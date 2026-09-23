@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks are small JavaScript functions you write inline in `defineAgent`. They run at points in a run and can change what happens: add to the system prompt, deny or edit a tool call, rewrite the final answer, reshape a subagent result, or drop a chat message.
+Hooks are small JavaScript functions you write inline in `defineAgent`. They run at set points in a run and can change what happens. A hook can add to the system prompt, deny or edit a tool call, rewrite the final answer, reshape a subagent result, or drop a chat message.
 
 To be notified about runs without changing them, use [webhooks](webhooks.md) instead. Both live under `hooks` and work together.
 
@@ -41,7 +41,7 @@ Each hook gets `(ctx, event)` and returns only the fields it may change. A wrong
 | `onMessageReceived` | a chat message arrives           | `drop` discards it, `text` rewrites it, `metadata` is stored with the message      |
 | `onMessageSending`  | a chat reply is about to be sent | `drop` blocks it, `text` rewrites it                                               |
 
-`onMessageReceived` narrows by `event.channel`, so `event.source` is typed per provider. A Pancake message carries `source.tagIds`, for example. It only sees text: an attachment reads as its caption or an empty string, and a `text` rewrite leaves the attachment on the message.
+`onMessageReceived` narrows by `event.channel`, so `event.source` is typed per provider. A Pancake message carries `source.tagIds`, for example. It only sees text. An attachment reads as its caption or an empty string, and a `text` rewrite leaves the attachment on the message.
 
 `metadata` returned from `onMessageReceived` shows up on that message in `onStart`'s `messages`, so a later hook can read who sent it without parsing text.
 
@@ -83,4 +83,4 @@ A subagent run fires hooks too. A predefined subagent runs its own hooks. A virt
 - A return may be at most 128 KB larger than the event it received.
 - `console.log` and `info` log at INFO, `warn` and `error` at their levels, `debug` at DEBUG. Lines are tagged `source: "user-code"` and appear in the dashboard Monitoring tab and `broods logs`. DEBUG lines only show in history, never in a live tail.
 
-Runnable example: [`agent-hooks` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/agent-hooks). For a Pancake human-handoff hook, see [Pancake](../channels/pancake.md).
+The [`agent-hooks` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/agent-hooks) is a runnable example. For a Pancake human-handoff hook, see [Pancake](../channels/pancake.md).

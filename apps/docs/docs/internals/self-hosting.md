@@ -37,14 +37,14 @@ flowchart LR
 | OPA                         | upstream, with `apps/core/opa/broods_authz.rego` | Needed for agent policies                                         |
 | OTel collector, Loki, Tempo | upstream                                         | Optional. Log and trace history                                   |
 
-The managed service runs all of this on k3s. Its release files are in the infra repo under `kubernetes/charts/releases/` (`core.yaml`, `gateway.yaml`, `dashboard.yaml`, `convex-prod.yaml`, `nats.yaml`, `opa.yaml`, `loki.yaml`, `tempo.yaml`, the two forwarders, plus `-dev` variants). Images are published to `ghcr.io/beeblastco/broods-{core,gateway,dashboard,discord-forwarder,matrix-forwarder}`, or build them from the Dockerfiles at the repo root: `docker build -f apps/core/Dockerfile .`.
+The managed service runs all of this on k3s. Its release files are in the infra repo under `kubernetes/charts/releases/`. They are `core.yaml`, `gateway.yaml`, `dashboard.yaml`, `convex-prod.yaml`, `nats.yaml`, `opa.yaml`, `loki.yaml`, `tempo.yaml`, the two forwarders, and `-dev` variants. Images are published to `ghcr.io/beeblastco/broods-{core,gateway,dashboard,discord-forwarder,matrix-forwarder}`, or build them from the Dockerfiles at the repo root with `docker build -f apps/core/Dockerfile .`.
 
 ## Prerequisites
 
-- Bun, version from `.bun-version` (1.4.2 or newer).
+- Bun at the version in `.bun-version`, 1.4.2 or newer.
 - An AWS account and credentials that can create S3, IAM, Lambda and CloudWatch resources.
 - A Kubernetes cluster, or any container host, for the five images.
-- A Convex deployment: Convex Cloud, or self-hosted.
+- A Convex deployment, on Convex Cloud or self-hosted.
 - A WorkOS AuthKit app if you run the dashboard. Without it there is no browser login, and so no `broods login`.
 
 ## 1. Deploy the AWS data plane
@@ -86,7 +86,7 @@ Stack outputs, which the containers and Convex need:
 | `convexAwsRoleArn`                                                                                                 | Convex `CONVEX_AWS_ROLE_ARN`                                                |
 | `convexBootstrapUserName`                                                                                          | mint the Convex `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`               |
 
-Two values are not outputs but follow fixed names: `SANDBOX_MOUNT_ROLE_ARN` is the role `<stage>-<project>-sandbox-s3mount-<account>-<region>`, without `<stage>-` on production, and `MICROVM_LOG_GROUP_NAME` is `/broods/<stage>/microvms`.
+Two values are not outputs but follow fixed names. `SANDBOX_MOUNT_ROLE_ARN` is the role `<stage>-<project>-sandbox-s3mount-<account>-<region>`, without `<stage>-` on production, and `MICROVM_LOG_GROUP_NAME` is `/broods/<stage>/microvms`.
 
 Production stages keep their buckets on removal and protect them. Add every long-lived stage to the matrix in `.github/workflows/drift-cleanup.yaml`, or the nightly reconcile never sees it. See [CI/CD](ci-cd.md).
 
@@ -125,9 +125,9 @@ Deploy Convex before core. Core calls functions that must already exist. CI enfo
 
 ## 3. Shared services
 
-- **NATS** with JetStream, for WebSocket runs and the live log and trace stream. Core creates its streams (`WS_RESPONSES`, `OBSERVABILITY`) on first use. `nats://` or `tls://` is core TCP for in-cluster clients, `wss://` or `ws://` for clients outside.
-- **OPA**, loaded with `apps/core/opa/broods_authz.rego`. Core posts to `/v1/data/broods/authz/decision`. Only agents with policies attached call it. `opa-policy-check.yaml` shows how to check a deployed OPA serves the same rego.
-- **OTel collector, Loki, Tempo**, optional. Core exports to `OTEL_EXPORTER_OTLP_ENDPOINT`; the gateway reads history from `LOKI_URL` and `TEMPO_URL`. Without them the dashboard shows only the live window NATS keeps.
+- NATS with JetStream, for WebSocket runs and the live log and trace stream. Core creates its streams (`WS_RESPONSES`, `OBSERVABILITY`) on first use. `nats://` or `tls://` is core TCP for in-cluster clients, `wss://` or `ws://` for clients outside.
+- OPA, loaded with `apps/core/opa/broods_authz.rego`. Core posts to `/v1/data/broods/authz/decision`. Only agents with policies attached call it. `opa-policy-check.yaml` shows how to check a deployed OPA serves the same rego.
+- An OTel collector with Loki and Tempo, optional. Core exports to `OTEL_EXPORTER_OTLP_ENDPOINT`; the gateway reads history from `LOKI_URL` and `TEMPO_URL`. Without them the dashboard shows only the live window NATS keeps.
 
 ## 4. Run the containers
 
@@ -159,7 +159,7 @@ Refuses to start without the four service secrets. Keep it cluster-internal; the
 | `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                                                                                                       | no                     | Same as on Convex                                                                              |
 | `BROODS_CONTAINER_RUNTIME`                                                                                                                              | no                     | `1` in a deployed pod, enables isolate prewarm. Leave unset locally                            |
 
-Tuning knobs with their defaults: `REQUEST_TIMEOUT_BUDGET_MS` 600000, `WORKER_TIMEOUT_BUDGET_MS` 600000, `MAX_INPROCESS_WORKERS` 8, `SHUTDOWN_DEADLINE_MS` 25000, `MCP_BATCH_WINDOW_MS` 10, `MCP_BATCH_MAX` 8, `ISOLATE_POOL`, `ISOLATE_WORKER_POOL_SIZE` 4, `ISOLATE_MEMORY_LIMIT_MB`, `ISOLATE_RUNNER_TIMEOUT_SECONDS`, `SANDBOX_SWEEP_INTERVAL_SECONDS`, and the `WORKSPACE_SANDBOX_*` limits in `apps/core/src/shared/sandbox.ts`.
+The tuning knobs and their defaults are `REQUEST_TIMEOUT_BUDGET_MS` 600000, `WORKER_TIMEOUT_BUDGET_MS` 600000, `MAX_INPROCESS_WORKERS` 8, `SHUTDOWN_DEADLINE_MS` 25000, `MCP_BATCH_WINDOW_MS` 10, `MCP_BATCH_MAX` 8, `ISOLATE_POOL`, `ISOLATE_WORKER_POOL_SIZE` 4, `ISOLATE_MEMORY_LIMIT_MB`, `ISOLATE_RUNNER_TIMEOUT_SECONDS`, `SANDBOX_SWEEP_INTERVAL_SECONDS`, and the `WORKSPACE_SANDBOX_*` limits in `apps/core/src/shared/sandbox.ts`.
 
 Model and tool API keys are never deployment-wide. Accounts set them in agent config or as stage env vars.
 
@@ -182,7 +182,7 @@ The gateway is stateless. Scale it with replicas.
 
 ### dashboard
 
-Build-time: `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, `NEXT_PUBLIC_BROODS_BASE_URL` (the public gateway). Runtime: `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_REDIRECT_URI`, `WORKOS_COOKIE_PASSWORD`, and `CONVEX_SITE_URL` against a self-hosted Convex, which has no derivable `.convex.site` host. See `apps/dashboard/.env.example`.
+The build-time values are `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI` and `NEXT_PUBLIC_BROODS_BASE_URL`, the public gateway. The runtime values are `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_REDIRECT_URI`, `WORKOS_COOKIE_PASSWORD`, and `CONVEX_SITE_URL` against a self-hosted Convex, which has no derivable `.convex.site` host. See `apps/dashboard/.env.example`.
 
 ### Forwarders
 
@@ -262,4 +262,4 @@ bun run local:status
 bun run local:down      # --purge deletes the instance state
 ```
 
-`verify` passes without a model key: the run fails at the provider call, which still proves routing, auth, config encryption and the Convex round trips. Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for a full run. The local stack has no dashboard, AWS data plane or NATS, so it covers the config plane and runs without sandboxes or WebSocket.
+`verify` passes without a model key. The run fails at the provider call, which still proves routing, auth, config encryption and the Convex round trips. Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for a full run. The local stack has no dashboard, AWS data plane or NATS, so it covers the config plane and runs without sandboxes or WebSocket.

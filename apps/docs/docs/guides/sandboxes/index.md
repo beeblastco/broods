@@ -25,14 +25,14 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 
 ## Providers
 
-| Provider  | What it is                        | Workspace mount | Persistent            | Background jobs         | Network enforcement            |
-| --------- | --------------------------------- | --------------- | --------------------- | ----------------------- | ------------------------------ |
-| `sandbox` | Self-hosted Firecracker (workdir) | yes             | yes, pause and resume | yes, with logs and stop | all modes, domain + CIDR lists |
-| `lambda`  | AWS Lambda MicroVM                | yes             | yes, 8 h max per VM   | yes, with logs and stop | `allow-all` or no internet     |
-| `daytona` | Daytona sandbox                   | yes             | yes, native auto-stop | yes, with logs and stop | all modes, CIDR lists only     |
-| `e2b`     | E2B template                      | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
-| `vercel`  | Vercel Sandbox                    | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
-| `machine` | Your own computer                 | no              | no                    | no                      | `allow-all` only               |
+| Provider  | What it is                   | Workspace mount | Persistent            | Background jobs         | Network enforcement            |
+| --------- | ---------------------------- | --------------- | --------------------- | ----------------------- | ------------------------------ |
+| `sandbox` | Broods-hosted Firecracker VM | yes             | yes, pause and resume | yes, with logs and stop | all modes, domain + CIDR lists |
+| `lambda`  | AWS Lambda MicroVM           | yes             | yes, 8 h max per VM   | yes, with logs and stop | `allow-all` or no internet     |
+| `daytona` | Daytona sandbox              | yes             | yes, native auto-stop | yes, with logs and stop | all modes, CIDR lists only     |
+| `e2b`     | E2B template                 | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
+| `vercel`  | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
+| `machine` | Your own computer            | no              | no                    | no                      | `allow-all` only               |
 
 `sandbox` is the default provider. Attaching a workspace to an `e2b`, `vercel` or `machine` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and the `machine` provider has its own page, [Your computer](machine.md).
 
@@ -56,7 +56,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                        |
 | `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                             |
 
-`envVars` cannot override the runtime's reserved names: `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND` and the background-job slots. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
+`envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND` and the background-job slots. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
 
 A call that blocks is capped at 600 seconds on every provider. Background jobs are not bound by the call timeout.
 
@@ -107,13 +107,13 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `medium` | 2    | 4 GB   | 16 GB | paid          |
 | `large`  | 4    | 8 GB   | 32 GB | paid          |
 
-`sandbox` and `lambda` apply the size. `tiny` exists on `lambda` only, and `sandbox` rounds vCPU up to 0.5. On `daytona`, `e2b` and `vercel` the size is advisory: those providers size machines through their own options, and the size only sets what the dashboard shows.
+Only the `sandbox` provider applies the size to the machine it creates, and it rounds `tiny` up to 0.5 vCPU. On `lambda` the image fixes the machine, so the size is display-only. `daytona`, `e2b` and `vercel` size machines through their own options, and there the size only sets what the dashboard shows. Every provider accepts every size name.
 
 ## Images
 
 Set `snapshot` to boot a prebuilt image instead of the provider default. Bake heavy toolchains into an image once rather than installing them on every cold start.
 
-- `sandbox` boots the named workdir image. The dashboard's Create snapshot action captures a running `sandbox` instance into an image you can pin later. It is the only provider with that action.
+- `sandbox` boots the named image. The dashboard's Create snapshot action captures a running `sandbox` instance into an image you can pin later. It is the only provider with that action.
 - `lambda` selects a MicroVM image by ARN. A running MicroVM cannot be captured into a new image. Its state survives idle through suspend and resume instead.
 - `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
 
@@ -121,7 +121,7 @@ The dashboard Snapshots view shows which image each running instance booted from
 
 ## More than one sandbox
 
-An agent lists its sandboxes in `sandboxes`. The first one is the default: `bash` without a workspace runs there, a workspace without its own sandbox mounts it, and a [harness](../agents.md) runs on it. Add more when one agent needs a second kind of machine, such as a browser image or a deny-all box.
+An agent lists its sandboxes in `sandboxes`. The first one is the default. `bash` without a workspace runs there, a workspace without its own sandbox mounts it, and a [harness](../agents.md) runs on it. Add more when one agent needs a second kind of machine, such as a browser image or a deny-all box.
 
 ```ts
 export const myAgent = defineAgent({

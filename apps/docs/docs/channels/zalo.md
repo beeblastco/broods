@@ -46,7 +46,7 @@ The Zalo channel answers private chats and groups through the official Zalo Bot 
      }'
    ```
 
-   The `packages/demos/channel-zalo` demo has a `register` command for this.
+   The [`channel-zalo` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/channel-zalo) has a `register` command for this.
 
 Zalo stores one webhook per bot. Registering a stage URL moves all of that bot's traffic to that stage. Give each developer their own bot to run stages side by side.
 

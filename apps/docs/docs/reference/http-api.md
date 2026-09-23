@@ -6,25 +6,19 @@ title: HTTP and WebSocket API
 
 Use the raw API from any language. TypeScript users get the same calls through the [SDK](sdk.md). Every request and response schema is in the [API reference](/api-reference).
 
-Base URL: `https://gateway.broods.app`, or your own gateway when self-hosting.
+The base URL is `https://gateway.broods.app`, or your own gateway when self-hosting.
 
 ## Credentials
 
 Every request sends `Authorization: Bearer <credential>`.
 
-| Credential           | Prefix      | Where it comes from                                  | What it opens                                                                       |
-| -------------------- | ----------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Stage runtime key    | `fp_agent_` | `broods dev` / `deploy` write it to `BROODS_API_KEY` | Runs of `publicAccess` agents in one project and stage. Safe to embed in a frontend |
-| Account secret       | `fp_acct_`  | Shown once at signup, rotate in Org Settings         | The whole account: runs of any agent, every `/v1/*` config route                    |
-| Role session         | `fp_sts_`   | `POST /v1/account/assume-role`                       | The config routes its role's policy allows. 1 hour default, 12 hours max            |
-| Stage session ticket | `fp_dts_`   | The dashboard and `broods logs` mint it              | Runs plus the logs and traces socket for one stage, for 15 minutes                  |
+| Endpoint                                           | Accepts                                                      |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Stage runtime key, account secret, or a stage session ticket |
+| `/v1/*` config routes                              | Account secret, or a role session within its policy          |
+| Logs and traces socket                             | Stage session ticket only. The runtime key is refused        |
 
-The runtime key is limited on purpose:
-
-- It reaches only agents of its own stage. Another stage's `agentId` answers `404`.
-- `system` and `model` overrides need `allowRunOverrides: true` on the agent.
-- `continue: true` only re-enters conversations the direct API opened, not channel sessions.
-- It cannot open logs or traces.
+The runtime key only reaches agents with `publicAccess: true` in its own stage. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
 
 ## Run an agent
 
@@ -51,16 +45,16 @@ curl -N -X POST "https://gateway.broods.app/v1/runs" \
 | `conversationKey` | yes                                 | Conversation to continue or create                                                                                                                        |
 | `events`          | yes, unless `answers` or `continue` | AI SDK messages. Roles `user`, `tool`, and `system` with `persist: false`                                                                                 |
 | `background`      | no                                  | `true` answers `202` with a run id instead of streaming                                                                                                   |
-| `mode`            | no                                  | Busy-conversation behavior: `steer` (default), `followup`, `collect`, `reject`                                                                            |
+| `mode`            | no                                  | Busy-conversation behavior, one of `steer`, the default, `followup`, `collect`, `reject`                                                                  |
 | `idempotencyKey`  | no                                  | Retry identity. Defaults to `eventId`, bound for 7 days                                                                                                   |
 | `system`          | no                                  | One-turn system message or list, not stored                                                                                                               |
 | `model`           | no                                  | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`. `provider`, `modelId`, `output` and `apiKey` are rejected |
 | `answers`         | no                                  | Answers to open `ask_questions` prompts. Cannot be combined with `events`                                                                                 |
 | `continue`        | no                                  | Re-enter a run that stopped on the step cap or a provider fault                                                                                           |
 
-The stream carries AI SDK stream parts (`step-start`, `text-delta`, `tool-call`, `tool-result`, `finish`, `error`). Long quiet waits send SSE comment lines such as `: waiting for async work pending=2` to keep the connection open. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
+The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. Long quiet waits send SSE comment lines such as `: waiting for async work pending=2` to keep the connection open. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
 
-The dashboard advertises a scoped form of the same endpoint: `POST /v1/projects/{project}/stages/{stage}/agents/{endpointId}`. It takes the same body and refuses a key from another project or stage with `401`.
+The dashboard advertises a scoped form of the same endpoint, `POST /v1/projects/{project}/stages/{stage}/agents/{endpointId}`. It takes the same body and refuses a key from another project or stage with `401`.
 
 ## Background runs and polling
 
@@ -147,17 +141,18 @@ A queued request answers `202` with a `statusUrl` instead of a second SSE stream
 }
 ```
 
-Branch on `code`, never on `message`. Each response also carries an `X-Request-Id` header; quote it when reporting a problem.
+Branch on `code`, never on `message`. Each response also carries an `X-Request-Id` header. Quote it when reporting a problem.
 
-| Status | `code`                   | Cause                                                      |
-| ------ | ------------------------ | ---------------------------------------------------------- |
-| 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope    |
-| 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                |
-| 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true` |
-| 404    | `run_not_found`          | Unknown run id                                             |
-| 409    | `conversation_busy`      | Busy conversation in `reject` mode                         |
-| 409    | `idempotency_conflict`   | Same idempotency key, different payload                    |
-| 429    | `ingress_capacity`       | Conversation queue is full                                 |
+| Status | `code`                   | Cause                                                                                                          |
+| ------ | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope                                                        |
+| 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                                                                    |
+| 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true`                                                     |
+| 403    | `status_access_denied`   | The run's status is not readable from this deployment, such as a subagent run started under another deployment |
+| 404    | `run_not_found`          | Unknown run id                                                                                                 |
+| 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                             |
+| 409    | `idempotency_conflict`   | Same idempotency key, different payload                                                                        |
+| 429    | `ingress_capacity`       | Conversation queue is full                                                                                     |
 
 On a streamed run, these arrive as the first SSE `error` frame instead of a JSON body.
 
@@ -198,12 +193,12 @@ The server answers `broods.v1`. A proxy in front of the gateway must not log req
 
 ### Client frames
 
-| Frame     | Purpose                                                                                                                     |
-| --------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `execute` | Start a run: `agentId`, `sessionId`, `eventId`, `events` or `answers`, optional `mode`, `idempotencyKey`, `system`, `model` |
-| `control` | More input for the live run: `requestId`, `eventId`, `events`, optional `mode` (default `steer`)                            |
-| `attach`  | Reattach to a run: `requestId`, `agentId`, `conversationKey`, `eventId`, `runId`, optional `afterCursor`                    |
-| `cancel`  | Stop reading now. The in-flight step's output is dropped                                                                    |
+| Frame     | Purpose                                                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `execute` | Starts a run with `agentId`, `sessionId`, `eventId`, `events` or `answers`, optional `mode`, `idempotencyKey`, `system`, `model` |
+| `control` | Adds input to the live run with `requestId`, `eventId`, `events`, and `mode`, default `steer`                                    |
+| `attach`  | Reattaches to a run with `requestId`, `agentId`, `conversationKey`, `eventId`, `runId`, optional `afterCursor`                   |
+| `cancel`  | Stop reading now. The in-flight step's output is dropped                                                                         |
 
 ```json
 {
@@ -235,15 +230,8 @@ The server answers `broods.v1`. A proxy in front of the gateway must not log req
 
 ### Resume after a disconnect
 
-Output is kept for about 3 minutes (2,000 frames per conversation). Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`; later frames are live. When the cursor is too old or belongs to another event, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
+Output is kept for about 3 minutes, up to 2,000 frames per conversation. Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`. Later frames are live. When the cursor is too old or belongs to another event, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
 
 ## Channel webhooks
 
-Providers post to one URL per account and channel type. The URL names no agent: the credentials that verify the request pick it.
-
-| Stage           | URL                                                                    |
-| --------------- | ---------------------------------------------------------------------- |
-| Production      | `{BROODS_BASE_URL}/v1/webhooks/{accountId}/{channel}`                  |
-| Any other stage | `{BROODS_BASE_URL}/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` |
-
-`broods dev` and `broods deploy` print the right URL after each sync. See [Channels](../channels/index.md).
+Providers post to one URL per account and channel type. `broods dev` and `broods deploy` print it after each sync. The production and per-stage URL forms are in [Channels](../channels/index.md).

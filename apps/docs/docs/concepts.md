@@ -1,6 +1,6 @@
 # Concepts
 
-The handful of ideas every other page assumes. Read this once after the [Quickstart](quickstart.md).
+Every other page assumes the ideas on this one. Read it once after the [Quickstart](quickstart.md).
 
 ## Where things live
 
@@ -19,7 +19,7 @@ flowchart LR
 | Project      | One product or repo. Groups its stages.                                                                                                     | `broods dev` creates it, `broods project` |
 | Stage        | A deploy target inside a project, such as `development` or `production`. Each has its own resources, environment variables and runtime key. | `broods stage`, `--stage`                 |
 
-`broods dev` syncs to `development`. `broods deploy` syncs to `production`. Clone a stage with `broods stage create staging --from development`. See [Deploying](guides/deploying.md).
+`broods dev` syncs to `development`. `broods deploy` syncs to `production`, or to the `stages.deploy` stage you set with `defineBroods`. Clone a stage with `broods stage create staging --from development`. See [Deploying](guides/deploying.md).
 
 ## Resources
 
@@ -60,24 +60,21 @@ flowchart LR
 
 ## Credentials
 
-Each credential opens a different door. Use the narrowest one that works.
+Use the narrowest credential that works. The three you meet first:
 
-| Credential           | Prefix       | Who holds it                     | What it can do                                                                               |
-| -------------------- | ------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
-| Stage runtime key    | `fp_agent_`  | Your app or frontend             | Run agents with `publicAccess: true` in its own stage. Nothing else.                         |
-| CLI login            | `fp_cli_`    | `broods login` on your machine   | Everything the CLI does, for org owners and admins                                           |
-| Deploy key           | `fp_deploy_` | CI                               | Sync one project and stage                                                                   |
-| Account secret       | `fp_acct_`   | Your backend, kept secret        | The whole config plane of the organization's account: create agents, crons, files at runtime |
-| Role session         | `fp_sts_`    | A tool or service you hand it to | Only what the role's policy allows, for up to 12 hours                                       |
-| Stage session ticket | `fp_dts_`    | Dashboard and `broods logs`      | Logs, traces and test chat for one stage, for 15 minutes                                     |
+| Credential        | Prefix      | Who holds it                   | What it can do                                                       |
+| ----------------- | ----------- | ------------------------------ | -------------------------------------------------------------------- |
+| Stage runtime key | `fp_agent_` | Your app or frontend           | Run agents with `publicAccess: true` in its own stage. Nothing else. |
+| Account secret    | `fp_acct_`  | Your backend, kept secret      | The whole config plane, to create agents, crons and files at runtime |
+| CLI login         | `fp_cli_`   | `broods login` on your machine | Everything the CLI does, for org owners and admins                   |
 
-The account secret is shown once, when your organization is provisioned, and can be rotated under Org Settings, API Access. The runtime key is written to `.env.local` as `BROODS_API_KEY` by `broods dev` and `broods deploy`. See [Security](guides/security.md).
+`broods dev` and `broods deploy` write the runtime key to `.env.local` as `BROODS_API_KEY`. The account secret is shown once, when your organization is provisioned. Rotate it under Org Settings, API Access. Deploy keys, role sessions and stage tickets are in [Security](guides/security.md).
 
 ## Config plane and runtime
 
-Two kinds of API sit behind the same URL:
+Two kinds of API sit behind the same URL.
 
-- The **runtime** runs agents: `POST /v1/runs`, WebSocket, channel webhooks. `BroodsClient` uses it with the runtime key.
-- The **config plane** manages resources: `/v1/agents`, `/v1/crons`, `/v1/workspaces` and so on. `broods dev` uses it, and so does `BroodsAccountClient` when your app needs to create an agent per customer at runtime.
+- The runtime runs agents through `POST /v1/runs`, the WebSocket and channel webhooks. `BroodsClient` calls it with the runtime key.
+- The config plane manages resources through `/v1/agents`, `/v1/crons`, `/v1/workspaces` and the rest. `broods dev` calls it. So does `BroodsAccountClient` when your app creates an agent per customer at runtime.
 
 The code in `broods/` and the config plane describe the same resources. Anything you can declare, you can also create through the API.

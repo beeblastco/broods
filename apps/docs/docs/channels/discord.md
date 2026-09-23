@@ -48,7 +48,7 @@ A Discord bot puts your agent in guild channels and threads. Slash commands arri
    });
    ```
 
-6. Run `broods dev` or `broods deploy`. Set the printed webhook URL as the Interactions Endpoint URL in the developer portal, and register the slash commands `/new`, `/clear`, `/compact` and `/help`. The `packages/demos/channel-discord` demo has a `register` command for this.
+6. Run `broods dev` or `broods deploy`. Set the printed webhook URL as the Interactions Endpoint URL in the developer portal, and register the slash commands `/new`, `/clear`, `/compact` and `/help`. The [`channel-discord` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/channel-discord) has a `register` command for this.
 
 Declaring a `botToken` is enough to get regular messages. The hosted Discord forwarder reads your connection and opens the socket. There is nothing else to configure.
 
@@ -91,18 +91,7 @@ If the forwarder logs close code 4014, Message Content Intent is off in the deve
 
 Discord resets a bot token after 1000 identifies in 24 hours. The forwarder caps reconnects to stay under that, so an occasional delayed reconnect is expected.
 
-### Self-hosting without the forwarder
-
-Post each Discord `MESSAGE_CREATE` event, unmodified, to the webhook URL:
-
-```json
-{
-  "type": "GATEWAY_MESSAGE_CREATE",
-  "data": { "...": "MESSAGE_CREATE payload" }
-}
-```
-
-Send the bot token in an `x-discord-gateway-token` header. `author.bot` absent means a human, as Discord sends it. When the message is inside a thread, add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits its parent. Without it the conversation keys under the thread id as if it were a channel, `/new` in that thread disagrees, and allow lists that name the parent channel reject it.
+A self-hosted deployment without the forwarder can post the events itself. The payload is in [Channels internals](../internals/channels.md).
 
 ## Replies and media
 

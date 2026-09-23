@@ -57,15 +57,15 @@ The `description` decides when the model loads the skill, so write it as a routi
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Name       | Lowercase letters, digits and hyphens, up to 64 characters. Names containing `anthropic`, `claude` or XML tags are rejected. |
 | File size  | 5 MB per file, 30 MB per bundle                                                                                              |
-| File types | Text only: `.css .csv .html .js .json .md .mjs .py .sh .sql .svg .toml .ts .tsx .txt .xml .yaml .yml`                        |
-| Paths      | Relative to the skill root: `SKILL.md`, not `support-flow/SKILL.md`                                                          |
-| Scope      | Skills belong to the account. The stored path is `<accountId>/<name>`, taken from the `SKILL.md` name, not the folder.       |
+| File types | Text only, meaning `.css .csv .html .js .json .md .mjs .py .sh .sql .svg .toml .ts .tsx .txt .xml .yaml .yml`                |
+| Paths      | Relative to the skill root. Write `SKILL.md`, not `support-flow/SKILL.md`                                                    |
+| Scope      | Skills belong to the account. A skill's name comes from `SKILL.md`, not from the folder name.                                |
 
 Do not put credentials in a skill. Use [environment variables](deploying.md#secrets-and-environment-variables).
 
 ## Running scripts from a skill
 
-When the agent has a workspace, `load_skill` also copies the bundle into it at `.claude/skills/<name>/`, mirrored at `.agents/skills/<name>/`. Scripts (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are marked executable, so the agent can run them with `bash`. Every load copies a fresh version.
+When the agent has a workspace, `load_skill` also copies the bundle into it at `.claude/skills/<name>/`, mirrored at `.agents/skills/<name>/`. Scripts ending in `.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs` or `.ts` are marked executable, so the agent can run them with `bash`. Every load copies a fresh version.
 
 Without a workspace, the instructions still load, but scripts cannot run in that turn.
 
@@ -75,6 +75,6 @@ Without a workspace, the instructions still load, but scripts cannot run in that
 
 ## Other ways to upload
 
-The account API also takes skills from JSON, uploaded files, or a public GitHub tree URL (`https://github.com/{owner}/{repo}/tree/{ref}/{path}`). Only import from repositories you trust, and pin the ref. See `POST /v1/skills` in the [API reference](/api-reference).
+The account API also takes skills from JSON, uploaded files, or a public GitHub tree URL of the form `https://github.com/{owner}/{repo}/tree/{ref}/{path}`. Only import from repositories you trust, and pin the ref. See `POST /v1/skills` in the [API reference](/api-reference).
 
-Runnable example: [`skill` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/skill).
+The [`skill` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/skill) is a runnable example.

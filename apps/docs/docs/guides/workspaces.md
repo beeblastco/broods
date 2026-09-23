@@ -1,6 +1,6 @@
 # Workspaces
 
-A workspace is a persistent folder of files. It lives in object storage, and each run mounts it into a sandbox. Everything the agent writes there survives the sandbox: notes, generated files, `memory/`, staged skills. Agents that attach the same workspace share the same files.
+A workspace is a persistent folder of files. It lives in object storage, and each run mounts it into a sandbox. Everything the agent writes there survives the sandbox, including notes, generated files, `memory/` and staged skills. Agents that attach the same workspace share the same files.
 
 A workspace alone stores files. The agent needs a [sandbox](sandboxes/index.md) to mount it with full read and write tools; without one it can only read.
 
@@ -39,7 +39,7 @@ workspaces: [
 | -------------------- | ------------------------------------------------------------------------ |
 | bare workspace       | the agent's first sandbox, or read-only when the agent has none          |
 | `sandbox: <sandbox>` | that sandbox, with its own `permissionMode`                              |
-| `sandbox: null`      | none. Reads go straight to storage: cheapest, but they lag recent writes |
+| `sandbox: null`      | none. Reads go straight to storage. Cheapest, but they lag recent writes |
 
 That lets one agent give different workspaces different sandboxes and approval rules, lets two agents reach one workspace through their own sandboxes, and makes a workspace read-only.
 
@@ -110,7 +110,7 @@ export const github = defineGitHubConnection({
 
 A new child folder starts empty. Files at the root are not copied in. A [channel record](../channels/channel-records.md) can also set `partition` for one place.
 
-The rules are checked on `broods dev`: a workspace with `partitioned: true` needs `partition` on every attached connection, and a connection with `partition` needs at least one partitioned workspace.
+`broods dev` checks the rules. A workspace with `partitioned: true` needs `partition` on every attached connection, and a connection with `partition` needs at least one partitioned workspace.
 
 ### When a child folder is deleted
 

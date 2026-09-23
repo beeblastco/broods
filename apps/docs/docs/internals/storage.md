@@ -4,7 +4,7 @@ This page covers where workspace files, memory and skills live in S3, how the ha
 
 ## Key layout
 
-A workspace's files live directly under `<namespace>/` in the managed bucket (`FILESYSTEM_BUCKET_NAME`). The namespace is `fs-` plus the first 40 hex characters of a scoped SHA-256 of `accountId:workspaceId`: `workspaceNamespace()` in `src/shared/workspaces.ts`, hashing through `normalizeFilesystemNamespace()` in `src/shared/runtime-keys.ts`. Partitioning adds child folders below it, never another bucket: a `conversation` partition mounts `<namespace>/<alias>/fs-<hash of the conversation key>` (`isolatedWorkspaceNamespace()`).
+A workspace's files live directly under `<namespace>/` in the managed bucket named by `FILESYSTEM_BUCKET_NAME`. The namespace is `fs-` plus the first 40 hex characters of a scoped SHA-256 of `accountId:workspaceId`. `workspaceNamespace()` in `src/shared/workspaces.ts` computes it, hashing through `normalizeFilesystemNamespace()` in `src/shared/runtime-keys.ts`. Partitioning adds child folders below it, never another bucket. A `conversation` partition mounts `<namespace>/<alias>/fs-<hash of the conversation key>`, computed by `isolatedWorkspaceNamespace()`.
 
 The layout is single-sourced in `workspaceNamespacePrefix()` in `src/shared/sandbox.ts`. Harness-side S3 reads and writes and the sandbox's `mount-s3` mount both go through it, so changing it there moves both together. The `<namespace>/` segment is also the tenant boundary the per-mount IAM session policy is scoped to.
 
@@ -21,7 +21,7 @@ flowchart TD
   Mount --> Providers["lambda MicroVM, sandbox (workdir), Daytona"]
 ```
 
-Every S3-backed provider mounts the prefix with `mount-s3` (Mountpoint for S3). The MicroVM mounts from its `/run` lifecycle hook and gets refreshed credentials every 30 minutes; workdir and Daytona mount per run. E2B and Vercel are not wired to S3 workspaces, and attaching one fails fast instead of silently using provider-native state. `src/harness/sandbox/s3-mount.ts` resolves the mount target and credentials the same way for every provider.
+Every S3-backed provider mounts the prefix with `mount-s3`, Mountpoint for S3. The MicroVM mounts from its `/run` lifecycle hook and gets refreshed credentials every 30 minutes. Workdir and Daytona mount per run. E2B and Vercel are not wired to S3 workspaces, and attaching one fails fast instead of silently using provider-native state. `src/harness/sandbox/s3-mount.ts` resolves the mount target and credentials the same way for every provider.
 
 Mountpoint for S3 supports whole-file create and overwrite only. `O_APPEND` (`>>`), in-place edits and `rename()` fail with `EPERM`, which is why the `write` and `edit` tools rewrite whole files and `memory_save` rewrites the index in one `>` pass with no temp file. Both tools `sync` the file after writing.
 
@@ -32,7 +32,7 @@ The mount and the S3 API reach the same objects on different schedules:
 - Bucket to mount. An object the harness wrote with `PutObject` or `CopyObject` appears in the mount without remounting, after Mountpoint's metadata cache catches up.
 - Mount to bucket. A file the agent wrote through `bash` or the file tools is visible in the mount at once and reaches the bucket when Mountpoint uploads it on close.
 
-The routing below dates from the earlier S3 Files mount, where a mount write took 1 to 2 minutes to reach the S3 API (measured: missing at +45 s, present at +120 s). Mountpoint uploads on close, so that window is now the upload itself. The routing stays because it is correct either way. Pick the door by who last wrote the file:
+The routing below dates from the earlier S3 Files mount, where a mount write took 1 to 2 minutes to reach the S3 API. It was missing at +45 s and present at +120 s. Mountpoint uploads on close, so that window is now the upload itself. The routing stays because it is correct either way. Pick the door by who last wrote the file.
 
 | Reading                                                                 | Last writer    | Read through                                       |
 | ----------------------------------------------------------------------- | -------------- | -------------------------------------------------- |
@@ -42,9 +42,9 @@ The routing below dates from the earlier S3 Files mount, where a mount write too
 
 The agent always reads through the mount, so it always sees its own writes. The choice only applies to harness-side reads.
 
-Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix: no mount, no cold start, but lagged.
+Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag.
 
-Known exception: `Session.loadMemoryFile` reads `memory/MEMORY.md` through the S3 API at the start of each turn, so a workspace with no sandbox still serves memory. A read that lands before the agent's last edit reached the bucket is stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
+One known exception exists. `Session.loadMemoryFile` reads `memory/MEMORY.md` through the S3 API at the start of each turn, so a workspace with no sandbox still serves memory. A read that lands before the agent's last edit reached the bucket is stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
 
 ## Bring-your-own bucket
 
@@ -54,7 +54,7 @@ A workspace can set `storage.bucket`, `region`, `prefix`, optional `endpoint`, a
 - `bucket` is not one of the platform's own buckets, compared case-insensitively.
 - `auth.roleArn` is an IAM role outside the platform AWS account.
 - `prefix` is set. Mount credentials are scoped to `bucket/prefix/*`, a directory boundary.
-- `endpoint`, when set, is a public `https` URL and appears only with `bucket`. The sandbox `options.s3Endpoint` follows the same rule. A self-hosted deployment can allow private endpoints (MinIO on the cluster network, single-label hosts like `http://minio:9000`) with `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on both core and Convex. A public host still needs `https`.
+- `endpoint`, when set, is a public `https` URL and appears only with `bucket`. The sandbox `options.s3Endpoint` follows the same rule. A self-hosted deployment can allow private endpoints, such as MinIO on the cluster network or single-label hosts like `http://minio:9000`, with `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on both core and Convex. A public host still needs `https`.
 
 The config API, `broods deploy` and the dashboard canvas check these on save, and core and the config plane check them again every time storage is resolved. A workspace stored before a rule existed fails with the same error instead of falling back to platform credentials.
 
@@ -68,15 +68,15 @@ flowchart TD
   Byo --> Mount
 ```
 
-`resolveS3Mount()` has three credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`. The managed bucket assumes the platform `sandbox-s3mount` role (`SANDBOX_MOUNT_ROLE_ARN`). Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session (`fp-sandbox-mount`, one hour) carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target; bring-your-own read targets are cached until 10 minutes before their credentials expire. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
+`resolveS3Mount()` has three credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`. The managed bucket assumes the platform `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN`. Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session, named `fp-sandbox-mount` and lasting one hour, carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target. Bring-your-own read targets are cached until 10 minutes before their credentials expire. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
 
-Workspace config is stored in plaintext, so no access keys are ever stored in it. Static access keys for non-AWS stores (R2, MinIO tokens) are not supported yet, and `assumeRole` is an AWS STS call. `provider` stays `s3` for every S3-compatible vendor; it is reserved for a different protocol such as native Azure Blob or GCS.
+Workspace config is stored in plaintext, so no access keys are ever stored in it. Static access keys for non-AWS stores, such as R2 or MinIO tokens, are not supported yet, and `assumeRole` is an AWS STS call. `provider` stays `s3` for every S3-compatible vendor. It is reserved for a different protocol such as native Azure Blob or GCS.
 
 Under `deny-all` or `restricted` networking, a MicroVM reaches S3 only through the gateway endpoint, whose policy names the managed bucket alone. BYO-bucket workspaces on `lambda` therefore need `allow-all`.
 
 ## Dashboard Files panel
 
-The dashboard Files tab lists and mutates the same S3 namespace through the Convex workspace file actions (`packages/convex/workspace/filesPublic.ts`), so uploads, renames and deletes change the files the agent mounts. Convex file storage only holds upload blobs in transit: an upload grant (`uploadGrants`, 20 open per account per hour) hands out a Convex upload URL, and blobs no workspace file references are deleted after a day.
+The dashboard Files tab lists and mutates the same S3 namespace through the Convex workspace file actions in `packages/convex/workspace/filesPublic.ts`, so uploads, renames and deletes change the files the agent mounts. Convex file storage only holds upload blobs in transit. An upload grant in `uploadGrants`, at most 20 open per account per hour, hands out a Convex upload URL, and blobs no workspace file references are deleted after a day.
 
 - The last confirmed tree is cached in memory and `sessionStorage` and painted immediately, then revalidated. File contents and signed URLs are never cached.
 - Uploads show as pending rows until S3 confirms. Rename and delete update optimistically, then reload; a failure restores server state.
@@ -114,22 +114,22 @@ flowchart LR
   Loader -->|"server-side copy"| Ws["workspace namespace<br/>.claude/skills + .agents/skills"]
 ```
 
-- `session.ts` lists allowed skill metadata (path, name, description) in the prompt. `load_skill` returns `SKILL.md` and any requested resources through the S3 API, which works with no workspace or sandbox.
-- With a workspace attached, every `load_skill` re-stages a fresh copy into `<namespace>/.claude/skills/<name>` and mirrors it to `.agents/skills/<name>` (`SKILL_CANONICAL_DIR`, `SKILL_MIRROR_DIRS` in `src/harness/skills.ts`), dropping stale files first. It uses S3 server-side copy, so bytes do not stream through core. No sandbox mounts the skills bucket; the staged copy is how scripts reach a sandbox.
+- `session.ts` lists the path, name and description of each allowed skill in the prompt. `load_skill` returns `SKILL.md` and any requested resources through the S3 API, which works with no workspace or sandbox.
+- With a workspace attached, every `load_skill` re-stages a fresh copy into `<namespace>/.claude/skills/<name>` and mirrors it to `.agents/skills/<name>`, per `SKILL_CANONICAL_DIR` and `SKILL_MIRROR_DIRS` in `src/harness/skills.ts`. It drops stale files first. It uses S3 server-side copy, so bytes do not stream through core. No sandbox mounts the skills bucket. The staged copy is how scripts reach a sandbox.
 - Harness adapters get the same skills as `HarnessAgentSkill` entries through `src/harness/skills.ts`.
 - Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged with executable POSIX metadata so shebang scripts run directly. Other text files are staged non-executable.
-- Validation, in both `src/shared/skills.ts` and `packages/convex/model/skillRules.ts`: lowercase letters, digits and hyphens, at most 64 characters, no reserved words (`anthropic`, `claude`) or XML tags; 5 MB per file, 30 MB per bundle, text types only.
+- `src/shared/skills.ts` and `packages/convex/model/skillRules.ts` both validate. Names are lowercase letters, digits and hyphens, at most 64 characters, with no `anthropic`, `claude` or XML tags. Files are text only, at most 5 MB each and 30 MB per bundle.
 
 Design rules:
 
-- Skill CRUD stays in the Convex config plane (`packages/convex/config/http.ts`, `packages/convex/model/skills.ts`, Node actions only). Skills are S3 bundles; there is no Convex skills table.
+- Skill CRUD stays in the Convex config plane, in `packages/convex/config/http.ts` and `packages/convex/model/skills.ts`, as Node actions only. Skills are S3 bundles, and there is no Convex skills table.
 - Shared runtime validation and S3 path rules stay in `src/shared/skills.ts`.
 - The model-facing `load_skill` schema stays in `src/harness/tools/load-skill.tool.ts`.
 - Editing a skill goes through an editable workspace and the normal file tools, never through `load_skill`.
 
 ## Future external storage
 
-S3-compatible stores (R2, MinIO, Wasabi, B2) need an access-key auth type that references account env vars; `endpoint` is already in the BYO contract for them. Non-S3 providers (Google Drive, native GCS, Azure Blob) would go behind a new `storage.provider`, and must still:
+S3-compatible stores such as R2, MinIO, Wasabi and B2 need an access-key auth type that references account env vars. `endpoint` is already in the BYO contract for them. Non-S3 providers such as Google Drive, native GCS and Azure Blob would go behind a new `storage.provider`, and must still:
 
 - keep one logical namespace for memory, staged skills and files,
 - mount or sync that namespace into the sandbox's workspace root,

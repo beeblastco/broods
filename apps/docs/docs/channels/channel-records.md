@@ -4,7 +4,7 @@ title: Channel records
 
 # Channel records
 
-A channel record binds one real place, such as a Slack channel, a Discord channel or a repository, to the agents that answer there. It also carries rules for that place: extra instructions, workspaces, policies and denied tools.
+A channel record binds one real place, such as a Slack channel, a Discord channel or a repository, to the agents that answer there. It also carries rules for that place, such as extra instructions, workspaces, policies and denied tools.
 
 Every `define*Channel` you declare becomes a record on deploy. Use one when you need any of these:
 
@@ -99,13 +99,13 @@ export const internalGroups = defineZaloChannel({
 });
 ```
 
-That deploys three records: `lamy-internal-7788`, `lamy-internal-7789` and `lamy-internal-7790`. The suffix is the id, so removing one leaves the others' names unchanged. The ids must be known at deploy time.
+That deploys three records, `lamy-internal-7788`, `lamy-internal-7789` and `lamy-internal-7790`. The suffix is the id, so removing one leaves the others' names unchanged. The ids must be known at deploy time.
 
 `"*"` is refused as an id. A record matches one exact room, so a wildcard would open the connection everywhere with none of the rules. To answer everywhere, set `allowedChannelIds: ["*"]` on the connection. Rooms without a record fall back to the connection's own agent.
 
 ## Through the account API
 
-The API uses the stored names: `externalId` for the room id and `agentBindings` for `agents`. Everything else is spelled the same.
+The API uses the stored names. It says `externalId` for the room id and `agentBindings` for `agents`. Everything else is spelled the same.
 
 ```ts
 import { BroodsAccountClient } from "broods/account";

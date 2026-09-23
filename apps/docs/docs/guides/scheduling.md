@@ -50,39 +50,41 @@ A one-time `at(...)` job deletes itself, and its run history, once its run finis
 
 `conversationKey` decides which conversation the run continues:
 
-- The key of an existing channel conversation, such as a Slack thread the agent already answered in: the run continues that conversation with the same channel rules, and the reply is posted there.
-- Anything else, including the default `cron:<cronId>`: the run gets its own conversation. Read the result through the run status API. Nothing is posted.
+- Give the key of an existing channel conversation, such as a Slack thread the agent already answered in, and the run continues that conversation with the same channel rules. The reply goes to that thread.
+- Any other key, including the default `cron:<cronId>`, gives the run its own conversation. Read the result through the run status API. Nothing is posted.
 
 A run that fires while its conversation is busy is skipped and recorded as failed.
 
 ## What the agent sees
 
-A scheduled run starts with a note before the instructions: the task name, the schedule and timezone, when it fired, when it was created, whether it fires again, and that nobody is waiting for a reply. In traces the run is labelled `cron`.
+A scheduled run starts with a note before the instructions. It names the task, the schedule and timezone, when it fired, when it was created, whether it fires again, and that nobody is waiting for a reply. In traces the run is labelled `cron`.
 
 Scheduled runs never get the scheduling tools below, so a task cannot reschedule itself by reading its own instructions.
 
 ## Manage jobs at runtime
 
+Cron jobs are config, so managing them needs the account secret, not the stage runtime key. Use `BroodsAccountClient` from a backend:
+
 ```ts
-import { BroodsClient } from "broods";
+import { BroodsAccountClient } from "broods/account";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+const account = new BroodsAccountClient(); // reads BROODS_ACCOUNT_SECRET
 
-const cron = await client.createCron({
+const cron = await account.createCron({
   name: "weekly-digest",
-  agent: api.agents.maintainer,
+  agentId: api.agents.maintainer.id,
   input: "Summarize this week.",
   scheduleExpression: "cron(0 9 ? * MON *)",
   timezone: "Europe/Amsterdam",
 });
 
-await client.updateCron(cron.cronId, { status: "paused" });
-const runs = await client.listCronRuns(cron.cronId, { limit: 10 });
-await client.deleteCron(cron.cronId); // deletes its run history too
+await account.updateCron(cron.cronId, { status: "paused" });
+const runs = await account.listCronRuns(cron.cronId, { limit: 10 });
+await account.deleteCron(cron.cronId); // deletes its run history too
 ```
 
-Jobs report `status`, `lastInvokedAt`, `lastStatus` and `lastError`. Paused jobs are skipped. The same operations are on `/v1/crons` with the account secret. See the [API reference](/api-reference).
+Jobs report `status`, `lastInvokedAt`, `lastStatus` and `lastError`. Paused jobs are skipped. The same operations are on `/v1/crons`. See the [API reference](/api-reference).
 
 ## Let the agent schedule work
 
@@ -106,4 +108,4 @@ An agent can only schedule itself and only manage its own jobs. A job answers in
 
 These are ordinary cron jobs. They show on the dashboard scheduler page, where changing them needs the org admin role. Withhold a tool in one channel with `denyTools` on its [channel record](../channels/channel-records.md).
 
-Runnable example: [`cron` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/cron).
+The [`cron` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/cron) is a runnable example.

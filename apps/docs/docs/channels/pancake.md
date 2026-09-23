@@ -4,7 +4,7 @@ title: Pancake
 
 # Pancake
 
-Pancake is a customer service inbox. The Pancake channel answers inbox messages (`INBOX`) and post or page comments (`COMMENT`).
+Pancake is a customer service inbox. The Pancake channel answers inbox messages, which Pancake calls `INBOX`, and post or page comments, which it calls `COMMENT`.
 
 ## Setup
 

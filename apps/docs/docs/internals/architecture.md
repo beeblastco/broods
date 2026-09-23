@@ -77,7 +77,7 @@ flowchart LR
 | `apps/lambda/handler.mjs`               | AWS Lambda (SST)                           | Hosted MCP runner: one invoke per batch of calls, bundle run in a child process.                                                                 |
 | `apps/lambda/sandbox-log-forwarder.mjs` | AWS Lambda (SST)                           | Ships MicroVM guest stdout from CloudWatch to the OTel collector with tenant labels.                                                             |
 
-SST in `apps/core/sst.config.ts` owns only AWS resources: the three S3 buckets, MicroVM artifacts bucket and roles, the MicroVM log group and forwarder, the sandbox VPC and S3 endpoint, the `sandbox-s3mount` role, the sandbox ECR repo, the mcp-runner function, the `core-runtime` IAM user, and the role Convex assumes for S3. The pods, NATS, OPA and the collector are deployed from the sibling `../infra` repo.
+SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3 buckets, MicroVM artifacts bucket and roles, the MicroVM log group and forwarder, the sandbox VPC and S3 endpoint, the `sandbox-s3mount` role, the sandbox ECR repo, the mcp-runner function, the `core-runtime` IAM user, and the role Convex assumes for S3. The pods, NATS, OPA and the collector are deployed from the sibling `../infra` repo.
 
 ## Request paths
 
@@ -86,9 +86,9 @@ SST in `apps/core/sst.config.ts` owns only AWS resources: the three S3 buckets, 
 1. The client sends `POST /v1/runs`, or the scoped `POST /v1/projects/:p/stages/:s/agents/:endpointId`, with a bearer credential.
 2. The gateway sees a non-config `/v1/` path and proxies it to core (`apps/gateway/src/upstream.ts` `proxyHttp`), stripping `Host` and stamping `x-broods-via-gateway`.
 3. `apps/core/src/server.ts` routes it to the harness handler. `routeIncomingEvent` in `src/harness/integrations.ts` resolves the credential (`src/shared/auth.ts`), loads the agent, and applies the public-access and run-override rules for a runtime key.
-4. `src/harness/handler.ts` admits the request through the conversation coordinator (`src/harness/ingress.ts`, Convex `runtimeIngress.ts`). A busy conversation queues or steers per [queue and steer](queue-and-steer.md).
+4. `src/harness/handler.ts` admits the request through the conversation coordinator in `src/harness/ingress.ts` and Convex `runtimeIngress.ts`. A busy conversation queues or steers per [queue and steer](queue-and-steer.md).
 5. `src/harness/session.ts` claims the event, loads history and builds the turn context. `src/harness/harness.ts` runs the AI SDK `streamText` loop with tools from `src/harness/tools/index.ts`.
-6. Without `background`, the response is the SSE stream. With `background: true`, core stores a `runtimeAsyncAgentResults` row, answers `202` with a `runId`, and runs the turn on an in-process worker (`dispatchInProcessWorker`, capped by `MAX_INPROCESS_WORKERS`, default 8). The client polls `GET /v1/runs/:runId`.
+6. Without `background`, the response is the SSE stream. With `background: true`, core stores a `runtimeAsyncAgentResults` row, answers `202` with a `runId`, and runs the turn on an in-process worker. `dispatchInProcessWorker` starts it, capped by `MAX_INPROCESS_WORKERS`, default 8. The client polls `GET /v1/runs/:runId`.
 
 `ENABLE_DIRECT_API` gates these routes and defaults to `true`.
 
@@ -105,10 +105,10 @@ SST in `apps/core/sst.config.ts` owns only AWS resources: the three S3 buckets, 
 ### Channel webhook
 
 1. The provider posts to `/v1/webhooks/:accountId/:channel`, or `/v1/webhooks/:accountId/dev/:endpointId/:channel` for a non-production stage. Discord messages and all Matrix traffic come from the two forwarders, which post to the same URL.
-2. The gateway proxies to core. `integrations.ts` loads the account and finds the credential holder: the agent whose channel credentials verify the request. On the bare URL, when two agents verify, the lowest agent id wins. A stage URL that resolves to no agent is a `404`.
+2. The gateway proxies to core. `integrations.ts` loads the account and finds the credential holder, the agent whose channel credentials verify the request. On the bare URL, when two agents verify, the lowest agent id wins. A stage URL that resolves to no agent is a `404`.
 3. The holder's adapter (`src/shared/<channel>-channel.ts`) authenticates and parses the request into an `InboundMessage`.
 4. The `channelRecords` row for `(platform, externalId)` decides which agent runs and layers its instructions, workspaces, policies and `denyTools` (`applyChannelRecord`). A failed lookup refuses the turn.
-5. The `agent.invoke` policy gate runs, the provider is acknowledged, and the rest continues under `ctx.waitUntil`: `handleChannelRequest` admits the message, runs the turn, and replies through the adapter's `ChannelActions`. Matrix replies go to the matrix-forwarder's `/v1/send`, since only it holds the room keys.
+5. The `agent.invoke` policy gate runs, the provider is acknowledged, and the rest continues under `ctx.waitUntil`. `handleChannelRequest` admits the message, runs the turn, and replies through the adapter's `ChannelActions`. Matrix replies go to the matrix-forwarder's `/v1/send`, since only it holds the room keys.
 
 ### Cron fire
 
@@ -120,7 +120,7 @@ SST in `apps/core/sst.config.ts` owns only AWS resources: the three S3 buckets, 
 ### Config-plane call
 
 1. A client calls a config path such as `/v1/agents`, `/v1/crons`, `/v1/workspaces/:id/files` or `/v1/account`. `isConfigHttpPath` in `apps/gateway/src/routes.ts` is method-aware and decides; everything else under `/v1/` goes to core.
-2. The gateway proxies to `BROODS_CONFIG_URL`, the Convex HTTP router (`packages/convex/http.ts`, handlers in `config/http.ts` and `config/routes/*`).
+2. The gateway proxies to `BROODS_CONFIG_URL`, the Convex HTTP router in `packages/convex/http.ts`, with handlers in `config/http.ts` and `config/routes/*`.
 3. The config plane authenticates the bearer, checks role policy for a role session, runs the mutation, and writes a `configAuditEvents` row.
 4. Sandbox lifecycle verbs (`/v1/sandboxes/:id/suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec`, `terminal`) and account creation and deletion are the exceptions. They reach core's account handler (`src/accounts/handler.ts`, `routesToAccountManage`). The dashboard reaches them through Convex actions that call core with the service token (`packages/convex/model/serviceBridge.ts`).
 
@@ -128,7 +128,7 @@ SST in `apps/core/sst.config.ts` owns only AWS resources: the three S3 buckets, 
 
 1. `broods dev` or `broods deploy` compiles `broods/` into a manifest (`packages/broods/src/manifest.ts`). Hosted MCP handlers and code hooks are bundled here.
 2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it.
-3. The sync resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3 (large ones through upload grants), and creates the stage runtime key if the stage has none.
+3. The sync resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the stage runtime key if the stage has none.
 4. The CLI writes `broods/_generated/` and `BROODS_API_KEY`.
 
 ## Credentials
@@ -180,14 +180,14 @@ Channel webhooks use each provider's own signature or secret, checked by the ada
 
 ## Async and deferred work
 
-Everything a run starts runs inside core's process: subagents are in-process child loops, async tools wait in the request or worker, and background runs are in-process workers. There are no separate worker deployments. Hosted MCP calls go to the Lambda. Code hooks run in a pooled Node child with a V8 isolate (`src/harness/isolate`).
+Everything a run starts runs inside core's process. Subagents are in-process child loops, async tools wait in the request or worker, and background runs are in-process workers. There are no separate worker deployments. Hosted MCP calls go to the Lambda. Code hooks run in a pooled Node child with a V8 isolate, in `src/harness/isolate`.
 
 A detached sandbox job outlives its request. Its result comes back through a delivery descriptor stored with the job:
 
-1. `bash` with `background: true` writes a `runtimeAsyncToolResults` row with the turn's `delivery` (`channel` with the routing `source`, `nats` with the connection, or `async`) and a per-job token.
+1. `bash` with `background: true` writes a `runtimeAsyncToolResults` row with the turn's `delivery` and a per-job token. The delivery is `channel` with the routing `source`, `nats` with the connection, or `async`.
 2. The job posts `POST /v1/sandbox-jobs/:resultId/complete` with `x-job-token` when it exits. A wrong token reads as `404`.
 3. Core settles the row, rebuilds the turn from `parentEventId` and `conversationKey`, injects the result, and runs the loop again (`continueAfterAsyncToolSettlement`).
-4. The follow-up goes back to its origin: a channel `sendText` with credentials decrypted again from agent config, a publish to `WS_RESPONSES`, or a settled status row plus the lifecycle webhook.
+4. The follow-up goes back to its origin, as a channel `sendText` with credentials decrypted again from agent config, a publish to `WS_RESPONSES`, or a settled status row plus the lifecycle webhook.
 
 The sandbox needs egress to `PUBLIC_BASE_URL` for step 2. Without it the job still runs and `async_status` polling still works.
 
@@ -198,7 +198,7 @@ The sandbox needs egress to `PUBLIC_BASE_URL` for step 2. Without it the job sti
 - `Nats-Msg-Id` (`eventId:sequence`) and a 2 minute duplicate window collapse retries.
 - Cursors are opaque, bound to one event, and exclusive. A cursor the stream can no longer serve gets `replay_unavailable` and the durable status.
 - Convex ingress status is the source of truth for acceptance and terminal state for 7 days. JetStream only carries output.
-- `connectNats` in `apps/core/src/shared/nats.ts` picks the transport from `NATS_URL`: `ws://` or `wss://` for callers outside the cluster, `nats://` or `tls://` inside it.
+- `connectNats` in `apps/core/src/shared/nats.ts` picks the transport from `NATS_URL`. `ws://` or `wss://` serves callers outside the cluster, `nats://` or `tls://` inside it.
 
 Frames, attach and control are specified in [queue and steer](queue-and-steer.md). Logs and traces take the same NATS path on `OBSERVABILITY`, described in [observability](observability.md).
 

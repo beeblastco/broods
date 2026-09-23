@@ -1,6 +1,6 @@
 # Subagents
 
-This page covers how subagent runs execute inside core: dispatch, the parent continuation loop, control of a running child, and who may watch a child's live stream. The configuration and model-facing behavior are in the [subagents guide](../guides/subagents.md). Paths are relative to `apps/core/`.
+This page covers how subagent runs execute inside core. It explains dispatch, the parent continuation loop, control of a running child, and who may watch a child's live stream. The configuration and model-facing behavior are in the [subagents guide](../guides/subagents.md). Paths are relative to `apps/core/`.
 
 ## Execution model
 
@@ -54,17 +54,17 @@ Background runs, the NATS WebSocket worker and channel requests use the same coo
 
 Inherited context (`context: "inherited"`) is passed straight into the child model call and never copied into the child's stored conversation. That keeps one-shot children cheap and avoids storing fake child history.
 
-Reasoning parts are stripped from inherited parent context before the child sees it. After a child result is injected, the next parent pass is rebuilt from persisted state with completed-turn reasoning stripped. A pending tool-approval resume is the exception: that step has not finished, so its tool call, approval request and reasoning are kept for the approval response.
+Reasoning parts are stripped from inherited parent context before the child sees it. After a child result is injected, the next parent pass is rebuilt from persisted state with completed-turn reasoning stripped. A pending tool-approval resume is the exception. That step has not finished, so its tool call, approval request and reasoning are kept for the approval response.
 
 ## Persistent children and control
 
-In `persistent` mode each child is admitted through the same conversation coordinator as a top-level run, under a generated key of the form `subagent-persistent-{uuid}`. That is what makes a child stoppable and steerable. There is no subagent-specific control API: stop, steer and follow-up requests go to the child's `conversationKey` through the normal ingress endpoints, and the model-facing `get_subagent_status`, `update_subagent` and `stop_subagent` tools use the same path.
+In `persistent` mode each child is admitted through the same conversation coordinator as a top-level run, under a generated key of the form `subagent-persistent-{uuid}`. That is what makes a child stoppable and steerable. There is no subagent-specific control API. Stop, steer and follow-up requests go to the child's `conversationKey` through the normal ingress endpoints, and the model-facing `get_subagent_status`, `update_subagent` and `stop_subagent` tools use the same path.
 
 - The parent dispatches a child with mode `reject`, so dispatching into a busy child conversation surfaces the conflict instead of stalling.
 - Control admission and conversation ownership are decided in one transaction. An update can enter the queue only while the child still owns an active fenced generation. If the child finishes at the same moment, the update creates no ingress envelope and returns `not_running`. A late stop follows the same current-owner rule.
 - The control tools accept only tasks created by the calling parent event, so a child cannot control a sibling and one parent cannot control another's child.
 - A stopped child settles `failed` with `stoppedByUser`. Its partial progress is not injected into the parent, because it was cancelled on purpose. Genuine failures are still reported.
-- A follow-up drained after the child settles runs as another turn of the same task, and its result is injected like the first answer, under the same `subagent.visibility` rules. If the parent's wait budget has already expired, there is no live parent turn to inject into: the envelope runs on its own worker, writes to the child conversation, and is not injected.
+- A follow-up drained after the child settles runs as another turn of the same task, and its result is injected like the first answer, under the same `subagent.visibility` rules. If the parent's wait budget has already expired, there is no live parent turn to inject into. The envelope runs on its own worker, writes to the child conversation, and is not injected.
 
 Ephemeral children hold no durable conversation and no owner generation, so there is nothing to fence a stop or steer against. That is the main reason `persistent` is the default.
 
@@ -83,7 +83,7 @@ flowchart LR
   Gateway --> Client["WebSocket client"]
 ```
 
-A client attaches with the values `run_subagent` returned: `taskId` as the attach `eventId`, `runId`, `agentId` and `conversationKey`.
+A client attaches with the values `run_subagent` returned. `taskId` becomes the attach `eventId`, next to `runId`, `agentId` and `conversationKey`.
 
 ### Attach authorization
 

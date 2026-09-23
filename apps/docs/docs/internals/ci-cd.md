@@ -1,11 +1,11 @@
 # CI/CD
 
-Every GitHub Actions workflow in `.github/workflows/`: what triggers it, what it does, and what it needs. It is for contributors and operators.
+This page lists every GitHub Actions workflow in `.github/workflows/`, with what triggers it, what it does, and what it needs. It is for contributors and operators.
 
 ## Branch flow
 
-- Work lands on `dev` through pull requests. A push to `dev` deploys the dev stage: Convex, the AWS data plane, and every changed container image.
-- `main` is protected and only moves by fast-forward from `dev`, through "Promote dev to main" (Actions tab, one click). Nothing is merged into `main` directly.
+- Work lands on `dev` through pull requests. A push to `dev` deploys the dev stage, meaning Convex, the AWS data plane, and every changed container image.
+- `main` is protected and only moves by fast-forward from `dev`, through the one-click "Promote dev to main" workflow in the Actions tab. Nothing is merged into `main` directly.
 - Promote waits for dev's required checks, fast-forwards `main`, then dispatches the production workflows. Pushes made with `GITHUB_TOKEN` do not fire `on: push` workflows, which is why promote dispatches them itself.
 - Do not deploy by hand unless asked. Push to `dev` and let the workflows do it.
 
@@ -47,7 +47,7 @@ Promote dispatches `deploy-convex.yaml` first and waits for it, then `deploy.yam
 
 ## Rollouts
 
-A green image build deploys nothing by itself. The pods live in a k3s cluster owned by the `beeblastco/infra` repo. `rollout.yaml` dispatches that repo's workflow with the image tag (the commit sha) and watches the run.
+A green image build deploys nothing by itself. The pods live in a k3s cluster owned by the `beeblastco/infra` repo. `rollout.yaml` dispatches that repo's workflow with the image tag, which is the commit sha, and watches the run.
 
 - Core waits for `deploy-convex.yaml` and `deploy.yaml` on the same sha, so its image never reaches the cluster ahead of the schema or data plane it expects. The dashboard waits for `deploy-convex.yaml`.
 - A prerequisite that did not run for the sha is skipped. One that fails, or has not finished in 20 minutes, stops the rollout.
@@ -62,7 +62,7 @@ A green image build deploys nothing by itself. The pods live in a k3s cluster ow
 | manual, `stage: production` | `production-eu-west-1` | `eu-west-1`                           | `production`       |
 | manual, other stage         | that stage             | `DEV_AWS_REGION`                      | `development`      |
 
-Production deploys only to `eu-west-1`. `production_targets()` in `deploy.yaml` lists it alone. MicroVM prerequisites are skipped in `ap-southeast-1` (`microvmPrereqsEnabled` in `sst.config.ts`).
+Production deploys only to `eu-west-1`. `production_targets()` in `deploy.yaml` lists it alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM prerequisites in `ap-southeast-1`.
 
 `deploy.yaml` also handles the regional sandbox image. When a target's `SANDBOX_IMAGE_READY_*` variable is `true` and the region's ECR repo has no `latest-arm64` image, it runs one deploy without sandbox functions to create the repo, copies the image from `SANDBOX_IMAGE_SOURCE_REGION` with `crane`, then deploys again.
 
@@ -88,11 +88,11 @@ Environment-scoped values resolve from `development` or `production` by branch.
 
 Runtime secrets for the containers are not GitHub secrets. They live in k8s secrets referenced by the infra repo's release files, and in the Convex deployment env. See [self-hosting](self-hosting.md).
 
-The npm package is published through Trusted Publishing: GitHub Actions, organization `beeblastco`, repository `broods`, workflow `publish-npm.yaml`. Do not commit `.npmrc` files or npm tokens.
+The npm package is published through Trusted Publishing, configured for GitHub Actions, organization `beeblastco`, repository `broods` and workflow `publish-npm.yaml`. Do not commit `.npmrc` files or npm tokens.
 
 ## SDK versioning
 
-Nobody hand-edits the SDK `version`, and nothing commits it. `publish-npm.yaml` runs `scripts/next-version.ts`, which reads the conventional-commit subjects since the newest `broods-v*` tag: `!` or `BREAKING CHANGE` bumps minor while on `0.x`, `feat:` bumps minor, anything else bumps patch. The subject line is the release note, so write real conventional subjects. The publish is skipped when nothing releasable changed or the version is already on npm. See `packages/broods/AGENTS.md`.
+Nobody hand-edits the SDK `version`, and nothing commits it. `publish-npm.yaml` runs `scripts/next-version.ts`, which reads the conventional-commit subjects since the newest `broods-v*` tag. `!` or `BREAKING CHANGE` bumps minor while on `0.x`, `feat:` bumps minor, anything else bumps patch. The subject line is the release note, so write real conventional subjects. The publish is skipped when nothing releasable changed or the version is already on npm. See `packages/broods/AGENTS.md`.
 
 ## Drift cleanup
 

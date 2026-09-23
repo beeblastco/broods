@@ -4,7 +4,7 @@ A conversation is the history a set of runs share, keyed by `conversationKey`. T
 
 ## Messaging a busy agent
 
-A conversation runs one turn at a time. When a message arrives while a turn is running, it does not error and it is not dropped. By default it steers: the message joins the running turn at its next step boundary, after the current model call and tool batch finish and before the next model call. The agent keeps the work it has done and takes your message into account.
+A conversation runs one turn at a time. When a message arrives while a turn is running, it does not error and it is not dropped. By default it steers. The message joins the running turn at its next step boundary, after the current model call and tool batch finish and before the next model call. The agent keeps the work it has done and takes your message into account.
 
 If the turn has no step left, the message becomes the next turn instead.
 
@@ -32,7 +32,7 @@ const final = await status.wait();
 console.log(final.requestedMode, final.appliedMode, final.appliedToEventId);
 ```
 
-`appliedMode` tells you what actually happened. A steer that found no step left reports `appliedMode: "followup"`.
+`appliedMode` tells you what happened. A steer that found no step left reports `appliedMode: "followup"`.
 
 A second `client.stream()` on a busy conversation does not get its own stream. It throws `IngressAcceptedError`, and you poll the accepted run:
 
@@ -86,15 +86,15 @@ The dashboard Tracing tab has a Continue button on failed runs that does the sam
 
 ## Retries and idempotency
 
-Send the same `idempotencyKey` (it defaults to `eventId`) to retry safely. The same key with the same payload returns the original run. The same key with a different payload is `409 idempotency_conflict`. Keys are remembered for seven days.
+Send the same `idempotencyKey` to retry safely. It defaults to `eventId`. The same key with the same payload returns the original run. The same key with a different payload is `409 idempotency_conflict`. Keys are remembered for seven days.
 
 ## Limits
 
-| Limit                            | Default                                                  |
-| -------------------------------- | -------------------------------------------------------- |
-| Queued messages per conversation | 100, and 1 MiB total. Over that: `429 ingress_capacity`. |
-| Time a queued message waits      | 15 minutes, then it is `expired`                         |
-| Run status kept                  | 7 days                                                   |
-| Live stream kept for reconnects  | About 3 minutes                                          |
+| Limit                            | Default                                                 |
+| -------------------------------- | ------------------------------------------------------- |
+| Queued messages per conversation | 100, and 1 MiB total. Over that, `429 ingress_capacity` |
+| Time a queued message waits      | 15 minutes, then it is `expired`                        |
+| Run status kept                  | 7 days                                                  |
+| Live stream kept for reconnects  | About 3 minutes                                         |
 
-Every accepted message ends as `completed`, `failed` or `expired`. How it works inside: [Queue and steer design](../internals/queue-and-steer.md).
+Every accepted message ends as `completed`, `failed` or `expired`. The [Queue and steer design](../internals/queue-and-steer.md) explains how it works inside.

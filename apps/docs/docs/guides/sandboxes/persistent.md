@@ -1,6 +1,6 @@
 # Persistent sandboxes
 
-By default a sandbox is ephemeral: each call creates a machine, runs, and destroys it. Only workspace files survive. Set `persistent: true` to reserve a long-lived machine instead, so installed packages, code on local disk and running processes survive between calls. It scales down when idle and wakes on the next call.
+By default a sandbox is ephemeral. Each call creates a machine, runs, and destroys it. Only workspace files survive. Set `persistent: true` to reserve a long-lived machine instead, so installed packages, code on local disk and running processes survive between calls. It scales down when idle and wakes on the next call.
 
 ```ts title="broods/index.ts"
 import { defineSandbox } from "broods";
@@ -26,7 +26,7 @@ Stay ephemeral unless the agent needs state between calls. Ephemeral runs hold r
 
 Reserve a machine for iterative coding sessions, long-running work, background jobs, or when you want the live terminal in the dashboard. Avoid it for one-shot tasks.
 
-On `lambda`, a reserved MicroVM counts against your account's allocated memory quota while it runs and while it is suspended. A handful of persistent agents can exhaust the quota, and every new launch then fails with `ServiceQuotaExceededException` ("maximum allocated memory limit"). Terminate reservations you are done with from the dashboard, under Sandbox, Instances. That frees the quota at once instead of waiting for the idle window.
+On `lambda`, a reserved MicroVM counts against your account's allocated memory quota while it runs and while it is suspended. A handful of persistent agents can exhaust the quota, and every new launch then fails with `ServiceQuotaExceededException` and the message "maximum allocated memory limit". Terminate reservations you are done with from the dashboard, under Sandbox, Instances. That frees the quota at once instead of waiting for the idle window.
 
 ## Which machine you get
 
@@ -57,7 +57,7 @@ Idle scale-down never pauses a machine while a background job runs.
 | Provider                       | When `onResume` runs                         |
 | ------------------------------ | -------------------------------------------- |
 | `sandbox`, `daytona`, `lambda` | on every call                                |
-| `vercel`                       | only when a stopped sandbox actually resumes |
+| `vercel`                       | only when a stopped sandbox resumes          |
 | `e2b`                          | not supported. Put setup in the E2B template |
 
 Make `onResume` idempotent, since on most providers it runs every time.
@@ -82,8 +82,6 @@ When the job exits it reports back, the conversation resumes with the result, an
 | Direct or async API | settled on the run status, and lifecycle webhooks fire `agent.finished` |
 
 The model does not have to poll, though it can. `async_status` is added automatically when the agent has a workspace on a persistent sandbox. A persistent sandbox used with no workspace does not get it.
-
-Things to know:
 
 - Auto-delivery needs the sandbox to reach the Broods gateway, so use `network.mode: "allow-all"` or allow that host. Without egress the job still runs and `async_status` polling still works.
 - `logs` and `stop` exist only where the provider exposes live job control. E2B launches jobs natively and offers `status` only.

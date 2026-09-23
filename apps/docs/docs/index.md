@@ -6,7 +6,7 @@ sidebar_label: Overview
 
 # Broods
 
-Broods runs AI agents for you. You describe an agent in TypeScript: its model, its tools, where it runs code, and which chat apps it answers in. `broods deploy` puts it in the cloud. You then call it from your app, a terminal, Slack, Telegram, or a schedule.
+Broods runs AI agents for you. You describe an agent in TypeScript, with its model, its tools, where it runs code, and which chat apps it answers in. `broods deploy` puts it in the cloud. You then call it from your app, a terminal, Slack, Telegram, or a schedule.
 
 ```ts title="broods/index.ts"
 import { defineAgent, env } from "broods";
@@ -28,9 +28,9 @@ broods run support "Hi there"    # chat with it in the terminal
 ## What you get
 
 - Agents with any AI SDK model provider, streaming, structured output, and reasoning.
-- Sandboxes where the agent runs `bash`, Python and Node, on AWS MicroVMs, Daytona, E2B, Vercel, or your own computer.
-- Workspaces: persistent files and memory that survive between runs and can be shared across agents.
-- Channels: Telegram, Slack, Discord, GitHub, Matrix, Pancake and Zalo, with one webhook per account.
+- Sandboxes where the agent runs `bash`, Python and Node. They run on Broods-hosted Firecracker VMs, AWS Lambda MicroVMs, Daytona, E2B, Vercel, or your own computer.
+- Workspaces with persistent files and memory. They survive between runs and several agents can share one.
+- Channels for Telegram, Slack, Discord, GitHub, Matrix, Pancake and Zalo, with one webhook per account.
 - Tools from your model provider or any MCP server, including servers Broods hosts for you.
 - Skills, subagents, cron jobs, code hooks, lifecycle webhooks, and policies.
 - A typed SDK, a raw HTTP and WebSocket API, a CLI, and a dashboard for logs, traces and config.

@@ -1,6 +1,6 @@
 # Webhooks
 
-Lifecycle webhooks POST a signed JSON event to your HTTPS endpoint when something happens in a run: it started, a tool ran, it finished, it failed. Use them for audit logs, alerts or analytics. They cannot change the run. For that, use [hooks](hooks.md).
+Lifecycle webhooks POST a signed JSON event to your HTTPS endpoint when a run starts, runs a tool, finishes or fails. Use them for audit logs, alerts or analytics. They cannot change the run. For that, use [hooks](hooks.md).
 
 These are not the provider webhooks that bring chat messages in. Those are covered in [Channels](../channels/index.md).
 
@@ -90,4 +90,4 @@ function isValid(rawBody: string, header: string, secret: string): boolean {
 
 Delivery is best effort. A failed delivery is logged and never fails the run.
 
-Runnable example: [`webhook` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/webhook).
+The [`webhook` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/webhook) is a runnable example.

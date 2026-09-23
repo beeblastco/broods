@@ -30,7 +30,7 @@ export const researcher = defineAgent({
 });
 ```
 
-The provider runs these tools itself during the model call. Available names depend on `model.provider`: Google has `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch` and `enterpriseWebSearch`. OpenAI has `webSearch`, `codeInterpreter` and `fileSearch`. Anthropic has `computerUse`, `bash`, `textEditor` and `webSearch`. A name the provider does not have fails the run and lists the names it does have.
+The provider runs these tools itself during the model call. Available names depend on `model.provider`. Google has `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch` and `enterpriseWebSearch`. OpenAI has `webSearch`, `codeInterpreter` and `fileSearch`. Anthropic has `computerUse`, `bash`, `textEditor` and `webSearch`. A name the provider does not have fails the run and lists the names it does have.
 
 A tool that your code would execute, such as the Tavily AI SDK package, cannot go in `tools`, because a function does not survive sync. Put it behind an MCP server.
 
@@ -58,7 +58,7 @@ export const agent = defineAgent({
 
 Rules:
 
-- `name` is 1 to 32 lowercase letters, digits or hyphens, unique per stage.
+- `name` is 1 to 32 lowercase letters, digits or hyphens, starts with a letter, and is unique per stage.
 - The URL must be public. Private, loopback, link-local and metadata addresses are refused, and so are redirects. For a server on `localhost` or your network, run it on your computer with the [machine sandbox](sandboxes/machine.md).
 - Credential headers such as `Authorization` or `X-Api-Key` must name an environment variable inside a plain string, `"Bearer ${SEARCH_TOKEN}"`. Inline secrets are rejected. A template literal around `env()` sends `[object Object]`.
 - Tool lists are cached for the time the server's listing allows. Server-pushed list changes are not supported.
@@ -117,7 +117,7 @@ export const greeter = defineMcp({
 Install `@modelcontextprotocol/server` in your project. The CLI bundles the file, checks that the handler loads, and uploads it on sync.
 
 - The factory must build a new server on every call. Calls from one model step run at the same time, and a shared instance breaks.
-- Bundles are capped at 50 MB. Each call has a 30 second deadline and 16 MB of output.
+- Bundles are capped at 50 MB. The calls from one model step to one server run as a batch, and the batch shares a 30 second deadline and 16 MB of output.
 - Hosted servers run isolated per account. The first call after an idle period is a cold start.
 - Module-level state, such as a memoized client, survives between calls of the same bundle.
 
@@ -137,13 +137,13 @@ A server in your `.mcp.json`, such as a Blender or filesystem server, can run on
 | Background run          | Status becomes `awaiting_approval` with an `approvals` list.                      |
 | Channel                 | The tool is denied with "Tool approval is only supported through the direct API." |
 
-Keep approval off for agents that only live in channels. Subagents that inherit a parent with approval on currently fail, so turn approval off on the parent's tools when you use subagents.
+Keep approval off for agents that only live in channels. Approval also breaks subagents that inherit it. See [Subagents](subagents.md).
 
 ## Asking the user
 
 `ask_questions` lets the agent ask one to three multiple-choice questions and keep working. It is on automatically for channel and WebSocket runs, which have somewhere to post the question and resume. Plain HTTP runs, cron runs and subagents do not get it.
 
-Each question has an `id`, a short `header`, the `question`, two to four `options`, and optionally `allowFreeText`. With `blocking: false` (the default) the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
+Each question has an `id`, a short `header`, the `question`, two to four `options`, and optionally `allowFreeText`. With `blocking: false`, the default, the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
 
 | Where       | The question appears as                  | The user answers by                                                                            |
 | ----------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -154,7 +154,7 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 
 ## Background tools
 
-`async_status` appears on its own when the agent can start background work: a workspace on a persistent sandbox, or a tool marked `async: true`. The model uses it to check, tail or stop that work. See [Persistent sandboxes](sandboxes/persistent.md).
+`async_status` appears on its own when the agent can start background work, through a workspace on a persistent sandbox or a tool marked `async: true`. The model uses it to check, tail or stop that work. See [Persistent sandboxes](sandboxes/persistent.md).
 
 ## Other built-in tools
 

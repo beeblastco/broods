@@ -1,6 +1,6 @@
 # Operations
 
-Running a Broods deployment day to day: what runs where, the secrets and how to rotate them, the rules that keep the service token internal, the two forwarders, and runbooks for failures the code names. First-time setup is in [self-hosting](self-hosting.md). Log and trace plumbing is in [observability](observability.md).
+This page is for running a Broods deployment day to day. It covers what runs where, the secrets and how to rotate them, the rules that keep the service token internal, the two forwarders, and runbooks for failures the code names. First-time setup is in [self-hosting](self-hosting.md). Log and trace plumbing is in [observability](observability.md).
 
 ## Runtime topology
 
@@ -35,7 +35,7 @@ flowchart LR
 ```
 
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user that SST creates. The key lives in the `core-secrets` k8s secret.
-- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS` (default 8). A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds.
+- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds.
 - Core schedules nothing. The Convex crons component owns every schedule, including the account-deletion cascade. When one fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` to `BROODS_ACCOUNT_MANAGE_URL/v1/cron-runs` with `SERVICE_AUTH_SECRET`.
 - Core's sandbox sweeper releases reserved sandboxes whose conversation never came back, once an hour by default (`SANDBOX_SWEEP_INTERVAL_SECONDS`). A lease keeps two core pods from sweeping at once. It lives in core, not a Convex cron, because deleting a sandbox calls the in-cluster workdir control plane.
 - A green image build deploys nothing. `rollout.yaml` dispatches the infra workflow that rolls the pod. See [CI/CD](ci-cd.md).
@@ -63,10 +63,10 @@ Rotation:
 The service token never crosses the public door. Only Convex sends it, always to core's in-cluster address.
 
 - The gateway drops a client `X-Account-Id` unless `GATEWAY_FORWARD_ACCOUNT_ID=true`.
-- The gateway sets `x-broods-via-gateway` on every upstream request. Core and the config plane refuse the service token on a request that carries it (`VIA_GATEWAY_HEADER` in `packages/convex/model/serviceBridge.ts`).
+- The gateway sets `x-broods-via-gateway` on every upstream request. Core and the config plane refuse the service token on a request that carries it. The header name is `VIA_GATEWAY_HEADER` in `packages/convex/model/serviceBridge.ts`.
 - The gateway answers `404` for `/v1/cron-runs` and `/v1/mcp-service/rpc`. `GATEWAY_DENY_INTERNAL_PATHS=false` turns that off.
 
-If Convex cannot reach core directly, fix the network rather than the flags: `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, plus a NetworkPolicy egress rule from the `convex` namespace if one blocks it. The flags do not restore a gateway path.
+If Convex cannot reach core directly, fix the network rather than the flags. Run `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, and add a NetworkPolicy egress rule from the `convex` namespace if one blocks it. The flags do not restore a gateway path.
 
 ## Forwarders
 
@@ -74,7 +74,7 @@ Discord delivers regular messages only over a Gateway WebSocket, and Matrix only
 
 Both share one design, and the Matrix forwarder imports the Discord forwarder's `config.ts`, `connections.ts`, `backoff.ts`, `forward.ts`, `log.ts` and `supervisor.ts`:
 
-- One release serves every config plane. `BROODS_CONFIG_PLANES` is a JSON array of `{ name, convexUrl, webhookBaseUrl }`, and plane `dev` reads its admin key from `CONVEX_DEPLOY_KEY_DEV`. Adding a Convex deployment is one array entry and one secret key. Neither forwarder ever holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: Convex decrypts and returns only the token and webhook path, through `channel/connections.listConnections`.
+- One release serves every config plane. `BROODS_CONFIG_PLANES` is a JSON array of `{ name, convexUrl, webhookBaseUrl }`, and plane `dev` reads its admin key from `CONVEX_DEPLOY_KEY_DEV`. Adding a Convex deployment is one array entry and one secret key. Neither forwarder ever holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`. Convex decrypts and returns only the token and webhook path, through `channel/connections.listConnections`.
 - The connection list is a Convex websocket subscription, not a poll. A plane that errors keeps what it last answered, so a Convex blip does not close sockets. A plane that has never answered contributes nothing. Readiness stays false until the first plane answers.
 - One connection per token, fanned out to every webhook that token serves. Two agents or two stages sharing a token both run from one connection.
 - Single replica with `strategy: Recreate`, always. A second pod means a second connection per token and every message answered twice. Never add a release per stage; add a plane to the existing one.
@@ -84,12 +84,12 @@ Both share one design, and the Matrix forwarder imports the Discord forwarder's 
 Discord specifics:
 
 - Events go out as `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }` with the bot token in `x-discord-gateway-token`. The forwarder adds `thread` when a message is inside a thread, because Discord omits the parent.
-- Discord resets a bot token after 1000 IDENTIFYs in 24 hours and emails its owner. Reconnect backoff is capped at `DISCORD_BACKOFF_CEILING_MS` (300 s), which alone keeps a permanently failing socket under 300 IDENTIFYs a day. The per-token counter (`DISCORD_IDENTIFY_LIMIT`, default 500) parks a socket before the limit. The counter is in memory, so a crash loop is the one thing that defeats it.
+- Discord resets a bot token after 1000 IDENTIFYs in 24 hours and emails its owner. Reconnect backoff is capped at `DISCORD_BACKOFF_CEILING_MS`, 300 s, which alone keeps a permanently failing socket under 300 IDENTIFYs a day. The per-token counter `DISCORD_IDENTIFY_LIMIT`, default 500, parks a socket before the limit. The counter is in memory, so a crash loop is the one thing that defeats it.
 - RESUME only dials a host under `.discord.gg`, whatever READY names, so the bot token cannot be sent elsewhere.
 
 Matrix specifics:
 
-- `MATRIX_STORE_DIR` holds each account's crypto store and sync token and must be a persistent volume. It is required at startup so a missing volume fails loudly. Losing it loses the device keys: encrypted rooms become unreadable and the account has to log in again as a new device.
+- `MATRIX_STORE_DIR` holds each account's crypto store and sync token and must be a persistent volume. It is required at startup so a missing volume fails loudly. Losing it loses the device keys. Encrypted rooms become unreadable and the account has to log in again as a new device.
 - Core sends replies, reactions and typing through `POST /v1/send` and `POST /v1/typing` on the forwarder (`MATRIX_FORWARDER_URL`), authenticated with the access token, because only the forwarder can encrypt for the room.
 - The first sync with no stored token skips backlog. An undecryptable event waits up to 5 minutes for its room key and holds the stored sync token back meanwhile, so a restart replays it. A gap of more than 50 messages in a room is logged, not backfilled.
 

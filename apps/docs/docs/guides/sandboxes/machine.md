@@ -49,7 +49,7 @@ The record is released when the daemon exits, so a normal restart never needs `-
 
 ## Computer use
 
-Start the daemon with `--computer` and agents on this sandbox also get a `computer` tool: screenshots of the main display, mouse and keyboard. It takes the action names of Anthropic's computer-use tool (`screenshot`, `left_click`, `type`, `key`, `scroll`, `zoom` and so on) as a plain tool, so any model provider can call it.
+Start the daemon with `--computer` and agents on this sandbox also get a `computer` tool for screenshots of the main display, mouse and keyboard. It takes the action names of Anthropic's computer-use tool, such as `screenshot`, `left_click`, `type`, `key`, `scroll` and `zoom`, as a plain tool, so any model provider can call it.
 
 ```bash
 broods machine --doctor --request   # once: grant Screen Recording and Accessibility to this terminal

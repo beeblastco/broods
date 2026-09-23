@@ -226,8 +226,9 @@ test("formatContext names a missing login and a guessed project", () => {
 
 test("formatTarget explains a target that differs from the stage", () => {
   expect(
-    formatTarget("my-app", "production", "ignores stage staging", {
+    formatTarget("my-app", "production", {
       color: false,
+      note: "ignores stage staging",
     }),
   ).toBe("  now  my-app → production  (ignores stage staging)");
 });

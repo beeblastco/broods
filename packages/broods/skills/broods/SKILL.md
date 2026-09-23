@@ -17,7 +17,7 @@ The `broods` CLI does the interaction: sign-in, project sync, env, logs, running
 
 `broods dev` on first run does everything: scaffolds `broods/` with a starter agent, runs the browser login if needed, pushes model keys from `.env.local` to the cloud env store, syncs to the `development` stage, then watches for changes and tails logs. `broods init` and `broods login` exist standalone when you want the steps separate.
 
-A project is the `broods/` directory. `broods/index.ts` exports resources built with the `define*` functions: `defineAgent`, `defineSandbox`, `defineWorkspace`, `defineSkill`, `defineCron`, `defineMcp`, `definePolicy`, and the channel helpers. An optional `export default defineBroods({...})` sets project defaults like project name and stage mapping. The full reference is `resources.md` in the docs; the starter agent in `broods/index.ts` shows the minimum shape.
+A project is the `broods/` directory. `broods/index.ts` exports resources built with the `define*` functions: `defineAgent`, `defineSandbox`, `defineWorkspace`, `defineSkill`, `defineCron`, `defineMcp`, `definePolicy`, and the channel helpers. An optional `export default defineBroods({...})` sets project defaults like project name and stage mapping. The full reference is https://docs.broods.app/reference/configuration; the starter agent in `broods/index.ts` shows the minimum shape.
 
 To create an agent, add a `defineAgent` to the project and sync. Talk to it with `broods run <agent> "prompt"`. Day to day: `broods dev` watches, `broods diff` previews, `broods deploy` syncs the production stage. Always `diff` before the first `deploy` on a stage you did not create.
 
@@ -33,11 +33,11 @@ const client = new BroodsClient();
 const result = await client.run(api.agents.myAgent, { input: "..." });
 ```
 
-`client.stream(...)` and `client.runAsync(...)` cover streaming and async runs. `_generated/` is empty until a sync has run at least once. The `sdk.md` docs page has the full client, including account operations through `BroodsAccountClient`.
+`client.stream(...)` and `client.runAsync(...)` cover streaming and async runs. `_generated/` is empty until a sync has run at least once. https://docs.broods.app/reference/sdk has the full client, including account operations through `BroodsAccountClient`.
 
 ## When the CLI has no command
 
-Crons, skills, sandboxes, policies, roles, channels, and hooks have no CLI verb. Prefer changing them in the project definition and syncing. For one-off reads and operations a manifest cannot say, use the MCP server. `claude mcp add broods -- broods mcp` adds it, and its tool names mirror the SDK: `list-agents`, `create-cron`, `update-agent`, and so on. For scoped automation credentials, read `roles.md` in the docs.
+Crons, skills, sandboxes, policies, roles, channels, and hooks have no CLI verb. Prefer changing them in the project definition and syncing. For one-off reads and operations a manifest cannot say, use the MCP server. `claude mcp add broods -- broods mcp` adds it, and its tool names mirror the SDK: `list-agents`, `create-cron`, `update-agent`, and so on. For scoped automation credentials, read the roles section of https://docs.broods.app/guides/security.
 
 ## Rules that keep you out of trouble
 

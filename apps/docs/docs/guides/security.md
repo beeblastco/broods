@@ -92,4 +92,4 @@ For the CLI's MCP server, prefer a role session in `BROODS_SESSION_TOKEN` over t
 
 MCP server URLs, OAuth token URLs, webhook URLs and custom channel API URLs must be public `https`. Private, loopback, link-local and metadata addresses are refused when you save and again when used, and redirects are not followed.
 
-Details for self-hosters and contributors: [Security internals](../internals/security.md).
+Self-hosters and contributors can read [Security internals](../internals/security.md) for the details.

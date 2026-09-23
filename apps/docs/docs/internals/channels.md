@@ -1,6 +1,6 @@
 # Channels
 
-This page covers how core turns a provider webhook into an agent run and sends the reply back: the adapter contract, the runtime flow, attachment handling, and how to add a provider. Per-provider setup for users is under [Channels](../channels/index.md). Paths are relative to `apps/core/`.
+This page covers how core turns a provider webhook into an agent run and sends the reply back. It covers the adapter contract, the runtime flow, attachment handling, and how to add a provider. Per-provider setup for users is under [Channels](../channels/index.md). Paths are relative to `apps/core/`.
 
 ## File map
 
@@ -45,7 +45,7 @@ flowchart TD
 
 `handleChannelWebhook` in `integrations.ts` runs the steps in that order. Everything after the ACK runs in `waitUntil`, so the provider gets its response before any model work starts.
 
-If two agents hold credentials that verify the same request, the lower agent id receives it (`localeCompare` on the id). The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
+If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
 
 A record lookup that finds nothing falls back to the credential holder. A lookup that fails refuses the turn and posts "I can't reach my channel configuration right now", because running without the record's policies and `denyTools` would be an escalation. The channel path already needs the control plane to admit ingress, so this costs no availability that is not already lost. A `context` message whose lookup fails is dropped with a warning.
 
@@ -75,11 +75,11 @@ Each provider implements `ChannelAdapter` from `src/shared/channels.ts`:
 | `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                             |
 | `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                   |
 
-`ChannelActions` (in `channels.ts`) has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that:
+`ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
 
 | Tool             | Registers when                                                                                                                                    |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `send-message`   | always on a channel turn                                                                                                                          |
+| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                 |
 | `send-update`    | always on a channel turn, since every provider can post text                                                                                      |
 | `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                |
 | `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                       |
@@ -88,25 +88,25 @@ Each provider implements `ChannelAdapter` from `src/shared/channels.ts`:
 
 The normalized `InboundMessage`:
 
-- `eventId`: provider delivery or message id, used for dedup.
-- `conversationKey`: provider thread, chat or channel key.
-- `channelName`: the adapter name.
-- `content`: AI SDK `UserContent`.
-- `attachments`: named attachments with an adapter-owned `fetchData` reader. No bytes yet.
-- `events`: optional extra model messages, such as a one-turn system message that must not persist.
-- `identity`: provider-neutral `ChannelIdentity` (`workspaceRef`, `channelId`, `threadId`, `userId`, `userName`, and `userRoles` filled from the channel record). Record lookup and policy read this.
-- `source`: opaque provider metadata for commands and replies. It stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
-- `answer`: set when the message is a click on an `ask_questions` button.
+- `eventId` is the provider delivery or message id, used for dedup.
+- `conversationKey` is the provider thread, chat or channel key.
+- `channelName` is the adapter name.
+- `content` is AI SDK `UserContent`.
+- `attachments` are named attachments with an adapter-owned `fetchData` reader. They hold no bytes yet.
+- `events` holds optional extra model messages, such as a one-turn system message that must not persist.
+- `identity` is the provider-neutral `ChannelIdentity` with `workspaceRef`, `channelId`, `threadId`, `userId`, `userName`, and `userRoles` filled from the channel record. Record lookup and policy read it.
+- `source` is opaque provider metadata for commands and replies. It stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
+- `answer` is set when the message is a click on an `ask_questions` button.
 
 ## Shared pipeline behavior
 
 Adapters do not implement these; the shared pipeline does:
 
-- Commands. Command-capable channels (Slack, Discord, Matrix, Telegram, Zalo) route `/command` input through `commands.ts` instead of the agent. GitHub and Pancake treat slash text as agent input.
+- Commands. Slack, Discord, Matrix, Telegram and Zalo route `/command` input through `commands.ts` instead of the agent. GitHub and Pancake treat slash text as agent input.
 - Typing and reaction are fire-and-forget. A failed typing or reaction call never fails the turn.
 - Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` (`handler.ts`).
-- A failed turn replies with `formatChannelErrorText()`: a `⚠️` line with the error simplified, so a quota error reads "Usage limit reached..." and a 429 reads "The model is busy right now...". Policy refusals use the same format.
-- Deferred replies: a turn that finishes in the background pushes its result back through `sendChannelReply()`, which rebuilds the adapter from the agent config and the stored `source`, and runs the `onMessageSending` hook first. See [architecture](architecture.md).
+- A failed turn replies with `formatChannelErrorText()`, a `⚠️` line with the error simplified, so a quota error reads "Usage limit reached..." and a 429 reads "The model is busy right now...". Policy refusals use the same format.
+- Deferred replies. A turn that finishes in the background pushes its result back through `sendChannelReply()`, which rebuilds the adapter from the agent config and the stored `source`, and runs the `onMessageSending` hook first. See [architecture](architecture.md).
 - Trace links are omitted unless the connection sets `trace: "enabled"`.
 - When a policy denies `agent.invoke`, core posts the refusal in-channel and the turn never starts.
 
@@ -130,20 +130,20 @@ The model only ever names workspace paths or public URLs. The adapter decides ho
 | Zalo     | fetches the URL                   | none                             | one per message         |
 | GitHub   | none                              | none                             | text links only         |
 
-A workspace attachment carries both a sealed link and a reader, so fetch-style providers take the link and upload-style providers read the bytes, only when they actually upload. A caption rides the first message only.
+A workspace attachment carries both a sealed link and a reader, so fetch-style providers take the link and upload-style providers read the bytes only at upload time. A caption rides the first message only.
 
-A workspace file leaves as a durable `/v1/media/{ticket}` link served by core, not a presigned S3 URL. Some providers re-fetch on every view (Zalo stores the URL), so an expiring URL would leave broken images in chat history. Storage stays private, and the sealed ticket is the only credential. The ticket is minted per workspace and account. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it.
+A workspace file leaves as a durable `/v1/media/{ticket}` link served by core, not a presigned S3 URL. Some providers re-fetch on every view, and Zalo stores the URL itself, so an expiring URL would leave broken images in chat history. Storage stays private, and the sealed ticket is the only credential. The ticket is minted per workspace and account. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it.
 
-`send-images` degrades rather than fails: with no picture endpoint, or a rejected batch, pictures go out through the `send-files` path, as documents or as download links. Core logs the rejection reason and does not show it to the recipient. Where a provider has no document endpoint, `send-files` posts the links as text and says so in its tool result so the model does not send them twice. An agent with no workspace gets no `send-files`, and its `send-images` takes `urls` only; the harness logs a warning naming the cause.
+`send-images` degrades rather than fails. With no picture endpoint, or a rejected batch, pictures go out through the `send-files` path, as documents or as download links. Core logs the rejection reason and does not show it to the recipient. Where a provider has no document endpoint, `send-files` posts the links as text and says so in its tool result so the model does not send them twice. An agent with no workspace gets no `send-files`, and its `send-images` takes `urls` only. The harness logs a warning naming the cause.
 
 ## Inbound attachments
 
-- Parsing never downloads. Core acknowledges the webhook first, then reads the provider, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth: Telegram resolves a file id through `getFile` and signs with the bot token; Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack.
-- With a workspace attached, each attachment is read once and written twice: to the agent's default workspace under `media/` for its own tools, and to the attachment store, a prefix of the managed bucket that no sandbox mounts. The model gets a `/v1/media/{ticket}` link to the attachment-store copy, so it survives the agent tidying its workspace. Nothing is inlined as base64, because the conversation is stored as JSON and a link still resolves when the turn replays later. Deleting the account deletes the store.
-- With no workspace, nothing is stored. The bytes reach the model on the turn they arrive, and the message keeps a reference to the channel's own copy so a later turn re-reads it with the channel's credentials. The channel then decides how long media works: a Telegram file id lasts, a Discord link expires within a day.
-- Limits are checked twice, on the declared size and on the bytes read: 6 MB for a picture, 25 MB for anything else, at most ten attachments per message. The media type is sniffed from the bytes, not taken from the provider, except when the sniff only identifies a container (a `.docx` is a zip). An unreadable attachment becomes a line of text saying so.
+- Parsing never downloads. Core acknowledges the webhook first, then reads the provider, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack.
+- With a workspace attached, each attachment is read once and written twice, to the agent's default workspace under `media/` for its own tools, and to the attachment store, a prefix of the managed bucket that no sandbox mounts. The model gets a `/v1/media/{ticket}` link to the attachment-store copy, so it survives the agent tidying its workspace. Nothing is inlined as base64, because the conversation is stored as JSON and a link still resolves when the turn replays later. Deleting the account deletes the store.
+- With no workspace, nothing is stored. The bytes reach the model on the turn they arrive, and the message keeps a reference to the channel's own copy so a later turn re-reads it with the channel's credentials. The channel then decides how long media works. A Telegram file id lasts, and a Discord link expires within a day.
+- Core checks limits twice, on the declared size and on the bytes read. The limits are 6 MB for a picture, 25 MB for anything else, at most ten attachments per message. The media type is sniffed from the bytes, not taken from the provider, except when the sniff only identifies a container, since a `.docx` is a zip. An unreadable attachment becomes a line of text saying so.
 - Pictures go to the model as pictures. PDFs, audio and video go as native parts only where the model provider accepts that exact type, and otherwise as a saved file. Every message with attachments gets one note listing what arrived and where.
-- Audio the model cannot hear is transcribed on the way in (`src/harness/transcribe.ts`), with the account's own provider: `whisper-1` on OpenAI, `whisper-large-v3-turbo` on Groq, `voxtral-mini-latest` on Mistral. Google and Vertex get the recording itself. `config.model.transcriptionModelId` overrides the model. Transcription fails fast rather than retrying, and the note says whether the provider was busy, refused the file, or the account has no speech-to-text.
+- `src/harness/transcribe.ts` transcribes audio the model cannot hear on the way in, with the account's own provider. It uses `whisper-1` on OpenAI, `whisper-large-v3-turbo` on Groq, `voxtral-mini-latest` on Mistral. Google and Vertex get the recording itself. `config.model.transcriptionModelId` overrides the model. Transcription fails fast rather than retrying, and the note says whether the provider was busy, refused the file, or the account has no speech-to-text.
 
 ## Forwarders
 
@@ -154,7 +154,18 @@ Two providers do not deliver ordinary messages to a webhook, so a separate singl
 | `apps/discord-forwarder` | Discord sends regular messages only over a Gateway WebSocket                                 | `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }` with the bot token in `x-discord-gateway-token`                                                            | nothing. Replies use the Discord REST API.                                                                           |
 | `apps/matrix-forwarder`  | Matrix has no webhooks. A client long-polls `/sync`. The forwarder also holds the E2EE keys. | `{ "type": "MATRIX_ROOM_EVENT", "encrypted", "event", "roomId", "senderName", "userId" }`, already decrypted, with the access token in `x-matrix-access-token` | `POST /v1/send` and `POST /v1/typing` at `MATRIX_FORWARDER_URL`, because only the forwarder can encrypt for the room |
 
-Core's Discord adapter takes both the interaction webhook and the forwarded shape on one URL and tells them apart by the `x-discord-gateway-token` header. Matrix replies carry the `app.broods.bot` marker (`MATRIX_BOT_MARKER`), so core never answers its own events on a personal account. Deployment constraints for both are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
+Core's Discord adapter takes both the interaction webhook and the forwarded shape on one URL and tells them apart by the `x-discord-gateway-token` header.
+
+A deployment without the Discord forwarder can post the events itself. Send each Discord `MESSAGE_CREATE` event unmodified, wrapped as below, with the bot token in `x-discord-gateway-token`:
+
+```json
+{
+  "type": "GATEWAY_MESSAGE_CREATE",
+  "data": { "...": "MESSAGE_CREATE payload" }
+}
+```
+
+An absent `author.bot` means a human, as Discord sends it. For a message inside a thread, add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits its parent. Without it the conversation keys under the thread id as if it were a channel, `/new` in that thread disagrees, and allow lists that name the parent channel reject it. Matrix replies carry the `app.broods.bot` marker (`MATRIX_BOT_MARKER`), so core never answers its own events on a personal account. Deployment constraints for both are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
 
 ## Add a channel
 

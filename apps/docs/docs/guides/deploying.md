@@ -8,17 +8,17 @@ How code in `broods/` reaches a stage, how secrets get there, and how to run it 
 | ------------------- | ------------------------------------- | -------------------------- | ------------------- |
 | `broods dev`        | `BROODS_STAGE`, default `development` | yes                        | yes, plus live logs |
 | `broods dev --once` | same                                  | yes                        | no                  |
-| `broods deploy`     | always `production`                   | no                         | no                  |
+| `broods deploy`     | `production`, or `stages.deploy`      | no                         | no                  |
 
 Both commands compile `broods/`, validate it, sync it, regenerate `broods/_generated/`, and write the stage runtime key to `.env.local` as `BROODS_API_KEY`. A broken config fails before anything is written.
 
-`deploy` ignores `BROODS_STAGE`. After `broods stage use staging`, `broods deploy` still writes to production. Pass `--stage staging` to deploy elsewhere.
+`deploy` ignores `BROODS_STAGE`. After `broods stage use staging`, `broods deploy` still writes to production, or to the stage `defineBroods({ stages: { deploy } })` names. Pass `--stage staging` to deploy elsewhere.
 
 Preview first with `broods diff`. It compares your code with the stage, including environment variables that differ from `.env.local`.
 
 ### Removing resources
 
-A sync creates and updates, but never deletes. `broods deploy --prune` deletes resources on the stage that your code no longer declares. It fails if a policy it would remove is still used by an agent or channel record.
+When the stage holds resources your code no longer declares, `broods dev` lists them and asks before deleting. A no is remembered, so it does not ask again for the same resources. `broods deploy` never deletes unless you pass `--prune`. A prune fails if a policy it would remove is still used by an agent or channel record.
 
 ## Stages
 
@@ -35,7 +35,7 @@ Cloning copies secret values. Removing a secret later means removing it from bot
 
 ## Secrets and environment variables
 
-Reference secrets with `env("NAME")`. The value is stored encrypted on the stage and resolved on the server:
+Reference secrets with `env("NAME")`. The stage stores the value encrypted and the server resolves it at run time.
 
 ```ts
 provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
@@ -66,20 +66,11 @@ The key only reaches agents in its own stage that set `publicAccess: true`. It c
 
 ## Where a command acts
 
-Four settings decide where a command writes. Run `broods whoami` when in doubt.
-
-| Setting      | Stored in                                             | Change with                   |
-| ------------ | ----------------------------------------------------- | ----------------------------- |
-| Server       | `BROODS_BASE_URL` in `.env.local`                     | `broods login`, `--base-url`  |
-| Organization | your CLI login, shared by all projects on the machine | `broods org use`              |
-| Project      | `BROODS_PROJECT` in `.env.local`                      | `--project`                   |
-| Stage        | `BROODS_STAGE` in `.env.local`                        | `broods stage use`, `--stage` |
-
-A variable exported in your shell wins over `.env.local`. Run `unset BROODS_STAGE` to let the file take effect.
+Server, organization, project and stage together decide where a command writes. Run `broods whoami` when in doubt. The full rules, including shell exports winning over `.env.local`, are in the [CLI reference](../reference/cli.md).
 
 ## Deploying from CI
 
-Create a deploy key for the project and stage in the dashboard. A deploy key can sync only that stage, set and list environment variables but never read them, and cannot replace skills or hooks another stage manages. Then:
+Create a deploy key for the project and stage in the dashboard. It can sync only that stage. It can set and list environment variables but never read them, and it cannot replace skills or hooks another stage manages.
 
 ```yaml title=".github/workflows/deploy.yaml"
 - run: bunx broods deploy
@@ -95,7 +86,7 @@ Create a deploy key for the project and stage in the dashboard. A deploy key can
 
 ```bash
 broods agent list                 # name, public or private, model, deploy status
-broods agent get support          # resolved config: model, sandboxes, workspaces, tools, channels, webhooks
+broods agent get support          # model, sandboxes, workspaces, tools, channels, webhooks
 broods run support "ping" | cat   # one plain-text round trip
 broods logs --limit 100           # recent logs, then live
 ```

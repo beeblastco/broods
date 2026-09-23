@@ -21,7 +21,7 @@ metadata:
 Keep replies to a few sentences unless asked for detail.
 ```
 
-`originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent today's date, the current conversation, and the rules: the index holds summaries only, and current instructions always outrank memory.
+`originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent today's date, the current conversation, and two rules. The index holds summaries only, and current instructions always outrank memory.
 
 A workspace without a sandbox still loads `memory/MEMORY.md` into the prompt, but the agent cannot save.
 
@@ -74,8 +74,6 @@ export const myAgent = defineAgent({
 | `session.pruning.enabled`             | on      | Drops reasoning and older tool calls with their results from what the model sees          |
 | `session.compaction.enabled`          | off     | Summarizes older history with the agent's own model once the pruned context gets too long |
 | `session.compaction.maxContextLength` |         | Size of the serialized pruned context that triggers compaction                            |
-
-Details that matter:
 
 - On OpenAI and Azure, pruning keeps tool calls in context until compaction. Those providers replay a message by reference to a stored reasoning item, which they refuse without the tool call it produced.
 - A tool call with no result, such as an approval nobody answered, is always left out of what the model sees.

@@ -2,9 +2,9 @@
 
 Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here. The `machine` provider has its own page, [Your computer](machine.md).
 
-## sandbox (workdir)
+## `sandbox`
 
-The default provider: Firecracker microVMs on the platform's own hosts. It supports workspace mounts, persistence with pause and resume, background jobs with logs and stop, the live dashboard terminal, and the Create snapshot action.
+The default provider runs Firecracker VMs on Broods-hosted machines. It supports workspace mounts, persistence with pause and resume, background jobs with logs and stop, the live dashboard terminal, and the Create snapshot action.
 
 ```ts
 export const box = defineSandbox({
@@ -20,11 +20,11 @@ export const box = defineSandbox({
 - `options.docker: true` enables Docker inside the sandbox. It is accepted only on this provider.
 - `options.cpu`, `options.memoryMb` and `options.diskGb` override the size. vCPU is one of 0.5, 1, 2 or 4.
 - `options.mountAwsS3Buckets: true` mounts workspace storage even when no workspace sets `storage`.
-- `snapshot` names a workdir image to boot.
+- `snapshot` names an image to boot.
 
 Self-hosting this provider has guest image requirements, covered in [Sandbox internals](../../internals/sandboxes.md).
 
-## lambda (AWS MicroVM)
+## `lambda`
 
 Each session runs in one AWS Lambda MicroVM with real `bash`, `python3`, Node 22, `uv` and `ripgrep`. It supports workspace mounts, persistence through suspend and resume, background jobs and the live terminal.
 
@@ -38,7 +38,7 @@ export const box = defineSandbox({
 });
 ```
 
-- Sizes run from 0.5 GB with 0.25 vCPU up to 8 GB with 4 vCPU.
+- MicroVM images come in sizes from 0.5 GB with 0.25 vCPU up to 8 GB with 4 vCPU. The image sets the machine, so `size` only changes what the dashboard shows.
 - A MicroVM lives at most 8 hours. A persistent reservation is recreated after that.
 - `restricted` behaves like `deny-all`, and `allowDomains` or `allowCidrs` are rejected. Under `deny-all` the managed workspace bucket stays reachable.
 - A workspace that brings its own bucket cannot be reached under `deny-all`. Pair it with `allow-all`.
@@ -49,7 +49,7 @@ export const box = defineSandbox({
 
 The first exec after a resume can take 1 to 10 seconds while the VM restores.
 
-## daytona
+## `daytona`
 
 Runs on a [Daytona](https://daytona.io/docs) sandbox and supports workspace mounts through a `mount-s3` snapshot.
 
@@ -67,7 +67,7 @@ export const box = defineSandbox({
 });
 ```
 
-- `options.apiKey`, `organizationId`, `apiUrl` and `target` fall back to the deployment's `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_API_URL` and `DAYTONA_TARGET`.
+- Set your Daytona credentials in `options.apiKey`, `organizationId`, `apiUrl` and `target`, with `env("NAME")` for the key. A self-hosted deployment can set fallbacks for every account. See [Self-hosting](../../internals/self-hosting.md).
 - Set `options.mountAwsS3Buckets: true` for workspace tools. The snapshot must include `mount-s3`.
 - Use `options.snapshot` for Daytona snapshots and `options.image` only to create from a Docker image.
 - `network.mode` maps to Daytona's `networkBlockAll`. `restricted` applies the CIDR allowlist only; domain lists are ignored with a warning.
@@ -79,7 +79,7 @@ export const box = defineSandbox({
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Daytona has no available runner for snapshot '<name>'` | The snapshot is pinned to one runner, or that runner is full. Rebuild it as a general snapshot, drop a `target` that does not match the snapshot's region, or retry |
 
-## e2b
+## `e2b`
 
 Runs on an [E2B](https://e2b.dev/docs) template. Use it for compute without a workspace.
 
@@ -96,12 +96,12 @@ export const box = defineSandbox({
 - `network.mode` must be `allow-all`, set explicitly. E2B cannot enforce egress limits, so `deny-all`, the default, and `restricted` are rejected.
 - Workspaces are not supported. Attaching one fails.
 - `onCreate` and `onResume` are rejected. Put setup in the template.
-- `options.apiKey` falls back to the deployment's `E2B_API_KEY`. `templateId` is an alias for `template`.
+- Set your E2B key in `options.apiKey`. A self-hosted deployment can set a fallback for every account, see [Self-hosting](../../internals/self-hosting.md). `templateId` is an alias for `template`.
 - Persistent mode pauses on idle and keeps files, installs and processes.
 - Background jobs run natively, and `async_status` offers `status` only, without `logs` or `stop`.
 - The template needs Python for background-job completion callbacks.
 
-## vercel
+## `vercel`
 
 Runs on [Vercel Sandbox](https://vercel.com/docs/sandbox). Use it for compute without a workspace.
 
@@ -118,7 +118,7 @@ export const box = defineSandbox({
 });
 ```
 
-- `options.token`, `teamId` and `projectId` fall back to the deployment's `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`.
+- Set your Vercel credentials in `options.token`, `teamId` and `projectId`. A self-hosted deployment can set fallbacks for every account. See [Self-hosting](../../internals/self-hosting.md).
 - `options.image` takes a managed image or an OCI image in your project's Vercel Container Registry. `runtime` is deprecated and cannot be combined with `image`.
 
   | Image                                                        | Contents                                                            |
@@ -138,4 +138,4 @@ export const box = defineSandbox({
 
 ## Environment variables in every provider
 
-`envVars` is a flat map of strings, read the usual way: `$MY_API_BASE` in shell, `process.env.MY_API_BASE` in Node, `os.environ["MY_API_BASE"]` in Python. Each run starts from an empty environment, so only the keys you declare reach it.
+`envVars` is a flat map of strings, read the usual way. Use `$MY_API_BASE` in shell, `process.env.MY_API_BASE` in Node, `os.environ["MY_API_BASE"]` in Python. Each run starts from an empty environment, so only the keys you declare reach it.

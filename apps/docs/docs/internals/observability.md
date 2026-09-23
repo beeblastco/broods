@@ -1,6 +1,6 @@
 # Observability
 
-This page covers the log and trace pipeline: how every line is redacted, where it lands, how the dashboard and `broods logs` read it, and how sandbox output joins in. What users see is in the [observability guide](../guides/observability.md). Paths are relative to `apps/core/`.
+This page covers the log and trace pipeline. It explains how every line is redacted, where it lands, how the dashboard and `broods logs` read it, and how sandbox output joins in. What users see is in the [observability guide](../guides/observability.md). Paths are relative to `apps/core/`.
 
 ## Pipeline
 
@@ -43,7 +43,7 @@ NATS subjects encode the routable subset (`src/shared/nats.ts`):
 v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
 ```
 
-The durable `OBSERVABILITY` JetStream stream binds `v1.*.*.*.logs.>` and `v1.*.*.*.traces.>`. It is file-backed and keeps 2 hours, at most 512 MiB and 20,000 messages per subject (`src/shared/nats.ts`). On subscribe the gateway replays the last 30 minutes of it (`OBS_REPLAY_WINDOW_MS` in `apps/gateway/src/observability.ts`) before tailing live. Unlike `WS_RESPONSES`, it is not purged on persist. Loki and Tempo own everything older.
+The durable `OBSERVABILITY` JetStream stream binds `v1.*.*.*.logs.>` and `v1.*.*.*.traces.>`. It is file-backed and keeps 2 hours, at most 512 MiB and 20,000 messages per subject, set in `src/shared/nats.ts`. On subscribe the gateway replays the last 30 minutes of it before tailing live, per `OBS_REPLAY_WINDOW_MS` in `apps/gateway/src/observability.ts`. Like `WS_RESPONSES`, nothing purges it early. Messages expire by age and count. Loki and Tempo own everything older.
 
 ## The observability socket
 
@@ -51,18 +51,18 @@ The dashboard Monitoring and Tracing tabs and `broods logs`, `broods stream` and
 
 - It refuses the stage runtime key. Clients connect with a fifteen-minute stage session ticket (`fp_dts_`), which the CLI mints from a login token at `POST /v1/account/stage-session` and refreshes before each reconnect.
 - A `subscribe` with `backfill` always gets a closing `backfill` message, even when Loki or Tempo failed; that message then carries `error`, so a client can tell an empty stage from a failed query.
-- Logs come back in one message. The Loki query widens in steps: the last hour with a 5 s budget, then a day with 10 s, then 30 days with 15 s, stopping at the first step that fills a page. A step that times out ends the backfill, since a wider window only costs more. 30 days is Loki's own range cap.
-- Traces come from a Tempo search over 7 days, Tempo's cap, with a 15 s budget. Each trace then needs its own lookup (5 s, 6 at a time), so traces arrive newest first in chunks of 12 flagged `more: true`, and the closing message carries the failure count.
+- Logs come back in one message. The Loki query widens in steps. It tries the last hour with a 5 s budget, then a day with 10 s, then 30 days with 15 s, stopping at the first step that fills a page. A step that times out ends the backfill, since a wider window only costs more. 30 days is Loki's own range cap.
+- Traces come from a Tempo search over 7 days, Tempo's cap, with a 15 s budget. Each trace then needs its own lookup, with a 5 s budget and 6 at a time, so traces arrive newest first in chunks of 12 flagged `more: true`, and the closing message carries the failure count.
 - `fetchTrace { traceId }` pulls one trace from Tempo for a log line older than the 7 day search window. Tempo's id lookup is not tenant-scoped, so the gateway filters the spans to the socket's account, project and stage before anything leaves. A lookup result is shared between sockets for 5 minutes.
-- Backpressure: while a socket has more than 512 KiB unsent, live log and span messages to it are dropped rather than queued, and backfill waits up to 5 s for it to drain.
+- Backpressure. While a socket has more than 512 KiB unsent, live log and span messages to it are dropped rather than queued, and backfill waits up to 5 s for it to drain.
 - Tempo truncates large attributes on ingest, so when the same span arrives from both NATS and Tempo, the dashboard keeps the richer or terminal copy.
 
 ## Traces
 
-Every top-level run is its own trace, labelled by what started it: `task` for a request, `cron` for a scheduled run, `subtask` for a subagent.
+Every top-level run is its own trace, labelled by what started it. `task` is a request, `cron` a scheduled run, and `subtask` a subagent.
 
-- The task span and every model step record `model.system`, the whole assembled prompt: the agent's prompt plus the memory index, workspace, memory, scheduler, skills and subagent harness blocks, skills loaded mid-run, persisted system context and steering. `model.system_part_count` and `model.system_chars` report the real size even when the payload is truncated.
-- Each model step splits into time to first token, streaming (token generation only) and tool wait (also shown as child tool spans). Streaming never includes tool time.
+- The task span and every model step record `model.system`, the whole assembled prompt. That is the agent's prompt plus the memory index, workspace, memory, scheduler, skills and subagent harness blocks, skills loaded mid-run, persisted system context and steering. `model.system_part_count` and `model.system_chars` report the real size even when the payload is truncated.
+- Each model step splits into time to first token, streaming, and tool wait. Streaming counts token generation only and never includes tool time. Tool wait also shows as child tool spans.
 - A failed `task` or `cron` root has a Continue button that posts `continue: true` for its agent and scoped conversation key.
 - Config mutations write to Convex `configAuditEvents`, which the dashboard Settings Audit Logs tab reads.
 
@@ -91,11 +91,11 @@ flowchart TD
   Coll --> Ops["Grafana, operators only"]
 ```
 
-1. Tool output on the trace, live on every provider. The harness does not log sandbox output. It puts the redacted result on the `tool.call` span as `tool.output`, capped at 32k characters. Lifecycle actions go to `sandboxAuditEvents`. The Logs tab sees almost none of this: `bash` logs one INFO line when a background job starts, the MicroVM and Daytona executors log a few warnings, and the workdir executor logs nothing. Output the guest writes with no tool call in front of it is not captured by this path.
-2. MicroVM guest output, built. What the guest writes to stdout and stderr (the `/run` hook, background jobs, servers the agent started) goes to CloudWatch at `/broods/<stage>/microvms`, set by `MICROVM_LOG_GROUP_NAME`. Core names each stream `<accountId>/<project>/<stage>/<uuid>/<mac>` at launch and stores it on the instance row as `logStream`. A `-` segment marks a run with no deployment scope (channel, cron), which still ships for operators but never indexes as a tenant. The mac is an HMAC over the first four segments keyed by the `OTEL_EXPORTER_OTLP_HEADERS` line that core and the forwarder share. A guest can read the VM role from IMDS and create any stream in the group, so only a name core signed earns tenant labels; a forged one ships unlabeled. A CloudWatch subscription filter invokes `apps/lambda/sandbox-log-forwarder.mjs`, which verifies the name, sets `account_id`, `project` and `stage`, redacts, and posts one OTLP/HTTP request to the cluster collector, the only external write path into Loki. The VM id rides as `sandbox_id` structured metadata under service `broods-sandbox`, so an ephemeral VM never becomes a new Loki stream.
-3. Workdir host, not built. `sandboxd` logs to journald and each VM keeps a Firecracker log, neither with a tenant. When the production host lands (#89), an otel-collector-contrib on the host will ship them as operator-only logs with `host`, `unit` and `sandbox_id` but no `account_id`, so they reach Grafana and never a customer dashboard.
+1. Tool output on the trace, live on every provider. The harness does not log sandbox output. It puts the redacted result on the `tool.call` span as `tool.output`, capped at 32k characters. Lifecycle actions go to `sandboxAuditEvents`. The Logs tab sees almost none of this. `bash` logs one INFO line when a background job starts, the MicroVM and Daytona executors log a few warnings, and the `sandbox` provider's executor logs nothing. Output the guest writes with no tool call in front of it is not captured by this path.
+2. MicroVM guest output, built. What the guest writes to stdout and stderr, such as the `/run` hook, background jobs and servers the agent started, goes to CloudWatch at `/broods/<stage>/microvms`, set by `MICROVM_LOG_GROUP_NAME`. Core names each stream `<accountId>/<project>/<stage>/<uuid>/<mac>` at launch and stores it on the instance row as `logStream`. A `-` segment marks a run with no deployment scope, such as a channel or cron run, which still ships for operators but never indexes as a tenant. The mac is an HMAC over the first four segments keyed by the `OTEL_EXPORTER_OTLP_HEADERS` line that core and the forwarder share. A guest can read the VM role from IMDS and create any stream in the group, so only a name core signed earns tenant labels. A forged one ships unlabeled. A CloudWatch subscription filter invokes `apps/lambda/sandbox-log-forwarder.mjs`, which verifies the name, sets `account_id`, `project` and `stage`, redacts, and posts one OTLP/HTTP request to the cluster collector, the only external write path into Loki. The VM id rides as `sandbox_id` structured metadata under service `broods-sandbox`, so an ephemeral VM never becomes a new Loki stream.
+3. The `sandbox` provider's host, not built. `sandboxd` logs to journald and each VM keeps a Firecracker log, neither with a tenant. When the production host lands in #89, an otel-collector-contrib on the host will ship them as operator-only logs with `host`, `unit` and `sandbox_id` but no `account_id`, so they reach Grafana and never a customer dashboard.
 
-The dashboard Instances sheet Logs tab and `broods logs --sandbox <uuid>` subscribe with `{ sandboxId }`. Sandbox lines never pass through NATS, so the gateway polls Loki every 2 s over a 3 minute lookback, at most 1,000 lines and 5 s per poll, newest first, dropping what it already relayed. The lookback is that wide because CloudWatch redelivery lands lines a minute or two late. Lines relay as opaque text under `eventType: "sandbox"`. The deployment stream's backfill excludes the bridge's service, so the Monitoring tab matches its live relay. Sandbox backfill reads one fixed day with a 15 s budget, not the stepped 30 days: the sandbox filter is structured metadata, so Loki scans every chunk of the tenant in the window, and a month took 8 s against 0.2 s for a day. A line reaches the screen 1 to 2 s after the collector accepts it, plus CloudWatch delivery time.
+The dashboard Instances sheet Logs tab and `broods logs --sandbox <uuid>` subscribe with `{ sandboxId }`. Sandbox lines never pass through NATS, so the gateway polls Loki every 2 s over a 3 minute lookback, at most 1,000 lines and 5 s per poll, newest first, dropping what it already relayed. The lookback is that wide because CloudWatch redelivery lands lines a minute or two late. Lines relay as opaque text under `eventType: "sandbox"`. The deployment stream's backfill excludes the bridge's service, so the Monitoring tab matches its live relay. Sandbox backfill reads one fixed day with a 15 s budget, not the stepped 30 days. The sandbox filter is structured metadata, so Loki scans every chunk of the tenant in the window, and a month took 8 s against 0.2 s for a day. A line reaches the screen 1 to 2 s after the collector accepts it, plus CloudWatch delivery time.
 
 The forwarder and its filter are SST resources that deploy only when `OTEL_EXPORTER_OTLP_HEADERS` is set for the stage. It is the same `Authorization=Basic ...` line core ships with, so one credential serves both and rotates once.
 
@@ -110,19 +110,19 @@ Core writes compact JSON lines for metric-bearing events so CloudWatch Logs Insi
 | `tool.call.finished`, `.failed`        | `toolName`, `toolCallId`, `durationMs`                                                                                                   |
 | `model.step.warnings`                  | Provider warnings, such as an unsupported reasoning level                                                                                |
 
-Common fields: `accountId`, `agentId`, `conversationKey`, `eventId`, `modelProvider`, `modelId`, `stepNumber`, `durationMs`.
+The common fields are `accountId`, `agentId`, `conversationKey`, `eventId`, `modelProvider`, `modelId`, `stepNumber`, `durationMs`.
 
-A `tool.call` span for a tool that ran off-process carries `tool.compute.type` and `tool.compute.cpu_usec`: `sandbox` or `lambda` for sandbox execs (from the workdir cgroup or the image's `getrusage`), `mcp-sandbox` for hosted MCP calls. Hosted MCP calls that shared one Lambda invoke each carry an even share of its CPU. The same samples are summed per task into `sandboxUsage` rows for usage metering. No such attributes means the call ran in-process or on a provider that reports no CPU.
+A `tool.call` span for a tool that ran off-process carries `tool.compute.type` and `tool.compute.cpu_usec`. Sandbox execs report `sandbox`, from the host's cgroup, or `lambda`, from the image's `getrusage`. Hosted MCP calls report `mcp-sandbox`. Hosted MCP calls that shared one Lambda invoke each carry an even share of its CPU. The same samples are summed per task into `sandboxUsage` rows for usage metering. No such attributes means the call ran in-process or on a provider that reports no CPU.
 
 Prompts, full tool inputs and outputs, request and response bodies, and response headers are not logged by default.
 
 ## Security
 
-- One redaction chokepoint. `log.ts` redacts by key name (exact, prefix and suffix deny lists, with an allow list for known-safe keys) and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens.
-- Scoped STS mount credentials are never logged. The MicroVM forwarder applies the pattern half of redaction (`Bearer` and `Basic` values, query-string secrets, `fp_agent_` and `fp_sts_` tokens), but it cannot know a run's own secret values. A guest that echoes an injected secret prints it to the owning account's view and to operators. Treat sandbox stdout as untrusted.
+- One redaction chokepoint. `log.ts` redacts by key name, using exact, prefix and suffix deny lists with an allow list for known-safe keys, and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens.
+- Scoped STS mount credentials are never logged. The MicroVM forwarder applies the pattern half of redaction, covering `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens. It cannot know a run's own secret values. A guest that echoes an injected secret prints it to the owning account's view and to operators. Treat sandbox stdout as untrusted.
 - A sandbox tail is scoped like every other observability socket. The gateway builds the Loki selector from the ticket's server-derived account, project and stage, and the client's `sandboxId` only narrows inside that. It must be the UUID shape core mints, or the wire rejects it before it reaches LogQL.
 
 ## Retention and follow-ups
 
 - CloudWatch keeps the MicroVM group 30 days, Loki keeps 90. Once the bridge is verified on a stage, the group's retention can drop to a few days.
-- The workdir host collector belongs to the workdir provisioning runbook in the infra repo and waits for the production host (#89).
+- The host collector for the `sandbox` provider belongs to that host's provisioning runbook in the infra repo, and waits for the production host in #89.

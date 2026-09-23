@@ -14,7 +14,7 @@ broods <command> -h    # one command's flags
 
 ## Help and output
 
-`broods` on its own reads `.env.local`, your shell and the stored login, with no network call, and shows where the next command acts:
+`broods` on its own shows where the next command acts. It reads only `.env.local`, your shell and the stored login, and makes no network call.
 
 ```text
 broods v0.26.0
@@ -36,13 +36,15 @@ Commands
   Tools     init  machine  mcp  update
 ```
 
-Pages of commands that act on a stage start with the target, so `broods deploy -h` after `broods stage use staging` shows `now  my-app → production  (ignores stage staging)`. `org`, `stage`, `env`, `agent`, `project` and `machine` print their page when run without a subcommand.
+Help does not apply `defineBroods` project or stage settings, because it never loads your `broods/` code. `broods whoami` and the commands themselves do.
 
-Output lines are marked the same way everywhere: `✔` for a completed change, `!` for a warning, `✖` for an error. Errors go to stderr and exit with code 1.
+Pages of commands that act on a stage start with a target line. It appears on `--help` pages and on the page a grouped command prints with no subcommand. `org`, `stage`, `env`, `agent`, `project` and `machine` print their page that way. After `broods stage use staging`, `broods deploy -h` shows `now  my-app → production  (ignores stage staging)`. The note only appears when `BROODS_STAGE` or `--stage` names another stage.
+
+Every command marks its output the same way. `✔` marks a completed change, `!` a warning and `✖` an error. Errors go to stderr and exit with code 1.
 
 ## Where a command acts
 
-Four settings decide what a command touches:
+Four settings decide what a command touches.
 
 | Setting      | Stored in                         | Changed by                       |
 | ------------ | --------------------------------- | -------------------------------- |
@@ -51,13 +53,11 @@ Four settings decide what a command touches:
 | Project      | `BROODS_PROJECT` in `.env.local`  | `broods dev` prompt, `--project` |
 | Stage        | `BROODS_STAGE` in `.env.local`    | `broods stage use`, `--stage`    |
 
-Rules worth knowing:
-
 - The organization lives on the login token, so every project directory on the machine shares it. Run `broods whoami` before syncing somewhere shared.
-- `deploy` always targets `production` and ignores `BROODS_STAGE`. Pass `--stage <name>` to deploy elsewhere. Every other command follows `BROODS_STAGE`.
+- `deploy` targets `production`, or the `stages.deploy` stage set with `defineBroods`, and ignores `BROODS_STAGE`. Pass `--stage <name>` to deploy elsewhere. Every other command follows `BROODS_STAGE`.
 - A variable exported in your shell wins over `.env.local`. The CLI warns when an export shadows a value it just wrote. `unset BROODS_API_KEY` to let the file take effect.
 - `~/.broods/config.json` keeps one login per server, so a dev dashboard login never replaces a production one. A command uses the login for the server `BROODS_BASE_URL` names and stops with `Not logged in to <server>` when there is none.
-- `~/.broods/config.json` and `.env.local` are written with mode `0600` (`~/.broods` at `0700`). The CLI adds `.env*.local` to `.gitignore` when nothing ignores `.env.local` yet.
+- The CLI writes `~/.broods/config.json` and `.env.local` with mode `0600`, and `~/.broods` with `0700`. The CLI adds `.env*.local` to `.gitignore` when nothing ignores `.env.local` yet.
 - The dashboard tracks its own active organization. After `broods org use`, switch the dashboard too, or a `?project=…&stage=…` deep link resolves against the old one.
 
 ## Global options
@@ -72,9 +72,9 @@ Every command except `mcp` and `update` accepts these:
 | `--dashboard-url <url>` | Dashboard URL for login and deep links. Default: `https://dashboard.broods.app` |
 | `-h`, `--help`          | Show the command's help                                                         |
 
-`broods -v` prints the CLI version. `org`, `project`, `stage`, `env` and `agent` print their help page when run without a subcommand.
+`broods -v` prints the CLI version. `org`, `stage`, `env`, `agent`, `project` and `machine` print their help page when run without a subcommand.
 
-Subcommands accept short aliases: `ls` for `list`, `select` for `use`, `new` for `create`, `rm` for `project delete`, and `remove` for `env rm`.
+Subcommands accept short aliases. `ls` means `list`, `select` means `use`, `new` means `create`, `rm` means `project delete`, and `remove` means `env rm`.
 
 ## init
 
@@ -84,12 +84,12 @@ Creates the `broods/` project shell with a starter agent and sandbox, plus `.env
 broods init [--region <region>] [--force]
 ```
 
-| Flag                | Description                                                           |
-| ------------------- | --------------------------------------------------------------------- |
-| `--region <region>` | Service region preference: `eu-west-1`, `us-east-1`, `ap-southeast-1` |
-| `--force`           | Overwrite existing starter files                                      |
+| Flag                | Description                                                             |
+| ------------------- | ----------------------------------------------------------------------- |
+| `--region <region>` | Service region preference, `eu-west-1`, `us-east-1` or `ap-southeast-1` |
+| `--force`           | Overwrite existing starter files                                        |
 
-In a repo that works with a coding agent (it has `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.agent/` or `.agents/`), `init` and `dev` also write the broods skill to `.agents/skills/broods/`. It is written once and your edits survive. Only `--force` rewrites it.
+In a repo that has `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.agent/` or `.agents/`, `init` and `dev` also write the broods skill to `.agents/skills/broods/`. It is written once and your edits survive. Only `--force` rewrites it.
 
 ## login
 
@@ -99,7 +99,7 @@ Authenticates through the dashboard in your browser and stores the token in `~/.
 broods login [--region <region>]
 ```
 
-The browser hand-off uses PKCE, so only the CLI that started the login can exchange the code. The token belongs to an org owner or admin and is re-checked on every request: demote or remove the user and it stops working.
+The browser hand-off uses PKCE, so only the CLI that started the login can exchange the code. The token belongs to an org owner or admin and is re-checked on every request. Demote or remove the user and it stops working.
 
 `login` does not choose a project. It writes `BROODS_PROJECT`, `BROODS_STAGE` and `BROODS_REGION` to `.env.local` only when passed `--project`, `--stage` or `--region`. It records `BROODS_BASE_URL` so SDK clients in the project reach the same deployment.
 
@@ -119,7 +119,7 @@ broods whoami
 ```
 
 ```text
-broods v0.8.1
+broods v0.26.0
 Dashboard:   https://dashboard.broods.app
 Project:     my-agent-project
 Stage:       development
@@ -140,14 +140,14 @@ Watches `broods/`, syncs the current stage on every change, and live-tails agent
 broods dev [--once] [--level <lvl>] [--all] [--region <region>]
 ```
 
-| Flag                | Description                                                          |
-| ------------------- | -------------------------------------------------------------------- |
-| `--once`            | Sync once and exit. No watch, no log tail                            |
-| `--level <lvl>`     | Minimum tail level: `DEBUG`, `INFO`, `WARN`, `ERROR`. Default `WARN` |
-| `--all`             | Tail `INFO` and up. DEBUG lines are only in the dashboard            |
-| `--region <region>` | Region preference used when `dev` onboards a new project             |
+| Flag                | Description                                                            |
+| ------------------- | ---------------------------------------------------------------------- |
+| `--once`            | Sync once and exit. No watch, no log tail                              |
+| `--level <lvl>`     | Minimum tail level, `DEBUG`, `INFO`, `WARN` or `ERROR`. Default `WARN` |
+| `--all`             | Tail `INFO` and up. DEBUG lines are only in the dashboard              |
+| `--region <region>` | Region preference used when `dev` onboards a new project               |
 
-The first run in an empty folder does the setup for you: creates `broods/` like `init`, opens the browser like `login`, asks for a project name, pushes referenced secrets from `.env.local`, syncs to the `development` stage, and writes `BROODS_API_KEY` to `.env.local`.
+The first run in an empty folder does the setup. It opens the browser like `login`, asks for an organization, project, stage and service region, creates `broods/` like `init`, pushes referenced secrets from `.env.local`, syncs, and writes `BROODS_API_KEY` to `.env.local`.
 
 On every sync `dev`:
 
@@ -166,15 +166,15 @@ Shows local desired state against the current stage, without writing anything.
 broods diff
 ```
 
-Markers: `[+]` create, `[~]` update, `[*]` replace, `[-]` delete. It also warns when the stage's value for a referenced `env("NAME")` no longer matches `.env.local`:
+Markers are `[+]` create, `[~]` rename, `[*]` update and `[-]` delete. It also warns when the stage's value for a referenced `env("NAME")` no longer matches `.env.local`:
 
 ```text
-⚠ .env.local and demo-app/development disagree on 1 variable(s): ZALO_WEBHOOK_SECRET. Run `broods env sync` to push the local values.
+! .env.local and demo-app/development disagree on 1 variable(s): ZALO_WEBHOOK_SECRET. Run `broods env sync` to push the local values.
 ```
 
 ## deploy
 
-Syncs the `production` stage once and writes its runtime key to `.env.local`.
+Syncs the `production` stage once, or the `stages.deploy` stage set with `defineBroods`, and writes its runtime key to `.env.local`.
 
 ```bash
 broods deploy [--prune] [--rotate-key] [--stage <name>]
@@ -185,7 +185,7 @@ broods deploy [--prune] [--rotate-key] [--stage <name>]
 | `--prune`      | Delete remote resources the project no longer declares                           |
 | `--rotate-key` | Mint a fresh runtime key and write it to `.env.local`. The old key stops working |
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`: set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them.
 
 ## env
 
@@ -208,7 +208,7 @@ echo "$VALUE" | broods env set SOME_NAME
 ```
 
 - `rm` refuses while a synced agent or sandbox still references the name, and says which. Remove the reference and sync first. To rotate a secret, run `set` again instead.
-- `sync` only touches names the project references, skips values the stage already holds, never deletes, and never touches `BROODS_*` variables. It reports names that exist only on the stage:
+- `sync` only touches names the project references. It skips values the stage already holds, never deletes, and never touches `BROODS_*` variables. It reports names that exist only on the stage.
 
 ```text
 ▌ ↑ Synced 1 env var(s) from .env.local: ZALO_WEBHOOK_SECRET
@@ -232,7 +232,7 @@ broods run my-agent "ping" > answer.txt   # plain text, no UI
 ```
 
 - The session streams reasoning, shows tool calls as cards with input and output, and stops for `y`/`n` on tools that need approval. It stays open for follow-ups.
-- Keys: Enter sends, arrows or PgUp/PgDn scroll, Ctrl+L repaints, Esc or Ctrl+C leaves.
+- Enter sends, arrows or PgUp and PgDn scroll, Ctrl+L repaints, and Esc or Ctrl+C leaves.
 - When stdin or stdout is not a terminal, `run` prints the answer as plain text. A prompt is then required.
 - `run` uses the stage runtime key over the public endpoint, so the agent needs `publicAccess: true`. Without it you get `403 public_access_disabled`.
 - Each turn is a normal run on one conversation. Tools, sandboxes and policies behave as in production.
@@ -257,7 +257,7 @@ broods logs [-n <n>] [--level <lvl>] [--all] [--json] [--sandbox <id>]
 | Flag             | Description                                                                                           |
 | ---------------- | ----------------------------------------------------------------------------------------------------- |
 | `-n`, `--limit`  | Backfill line count. Default 100                                                                      |
-| `--level <lvl>`  | Minimum level: `DEBUG`, `INFO`, `WARN`, `ERROR`. Default `WARN`                                       |
+| `--level <lvl>`  | Minimum level, `DEBUG`, `INFO`, `WARN` or `ERROR`. Default `WARN`                                     |
 | `--all`          | Every level. DEBUG comes from the backfill only                                                       |
 | `--json`         | Print the backfill as raw JSON                                                                        |
 | `--sandbox <id>` | Tail one sandbox instance's guest output instead. The id is the UUID in the dashboard Instances sheet |
@@ -301,7 +301,7 @@ Projects:
   abandoned-e2e: empty
 ```
 
-`delete` removes the project on every stage: agent configs, canvas, environment variables, deploy keys, cron schedules, and workspace files with their stored blobs. It needs the org admin role. There is no undo. The prompt shows the counts first. `--yes` skips it. Without a TTY the prompt answers no, so a CI run without `--yes` deletes nothing.
+`delete` removes the project on every stage, including agent configs, canvas, environment variables, deploy keys, cron schedules, and workspace files with their stored blobs. It needs the org admin role. There is no undo. The prompt shows the counts first. `--yes` skips it. Without a TTY the prompt answers no, so a CI run without `--yes` deletes nothing.
 
 ## stage
 
@@ -320,7 +320,7 @@ broods stage use staging
 
 - Without `--from` the new stage is empty. Cloned secrets live in both stages, so removing one later means removing it twice.
 - `use` writes `BROODS_STAGE` and refreshes `BROODS_API_KEY`, since the runtime key is per stage. Run `broods dev` afterwards to sync your resources there.
-- `development` and `production` are reserved names. Other names must be lowercase letters, digits and dashes (`staging`, `qa-2`) because they appear in URLs and log labels.
+- `development` and `production` are reserved names. Other names must be lowercase letters, digits and dashes, such as `staging` or `qa-2`, because they appear in URLs and log labels.
 
 ## machine
 
@@ -334,7 +334,7 @@ broods machine --doctor [--request]
 | Flag                   | Description                                                                                                 |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `--cwd <dir>`          | Working directory for commands. Default: current directory                                                  |
-| `--computer`           | Also serve the `computer` tool: screenshots, mouse, keyboard. macOS only                                    |
+| `--computer`           | Also serve the `computer` tool for screenshots, mouse and keyboard. macOS only                              |
 | `--mcp <file>`         | Run the stdio MCP servers in this `.mcp.json` for MCP rows on this sandbox                                  |
 | `--force`              | Take the record over from another daemon                                                                    |
 | `--doctor [--request]` | Check the Screen Recording and Accessibility grants `--computer` needs. `--request` shows the macOS prompts |
@@ -351,19 +351,19 @@ Serves the account config plane to a coding agent over MCP on stdio. Start it fr
 claude mcp add broods -- broods mcp
 ```
 
-Tools mirror the account SDK in kebab-case (`listAgents` is `list-agents`). Every config resource gets the verbs it supports: agents, crons, sandboxes, workspaces, policies, roles, channels, skills and MCP servers. Extra tools: `list-cron-runs`, `upload-skill`, sandbox lifecycle (`suspend-sandbox`, `resume-sandbox`, `terminate-sandbox`, `snapshot-sandbox`, `open-sandbox-terminal`), env (`list-env-vars`, `set-env-var`, `delete-env-var`), and account (`get-account`, `update-account`, `rotate-secret`, `assume-role`). MCP server tools take `project` and `stage`, defaulted from `BROODS_PROJECT` and `BROODS_STAGE`.
+Tools mirror the account SDK in kebab-case, so `listAgents` is `list-agents`. Every config resource gets the verbs it supports. That covers agents, crons, sandboxes, workspaces, policies, roles, channels, skills and MCP servers. The extra tools are `list-cron-runs` and `upload-skill`. The sandbox lifecycle tools are `suspend-sandbox`, `resume-sandbox`, `terminate-sandbox`, `snapshot-sandbox` and `open-sandbox-terminal`. The env tools are `list-env-vars`, `set-env-var` and `delete-env-var`. The account tools are `get-account`, `update-account`, `rotate-secret` and `assume-role`. MCP server tools take `project` and `stage`, defaulted from `BROODS_PROJECT` and `BROODS_STAGE`.
 
 With a stored `broods login`, it also registers `list-orgs`, `create-org`, `select-org`, `list-projects`, `list-stages` and `create-stage`. Creating a stage under a new project name creates the project.
 
-Credentials come from the environment and are read once at startup:
+The server reads credentials from the environment once, at startup.
 
-| Credential                            | What the agent can reach                 |
-| ------------------------------------- | ---------------------------------------- |
-| `BROODS_SESSION_TOKEN` (role session) | What the role's policy allows. Preferred |
-| `BROODS_ACCOUNT_SECRET`               | The whole account                        |
-| Stored `broods login` only            | Org, project and stage tools only        |
+| Credential                             | What the agent can reach                 |
+| -------------------------------------- | ---------------------------------------- |
+| `BROODS_SESSION_TOKEN`, a role session | What the role's policy allows. Preferred |
+| `BROODS_ACCOUNT_SECRET`                | The whole account                        |
+| Stored `broods login` only             | Org, project and stage tools only        |
 
-Built-in guards:
+The server enforces these guards itself.
 
 - A delete needs `confirm: true` and takes one id.
 - There is no tool that reads env values.
@@ -392,4 +392,4 @@ A global bun or npm install is replaced in place. Inside a project, the dependen
 | `BROODS_CONTROL_URL`, `--control-url` | Removed. `BROODS_BASE_URL` serves both the CLI and the SDK |
 | `/api/cli/*` routes                   | `/v1/account/*`                                            |
 
-The old names fail with an error that names the replacement. Environment-based auth needs both `BROODS_TOKEN` and `BROODS_BASE_URL`. Logins from before the base URL change need `broods login` again.
+`status`, `--env` and `BROODS_ENVIRONMENT` fail with an error that names the replacement. `BROODS_CONTROL_URL`, `--control-url` and the `/api/cli/*` routes no longer exist, so they do nothing. Environment-based auth needs both `BROODS_TOKEN` and `BROODS_BASE_URL`. Logins from before the base URL change need `broods login` again.

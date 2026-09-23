@@ -83,6 +83,7 @@ import {
   printReadyLine,
   printSuccess,
   printWarning,
+  type FormatOptions,
   type HelpContext,
 } from "./output.ts";
 import {
@@ -123,6 +124,11 @@ const COMMAND_GROUPS = `Commands
   Inspect   agent  whoami
   Account   login  org  project
   Tools     init  machine  mcp  update`;
+
+// Help printed to a terminal is colored for stdout; help embedded in an error
+// goes to stderr, so it stays plain rather than guess that stream's TTY.
+const HELP_STDOUT: FormatOptions = { stream: "stdout" };
+const HELP_PLAIN: FormatOptions = { color: false };
 
 // Commands that act on one project and stage, so their page leads with it.
 const STAGE_SCOPED_COMMANDS = new Set([
@@ -341,7 +347,7 @@ async function main(): Promise<void> {
     case undefined:
     case "--help":
     case "-h":
-      console.log(renderHelp(args));
+      console.log(renderHelp(args, HELP_STDOUT));
 
       return;
     case "--version":
@@ -430,14 +436,16 @@ async function main(): Promise<void> {
 
       return;
     default:
-      throw new Error(`Unknown command: ${command}\n\n${renderHelp(args)}`);
+      throw new Error(
+        `Unknown command: ${command}\n\n${renderHelp(args, HELP_PLAIN)}`,
+      );
   }
 }
 
 // Falls back to the top-level page so a mistyped key still prints something
 // useful instead of "undefined" inside an error message.
 function commandHelp(command: string): string {
-  return COMMAND_HELP[command] ?? renderHelp([]);
+  return COMMAND_HELP[command] ?? renderHelp([], HELP_PLAIN);
 }
 
 /**
@@ -483,35 +491,34 @@ function renderCommandHelp(command: string, args: string[]): string {
   if (!STAGE_SCOPED_COMMANDS.has(command)) return page;
   const context = helpContext(args);
   const project = context.project ?? context.projectGuess;
-  const color = { stream: "stdout" as const };
-  // deploy ignores BROODS_STAGE, so its target is production unless --stage says otherwise.
-  const target =
-    command === "deploy" && optionValue(args, "--stage") === undefined
-      ? formatTarget(
-          project,
-          "production",
-          context.stage === "production"
-            ? undefined
-            : `ignores stage ${context.stage}`,
-          color,
-        )
-      : formatTarget(project, context.stage, undefined, color);
+  if (command !== "deploy" || optionValue(args, "--stage") !== undefined) {
+    return `${formatTarget(project, context.stage, HELP_STDOUT)}\n\n${page}`;
+  }
+  // deploy ignores BROODS_STAGE, so say so only when one is actually selected.
+  const selected = stageFromEnv();
+  const note =
+    selected && selected !== "production"
+      ? `ignores stage ${selected}`
+      : undefined;
+  const target = formatTarget(project, "production", {
+    ...HELP_STDOUT,
+    note: note,
+  });
 
   return `${target}\n\n${page}`;
 }
 
 /** Bare `broods`: where you are pointed, what to run next, then every command. */
-function renderHelp(args: string[]): string {
+function renderHelp(args: string[], options: FormatOptions): string {
   const context = helpContext(args);
-  const color = { stream: "stdout" as const };
 
   return [
     `broods v${VERSION}`,
     "",
-    ...formatContext(context, color),
+    ...formatContext(context, options),
     "",
     "Next",
-    ...formatNext(nextCommands(context), color),
+    ...formatNext(nextCommands(context), options),
     "",
     COMMAND_GROUPS,
     "",
@@ -707,7 +714,7 @@ async function printRuntimeKeyStatus(
 async function orgCommand(args: string[]): Promise<void> {
   const [subcommand, needle] = positionalArgs(args);
   if (!subcommand) {
-    console.log(commandHelp("org"));
+    console.log(renderCommandHelp("org", args));
 
     return;
   }
@@ -800,7 +807,7 @@ async function orgCommand(args: string[]): Promise<void> {
 async function projectCommand(args: string[]): Promise<void> {
   const [subcommand, needle] = positionalArgs(args);
   if (!subcommand) {
-    console.log(commandHelp("project"));
+    console.log(renderCommandHelp("project", args));
 
     return;
   }
@@ -891,7 +898,7 @@ async function projectCommand(args: string[]): Promise<void> {
 async function stageCommand(args: string[]): Promise<void> {
   const [subcommand, needle] = positionalArgs(args);
   if (!subcommand) {
-    console.log(commandHelp("stage"));
+    console.log(renderCommandHelp("stage", args));
 
     return;
   }
@@ -2037,7 +2044,7 @@ async function clearDeclinedDeletes(): Promise<void> {
 async function envCommand(args: string[]): Promise<void> {
   const [subcommand, name] = positionalArgs(args);
   if (!subcommand) {
-    console.log(commandHelp("env"));
+    console.log(renderCommandHelp("env", args));
 
     return;
   }
@@ -2317,7 +2324,7 @@ async function machine(args: string[]): Promise<void> {
   }
   const sandbox = positionalArgs(args)[0];
   if (!sandbox) {
-    console.log(COMMAND_HELP.machine);
+    console.log(renderCommandHelp("machine", args));
 
     return;
   }
@@ -2445,7 +2452,7 @@ async function logs(args: string[]): Promise<void> {
 async function agentCommand(args: string[]): Promise<void> {
   const [subcommand, name] = positionalArgs(args);
   if (!subcommand) {
-    console.log(commandHelp("agent"));
+    console.log(renderCommandHelp("agent", args));
 
     return;
   }

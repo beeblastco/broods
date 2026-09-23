@@ -5,11 +5,11 @@ sidebar_label: Overview
 
 # Internals overview
 
-This section is for people who work on Broods itself: contributors, self-hosters and operators. It covers how the code is laid out, how a request moves through the system, and how to run and extend it. If you are building agents on Broods, start at the [user docs](../index.md) instead.
+This section is for the contributors, self-hosters and operators who work on Broods itself. It covers how the code is laid out, how a request moves through the system, and how to run and extend it. If you are building agents on Broods, start at the [user docs](../index.md) instead.
 
 ## What is in the repo
 
-The repo is a Bun workspaces monorepo. The parts form one product: the gateway is the front door, core owns runtime truth, Convex owns config and persistence, and the dashboard and CLI are two clients of the same config plane.
+The repo is a Bun workspaces monorepo. The parts form one product. The gateway is the front door, core owns runtime truth, Convex owns config and persistence, and the dashboard and CLI are two clients of the same config plane.
 
 | Path                     | Package                     | Job                                                                                                                                                                                                                               |
 | ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,7 +35,7 @@ The [architecture](architecture.md) page has the system diagram, each request pa
 
 1. [Architecture](architecture.md) for the request path and where each record lives.
 2. [Queue and steer](queue-and-steer.md) for the concurrency contract every ingress path shares.
-3. The subsystem page you are about to touch: [channels](channels.md), [tools and MCP](tools-and-mcp.md), [subagents](subagents.md), [storage](storage.md), [sandboxes](sandboxes.md), [security](security.md) or [observability](observability.md).
+3. The subsystem page you are about to touch, such as [channels](channels.md), [tools and MCP](tools-and-mcp.md), [subagents](subagents.md), [storage](storage.md), [sandboxes](sandboxes.md), [security](security.md) or [observability](observability.md).
 4. [Self-hosting](self-hosting.md), [operations](operations.md) and [CI/CD](ci-cd.md) before you deploy anything.
 
 Each workspace also has its own `AGENTS.md` with the gotchas for that folder. Read it when you touch the folder.
@@ -43,19 +43,19 @@ Each workspace also has its own `AGENTS.md` with the gotchas for that folder. Re
 ## Contributor workflow
 
 - Install once with `bun install` at the root. Workspace scripts live in each `package.json`.
-- Before you call a change done, run the workspace's own `bun run check` (types, plus lint for the dashboard) and the root `bun run format` (oxfmt). Do not run raw `tsc`; the config is wrong for it.
+- Before you call a change done, run the workspace's own `bun run check` and the root `bun run format`. `check` runs types, plus lint for the dashboard, and `format` runs oxfmt. Do not run raw `tsc`, because the config is wrong for it.
 - Lint is oxlint with one `.oxlintrc.json` at the root. `bun run lint` at the root covers every workspace. `bun run lint:types` is the type-aware pass; it has a backlog, so do not add new findings.
 - The pre-commit hook in `.githooks/` runs oxlint and `oxfmt --check` on staged files. `bun install` wires it through the root `prepare` script.
 - A Convex schema or function change needs `bun run --filter @broods/convex codegen`, and the generated diff is committed. Core and the dashboard typecheck against it without local codegen.
 - React is pinned per app package. Never add React to the root package.
 - A breaking storage or backend change gets no compat shim for dead record formats. Reset and recreate the affected accounts or resources instead.
-- A change to a public contract moves everything that describes it: `apps/docs/docs/api-reference/openapi.yaml`, the docs, `packages/demos`, the SDK types and client in `packages/broods`, and the focused tests.
+- A change to a public contract moves everything that describes it, meaning `apps/docs/docs/api-reference/openapi.yaml`, the docs, `packages/demos`, the SDK types and client in `packages/broods`, and the focused tests.
 
 ## Extending Broods
 
-- Add a built-in tool: [Tools and MCP](tools-and-mcp.md). Most integrations should be an MCP server instead.
-- Add a channel: [Channels](channels.md).
-- Add a chat command: the steps are below.
+- To add a built-in tool, see [Tools and MCP](tools-and-mcp.md). Most integrations should be an MCP server instead.
+- To add a channel, see [Channels](channels.md).
+- To add a chat command, follow the steps below.
 
 ### Add a chat command
 

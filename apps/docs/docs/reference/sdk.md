@@ -8,7 +8,7 @@ The `broods` package ships three clients:
 
 | Client                | Import           | Credential                     | Use it to                                    |
 | --------------------- | ---------------- | ------------------------------ | -------------------------------------------- |
-| `BroodsClient`        | `broods`         | Stage runtime key              | Run agents over HTTP and SSE, manage crons   |
+| `BroodsClient`        | `broods`         | Stage runtime key              | Run agents over HTTP and SSE                 |
 | `WebSocketClient`     | `broods`         | Stage runtime key              | Run and steer agents over one socket         |
 | `BroodsAccountClient` | `broods/account` | Account secret or role session | Create and change config while your app runs |
 
@@ -20,7 +20,7 @@ There is no Python SDK yet. Call the [HTTP API](http-api.md) directly.
 bun add broods     # or: npm install broods
 ```
 
-`ai` (the Vercel AI SDK) is a peer dependency. npm and bun install it for you. On a package manager that skips peers, add it yourself, or valid agent configs fail to compile.
+`ai` is the Vercel AI SDK and a peer dependency. npm and bun install it for you. On a package manager that skips peers, add it yourself, or valid agent configs fail to compile.
 
 ## Generated references
 
@@ -48,11 +48,11 @@ const client = new BroodsClient();
 | Option    | Default                                                                               |
 | --------- | ------------------------------------------------------------------------------------- |
 | `apiKey`  | `BROODS_API_KEY`, loaded from `.env` and `.env.local`                                 |
-| `baseUrl` | `BROODS_BASE_URL`, then `https://gateway.broods.app`                                  |
+| `baseUrl` | `BROODS_BASE_URL`, then `BROODS_HOST`, then `https://gateway.broods.app`              |
 | `host`    | Hostname form of `baseUrl`. `gateway.broods.app` becomes `https://gateway.broods.app` |
 | `fetch`   | Global `fetch`                                                                        |
 
-The runtime key (`fp_agent_...`) is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
+The runtime key, `fp_agent_...`, is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
 
 ### Methods
 
@@ -65,16 +65,11 @@ The runtime key (`fp_agent_...`) is scoped to one project and stage. It reaches 
 | `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                    | One status snapshot. `{ status: "not_found" }` on 404            |
 | `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                    | Polls until a settled status or timeout                          |
 | `agent(ref)`                                   | `AgentHandle`                    | Binds `run`, `stream`, `runAsync`, `continue` to one agent       |
-| `createCron(input)`                            | `Cron`                           | Creates a schedule. `agent` takes a reference                    |
-| `listCrons()`, `getCron(id)`                   | `Cron[]`, `Cron \| null`         | Reads schedules                                                  |
-| `listCronRuns(id, { limit })`                  | `CronRun[]`                      | Recent runs of one schedule                                      |
-| `updateCron(id, patch)`                        | `Cron`                           | Changes fields, including `status: "paused"`                     |
-| `deleteCron(id)`                               | `boolean`                        | Deletes the schedule and its run history                         |
 | `channelWebhookUrl(ref)`                       | `string`                         | Webhook URL for a generated channel reference                    |
 | `accountWebhookUrl(accountId, type)`           | `string`                         | Production webhook URL for a channel type                        |
 | `stageWebhookUrl(accountId, endpointId, type)` | `string`                         | Webhook URL pinned to one non-production stage                   |
 
-`AsyncAgentRun` has `runId`, `eventId`, `statusUrl`, `conversationKey`, `poll()` and `wait(options)`. `wait` and `waitForAsyncStatus` take `intervalMs` (default 2000), `timeoutMs` (default 180000) and `signal`, and return on `completed`, `failed`, `expired`, `awaiting_approval`, `awaiting_input` or `not_found`.
+`AsyncAgentRun` has `runId`, `eventId`, `statusUrl`, `conversationKey`, `poll()` and `wait(options)`. `wait` and `waitForAsyncStatus` take `intervalMs`, default 2000, `timeoutMs`, default 180000, and `signal`, and return on `completed`, `failed`, `expired`, `awaiting_approval`, `awaiting_input` or `not_found`.
 
 ```ts
 const result = await client.run(api.agents.myAgent, { input: "Hello" });
@@ -95,16 +90,16 @@ const status = await job.wait({ timeoutMs: 300_000 });
 
 Pass exactly one of `input` or `events`.
 
-| Field             | Description                                                                                  |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| `input`           | One user text message                                                                        |
-| `events`          | AI SDK model messages, for images, files, tool approval responses                            |
-| `conversationKey` | Conversation to continue. Omit for a new one                                                 |
-| `eventId`         | Correlation id. Generated when omitted                                                       |
-| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days              |
-| `mode`            | What to do when the conversation is busy: `steer` (default), `followup`, `collect`, `reject` |
-| `system`          | One-turn system message or messages, not persisted                                           |
-| `model`           | Per-run call settings: `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`, ... |
+| Field             | Description                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `input`           | One user text message                                                                                  |
+| `events`          | AI SDK model messages, for images, files, tool approval responses                                      |
+| `conversationKey` | Conversation to continue. Omit for a new one                                                           |
+| `eventId`         | Correlation id. Generated when omitted                                                                 |
+| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days                        |
+| `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject` |
+| `system`          | One-turn system message or messages, not persisted                                                     |
+| `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`         |
 
 `model` rejects `provider`, `modelId`, `output` and `apiKey`, so a request cannot swap the model or credentials. With a runtime key, `system` and `model` need `allowRunOverrides: true` on the agent, or the run fails with `403 run_overrides_disabled`.
 
@@ -125,7 +120,7 @@ await client.run(api.agents.myAgent, {
 
 ### Stream parts
 
-`stream` yields the AI SDK `TextStreamPart` shape: `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+`stream` yields AI SDK `TextStreamPart` values such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
 
 ### Async status
 
@@ -178,7 +173,7 @@ const ws = new WebSocketClient();
 | `WebSocket`        | `globalThis.WebSocket`. Pass one on older runtimes |
 | `connectTimeoutMs` | 2000                                               |
 
-The key travels as a `Sec-WebSocket-Protocol` entry (`broods.v1`, `broods.token.<key>`), never in the URL.
+The key travels as the `Sec-WebSocket-Protocol` entries `broods.v1` and `broods.token.<key>`, never in the URL.
 
 | Method                        | What it does                                            |
 | ----------------------------- | ------------------------------------------------------- |
@@ -188,7 +183,7 @@ The key travels as a `Sec-WebSocket-Protocol` entry (`broods.v1`, `broods.token.
 | `subscription.sendControl(m)` | Sends more input to the live run. Steers by default     |
 | `subscription.close()`        | Closes the socket                                       |
 
-`subscribe` input takes the run input fields above plus `agent` (a reference), `sessionId` (the conversation key) and `signal`. An aborted signal sends `cancel`. Pass `answers` instead of `input` to answer an open `ask_questions` prompt; the resumed run streams back on the same socket.
+`subscribe` takes the run input fields above plus `agent`, a reference, `sessionId`, the conversation key, and `signal`. An aborted signal sends `cancel`. Pass `answers` instead of `input` to answer an open `ask_questions` prompt; the resumed run streams back on the same socket.
 
 | Handler     | Receives                                                                       |
 | ----------- | ------------------------------------------------------------------------------ |
@@ -234,12 +229,12 @@ const account = new BroodsAccountClient({
 });
 ```
 
-| Option          | Default                                                     |
-| --------------- | ----------------------------------------------------------- |
-| `accountSecret` | `BROODS_ACCOUNT_SECRET` (`fp_acct_...`)                     |
-| `sessionToken`  | `BROODS_SESSION_TOKEN` (`fp_sts_...`). Wins over the secret |
-| `baseUrl`       | `BROODS_BASE_URL`, then `https://gateway.broods.app`        |
-| `fetch`         | Global `fetch`                                              |
+| Option          | Default                                                             |
+| --------------- | ------------------------------------------------------------------- |
+| `accountSecret` | `BROODS_ACCOUNT_SECRET`, an `fp_acct_...` value                     |
+| `sessionToken`  | `BROODS_SESSION_TOKEN`, an `fp_sts_...` value. Wins over the secret |
+| `baseUrl`       | `BROODS_BASE_URL`, then `https://gateway.broods.app`                |
+| `fetch`         | Global `fetch`                                                      |
 
 The entry point has no dependencies and uses plain `fetch`, so it runs in Convex actions, Cloudflare Workers and other edge runtimes where the main `broods` entry cannot load.
 

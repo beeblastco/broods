@@ -30,7 +30,7 @@ export const lead = defineAgent({
 | `context`    | `"new"`        | `"inherited"` passes the parent's visible messages to the child for that call. They are not stored in the child's history.  |
 | `mode`       | `"persistent"` | Persistent children keep a conversation you can resume, steer and stop. `"ephemeral"` keeps them in memory only.            |
 | `stream`     | `false`        | `true` lets a WebSocket client attach to a child's live output                                                              |
-| `visibility` | `"result"`     | What the parent sees of a result: `"full"`, `"result"` or `"none"`. The `onSubagentFinish` [hook](hooks.md) can reshape it. |
+| `visibility` | `"result"`     | What the parent sees of a result, `"full"`, `"result"` or `"none"`. The `onSubagentFinish` [hook](hooks.md) can reshape it. |
 
 ## How the model uses it
 
@@ -46,7 +46,7 @@ In persistent mode the parent also gets:
 | `update_subagent`     | `steer` changes the running child's direction, `continue` queues a follow-up turn           |
 | `stop_subagent`       | Stops the child at its next step. A stopped child's partial work is not sent to the parent. |
 
-A parent can only control children it started. From outside, a persistent child is an ordinary conversation: stop or steer it through the normal run endpoints with its `conversationKey`.
+A parent can only control children it started. From outside, a persistent child is an ordinary conversation. Stop or steer it through the normal run endpoints with its `conversationKey`.
 
 ## What a child inherits
 
@@ -76,4 +76,4 @@ A runtime key can attach only to children of a public parent in its own stage. L
 
 The parent's request stays open while children run. Over SSE it sends heartbeat comments during quiet waits. If the request is about to hit its deadline, finished results and timeout notices are injected together so the parent can answer with what it has. A follow-up queued on a child after the parent's wait expired still runs, but its result stays in the child's conversation.
 
-Runnable example: [`subagent` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/subagent). How it works inside: [Subagent internals](../internals/subagents.md).
+The [`subagent` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/subagent) is a runnable example. [Subagent internals](../internals/subagents.md) explains how it works inside.

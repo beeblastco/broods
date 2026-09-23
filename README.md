@@ -72,10 +72,11 @@ After deploying, try the runnable demos in `packages/demos/`:
 
 ```bash
 bun run --filter broods build   # once, from repo root
-cp packages/demos/.env.example packages/demos/.env.local
+cp packages/demos/.env.example packages/demos/basic-stream/.env.local
 cd packages/demos/basic-stream && bun run start
-cd packages/demos/basic-async && bun run start
 ```
+
+Bun reads `.env.local` from the folder a demo runs in, so each demo needs its own copy.
 
 See `packages/demos/README.md` for the full list of demos and setup steps.
 

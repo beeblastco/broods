@@ -1,8 +1,8 @@
 # Queue and steer
 
-This is the design record for how Broods handles a message that arrives while a conversation is already busy. One contract covers direct HTTP, async HTTP, WebSocket and channel ingress. It was accepted and implemented for [issue #71](https://github.com/beeblastco/broods/issues/71).
+This is the design record for a message that arrives while a conversation is busy. One contract covers direct HTTP, async HTTP, WebSocket and channel ingress. It shipped for [issue #71](https://github.com/beeblastco/broods/issues/71).
 
-If you only want to use it, read [Conversations](../guides/conversations.md). This page is for changing it.
+To use it, read [Conversations](../guides/conversations.md). This page is for changing it.
 
 ## Where it lives
 
@@ -11,215 +11,80 @@ If you only want to use it, read [Conversations](../guides/conversations.md). Th
 | `packages/convex/runtimeIngress.ts` | The coordinator: `accept`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `acquireClear`, `clearConversation`, `renewOwner`, `releaseOwner`, `maintain` |
 | `apps/core/src/harness/ingress.ts`  | Candidate and delivery types, the limit and TTL constants, admission helpers                                                                                 |
 | `apps/core/src/harness/harness.ts`  | The `prepareStep` and `onStepEnd` hooks that apply steering at a step boundary                                                                               |
-| `apps/core/src/harness/handler.ts`  | HTTP and async admission, `409`/`429` responses, the continuation workers                                                                                    |
+| `apps/core/src/harness/handler.ts`  | HTTP and async admission, `409` and `429` responses, the continuation workers                                                                                |
 | `apps/core/src/shared/commands.ts`  | `/steer`, `/queue`, `/stop` and `/cancel`, lease-safe `/new` and `/clear`, `/compact`                                                                        |
 | `apps/gateway/src/agent.ts`         | WebSocket `execute`, `control`, `attach` and `cancel` frames, ACK and status relay                                                                           |
 
-The rest of the page is the decision as accepted. Where the code went a different way, the text says so.
+## Why it exists
 
-## Context
+Before this contract, a per-conversation lease serialized work and each transport treated a busy conversation its own way. Direct SSE answered `409`. Async accepted the request and then failed it as busy. Channels buffered messages and folded them into the next turn. The WebSocket gateway allowed one execute per socket, and its `cancel` frame stopped only gateway-side reads. The contract replaced all of that with one default, `steer`, and no transition mode. It does not add distributed cancellation.
 
-Before this change, Broods serialized work with a per-conversation lease, and
-each transport handled a busy conversation its own way. A busy direct SSE
-request was rejected with `409`. An async request could be accepted and later
-fail as busy. Channel messages went to a transactional pending buffer and were
-collected into the next turn. The WebSocket gateway allowed one active execute
-message per socket, and its `cancel` frame only stopped gateway-side fetch and
-read work, not the core run.
+## Steering is a boundary, not an abort
 
-The v1 goal is to make those concurrency choices explicit and consistent while
-the project is still under development. This decision replaces the old
-transport-specific defaults with `steer` everywhere; there is no transition
-mode. It does not add distributed cancellation.
+`steer` adds the new input after the current AI SDK step, including its whole in-flight tool batch, and before the next model call. It never aborts a model call or a running tool.
 
-## Decision
+Hard interrupt, abort and distributed cancellation are separate features. Each needs its own ownership, tool cleanup, persistence, billing and terminal-state rules before the API can claim a core run was cancelled. Nobody should redefine the gateway `cancel` frame as core cancellation.
 
-### Steering is boundary interruption, not abort
+## Modes
 
-`steer` interrupts the active run's current direction at the next safe model
-boundary, then continues the same run with the new input. Concretely, it adds
-accepted input after the current AI SDK
-step (including its complete in-flight tool batch) and before the next model
-call. It does not abort a model call or tool that is already running.
+Every ingress surface uses the same four modes.
 
-Hard interrupt, abort, and distributed cancellation are separate semantics and
-are out of issue #71 v1. They require their own ownership, tool cleanup,
-persistence, billing, and terminal-state contract before the public API can
-claim that a core run was cancelled. The current gateway-side `cancel` behavior
-must not be redefined as core cancellation.
+| Mode       | What a busy conversation does                                                                |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| `reject`   | Refuses the input and stores nothing. The caller gets a conflict.                            |
+| `followup` | Stores one FIFO envelope that runs as its own turn after earlier work.                       |
+| `collect`  | Stores the envelope, then merges every envelope waiting at drain time into one next turn.    |
+| `steer`    | Offers the envelope at the next step boundary, and falls back to `followup` if none is left. |
 
-### Public modes
+HTTP, async, WebSocket `execute` and `control`, and plain channel messages all default to `steer`. Callers ask for `reject`, `followup` or `collect` explicitly. Channel `/queue <message>` is the one-message `followup` form.
 
-Every ingress surface uses the same four modes:
+`collect` keeps order. The model sees one merged turn, but every contributing envelope keeps its own status, and the application record lists the contributor event ids in order.
 
-| Mode       | Busy-conversation behavior                                                                           |
-| ---------- | ---------------------------------------------------------------------------------------------------- |
-| `reject`   | Do not accept or persist the envelope; return a conflict/error.                                      |
-| `followup` | Persist one FIFO envelope that becomes its own turn after earlier work.                              |
-| `collect`  | Persist FIFO, then combine all envelopes available at the atomic drain cutoff into one next turn.    |
-| `steer`    | Offer the envelope at the next AI SDK step boundary; fall back to `followup` if no boundary remains. |
+## Envelopes and idempotency
 
-Direct sync HTTP, async HTTP, WebSocket execute/control, and ordinary channel
-messages all resolve an omitted mode to `steer`. Callers opt into `reject`,
-`followup`, or `collect` explicitly. Channel `/queue <message>` is the explicit
-one-message `followup` form.
+Authentication and parsing produce an in-memory `IngressCandidate`. Parsing stores nothing. The coordinator resolves the mode and stores an envelope only when it accepts the candidate, so a busy `reject` leaves no envelope and no status row.
 
-`collect` is a real public mode, not an undocumented channel optimization.
-Collection preserves envelope and event order even though the model sees one
-combined turn. Each contributing envelope keeps its own durable status, and the
-application relation records the ordered contributor event IDs.
+`IngressDelivery` in `ingress.ts` has one variant per delivery kind. `http`, `async` and `websocket` carry `publicEventId`, `publicConversationKey`, and for runtime-key ingress a `publicDeploymentIngress` marker. `channel` carries the channel name, the sender `identity` and the reply-routing `source`. Delivery holds routing identifiers only. It never stores provider credentials, bearer tokens, request headers or copies of the message.
 
-### Transport-neutral ingress envelope
+An envelope stores `requestedMode`, which is the caller's mode or the resolved `steer` default. It also stores the server-derived `accountId` and `agentId`, which callers cannot set.
 
-The types below are the decision's sketch. The implemented ones are `IngressCandidate` and `IngressDelivery` in `ingress.ts`. Each delivery kind is its own variant: `http`, `async` and `websocket` carry `publicEventId`, `publicConversationKey` and, for runtime-key ingress, a `publicDeploymentIngress` marker. `channel` carries the channel name, the sender `identity` and the reply-routing `source`.
-
-Authentication and transport parsing first produce an in-memory candidate.
-Parsing does not persist anything. The conversation coordinator resolves the
-explicit or default mode and persists an envelope only when it authorizes
-acceptance. A busy `reject` candidate is discarded without an envelope or status
-row.
-
-```ts
-type IngressMode = "reject" | "followup" | "collect" | "steer";
-
-interface IngressCandidate {
-  eventId: string;
-  conversationKey: string;
-  events: ModelMessage[];
-  requestedMode?: IngressMode;
-  idempotencyKey: string;
-  delivery: {
-    kind: "http" | "async" | "websocket" | "channel";
-    statusUrl?: string;
-    connectionId?: string;
-    channel?: string;
-  };
-}
-
-interface IngressEnvelope extends Omit<IngressCandidate, "requestedMode"> {
-  requestedMode: IngressMode;
-  applicationId?: string;
-  ownerGeneration?: number;
-  status:
-    | "accepted"
-    | "queued"
-    | "applied"
-    | "processing"
-    | "completed"
-    | "failed"
-    | "expired";
-  idempotency: {
-    identity: string;
-    payloadDigest: string;
-  };
-  createdAt: string;
-  expiresAt: string;
-}
-
-interface IngressApplication {
-  applicationId: string;
-  appliedMode: IngressMode;
-  appliedToEventId: string;
-  contributingEventIds: string[];
-  ownerGeneration: number;
-}
-```
-
-`requestedMode` on the persisted envelope contains either the client's explicit
-selection or the resolved `steer` default.
-
-The stored record also carries server-derived `accountId` and `agentId`; clients
-cannot select or override them. Every transport uses one canonical idempotency
-identity:
+Every transport shares one idempotency identity:
 
 ```text
 (accountId, agentId, scopedConversationKey, idempotencyKey)
 ```
 
-Clients may provide `idempotencyKey`; otherwise it defaults to `eventId`.
-`eventId` remains the public correlation ID and is not a second idempotency
-identity. First acceptance binds the canonical identity to its `eventId`, payload
-digest, envelope, and status. A retry with the same identity and digest returns
-that existing `eventId` and status; the same identity with a different digest is
-a conflict.
+`idempotencyKey` defaults to `eventId`. `eventId` stays the public correlation id and is not a second identity. The first acceptance binds the identity to its `eventId`, payload digest, envelope and status. A retry with the same identity and digest gets that `eventId` and status back. The same identity with a different digest is `409 idempotency_conflict`.
 
-The identity binding/tombstone is retained for at least the same seven-day
-window as the status row, including after `completed`, `failed`, or `expired`.
-Expiry of a queued envelope therefore does not reopen its identity for duplicate
-execution. A rejected candidate has no binding because it was never accepted.
+The binding lives as long as the status row, seven days, including after `completed`, `failed` or `expired`. An expired envelope therefore cannot run twice. A rejected candidate never binds, because it was never accepted.
 
-`delivery` contains routing identifiers only. Provider credentials, bearer
-tokens, request headers, message payload copies, and other secrets are never
-stored as delivery metadata.
+## FIFO, limits and recovery
 
-### Durable FIFO, bounds, and recovery
+The coordinator stores each accepted envelope as its own row, ordered by a sequence number it assigns in the same transaction. `(createdAt, eventId)` is only a diagnostic tie-breaker.
 
-The coordinator stores accepted busy ingress as individual FIFO envelopes, not an
-untyped array on the lease row. Ordering is by a transactionally assigned conversation
-sequence, with `(createdAt, eventId)` only as a diagnostic tie-breaker.
+`collect` never replaces its source envelopes. At drain time the coordinator creates one application whose `contributingEventIds` lists every source in order, and links each envelope to it. Each source then moves through `applied` and `processing` to the same terminal status, so polling and audit still work per request.
 
-`collect` never replaces its source envelopes. At the atomic drain cutoff, the
-coordinator creates one `IngressApplication` whose ordered
-`contributingEventIds` contains every source `eventId`, and links each envelope
-to it. Every source status then transitions independently through
-`applied`/`processing` to the same terminal outcome, preserving per-request
-polling, replay, and audit provenance.
+Steering follows the same rule at a live boundary. Only the contiguous run of `steer` envelopes at the head of the queue is merged and injected. A `followup` or `collect` ahead of a later steer is never skipped. If the run has no model call left, that same steer prefix becomes one follow-up application, and every contributor keeps its own status.
 
-Steering uses the same ordered grouping rule at a live model boundary: only the
-contiguous `steer` prefix at the head of the FIFO is combined and injected. A
-`followup` or `collect` ahead of a later steer is never skipped. If the active
-run has no next model call, that same contiguous steer prefix becomes one
-follow-up application while every contributor retains its own status.
+In a channel the steer prefix also stops at a new sender. `applySteering` compares `delivery.identity.userId`, so a message from someone other than the person whose turn is running waits for its own turn, where policy checks it against that sender's id and roles. This rule came after the original record.
 
-In a channel the prefix also stops at a different sender (`applySteering` compares
-`delivery.identity.userId`). A message from someone other than the person whose
-turn is running waits and runs as its own turn, so policy checks it against its
-own user id and roles. This rule was added after the original record.
+The limits are constants in `ingress.ts`. Core sends them to Convex on every admission, and changing them is a code change.
 
-The limits are 100 queued envelopes and 1 MiB of serialized queued events per
-conversation (`DEFAULT_INGRESS_MAX_COUNT`, `DEFAULT_INGRESS_MAX_BYTES`). Core
-passes them to Convex on every admission. They are constants, not environment
-settings, so tuning them is a code change. Acceptance is atomic: an envelope is
-either durably inserted with a status record or rejected. Overflow returns
-`429` with code `ingress_capacity` and never drops the oldest or newest item
-silently.
+| Limit                             | Value  | Constant                            |
+| --------------------------------- | ------ | ----------------------------------- |
+| Queued envelopes per conversation | 100    | `DEFAULT_INGRESS_MAX_COUNT`         |
+| Queued event bytes                | 1 MiB  | `DEFAULT_INGRESS_MAX_BYTES`         |
+| Queued envelope lifetime          | 15 min | `DEFAULT_INGRESS_TTL_MS`            |
+| Conversation lease                | 15 min | `DEFAULT_CONVERSATION_LEASE_TTL_MS` |
+| Status and idempotency records    | 7 days | `DEFAULT_INGRESS_STATUS_TTL_MS`     |
 
-Queued envelopes expire 15 minutes after acceptance (`DEFAULT_INGRESS_TTL_MS`),
-matching the conversation-lease window (`DEFAULT_CONVERSATION_LEASE_TTL_MS`).
-Status records remain pollable for seven days (`DEFAULT_INGRESS_STATUS_TTL_MS`).
-Expiry transitions the envelope to terminal `expired`; it does not simply delete
-evidence that accepted work was lost.
+Acceptance is atomic. The coordinator either inserts the envelope with its status row or rejects it. Overflow returns `429 ingress_capacity` and never silently drops the oldest or newest item. An envelope that outlives its lifetime moves to terminal `expired`, so lost work stays visible.
 
-Every lease acquisition or recovery atomically increments a monotonic
-per-conversation `ownerGeneration` and returns it as a fencing token. The
-generation survives lease deletion. The owner must renew the lease, and every
-dequeue/application, conversation-history write, status transition, result
-commit, and lease release includes the token and fails unless it still matches
-the current generation. Stream publication and channel replies revalidate the
-same token immediately before the external side effect.
+Every lease acquisition or recovery increments a per-conversation `ownerGeneration` and returns it as a fencing token. The generation survives lease deletion. Dequeue, history writes, status changes, result commits and lease release all carry the token, and Convex refuses any of them once the generation has moved on. Core checks the token again right before it starts a tool, publishes to the stream or posts a channel reply. A call already in flight when ownership changes cannot be revoked, but its result and later writes are refused. Channel delivery stays best effort and uses the provider's idempotency metadata where one exists.
 
-The runtime revalidates the current generation immediately before starting a
-tool or externally visible channel reply. Conversation writes, terminal results,
-dequeue/application, and releases are transactional fenced mutations. An
-external call already in flight when ownership changes cannot be revoked, but
-its stale result and follow-on writes are rejected; true remote abort remains
-outside v1. Channel/provider delivery remains best-effort and must use the
-provider's idempotency metadata when that surface supports it.
+After a crash, maintenance marks elapsed work `expired`. When a new event reaches a conversation whose lease expired with work still queued, admission first promotes the oldest queued group to the new generation and schedules it, and the newcomer queues behind it. A stale worker cannot apply an envelope or commit output after that.
 
-After a process crash, maintenance marks elapsed work `expired`. When a new
-event arrives on a conversation whose owner lease expired with work still
-queued, admission first promotes the oldest queued group to the new owner
-generation and schedules it, and the new arrival queues behind it. Recovery
-preserves FIFO order rather than letting the newcomer jump the queue. Stale
-workers cannot apply an envelope or commit outputs after recovery.
-
-Each envelope durably carries its own request execution context: the resolved
-agent config (including per-run `model` overrides) and one-turn `system`
-messages. Its payload digest covers them. A queued request therefore runs
-with exactly its own overrides when it later reaches a boundary, and never
-inherits the previous owner's. A failed owner releases or times out its lease without
-leaving accepted work permanently `accepted`, `queued`, `applied`, or
-`processing`.
+Each envelope carries its own execution context, meaning the resolved agent config with per-run `model` overrides and one-turn `system` messages. The payload digest covers them. A queued request therefore runs with its own overrides and never inherits the previous owner's.
 
 ```mermaid
 flowchart LR
@@ -233,41 +98,19 @@ flowchart LR
   Worker --> Status
 ```
 
-Every accepted async ingress therefore reaches `completed`, `failed`, or
-`expired`. Each status record includes `requestedMode`, the actual `appliedMode`,
-and `appliedToEventId` from its envelope/application record. A `steer` that misses
-its boundary records `requestedMode: "steer"`, `appliedMode: "followup"`, and the
-event ID of the follow-up turn.
+Every accepted envelope ends as `completed`, `failed` or `expired`. Its status carries `requestedMode`, the `appliedMode` that happened, and `appliedToEventId`. A steer that missed its boundary shows `requestedMode: "steer"`, `appliedMode: "followup"` and the event id of the follow-up turn. An idle request records its own event id, and an idle steer records `appliedMode: "followup"` because it starts a normal turn.
 
-An idle request records its immediately applied policy and its own event ID. An
-idle `steer` records `appliedMode: "followup"` because there is no active run to
-steer; it starts a normal turn.
+## The step boundary
 
-### AI SDK boundary
+Steering enters at one point, the AI SDK `prepareStep` hook. After `onStepEnd` has seen every tool result of the current step, and before the next model call, the coordinator takes the steer prefix, appends it to history, refreshes the next step's messages and system context, and records the active event id as `appliedToEventId`.
 
-The only v1 steering injection point is the AI SDK `prepareStep` boundary. The
-coordinator checks the contiguous FIFO steer prefix after `onStepEnd` has
-observed all tool results from the current step and before the next model call is
-prepared. It appends those steered events durably, refreshes the next step's
-messages/system context, and records the active event ID in `appliedToEventId`.
+Nothing enters mid-stream or between tool calls of one parallel batch. When the run has finished, hit its step limit, entered an approval or terminal path, or has no next model call for any other reason, the coordinator converts the envelope to `followup` in the same transaction.
 
-No injection occurs inside a model stream or between tool calls in a parallel
-tool batch. If the current run has finished, reached its step limit, entered an
-approval/terminal path, or otherwise has no next model call, the coordinator
-atomically converts the envelope to `followup`.
+This follows the AI SDK contract. [`prepareStep`](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text) runs before a step and may replace its messages, and the next step's messages already include finished tool results. [`onStepFinish`](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#onstepfinish-callback) fires only once the step's text, tool calls and tool results exist.
 
-This matches the AI SDK contract: [`prepareStep`](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text)
-runs before a step and may replace the step's messages, while completed tool
-results are included in the messages for the following step. The SDK's
-[`onStepFinish`](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#onstepfinish-callback)
-fires only after the step's text, tool calls, and tool results are available.
+## HTTP
 
-### HTTP and status
-
-An initial direct request may still own its `200 text/event-stream` response. A
-second request using `followup`, `collect`, or `steer` (including omitted mode's
-`steer` default) while that run is active does not receive a second SSE
-stream. Once durably accepted it returns `202 application/json`:
+A first direct request can own its `200 text/event-stream` response. A second request on the busy conversation, in `followup`, `collect` or `steer`, gets no second stream. Once Convex accepts it, core answers `202 application/json`:
 
 ```json
 {
@@ -280,22 +123,13 @@ stream. Once durably accepted it returns `202 application/json`:
 }
 ```
 
-Steered model output remains on the active SSE stream because it is part of that
-run. `followup` and `collect` work is observable through the status URL; it does
-not keep the accepting HTTP connection open. For direct sync HTTP, omitted
-`mode` means `steer`; only explicit `reject` returns the busy conflict without
-creating an accepted status record.
+Steered output stays on the active SSE stream, because it is part of that run. `followup` and `collect` work is visible through the status URL and does not hold the accepting connection open. Only an explicit `reject` returns the busy conflict without a status record.
 
-Async HTTP uses the same coordinator contract. Omitted `mode` resolves to
-`steer`, so a busy request is durably queued for the next boundary rather than
-accepted and later failed as busy. Any accepted async request returns `202` only
-after durable acceptance; `202` never means merely that an in-process worker was
-scheduled.
+Async HTTP follows the same contract. A busy async request is queued for the next boundary. `202` always means Convex stored the envelope, never merely that a worker was scheduled.
 
-### WebSocket control frames
+## WebSocket
 
-While a run is active, the WebSocket protocol adds correlated control input and
-status output. The minimum frame shapes are:
+While a run is active, a client sends correlated `control` frames and receives `ack` and `status` frames:
 
 ```json
 { "type": "control", "requestId": "r2", "eventId": "event-2", "idempotencyKey": "client-op-2", "events": [] }
@@ -303,22 +137,15 @@ status output. The minimum frame shapes are:
 { "type": "status", "requestId": "r2", "eventId": "event-2", "status": "applied", "appliedMode": "steer", "appliedToEventId": "event-1" }
 ```
 
-Omitted `mode` on `execute` or `control` means `steer`. `requestId` correlates
-frames on one socket only. `idempotencyKey` participates
-in the canonical identity defined above and defaults to `eventId`; `eventId`
-correlates the durable envelope/status. ACK is sent only after durable
-acceptance. Later status frames mirror the pollable record.
+`execute` and `control` default to `steer`. `requestId` correlates frames on one socket only. `idempotencyKey` joins the identity above and defaults to `eventId`, and `eventId` ties the frame to the stored envelope.
 
-Convex/core owns admission and status truth. The gateway owns only delivery of
-the correlated ACK/status frames: it emits ACK after core returns durable
-acceptance and obtains later transitions from the authenticated status route.
-JetStream output, an open socket, and gateway polling are never evidence of
-acceptance by themselves.
+Convex and core own admission and status. The gateway only delivers the frames. It sends `ack` after core confirms acceptance and reads later transitions from the authenticated status route. JetStream output, an open socket or gateway polling never count as acceptance.
 
-#### Attach and output replay
+A busy `execute` that gets queued receives its `ack` and stays open. The gateway streams the queued event's output once it runs, polls its status, and always ends with a terminal `done` or `error` frame, never a bare `ack`.
 
-A reconnecting client attaches to one active event with the last output cursor
-it fully processed:
+### Attach and replay
+
+A reconnecting client attaches to one event with the last cursor it fully processed:
 
 ```json
 { "type": "attach", "requestId": "a1", "agentId": "agent-1", "conversationKey": "conversation-1", "eventId": "event-1", "runId": "run_8c1d4a9e2f0b4c7d9e1f2a3b4c5d6e7f", "afterCursor": "ws-responses:4:1234" }
@@ -326,186 +153,54 @@ it fully processed:
 { "type": "output", "eventId": "event-1", "cursor": "ws-responses:4:1235", "replay": true, "data": { "type": "text-delta", "text": "..." } }
 ```
 
-The cursor is opaque to clients. It encodes the JetStream stream generation,
-the global `JsMsg.seq`, and a binding to its originating event, so a cursor can
-never resume a different event's stream; the publisher-local
-`NatsStreamEvent.sequence` is not a resume cursor because it resets for each
-publisher. `afterCursor` is exclusive: the first delivered frame has the next
-retained JetStream sequence. The client advances its cursor only after it has
-processed the complete `output` frame.
+The cursor is opaque. It encodes the JetStream stream generation, the global `JsMsg.seq`, and a hash of its event, so a cursor cannot resume another event's output. The publisher's own `NatsStreamEvent.sequence` resets per publisher and is not a cursor. `afterCursor` is exclusive, and the client advances its cursor only after it has handled a whole `output` frame.
 
-The SDK unwraps `output` envelopes before delivery: `onMessage` and `stream()`
-receive the inner stream part directly (`message.type === "text-delta"`), and
-the optional `onOutput` handler receives the raw envelope for clients that
-persist cursors for attach-based resume. The wire protocol above is what a
-bare WebSocket client sees.
+After authorization the gateway opens one ordered consumer at `afterCursor + 1` and records the current high-water mark as `replayThroughCursor`. Frames up to that mark carry `replay: true`, later frames `replay: false`, and the single consumer leaves no gap between them. Without `afterCursor`, replay starts at the earliest retained frame of the event. The gateway filters the conversation's subject by the event id in the NATS headers. `replayFromCursor` comes back only when the client sent `afterCursor`, because sequences are global to the stream. A fresh attach takes its first cursor from the first `output` frame.
 
-After authorization, the gateway creates one ordered JetStream consumer starting
-at `afterCursor + 1` and snapshots the current high-water mark as
-`replayThroughCursor`. Frames through that inclusive boundary carry
-`replay: true`; later frames from the same consumer carry `replay: false`. This
-single replay-then-tail consumer prevents a gap between replay and live output.
-When `afterCursor` is omitted, replay begins at the earliest retained frame for
-the target `eventId`. The gateway filters the conversation-scoped stream by the
-event ID in the NATS envelope headers.
+Attach returns `replay_unavailable` with the latest status and `statusUrl` when the cursor's generation is stale, when it belongs to another event, when it points past the last retained message, or when the message at that sequence has expired. It never skips a gap silently.
 
-`replayFromCursor` is returned only when the client supplied an `afterCursor`.
-Sequences are global to the shared response stream, so the earliest frame of one
-conversation cannot be named before it is delivered; on a fresh attach the client
-takes its first cursor from the first `output` frame instead.
+Nothing purges the stream per event or per conversation, because one subject can hold output for several queued events. JetStream drops output by `max_age`, 3 minutes, and `max_msgs_per_subject`, 2,000. After that the Convex status and idempotency records, kept 7 days, are the only record, and a reconnect gets the final status instead of token output. The SDK unwraps `output` frames for `onMessage` and `stream()`, and passes the raw envelope to `onOutput` for clients that store cursors.
 
-If the cursor's stream generation is stale, the cursor is bound to a different
-event, the cursor sequence is beyond the subject's last retained message (a
-future cursor), or the message at the cursor sequence is no longer retained for
-the conversation subject (its replay tail may have gaps), attach returns
-`replay_unavailable` with the latest durable status and `statusUrl`; it never
-silently skips a gap.
+Closing a socket or sending `cancel` only detaches that reader. The core run keeps going.
 
-A busy WebSocket `execute` that is durably queued (`followup`, `collect`, or
-`steer`) receives its ACK and then stays live: the gateway streams the queued
-event's output once it reaches a runnable boundary and polls its durable status,
-always closing the client stream with a terminal `done` or `error` frame. A bare
-ACK is never the final frame. On terminal status, the
-conversation output may already have expired, so reconnect returns the terminal
-status/result rather than recreating token-by-token output. An attached socket
-does not own the run, and status remains pollable for seven days independently
-of JetStream's short output-retention window.
+## Channel commands
 
-There is no manual event- or conversation-level purge in v1. The
-conversation-scoped `WS_RESPONSES` subject can contain output for overlapping or
-sequential FIFO work, so one terminal event must never erase another event's
-replay range. JetStream limits retention automatically by `max_age` (three
-minutes) and `max_msgs_per_subject` (2,000); Convex status and idempotency records
-remain for seven days and are the durable source of truth after output expires.
+Channels use the same coordinator.
 
-True abort/cancel remains separate from these control frames. Closing a socket or
-aborting a gateway fetch only detaches that reader in v1.
+- `/steer <text>` sends one `steer` envelope. On an idle conversation the text starts a normal turn.
+- `/queue <text>` sends one `followup` envelope. There is no sticky per-conversation mode. Every message resolves its own.
+- `/stop` and `/cancel` ask the current owner to stop at the next boundary. The in-flight batch finishes and remote tools keep running. The owner then settles `failed` with `stoppedByUser: true`, and queued work moves to a new generation.
+- `/new` and `/clear` are refused while a turn or queued envelope exists. Otherwise they clear history while holding the lease, so history never disappears under a running turn.
+- `/compact [instructions]` follows the same lease rule and summarizes the stored history whatever the agent's `session.compaction` says. The instructions steer what the summary keeps.
 
-### Channel commands
+## Authorization
 
-Channels use the same coordinator and add transport-neutral commands:
+Authorization finishes before any envelope exists.
 
-- `/steer <text>` submits one `steer` envelope. When the conversation is idle,
-  the text is normal input and starts a normal turn.
-- `/queue <text>` submits one explicit `followup` envelope. There is no sticky
-  per-conversation mode: every message resolves its own mode.
-- `/stop` and `/cancel` request that the current owner stop at the next safe model
-  boundary. The in-flight model/tool batch completes; the request does not kill
-  a remote tool. The owner then settles `failed` with a stopped-by-user reason,
-  and queued work is promoted normally under a new fencing generation. The
-  settled status carries `stoppedByUser: true`, so a deliberate stop is
-  distinguishable from a genuine failure even though both are terminal `failed`.
+- An account secret keeps its account and agent ownership checks.
+- A runtime key keeps its project, stage, endpoint and agent scope. The HTTP path must match it, and WebSocket `control` and `attach` inherit the socket's scope.
+- Channel ingress keeps provider authentication and the configured account and agent route.
 
-`/clear` must participate in the same conversation coordinator. The v1 default
-is to reject `/clear` with a retry message while a turn or queued ingress exists,
-then clear only while holding the conversation lease. It must never delete
-history concurrently with an active turn.
+The server derives the scoped conversation key and the storage identity. A caller cannot steer another tenant's conversation by sending its raw conversation key, event id, status URL, NATS subject or connection id. Status reads and retries repeat the same checks.
 
-`/compact [instructions]` follows the same lease rule: it is rejected with a
-retry message while a turn or queued ingress exists, and only summarizes while
-holding the conversation lease. It compacts the stored history into a summary
-regardless of the agent's `session.compaction` config, and the optional
-instructions steer what the summary preserves.
+## Subagents and status
 
-### Authorization and tenant isolation
+Steer and stop reach one conversation owner. They never spread into subagents the parent already started. A persistent child conversation can be steered only through ingress addressed to that child. Stopping the parent waits a bounded time for running children to settle their own status, and does not inject their late results into another parent step.
 
-Ingress authorization completes before envelope creation:
+With `subagent.stream: true`, a child publishes stream parts on the `WS_RESPONSES` subject of its account, child agent and conversation key. The `taskId` from `run_subagent` is the attach `eventId`, so attach, control and cursor binding work unchanged. A `done` part only marks delivery. The child's status row stays the terminal record after JetStream drops the output.
 
-- account secrets retain account/agent ownership checks;
-- deployment keys retain project, stage, endpoint, and agent scope;
-- channel ingress retains provider-native authentication and the configured
-  account/agent route;
-- gateway control frames inherit the authenticated socket's deployment scope.
+A runtime key attaches to a child only through its parent. Core allows the status read only when the child's event and conversation, the parent's stored ingress status, the active public parent and the server-derived `publicDeploymentIngress` marker all match the key's account, project, stage and endpoint. Endpoint metadata on account, channel, cron or internal work does not count. The gateway then checks the returned conversation key before it picks the NATS subject. Private children stay unreachable through the public endpoint, and no parent field the client sends is trusted. The rest is in [Subagents](subagents.md).
 
-The server derives the scoped conversation key and storage identity. A caller
-cannot steer by presenting another tenant's raw conversation key, event ID,
-status URL, NATS subject, or connection ID. Status reads and idempotent retries
-repeat the same authorization checks.
+`IngressStatus` is one of `accepted`, `queued`, `applied`, `processing`, `completed`, `failed` or `expired`. The public status can also report `awaiting_approval` with `approvals`. `requestedMode` is present for all coordinated ingress, and absent only for records that never went through the FIFO, such as a subagent result.
 
-A stage runtime/deployment key is resolved server-side to its account,
-project, stage, endpoint, and agent. The HTTP path must match that scope;
-WebSocket control and attach inherit the already-authenticated socket scope.
-Neither payload can replace the derived account or redirect work to another
-deployment.
+## Observability
 
-### Subagents and public status
-
-Steering and boundary stop target exactly one conversation owner. They do not
-broadcast into child subagents already dispatched by the parent. Ephemeral and
-persistent subagent runs keep their own event/result lifecycle; a persistent
-child conversation can be steered only through ingress addressed and authorized
-for that child agent/conversation. Stopping the parent waits boundedly for
-already-running children to finalize their own status, but does not hard-cancel
-them or inject their late result into another parent model step.
-
-With `subagent.stream: true`, a child also publishes model/tool stream
-parts on the existing `WS_RESPONSES` subject derived from its authenticated
-account, child `agentId`, and returned public `conversationKey`. The
-`run_subagent` result's `taskId` is the attach `eventId`, so attach/control
-correlation and the event-hash cursor binding remain unchanged. One ordered
-consumer replays retained child frames and then tails live output without a
-handoff gap. A publisher `done` part is only a delivery marker: the existing
-subagent runtime status/result is still the durable terminal truth, including
-after the short JetStream retention window expires.
-
-Deployment-key attach authorization is parent-bound. The server-issued child
-`taskId` correlates to the parent ingress event, while the exact child
-async-result row proves the task was created by the runtime. Core authorizes the
-status read only after the child event/conversation scope, durable parent ingress
-status, active public parent, and a dedicated server-derived public-deployment
-ingress marker all match the authenticated account/project/stage/endpoint.
-Generic endpoint metadata on account-authenticated, channel, cron, or internal
-work is not authorization provenance. The gateway then checks the returned
-conversation key before selecting the NATS subject. A zero-buffer processing
-attach tails future frames while polling durable status; terminal status closes
-the consumer after a short NATS grace and synthesizes a terminal frame only when
-the stream did not already emit one. Virtual and predefined private children
-therefore remain non-runnable through the public endpoint, and no client-asserted
-parent field is trusted.
-
-`IngressStatus` describes durable ingress (`accepted`, `queued`, `applied`,
-`processing`, `completed`, `failed`, or `expired`). The public status response
-may additionally report `awaiting_approval` from the async execution record and
-include `approvals`. `requestedMode` is present for coordinated ingress; it is
-optional only for independently owned records such as a subagent result that did
-not enter through the public ingress FIFO. A `failed` status caused by `/stop`
-also carries `stoppedByUser: true`, letting callers tell a deliberate stop apart
-from a fault without adding a separate terminal state.
-
-### Payload-free observability
-
-Metrics, logs, and traces may record account/agent IDs, event IDs, a hashed or
-encoded conversation identity, requested/applied mode, status, queue depth,
-event count, age, boundary latency, fallback reason, and
-`appliedToEventId`. They must not record message contents, tool inputs/results,
-system prompts, authorization values, channel credentials, delivery secrets,
-idempotency keys/identities, or raw request headers.
+Metrics, logs and traces may record account and agent ids, event ids, a hashed conversation identity, requested and applied mode, status, queue depth, event count, age, boundary latency, fallback reason and `appliedToEventId`. They never record message content, tool inputs or results, system prompts, credentials, delivery secrets, idempotency keys or raw headers.
 
 ## Status
 
-Implemented. Every item in the original sequence has shipped: the Convex
-primitives, step-boundary steering, HTTP and async behavior with SDK and OpenAPI,
-gateway attach and control frames, the channel commands, and the cross-transport
-tests. Tests live in `packages/convex/tests/runtimeIngress.test.ts` and the core
-ingress tests.
+Implemented, including the Convex primitives, step-boundary steering, HTTP and async admission with the SDK and OpenAPI, gateway attach and control frames, the channel commands, and cross-transport tests. The tests are in `packages/convex/tests/runtimeIngress.test.ts` and the core ingress tests.
 
-[Issue #95](https://github.com/beeblastco/broods/issues/95) built per-subagent
-streaming on the same attach and control correlation, durable status, subject
-ownership, replay and retention rules. It added no second gateway protocol or
-terminal-state source. See [subagents](subagents.md).
+[Issue #95](https://github.com/beeblastco/broods/issues/95) built per-subagent streaming on the same correlation, status, subject, replay and retention rules, with no second protocol.
 
-## Consequences
-
-- Accepted work becomes durable, bounded, observable, and idempotent across all
-  transports.
-- Steering is predictable because it cannot split a model call or tool batch.
-- Direct sync, async, WebSocket, and channel ingress share the `steer` default.
-- Busy async omission becomes durable boundary steering; the development
-  contract has no transition mode.
-- Hard cancellation remains visibly unsupported instead of being approximated by
-  disconnecting a gateway reader.
-- Transport-specific behavior is layered on the durable coordinator and status
-  transitions rather than maintaining separate in-memory queues.
-
-Queue limits and TTLs can change without changing the public contract. Change
-the constants in `ingress.ts` and the user guide together.
+To change a limit or TTL, change the constant in `ingress.ts` and the numbers in [Conversations](../guides/conversations.md) together.

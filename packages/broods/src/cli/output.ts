@@ -178,16 +178,17 @@ export function formatSuccess(
 
 /**
  * What a command page acts on right now, e.g. `now  my-app → production`.
- * `note` explains a target that differs from the current stage.
+ * `options.note` explains a target that differs from the selected stage.
  */
 export function formatTarget(
   project: string,
   stage: string,
-  note: string | undefined,
-  options: FormatOptions = {},
+  options: FormatOptions & { note?: string } = {},
 ): string {
   const color = shouldUseColor(options);
-  const suffix = note ? `  ${paint(`(${note})`, DIM, color)}` : "";
+  const suffix = options.note
+    ? `  ${paint(`(${options.note})`, DIM, color)}`
+    : "";
 
   return `  ${paint("now", DIM, color)}  ${project} → ${paintStage(stage, color)}${suffix}`;
 }

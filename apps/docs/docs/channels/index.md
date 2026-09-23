@@ -4,12 +4,10 @@ title: Channels
 
 # Channels
 
-A channel puts your agent in a chat app: Slack, Telegram, Discord, GitHub, Matrix, Pancake or Zalo. Messages that arrive there become agent turns, and the answer goes back to the same place.
+A channel puts your agent in Slack, Telegram, Discord, GitHub, Matrix, Pancake or Zalo. Messages that arrive there become agent turns, and the answer goes back to the same place.
 
-Three pieces are involved:
-
-- A **connection** is one app install and holds its credentials, such as a Slack bot token.
-- A **channel** names one room the connection answers in, such as `#product-eng`.
+- A connection is one app install and holds its credentials, such as a Slack bot token.
+- A channel names one room the connection answers in, such as `#product-eng`.
 - A [channel record](channel-records.md) is what a channel becomes after deploy. It can also route that room to a different agent and add rules for it.
 
 ## Minimal example
@@ -94,15 +92,15 @@ A connection that declares no channel and no `allowedChannelIds` fails `broods d
 
 Telegram, Slack, Discord, Matrix and Zalo route these commands to Broods instead of the agent. GitHub and Pancake pass slash text to the agent as normal input.
 
-| Command                                   | Effect                                                          |
-| ----------------------------------------- | --------------------------------------------------------------- |
-| `/new`, `/clear`                          | clear the conversation. Refused while a turn is running         |
-| `/compact [instructions]`                 | summarize the history now, whatever `session.compaction` says   |
-| `/help`                                   | list commands                                                   |
-| `/steer <text>`                           | join the running turn at its next step. Starts a turn when idle |
-| `/queue <text>`                           | run the text as its own turn after the current one              |
-| `/queue steer\|followup\|collect\|reject` | set the default mode for this conversation                      |
-| `/stop`, `/cancel`                        | stop the running turn after its current step                    |
+| Command                                   | Effect                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------ |
+| `/new`, `/clear`                          | clear the conversation. Refused while a turn or queued message is active |
+| `/compact [instructions]`                 | summarize the history now, whatever `session.compaction` says            |
+| `/help`                                   | list commands                                                            |
+| `/steer <text>`                           | join the running turn at its next step. Starts a turn when idle          |
+| `/queue <text>`                           | run the text as its own turn after the current one                       |
+| `/queue steer\|followup\|collect\|reject` | set the default mode for this conversation                               |
+| `/stop`, `/cancel`                        | stop the running turn after its current step                             |
 
 An ordinary message sent while the agent is busy steers the running turn. See [Conversations](../guides/conversations.md).
 
@@ -114,7 +112,7 @@ On a channel turn the agent gets these tools automatically. Do not add them to `
 | ---------------- | ----------------------------------------------------------- |
 | `send-update`    | post a progress note before the turn ends. Always available |
 | `send-message`   | message another conversation, which runs it as a follow-up  |
-| `send-images`    | send pictures from workspace files (`file_paths`) or `urls` |
+| `send-images`    | send pictures from workspace `file_paths` or from `urls`    |
 | `send-files`     | send workspace documents such as PDFs and spreadsheets      |
 | `send-sticker`   | send a sticker                                              |
 | `send-reactions` | react to a message                                          |
@@ -149,7 +147,7 @@ Media sent to the agent is read while the turn runs.
 | Zalo     | photos, stickers, voice notes                                              |
 | GitHub   | none. A pasted image stays a markdown URL in the text                      |
 
-Limits: 6 MB per picture, 25 MB for anything else, 10 attachments per message. The media type comes from the bytes, not the provider's label. An attachment that cannot be read becomes a line of text saying so, and the rest of the message still arrives.
+The limits are 6 MB per picture, 25 MB for anything else, and 10 attachments per message. The media type comes from the bytes, not the provider's label. An attachment that cannot be read becomes a line of text saying so, and the rest of the message still arrives.
 
 Pictures reach the model as pictures. A PDF, voice note or video goes over natively only when the model provider accepts that type. Otherwise the agent gets it as a workspace file to open with `read` or `bash`. Each message with attachments also carries a short note listing what arrived and where it was stored.
 
@@ -168,15 +166,15 @@ Audio the model cannot hear is transcribed on the way in, with the account's own
 
 Set `model.transcriptionModelId` to use another model on the same provider. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
 
-A failed transcription never drops the message. The note says why: a busy provider, a refused format, or no speech-to-text on the account.
+A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, or no speech-to-text on the account.
 
 ## Shared behavior
 
-- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub reacts with eyes. Pancake and Zalo do neither.
+- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub reacts with eyes. Zalo shows typing only. Pancake does neither.
 - Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
 - Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.
 - Trace links. Replies omit the dashboard trace link. Set `trace: "enabled"` on the connection to include it. Tracing itself is unaffected.
 - Credentials. A run only sees its own channel's credentials.
 
-Runnable examples live in `packages/demos/channel-*` and `packages/demos/multi-channel`. For how a webhook turns into a run inside the platform, see [Channels internals](../internals/channels.md).
+Runnable examples live in the [`packages/demos`](https://github.com/beeblastco/broods/tree/dev/packages/demos) folder, under `channel-*` and [`multi-channel`](https://github.com/beeblastco/broods/tree/dev/packages/demos/multi-channel). For how a webhook turns into a run inside the platform, see [Channels internals](../internals/channels.md).
