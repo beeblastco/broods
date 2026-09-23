@@ -8,6 +8,11 @@
 # defence against billable orphans (NAT Gateways, EIPs, unused log groups,
 # deprecated Lambda functions).
 #
+# Refs: the `production` environment only deploys from `main`, and the schedule
+# runs on the default branch (`dev`). So the scheduled run checks the non-
+# production stages itself and dispatches this workflow on `main` once per
+# production stage. A production dispatch from any other ref fails fast.
+#
 # Locking: each stage job takes the same `sst-<stage>` concurrency group as the
 # deploy job in deploy.yaml, so drift never touches a stage mid-deploy and never
 # needs `sst unlock`. A lock left behind by a crashed run fails the deploy here;
@@ -19,7 +24,7 @@
 #
 # Trigger:
 #   - schedule: 0 3 * * * (03:00 UTC daily; low-traffic window)
-#   - workflow_dispatch: ad-hoc run, same matrix
+#   - workflow_dispatch: one stage; production-* only with `--ref main`
 
 name: Drift Cleanup
 
@@ -27,30 +32,100 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+    inputs:
+      stage:
+        description: SST stage to check. production-* runs only from main.
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - production-eu-west-1
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  plan:
+    name: Pick stages
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      production: ${{ steps.pick.outputs.production }}
+    steps:
+      - name: Pick stages
+        id: pick
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_STAGE: ${{ inputs.stage }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # stage|region|ref. `ref` is the branch that feeds the stage, as in
+          # deploy.yaml. Stand up a new stage = add it here (and to the
+          # dispatch options) or drift eats it.
+          STAGES='dev|eu-west-1|dev
+          production-eu-west-1|eu-west-1|main'
+
+          selected=""
+          production=""
+          while IFS='|' read -r stage region ref; do
+            if [[ "$EVENT_NAME" == "schedule" ]]; then
+              if [[ "$stage" == production* ]]; then
+                production+="$stage "
+                continue
+              fi
+            elif [[ "$stage" != "$INPUT_STAGE" ]]; then
+              continue
+            elif [[ "$stage" == production* && "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "::error::Stage $stage runs only from main (this run is on $GITHUB_REF). Dispatch with --ref main."
+              exit 1
+            fi
+            selected+="${stage}|${region}|${ref}"$'\n'
+          done <<< "$STAGES"
+
+          matrix="$(printf '%s' "$selected" | jq -Rnc '[inputs | select(length > 0) | split("|") | {stage: .[0], region: .[1], ref: .[2]}]')"
+          {
+            echo "matrix=$matrix"
+            echo "production=$production"
+          } >> "$GITHUB_OUTPUT"
+
+  # Own job so a failed dispatch neither blocks nor hides the dev pass.
+  dispatch-production:
+    name: Dispatch production stages on main
+    needs: plan
+    if: needs.plan.outputs.production != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGES: ${{ needs.plan.outputs.production }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for stage in $STAGES; do
+            echo "Dispatching $stage on main"
+            gh workflow run drift-cleanup.yaml --repo "$GITHUB_REPOSITORY" --ref main -f stage="$stage"
+          done
+
   reconcile:
     name: Reconcile ${{ matrix.stage }}
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       # Each stage must finish (or fail) independently. One stage failing
       # must not block another's cleanup pass.
       fail-fast: false
-      # `ref` pins each stage to the branch that feeds it, mirroring deploy.yaml:
-      # `dev` tracks `dev`, every `production-*` stage tracks `main`. Without it
-      # every stage would diff against the trigger ref (`dev`).
       matrix:
-        include:
-          - stage: dev
-            region: eu-west-1
-            ref: dev
-          - stage: production-eu-west-1
-            region: eu-west-1
-            ref: main
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     # Same key as deploy.yaml's deploy job. Every production-* stage shares one.
     concurrency:
