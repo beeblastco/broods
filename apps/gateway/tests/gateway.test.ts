@@ -3605,24 +3605,19 @@ test("websocket token reads the broods.token subprotocol before the query param"
   expect(websocketUpgradeHeaders(request)).toEqual({
     "Sec-WebSocket-Protocol": "broods.v1",
   });
-  // Bun's server.upgrade throws on an empty headers object, which 500s the
-  // handshake for any client that offered no subprotocol.
   expect(websocketUpgradeHeaders(new Request(url))).toBeUndefined();
 });
 
 test("a client that offers no subprotocol still upgrades", async () => {
   const server = Bun.serve({
     port: 0,
-    fetch: (request, self) =>
-      self.upgrade(request, {
-        headers: websocketUpgradeHeaders(request),
-        data: undefined,
-      })
+    fetch: (request, self): Response | undefined =>
+      self.upgrade(request, { headers: websocketUpgradeHeaders(request) })
         ? undefined
         : new Response("no upgrade", { status: 400 }),
     websocket: {
-      message: () => {},
-      open: (socket) => socket.close(1000, "ok"),
+      message: (): void => {},
+      open: (socket): void => socket.close(1000, "ok"),
     },
   });
   try {
