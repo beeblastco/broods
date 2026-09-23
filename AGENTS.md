@@ -29,7 +29,7 @@ outside repo, sibling of checkout:
 - prefer strict type. do not reach for `isPlainObject` or `isRecord` on new code. find the real type first, or the library that already ship it. write your own type or interface when none fit. runtime guard only when the typing get too complex or too long to be worth it. when you hit that, say so to user and let them decide.
 - breaking storage or backend cutover: no compat shim for dead record format or old id unless user ask. clean reset and recreate account/resource instead. never delete live data, never deploy, without user say so.
 - do not deploy unless user ask. push to `dev`, let CI/CD do it. `main` is protected, only fast-forward from `dev` by "Promote dev to main" workflow (Actions tab, one click), that triggers prod deploy.
-- `.github/workflows/drift-cleanup.yaml` run `sst refresh` + `sst diff` nightly and delete Pulumi-tracked orphan per stage. stand up a new stage = add it to that matrix or drift eat it.
+- `.github/workflows/drift-cleanup.yaml` run `sst refresh` + `sst diff` nightly per stage, under same `sst-<stage>` lock as deploy. dev drift delete Pulumi-tracked orphan, production drift only report (job fail, no deploy). stand up a new stage = add it to that matrix or drift eat it.
 - keep change inside workspace you touch. but public contract move = also move `apps/docs/docs/api-reference/openapi.yaml`, the docs, `packages/demos`, SDK types/client in `packages/broods`, and the focused tests.
 - Convex schema or function change = `bun run --filter @broods/convex codegen`, commit the generated diff. it is committed on purpose so core and dashboard typecheck with no local codegen.
 - React version pinned per app package. never add React to root package.
