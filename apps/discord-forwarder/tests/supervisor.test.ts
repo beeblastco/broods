@@ -16,6 +16,8 @@ const CONFIG: ForwarderConfig = {
   port: 3000,
 };
 
+const realFetch = globalThis.fetch;
+
 class StubSocket implements ForwarderSocket {
   botIdentity: string | null = null;
   state: SocketState = "stopped";
@@ -166,15 +168,31 @@ describe("reconcile", () => {
     expect(forwarder.status().targets).toBe(2);
   });
 
-  // 4014 (Message Content Intent off) waits on the owner. A config change is
-  // the only signal they may have fixed it, and a timer would burn IDENTIFYs.
-  it("replaces a socket parked on a fatal close code", () => {
+  // 4014 (Message Content Intent off) waits on the owner. A change to that
+  // token's own rows is the only signal they may have fixed it; any other
+  // reconcile would spend an IDENTIFY on a bot that is still refused.
+  it("keeps a fatal socket parked when only another token changes", (): void => {
     const { forwarder, sockets } = stubbedForwarder();
     forwarder.reconcile([connection()]);
     const parked = sockets.get("token-a")!;
     parked.state = "fatal";
 
+    forwarder.reconcile([
+      connection(),
+      connection({ agentId: "agent-2", botToken: "token-b" }),
+    ]);
+
+    expect(parked.stopped).toBe(0);
+    expect(sockets.get("token-a")).toBe(parked);
+  });
+
+  it("replaces a fatal socket when its own connections change", (): void => {
+    const { forwarder, sockets } = stubbedForwarder();
     forwarder.reconcile([connection()]);
+    const parked = sockets.get("token-a")!;
+    parked.state = "fatal";
+
+    forwarder.reconcile([connection({ agentName: "renamed" })]);
 
     expect(parked.stopped).toBe(1);
     expect(sockets.get("token-a")).not.toBe(parked);
@@ -198,7 +216,6 @@ describe("reconcile", () => {
   // the targets before that await would post to the webhooks the token had when
   // the message arrived rather than the ones it has now.
   it("posts where reconcile last pointed the token, not where it started", async () => {
-    const realFetch = globalThis.fetch;
     const posted: string[] = [];
     let releaseLookup: (() => void) | undefined;
     globalThis.fetch = (async (
@@ -222,7 +239,7 @@ describe("reconcile", () => {
 
     try {
       let deliver: ((data: MessageCreate) => void) | undefined;
-      const forwarder = new Forwarder(CONFIG, (options) => {
+      const forwarder = new Forwarder(CONFIG, (options): StubSocket => {
         deliver = options.onMessageCreate;
 
         return new StubSocket();
@@ -245,7 +262,7 @@ describe("reconcile", () => {
         }),
       ]);
       releaseLookup?.();
-      await until(() => posted.length > 0);
+      await until((): boolean => posted.length > 0);
 
       expect(posted).toEqual(["https://gateway.example.com/v1/webhooks/new"]);
     } finally {
@@ -254,69 +271,67 @@ describe("reconcile", () => {
   });
 });
 
-describe("delivery", () => {
-  const realFetch = globalThis.fetch;
-
-  /** Opens one token and returns what its socket would hand the supervisor. */
-  function delivering(): {
-    deliver: (data: MessageCreate) => void;
-    lookups: string[];
-    posted: string[];
-  } {
-    const lookups: string[] = [];
-    const posted: string[] = [];
-    globalThis.fetch = (async (
-      input: string | URL | Request,
-    ): Promise<Response> => {
-      const url = String(input);
-      if (new URL(url).hostname === "discord.com") {
-        lookups.push(url);
-
-        return new Response("", {
-          headers: { "Retry-After": "0.001" },
-          status: 429,
-        });
-      }
-      posted.push(url);
-
-      return new Response("", { status: 200 });
-    }) as typeof fetch;
-    let deliver: (data: MessageCreate) => void = (): void => {};
-    const forwarder = new Forwarder(CONFIG, (options) => {
-      deliver = options.onMessageCreate;
-
-      return new StubSocket();
-    });
-    forwarder.reconcile([connection()]);
-
-    return { deliver: deliver, lookups: lookups, posted: posted };
-  }
-
-  afterEach(() => {
+describe("delivery", (): void => {
+  afterEach((): void => {
     globalThis.fetch = realFetch;
   });
 
   // Without `thread` core keys a threaded message to the parent channel, which
   // is a different conversation, so dropping it is the lesser harm.
-  it("drops a guild message whose thread lookup keeps failing", async () => {
+  it("drops a guild message whose thread lookup keeps failing", async (): Promise<void> => {
     const { deliver, lookups, posted } = delivering();
     deliver({ channel_id: "thread-1", guild_id: "guild-1", id: "message-1" });
 
-    await until(() => lookups.length === 2);
+    await until((): boolean => lookups.length === 2);
     await Bun.sleep(5);
 
     expect(posted).toEqual([]);
   });
 
-  it("forwards a DM without looking up a thread", async () => {
+  it("forwards a DM without looking up a thread", async (): Promise<void> => {
     const { deliver, lookups, posted } = delivering();
     deliver({ channel_id: "dm-1", id: "message-1" });
 
-    await until(() => posted.length > 0);
+    await until((): boolean => posted.length > 0);
 
     expect(lookups).toEqual([]);
   });
 });
+
+/** Opens one token and returns what its socket would hand the supervisor. */
+function delivering(): {
+  deliver: (data: MessageCreate) => void;
+  lookups: string[];
+  posted: string[];
+} {
+  const lookups: string[] = [];
+  const posted: string[] = [];
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+  ): Promise<Response> => {
+    const url = String(input);
+    if (new URL(url).hostname === "discord.com") {
+      lookups.push(url);
+
+      return new Response("", {
+        headers: { "Retry-After": "0.001" },
+        status: 429,
+      });
+    }
+    posted.push(url);
+
+    return new Response("", { status: 200 });
+  }) as typeof fetch;
+  let deliver: (data: MessageCreate) => void = (): void => {};
+  const forwarder = new Forwarder(CONFIG, (options): StubSocket => {
+    deliver = options.onMessageCreate;
+
+    return new StubSocket();
+  });
+  forwarder.reconcile([connection()]);
+
+  return { deliver: deliver, lookups: lookups, posted: posted };
+}
 
 /** Waits for a fire-and-forget delivery to reach the state under test. */
 async function until(done: () => boolean): Promise<void> {

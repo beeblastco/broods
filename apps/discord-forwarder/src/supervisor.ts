@@ -64,9 +64,9 @@ export class Forwarder {
    * Opens sockets for tokens that gained a connection, closes the ones that lost
    * every connection, and re-points the rest. An unchanged token keeps its
    * socket: its session, sequence number and IDENTIFY history all survive. A
-   * socket parked on a fatal close code is replaced instead, because a config
-   * change is the only signal that the owner may have fixed the bot, and
-   * retrying on a timer would spend IDENTIFY budget.
+   * socket parked on a fatal close code is replaced once its own targets change,
+   * the only signal that the owner may have fixed the bot. Any other reconcile,
+   * or a timer, would spend IDENTIFY budget on a bot that is still refused.
    */
   reconcile(connections: readonly ForwarderConnection[]): void {
     const desired = groupConnectionsByToken(connections);
@@ -83,16 +83,21 @@ export class Forwarder {
     for (const [botToken, targets] of desired) {
       const urls = webhookUrls(targets);
       const existing = this.managed.get(botToken);
-      if (existing?.socket.state === "fatal") {
-        existing.socket.stop();
-      } else if (existing) {
-        // reconcile runs on every config change, so warn only when the fan-out
-        // itself moved.
-        if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
-          warnOnSharedToken("Discord", botToken, urls);
+      if (existing) {
+        // Unchanged projection rows are never rewritten, so equal targets mean
+        // nothing about this token moved.
+        const moved =
+          JSON.stringify(existing.targets) !== JSON.stringify(targets);
+        if (!moved || existing.socket.state !== "fatal") {
+          // reconcile runs on every config change, so warn only when the
+          // fan-out itself moved.
+          if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
+            warnOnSharedToken("Discord", botToken, urls);
+          }
+          existing.targets = targets;
+          continue;
         }
-        existing.targets = targets;
-        continue;
+        existing.socket.stop();
       }
       warnOnSharedToken("Discord", botToken, urls);
       this.open(botToken, targets);
