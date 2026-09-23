@@ -1776,9 +1776,10 @@ paths:
         Mints a short-lived sealed ticket for an interactive PTY session on a persistent
         sandbox reservation (self-hosted workdir `sandbox` and AWS MicroVM `lambda`
         providers). A suspended instance is resumed first. The opaque `token` is passed
-        to the public gateway's terminal WebSocket (`websocketPath` + `?token=`), which
-        bridges the browser to the sandbox's in-guest TTY; the provider credential never
-        reaches the client. MicroVMs reserved before shell ingress was attached at launch
+        to the public gateway's terminal WebSocket at `websocketPath` as the
+        `broods.token.<token>` subprotocol, which bridges the browser to the sandbox's
+        in-guest TTY; the provider credential never reaches the client. A ticket opens
+        one socket. MicroVMs reserved before shell ingress was attached at launch
         answer 409 until terminated and re-reserved.
       security: [{ BearerAuth: [] }]
       parameters:

@@ -6,6 +6,11 @@
 
 import { afterEach, expect, test } from "bun:test";
 import {
+  sealTerminalTicket,
+  TERMINAL_WEBSOCKET_PATH,
+  type TerminalTicket,
+} from "../../core/src/shared/terminal-ticket.ts";
+import {
   createGateway,
   gatewayConfigFromEnv,
   type GatewayConfig,
@@ -406,6 +411,36 @@ test("a machine daemon upgrade needs a credential and is relayed to core's socke
   ]);
 });
 
+test("a terminal ticket in the subprotocol opens one socket, and a replay spends auth budget", async () => {
+  const authFailureLimiter = new RateLimiter(1, 60_000);
+  const gateway = createGateway(
+    gatewayConfig({ authFailureLimiter: authFailureLimiter }),
+  );
+  const { server, upgrades } = fakeServer();
+  const ticket: TerminalTicket = {
+    url: "wss://sandbox.example/pty",
+    authorization: "Bearer org-key",
+    accountId: "account-1",
+    expiresAt: Date.now() + 60_000,
+  };
+  const token = sealTerminalTicket(ticket, "terminal-secret");
+  const request = (): Request =>
+    upgradeRequest(TERMINAL_WEBSOCKET_PATH, {
+      subprotocols: ["broods.v1", `broods.token.${token}`],
+    });
+
+  expect(await gateway.fetch(request(), server)).toBeUndefined();
+  expect(authFailureLimiter.blocked("10.0.0.1")).toBe(false);
+  // The replay still upgrades so the open handler can close it with a reason.
+  expect(await gateway.fetch(request(), server)).toBeUndefined();
+  expect(authFailureLimiter.blocked("10.0.0.1")).toBe(true);
+  expect(upgrades).toEqual([
+    { kind: "terminal", ticket: ticket },
+    { kind: "terminal", ticket: null },
+  ]);
+});
+
+/** Upgrades like Bun: a plain empty `headers` object throws. */
 function fakeServer(): {
   server: Bun.Server<GatewayData>;
   upgrades: GatewayData[];
@@ -413,7 +448,20 @@ function fakeServer(): {
   const upgrades: GatewayData[] = [];
   const server = {
     requestIP: () => ({ address: "10.0.0.1", family: "IPv4", port: 4321 }),
-    upgrade: (_request: Request, options: { data: GatewayData }) => {
+    upgrade: (
+      _request: Request,
+      options: { data: GatewayData; headers?: HeadersInit },
+    ) => {
+      const { headers } = options;
+      if (
+        headers !== undefined &&
+        !(headers instanceof Headers) &&
+        Object.keys(headers).length === 0
+      ) {
+        throw new TypeError(
+          "upgrade options.headers must be a Headers or an object",
+        );
+      }
       upgrades.push(options.data);
 
       return true;
@@ -458,11 +506,13 @@ function scopeFetch(): typeof fetch {
 
 function upgradeRequest(
   pathname: string,
-  options: { origin?: string; token?: string } = {},
+  options: { origin?: string; subprotocols?: string[]; token?: string } = {},
 ): Request {
   const url = new URL(pathname, "https://gw.example");
   const headers = new Headers({ upgrade: "websocket" });
   headers.set("origin", options.origin ?? "https://broods.app");
+  if (options.subprotocols)
+    headers.set("sec-websocket-protocol", options.subprotocols.join(", "));
   if (options.token) headers.set("authorization", `Bearer ${options.token}`);
 
   return new Request(url, { headers: headers });

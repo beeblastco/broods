@@ -54,7 +54,7 @@ interface UseObservabilityStreamOptions {
   projectSlug: string | undefined;
   /** Stage slug, used in the WS path. Required to open the socket. */
   stageSlug: string | undefined;
-  /** Stage runtime API key (fp_…), passed as ?token=. Required to open the socket. */
+  /** Stage runtime API key (fp_…), sent as the `broods.token.` subprotocol. Required to open the socket. */
   apiKey: string | undefined;
   /** Number of historic entries to request as backfill before live stream. 0 = live only. */
   backfill?: number;

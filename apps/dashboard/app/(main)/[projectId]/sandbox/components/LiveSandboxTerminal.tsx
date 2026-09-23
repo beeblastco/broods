@@ -97,8 +97,11 @@ export function LiveSandboxTerminal({
         },
       };
 
+      // The ticket rides the subprotocol, not the query string, which lands
+      // in access logs.
       const socket = new WebSocket(
-        `${endpoint.websocketBaseUrl}${ticket.websocketPath}?token=${encodeURIComponent(ticket.token)}`,
+        `${endpoint.websocketBaseUrl}${ticket.websocketPath}`,
+        ["broods.v1", `broods.token.${ticket.token}`],
       );
       socket.binaryType = "arraybuffer";
       socketRef.current = socket;
