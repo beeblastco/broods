@@ -24,9 +24,11 @@ test("a breaking change on 0.x bumps the minor", async (): Promise<void> => {
   expect(await run(repo)).toMatchObject({ bump: "minor", next: "0.41.0" });
 });
 
-test("a declared version ahead of the tag is released as is", async (): Promise<void> => {
+test("a declared version ahead of the last stable tag is released as is", async (): Promise<void> => {
   repo = await releasedRepo("0.40.0");
   await commit(repo, "1.0.0", "chore(broods): cut 1.0.0");
+  // A hand-pushed rc sorts above the last stable tag and must not hide it.
+  git(repo, ["tag", "broods-v1.0.0-rc.1"]);
 
   expect(await run(repo, "--write")).toMatchObject({
     bump: "declared",

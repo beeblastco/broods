@@ -131,16 +131,15 @@ function lastBumpCommit(): string | undefined {
   return undefined;
 }
 
-// The newest release the publish workflow tagged, or undefined before the first
-// one. Sorted by version rather than by date so a re-cut old tag cannot win.
+// The newest stable release the publish workflow tagged, or undefined before
+// the first one. Sorted by version rather than by date so a re-cut old tag
+// cannot win, and a hand-pushed prerelease tag is skipped, not a dead end.
 function lastReleaseTag(): { tag: string; version: string } | undefined {
   const tag = git(["tag", "--list", "broods-v*", "--sort=-v:refname"])
     .split("\n")
-    .filter(Boolean)[0];
-  if (!tag) return undefined;
-  const version = tag.slice("broods-v".length);
+    .find((candidate) => SEMVER.test(candidate.slice("broods-v".length)));
 
-  return SEMVER.test(version) ? { tag: tag, version: version } : undefined;
+  return tag ? { tag: tag, version: tag.slice("broods-v".length) } : undefined;
 }
 
 function nextVersion(bump: Bump): string {
