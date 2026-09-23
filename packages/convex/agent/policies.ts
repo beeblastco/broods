@@ -19,6 +19,7 @@ import { isPlainObject } from "../model/objects";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
 import { AGENT_POLICY_ACTIONS } from "../model/policyRules";
 import { agentPoliciesFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 // Sourced from the CRUD normalizer rather than restated: this copy had gone
 // stale and silently refused every `agent.invoke` rule the runtime supports.
@@ -274,10 +275,10 @@ export const removeInternal = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("agentPolicies", args.policyId);
     if (!normalized)
-      throw new Error("Policy does not belong to the supplied accountId");
+      throw new ClientError("Policy does not belong to the supplied accountId");
     const policy = await ctx.db.get(normalized);
     if (!policy || policy.accountId !== args.accountId) {
-      throw new Error("Policy does not belong to the supplied accountId");
+      throw new ClientError("Policy does not belong to the supplied accountId");
     }
     await assertPolicyUnreferenced(ctx, policy);
     await ctx.db.patch(normalized, {
@@ -346,10 +347,10 @@ export const updateInternal = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("agentPolicies", args.policyId);
     if (!normalized)
-      throw new Error("Policy does not belong to the supplied accountId");
+      throw new ClientError("Policy does not belong to the supplied accountId");
     const policy = await ctx.db.get(normalized);
     if (!policy || policy.accountId !== args.accountId) {
-      throw new Error("Policy does not belong to the supplied accountId");
+      throw new ClientError("Policy does not belong to the supplied accountId");
     }
     const document =
       args.document !== undefined
@@ -423,25 +424,27 @@ export const usageCounts = query({
  */
 export function normalizePolicyDocument(value: unknown): unknown {
   if (!isPlainObject(value))
-    throw new Error("Policy document must be an object.");
+    throw new ClientError("Policy document must be an object.");
   if (value.version !== 1)
-    throw new Error("Policy document version must be 1.");
+    throw new ClientError("Policy document version must be 1.");
   if (!Array.isArray(value.rules))
-    throw new Error("Policy document rules must be an array.");
+    throw new ClientError("Policy document rules must be an array.");
   for (const [index, rule] of value.rules.entries()) {
     if (!isPlainObject(rule))
-      throw new Error(`Policy rule ${index + 1} must be an object.`);
+      throw new ClientError(`Policy rule ${index + 1} must be an object.`);
     if (rule.effect !== "allow" && rule.effect !== "deny") {
-      throw new Error(`Policy rule ${index + 1} effect must be allow or deny.`);
+      throw new ClientError(
+        `Policy rule ${index + 1} effect must be allow or deny.`,
+      );
     }
     if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
-      throw new Error(
+      throw new ClientError(
         `Policy rule ${index + 1} actions must be a non-empty array.`,
       );
     }
     for (const action of rule.actions) {
       if (typeof action !== "string" || !POLICY_ACTION_SET.has(action)) {
-        throw new Error(
+        throw new ClientError(
           `Policy rule ${index + 1} contains an unsupported action.`,
         );
       }

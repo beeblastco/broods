@@ -14,6 +14,7 @@ import {
   type WorkspaceConfig,
 } from "../model/workspaceRules";
 import { workspaceConfigsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const workspaceConfigDoc = v.object({
   ...workspaceConfigsFields,
@@ -175,13 +176,13 @@ export const update = internalMutation({
     const { accountId, workspaceId, ...patch } = args;
     const normalized = ctx.db.normalizeId("workspaceConfigs", workspaceId);
     if (!normalized) {
-      throw new Error(
+      throw new ClientError(
         "Workspace config does not belong to the supplied accountId",
       );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== accountId) {
-      throw new Error(
+      throw new ClientError(
         "Workspace config does not belong to the supplied accountId",
       );
     }
@@ -208,13 +209,13 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
     if (!normalized) {
-      throw new Error(
+      throw new ClientError(
         "Workspace config does not belong to the supplied accountId",
       );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId) {
-      throw new Error(
+      throw new ClientError(
         "Workspace config does not belong to the supplied accountId",
       );
     }

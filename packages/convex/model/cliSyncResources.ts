@@ -40,6 +40,7 @@ import {
   type PolicyReferenceRows,
 } from "./policyReferences";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
+import { ClientError } from "./clientError";
 
 /** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
 export async function deleteAgentResource(
@@ -58,8 +59,9 @@ export async function deleteAgentResource(
   const config = configs.find((entry) => entry.name === name);
   if (!config) return;
   if (config.managedBy !== "cli") {
-    throw new Error(
+    throw new ClientError(
       `Agent "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
+      "conflict",
     );
   }
   if (config.agentId) {
@@ -85,8 +87,9 @@ export async function deleteSandboxResource(
     .unique();
   if (!sandbox) return;
   if (sandbox.managedBy !== "cli") {
-    throw new Error(
+    throw new ClientError(
       `Sandbox "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
+      "conflict",
     );
   }
   await ctx.db.delete(sandbox._id);
@@ -105,8 +108,9 @@ export async function deleteWorkspaceResource(
     .unique();
   if (!workspace) return;
   if (workspace.managedBy !== "cli") {
-    throw new Error(
+    throw new ClientError(
       `Workspace "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
+      "conflict",
     );
   }
   await ctx.db.delete(workspace._id);

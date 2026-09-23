@@ -11,6 +11,7 @@ import {
   accountHooksFields,
   paginationCursorFields,
 } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const accountHookDoc = v.object({
   ...accountHooksFields,
@@ -116,11 +117,11 @@ export const update = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("accountHooks", args.hookId);
     if (!normalized) {
-      throw new Error("Hook does not belong to the supplied accountId");
+      throw new ClientError("Hook does not belong to the supplied accountId");
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId || doc.status !== "active") {
-      throw new Error("Hook does not belong to the supplied accountId");
+      throw new ClientError("Hook does not belong to the supplied accountId");
     }
 
     await ctx.db.patch(normalized, {
@@ -152,11 +153,11 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("accountHooks", args.hookId);
     if (!normalized) {
-      throw new Error("Hook does not belong to the supplied accountId");
+      throw new ClientError("Hook does not belong to the supplied accountId");
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId) {
-      throw new Error("Hook does not belong to the supplied accountId");
+      throw new ClientError("Hook does not belong to the supplied accountId");
     }
 
     await ctx.db.patch(normalized, {

@@ -21,6 +21,7 @@ import {
   type CliAuth,
   type RouteParts,
 } from "./httpRoutes";
+import { clientErrorResponse } from "../model/clientError";
 import { jsonError } from "../model/httpJson";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
@@ -54,18 +55,16 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
         return await handleResourceDeleteRoute(ctx, req, route, authResult);
     }
   } catch (error) {
-    console.error("CLI request failed", error);
+    // Most failures here are the caller's own manifest failing validation.
+    // Hand the reason back or `broods dev` reports an unactionable error.
+    const clientError = clientErrorResponse(error);
+    if (clientError) return clientError;
     if (error instanceof SyntaxError || error instanceof URIError) {
       return jsonError(400, "Request body or path is invalid");
     }
-    // Most failures here are the caller's own manifest failing validation. Hand
-    // the reason back or `broods dev` reports an unactionable 500.
-    const detail = error instanceof Error ? error.message : "";
+    console.error("CLI request failed", error);
 
-    return jsonError(
-      500,
-      detail ? `CLI request failed: ${detail}` : "CLI request failed",
-    );
+    return jsonError(500, "CLI request failed");
   }
 });
 

@@ -23,6 +23,7 @@ import {
   methodNotAllowed,
   rateLimitHeaders,
 } from "../../model/httpJson";
+import { ClientError } from "../../model/clientError";
 
 export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
@@ -207,7 +208,7 @@ export async function parseJsonRequest(req: Request): Promise<unknown> {
   try {
     return JSON.parse(text);
   } catch (err) {
-    throw new Error(
+    throw new ClientError(
       `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }

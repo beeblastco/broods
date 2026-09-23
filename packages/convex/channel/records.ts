@@ -12,6 +12,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { channelRecordsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const channelRecordDoc = v.object({
   ...channelRecordsFields,
@@ -47,8 +48,9 @@ export const create = internalMutation({
       )
       .first();
     if (existing) {
-      throw new Error(
+      throw new ClientError(
         `A channel record already exists for ${args.platform}:${args.externalId}`,
+        "conflict",
       );
     }
 
@@ -229,8 +231,9 @@ export const update = internalMutation({
           .take(2)
       ).find((row) => row._id !== doc._id);
       if (active) {
-        throw new Error(
+        throw new ClientError(
           `A channel record already exists for ${doc.platform}:${doc.externalId}`,
+          "conflict",
         );
       }
     }
@@ -261,11 +264,15 @@ async function loadOwnedRecord(
 ): Promise<Doc<"channelRecords">> {
   const normalized = ctx.db.normalizeId("channelRecords", channelRecordId);
   if (!normalized) {
-    throw new Error("Channel record does not belong to the supplied accountId");
+    throw new ClientError(
+      "Channel record does not belong to the supplied accountId",
+    );
   }
   const doc = await ctx.db.get(normalized);
   if (!doc || doc.accountId !== accountId) {
-    throw new Error("Channel record does not belong to the supplied accountId");
+    throw new ClientError(
+      "Channel record does not belong to the supplied accountId",
+    );
   }
 
   return doc;

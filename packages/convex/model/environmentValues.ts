@@ -12,6 +12,7 @@ import {
 } from "./agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./sandboxConfigSync";
+import { ClientError } from "./clientError";
 
 interface EnvironmentVariableWrite {
   id: Id<"environmentVariables">;
@@ -124,9 +125,10 @@ export async function assertEnvironmentVariableUnreferenced(
   ].sort();
   if (referencing.length === 0) return;
 
-  throw new Error(
+  throw new ClientError(
     `${name} is still referenced by ${referencing.join(", ")}. ` +
       `Remove the env("${name}") reference from those resources and sync before deleting the variable.`,
+    "conflict",
   );
 }
 

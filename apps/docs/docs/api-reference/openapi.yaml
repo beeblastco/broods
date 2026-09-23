@@ -2080,6 +2080,8 @@ paths:
                 $ref: "#/components/schemas/Mcp"
         "400": { description: Missing project or stage, or invalid input }
         "404": { description: Project or stage not found }
+        "409":
+          { description: A server with this name already exists in the stage }
     get:
       tags: [MCP servers]
       summary: List external MCP servers
@@ -2191,6 +2193,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Mcp"
+        "409":
+          { description: A server with this name already exists in the stage }
     delete:
       tags: [MCP servers]
       summary: Delete external MCP server
@@ -2571,6 +2575,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChannelRecord"
+        "409":
+          {
+            description: An active record already exists for this platform and externalId,
+          }
     get:
       tags: [Channels]
       summary: List channel records
@@ -2640,6 +2648,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ChannelRecord"
         "404": { description: Not found }
+        "409":
+          {
+            description: An active record already exists for this platform and externalId,
+          }
     delete:
       tags: [Channels]
       summary: Delete channel record

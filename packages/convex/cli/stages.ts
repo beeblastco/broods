@@ -30,6 +30,7 @@ import {
   stageSessionValidator,
   type StageSession,
 } from "../agent/deployments";
+import { ClientError, clientErrorResponse } from "../model/clientError";
 
 const CANONICAL_NAMES = {
   development: "Development",
@@ -80,7 +81,7 @@ export const createByAccount = internalMutation({
     if (!projectDoc) return null;
 
     const trimmed = args.name.trim();
-    if (!trimmed) throw new Error("Stage name is required");
+    if (!trimmed) throw new ClientError("Stage name is required");
 
     const stages = await ctx.db
       .query("stages")
@@ -90,7 +91,7 @@ export const createByAccount = internalMutation({
     const displayName =
       kind === "custom" ? assertStageName(trimmed) : CANONICAL_NAMES[kind];
     if (stages.some((entry) => stageNameEquals(entry.name, displayName))) {
-      throw new Error(`Stage ${displayName} already exists`);
+      throw new ClientError(`Stage ${displayName} already exists`, "conflict");
     }
 
     const source = args.duplicateFrom
@@ -99,7 +100,10 @@ export const createByAccount = internalMutation({
         )
       : undefined;
     if (args.duplicateFrom && !source) {
-      throw new Error(`Source stage ${args.duplicateFrom} was not found`);
+      throw new ClientError(
+        `Source stage ${args.duplicateFrom} was not found`,
+        "not_found",
+      );
     }
 
     // A brand-new stage is never the default; `cliSync.ensureStage`
@@ -197,15 +201,14 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
 
     return methodNotAllowed(["GET", "POST"]);
   } catch (error) {
-    console.error("CLI stage request failed", error);
+    const clientError = clientErrorResponse(error);
+    if (clientError) return clientError;
     if (error instanceof SyntaxError) {
       return jsonError(400, "Request body must be valid JSON");
     }
+    console.error("CLI stage request failed", error);
 
-    return jsonError(
-      400,
-      error instanceof Error ? error.message : "Stage request failed",
-    );
+    return jsonError(500, "Stage request failed");
   }
 });
 

@@ -22,6 +22,7 @@ import {
 } from "../model/policyRules";
 import { createRoleId } from "../model/roleRules";
 import { accountRolesFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const DEFAULT_PRUNE_BATCH_SIZE = 100;
 
@@ -278,12 +279,12 @@ async function resolveRoleScope(
   // Structural scope is the deployKeys shape: a stage inside a project, or
   // account-wide. Half a scope would silently widen what fp_agent_ can assume.
   if (projectId === undefined || stageId === undefined) {
-    throw new Error("projectId and stageId must be provided together");
+    throw new ClientError("projectId and stageId must be provided together");
   }
   const normalizedProjectId = ctx.db.normalizeId("projects", projectId);
   const normalizedStageId = ctx.db.normalizeId("stages", stageId);
   if (!normalizedProjectId || !normalizedStageId) {
-    throw new Error("projectId and stageId must reference this account");
+    throw new ClientError("projectId and stageId must reference this account");
   }
   const [stage, owningAccountId] = await Promise.all([
     ctx.db.get(normalizedStageId),
@@ -294,7 +295,7 @@ async function resolveRoleScope(
     stage.projectId !== normalizedProjectId ||
     owningAccountId !== accountId
   ) {
-    throw new Error("projectId and stageId must reference this account");
+    throw new ClientError("projectId and stageId must reference this account");
   }
 
   return { projectId: normalizedProjectId, stageId: normalizedStageId };

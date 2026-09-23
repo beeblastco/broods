@@ -33,6 +33,7 @@ import {
   collectionPage,
   writeAudit,
 } from "./shared";
+import { ClientError } from "../../model/clientError";
 
 type PreparedAccountAgentConfig = {
   encrypted: { ciphertext: string; iv: string; tag: string };
@@ -423,7 +424,7 @@ async function prepareAccountAgentConfig(
     (name) => !Object.prototype.hasOwnProperty.call(values, name),
   );
   if (missing.length > 0)
-    throw new Error(`unknown env vars: ${missing.join(", ")}`);
+    throw new ClientError(`unknown env vars: ${missing.join(", ")}`);
 
   return {
     encrypted: await encryptAgentConfig(
@@ -446,7 +447,8 @@ async function validateAgentPolicyIds(
         policyId: policyId,
       },
     );
-    if (!policy) throw new Error(`Agent policy not found: ${policyId}`);
+    if (!policy)
+      throw new ClientError(`Agent policy not found: ${policyId}`, "not_found");
   }
 }
 
@@ -468,16 +470,20 @@ async function validateAgentSkillPaths(
   for (const skillPath of config.skills?.allowed ?? []) {
     const parts = skillPath.split("/");
     if (parts.length !== 2 || !parts[0] || !parts[1]) {
-      throw new Error(`Invalid skill path: ${skillPath}`);
+      throw new ClientError(`Invalid skill path: ${skillPath}`);
     }
     if (parts[0] !== accountId) {
-      throw new Error(`Skill path belongs to another account: ${skillPath}`);
+      throw new ClientError(
+        `Skill path belongs to another account: ${skillPath}`,
+        "unauthorized",
+      );
     }
     const skill: unknown | null = await ctx.runAction(internal.aws.skills.get, {
       accountId: accountId,
       skillName: parts[1],
     });
-    if (!skill) throw new Error(`Skill not found: ${skillPath}`);
+    if (!skill)
+      throw new ClientError(`Skill not found: ${skillPath}`, "not_found");
   }
 }
 
@@ -494,6 +500,7 @@ async function validateAgentSubagentIds(
         agentId: agentId,
       },
     );
-    if (!agent) throw new Error(`Subagent not found: ${agentId}`);
+    if (!agent)
+      throw new ClientError(`Subagent not found: ${agentId}`, "not_found");
   }
 }

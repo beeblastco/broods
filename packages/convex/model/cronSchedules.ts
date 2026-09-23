@@ -11,6 +11,7 @@ import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "../_generated/server";
 import { translateScheduleExpression } from "./cronRules";
+import { ClientError } from "./clientError";
 
 export const cronSchedules = new Crons(components.crons);
 
@@ -72,7 +73,7 @@ export async function registerSchedule(
   }
   if (schedule.timestamp <= Date.now()) {
     if (options.onPastAt === "throw") {
-      throw new Error("at(...) time must be in the future");
+      throw new ClientError("at(...) time must be in the future");
     }
     if (options.onPastAt === "skip") return { registered: false };
   }

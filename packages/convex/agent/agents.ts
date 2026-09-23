@@ -18,6 +18,7 @@ import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getProjectForRole } from "../model/ownership/project";
 import { agentsInProject, agentsInStage } from "../model/projectScope";
 import { agentsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const agentDoc = v.object({
   ...agentsFields,
@@ -63,7 +64,10 @@ export const create = internalMutation({
       )
       .first();
     if (existing) {
-      throw new Error(`Agent name already exists: ${args.name}`);
+      throw new ClientError(
+        `Agent name already exists: ${args.name}`,
+        "conflict",
+      );
     }
 
     const now = Date.now();
@@ -323,11 +327,11 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("agents", args.agentId);
     if (!normalized) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
     const agent = await ctx.db.get(normalized);
     if (!agent || agent.accountId !== args.accountId) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
 
     // Mirror cleanup onto the dashboard's canvas: drop any agentConfigs row
@@ -411,11 +415,11 @@ export const update = internalMutation({
     const { accountId, agentId, clearSourceConfig, ...patch } = args;
     const normalized = ctx.db.normalizeId("agents", agentId);
     if (!normalized) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
     const agent = await ctx.db.get(normalized);
     if (!agent || agent.accountId !== accountId) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
 
     if (patch.name !== undefined && patch.name !== agent.name) {
@@ -426,7 +430,10 @@ export const update = internalMutation({
         )
         .first();
       if (existing) {
-        throw new Error(`Agent name already exists: ${patch.name}`);
+        throw new ClientError(
+          `Agent name already exists: ${patch.name}`,
+          "conflict",
+        );
       }
     }
 

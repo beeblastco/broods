@@ -36,6 +36,7 @@ import { cronsInProject } from "../model/projectScope";
 import { toCronResponse } from "../model/responses";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CRON_RUN_PAGE_WINDOW = 1000;
@@ -72,7 +73,7 @@ export const completeRun = internalMutation({
   handler: async (ctx, { accountId, cronId, runId, result }): Promise<null> => {
     const run = await ctx.db.get(runId);
     if (!run || run.accountId !== accountId || run.cronId !== cronId) {
-      throw new Error(
+      throw new ClientError(
         "Cron job run does not belong to the supplied accountId and cronId",
       );
     }
@@ -142,7 +143,9 @@ export const createRun = internalMutation({
   handler: async (ctx, args): Promise<Id<"cronRuns">> => {
     const cron = await getOwned(ctx, args.accountId, args.cronId);
     if (!cron) {
-      throw new Error("Cron job does not belong to the supplied accountId");
+      throw new ClientError(
+        "Cron job does not belong to the supplied accountId",
+      );
     }
 
     return await ctx.db.insert("cronRuns", {
@@ -209,7 +212,7 @@ export const failRun = internalMutation({
   handler: async (ctx, { accountId, cronId, runId, error }): Promise<null> => {
     const run = await ctx.db.get(runId);
     if (!run || run.accountId !== accountId || run.cronId !== cronId) {
-      throw new Error(
+      throw new ClientError(
         "Cron job run does not belong to the supplied accountId and cronId",
       );
     }
@@ -422,7 +425,9 @@ export const recordInvocation = internalMutation({
   ): Promise<null> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) {
-      throw new Error("Cron job does not belong to the supplied accountId");
+      throw new ClientError(
+        "Cron job does not belong to the supplied accountId",
+      );
     }
 
     await ctx.db.patch(cronId, {
@@ -590,7 +595,7 @@ async function getOwnedAgent(
   const normalized = ctx.db.normalizeId("agents", agentId);
   const agent = normalized ? await ctx.db.get(normalized) : null;
   if (!agent || agent.accountId !== accountId) {
-    throw new Error("Cron job agentId must reference an existing agent");
+    throw new ClientError("Cron job agentId must reference an existing agent");
   }
 
   return agent;
