@@ -148,6 +148,7 @@ let microvmExecPayload = {
   duration_ms: 5,
   stdout: "shell ok\n",
   stderr: "",
+  truncated: false,
 };
 let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
 const microvmSendMock = mock(async (command: { _type?: string }) => {
@@ -369,6 +370,7 @@ beforeEach(() => {
     duration_ms: 5,
     stdout: "shell ok\n",
     stderr: "",
+    truncated: false,
   };
 });
 
@@ -722,6 +724,16 @@ describe("createSandboxExecutor", () => {
       timeout_ms: 45_000,
       env: { CONFIGURED: "base", COMMAND_ONLY: "value" },
     });
+
+    microvmExecPayload = { ...microvmExecPayload, truncated: true };
+    await expect(
+      executor.runHarnessCommand({
+        microvmId: created.microvmId,
+        endpoint: created.endpoint,
+        code: "base64 < large.bin",
+      }),
+    ).rejects.toThrow("passed the exec cap");
+    microvmExecPayload = { ...microvmExecPayload, truncated: false };
 
     expect(await executor.createHarnessAuthToken("microvm-1", 4_321)).toBe(
       "proxy-token",
