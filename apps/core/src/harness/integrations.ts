@@ -551,11 +551,12 @@ async function handleHttpRequest(
     }
   }
 
+  // A provider console may GET a webhook URL to check it is live. Any other GET
+  // is a path core does not serve; `/healthz` is answered in server.ts.
   if (method === "GET") {
-    return jsonResponse(200, {
-      status: "ok",
-      method: "POST",
-    });
+    return matchWebhookPath(request.path)
+      ? jsonResponse(200, { status: "ok", method: "POST" })
+      : notFoundResponse();
   }
 
   if (method !== "POST") {

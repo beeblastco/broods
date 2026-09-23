@@ -141,13 +141,14 @@ describe("direct API ingress", () => {
     });
   });
 
-  it("returns 200 for GET probes without requiring direct API configuration", async () => {
+  it("answers a GET on a webhook URL so a provider console sees it live", async () => {
     const response = await routeIncomingEvent(
       createEvent(
         undefined,
         {},
         {
           method: "GET",
+          rawPath: "/v1/webhooks/acct_1/slack",
         },
       ),
       createHandlers(),
@@ -155,6 +156,22 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(200);
     expect(responseJson(response)).toEqual({ status: "ok", method: "POST" });
+  });
+
+  it("returns 404 for a GET on a path core does not serve", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {},
+        {
+          method: "GET",
+          rawPath: "/v1/nothing-here",
+        },
+      ),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(404);
   });
 
   it("returns 405 for unsupported request methods", async () => {
