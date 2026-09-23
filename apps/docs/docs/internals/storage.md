@@ -4,7 +4,7 @@ This page covers where workspace files, memory and skills live in S3, how the ha
 
 ## Key layout
 
-A workspace's files live directly under `<namespace>/` in the managed bucket (`FILESYSTEM_BUCKET_NAME`). The namespace is `fs-<40 hex>`, a hash of `accountId:workspaceId` from `normalizeFilesystemNamespace()` in `src/shared/runtime-keys.ts`. Partitioning adds child folders below it, never another bucket.
+A workspace's files live directly under `<namespace>/` in the managed bucket (`FILESYSTEM_BUCKET_NAME`). The namespace is `fs-` plus the first 40 hex characters of a scoped SHA-256 of `accountId:workspaceId`: `workspaceNamespace()` in `src/shared/workspaces.ts`, hashing through `normalizeFilesystemNamespace()` in `src/shared/runtime-keys.ts`. Partitioning adds child folders below it, never another bucket: a `conversation` partition mounts `<namespace>/<alias>/fs-<hash of the conversation key>` (`isolatedWorkspaceNamespace()`).
 
 The layout is single-sourced in `workspaceNamespacePrefix()` in `src/shared/sandbox.ts`. Harness-side S3 reads and writes and the sandbox's `mount-s3` mount both go through it, so changing it there moves both together. The `<namespace>/` segment is also the tenant boundary the per-mount IAM session policy is scoped to.
 
@@ -21,30 +21,30 @@ flowchart TD
   Mount --> Providers["lambda MicroVM, sandbox (workdir), Daytona"]
 ```
 
-Every S3-backed provider mounts the prefix with `mount-s3` (Mountpoint for S3). The MicroVM mounts from its `/run` lifecycle hook; workdir and Daytona mount per run. E2B and Vercel are not wired to S3 workspaces, and attaching one fails fast instead of silently using provider-native state. `src/harness/sandbox/s3-mount.ts` resolves the mount target and credentials the same way for every provider.
+Every S3-backed provider mounts the prefix with `mount-s3` (Mountpoint for S3). The MicroVM mounts from its `/run` lifecycle hook and gets refreshed credentials every 30 minutes; workdir and Daytona mount per run. E2B and Vercel are not wired to S3 workspaces, and attaching one fails fast instead of silently using provider-native state. `src/harness/sandbox/s3-mount.ts` resolves the mount target and credentials the same way for every provider.
 
-Mountpoint for S3 supports whole-file create and overwrite only. Appending (`>>`) and in-place edits fail, which is why the `write` and `edit` tools rewrite whole files.
+Mountpoint for S3 supports whole-file create and overwrite only. `O_APPEND` (`>>`), in-place edits and `rename()` fail with `EPERM`, which is why the `write` and `edit` tools rewrite whole files and `memory_save` rewrites the index in one `>` pass with no temp file. Both tools `sync` the file after writing.
 
 ## Two doors to the same bytes
 
-The mount and the S3 API are not interchangeable, because the mount syncs to the bucket asymmetrically:
+The mount and the S3 API reach the same objects on different schedules:
 
-- Bucket to mount. An object the harness wrote with `PutObject` or `CopyObject` appears in the mount without remounting, after a short propagation delay.
-- Mount to bucket. A file the agent wrote through `bash` or the file tools is visible in the mount at once, but the S3 API does not list or return it for about 1 to 2 minutes. Measured: not visible at +0 s or +45 s, visible at +120 s.
+- Bucket to mount. An object the harness wrote with `PutObject` or `CopyObject` appears in the mount without remounting, after Mountpoint's metadata cache catches up.
+- Mount to bucket. A file the agent wrote through `bash` or the file tools is visible in the mount at once and reaches the bucket when Mountpoint uploads it on close.
 
-Pick the door by who last wrote the file, not by elapsed time:
+The routing below dates from the earlier S3 Files mount, where a mount write took 1 to 2 minutes to reach the S3 API (measured: missing at +45 s, present at +120 s). Mountpoint uploads on close, so that window is now the upload itself. The routing stays because it is correct either way. Pick the door by who last wrote the file:
 
-| Reading                                                                                             | Last writer    | Read through                                       |
-| --------------------------------------------------------------------------------------------------- | -------------- | -------------------------------------------------- |
-| Agent-written files, including agent-edited `MEMORY.md`                                             | sandbox mount  | The mount: `bash`, `read`, `glob`, `grep`          |
-| Harness-written files: the `.stage.json` manifest, staged skill copies, sandbox artifact write-back | harness via S3 | The S3 API (`src/shared/s3.ts`)                    |
-| The account skills bucket                                                                           | harness via S3 | The S3 API. It is a separate bucket, never mounted |
+| Reading                                                                 | Last writer    | Read through                                       |
+| ----------------------------------------------------------------------- | -------------- | -------------------------------------------------- |
+| Agent-written files, including agent-edited `MEMORY.md`                 | sandbox mount  | The mount: `bash`, `read`, `glob`, `grep`          |
+| Harness-written files: staged skill copies, sandbox artifact write-back | harness via S3 | The S3 API (`src/shared/s3.ts`)                    |
+| The account skills bucket                                               | harness via S3 | The S3 API. It is a separate bucket, never mounted |
 
 The agent always reads through the mount, so it always sees its own writes. The choice only applies to harness-side reads.
 
 Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix: no mount, no cold start, but lagged.
 
-Known exception: `Session.loadMemoryFile` reads `MEMORY.md` through the S3 API at the start of each turn. If the agent edited it less than about 2 minutes earlier, that read can be stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
+Known exception: `Session.loadMemoryFile` reads `memory/MEMORY.md` through the S3 API at the start of each turn, so a workspace with no sandbox still serves memory. A read that lands before the agent's last edit reached the bucket is stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
 
 ## Bring-your-own bucket
 
@@ -68,24 +68,24 @@ flowchart TD
   Byo --> Mount
 ```
 
-For `assumeRole`, the harness calls STS and narrows the session with a policy scoped to `bucket/prefix*`, so the credentials handed to a sandbox can only touch that prefix. The mount and harness-side reads resolve the same target. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
+`resolveS3Mount()` has three credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`. The managed bucket assumes the platform `sandbox-s3mount` role (`SANDBOX_MOUNT_ROLE_ARN`). Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session (`fp-sandbox-mount`, one hour) carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target; bring-your-own read targets are cached until 10 minutes before their credentials expire. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
 
 Workspace config is stored in plaintext, so no access keys are ever stored in it. Static access keys for non-AWS stores (R2, MinIO tokens) are not supported yet, and `assumeRole` is an AWS STS call. `provider` stays `s3` for every S3-compatible vendor; it is reserved for a different protocol such as native Azure Blob or GCS.
 
-Under `deny-all` or `restricted` networking, a MicroVM can reach only the deployment's own managed bucket, so BYO-bucket workspaces need `allow-all`.
+Under `deny-all` or `restricted` networking, a MicroVM reaches S3 only through the gateway endpoint, whose policy names the managed bucket alone. BYO-bucket workspaces on `lambda` therefore need `allow-all`.
 
 ## Dashboard Files panel
 
-The dashboard Files tab lists and mutates the same S3 namespace through the authenticated Convex workspace file API, so uploads, renames and deletes change the files the agent mounts. Convex file storage is used only for editable skill-node bundles.
+The dashboard Files tab lists and mutates the same S3 namespace through the Convex workspace file actions (`packages/convex/workspace/filesPublic.ts`), so uploads, renames and deletes change the files the agent mounts. Convex file storage only holds upload blobs in transit: an upload grant (`uploadGrants`, 20 open per account per hour) hands out a Convex upload URL, and blobs no workspace file references are deleted after a day.
 
 - The last confirmed tree is cached in memory and `sessionStorage` and painted immediately, then revalidated. File contents and signed URLs are never cached.
 - Uploads show as pending rows until S3 confirms. Rename and delete update optimistically, then reload; a failure restores server state.
 - While visible, the panel lists S3 every 5 seconds, and again on focus, tab restore or Refresh. Overlapping lists dedup, and an older response cannot overwrite a newer optimistic change.
 - The panel cannot show an agent write before the mount has exported it to S3.
 - Dashboard uploads are capped at 512 KiB per file because the base64 payload crosses a Convex action. Agents can write larger files through the mount.
-- On first load, legacy canvas-node files are copied from Convex storage to S3 and removed. Existing S3 paths win.
+- On first load, `migrateLegacy` copies files from the old canvas-node records into S3 and removes the records. Existing S3 paths win.
 
-`GET /v1/workspaces/{id}/files?path=` returns a presigned URL, about 1.4 KB long and valid for 5 minutes. `POST /v1/workspaces/{id}/download-links` mints a short token under `/v1/downloads/{token}` that redirects to a fresh presigned URL, default 24 hours and at most 30 days. Tokens are stored in `workspaceDownloadTokens`, and deleting the workspace or account revokes them.
+`GET /v1/workspaces/:id/files?path=` returns a presigned URL, about 1.4 KB long and valid for 5 minutes. `POST /v1/workspaces/:id/download-links` mints a short token under `/v1/downloads/:token` that redirects to a fresh presigned URL, valid 24 hours by default and at most 30 days (`packages/convex/workspace/files.ts`). Tokens are stored in `workspaceDownloadTokens`, and deleting the workspace or account revokes them. Routes live in `packages/convex/config/routes/workspaceFiles.ts`.
 
 ## Sessions and memory
 
@@ -115,13 +115,14 @@ flowchart LR
 ```
 
 - `session.ts` lists allowed skill metadata (path, name, description) in the prompt. `load_skill` returns `SKILL.md` and any requested resources through the S3 API, which works with no workspace or sandbox.
-- With a workspace attached, every `load_skill` re-stages a fresh copy into `<namespace>/.claude/skills/<name>` and mirrors it to `.agents/skills/<name>`, dropping stale files first. It uses S3 server-side copy, so bytes do not stream through core.
+- With a workspace attached, every `load_skill` re-stages a fresh copy into `<namespace>/.claude/skills/<name>` and mirrors it to `.agents/skills/<name>` (`SKILL_CANONICAL_DIR`, `SKILL_MIRROR_DIRS` in `src/harness/skills.ts`), dropping stale files first. It uses S3 server-side copy, so bytes do not stream through core. No sandbox mounts the skills bucket; the staged copy is how scripts reach a sandbox.
+- Harness adapters get the same skills as `HarnessAgentSkill` entries through `src/harness/skills.ts`.
 - Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged with executable POSIX metadata so shebang scripts run directly. Other text files are staged non-executable.
-- Validation: lowercase letters, digits and hyphens, at most 64 characters, no `anthropic` or `claude`, no XML tags; 5 MB per file, 30 MB per bundle, text types only.
+- Validation, in both `src/shared/skills.ts` and `packages/convex/model/skillRules.ts`: lowercase letters, digits and hyphens, at most 64 characters, no reserved words (`anthropic`, `claude`) or XML tags; 5 MB per file, 30 MB per bundle, text types only.
 
 Design rules:
 
-- Skill CRUD stays in the Convex config plane (`packages/convex/config/http.ts`, `packages/convex/model/skills.ts`).
+- Skill CRUD stays in the Convex config plane (`packages/convex/config/http.ts`, `packages/convex/model/skills.ts`, Node actions only). Skills are S3 bundles; there is no Convex skills table.
 - Shared runtime validation and S3 path rules stay in `src/shared/skills.ts`.
 - The model-facing `load_skill` schema stays in `src/harness/tools/load-skill.tool.ts`.
 - Editing a skill goes through an editable workspace and the normal file tools, never through `load_skill`.

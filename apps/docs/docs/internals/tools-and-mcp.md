@@ -7,7 +7,7 @@ This page covers how core builds an agent's tool set for a run, how async tools 
 `harness.ts` resolves the model, then calls `createTools()` in `src/harness/tools/index.ts`. The tool set is assembled in this order:
 
 1. Sandbox tools from the agent's `sandboxes` and `workspaces`. `bash` when there is any sandbox or sandbox-backed workspace. `computer` for every machine sandbox. `read` and `glob` for every workspace, through the mount when it has a sandbox and through S3 or a read-only mount when it does not. `write`, `edit` and `grep` only when a workspace has a sandbox. `memory_save` when a sandbox-backed workspace keeps the memory harness on.
-2. Channel tools (`send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update`) on channel turns, and `send-message` when the agent has channels.
+2. Channel tools (`send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update`) on channel turns, each gated on the adapter's capabilities, and `send-message` when the agent has channels and the request can dispatch to another session. See [channels](channels.md).
 3. `run_subagent` when `config.subagent.enabled` and the request has a dispatcher, plus `get_subagent_status`, `update_subagent` and `stop_subagent` in persistent mode.
 4. `load_skill` when `config.skills.enabled` and `allowed` has paths.
 5. `schedule`, `list_schedules`, `update_schedule` and `cancel_schedule` when `config.scheduler.enabled`, except on a cron-fired run.
@@ -31,7 +31,7 @@ Provider tools have no local `execute`, so `async: true` cannot wrap them. Core 
 The async subsystem (`async-tools.ts`, `async-tool-result.ts`) creates `runtimeAsyncToolResults` rows, exposes `async_status`, waits for in-process pending work, and injects completed results into the same active agent loop.
 
 - The continuation loop waits only for in-memory pending work.
-- Detached work, currently `bash` background jobs, settles through the token-authenticated `POST /v1/sandbox-jobs/{resultId}/complete`, which resumes the conversation. See [architecture](architecture.md#deferred-delivery).
+- Detached work, currently `bash` background jobs, settles through the token-authenticated `POST /v1/sandbox-jobs/{resultId}/complete`, which resumes the conversation. See [architecture](architecture.md).
 - The original background-run status row settles through `asyncResultEventId`. The internal continuation uses a separate event id for dedup.
 
 Approval requests on a sync direct API run stream as SSE and persist in the conversation. The caller resumes with a `tool-approval-response`. Channel turns cannot complete approval, so they deny tools with `needsApproval`.
@@ -48,17 +48,18 @@ Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agen
 
 ### Hosted servers
 
-A hosted row (`transport: "hosted"`) stores a bundle under the `account-mcp/` prefix of the tool-bundles bucket, capped at 50 MB. The CLI bundles the module that calls `defineMcp({ handler })` and imports the build before upload, failing the deploy if the handler is missing or not fetch-style. Bundles over 10 MB go through a storage upload URL (`POST /v1/mcp/uploads`) instead of the request body.
+A hosted row (`transport: "hosted"`) stores a bundle under the `account-mcp/` prefix of the tool-bundles bucket, capped at 50 MB (`MAX_MCP_BUNDLE_BYTES`, checked by the CLI and again in `packages/convex/aws/bundles.ts`). The CLI bundles the module that calls `defineMcp({ handler })` and imports the build before upload, failing the deploy if the handler is missing or not fetch-style. Bundles over 10 MB (`INLINE_MCP_BUNDLE_BYTES`) go through a storage upload URL (`POST /v1/mcp/uploads`) instead of the request body.
 
 The handler factory must build a fresh server on every call. The stateless transport connects one per request, and the parallel calls of a model step run concurrently in one process, where a shared instance would have every in-flight handler aborted when one request's transport closes.
 
 The mcp-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the bundle. `src/harness/mcp/hosted.ts` is the core side:
 
 - Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS` (default 10 ms) and sends every call for the same account and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX` (default 8; `1` disables batching). The child runs them concurrently and answers each on its own frame.
-- A batch shares one 30 s deadline and one 16 MB output cap. Its CPU is split evenly across its calls.
-- Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. Reuse is bounded. A timeout or crash retires the child; a handler that throws fails only its own request.
+- A batch shares one 30 s deadline (`RUN_TIMEOUT_MS` in `apps/lambda/handler.mjs`, with a 2 s grace for the child to abort itself) and one 16 MB output cap. Its CPU is split evenly across its calls.
+- Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A child serves at most `MCP_CHILD_MAX_CALLS` calls (default 64) and retires after `MCP_CHILD_IDLE_SECONDS` idle (default 300). A timeout or crash retires it at once. A handler that throws fails only its own request.
 - Metering. Each call's span carries `tool.compute.type: "mcp-sandbox"` and `tool.compute.cpu_usec`, billed into the account's tool-sandbox CPU usage.
-- With `MCP_TENANT_ISOLATION=true` on both the SST deploy and core, every invoke carries the account id as its Lambda tenant id. See [security](security.md#hosted-mcp-servers).
+- With `MCP_TENANT_ISOLATION=true` on both the SST deploy and core, every invoke carries the account id as its Lambda tenant id. See [security](security.md).
+- The bundle reaches the runner as a pre-signed URL valid for 120 s, so the function holds no S3 access.
 
 Because the transport is stateless, per-invoke hosting is a complete implementation, and agents use hosted and external servers the same way. `defineTool` and `POST /v1/tools` are retired; hosted MCP servers replace them.
 

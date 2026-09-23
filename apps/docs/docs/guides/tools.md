@@ -141,7 +141,7 @@ Keep approval off for agents that only live in channels. Subagents that inherit 
 
 ## Asking the user
 
-`ask_questions` lets the agent ask one to three multiple-choice questions and keep working. It is on automatically for channel, WebSocket and direct runs. Cron runs and subagents do not get it.
+`ask_questions` lets the agent ask one to three multiple-choice questions and keep working. It is on automatically for channel and WebSocket runs, which have somewhere to post the question and resume. Plain HTTP runs, cron runs and subagents do not get it.
 
 Each question has an `id`, a short `header`, the `question`, two to four `options`, and optionally `allowFreeText`. With `blocking: false` (the default) the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
 
@@ -149,7 +149,7 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 | ----------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Telegram    | inline buttons                           | tapping a button                                                                               |
 | Other chats | numbered text                            | replying with the number, the label, or free text. The reply answers the oldest open question. |
-| HTTP        | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
+| Any client  | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
 | WebSocket   | a `question-request` frame               | an `execute` frame carrying `answers`                                                          |
 
 ## Background tools

@@ -56,15 +56,14 @@ Over WebSocket, send a `control` frame on the open subscription. See [SDK](../re
 
 ### From a chat
 
-| Command            | Does                                                                                   |
-| ------------------ | -------------------------------------------------------------------------------------- |
-| any message        | Steers the running turn, or starts one                                                 |
-| `/queue <message>` | Queues the message as its own turn                                                     |
-| `/queue followup`  | Makes `followup` the default for this conversation. Also `collect`, `reject`, `steer`. |
-| `/steer <message>` | Steers explicitly. On an idle conversation it starts a normal turn.                    |
-| `/stop`, `/cancel` | Stops the running turn at its next step                                                |
-| `/new`, `/clear`   | Clears the history. Refused while a turn or queued message exists.                     |
-| `/compact [notes]` | Summarizes the history now. Refused while busy.                                        |
+| Command            | Does                                                                |
+| ------------------ | ------------------------------------------------------------------- |
+| any message        | Steers the running turn, or starts one                              |
+| `/queue <message>` | Queues the message as its own turn                                  |
+| `/steer <message>` | Steers explicitly. On an idle conversation it starts a normal turn. |
+| `/stop`, `/cancel` | Stops the running turn at its next step                             |
+| `/new`, `/clear`   | Clears the history. Refused while a turn or queued message exists.  |
+| `/compact [notes]` | Summarizes the history now. Refused while busy.                     |
 
 ## Stopping a run
 

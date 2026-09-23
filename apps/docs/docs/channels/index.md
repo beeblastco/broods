@@ -174,7 +174,7 @@ A failed transcription never drops the message. The note says why: a busy provid
 
 - Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub reacts with eyes. Pancake and Zalo do neither.
 - Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
-- Errors. If a turn fails, the room receives `Error: <message>`.
+- Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.
 - Trace links. Replies omit the dashboard trace link. Set `trace: "enabled"` on the connection to include it. Tracing itself is unaffected.
 - Credentials. A run only sees its own channel's credentials.

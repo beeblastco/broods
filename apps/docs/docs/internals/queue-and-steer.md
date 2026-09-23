@@ -4,6 +4,19 @@ This is the design record for how Broods handles a message that arrives while a 
 
 If you only want to use it, read [Conversations](../guides/conversations.md). This page is for changing it.
 
+## Where it lives
+
+| File                                | Owns                                                                                                                                                         |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/convex/runtimeIngress.ts` | The coordinator: `accept`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `acquireClear`, `clearConversation`, `renewOwner`, `releaseOwner`, `maintain` |
+| `apps/core/src/harness/ingress.ts`  | Candidate and delivery types, the limit and TTL constants, admission helpers                                                                                 |
+| `apps/core/src/harness/harness.ts`  | The `prepareStep` and `onStepEnd` hooks that apply steering at a step boundary                                                                               |
+| `apps/core/src/harness/handler.ts`  | HTTP and async admission, `409`/`429` responses, the continuation workers                                                                                    |
+| `apps/core/src/shared/commands.ts`  | `/steer`, `/queue`, `/stop` and `/cancel`, lease-safe `/new` and `/clear`, `/compact`                                                                        |
+| `apps/gateway/src/agent.ts`         | WebSocket `execute`, `control`, `attach` and `cancel` frames, ACK and status relay                                                                           |
+
+The rest of the page is the decision as accepted. Where the code went a different way, the text says so.
+
 ## Context
 
 Before this change, Broods serialized work with a per-conversation lease, and
@@ -57,6 +70,8 @@ combined turn. Each contributing envelope keeps its own durable status, and the
 application relation records the ordered contributor event IDs.
 
 ### Transport-neutral ingress envelope
+
+The types below are the decision's sketch. The implemented ones are `IngressCandidate` and `IngressDelivery` in `ingress.ts`. Each delivery kind is its own variant: `http`, `async` and `websocket` carry `publicEventId`, `publicConversationKey` and, for runtime-key ingress, a `publicDeploymentIngress` marker. `channel` carries the channel name, the sender `identity` and the reply-routing `source`.
 
 Authentication and transport parsing first produce an in-memory candidate.
 Parsing does not persist anything. The conversation coordinator resolves the
@@ -156,18 +171,22 @@ contiguous `steer` prefix at the head of the FIFO is combined and injected. A
 run has no next model call, that same contiguous steer prefix becomes one
 follow-up application while every contributor retains its own status.
 
-In a channel the prefix also stops at a different sender. A message from someone
-other than the person whose turn is running waits and runs as its own turn, so
-policy checks it against its own user id and roles.
+In a channel the prefix also stops at a different sender (`applySteering` compares
+`delivery.identity.userId`). A message from someone other than the person whose
+turn is running waits and runs as its own turn, so policy checks it against its
+own user id and roles. This rule was added after the original record.
 
-Initial limits are configurable, with conservative defaults of 100 queued
-envelopes and 1 MiB of serialized queued events per conversation. Acceptance is
-atomic: an envelope is either durably inserted with a status record or rejected.
-Overflow returns a visible capacity error (`429` is recommended) and never drops
-the oldest or newest item silently.
+The limits are 100 queued envelopes and 1 MiB of serialized queued events per
+conversation (`DEFAULT_INGRESS_MAX_COUNT`, `DEFAULT_INGRESS_MAX_BYTES`). Core
+passes them to Convex on every admission. They are constants, not environment
+settings, so tuning them is a code change. Acceptance is atomic: an envelope is
+either durably inserted with a status record or rejected. Overflow returns
+`429` with code `ingress_capacity` and never drops the oldest or newest item
+silently.
 
-Queued envelopes expire 15 minutes after acceptance by default, matching the
-current conversation-lease window. Status records remain pollable for seven days.
+Queued envelopes expire 15 minutes after acceptance (`DEFAULT_INGRESS_TTL_MS`),
+matching the conversation-lease window (`DEFAULT_CONVERSATION_LEASE_TTL_MS`).
+Status records remain pollable for seven days (`DEFAULT_INGRESS_STATUS_TTL_MS`).
 Expiry transitions the envelope to terminal `expired`; it does not simply delete
 evidence that accepted work was lost.
 
@@ -368,8 +387,8 @@ Channels use the same coordinator and add transport-neutral commands:
 
 - `/steer <text>` submits one `steer` envelope. When the conversation is idle,
   the text is normal input and starts a normal turn.
-- `/queue <text>` submits one explicit `followup` envelope. It never changes a
-  sticky conversation mode.
+- `/queue <text>` submits one explicit `followup` envelope. There is no sticky
+  per-conversation mode: every message resolves its own mode.
 - `/stop` and `/cancel` request that the current owner stop at the next safe model
   boundary. The in-flight model/tool batch completes; the request does not kill
   a remote tool. The owner then settles `failed` with a stopped-by-user reason,
@@ -462,23 +481,18 @@ event count, age, boundary latency, fallback reason, and
 system prompts, authorization values, channel credentials, delivery secrets,
 idempotency keys/identities, or raw request headers.
 
-## Implementation sequence
+## Status
 
-The implementation follows this dependency order:
+Implemented. Every item in the original sequence has shipped: the Convex
+primitives, step-boundary steering, HTTP and async behavior with SDK and OpenAPI,
+gateway attach and control frames, the channel commands, and the cross-transport
+tests. Tests live in `packages/convex/tests/runtimeIngress.test.ts` and the core
+ingress tests.
 
-1. Durable Convex envelope, FIFO, idempotency, lease, status, and owner-fencing
-   primitives.
-2. Core conversation coordinator and AI SDK step-boundary steering.
-3. Direct/async HTTP behavior, then SDK types/client and OpenAPI.
-4. Gateway attach/control plus WebSocket ACK/status frames.
-5. Channel `/steer`, `/queue`, `/stop`/`/cancel`, and lease-safe `/clear`
-   commands.
-6. Cross-transport integration tests and user/operations documentation.
-
-[Issue #95](https://github.com/beeblastco/broods/issues/95) builds per-subagent
-streaming on the same attach/control correlation, durable status, subject
-ownership, replay, and retention rules; it does not introduce a second gateway
-protocol or terminal-state source.
+[Issue #95](https://github.com/beeblastco/broods/issues/95) built per-subagent
+streaming on the same attach and control correlation, durable status, subject
+ownership, replay and retention rules. It added no second gateway protocol or
+terminal-state source. See [subagents](subagents.md).
 
 ## Consequences
 
@@ -493,6 +507,5 @@ protocol or terminal-state source.
 - Transport-specific behavior is layered on the durable coordinator and status
   transitions rather than maintaining separate in-memory queues.
 
-There are no unresolved v1 decision blockers. Queue limits and TTLs are
-configuration values, but the defaults above are sufficient for implementation
-and can be tuned from production evidence without changing the public contract.
+Queue limits and TTLs can change without changing the public contract. Change
+the constants in `ingress.ts` and the user guide together.

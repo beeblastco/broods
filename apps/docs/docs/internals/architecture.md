@@ -1,184 +1,209 @@
 # Architecture
 
-This page follows a request from the gateway to the agent loop and back, and lists where every record is stored. Read it before changing core, the gateway or the Convex runtime tables. Paths are relative to `apps/core/` unless they name another workspace.
+How the deployables fit together, how each kind of request moves through them, who checks which credential, and where every record lives. Read it before changing the gateway, core, or the Convex runtime tables. Paths are relative to the repo root.
 
-## Runtime layer
-
-Core is one Bun container (`src/server.ts`). It turns each HTTP request into a transport-neutral `CoreRequest`, routes it by path to the account handler or the harness handler, and streams the Web `Response` back through the gateway.
-
-- SST provisions the AWS data plane and IAM. The container itself is deployed from the infra repo.
-- Handlers take a `CoreRequest` and return a Web `Response`.
-- `ctx.waitUntil(...)` lets a channel webhook acknowledge the provider at once and keep working after the response.
-
-## High-level view
+## The system
 
 ```mermaid
-flowchart TD
-  Owner["Account owner / CLI / dashboard"] -->|"config plane /v1/*"| Gateway["gateway"]
-  Direct["Direct API client"] -->|"POST /v1/runs"| Gateway
-  Provider["Telegram / GitHub / Slack / Discord / Matrix / Pancake / Zalo"] -->|"/v1/webhooks/:accountId/:channel"| Gateway
-  WSClient["WebSocket client"] <-->|"wss"| Gateway
-  Gateway -->|"config paths"| Convex["Convex config plane"]
-  Gateway -->|"runtime paths"| Core["core container"]
-  Convex -->|"cron dispatch, in-cluster"| Core
+flowchart LR
+  subgraph Clients
+    SDK["SDK / HTTP client"]
+    CLI["broods CLI"]
+    Dash["dashboard<br/>(Next.js)"]
+    Prov["Slack, Telegram, GitHub,<br/>Zalo, Pancake webhooks"]
+  end
 
-  Core --> Integrations["integrations.ts<br/>auth + routing"]
-  Integrations --> Handler["handler.ts<br/>orchestration"]
-  Handler --> Session["session.ts<br/>conversation state + prompt"]
-  Session --> Harness["harness.ts<br/>model + tool loop"]
-  Harness --> Model["AI SDK provider"]
-  Harness --> Tools["tools/index.ts"]
-  Harness --> Subagents["subagents.ts"]
-  Harness --> AsyncTools["async-tools.ts"]
-  Handler -->|"stream frames"| NATS["NATS JetStream"]
-  NATS --> Gateway
+  subgraph Cluster["k8s cluster (../infra)"]
+    GW["gateway<br/>apps/gateway"]
+    Core["core<br/>apps/core"]
+    DFwd["discord-forwarder"]
+    MFwd["matrix-forwarder"]
+    NATS[("NATS JetStream<br/>WS_RESPONSES, OBSERVABILITY")]
+    OPA["OPA"]
+    OTel["OTel collector<br/>Loki, Tempo"]
+  end
 
-  Session --> RuntimeTables["Convex runtime tables<br/>conversations, claims, results"]
-  Tools --> S3["S3 workspace bucket"]
-  Session --> Skills["S3 skills bucket"]
+  Convex[("Convex<br/>packages/convex")]
+
+  subgraph AWS["AWS (apps/core/sst.config.ts)"]
+    S3[("S3: Filesystem,<br/>Skills, ToolBundles")]
+    MCPR["mcp-runner Lambda<br/>apps/lambda/handler.mjs"]
+    VM["Lambda MicroVMs<br/>(../lambda-sanbdox image)"]
+    CW["CloudWatch MicroVM<br/>log group"]
+    LFwd["sandbox-log-forwarder<br/>Lambda"]
+  end
+
+  Discord["Discord Gateway"] --> DFwd
+  Matrix["Matrix homeserver"] <--> MFwd
+
+  SDK --> GW
+  CLI --> GW
+  Prov --> GW
+  Dash --> Convex
+  Dash -->|"observability, test chat,<br/>terminal sockets"| GW
+  DFwd -->|"POST channel webhook"| GW
+  MFwd -->|"POST channel webhook"| GW
+  DFwd -. "subscribe listConnections" .-> Convex
+  MFwd -. "subscribe listConnections" .-> Convex
+
+  GW -->|"config-plane paths"| Convex
+  GW -->|"runtime paths"| Core
+  GW <-->|"replay + tail"| NATS
+  GW -->|"history backfill"| OTel
+
+  Convex -->|"service token:<br/>cron fire, sandbox verbs"| Core
+  Core -->|"deploy key<br/>ConvexHttpClient"| Convex
+  Core -->|"publish"| NATS
+  Core --> OPA
+  Core --> OTel
+  Core --> S3
+  Core --> MCPR
+  Core --> VM
+  Core -->|"/v1/send, /v1/typing"| MFwd
+  Core --> Other["Daytona, E2B, Vercel,<br/>machine daemons"]
+  Convex --> S3
+  VM --> S3
+  VM --> CW --> LFwd --> OTel
 ```
 
-The gateway splits config-plane paths from core paths, so account, agent, skill, cron and file CRUD go to Convex and never touch core. Core reads config from Convex with a deploy key (`ConvexHttpClient`).
+| Deployable                              | Runs as                                    | Job                                                                                                                                              |
+| --------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/gateway`                          | Bun pod, `src/main.ts`                     | The only public door. Splits HTTP by path between Convex and core, terminates four WebSocket kinds, rate-limits auth failures and upgrades.      |
+| `apps/core`                             | Bun pod, `src/server.ts`                   | Runs agents: runtime API, channel webhooks, cron runs, async and subagent work, sandbox lifecycle verbs, hosted MCP invokes, the machine socket. |
+| `packages/convex`                       | Convex deployment                          | Config plane (HTTP actions under `/v1/...`), CLI sync, every table, the crons component, WorkOS auth, Stripe.                                    |
+| `apps/dashboard`                        | Next.js                                    | Reads and writes Convex as a WorkOS user. Opens gateway sockets for logs, traces, the test chat and sandbox terminals.                           |
+| `apps/discord-forwarder`                | Bun pod, single replica                    | One Discord Gateway socket per bot token, forwards `MESSAGE_CREATE` to the channel webhook.                                                      |
+| `apps/matrix-forwarder`                 | Bun pod, single replica, persistent volume | One `/sync` long-poll per access token, decrypts inbound messages, encrypts core's replies.                                                      |
+| `apps/lambda/handler.mjs`               | AWS Lambda (SST)                           | Hosted MCP runner: one invoke per batch of calls, bundle run in a child process.                                                                 |
+| `apps/lambda/sandbox-log-forwarder.mjs` | AWS Lambda (SST)                           | Ships MicroVM guest stdout from CloudWatch to the OTel collector with tenant labels.                                                             |
 
-## Account routing
+SST in `apps/core/sst.config.ts` owns only AWS resources: the three S3 buckets, MicroVM artifacts bucket and roles, the MicroVM log group and forwarder, the sandbox VPC and S3 endpoint, the `sandbox-s3mount` role, the sandbox ECR repo, the mcp-runner function, the `core-runtime` IAM user, and the role Convex assumes for S3. The pods, NATS, OPA and the collector are deployed from the sibling `../infra` repo.
 
-Every runtime request resolves an account and one of its agents before any agent work begins. `integrations.ts` resolves the account once, loads the selected agent, and passes the runtime config down to `handler.ts` and `session.ts` so the turn does no further lookups. That runtime projection keeps model, tool, workspace and skills config but strips channel credentials before the agent loop.
+## Request paths
 
-```mermaid
-flowchart TD
-  Direct["POST /v1/runs"] --> Bearer["Authorization: Bearer credential"]
-  Status["GET /v1/runs/:runId"] --> Bearer
-  Bearer --> Hash["hash the secret"]
-  Hash --> Lookup["Convex accounts<br/>by_secretHash index"]
-  Lookup --> Account["active account"]
+### Direct run over HTTP
 
-  Webhook["POST /v1/webhooks/:accountId/:channel"] --> Load["load account by id"]
-  Load --> Agents["the account's agents<br/>that configure :channel"]
-  Agents --> Verify["verify provider signature per agent<br/>first match receives"]
-  Verify --> Account
+1. The client sends `POST /v1/runs`, or the scoped `POST /v1/projects/:p/stages/:s/agents/:endpointId`, with a bearer credential.
+2. The gateway sees a non-config `/v1/` path and proxies it to core (`apps/gateway/src/upstream.ts` `proxyHttp`), stripping `Host` and stamping `x-broods-via-gateway`.
+3. `apps/core/src/server.ts` routes it to the harness handler. `routeIncomingEvent` in `src/harness/integrations.ts` resolves the credential (`src/shared/auth.ts`), loads the agent, and applies the public-access and run-override rules for a runtime key.
+4. `src/harness/handler.ts` admits the request through the conversation coordinator (`src/harness/ingress.ts`, Convex `runtimeIngress.ts`). A busy conversation queues or steers per [queue and steer](queue-and-steer.md).
+5. `src/harness/session.ts` claims the event, loads history and builds the turn context. `src/harness/harness.ts` runs the AI SDK `streamText` loop with tools from `src/harness/tools/index.ts`.
+6. Without `background`, the response is the SSE stream. With `background: true`, core stores a `runtimeAsyncAgentResults` row, answers `202` with a `runId`, and runs the turn on an in-process worker (`dispatchInProcessWorker`, capped by `MAX_INPROCESS_WORKERS`, default 8). The client polls `GET /v1/runs/:runId`.
 
-  Account --> Namespace["prefix event and conversation keys<br/>acct:accountId:..."]
-```
+`ENABLE_DIRECT_API` gates these routes and defaults to `true`.
 
-Credentials that reach runtime routes:
+### WebSocket run
 
-- The account secret (`fp_acct_`), full tenant access.
-- A stage runtime key (`fp_agent_`), scoped server-side to one account, project, stage and endpoint. A request body cannot redirect it.
-- A role session (`fp_sts_`), bounded by the role's policy. See [security](security.md).
-- A dashboard stage session ticket (`fp_dts_`), fifteen minutes, signed by Convex with `STAGE_TICKET_SECRET`.
-- The service token. A request with `SERVICE_AUTH_SECRET` plus an `X-Account-Id` header acts for that account. Only Convex uses it, and only on core's in-cluster address. Core refuses it on any request that came through the gateway. See [operations](operations.md#service-token-rules).
+1. The client opens `/v1/agents/:endpointId/ws` or the scoped form. The credential rides the `Sec-WebSocket-Protocol` header.
+2. The gateway asks core for the token's scope (`/v1/internal/observability-scope`) and refuses an endpoint outside it. Attach never reaches the core run path, so this is the door check.
+3. On `execute` or `control`, the gateway posts the run to the same core path with a `connectionId` (`apps/gateway/src/agent.ts`). Core admits it and answers JSON naming the NATS subject instead of an SSE stream.
+4. Core runs the turn as a `nats-worker` in-process worker and publishes each stream part to `WS_RESPONSES`.
+5. The gateway reads that subject with one ordered consumer, replay first and then the live tail, and relays `output` frames with a cursor. It polls the run status route in parallel and always closes with a terminal frame.
 
-Root provider webhooks are not accepted. A webhook URL names the account and the channel, never an agent. The credentials that verify the request pick the receiving agent, and a [channel record](../channels/channel-records.md) can then re-target the run. A non-production stage has its own URL form, `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}`, delivered only to that stage.
+`ENABLE_WEBSOCKET=true` and `NATS_URL` are required for the worker path.
 
-## Account management
+### Channel webhook
 
-`POST /v1/accounts` with the `AdminAccountSecret` creates an account and returns its secret once; only `secretHash` is stored. Hosted onboarding does not use this path: the dashboard creates accounts through the Convex config plane against a WorkOS organization.
+1. The provider posts to `/v1/webhooks/:accountId/:channel`, or `/v1/webhooks/:accountId/dev/:endpointId/:channel` for a non-production stage. Discord messages and all Matrix traffic come from the two forwarders, which post to the same URL.
+2. The gateway proxies to core. `integrations.ts` loads the account and finds the credential holder: the agent whose channel credentials verify the request. On the bare URL, when two agents verify, the lowest agent id wins. A stage URL that resolves to no agent is a `404`.
+3. The holder's adapter (`src/shared/<channel>-channel.ts`) authenticates and parses the request into an `InboundMessage`.
+4. The `channelRecords` row for `(platform, externalId)` decides which agent runs and layers its instructions, workspaces, policies and `denyTools` (`applyChannelRecord`). A failed lookup refuses the turn.
+5. The `agent.invoke` policy gate runs, the provider is acknowledged, and the rest continues under `ctx.waitUntil`: `handleChannelRequest` admits the message, runs the turn, and replies through the adapter's `ChannelActions`. Matrix replies go to the matrix-forwarder's `/v1/send`, since only it holds the room keys.
 
-Secret-like fields in agent config are redacted as `********` on reads. Sending `********` back in a patch keeps the stored value. `PATCH` deep-merges `config`, and `null` deletes a key.
+### Cron fire
 
-Deleting an account runs account-scoped cleanup first: runtime rows whose keys start with `acct:{accountId}:`, the account's workspace namespaces in S3, and reserved sandboxes.
+1. A schedule in the Convex crons component fires `packages/convex/agent/crons.ts` `dispatch`.
+2. The action posts `{ kind: "cron", accountId, cronId, scheduledTime }` to core's in-cluster address (`BROODS_ACCOUNT_MANAGE_URL`) at `/v1/cron-runs` with the service token. The gateway answers `404` on that path.
+3. `handleScheduledCron` in `handler.ts` loads the job, skips it if paused, marks it started, and starts the run. A conversation key that names a live channel session resumes it and replies there.
+4. A one-time `at(...)` job is deleted when its run settles.
 
-## Direct and async runs
+### Config-plane call
 
-`POST /v1/runs` is the single runtime entry point. Without `background` it streams the turn as SSE. With `background: true` it answers `202` with a `runId` once the run is durably accepted, and the caller polls `GET /v1/runs/{runId}`. A busy conversation follows the [queue and steer](queue-and-steer.md) contract in both cases.
+1. A client calls a config path such as `/v1/agents`, `/v1/crons`, `/v1/workspaces/:id/files` or `/v1/account`. `isConfigHttpPath` in `apps/gateway/src/routes.ts` is method-aware and decides; everything else under `/v1/` goes to core.
+2. The gateway proxies to `BROODS_CONFIG_URL`, the Convex HTTP router (`packages/convex/http.ts`, handlers in `config/http.ts` and `config/routes/*`).
+3. The config plane authenticates the bearer, checks role policy for a role session, runs the mutation, and writes a `configAuditEvents` row.
+4. Sandbox lifecycle verbs (`/v1/sandboxes/:id/suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec`, `terminal`) and account creation and deletion are the exceptions. They reach core's account handler (`src/accounts/handler.ts`, `routesToAccountManage`). The dashboard reaches them through Convex actions that call core with the service token (`packages/convex/model/serviceBridge.ts`).
 
-```mermaid
-flowchart TD
-  Caller -->|"POST /v1/runs"| Auth["auth + parse"]
-  Auth --> Admit["conversation coordinator<br/>admit / queue / steer"]
-  Admit --> Session["session.ts<br/>claim + context + skills"]
-  Session --> Loop["handler.ts<br/>parent continuation loop"]
-  Loop --> Agent["harness.ts<br/>streamText + tools"]
-  Agent -->|"run_subagent"| SubCoord["SubagentCoordinator<br/>per request"]
-  Agent -->|"async: true tool"| ToolCoord["AsyncToolCoordinator<br/>per request"]
-  SubCoord -->|"inject batched results"| Loop
-  ToolCoord -->|"inject results"| Loop
-  Agent -->|"SSE chunks"| Caller
-  Admit -->|"background: true"| Status["runtimeAsyncAgentResults"]
-  Caller -->|"GET /v1/runs/:runId"| Status
-```
+### CLI sync
 
-Background runs start an in-process worker, capped by `MAX_INPROCESS_WORKERS`. Subagents and built-in async tools run inside that request or worker; there are no child worker processes. MCP tools are synchronous request/response. See [subagents](subagents.md) and [tools and MCP](tools-and-mcp.md).
+1. `broods dev` or `broods deploy` compiles `broods/` into a manifest (`packages/broods/src/manifest.ts`). Hosted MCP handlers and code hooks are bundled here.
+2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it.
+3. The sync resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3 (large ones through upload grants), and creates the stage runtime key if the stage has none.
+4. The CLI writes `broods/_generated/` and `BROODS_API_KEY`.
 
-`ENABLE_DIRECT_API` in core's container env gates `POST /v1/runs`. It defaults to `true`; set it to `false` and the route answers `404`. Channel webhooks, cron runs and internal workers keep working either way.
+## Credentials
 
-## Deferred delivery
+| Credential           | Prefix       | Verified by                                                                                      | Scope                                                                   |
+| -------------------- | ------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Stage runtime key    | `fp_agent_`  | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
+| Stage session ticket | `fp_dts_`    | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
+| Account secret       | `fp_acct_`   | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
+| Role session         | `fp_sts_`    | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
+| CLI login            | `fp_cli_`    | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
+| Deploy key           | `fp_deploy_` | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
+| Admin secret         | none         | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
+| Service token        | none         | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
+| Terminal ticket      | sealed       | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, about 2 minutes                                   |
+| Per-job token        | none         | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
 
-A detached sandbox job can outlive the request that launched it, so its result has to find its way back to wherever the turn came from. The turn carries a small delivery descriptor, `Session.delivery`, and the job persists it. No live connection state has to survive.
+Channel webhooks use each provider's own signature or secret, checked by the adapter. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
 
-```mermaid
-flowchart TD
-  Turn["turn with Session.delivery<br/>channel / nats / async"] -->|"bash background: true"| Row["runtimeAsyncToolResults<br/>delivery, completionToken,<br/>conversationKey, parentEventId"]
-  Turn --> Job["detached job in sandbox"]
-  Job -->|"POST /v1/sandbox-jobs/:id/complete<br/>x-job-token"| Settle["settle row"]
-  Settle --> Resume["rebuild turn, inject result,<br/>run the agent loop"]
-  Resume --> Deliver{"delivery.kind"}
-  Deliver -->|"channel"| Chan["rebuild adapter from config, sendText"]
-  Deliver -->|"nats"| Pub["publish to the conversation stream"]
-  Deliver -->|"async"| Poll["settle status row, fire lifecycle webhook"]
-```
+## Where state lives
 
-- A channel delivery stores `{ channelName, source }`, the routing payload only. Channel credentials are decrypted from agent config again at delivery time.
-- The completion endpoint is authenticated by the per-job token minted at launch. No account secret is stored with the job or enters the sandbox.
-- Resuming reuses the async-tool continuation path. See `bash.tool.ts`, `handler.ts` (`continueAfterAsyncToolSettlement`, `pushReplyToChannel`) and `integrations.ts` (`sendChannelReply`).
+### Convex tables
 
-## WebSocket streaming over NATS JetStream
+| Group                 | Tables                                                                                                                                                                                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity and tenancy  | `users`, `orgs`, `orgMembers`, `accounts`                                                                                                                                                                                                             |
+| Projects and access   | `projects`, `stages`, `agentDeployments` (runtime keys), `deployKeys`, `cliAuthCodes`, `cliTokens`, `accountRoles`, `roleSessions`                                                                                                                    |
+| Resource config       | `agents` (encrypted config), `agentConfigs` and `canvasLayouts` (dashboard canvas), `agentRuntimeSecrets`, `sandboxConfigs`, `workspaceConfigs`, `mcp`, `accountHooks`, `agentPolicies`, `channelRecords`, `channelEndpoints`, `cliExternalResources` |
+| Environment variables | `environmentVariables` (per stage), `accountEnvVars`, `environmentVariableReveals`                                                                                                                                                                    |
+| Schedules             | `crons`, `cronRuns`, plus the crons component's own tables                                                                                                                                                                                            |
+| Runtime               | `runtimeConversationEvents`, `runtimeHarnessSessions`, `runtimeClaims`, `runtimeConversationCoordinators`, `runtimeIngressEnvelopes`, `runtimeIngressApplications`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`, `runtimeAsyncToolGroups`   |
+| Sandboxes             | `sandboxReservations`, `sandboxInstances`, `sandboxSnapshots`, `sandboxAuditEvents`, `machineConnections`                                                                                                                                             |
+| Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                                           |
+| Audit and usage       | `configAuditEvents`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`                                                                                                                                                                            |
 
-Core publishes streaming output to a conversation-scoped JetStream subject, and the gateway relays it to WebSocket clients. Because the stream is keyed by conversation and not by socket, a client that drops can reconnect on a fresh socket and replay what it missed, including a background job result that arrived after the original socket closed.
+`packages/convex/schema.ts` is the source of truth. Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). `channelEndpoints` holds each connection's encrypted bot token so the forwarders' `listConnections` subscription reads one small table.
 
-```mermaid
-flowchart TD
-  Worker["core worker"] -->|"one publish per frame"| Subj["v1.:accountId.:agentId.ws.response.:convToken"]
-  Subj --> Stream["WS_RESPONSES stream"]
-  Stream -->|"one ordered consumer<br/>replay, then live tail"| Gateway["gateway"]
-  Gateway -->|"output frames with cursor, status frames"| Client["WebSocket client"]
-  Convex["Convex ingress status<br/>7-day source of truth"] --> Gateway
-```
+### Bytes and streams
 
-`convToken` is `base64url(publicConversationKey)`, one NATS-safe token.
+| Store                                      | Holds                                                                             |
+| ------------------------------------------ | --------------------------------------------------------------------------------- |
+| S3 `Filesystem` (`FILESYSTEM_BUCKET_NAME`) | Workspace files under `<namespace>/`, staged skills, the channel attachment store |
+| S3 `Skills`                                | Skill bundles under `<accountId>/<skill-name>`                                    |
+| S3 `ToolBundles`                           | Code hook bundles and hosted MCP bundles under `account-mcp/`                     |
+| NATS `WS_RESPONSES`                        | Agent stream parts per conversation, about 3 minutes, for WebSocket replay        |
+| NATS `OBSERVABILITY`                       | Live logs and spans per stage, about 2 hours, for dashboard replay                |
+| Loki and Tempo                             | Long-term logs and traces, via the OTel collector                                 |
+| Matrix forwarder volume                    | Each Matrix account's crypto store and sync token                                 |
 
-- Replay is best-effort and status is durable. Core publishes without a per-frame PubAck, so a transient NATS failure can drop a frame before JetStream stores it. When the output a client needs was never stored or has aged out, the client falls back to the Convex status and result.
-- Retention is `max_age` of about 3 minutes and `max_msgs_per_subject` of 2,000. There is no manual purge: sequential FIFO work shares a subject, so one event's completion must not erase another's replay range.
-- Each publish carries `Nats-Msg-Id` (`eventId:sequence`), and the stream's roughly 2 minute `duplicate_window` collapses retries.
-- `RESPONSE_STREAM_STORAGE` is `File` by default. `Memory` is cheaper but lost on restart. `ensureResponseStream` syncs the mutable retention knobs onto an existing stream. HA `replicas: 3` triples storage.
-- `connectNats` in `src/shared/nats.ts` picks the transport from `NATS_URL`: `wss://` or `ws://` uses `nats.ws` for out-of-cluster callers, `nats://` or `tls://` uses core TCP for in-cluster callers. `NATS_TOKEN` carries token auth.
-- `connectionId` is only a routing label on headers. Overlapping turns on one conversation share the subject and are grouped by `headers.eventId`.
-- `ENABLE_WEBSOCKET=true` plus `NATS_URL` are required for `nats-worker` invocations. With WebSocket off, the direct API is SSE-only and NATS config is ignored.
+## Async and deferred work
 
-The cluster NATS runs JetStream with a WebSocket listener behind Traefik at `wss://nats.beeblast.co` (token auth from the `nats-auth` secret) and a file-backed PVC. Core `4222` stays cluster-internal. For production durability, enable JetStream clustering.
+Everything a run starts runs inside core's process: subagents are in-process child loops, async tools wait in the request or worker, and background runs are in-process workers. There are no separate worker deployments. Hosted MCP calls go to the Lambda. Code hooks run in a pooled Node child with a V8 isolate (`src/harness/isolate`).
 
-Attach, cursors and control frames are specified in [queue and steer](queue-and-steer.md#attach-and-output-replay).
+A detached sandbox job outlives its request. Its result comes back through a delivery descriptor stored with the job:
 
-## Sandbox and workspace resolution
+1. `bash` with `background: true` writes a `runtimeAsyncToolResults` row with the turn's `delivery` (`channel` with the routing `source`, `nats` with the connection, or `async`) and a per-job token.
+2. The job posts `POST /v1/sandbox-jobs/:resultId/complete` with `x-job-token` when it exits. A wrong token reads as `404`.
+3. Core settles the row, rebuilds the turn from `parentEventId` and `conversationKey`, injects the result, and runs the loop again (`continueAfterAsyncToolSettlement`).
+4. The follow-up goes back to its origin: a channel `sendText` with credentials decrypted again from agent config, a publish to `WS_RESPONSES`, or a settled status row plus the lifecycle webhook.
 
-Sandboxes and workspaces are independent account-scoped records referenced from agent config by id. `resolveAgentRuntime` in `src/shared/workspaces.ts` resolves them before the loop:
+The sandbox needs egress to `PUBLIC_BASE_URL` for step 2. Without it the job still runs and `async_status` polling still works.
 
-- The first id in `config.sandboxes` is the default sandbox. A workspace can pin its own with `workspaces[].sandbox`. Later ids are `bash` targets by name, and `computer` targets when they are machines.
-- Each workspace's effective sandbox decides its tools: the full file tool set when present, read-only `read` and `glob` when absent.
-- `permissionMode` is resolved per call from the selected workspace's sandbox.
-- A workspace namespace is `hash(accountId:workspaceId)`, so agents that reference one `workspaceId` share files.
+## WebSocket and JetStream contract
 
-Every sandbox tool compiles to one `run` against the provider. See [sandboxes](sandboxes.md) and [storage](storage.md).
+- Core publishes each frame once to `v1.<accountId>.<agentId>.ws.response.<convToken>`, where `convToken` is `base64url` of the public conversation key. Publishing has no per-frame ack, so replay is best effort.
+- Retention is `max_age` of about 3 minutes and 2,000 messages per subject. There is no manual purge, because sequential work shares one subject.
+- `Nats-Msg-Id` (`eventId:sequence`) and a 2 minute duplicate window collapse retries.
+- Cursors are opaque, bound to one event, and exclusive. A cursor the stream can no longer serve gets `replay_unavailable` and the durable status.
+- Convex ingress status is the source of truth for acceptance and terminal state for 7 days. JetStream only carries output.
+- `connectNats` in `apps/core/src/shared/nats.ts` picks the transport from `NATS_URL`: `ws://` or `wss://` for callers outside the cluster, `nats://` or `tls://` inside it.
 
-## Storage boundaries
+Frames, attach and control are specified in [queue and steer](queue-and-steer.md). Logs and traces take the same NATS path on `OBSERVABILITY`, described in [observability](observability.md).
 
-Every stage keeps config and runtime state in Convex (`packages/convex/schema.ts`). S3 holds bytes.
+## Related pages
 
-| Store                                                      | Holds                                                                          |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Convex `accounts`                                          | Account metadata and `secretHash`                                              |
-| Convex agents                                              | Encrypted agent config                                                         |
-| Convex `sandboxConfigs`, `workspaceConfigs`                | Account-scoped records referenced by id                                        |
-| Convex `mcp`                                               | Registered MCP servers, external and hosted                                    |
-| Convex `crons`                                             | Scheduled runs, written in the same transaction as their schedule              |
-| Convex `runtimeConversationEvents`                         | Normalized model messages by scoped `conversationKey`                          |
-| Convex `runtimeClaims`                                     | Event dedup markers and conversation leases                                    |
-| Convex `runtimeAsyncAgentResults`                          | Background runs and subagent state for `GET /v1/runs/{runId}`                  |
-| Convex `runtimeAsyncToolResults`, `runtimeAsyncToolGroups` | Async tool state, detached group fan-in, delivery metadata, structured outputs |
-| Convex `sandboxReservations`, `sandboxInstances`           | Reserved sandbox ids for persistent providers                                  |
-| Convex `configAuditEvents`                                 | Config mutations, read by the dashboard Audit Logs tab                         |
-| S3 workspace bucket (`FILESYSTEM_BUCKET_NAME`)             | Workspace files by namespace, staged skills                                    |
-| S3 skills bucket                                           | Skill bundles under `<accountId>/<skill-name>`                                 |
-| S3 tool-bundles bucket                                     | Code hook bundles and hosted MCP bundles under `account-mcp/`                  |
-
-Built-in tools run inline in the core process. Hosted MCP bundles run on the mcp-runner Lambda. Inline code hooks run in a V8 isolate in a Node child of core. See [security](security.md).
+- [Sandboxes](sandboxes.md) and [storage](storage.md) for how tools reach compute and files.
+- [Channels](channels.md), [tools and MCP](tools-and-mcp.md) and [subagents](subagents.md) for each harness subsystem.
+- [Security](security.md) for encryption, redaction and untrusted code tiers.

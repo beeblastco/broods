@@ -176,6 +176,6 @@ It returns a short `downloadPath` such as `/v1/downloads/K3n8…`. Join it to th
 
 ## Freshness
 
-The agent always sees its own writes, because its tools read through the mount. Files written through the mount take about 1 to 2 minutes to show up in storage API reads, such as the dashboard Files tab, another sandbox, or `memory/MEMORY.md` loaded at the start of a turn. Details are in [Storage internals](../internals/storage.md).
+The agent always sees its own writes, because its tools read through the mount. A file written through the mount reaches storage when it is closed, so other readers, such as the dashboard Files tab, another sandbox, or `memory/MEMORY.md` loaded at the start of a turn, can briefly see the older version. Details are in [Storage internals](../internals/storage.md).
 
 See [Memory and sessions](memory-and-sessions.md) for what the agent stores in a workspace on its own.

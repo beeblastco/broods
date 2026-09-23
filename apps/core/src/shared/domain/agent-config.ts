@@ -224,7 +224,7 @@ export interface AgentWorkspaceRef {
   // read-only and read/glob run through a service-managed read-only mount (so they see
   // committed writes immediately). `null` forces this workspace read-only AND opts
   // out of that mount: read/glob then read straight from S3 (no compute, but reads
-  // lag mount writes by the S3 export delay). See docs/workspace/sandbox/lambda.md.
+  // lag mount writes until the mount uploads them). See docs/internals/storage.md.
   sandbox?: string | null;
 }
 

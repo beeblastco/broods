@@ -4,17 +4,20 @@ This page covers how core turns a provider webhook into an agent run and sends t
 
 ## File map
 
-| File                              | Owns                                                                                          |
-| --------------------------------- | --------------------------------------------------------------------------------------------- |
-| `src/harness/integrations.ts`     | Routing, account and agent lookup, adapter selection (`createChannelRegistry`), provider ACKs |
-| `src/harness/handler.ts`          | Session setup, command dispatch, agent execution, final reply                                 |
-| `src/shared/channels.ts`          | The shared contracts: `ChannelAdapter`, `ChannelActions`, `InboundMessage`                    |
-| `src/shared/<channel>-channel.ts` | Provider auth, parsing, formatting and reply calls                                            |
-| `src/shared/commands.ts`          | `/new`, `/clear`, `/compact`, `/help`, `/steer`, `/queue`, `/stop`                            |
-| `src/harness/channel-media.ts`    | Inbound attachment download, storage and model hand-off                                       |
-| `src/shared/media-ticket.ts`      | Sealed `/v1/media/{ticket}` links                                                             |
+| File                              | Owns                                                                                                |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `src/harness/integrations.ts`     | Routing, account and agent lookup, adapter selection (`createChannelRegistry`), provider ACKs       |
+| `src/harness/handler.ts`          | Session setup, command dispatch, agent execution, final reply                                       |
+| `src/shared/channels.ts`          | The shared contracts: `ChannelAdapter`, `ChannelActions`, `InboundMessage`                          |
+| `src/shared/<channel>-channel.ts` | Provider auth, parsing, formatting and reply calls                                                  |
+| `src/shared/matrix-wire.ts`       | The wire shapes core and `apps/matrix-forwarder` share. No imports, so the forwarder can bundle it. |
+| `src/shared/commands.ts`          | `/new` and `/clear`, `/compact`, `/steer`, `/stop` and `/cancel`, `/queue`, `/help`                 |
+| `src/harness/channel-media.ts`    | Inbound attachment download, storage and model hand-off                                             |
+| `src/shared/media-ticket.ts`      | Sealed `/v1/media/{ticket}` links                                                                   |
 
-Slack, Telegram, Discord and GitHub build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`). Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Matrix delivery goes through `apps/matrix-forwarder`, and Discord regular messages through `apps/discord-forwarder`. See [operations](operations.md#discord-gateway-forwarder).
+Slack, Telegram, Discord and GitHub build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`). Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
+
+Webhooks arrive at `/v1/webhooks/{accountId}/{channel}` for the production stage and `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage, so two stages sharing one bot never receive each other's traffic.
 
 ## Runtime flow
 
@@ -27,6 +30,8 @@ flowchart TD
   Registry --> Auth["adapter.authenticate(req)"]
   Auth --> Parse["adapter.parse(req)"]
   Parse -->|"response / ignore"| Early["provider response"]
+  Parse -->|"cleanup"| Cleanup["delete the conversation's<br/>partition folder"]
+  Parse -->|"context"| Context["store as context,<br/>no agent run"]
   Parse --> Record["channel record lookup<br/>(platform, externalId)"]
   Record --> Gate["agent.invoke policy gate"]
   Gate -->|"message"| Ack["provider ACK"]
@@ -38,9 +43,11 @@ flowchart TD
   Actions --> Provider
 ```
 
-If two agents hold credentials that verify the same request, the lower agent id receives it. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
+`handleChannelWebhook` in `integrations.ts` runs the steps in that order. Everything after the ACK runs in `waitUntil`, so the provider gets its response before any model work starts.
 
-A record lookup that finds nothing falls back to the credential holder. A lookup that fails refuses the turn, because running without the record's policies and `denyTools` would be an escalation. The channel path already needs the control plane to admit ingress, so this costs no availability that is not already lost.
+If two agents hold credentials that verify the same request, the lower agent id receives it (`localeCompare` on the id). The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
+
+A record lookup that finds nothing falls back to the credential holder. A lookup that fails refuses the turn and posts "I can't reach my channel configuration right now", because running without the record's policies and `denyTools` would be an escalation. The channel path already needs the control plane to admit ingress, so this costs no availability that is not already lost. A `context` message whose lookup fails is dropped with a warning.
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them. A webhook run only sees its own channel's config; core strips other channels' credentials from the runtime agent config.
 
@@ -53,20 +60,31 @@ Each provider implements `ChannelAdapter` from `src/shared/channels.ts`:
 | `name`                   | Stable URL segment and config key, such as `telegram`                                    |
 | `canHandle(req)`         | Quick provider-shape check, usually on headers                                           |
 | `authenticate(req)`      | Provider-native signature or secret check                                                |
-| `parse(req)`             | Turns the webhook into `message`, `ignore` or `response`. May be async.                  |
+| `parse(req)`             | Turns the webhook into one of the results below. May be async.                           |
 | `actions(msg)`           | Reply, typing and reaction actions scoped to the inbound message                         |
 | `applyReplyIn?(...)`     | Rewrites reply routing for a record's `replyIn`. Only Slack implements it.               |
 | `rehydrateAttachment?()` | Rebuilds an attachment reader from stored metadata so a later turn can download it again |
 
 `parse()` outcomes:
 
-| Result     | Meaning                                                                |
-| ---------- | ---------------------------------------------------------------------- |
-| `message`  | Continue into the agent loop after sending `ack` or a default `200`    |
-| `ignore`   | Stop without running the agent, usually an unsupported event           |
-| `response` | Return a provider-specific response at once, such as a challenge reply |
+| Result     | Meaning                                                                                                                                                                                                  |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message`  | Continue into the agent loop after sending `ack` or a default `200`                                                                                                                                      |
+| `context`  | Store the message as conversation context without running the agent. Slack, Discord, Telegram and Matrix return it for messages that do not address the bot, so a later mention sees what the room said. |
+| `cleanup`  | Delete the conversation's partition folder (`cleanupChannelPartitions`). GitHub returns it when an issue or PR closes.                                                                                   |
+| `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                             |
+| `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                   |
 
-`ChannelActions` has `sendText` and `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions` and `stream`. A provider declares a capability by implementing the method. The model-facing channel tools (`send-images`, `send-files`, `send-sticker`, `send-reactions`) register only when the method exists, and `send-update` always registers because every provider can post text.
+`ChannelActions` (in `channels.ts`) has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that:
+
+| Tool             | Registers when                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `send-message`   | always on a channel turn                                                                                                                          |
+| `send-update`    | always on a channel turn, since every provider can post text                                                                                      |
+| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                |
+| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                       |
+| `send-sticker`   | `sendSticker` exists                                                                                                                              |
+| `send-reactions` | `supportsReactions` is `true`. Telegram and Matrix always, Slack, Discord and GitHub when the inbound message id is known, never Pancake or Zalo. |
 
 The normalized `InboundMessage`:
 
@@ -75,7 +93,8 @@ The normalized `InboundMessage`:
 - `channelName`: the adapter name.
 - `content`: AI SDK `UserContent`.
 - `attachments`: named attachments with an adapter-owned `fetchData` reader. No bytes yet.
-- `identity`: provider-neutral `ChannelIdentity` (`workspaceRef`, `channelId`, `threadId`, `userId`, `userName`). Record lookup and policy read this.
+- `events`: optional extra model messages, such as a one-turn system message that must not persist.
+- `identity`: provider-neutral `ChannelIdentity` (`workspaceRef`, `channelId`, `threadId`, `userId`, `userName`, and `userRoles` filled from the channel record). Record lookup and policy read this.
 - `source`: opaque provider metadata for commands and replies. It stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
 - `answer`: set when the message is a click on an `ask_questions` button.
 
@@ -85,15 +104,15 @@ Adapters do not implement these; the shared pipeline does:
 
 - Commands. Command-capable channels (Slack, Discord, Matrix, Telegram, Zalo) route `/command` input through `commands.ts` instead of the agent. GitHub and Pancake treat slash text as agent input.
 - Typing and reaction are fire-and-forget. A failed typing or reaction call never fails the turn.
-- Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.`
-- A failed turn replies `Error: <message>`.
-- Deferred replies: a turn that finishes in the background pushes its result back to the chat through the stored delivery. See [architecture](architecture.md#deferred-delivery).
+- Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` (`handler.ts`).
+- A failed turn replies with `formatChannelErrorText()`: a `⚠️` line with the error simplified, so a quota error reads "Usage limit reached..." and a 429 reads "The model is busy right now...". Policy refusals use the same format.
+- Deferred replies: a turn that finishes in the background pushes its result back through `sendChannelReply()`, which rebuilds the adapter from the agent config and the stored `source`, and runs the `onMessageSending` hook first. See [architecture](architecture.md).
 - Trace links are omitted unless the connection sets `trace: "enabled"`.
 - When a policy denies `agent.invoke`, core posts the refusal in-channel and the turn never starts.
 
 ## Reply streaming
 
-Replies use Chat SDK `fromFullStream()` when the adapter exposes `stream()`. Slack uses Chat SDK's native Slack streaming API, Telegram private chats use rich draft previews and then persist the final response, and GitHub buffers text and posts one Markdown comment. Discord's adapter has no native streaming yet, so it sends final messages. Channels without streaming send one `sendText` reply.
+Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake and Zalo have no `stream()` and send one final `sendText` reply.
 
 Slack, Telegram, Discord and GitHub delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
 
@@ -126,14 +145,26 @@ A workspace file leaves as a durable `/v1/media/{ticket}` link served by core, n
 - Pictures go to the model as pictures. PDFs, audio and video go as native parts only where the model provider accepts that exact type, and otherwise as a saved file. Every message with attachments gets one note listing what arrived and where.
 - Audio the model cannot hear is transcribed on the way in (`src/harness/transcribe.ts`), with the account's own provider: `whisper-1` on OpenAI, `whisper-large-v3-turbo` on Groq, `voxtral-mini-latest` on Mistral. Google and Vertex get the recording itself. `config.model.transcriptionModelId` overrides the model. Transcription fails fast rather than retrying, and the note says whether the provider was busy, refused the file, or the account has no speech-to-text.
 
+## Forwarders
+
+Two providers do not deliver ordinary messages to a webhook, so a separate single-replica deployment holds the connection and POSTs to the channel webhook. Both read connections from every config plane listed in `BROODS_CONFIG_PLANES` and keep one connection per credential, fanning each event out to every plane's webhook, so the same bot on dev and prod is never connected twice. Neither filters anything. Which message runs the agent is core's decision.
+
+| Forwarder                | Why it exists                                                                                | What it POSTs                                                                                                                                                  | Core calls back                                                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `apps/discord-forwarder` | Discord sends regular messages only over a Gateway WebSocket                                 | `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }` with the bot token in `x-discord-gateway-token`                                                            | nothing. Replies use the Discord REST API.                                                                           |
+| `apps/matrix-forwarder`  | Matrix has no webhooks. A client long-polls `/sync`. The forwarder also holds the E2EE keys. | `{ "type": "MATRIX_ROOM_EVENT", "encrypted", "event", "roomId", "senderName", "userId" }`, already decrypted, with the access token in `x-matrix-access-token` | `POST /v1/send` and `POST /v1/typing` at `MATRIX_FORWARDER_URL`, because only the forwarder can encrypt for the room |
+
+Core's Discord adapter takes both the interaction webhook and the forwarded shape on one URL and tells them apart by the `x-discord-gateway-token` header. Matrix replies carry the `app.broods.bot` marker (`MATRIX_BOT_MARKER`), so core never answers its own events on a personal account. Deployment constraints for both are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
+
 ## Add a channel
 
 1. Add the config type to `src/shared/domain/agent-config.ts`.
 2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()` in `packages/convex/model/agentRules.ts`.
-3. Create `src/shared/<channel>-channel.ts` implementing `ChannelAdapter`. Use a Chat SDK adapter when one exists. Keep provider formatting and send logic in this module only for providers Chat SDK does not cover.
-4. Import the factory in `src/harness/integrations.ts`, add `create<Channel>ChannelFromConfig()`, and include it in `createChannelRegistry()`.
-5. Add the `define<Channel>Connection` and `define<Channel>Channel` constructors in `packages/broods/src/resources.ts`.
-6. Document the webhook as `/v1/webhooks/{accountId}/{channel}`, and update the [API reference](/api-reference), the user docs under `channels/`, a `packages/demos/channel-*` demo, and focused tests.
+3. Create `src/shared/<channel>-channel.ts` implementing `ChannelAdapter`. Use a Chat SDK adapter when one exists. Keep provider formatting and send logic in this module only for providers Chat SDK does not cover. Fill `identity` so records and policies can match the room and sender.
+4. In `src/harness/integrations.ts`, add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
+5. In `packages/broods/src/resources.ts`, add the name to `ChannelType`, the connection and channel input types, and the `define<Channel>Connection` and `define<Channel>Channel` constructors. `packages/broods/src/client.ts` also lists channel names for the webhook URL helpers.
+6. If the provider cannot call a webhook, add a forwarder like the two above rather than polling from core.
+7. Update the [API reference](/api-reference), the user docs under `channels/`, a `packages/demos/channel-*` demo, and focused tests.
 
 Never hardcode channel-specific behavior in commands, shared handlers or the agent loop. Commands receive only `ChannelActions`.
 
