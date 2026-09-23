@@ -334,6 +334,7 @@ export interface IntegrationRoutingOptions {
     accountId: string,
     agentId: string,
   ) => Promise<AgentRecord | null>;
+  /** The production-stage agents the bare webhook URL routes to. */
   agentLister?: (accountId: string) => Promise<AgentRecord[]>;
   stageAgentLister?: (
     accountId: string,
@@ -442,7 +443,7 @@ export function createIncomingEventRouter(
   const agentLister =
     options.agentLister ??
     ((accountId: string): Promise<AgentRecord[]> =>
-      getStorage().agents.list(accountId));
+      getStorage().agents.listForProduction(accountId));
   const stageAgentLister =
     options.stageAgentLister ??
     ((accountId: string, endpointId: string): Promise<AgentRecord[]> =>
@@ -887,8 +888,9 @@ async function findChannelCredentialHolder(
 ): Promise<ChannelCredentialHolder> {
   let listed: AgentRecord[];
   try {
-    // A stage-scoped URL narrows the scan to that stage, so a sibling stage
-    // holding the same provider credentials is never a candidate.
+    // Each URL scans only its own stage: the stage URL that stage's agents, the
+    // bare URL the production stages' agents. A sibling stage holding the same
+    // provider credentials is never a candidate.
     listed = endpointId
       ? await context.stageAgentLister(accountId, endpointId)
       : await context.agentLister(accountId);

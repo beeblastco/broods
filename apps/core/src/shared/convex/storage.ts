@@ -229,13 +229,6 @@ const agents: Storage["agents"] = {
 
     return agentFromConvex(doc as ConvexAgentDoc | null);
   },
-  list: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.agent.agents.list, {
-      accountId: accountId,
-    })) as ConvexAgentDoc[];
-
-    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
-  },
   listForEndpoint: async function (accountId, endpointId) {
     const docs = (await getConvexClient().query(
       internal.agent.agents.listForEndpoint,
@@ -243,6 +236,14 @@ const agents: Storage["agents"] = {
         accountId: accountId,
         endpointId: endpointId,
       },
+    )) as ConvexAgentDoc[];
+
+    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
+  },
+  listForProduction: async function (accountId) {
+    const docs = (await getConvexClient().query(
+      internal.agent.agents.listForProduction,
+      { accountId: accountId },
     )) as ConvexAgentDoc[];
 
     return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);

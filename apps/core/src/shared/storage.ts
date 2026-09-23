@@ -115,7 +115,8 @@ interface AccountStore {
 /** Agent reads plus the explicit deletion cleanup used by core. */
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  list(accountId: string): Promise<AgentRecord[]>;
+  /** Agents of the account's production stages, for the bare webhook URL. */
+  listForProduction(accountId: string): Promise<AgentRecord[]>;
   /** Agents of one stage, for the stage-scoped webhook URL. */
   listForEndpoint(
     accountId: string,
