@@ -23,6 +23,13 @@ import type { RoomEvent } from "../src/matrix.ts";
 const DEVICE_ID = "DEVICE1";
 const ROOM_ID = "!room:example.org";
 const USER_ID = "@bot:example.org";
+const ADA_MESSAGE: RoomEvent = {
+  content: { body: "morning", msgtype: "m.text" },
+  event_id: "$event-1",
+  origin_server_ts: 2,
+  sender: "@ada:example.org",
+  type: "m.room.message",
+};
 const DEFAULT_TIMELINE: RoomEvent[] = [
   {
     // The agent's own reply, which must not come back.
@@ -36,13 +43,7 @@ const DEFAULT_TIMELINE: RoomEvent[] = [
     sender: USER_ID,
     type: "m.room.message",
   },
-  {
-    content: { body: "morning", msgtype: "m.text" },
-    event_id: "$event-1",
-    origin_server_ts: 2,
-    sender: "@ada:example.org",
-    type: "m.room.message",
-  },
+  ADA_MESSAGE,
 ];
 
 interface Homeserver {
@@ -152,6 +153,85 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
       await account.stop();
       homeserver.stop();
     }
+  }, 20_000);
+
+  it("keeps the stored token where an undecryptable event is served again", async () => {
+    const { MatrixAccount } = await import("../src/account.ts");
+    const homeserver = fakeHomeserver({
+      timeline: [
+        {
+          // No room key will ever arrive for this session.
+          content: {
+            algorithm: "m.megolm.v1.aes-sha2",
+            ciphertext: "unknown",
+            device_id: "OTHER",
+            sender_key: "unknown",
+            session_id: "unknown",
+          },
+          event_id: "$locked",
+          origin_server_ts: 1,
+          sender: "@ada:example.org",
+          type: "m.room.encrypted",
+        },
+      ],
+    });
+    const storeDir = await temporaryStore();
+    const forwarded: MatrixForwardedEvent[] = [];
+    const account = new MatrixAccount({
+      accessToken: "syt_token",
+      apiUrl: homeserver.apiUrl,
+      onEvent: async (event: MatrixForwardedEvent): Promise<void> => {
+        forwarded.push(event);
+      },
+      storeDir: storeDir,
+    });
+
+    account.start();
+    try {
+      // A few syncs past the one that served it, each retrying it.
+      await until((): boolean => homeserver.syncs >= 5);
+    } finally {
+      await account.stop();
+      homeserver.stop();
+    }
+
+    expect(forwarded).toEqual([]);
+    expect(
+      await readFile(join(storeDir, storePath(), "sync-token"), "utf8"),
+    ).toBe("s1");
+  }, 20_000);
+
+  it("stops between events on shutdown and keeps that sync to replay", async () => {
+    const { MatrixAccount } = await import("../src/account.ts");
+    const homeserver = fakeHomeserver({
+      timeline: [ADA_MESSAGE, { ...ADA_MESSAGE, event_id: "$event-2" }],
+    });
+    const storeDir = await temporaryStore();
+    const forwarded: string[] = [];
+    const { promise: delivered, resolve: deliver } =
+      Promise.withResolvers<void>();
+    const account = new MatrixAccount({
+      accessToken: "syt_token",
+      apiUrl: homeserver.apiUrl,
+      // The first delivery is still in flight when shutdown starts.
+      onEvent: async (event: MatrixForwardedEvent): Promise<void> => {
+        forwarded.push(event.event.event_id);
+        await delivered;
+      },
+      storeDir: storeDir,
+    });
+
+    account.start();
+    await until((): boolean => forwarded.length > 0);
+    const stopped = account.stop();
+    deliver();
+    await stopped;
+    homeserver.stop();
+
+    expect(forwarded).toEqual(["$event-1"]);
+    expect(
+      await readFile(join(storeDir, storePath(), "sync-token"), "utf8"),
+    ).toBe("s1");
   }, 20_000);
 
   it("asks who is in an encrypted room on every send", async () => {

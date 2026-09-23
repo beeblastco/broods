@@ -74,10 +74,13 @@ export interface MatrixAccountOptions {
   storeDir: string;
 }
 
+/** A timeline event on its way to core, held back while it cannot be decrypted. */
 interface PendingEvent {
   event: RoomEvent;
   firstSeenMs: number;
   roomId: string;
+  /** The sync token whose `/sync` served this event, and would serve it again. */
+  since: string;
 }
 
 /** What exists once whoami answered and the store is open. */
@@ -142,10 +145,10 @@ export class MatrixAccount {
 
   private async forwardEvent(
     session: Session,
-    roomId: string,
-    event: RoomEvent,
-    firstSeenMs: number | null,
+    item: PendingEvent,
+    retry: boolean,
   ): Promise<void> {
+    const { event, roomId } = item;
     const encrypted = event.type === "m.room.encrypted";
     let plaintext = event;
     if (encrypted) {
@@ -153,7 +156,7 @@ export class MatrixAccount {
         plaintext = await session.crypto.decrypt(roomId, event);
       } catch (error) {
         // Logged once, not on every retry: keys often land a sync later.
-        if (firstSeenMs === null) {
+        if (!retry) {
           logWarn("Matrix event not decryptable yet, retrying", {
             error: error instanceof Error ? error.message : String(error),
             eventId: event.event_id,
@@ -161,11 +164,7 @@ export class MatrixAccount {
             userId: session.userId,
           });
         }
-        this.pending.push({
-          event: event,
-          firstSeenMs: firstSeenMs ?? Date.now(),
-          roomId: roomId,
-        });
+        this.pending.push(item);
 
         return;
       }
@@ -186,12 +185,19 @@ export class MatrixAccount {
     );
   }
 
-  /** Retries held-back events first, then this sync's timelines, in order. */
+  /**
+   * Retries held-back events first, then this sync's timelines, in order.
+   * Stops between events once the account is stopping: each delivery can take
+   * the webhook timeout, and shutdown has a grace period to fit in.
+   */
   private async forwardSync(
     session: Session,
     response: SyncResponse,
+    since: string,
   ): Promise<void> {
+    const signal = this.controller.signal;
     for (const item of this.pending.splice(0)) {
+      if (signal.aborted) return;
       if (Date.now() - item.firstSeenMs > PENDING_TTL_MS) {
         logWarn("Matrix event dropped, room key never arrived", {
           eventId: item.event.event_id,
@@ -200,12 +206,7 @@ export class MatrixAccount {
         });
         continue;
       }
-      await this.forwardEvent(
-        session,
-        item.roomId,
-        item.event,
-        item.firstSeenMs,
-      );
+      await this.forwardEvent(session, item, true);
     }
     for (const [roomId, room] of Object.entries(response.rooms?.join ?? {})) {
       if (room.timeline?.limited) {
@@ -215,7 +216,17 @@ export class MatrixAccount {
         });
       }
       for (const event of room.timeline?.events ?? []) {
-        await this.forwardEvent(session, roomId, event, null);
+        if (signal.aborted) return;
+        await this.forwardEvent(
+          session,
+          {
+            event: event,
+            firstSeenMs: Date.now(),
+            roomId: roomId,
+            since: since,
+          },
+          false,
+        );
       }
     }
   }
@@ -298,10 +309,18 @@ export class MatrixAccount {
               userId: session.userId,
             });
           } else {
-            await this.forwardSync(session, response);
+            await this.forwardSync(session, response, since);
           }
+          // Not stored: a restart replays this sync, not skips it.
+          if (signal.aborted) break;
           since = response.next_batch;
-          await writeSyncToken(session.syncTokenPath, since);
+          // Held-back events live only in memory, so the stored token stays
+          // where a restart is served them again. The events around them come
+          // again too, and core drops those by event id.
+          await writeSyncToken(
+            session.syncTokenPath,
+            this.pending[0]?.since ?? since,
+          );
           attempt = 0;
         } catch (error) {
           if (signal.aborted) break;
