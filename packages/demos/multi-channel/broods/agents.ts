@@ -34,16 +34,18 @@ export const slack = defineSlackConnection({
 });
 
 // Reach is deny-by-default: these two rooms are the ones this agent answers in.
+// Set the room ids in .env.local; the placeholders match no real room.
 export const slackGeneral = defineSlackChannel({
   name: "multi-channel-general",
   connection: slack,
-  channelId: "C0BEDDS52GK",
+  channelId:
+    process.env.SLACK_GENERAL_CHANNEL_ID ?? "C_SET_SLACK_GENERAL_CHANNEL_ID",
 });
 
 export const slackOps = defineSlackChannel({
   name: "multi-channel-ops",
   connection: slack,
-  channelId: "C0BEQ9XRE4A",
+  channelId: process.env.SLACK_OPS_CHANNEL_ID ?? "C_SET_SLACK_OPS_CHANNEL_ID",
 });
 
 export const telegram = defineTelegramConnection({
@@ -56,13 +58,15 @@ export const telegram = defineTelegramConnection({
 export const telegramPrimary = defineTelegramChannel({
   name: "multi-channel-telegram-primary",
   connection: telegram,
-  chatId: "8096152290",
+  chatId:
+    process.env.TELEGRAM_PRIMARY_CHAT_ID ?? "SET_TELEGRAM_PRIMARY_CHAT_ID",
 });
 
 export const telegramSecondary = defineTelegramChannel({
   name: "multi-channel-telegram-secondary",
   connection: telegram,
-  chatId: "7495331456",
+  chatId:
+    process.env.TELEGRAM_SECONDARY_CHAT_ID ?? "SET_TELEGRAM_SECONDARY_CHAT_ID",
 });
 
 // A GitHub App's reach is already the repositories it was installed on, so the
