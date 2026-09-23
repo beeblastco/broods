@@ -54,15 +54,6 @@ describe("MicrovmHarnessDriver", () => {
     expect(
       await created.session.readFile({ path: "/workspace/missing" }),
     ).toBeNull();
-    // Past one exec's 256 KB stdout cap, so it must come back in chunks.
-    const large = new Uint8Array(300_000).map((_, index) => index % 251);
-    await created.session.writeFile({
-      path: "/workspace/large.bin",
-      content: large,
-    });
-    expect(
-      await created.session.readFile({ path: "/workspace/large.bin" }),
-    ).toEqual(large);
 
     const portUrl = await created.session.getPortUrl!({
       port: 4_321,
@@ -84,6 +75,58 @@ describe("MicrovmHarnessDriver", () => {
     expect(executor.releases).toEqual([
       { reservationKey: "acct:agent:harness" },
     ]);
+  });
+
+  test("reads files past one exec's stdout cap in chunks", async () => {
+    const executor = fakeExecutor(true);
+    const driver = new MicrovmHarnessDriver(
+      driverOptions(),
+      executor.value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+
+    // Past the cap, an exact multiple of the chunk size, and empty.
+    for (const size of [300_000, 2 * 180 * 1024, 0]) {
+      const content = new Uint8Array(size).map((_, index) => index % 251);
+      await session.writeFile({
+        path: "/workspace/file.bin",
+        content: content,
+      });
+      expect(await session.readFile({ path: "/workspace/file.bin" })).toEqual(
+        content,
+      );
+    }
+    expect(executor.chunkReads).toEqual([
+      "/workspace/file.bin@0",
+      "/workspace/file.bin@184320",
+      "/workspace/file.bin@0",
+      "/workspace/file.bin@184320",
+      "/workspace/file.bin@0",
+    ]);
+  });
+
+  test("refuses to stitch a file that changed between chunks", async () => {
+    const executor = fakeExecutor(true);
+    const driver = new MicrovmHarnessDriver(
+      driverOptions(),
+      executor.value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+    await session.writeFile({
+      path: "/workspace/shot.png",
+      content: new Uint8Array(300_000),
+    });
+    executor.onChunkRead(() =>
+      executor.files.set("/workspace/shot.png", new Uint8Array(300_000)),
+    );
+
+    await expect(
+      session.readFile({ path: "/workspace/shot.png" }),
+    ).rejects.toThrow("changed while it was being read");
   });
 
   test("resumes the same reservation and validates bootstrap identity", async () => {
@@ -154,7 +197,11 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
   const releases: unknown[] = [];
   const authRequests: unknown[] = [];
   const launchEnvs: Array<Record<string, string> | undefined> = [];
+  const chunkReads: string[] = [];
   const files = new Map<string, Uint8Array>();
+  // Bumped on every write, standing in for the inode and change time in a stamp.
+  const versions = new Map<Uint8Array, number>();
+  let afterChunkRead: (() => void) | undefined;
   const processes = new Map<
     string,
     { stdout: Uint8Array; stderr: Uint8Array; exitCode: number }
@@ -167,6 +214,11 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
     releases: releases,
     authRequests: authRequests,
     launchEnvs: launchEnvs,
+    chunkReads: chunkReads,
+    files: files,
+    onChunkRead: function (callback: () => void): void {
+      afterChunkRead = callback;
+    },
     value: {
       acquireHarnessReservation: async function (request: unknown) {
         acquisitions.push(request);
@@ -203,19 +255,25 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
 
           return result();
         }
-        if (request.code.includes("dd if=") && processRoot) {
-          const process = processes.get(processRoot);
-          const stream = request.code.includes(".stderr")
-            ? process?.stderr
-            : process?.stdout;
-          const skip = Number(request.code.match(/ skip=(\d+)/)?.[1] ?? 0);
-          const count = Number(request.code.match(/ count=(\d+)/)?.[1] ?? 0);
+        const chunk = request.code.match(
+          /if \[ -f '([^']+)' \]; then stat .* tail -c \+(\d+) .* head -c (\d+)/,
+        );
+        if (chunk) {
+          const path = chunk[1]!;
+          const process = processRoot ? processes.get(processRoot) : undefined;
+          const content = processRoot
+            ? path.endsWith(".stderr")
+              ? process?.stderr
+              : process?.stdout
+            : files.get(path);
+          if (!content) return result("", "", 44);
+          const start = Number(chunk[2]) - 1;
+          if (!processRoot) chunkReads.push(`${path}@${start}`);
+          const stamp = `${content.byteLength} ${versions.get(content) ?? 0}`;
+          const bytes = content.slice(start, start + Number(chunk[3]));
+          afterChunkRead?.();
 
-          return result(
-            Buffer.from(
-              stream?.slice(skip, skip + count) ?? new Uint8Array(),
-            ).toString("base64"),
-          );
+          return result(`${stamp}\n${Buffer.from(bytes).toString("base64")}`);
         }
         if (request.code.includes('echo "done $(cat') && processRoot) {
           const process = processes.get(processRoot);
@@ -224,30 +282,14 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         }
 
         const write = request.code.match(
-          /printf %s '([^']+)' \| base64 -d > '([^']+)'/,
+          /printf %s '([^']*)' \| base64 -d > '([^']+)'/,
         );
         if (write) {
-          files.set(
-            write[2]!,
-            new Uint8Array(Buffer.from(write[1]!, "base64")),
-          );
+          const content = new Uint8Array(Buffer.from(write[1]!, "base64"));
+          versions.set(content, versions.size + 1);
+          files.set(write[2]!, content);
 
           return result();
-        }
-        const read = request.code.match(
-          /if \[ -f '([^']+)' \]; then tail -c \+(\d+) .* head -c (\d+)/,
-        );
-        if (read) {
-          const content = files.get(read[1]!);
-          const start = Number(read[2]) - 1;
-
-          return content
-            ? result(
-                Buffer.from(
-                  content.slice(start, start + Number(read[3])),
-                ).toString("base64"),
-              )
-            : result("", "", 44);
         }
 
         return result();
