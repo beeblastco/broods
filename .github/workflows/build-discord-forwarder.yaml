@@ -7,12 +7,11 @@ on:
       - dev
     paths:
       - "apps/discord-forwarder/**"
-      # The two core modules the forwarder imports by relative path. Nothing
-      # declares that dependency, so name them here or a rename ships broken.
+      # The core module the forwarder imports by relative path. Nothing declares
+      # that dependency, so name it here or a rename ships broken.
       - "apps/core/src/shared/env.ts"
-      - "apps/core/src/shared/convex/client.ts"
-      # Copied into the image, and it owns the config-plane query the forwarder
-      # reads, so a change there ships broken without a rebuild.
+      # Owns the config-plane query the forwarder reads by name, so a change
+      # there ships broken without a rebuild.
       - "packages/convex/**"
       - "package.json"
       - "bun.lock"
