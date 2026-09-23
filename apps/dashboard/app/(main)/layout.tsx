@@ -16,10 +16,13 @@ import { api } from "@broods/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { notFound, useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 const SYNC_RETRY_MS = 5_000;
+
+// A Convex id is 31 to 37 characters of lowercase Crockford base32 (no i, l, o, u).
+const CONVEX_ID_SHAPE = /^[0-9a-hjkmnp-tv-z]{31,37}$/;
 
 // Shown once, on the first login of an account's life. It has no business
 // riding along in the layout chunk every other session loads. `loading` is
@@ -38,6 +41,12 @@ export default function MainLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>): React.JSX.Element | null {
+  // A segment that cannot be a project id is a 404 before anything queries
+  // with it: the header, copilot and page all cast it to `Id<"projects">`, and
+  // the first query validator to reject it would win over a notFound() thrown
+  // further down.
+  const { projectId } = useParams<{ projectId?: string }>();
+  if (projectId !== undefined && !CONVEX_ID_SHAPE.test(projectId)) notFound();
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const router = useRouter();
