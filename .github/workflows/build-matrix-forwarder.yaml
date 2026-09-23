@@ -20,6 +20,11 @@ on:
       - "bun.lock"
       - ".github/workflows/build-matrix-forwarder.yaml"
   workflow_dispatch:
+    inputs:
+      rollout:
+        description: "Roll this build onto the one release every stage shares, prod included"
+        type: boolean
+        default: false
 
 # Each build dispatches its own sha to infra once it finishes, so two builds on
 # one branch can roll out in the order they end rather than the order they were
@@ -73,19 +78,21 @@ jobs:
           push: true
           # The floating branch tag only for dev and main: a feature branch's
           # name has a slash, which no image tag may hold, so a manual dispatch
-          # to test a branch on the dev stage ships by sha alone.
+          # from one ships by sha alone.
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ (github.ref_name == 'dev' || github.ref_name == 'main') && format('{0}:{1}', env.IMAGE_NAME, github.ref_name) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # One release, not one per stage: it serves every config plane. Rolled from
-  # `dev` alone because `main` only ever fast-forwards from it, so rolling on
-  # both would reinstall older code on promote.
+  # One release, not one per stage: it serves every config plane, prod included.
+  # So a push to `dev` builds and tests without shipping, and the roll happens on
+  # `main`, which promote.yaml dispatches once it fast-forwards. A manual
+  # dispatch with `rollout` ticked rolls whatever branch it ran on, to try a
+  # change before promote. That serves prod traffic too.
   rollout:
     needs: build
-    if: ${{ github.ref_name == 'dev' }}
+    if: ${{ github.ref_name == 'main' || inputs.rollout }}
     # No prerequisite gate: this image depends on neither Convex nor the AWS
     # data plane. The grant is still required because rollout.yaml declares it
     # and a called workflow can never hold more than its caller.
