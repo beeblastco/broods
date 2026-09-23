@@ -141,6 +141,8 @@ const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
   10 * 60 * 1000,
 );
 const WORKER_SLOT_GRACE_MS = 5_000;
+// Well under the server's 255s idleTimeout and the gateway's own idle limit.
+const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_PAYLOADS = 1000;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on this clock. A frame the client acts on checks exactly: a stale
@@ -2637,6 +2639,16 @@ function createDirectContinuationSseBody(
         let transferred = false;
         let terminalFailureDrained = false;
         const checkOwner = ownerCheckForStream(session);
+        // Bun closes a response that writes nothing for its idleTimeout, and one
+        // bash call can run silent for longer. A comment line is ignored by
+        // every SSE parser.
+        const keepalive = setInterval(() => {
+          try {
+            controller.enqueue(textEncoder.encode(": keepalive\n\n"));
+          } catch {
+            clearInterval(keepalive);
+          }
+        }, SSE_KEEPALIVE_INTERVAL_MS);
         // Once the client is gone the enqueue below throws about its closed
         // controller, which says nothing about the run. The run's own reason is
         // the one worth storing and logging.
@@ -2722,6 +2734,7 @@ function createDirectContinuationSseBody(
           );
           terminalFailureDrained = true;
         } finally {
+          clearInterval(keepalive);
           if (!terminalFailureDrained && !transferred) {
             await session.releaseConversationLease().catch(() => {});
           }
