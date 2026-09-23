@@ -117,7 +117,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                 crons, and workspaces from your own code.
               </p>
               <div className="flex items-center gap-4">
-                <DocsLink href="https://docs.broods.app/sdk">
+                <DocsLink href="https://docs.broods.app/reference/sdk">
                   Use it from the SDK
                 </DocsLink>
                 <DocsLink href="https://docs.broods.app/api-reference">

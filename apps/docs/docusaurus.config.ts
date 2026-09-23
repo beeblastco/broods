@@ -11,7 +11,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config: Config = {
-  title: "Broods Developer Docs",
+  title: "Broods Docs",
   favicon: "img/broods-favicon.ico",
 
   url: "https://docs.broods.app",
@@ -104,6 +104,28 @@ const config: Config = {
         srcDark: "img/dark-broods-full.svg",
       },
       items: [
+        {
+          type: "docSidebar",
+          sidebarId: "docs",
+          label: "Docs",
+          position: "left",
+        },
+        {
+          to: "/reference/cli",
+          label: "Reference",
+          position: "left",
+        },
+        {
+          to: "/api-reference",
+          label: "API",
+          position: "left",
+        },
+        {
+          type: "docSidebar",
+          sidebarId: "internals",
+          label: "Internals",
+          position: "left",
+        },
         {
           href: "https://dashboard.broods.app/",
           label: "Dashboard",

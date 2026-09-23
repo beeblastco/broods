@@ -59,10 +59,10 @@ broods stage create staging --from development   # clone a stage to work on
 broods stage use staging
 ```
 
-See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough,
-and the [CLI reference](apps/docs/docs/cli.md) for every command.
+See the [Quickstart](apps/docs/docs/quickstart.md) for the full walkthrough,
+and the [CLI reference](apps/docs/docs/reference/cli.md) for every command.
 
-For self-hosted deployments, see the [Deployment guide](apps/docs/docs/deployment.md).
+For self-hosted deployments, see the [Self-hosting guide](apps/docs/docs/internals/self-hosting.md).
 
 ---
 
@@ -83,11 +83,13 @@ See `packages/demos/README.md` for the full list of demos and setup steps.
 
 ## Documentation
 
-- [Getting Started](apps/docs/docs/getting-started.md). Install the CLI, define your first agent, and run it in 5 minutes.
-- [Resource Configuration](apps/docs/docs/resources.md). Full reference for `defineAgent`, `defineSandbox`, channels, skills, tools, and cron jobs.
-- [SDK & Runtime API](apps/docs/docs/sdk.md). Typed SDK usage, curl equivalents, and WebSocket streaming.
-- [Architecture](apps/docs/docs/architecture.md). How the platform works.
-- [Deployment](apps/docs/docs/deployment.md). SST, secrets, and CI/CD.
+The docs have two parts. User docs are for building agents on Broods. Internals are for working on Broods itself.
+
+- [Quickstart](apps/docs/docs/quickstart.md). Deploy an agent, chat with it, and call it from code in five minutes.
+- [Concepts](apps/docs/docs/concepts.md). Projects, stages, resources, runs and credentials.
+- [Configuration](apps/docs/docs/reference/configuration.md). Every `define*` helper and its fields.
+- [SDK](apps/docs/docs/reference/sdk.md) and [HTTP API](apps/docs/docs/reference/http-api.md). Calling agents from code.
+- [Internals](apps/docs/docs/internals/index.md). Architecture, self-hosting, operations and CI/CD.
 - [API Reference](apps/docs/docs/api-reference/openapi.yaml). OpenAPI spec.
 
 Preview the docs locally:
