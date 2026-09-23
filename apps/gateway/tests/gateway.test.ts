@@ -3605,7 +3605,39 @@ test("websocket token reads the broods.token subprotocol before the query param"
   expect(websocketUpgradeHeaders(request)).toEqual({
     "Sec-WebSocket-Protocol": "broods.v1",
   });
-  expect(websocketUpgradeHeaders(new Request(url))).toEqual({});
+  // Bun's server.upgrade throws on an empty headers object, which 500s the
+  // handshake for any client that offered no subprotocol.
+  expect(websocketUpgradeHeaders(new Request(url))).toBeUndefined();
+});
+
+test("a client that offers no subprotocol still upgrades", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request, self) =>
+      self.upgrade(request, {
+        headers: websocketUpgradeHeaders(request),
+        data: undefined,
+      })
+        ? undefined
+        : new Response("no upgrade", { status: 400 }),
+    websocket: {
+      message: () => {},
+      open: (socket) => socket.close(1000, "ok"),
+    },
+  });
+  try {
+    const response = await fetch(`http://localhost:${server.port}/ws`, {
+      headers: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": btoa("the sample nonce"),
+      },
+    });
+    expect(response.status).toBe(101);
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("observability selectors keep a hostile stage slug inside the string", () => {
