@@ -11,7 +11,10 @@
  */
 
 import { isPlainObject } from "./objects";
-import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
+import {
+  ACCOUNT_ENV_PLACEHOLDER_PATTERN,
+  ACCOUNT_ENV_REFS_ONLY_PATTERN,
+} from "./envRefs";
 import { ClientError } from "./clientError";
 
 // Global clone of the shared pattern for iteration/replacement.
@@ -244,13 +247,9 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   return patch;
 }
 
-/**
- * True when a string consists ONLY of `${NAME}` placeholder tokens. Anchored
- * on purpose: a value mixing literal content with a placeholder (e.g.
- * `sk_live_abc${FOO}`) still carries secret material and must stay redacted.
- */
+/** True when a string consists ONLY of `${NAME}` placeholder tokens. */
 export function isEntirelyEnvPlaceholders(value: string): boolean {
-  return /^(\$\{[A-Z][A-Z0-9_]*\})+$/.test(value);
+  return ACCOUNT_ENV_REFS_ONLY_PATTERN.test(value);
 }
 
 /** Replace valid uppercase account env-var `${NAME}` placeholders recursively. */

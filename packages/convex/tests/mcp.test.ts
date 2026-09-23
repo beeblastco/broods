@@ -318,6 +318,60 @@ describe("normalizeMcpInput", () => {
     ).rejects.toThrow("headers values for X-Api-Key must reference");
   });
 
+  test("rejects an inline secret sitting beside a ref", async () => {
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          headers: { Authorization: "Bearer sk-live-1234 ${SEARCH_TOKEN}" },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("headers values for Authorization must reference");
+  });
+
+  test("any credential-named header needs a ref, other headers stay inline", async () => {
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          headers: { "X-Service-Token": "raw-secret" },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("headers values for X-Service-Token must reference");
+
+    const input = await normalizeMcpInput(
+      {
+        name: "search",
+        url: SERVER_URL,
+        headers: { "X-Region": "eu-west-1" },
+      },
+      { requireConnection: true },
+    );
+
+    expect(input.headers).toEqual({ "X-Region": "eu-west-1" });
+  });
+
+  test("rejects an oauth secret with inline content beside a ref", async () => {
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          oauth: {
+            clientId: "client",
+            clientSecret: "inline${CLIENT_SECRET}",
+            refreshToken: "${REFRESH_TOKEN}",
+          },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("oauth.clientSecret must reference");
+  });
+
   test("rejects urls embedding credentials", async () => {
     await expect(
       normalizeMcpInput(
