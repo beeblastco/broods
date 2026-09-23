@@ -95,12 +95,15 @@ export function websocketToken(request: Request, url: URL): string {
 /**
  * Response headers for an upgrade. A client that offered subprotocols fails
  * the handshake unless the server selects one, so `broods.v1` is echoed back;
- * the token entry is never echoed.
+ * the token entry is never echoed. Undefined, never `{}`, when `broods.v1`
+ * was not offered: Bun's `server.upgrade` throws on an empty headers object.
  */
-export function websocketUpgradeHeaders(request: Request): HeadersInit {
+export function websocketUpgradeHeaders(
+  request: Request,
+): HeadersInit | undefined {
   return offeredSubprotocols(request).includes(WEBSOCKET_SUBPROTOCOL)
     ? { "Sec-WebSocket-Protocol": WEBSOCKET_SUBPROTOCOL }
-    : {};
+    : undefined;
 }
 
 /** Log once per upgrade when the credential arrived through the query string. */
