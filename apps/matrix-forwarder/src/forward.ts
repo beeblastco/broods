@@ -34,8 +34,6 @@ interface ForwardedEventInput {
   userId: string;
 }
 
-export type { ForwardTarget };
-
 /** Keeps only the event fields the wire contract names. */
 export function forwardedEvent(
   input: ForwardedEventInput,

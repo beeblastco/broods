@@ -13,6 +13,7 @@ import type {
   MatrixSendRequest,
   MatrixTypingRequest,
 } from "../../core/src/shared/matrix-wire.ts";
+import type { ForwardTarget } from "../../discord-forwarder/src/forward.ts";
 import {
   logInfo,
   logWarn,
@@ -24,7 +25,7 @@ import {
 } from "../../discord-forwarder/src/supervisor.ts";
 import type { AccountState, MatrixAccountOptions } from "./account.ts";
 import type { MatrixConnection } from "./connections.ts";
-import { forwardRoomEvent, type ForwardTarget } from "./forward.ts";
+import { forwardRoomEvent } from "./forward.ts";
 import { normalizeApiUrl } from "./matrix.ts";
 
 /** Injected so tests never load the native crypto module; `main.ts` passes `MatrixAccount`. */
