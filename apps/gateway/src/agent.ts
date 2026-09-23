@@ -43,7 +43,8 @@ type ActiveRun = {
   publicConversationKey: string;
   publicEventId: string;
   // One control input at a time: each one is a core POST plus a status poll.
-  controlling: boolean;
+  /** Control inputs submitted and not yet applied or terminal. */
+  controls: number;
 };
 type IngressHttpResponse = {
   eventId?: string;
@@ -101,6 +102,10 @@ const CURSOR_PREFIX = "ws-responses";
 // must be one token: a `.` would shift the subject and `*` or `>` would widen
 // the subscription across agents.
 const SUBJECT_TOKEN = /^[^\s.*>]+$/;
+// Each control in flight polls its status until applied or terminal, and a
+// queued `collect` or `followup` stays in flight until the run ends, so this
+// bounds poll loops per socket without serializing batching.
+const MAX_CONTROLS_IN_FLIGHT = 8;
 const STATUS_POLL_INTERVAL_MS = 500;
 const STATUS_QUIET_MS = 3_000;
 const NATS_TAIL_GRACE_POLLS = 4;
@@ -139,13 +144,13 @@ export function handleAgentMessage(
 
       return;
     }
-    if (active.controlling) {
+    if (active.controls >= MAX_CONTROLS_IN_FLIGHT) {
       sendAgentTest(socket, {
         type: "status",
         requestId: message.requestId,
         eventId: message.eventId,
-        status: "not_found",
-        error: "A control input is already in flight on this WebSocket",
+        status: "failed",
+        error: `Too many control inputs in flight on this WebSocket (max ${MAX_CONTROLS_IN_FLIGHT})`,
       });
 
       return;
@@ -257,7 +262,7 @@ async function runCoreStream(
     agentId: String(body.agentId),
     publicConversationKey: String(body.conversationKey),
     publicEventId: String(body.eventId),
-    controlling: false,
+    controls: 0,
   };
   activeRuns.set(socket, active);
   sendAgentTest(socket, {
@@ -505,7 +510,7 @@ async function submitControl(
   active: ActiveRun,
   message: WebSocketClientControlMessage,
 ): Promise<void> {
-  active.controlling = true;
+  active.controls += 1;
   try {
     const response = await fetch(
       `${socket.data.coreBaseUrl}${socket.data.corePath}`,
@@ -568,7 +573,7 @@ async function submitControl(
       });
     }
   } finally {
-    active.controlling = false;
+    active.controls -= 1;
   }
 }
 
@@ -638,7 +643,7 @@ async function attachCoreStream(
     agentId: message.agentId,
     publicConversationKey: message.conversationKey,
     publicEventId: message.eventId,
-    controlling: false,
+    controls: 0,
   };
   activeRuns.set(socket, active);
   const statusUrl = `/v1/runs/${encodeURIComponent(message.runId)}`;

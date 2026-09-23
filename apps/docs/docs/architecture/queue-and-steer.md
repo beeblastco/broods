@@ -338,10 +338,11 @@ in the canonical identity defined above and defaults to `eventId`; `eventId`
 correlates the durable envelope/status. ACK is sent only after durable
 acceptance. Later status frames mirror the pollable record.
 
-One control input is in flight per socket at a time. It stays in flight until
-its status is `applied` or terminal; a second `control` frame sent before then
-gets a `status` frame with `status: "not_found"` and an error, and can be sent
-again once the first settles.
+Up to 8 control inputs can be in flight per socket. One stays in flight until
+its status is `applied` or terminal, so a queued `collect` or `followup` holds
+its place until the run ends. A `control` frame past the limit gets a `status`
+frame with `status: "failed"` and an error, and can be sent again once an
+earlier one settles.
 
 Convex/core owns admission and status truth. The gateway owns only delivery of
 the correlated ACK/status frames: it emits ACK after core returns durable
