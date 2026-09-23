@@ -192,7 +192,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After` on a background run; on a streamed run it arrives as the first SSE `error` frame.
+          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After` on a background run; on a streamed run it arrives as the first SSE `error` frame. Or a burst past the plan's runs per minute (`plan_limit_exceeded`), always a JSON envelope with `Retry-After`.
           headers:
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
@@ -200,6 +200,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "402":
+          description: The account has used its monthly compute budget (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces budgets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                budgetExhausted:
+                  value:
+                    error:
+                      message: This account has used its €5.00 compute budget for 2026-09 on the free plan. Upgrade to keep running agents, or wait for next month.
+                      type: invalid_request_error
+                      code: budget_exhausted
         "403":
           description: Agent has not opted into public access (secure by default), or a runtime key sent run overrides the agent does not allow
           content:
@@ -423,6 +436,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "402":
+          description: The account has used its monthly compute budget (`budget_exhausted`), as for `POST /v1/runs`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: A burst past the plan's runs per minute (`plan_limit_exceeded`), as for `POST /v1/runs`
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/sandbox-jobs/{resultId}/complete:
     post:
@@ -495,7 +523,7 @@ paths:
             enum: [telegram, github, slack, discord, matrix, pancake, zalo]
       responses:
         "200":
-          description: Provider-specific acknowledgement
+          description: Provider-specific acknowledgement. A message refused by the account's plan (budget used, or a burst past runs per minute) is still acknowledged so the provider does not redeliver it; the agent says why in the channel instead of running.
         "401":
           description: Provider authentication failed
         "404":

@@ -229,6 +229,11 @@ function fakeStorage(): Storage {
       disable: none,
       remove: async () => false,
     },
+    budgets: {
+      get: none,
+      record: async () => {},
+      claimWarning: async () => false,
+    },
     agents: {
       getById: none,
       listForProduction: empty,

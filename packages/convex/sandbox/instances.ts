@@ -9,14 +9,32 @@
  * `upsert` is the create-time populate keyed by reservationKey (carrying the size
  * `specs`), called when broods reserves a persistent sandbox; `setStatus`/`remove`
  * mirror later transitions; `listForActiveOrg` is the dashboard read.
+ *
+ * Every write here also bills the running time since the last one onto the
+ * account's usage meter (`model/usageMeter.ts`); `accrueRecent` does the same
+ * hourly for sandboxes nothing wrote to.
  */
 
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
-import { internalMutation, internalQuery, query } from "../_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type MutationCtx,
+} from "../_generated/server";
+import {
+  addUsage,
+  SANDBOX_IDLE_BILL_MS,
+  sandboxAccrual,
+  sandboxLaunchUsage,
+} from "../model/usageMeter";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxInstancesFields } from "../schema";
 import { recordRuntimeAction } from "./auditEvents";
+
+// Covers two missed hourly accruals before a sandbox's unbilled time is lost.
+const ACCRUE_LOOKBACK_MS = 2 * 60 * 60 * 1000;
 
 const sandboxInstanceDoc = v.object({
   ...sandboxInstancesFields,
@@ -129,6 +147,7 @@ export const remove = internalMutation({
       instance.accountId === accountId &&
       (externalId === undefined || instance.externalId === externalId)
     ) {
+      await accrue(ctx, instance, Date.now());
       await ctx.db.delete(instance._id);
     }
 
@@ -167,7 +186,12 @@ export const setStatus = internalMutation({
     if (!instance || instance.accountId !== accountId) return false;
 
     const now = Date.now();
+    await accrue(ctx, instance, now);
+    if (instance.status === "suspended" && status === "running") {
+      await addUsage(ctx, accountId, sandboxLaunchUsage(instance), now);
+    }
     await ctx.db.patch(instance._id, {
+      meteredUntil: now,
       status: status,
       // `undefined` unsets the field, so a reason never outlives its error.
       errorMessage: status === "error" ? errorMessage : undefined,
@@ -243,8 +267,19 @@ export const upsert = internalMutation({
       // found the old machine gone at the provider and launched another, so
       // this is a fresh reservation with its own creating trace.
       const replaced = existing.externalId !== args.externalId;
+      await accrue(ctx, existing, now);
+      // A new machine, a suspended one resumed, or one that idled past its
+      // timeout (so the provider suspended it) loads its snapshot again.
+      if (
+        replaced ||
+        existing.status === "suspended" ||
+        now > existing.lastUsedAt + SANDBOX_IDLE_BILL_MS
+      ) {
+        await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
+      }
       const patch = {
         ...fields,
+        meteredUntil: now,
         ...(replaced || !existing.createdByTraceId
           ? { createdByTraceId: args.createdByTraceId }
           : {}),
@@ -280,12 +315,52 @@ export const upsert = internalMutation({
         : {}),
       ...fields,
     };
-    await ctx.db.insert("sandboxInstances", row);
+    await ctx.db.insert("sandboxInstances", { ...row, meteredUntil: now });
+    await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
     await recordRuntimeAction(ctx, row, "reserve");
 
     return null;
   },
 });
+
+/**
+ * Bill the running time of every sandbox used recently enough to still have
+ * some unbilled, so the meter stays current for one nothing writes to.
+ * Hourly cron.
+ */
+export const accrueRecent = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const now = Date.now();
+    const recent = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_lastUsedAt", (q) =>
+        q.gte("lastUsedAt", now - SANDBOX_IDLE_BILL_MS - ACCRUE_LOOKBACK_MS),
+      )
+      .collect();
+    for (const instance of recent) {
+      const meteredUntil = await accrue(ctx, instance, now);
+      if (meteredUntil !== instance.meteredUntil) {
+        await ctx.db.patch(instance._id, { meteredUntil: meteredUntil });
+      }
+    }
+
+    return null;
+  },
+});
+
+// Add a sandbox's unbilled running time to its account's meter.
+async function accrue(
+  ctx: MutationCtx,
+  instance: Doc<"sandboxInstances">,
+  now: number,
+): Promise<number> {
+  const accrual = sandboxAccrual(instance, now);
+  await addUsage(ctx, instance.accountId, accrual.usage, now);
+
+  return accrual.meteredUntil;
+}
 
 /**
  * The refreshed registry columns `upsert` writes on both the patch and the

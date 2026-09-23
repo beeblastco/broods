@@ -55,6 +55,20 @@ crons.interval(
   internal.usage.pruneExpiredTaskUsage,
   {},
 );
+// Sandbox writes bill their own running time; this catches the ones nothing
+// wrote to within the hour.
+crons.interval(
+  "accrue sandbox usage",
+  { hours: 1 },
+  internal.sandbox.instances.accrueRecent,
+  {},
+);
+crons.interval(
+  "snapshot storage usage",
+  { hours: 24 },
+  internal.aws.storageMeter.snapshotAll,
+  {},
+);
 // The write seams keep this projection live; the sweep seeds it at cutover and
 // self-heals any seam a future writer forgets.
 crons.interval(

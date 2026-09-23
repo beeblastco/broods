@@ -104,6 +104,11 @@ import {
 } from "./integrations.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
+  admitRun,
+  planRefusalResponse,
+  type PlanRefusal,
+} from "./plan-limits.ts";
+import {
   ingestChannelAttachments,
   Session,
   type ConversationIngressEvent,
@@ -433,13 +438,20 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
     return errorResponse(400, "Invalid cron invocation");
   }
 
-  await handleScheduledCron(payload);
+  const refusal = await handleScheduledCron(payload);
 
-  return new Response(null, { status: 204 });
+  return refusal
+    ? planRefusalResponse(refusal)
+    : new Response(null, { status: 204 });
 }
 
-/** Handle scheduled cron jobs dispatched by the Convex crons component. */
-async function handleScheduledCron(event: CronInvocation): Promise<void> {
+/**
+ * Handle scheduled cron jobs dispatched by the Convex crons component.
+ * @returns the plan-limit refusal when the fire was not admitted, else null
+ */
+async function handleScheduledCron(
+  event: CronInvocation,
+): Promise<PlanRefusal | null> {
   const crons = getStorage().crons;
   const job = await crons.getById(event.accountId, event.cronId);
   if (!job) {
@@ -448,7 +460,7 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       cronId: event.cronId,
     });
 
-    return;
+    return null;
   }
   if (job.status !== "active") {
     logInfo("Cron job skipped because it is paused", {
@@ -456,7 +468,17 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       cronId: event.cronId,
     });
 
-    return;
+    return null;
+  }
+  const { refusal } = await admitRun(job.accountId);
+  if (refusal) {
+    // A refused fire is spent like a failed one, one-shot included.
+    await crons.markFailed(job.accountId, job.cronId, refusal.message);
+    if (isOneTimeSchedule(job.scheduleExpression)) {
+      await removeOneShotCron(job.accountId, job.cronId);
+    }
+
+    return refusal;
   }
 
   await crons.markStarted(job.accountId, job.cronId);
@@ -488,6 +510,8 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
     }
     throw err;
   }
+
+  return null;
 }
 
 /**
@@ -812,6 +836,10 @@ async function handleDirectRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
 ): Promise<Response> {
+  const { refusal } = await admitRun(event.accountId);
+  if (refusal) {
+    return planRefusalResponse(refusal);
+  }
   if (event.answers?.length) {
     return handleDirectAnswers(event);
   }
@@ -933,6 +961,10 @@ async function handleDirectRequest(
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
+  const { refusal } = await admitRun(event.accountId);
+  if (refusal) {
+    return planRefusalResponse(refusal);
+  }
   if (event.answers?.length) {
     return handleDirectAnswers(event);
   }
@@ -1462,6 +1494,21 @@ export async function handleChannelRequest(
     });
 
     return;
+  }
+  // The provider gets its usual ack either way; an error status would only
+  // make it redeliver. The refusal and the 80% notice are said in the channel.
+  const plan = await admitRun(event.accountId, { claimWarning: true });
+  if (plan.refusal) {
+    await event.channel.sendText(
+      plan.refusal.retryAfterSeconds === undefined
+        ? plan.refusal.message
+        : `${plan.refusal.message} Try again in ${plan.refusal.retryAfterSeconds} seconds.`,
+    );
+
+    return;
+  }
+  if (plan.warning) {
+    await event.channel.sendText(plan.warning);
   }
   // Before admission, so a turn that lands in the queue still carries its
   // media: the queued record holds only these events, and the drain loop

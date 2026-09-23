@@ -2815,6 +2815,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
   return {
     accounts: null as never,
     agents: null as never,
+    budgets: null as never,
     agentDeployments: null as never,
     channelRecords: null as never,
     crons: null as never,

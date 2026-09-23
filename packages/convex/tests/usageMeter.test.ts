@@ -1,0 +1,171 @@
+/// <reference types="vite/client" />
+/**
+ * The monthly usage meter: the sandbox billing math, the price of a meter,
+ * the sandbox mirror writing to it, and the budget read core enforces.
+ */
+
+import { convexTest } from "convex-test";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import { EMPTY_USAGE, meterCostEur } from "../model/pricing";
+import { SANDBOX_IDLE_BILL_MS, sandboxAccrual } from "../model/usageMeter";
+import schema from "../schema";
+
+const modules = import.meta.glob("../**/*.ts");
+
+const HOUR_MS = 60 * 60 * 1000;
+const NOW = Date.UTC(2026, 8, 23, 12);
+
+const meterTest = () => convexTest(schema, modules);
+
+type T = ReturnType<typeof meterTest>;
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
+
+describe("sandboxAccrual", () => {
+  const microvm = {
+    provider: "lambda" as const,
+    specs: { vcpu: 0.25, memoryMb: 512, storageGb: 8 },
+    status: "running" as const,
+  };
+
+  test("bills a MicroVM in use at its 1 vCPU / 2 GB baseline", () => {
+    const accrual = sandboxAccrual(
+      { ...microvm, lastUsedAt: NOW, meteredUntil: NOW - HOUR_MS },
+      NOW,
+    );
+
+    expect(accrual.usage).toEqual({
+      sandboxVcpuSeconds: 3600,
+      sandboxGbSeconds: 7200,
+    });
+    expect(accrual.meteredUntil).toBe(NOW);
+  });
+
+  test("stops billing an idle sandbox at its idle timeout", () => {
+    const lastUsedAt = NOW - HOUR_MS;
+    const accrual = sandboxAccrual(
+      { ...microvm, lastUsedAt: lastUsedAt, meteredUntil: lastUsedAt },
+      NOW,
+    );
+
+    expect(accrual.usage.sandboxVcpuSeconds).toBe(SANDBOX_IDLE_BILL_MS / 1000);
+    expect(accrual.meteredUntil).toBe(lastUsedAt + SANDBOX_IDLE_BILL_MS);
+  });
+
+  test("bills nothing while suspended, or for the user's own machine", () => {
+    const base = { lastUsedAt: NOW, meteredUntil: NOW - HOUR_MS };
+
+    expect(
+      sandboxAccrual({ ...microvm, ...base, status: "suspended" }, NOW).usage,
+    ).toEqual({});
+    expect(
+      sandboxAccrual({ ...microvm, ...base, provider: "machine" }, NOW).usage,
+    ).toEqual({ sandboxVcpuSeconds: 0, sandboxGbSeconds: 0 });
+  });
+});
+
+test("an hour of the default MicroVM costs about €0.14", () => {
+  const cost = meterCostEur({
+    ...EMPTY_USAGE,
+    sandboxVcpuSeconds: 3600,
+    sandboxGbSeconds: 7200,
+  });
+
+  expect(cost).toBeCloseTo(0.1368, 4);
+});
+
+test("a sandbox's launch and running time land on its account's meter", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+
+  await t.mutation(internal.sandbox.instances.upsert, {
+    accountId: accountId,
+    provider: "lambda",
+    reservationKey: "fs-abc",
+    externalId: "vm-1",
+    name: "default",
+    specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+  });
+  vi.setSystemTime(NOW + 10 * 60 * 1000);
+  await t.mutation(internal.sandbox.instances.remove, {
+    accountId: accountId,
+    reservationKey: "fs-abc",
+  });
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  expect(meter).toMatchObject({
+    month: "2026-09",
+    sandboxVcpuSeconds: 600,
+    sandboxGbSeconds: 1200,
+    sandboxSnapshotGb: 2,
+  });
+});
+
+describe("budget", () => {
+  test("is not enforced unless this is the managed service", async () => {
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+
+    const budget = await t.query(internal.account.budget.get, {
+      accountId: accountId,
+    });
+
+    expect(budget).toMatchObject({ enforced: false, limitEur: 5 });
+  });
+
+  test("prices the month's meter against the plan and warns once at 80%", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { egressGb: 50 },
+    });
+
+    const budget = await t.query(internal.account.budget.get, {
+      accountId: accountId,
+    });
+    const claims = [
+      await t.mutation(internal.account.budget.claimWarning, {
+        accountId: accountId,
+      }),
+      await t.mutation(internal.account.budget.claimWarning, {
+        accountId: accountId,
+      }),
+    ];
+
+    expect(budget).toMatchObject({ enforced: true, plan: "free" });
+    expect(budget?.usedEur).toBeCloseTo(4, 6);
+    expect(claims).toEqual([true, false]);
+  });
+});
+
+async function seedAccount(t: T): Promise<Id<"accounts">> {
+  return await t.run(async (ctx) => {
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free" as const,
+      createdAt: Date.now(),
+    });
+
+    return await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "beeblast",
+      secretHash: "hash",
+      status: "active" as const,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+}

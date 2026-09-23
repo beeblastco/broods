@@ -25,6 +25,7 @@ import {
   type S3ObjectHead,
 } from "./shared/s3.ts";
 import { getStorage } from "./shared/storage.ts";
+import { recordUsage } from "./harness/plan-limits.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -109,6 +110,11 @@ export async function handleMediaRequest(
   const bytes = object.access
     ? await readS3Bytes(object.bucket, object.key, object.access)
     : await readS3Bytes(object.bucket, object.key);
+  // Core is outside AWS, so bytes from the managed bucket are AWS egress. A
+  // tenant's own bucket is the tenant's bill.
+  if (!object.access) {
+    recordUsage(ticket.accountId, { egressGb: bytes.byteLength / 1e9 });
+  }
 
   return new Response(bytes, { status: 200, headers: headers });
 }

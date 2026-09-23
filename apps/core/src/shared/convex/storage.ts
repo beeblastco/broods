@@ -37,6 +37,7 @@ import type {
 } from "../domain/workspace-config.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { AgentDeploymentScope, Storage } from "../storage.ts";
+import { budgets } from "./budgets.ts";
 import { getConvexClient } from "./client.ts";
 import { taskUsage } from "./usage.ts";
 
@@ -828,6 +829,7 @@ const roleSessions: Storage["roleSessions"] = {
 export const convexStorage: Storage = {
   accounts: accounts,
   agents: agents,
+  budgets: budgets,
   agentDeployments: agentDeployments,
   channelRecords: channelRecords,
   crons: crons,

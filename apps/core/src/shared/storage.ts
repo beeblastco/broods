@@ -7,6 +7,8 @@ import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { McpRecord } from "./domain/mcp.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import type { UsageQuantities } from "@broods/convex/model/pricing";
+import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { PolicyRecord } from "./domain/policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
@@ -242,6 +244,25 @@ interface RoleSessionStore {
 }
 
 /**
+ * The account's monthly compute budget and the usage only core sees. Sandbox
+ * time and storage are metered in Convex itself.
+ */
+interface BudgetStore {
+  /** Null for an unknown account. */
+  get(accountId: string): Promise<BudgetStatus | null>;
+  /** Best-effort: a failed write is logged, never thrown. */
+  record(
+    accountId: string,
+    usage: Pick<
+      Partial<UsageQuantities>,
+      "hostedMcpGbSeconds" | "hostedMcpRequests" | "egressGb"
+    >,
+  ): Promise<void>;
+  /** True for the one caller that should send this month's 80% warning. */
+  claimWarning(accountId: string): Promise<boolean>;
+}
+
+/**
  * Writes per-task usage counts. The Convex storage adapter implements this;
  * it inserts one raw-count row per finished task and folds into a rollup
  * 5-minute Convex usageRollups bucket.
@@ -253,6 +274,7 @@ interface TaskUsageStore {
 export interface Storage {
   accounts: AccountStore;
   agents: AgentStore;
+  budgets: BudgetStore;
   agentDeployments: AgentDeploymentStore;
   channelRecords: ChannelRecordStore;
   crons: CronStore;

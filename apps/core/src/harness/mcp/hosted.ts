@@ -11,6 +11,7 @@ import {
   InvokeWithResponseStreamCommand,
   LambdaClient,
 } from "@aws-sdk/client-lambda";
+import { HOSTED_MCP_MEMORY_GB } from "@broods/convex/model/pricing";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import {
   booleanEnv,
@@ -19,6 +20,7 @@ import {
 } from "../../shared/env.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
 import { FrameQueue, toolBundlesBucket, type RunnerFrame } from "../frames.ts";
+import { recordUsage } from "../plan-limits.ts";
 
 /** Placeholder origin the SDK transport points at; never actually dialed. */
 export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
@@ -409,6 +411,7 @@ async function sendBatch(
   };
   const queue = new FrameQueue();
   let transportError: unknown;
+  const startedAt = Date.now();
   const pump = drainInvokeStream(defaultClient(), payload, abortSignal, queue)
     .catch((error: unknown) => {
       transportError = error;
@@ -427,5 +430,11 @@ async function sendBatch(
     return collected.result;
   } finally {
     await pump;
+    // Lambda bills the invoke's wall time at the function's memory size.
+    recordUsage(record.accountId, {
+      hostedMcpGbSeconds:
+        ((Date.now() - startedAt) / 1000) * HOSTED_MCP_MEMORY_GB,
+      hostedMcpRequests: 1,
+    });
   }
 }

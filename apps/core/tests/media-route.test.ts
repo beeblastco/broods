@@ -40,7 +40,10 @@ const ACCOUNT = "acct_1";
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const SECRET = "media-ticket-secret";
 
+let meterWrites: { accountId: string; usage: unknown }[] = [];
+
 beforeEach(() => {
+  meterWrites = [];
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = SECRET;
@@ -153,7 +156,10 @@ describe("handleMediaRequest", () => {
 
   it("serves an attachment store file without touching the workspace", async (): Promise<void> => {
     const { handleMediaRequest } = await import("../src/media.ts");
-    setStorageForTests({ workspaceConfigs: {} } as never);
+    setStorageForTests({
+      budgets: meterRecorder(),
+      workspaceConfigs: {},
+    } as never);
 
     const response = await handleMediaRequest(
       mediaRequest(
@@ -169,6 +175,10 @@ describe("handleMediaRequest", () => {
     expect(headS3ObjectMock.mock.calls[0]).toEqual([
       "filesystem-bucket",
       `attachments/${ACCOUNT}/media/ab12/0-photo.png`,
+    ]);
+    // Three bytes out of the managed bucket are three bytes of AWS egress.
+    expect(meterWrites).toEqual([
+      { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } },
     ]);
   });
 
@@ -207,8 +217,17 @@ function mediaRequest(token: string): CoreRequest {
   };
 }
 
+function meterRecorder(): Pick<Storage["budgets"], "record"> {
+  return {
+    record: async function (accountId, usage): Promise<void> {
+      meterWrites.push({ accountId: accountId, usage: usage });
+    },
+  };
+}
+
 function storageWithWorkspace(): Storage {
   return {
+    budgets: meterRecorder(),
     workspaceConfigs: {
       getById: async function (accountId: string, workspaceId: string) {
         return accountId === ACCOUNT && workspaceId === "ws_a"
