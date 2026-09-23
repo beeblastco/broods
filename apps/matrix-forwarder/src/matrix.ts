@@ -6,7 +6,7 @@
  */
 
 const API_PREFIX = "/_matrix/client/v3";
-/** Deadline for every call except `/sync`, which sets its own. */
+/** Deadline for a call whose caller passes no signal. `/sync` sets its own. */
 const REQUEST_TIMEOUT_MS = 30_000;
 /** How long past the long-poll timeout a sync may hang before it is aborted. */
 const SYNC_GRACE_MS = 15_000;
@@ -72,10 +72,16 @@ export class MatrixClient {
   /** User id to display name for everyone joined; no display name maps to undefined. */
   async joinedMembers(
     roomId: string,
+    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   ): Promise<Map<string, string | undefined>> {
     const response = await this.request<{
       joined: Record<string, { display_name?: string | null }>;
-    }>("GET", `/rooms/${encodeURIComponent(roomId)}/joined_members`);
+    }>(
+      "GET",
+      `/rooms/${encodeURIComponent(roomId)}/joined_members`,
+      undefined,
+      signal,
+    );
     const members = new Map<string, string | undefined>();
     for (const [userId, member] of Object.entries(response.joined)) {
       members.set(userId, member.display_name ?? undefined);
@@ -89,20 +95,21 @@ export class MatrixClient {
     method: string,
     path: string,
     body: string,
+    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   ): Promise<string> {
-    return this.call(
-      method,
-      path,
-      body,
-      AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    );
+    return this.call(method, path, body, signal);
   }
 
-  async roomEncrypted(roomId: string): Promise<boolean> {
+  async roomEncrypted(
+    roomId: string,
+    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  ): Promise<boolean> {
     try {
       await this.request(
         "GET",
         `/rooms/${encodeURIComponent(roomId)}/state/m.room.encryption/`,
+        undefined,
+        signal,
       );
     } catch (error) {
       if (error instanceof MatrixError && error.status === 404) return false;
@@ -117,11 +124,13 @@ export class MatrixClient {
     roomId: string,
     type: string,
     content: Record<string, unknown>,
+    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   ): Promise<string> {
     const response = await this.request<{ event_id: string }>(
       "PUT",
       `/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(type)}/${crypto.randomUUID()}`,
       content,
+      signal,
     );
 
     return response.event_id;
