@@ -59,8 +59,12 @@ export function getObservabilityContext(): ObservabilityContext | null {
 // Runs fn with a fresh, request-private observability cell. Nested scopes
 // (subagents, save/restore call sites) share the cell, which is correct because
 // it is the same logical request. Concurrent requests each get their own cell.
-export function runWithObservabilityScope<T>(fn: () => T): T {
-  return _obsStore.run({ current: null }, fn);
+// `inherited` seeds the cell for work that outlives the request that started it.
+export function runWithObservabilityScope<T>(
+  fn: () => T,
+  inherited: ObservabilityContext | null = null,
+): T {
+  return _obsStore.run({ current: inherited }, fn);
 }
 
 export function setObservabilityContext(

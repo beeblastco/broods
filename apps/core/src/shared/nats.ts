@@ -19,10 +19,9 @@
  * be publishing or attachable there.
  *
  * {@link connectNats} picks the transport from the `NATS_URL` scheme:
- * `wss://`/`ws://` uses `nats.ws` for out-of-cluster callers (the cluster
- * exposes only a `wss://` ingress externally), `nats://`/`tls://` uses the core
- * TCP client for in-cluster callers (core 4222 is not exposed externally).
- * Moving a service in-cluster is then a `NATS_URL` change, not a code change.
+ * `nats://`/`tls://` uses the core TCP client, `wss://`/`ws://` uses `nats.ws`.
+ * NATS is in-cluster only: core and the gateway both dial `nats://` on the
+ * cluster service, and nothing outside the cluster reaches it.
  */
 
 import { connect as connectTcp } from "nats";
@@ -30,7 +29,6 @@ import {
   connect as connectWebSocket,
   DeliverPolicy,
   DiscardPolicy,
-  headers as natsHeaders,
   RetentionPolicy,
   StorageType,
   type ConsumerConfig,
@@ -41,6 +39,7 @@ import {
 
 export type { NatsConnection };
 
+/** One run's response stream; core's implementation is `harness/nats-publisher.ts`. */
 export interface NatsPublisher {
   publish(data: Record<string, unknown>): Promise<void>;
   close(): Promise<void>;
@@ -92,8 +91,10 @@ const OBSERVABILITY_STREAM_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const OBSERVABILITY_STREAM_MAX_BYTES = 512 * 1024 * 1024;
 const OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT = 20_000;
 
-// Shared so token publishing does not allocate an encoder per chunk.
-const ENCODER = new TextEncoder();
+// Account and agent ids go into subjects raw, so they must be one token with no
+// wildcard. Only the characters NATS reserves are refused: virtual subagent ids
+// carry `~` from their task id.
+const SUBJECT_ID_PATTERN = /^[^\s.*>]+$/;
 
 // Both transports ship the same base client + JetStream API, so the returned
 // connection is interchangeable for every helper here. Pass `token` for
@@ -122,113 +123,42 @@ export async function connectNats(options: {
   return connection as unknown as NatsConnection;
 }
 
-// Shared memoized connection for observability publishes (logs + spans), used by
-// both log.ts and harness.ts. Returns null when NATS is unconfigured.
-let _obsNatsConn: NatsConnection | null = null;
-let _obsNatsConnPromise: Promise<NatsConnection> | null = null;
+// One memoized connection per process for every core publish: observability
+// logs and spans, and the WebSocket response stream. Returns null when NATS is
+// unconfigured. It reconnects forever, and a connection that still closes
+// (auth revoked, drained) clears the memo so the next call dials again.
+let _natsConn: NatsConnection | null = null;
+let _natsConnPromise: Promise<NatsConnection> | null = null;
 
-export function getObservabilityNatsConn(): Promise<NatsConnection> | null {
+export function getSharedNatsConn(): Promise<NatsConnection> | null {
   const url = process.env.NATS_URL?.trim();
   if (!url) return null;
   const token = process.env.NATS_TOKEN?.trim() || undefined;
 
-  if (_obsNatsConn) return Promise.resolve(_obsNatsConn);
-  if (_obsNatsConnPromise) return _obsNatsConnPromise;
+  if (_natsConn) return Promise.resolve(_natsConn);
+  if (_natsConnPromise) return _natsConnPromise;
 
-  _obsNatsConnPromise = connectNats({
+  _natsConnPromise = connectNats({
     servers: url,
     token: token,
     timeout: 3000,
+    maxReconnectAttempts: -1,
   })
-    .then((c) => {
-      _obsNatsConn = c;
-      _obsNatsConnPromise = null;
+    .then((connection): NatsConnection => {
+      _natsConn = connection;
+      _natsConnPromise = null;
+      void connection.closed().then((): void => {
+        if (_natsConn === connection) _natsConn = null;
+      });
 
-      return c;
+      return connection;
     })
-    .catch((err) => {
-      _obsNatsConnPromise = null;
+    .catch((err: unknown): never => {
+      _natsConnPromise = null;
       throw err;
     });
 
-  return _obsNatsConnPromise;
-}
-
-export class LiveNatsPublisher implements NatsPublisher {
-  private connectionPromise: Promise<NatsConnection> | null = null;
-  private streamReady: Promise<void> | null = null;
-  private readonly subject: string;
-  private sequence = 0;
-
-  constructor(
-    private readonly url: string,
-    private readonly headers: NatsEventHeaders,
-    // Token-auth credential; omit for an unauthenticated server.
-    private readonly token?: string,
-  ) {
-    this.subject = streamResponseSubject(
-      headers.accountId,
-      headers.agentId,
-      headers.conversationKey,
-    );
-  }
-
-  // A failed connect stays memoized: a publisher lives for one run, and
-  // reconnecting per chunk would make every awaited publish wait out a timeout.
-  private async getConnection(): Promise<NatsConnection> {
-    if (!this.connectionPromise) {
-      this.connectionPromise = connectNats({
-        servers: this.url,
-        token: this.token,
-      });
-    }
-
-    return this.connectionPromise;
-  }
-
-  async publish(data: Record<string, unknown>): Promise<void> {
-    try {
-      const connection = await this.getConnection();
-      // Ensure the stream exists before the first publish so it captures from the
-      // first token; memoized, so later tokens skip straight to publishing.
-      if (!this.streamReady) {
-        this.streamReady = ensureResponseStream(connection);
-      }
-      await this.streamReady;
-
-      this.sequence++;
-      const event = {
-        type: "stream",
-        headers: this.headers,
-        data: data,
-        sequence: this.sequence,
-      };
-      // Core publish: fire-and-forget at core-NATS speed for live subscribers,
-      // while the bound stream captures the same message for replay. Nats-Msg-Id
-      // makes it idempotent within the stream's duplicate_window so a retry never
-      // stores a duplicate.
-      const hdrs = natsHeaders();
-      hdrs.set("Nats-Msg-Id", `${this.headers.eventId}:${this.sequence}`);
-      connection.publish(this.subject, ENCODER.encode(JSON.stringify(event)), {
-        headers: hdrs,
-      });
-    } catch {
-      // Publishing is best-effort per event; close() drains queued writes.
-    }
-  }
-
-  async close(): Promise<void> {
-    if (this.connectionPromise) {
-      try {
-        const connection = await this.connectionPromise;
-        // Drain flushes pending publishes to the server (where the stream stores
-        // them) before closing. It does not affect other concurrent invocations.
-        await connection.drain();
-      } catch {
-        // Ignore drain errors.
-      }
-    }
-  }
+  return _natsConnPromise;
 }
 
 // Create the response stream once per process; idempotent across concurrent
@@ -372,9 +302,9 @@ export async function readObservabilityStream(options: {
  * Best-effort; a flush failure never affects the run.
  */
 export async function flushObservabilityNats(): Promise<void> {
-  if (!_obsNatsConn) return;
+  if (!_natsConn) return;
   try {
-    await _obsNatsConn.flush();
+    await _natsConn.flush();
   } catch {
     // Best-effort: a NATS hiccup must never affect the run.
   }
@@ -583,6 +513,13 @@ export function streamResponseSubject(
   agentId: string,
   conversationKey: string,
 ): string {
+  if (
+    !SUBJECT_ID_PATTERN.test(accountId) ||
+    !SUBJECT_ID_PATTERN.test(agentId)
+  ) {
+    throw new Error("Account and agent ids must be plain NATS subject tokens");
+  }
+
   return `v1.${accountId}.${agentId}.ws.response.${subjectToken(conversationKey)}`;
 }
 

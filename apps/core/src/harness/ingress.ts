@@ -1,6 +1,8 @@
 /**
  * Transport-neutral ingress admission and status helpers.
  * Convex owns atomic FIFO and fencing; handlers decide how accepted work is delivered.
+ * Every lease this process takes or gives back goes through here, which is how
+ * shutdown knows what to hand back when runs outlive the drain deadline.
  */
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
@@ -20,6 +22,10 @@ export const DEFAULT_INGRESS_MAX_COUNT = 100;
 export const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_CONVERSATION_LEASE_TTL_MS = 15 * 60 * 1000;
 
+// The leases this process holds, keyed by conversation: Convex allows one
+// owner per conversation at a time.
+const liveOwners = new Map<string, LiveOwner>();
+
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
 export type AppliedIngressMode = IngressMode;
 export type IngressStatus =
@@ -30,6 +36,21 @@ export type IngressStatus =
   | "completed"
   | "failed"
   | "expired";
+
+/** One conversation lease this process holds, as Convex fences it. */
+interface LiveOwner {
+  conversationKey: string;
+  ownerEventId: string;
+  ownerGeneration: number;
+}
+
+/** Queued work `recoverQueuedIngress` promoted, and the scope it runs under. */
+export interface RecoveredIngress {
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+  applied: AppliedIngress;
+}
 
 export interface PublicDeploymentIngress {
   accountId: string;
@@ -203,7 +224,7 @@ export async function acceptIngress(
     }),
   );
 
-  return runtime.mutate<IngressAdmission>("acceptIngress", {
+  const admission = await runtime.mutate<IngressAdmission>("acceptIngress", {
     ...candidate,
     ...(candidate.delivery.kind === "channel" && candidate.agentConfig
       ? {
@@ -222,6 +243,25 @@ export async function acceptIngress(
     maxQueuedCount: DEFAULT_INGRESS_MAX_COUNT,
     maxQueuedBytes: DEFAULT_INGRESS_MAX_BYTES,
   });
+  if (admission.recovered) {
+    trackOwner({
+      conversationKey: candidate.conversationKey,
+      ownerEventId: admission.recovered.eventId,
+      ownerGeneration: admission.recovered.ownerGeneration,
+    });
+  }
+  if (
+    admission.outcome === "owner" &&
+    admission.ownerGeneration !== undefined
+  ) {
+    trackOwner({
+      conversationKey: candidate.conversationKey,
+      ownerEventId: candidate.eventId,
+      ownerGeneration: admission.ownerGeneration,
+    });
+  }
+
+  return admission;
 }
 
 /** Applies waiting steer envelopes at the current AI SDK step boundary. */
@@ -266,6 +306,29 @@ export function getIngressStatusByEventId(options: {
   eventId: string;
 }): Promise<IngressStatusRecord | null> {
   return runtime.query("getIngressStatusByEventId", options);
+}
+
+/**
+ * Hands back every lease this process still holds, failing its run, so the
+ * conversation is not locked for the lease TTL after the process is gone.
+ * Shutdown calls it once runs outlive the drain deadline. Queued work stays
+ * queued for `recoverQueuedIngress` on the next pod.
+ * @returns how many leases were handed back
+ */
+export async function interruptLiveOwners(error: string): Promise<number> {
+  const owners = [...liveOwners.values()];
+  const results = await Promise.allSettled(
+    owners.map(async (owner): Promise<void> => {
+      // Fenced: a run that settled on its own meanwhile makes this a no-op.
+      await settleIngress({ ...owner, status: "failed", error: error }).catch(
+        (): number => 0,
+      );
+      await releaseIngressOwner(owner);
+    }),
+  );
+
+  return results.filter((result): boolean => result.status === "fulfilled")
+    .length;
 }
 
 export async function prepareSessionMessage(options: {
@@ -346,6 +409,37 @@ export async function prepareSessionMessage(options: {
   };
 }
 
+/**
+ * Promotes queued work whose conversation has no live owner: its owner handed
+ * the lease back at shutdown, or died and let it expire. The caller must
+ * dispatch every returned application; it now holds each lease.
+ */
+export async function recoverQueuedIngress(): Promise<RecoveredIngress[]> {
+  const recovered = await runtime.mutate<RecoveredIngress[]>(
+    "recoverQueuedIngress",
+    { leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS },
+  );
+  for (const entry of recovered) {
+    trackOwner({
+      conversationKey: entry.conversationKey,
+      ownerEventId: entry.applied.eventId,
+      ownerGeneration: entry.applied.ownerGeneration,
+    });
+  }
+
+  return recovered;
+}
+
+/** Gives the lease back, only while the caller still holds that generation. */
+export async function releaseIngressOwner(owner: LiveOwner): Promise<void> {
+  await runtime.mutate("releaseIngressOwner", {
+    conversationKey: owner.conversationKey,
+    ownerEventId: owner.ownerEventId,
+    ownerGeneration: owner.ownerGeneration,
+  });
+  forgetOwner(owner);
+}
+
 /** Settles every envelope applied to one active event under the fencing token. */
 export function settleIngress(options: {
   conversationKey: string;
@@ -359,15 +453,34 @@ export function settleIngress(options: {
 }
 
 /** Takes the next FIFO follow-up or contiguous collect application. */
-export function takeNextIngress(options: {
-  conversationKey: string;
-  ownerEventId: string;
-  ownerGeneration: number;
-}): Promise<AppliedIngress | null> {
-  return runtime.mutate("takeNextIngress", {
+export async function takeNextIngress(
+  options: LiveOwner,
+): Promise<AppliedIngress | null> {
+  const next = await runtime.mutate<AppliedIngress | null>("takeNextIngress", {
     ...options,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
   });
+  // Either the lease moved to the next application or it was released.
+  forgetOwner(options);
+  if (next) {
+    trackOwner({
+      conversationKey: options.conversationKey,
+      ownerEventId: next.eventId,
+      ownerGeneration: next.ownerGeneration,
+    });
+  }
+
+  return next;
+}
+
+function forgetOwner(owner: LiveOwner): void {
+  const held = liveOwners.get(owner.conversationKey);
+  if (
+    held?.ownerEventId === owner.ownerEventId &&
+    held.ownerGeneration === owner.ownerGeneration
+  ) {
+    liveOwners.delete(owner.conversationKey);
+  }
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -379,4 +492,8 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)]
     .map((byte): string => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function trackOwner(owner: LiveOwner): void {
+  liveOwners.set(owner.conversationKey, owner);
 }

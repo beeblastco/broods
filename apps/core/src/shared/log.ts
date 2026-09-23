@@ -8,7 +8,7 @@
 import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts.ts";
 import {
   ensureObservabilityStream,
-  getObservabilityNatsConn,
+  getSharedNatsConn,
   logsSubject,
 } from "./nats.ts";
 import { emitOtelLog, getObservabilityContext } from "./otel.ts";
@@ -270,7 +270,7 @@ function publishNats(
   level: "INFO" | "WARN" | "ERROR",
   entry: ObservabilityLogEntry,
 ): void {
-  const connPromise = getObservabilityNatsConn();
+  const connPromise = getSharedNatsConn();
   if (!connPromise) return;
 
   const ctx = getObservabilityContext();

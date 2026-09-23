@@ -54,6 +54,21 @@ describe("nats subject scheme", () => {
     ).not.toBe(base);
   });
 
+  it("refuses an agent id that would add or wildcard a subject token", () => {
+    expect(() => streamResponseSubject("acct1", "agent.>", "conv-1")).toThrow(
+      /plain NATS subject tokens/,
+    );
+    expect(() => streamResponseSubject("acct1", "a*", "conv-1")).toThrow();
+  });
+
+  it("accepts a virtual subagent id", () => {
+    const agentId = `virtual_subagent_subagent~YWJj~${crypto.randomUUID()}`;
+
+    expect(
+      streamResponseSubject("acct1", agentId, "conv-1").split("."),
+    ).toHaveLength(6);
+  });
+
   it("produces exactly six tokens so it matches the stream wildcard v1.*.*.ws.response.*", () => {
     const subject = streamResponseSubject(
       "acct1",

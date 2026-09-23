@@ -231,7 +231,7 @@ function fakeStorage(): Storage {
     },
     agents: {
       getById: none,
-      list: empty,
+      listForProduction: empty,
       listForEndpoint: empty,
       removeAllForAccount: zero,
     },
