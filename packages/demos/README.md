@@ -16,7 +16,8 @@ Each demo depends on `broods` as `file:../../broods`, whose entrypoint is
 entrypoint and `Cannot find package 'broods'` at runtime. Build first, and
 re-run `bun install` in the demo if you built afterwards.
 
-Use `.env.local` for local runtime settings. SDK clients automatically read the
+Each demo keeps its local settings in its own folder's `.env.local`; Bun never
+reads a parent folder's file. SDK clients automatically read the
 runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
 writes for the selected stage.
 WebSocket demos use the same `BROODS_BASE_URL` or `BROODS_HOST` override as
