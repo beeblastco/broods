@@ -27,6 +27,7 @@ import {
   gatewayUrlForDashboard,
   readStoredAuth,
   stageFromEnv,
+  writePrivateFile,
   writeStoredAuth,
   type StoredAuthConfig,
 } from "../config.ts";
@@ -48,8 +49,8 @@ import {
 } from "../client.ts";
 import { isShellOwnedEnv, loadBroodsRuntimeConfig } from "../runtime-config.ts";
 import {
-  fetchObservabilityScope,
   subscribeObservabilityLogs,
+  type ObservabilityClientOptions,
 } from "../observability-client.ts";
 import {
   isSandboxLogId,
@@ -89,6 +90,9 @@ import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with 
 const VERSION = packageJson.version;
 const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
+// Re-mint a stage ticket this long before it expires, so a reconnect never
+// presents one the gateway is about to refuse.
+const STAGE_SESSION_REFRESH_MS = 60_000;
 const DEFAULT_SERVICE_REGION = "eu-west-1";
 const SERVICE_REGIONS = [
   { region: "eu-west-1", label: "eu-west-1 (Ireland)" },
@@ -1136,43 +1140,31 @@ async function dev(args: string[]): Promise<void> {
   });
 }
 
-// Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the API
-// key or project/env can't be resolved yet, print a hint and return rather than
-// breaking the watch loop.
+// Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the
+// stage has no deployment yet, print a hint and return rather than breaking the
+// watch loop.
 async function streamDevLogs(
   args: string[],
   signal: AbortSignal,
 ): Promise<void> {
-  let creds: { apiKey: string; baseUrl: string };
+  let session: ObservabilityClientOptions;
   try {
-    creds = resolveObservabilityCredentials();
+    session = await openStageSession(args);
   } catch {
     console.log(
-      "· live logs off. No runtime key for this stage yet. Run `broods dev --once` after login to create or reconnect it.",
+      "· live logs off. This stage has no deployment yet. Run `broods dev --once` to create it.",
     );
 
     return;
   }
 
-  let project: string;
-  let stage: string;
-  try {
-    ({ project, stage } = await resolveObservabilityTarget(args, creds));
-  } catch {
-    return;
-  }
-
   const minLevel = resolveMinLevel(args);
   try {
-    for await (const entry of subscribeObservabilityLogs(
-      {
-        baseUrl: creds.baseUrl,
-        apiKey: creds.apiKey,
-        project: project,
-        stage: stage,
-      },
-      { backfill: 0, minLevel: minLevel, signal: signal },
-    )) {
+    for await (const entry of subscribeObservabilityLogs(session, {
+      backfill: 0,
+      minLevel: minLevel,
+      signal: signal,
+    })) {
       console.log(formatObservabilityEntry(entry));
     }
   } catch (error) {
@@ -2095,25 +2087,6 @@ async function syncEnvFromLocal(
 
 // Runtime API key (BROODS_API_KEY, written by `deploy`/`init`) + base URL
 // for the observability gateway. No dashboard login required.
-function resolveObservabilityCredentials(): {
-  apiKey: string;
-  baseUrl: string;
-} {
-  loadBroodsRuntimeConfig();
-  const apiKey = process.env.BROODS_API_KEY ?? "";
-  if (!apiKey) {
-    throw new Error(
-      "BROODS_API_KEY is not set. Run `broods deploy` first, or set the key in .env.local.",
-    );
-  }
-  const baseUrl =
-    process.env.BROODS_BASE_URL ??
-    process.env.BROODS_HOST ??
-    DEFAULT_CORE_BASE_URL;
-
-  return { apiKey: apiKey, baseUrl: baseUrl };
-}
-
 /**
  * Parse --all / --level <lvl> into a LogLevel. The terminal defaults
  * to WARN: a healthy run is not what a developer watches a terminal for, and
@@ -2160,28 +2133,51 @@ async function resolveProjectStage(
   return { project: project, stage: stage };
 }
 
-// The gateway matches the socket path on the key's slug, but BROODS_PROJECT
-// holds a display name. Ask core so the two cannot disagree.
-async function resolveObservabilityTarget(
+/**
+ * The stage the logs, stream and machine commands act on, with a credential
+ * for it: a 15-minute ticket minted from the `broods login` token and re-minted
+ * once it nears expiry. Never the stage runtime key, which sits in frontends.
+ * Project and stage come back as slugs, which the gateway paths match on.
+ */
+async function openStageSession(
   args: string[],
-  credentials: { baseUrl: string; apiKey: string },
-): Promise<{ project: string; stage: string }> {
+): Promise<ObservabilityClientOptions> {
   const configured = await resolveProjectStage(args);
-  const scope = await fetchObservabilityScope(
-    credentials.baseUrl,
-    credentials.apiKey,
+  const runtime = loadBroodsRuntimeConfig();
+  const auth = await requireAuthOrLogin(
+    optionValue(args, "--dashboard-url") ??
+      runtime.dashboardUrl ??
+      DEFAULT_DASHBOARD_URL,
+    optionValue(args, "--base-url"),
   );
-  if (!scope) return configured;
-  if (
-    scope.projectSlug !== configured.project ||
-    scope.stageSlug !== configured.stage
-  ) {
-    console.log(
-      `· reading ${scope.projectSlug}/${scope.stageSlug}. The runtime key is scoped there, not to ${configured.project}/${configured.stage}.`,
-    );
-  }
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  let session = await client.mintStageSession(
+    configured.project,
+    configured.stage,
+  );
+  const credential = async (): Promise<string> => {
+    if (session.expiresAt - Date.now() < STAGE_SESSION_REFRESH_MS) {
+      session = await client.mintStageSession(
+        configured.project,
+        configured.stage,
+      );
+    }
 
-  return { project: scope.projectSlug, stage: scope.stageSlug };
+    return session.token;
+  };
+
+  return {
+    baseUrl:
+      process.env.BROODS_BASE_URL ??
+      process.env.BROODS_HOST ??
+      DEFAULT_CORE_BASE_URL,
+    credential: credential,
+    project: session.projectSlug,
+    stage: session.stageSlug,
+  };
 }
 
 /** Point at --all whenever a tail is running on the quiet default. */
@@ -2205,11 +2201,8 @@ function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
 // `broods stream` live-tails the whole project/stage log stream until Ctrl-C,
 // with no backfill. Flags are documented in HELP.
 async function streamLogs(args: string[]): Promise<void> {
-  const { apiKey, baseUrl } = resolveObservabilityCredentials();
-  const { project, stage } = await resolveObservabilityTarget(args, {
-    baseUrl: baseUrl,
-    apiKey: apiKey,
-  });
+  const session = await openStageSession(args);
+  const { project, stage } = session;
   const minLevel = resolveMinLevel(args);
 
   const controller = new AbortController();
@@ -2223,10 +2216,11 @@ async function streamLogs(args: string[]): Promise<void> {
   );
 
   try {
-    for await (const entry of subscribeObservabilityLogs(
-      { baseUrl: baseUrl, apiKey: apiKey, project: project, stage: stage },
-      { backfill: 0, minLevel: minLevel, signal: controller.signal },
-    )) {
+    for await (const entry of subscribeObservabilityLogs(session, {
+      backfill: 0,
+      minLevel: minLevel,
+      signal: controller.signal,
+    })) {
       console.log(formatObservabilityEntry(entry));
     }
   } catch (error) {
@@ -2255,7 +2249,7 @@ async function machine(args: string[]): Promise<void> {
   }
   // Lazy, so zod loads for this command only.
   const { runMachineDaemon } = await import("./machine.ts");
-  const { apiKey, baseUrl } = resolveObservabilityCredentials();
+  const { baseUrl, credential } = await openStageSession(args);
   const cwd = resolve(optionValue(args, "--cwd") ?? process.cwd());
   const computer = hasFlag(args, "--computer");
   const mcpFile = optionValue(args, "--mcp");
@@ -2269,9 +2263,9 @@ async function machine(args: string[]): Promise<void> {
 
   try {
     await runMachineDaemon({
-      apiKey: apiKey,
       baseUrl: baseUrl,
       computer: computer,
+      credential: credential,
       cwd: cwd,
       force: force,
       log: (line: string): void => console.log(line),
@@ -2317,11 +2311,8 @@ async function machineDoctor(request: boolean): Promise<void> {
 // `broods logs` backfills recent lines (Loki) then switches to a live tail
 // until Ctrl-C. Flags are documented in HELP.
 async function logs(args: string[]): Promise<void> {
-  const { apiKey, baseUrl } = resolveObservabilityCredentials();
-  const { project, stage } = await resolveObservabilityTarget(args, {
-    baseUrl: baseUrl,
-    apiKey: apiKey,
-  });
+  const session = await openStageSession(args);
+  const { project, stage } = session;
   const sandboxId = optionValue(args, "--sandbox");
   // A bare or malformed --sandbox must not fall through to the deployment tail.
   if (hasFlag(args, "--sandbox") && !isSandboxLogId(sandboxId))
@@ -2349,15 +2340,12 @@ async function logs(args: string[]): Promise<void> {
   );
 
   try {
-    for await (const entry of subscribeObservabilityLogs(
-      { baseUrl: baseUrl, apiKey: apiKey, project: project, stage: stage },
-      {
-        backfill: limit,
-        minLevel: minLevel,
-        ...(sandboxId ? { sandboxId: sandboxId } : {}),
-        signal: controller.signal,
-      },
-    )) {
+    for await (const entry of subscribeObservabilityLogs(session, {
+      backfill: limit,
+      minLevel: minLevel,
+      ...(sandboxId ? { sandboxId: sandboxId } : {}),
+      signal: controller.signal,
+    })) {
       if (jsonMode) {
         console.log(JSON.stringify(entry));
       } else {
@@ -2658,6 +2646,22 @@ async function writeStarter(
   }
 }
 
+/** `.env.local` holds the stage runtime key, so keep it out of the repo. */
+async function ensureEnvLocalIgnored(): Promise<void> {
+  const path = resolve(process.cwd(), ".gitignore");
+  const existing = await readTextIfExists(path);
+  const ignored = existing
+    .split(/\r?\n/)
+    .some((line) =>
+      [".env.local", ".env*.local", ".env*"].includes(line.trim()),
+    );
+  if (ignored) return;
+  const body = existing
+    ? `${existing.trimEnd()}\n.env*.local\n`
+    : ".env*.local\n";
+  await writeFile(path, body, "utf8");
+}
+
 /** Adds any missing generated-file lines to the project directory's .gitignore. */
 async function ensureGitIgnore(): Promise<void> {
   const path = resolve(process.cwd(), PROJECT_DIR, ".gitignore");
@@ -2730,7 +2734,8 @@ async function writeLocalEnvDefaults(options: {
 
   if (!changed && current) return;
   const body = `${lines.filter((line, index, all) => !(line === "" && index === all.length - 1)).join("\n")}\n`;
-  await writeFile(path, body, "utf8");
+  await writePrivateFile(path, body);
+  await ensureEnvLocalIgnored();
 }
 
 /** Upsert a single KEY=value into `.env.local`, preserving other lines. */
@@ -2745,7 +2750,8 @@ async function writeEnvValue(key: string, value: string): Promise<void> {
   else lines.push(`${key}=${quoteEnv(value)}`);
   process.env[key] = value;
   const body = `${lines.filter((line, i, all) => !(line === "" && i === all.length - 1)).join("\n")}\n`;
-  await writeFile(path, body, "utf8");
+  await writePrivateFile(path, body);
+  await ensureEnvLocalIgnored();
 }
 
 async function readTextIfExists(path: string): Promise<string> {

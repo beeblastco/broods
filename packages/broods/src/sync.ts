@@ -75,6 +75,14 @@ export interface CliOnboardingContext {
 }
 
 /** One stage of a project, as listed by `broods stage list`. */
+/** A 15-minute stage ticket and the slugs the gateway paths use. */
+export interface CliStageSession {
+  token: string;
+  expiresAt: number;
+  projectSlug: string;
+  stageSlug: string;
+}
+
 export interface CliStage {
   id: string;
   name: string;
@@ -414,6 +422,28 @@ export class BroodsSyncClient {
       stage: CliStage;
       clonedFrom: string | null;
     };
+  }
+
+  /** Trade the login token for a stage ticket (logs, stream, machine). */
+  async mintStageSession(
+    project: string,
+    stage: string,
+  ): Promise<CliStageSession> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/stage-session`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ project: project, stage: stage }),
+      },
+    );
+    assertRouteMounted(response, "/v1/account/stage-session", "broods logs");
+    await assertOk(response, "Open stage session failed");
+
+    return (await response.json()) as CliStageSession;
   }
 
   /** Every project in the logged-in account's org, empty ones sorted last. */

@@ -15,6 +15,7 @@ import {
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from "../_generated/server";
 import { authKit } from "../auth";
 import {
@@ -37,6 +38,13 @@ import {
 } from "../model/stageSessionTicket";
 
 export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
+
+export interface StageSession {
+  token: string;
+  expiresAt: number;
+  projectSlug: string;
+  stageSlug: string;
+}
 
 /** Safe runtime deployment scope returned to core without stored credentials. */
 const agentDeploymentScopeValidator = v.object({
@@ -236,33 +244,54 @@ export const mintStageSession = mutation({
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
+    const session = await mintStageSessionTicket(ctx, projectId, stageId);
 
-    const deployment = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_projectId_and_stageId_and_status", (q) =>
-        q
-          .eq("projectId", projectId)
-          .eq("stageId", stageId)
-          .eq("status", "active"),
-      )
-      .first();
-    if (!deployment) return null;
-
-    const expiresAt = Date.now() + STAGE_SESSION_TICKET_TTL_MS;
-    const token = await sealStageSessionTicket(
-      {
-        accountId: deployment.accountId,
-        endpointId: deployment.endpointId,
-        projectSlug: deployment.projectSlug,
-        stageSlug: deployment.stageSlug,
-        expiresAt: expiresAt,
-      },
-      stageTicketSecret(),
-    );
-
-    return { token: token, expiresAt: expiresAt };
+    return session
+      ? { token: session.token, expiresAt: session.expiresAt }
+      : null;
   },
 });
+
+/**
+ * Seal a stage session ticket for the stage's active deployment. The caller
+ * has already checked the member may read that stage. Null before the first
+ * deploy. The slugs are what the gateway's observability path matches on.
+ */
+export async function mintStageSessionTicket(
+  ctx: QueryCtx,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+): Promise<StageSession | null> {
+  const deployment = await ctx.db
+    .query("agentDeployments")
+    .withIndex("by_projectId_and_stageId_and_status", (q) =>
+      q
+        .eq("projectId", projectId)
+        .eq("stageId", stageId)
+        .eq("status", "active"),
+    )
+    .first();
+  if (!deployment) return null;
+
+  const expiresAt = Date.now() + STAGE_SESSION_TICKET_TTL_MS;
+  const token = await sealStageSessionTicket(
+    {
+      accountId: deployment.accountId,
+      endpointId: deployment.endpointId,
+      projectSlug: deployment.projectSlug,
+      stageSlug: deployment.stageSlug,
+      expiresAt: expiresAt,
+    },
+    stageTicketSecret(),
+  );
+
+  return {
+    token: token,
+    expiresAt: expiresAt,
+    projectSlug: deployment.projectSlug,
+    stageSlug: deployment.stageSlug,
+  };
+}
 
 /**
  * Org admin only: decrypts the stage's stored runtime key so it can be copied

@@ -28,7 +28,7 @@ import {
 } from "../src/shared/storage.ts";
 import {
   closeOf,
-  MACHINE_RUNTIME_KEY,
+  MACHINE_ACCOUNT_SECRET,
   MACHINE_SANDBOX_ID,
   machineExecutorConfig,
   machineMcpRecord,
@@ -58,7 +58,7 @@ test("the CLI daemon runs bash on this machine through the gateway relay", async
   const lines: string[] = [];
   const controller = daemonController();
   const daemon = runMachineDaemon({
-    apiKey: MACHINE_RUNTIME_KEY,
+    credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
     baseUrl: startDoor(coreUrl()),
     cwd: "/tmp",
     log: (line) => lines.push(line),
@@ -90,7 +90,7 @@ test("core's MCP client lists and calls a stdio server on this machine through t
   const lines: string[] = [];
   const controller = daemonController();
   const daemon = runMachineDaemon({
-    apiKey: MACHINE_RUNTIME_KEY,
+    credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
     baseUrl: startDoor(coreUrl()),
     cwd: "/tmp",
     log: (line) => lines.push(line),
@@ -119,7 +119,7 @@ test("a bad key reaches the daemon as core's 4401 and stops it", async () => {
 
   await expect(
     runMachineDaemon({
-      apiKey: "wrong-key",
+      credential: async (): Promise<string> => "wrong-key",
       baseUrl: startDoor(coreUrl()),
       cwd: "/tmp",
       log: () => {},
@@ -138,7 +138,7 @@ test("the daemon exits when another daemon holds the record, and --force takes i
 
   await expect(
     runMachineDaemon({
-      apiKey: MACHINE_RUNTIME_KEY,
+      credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
       baseUrl: door,
       cwd: "/tmp",
       log: (line) => lines.push(line),
@@ -150,7 +150,7 @@ test("the daemon exits when another daemon holds the record, and --force takes i
   const holderClosed = closeOf(holder);
   const controller = daemonController();
   const daemon = runMachineDaemon({
-    apiKey: MACHINE_RUNTIME_KEY,
+    credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
     baseUrl: door,
     cwd: "/tmp",
     force: true,
@@ -175,7 +175,7 @@ test("an unreachable core is a reconnect, not a refusal", async () => {
   const lines: string[] = [];
   const controller = daemonController();
   const daemon = runMachineDaemon({
-    apiKey: MACHINE_RUNTIME_KEY,
+    credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
     baseUrl: startDoor(goneUrl),
     cwd: "/tmp",
     log: (line) => lines.push(line),
@@ -206,7 +206,7 @@ function daemonController(): AbortController {
 function holdRecord(coreBaseUrl: string, host: string): Promise<WebSocket> {
   return new Promise((resolve, reject): void => {
     const socket = new WebSocket(machineSocketUrl(coreBaseUrl), {
-      headers: { authorization: `Bearer ${MACHINE_RUNTIME_KEY}` },
+      headers: { authorization: `Bearer ${MACHINE_ACCOUNT_SECRET}` },
     } as unknown as string[]);
     socket.onopen = (): void =>
       socket.send(

@@ -22,6 +22,7 @@ import {
   type MachineResultFrame,
 } from "../../../../apps/core/src/shared/machine-socket.ts";
 import { reconnectDelay, resolveWebSocket } from "../observability-client.ts";
+import { agentEnv } from "../runtime-config.ts";
 import { webSocketSubprotocols } from "../websocket.ts";
 import type { DesktopDriver } from "./desktop.ts";
 import type { McpHost } from "./mcp-host.ts";
@@ -38,7 +39,8 @@ const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_MIN_MS = 1_000;
 
 export interface MachineDaemonOptions {
-  apiKey: string;
+  /** Called per connection, so a reconnect can carry a fresh stage ticket. */
+  credential: () => Promise<string>;
   baseUrl: string;
   /** Serve the computer tool through the desktop helper. */
   computer?: boolean;
@@ -86,7 +88,7 @@ export function runExec(
     // Its own process group, so a kill reaches every process the command started.
     const child = spawn("bash", ["-lc", frame.code], {
       cwd: frame.cwd ?? defaultCwd,
-      env: { ...process.env, ...frame.env },
+      env: { ...agentEnv(), ...frame.env },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -135,6 +137,7 @@ export async function runMachineDaemon(
       const startedAt = Date.now();
       const closed = await serveOnce(
         options,
+        await options.credential(),
         instance,
         WebSocketImpl,
         desktop,
@@ -272,6 +275,7 @@ async function serveMcp(
 /** One connection, from hello until close. */
 function serveOnce(
   options: MachineDaemonOptions,
+  token: string,
   instance: string,
   WebSocketImpl: ReturnType<typeof resolveWebSocket>,
   desktop: DesktopDriver | null,
@@ -280,7 +284,7 @@ function serveOnce(
   return new Promise((resolve): void => {
     const socket = new WebSocketImpl(
       machineSocketUrl(options.baseUrl),
-      webSocketSubprotocols(options.apiKey),
+      webSocketSubprotocols(token),
     );
     // Aborts on close: a result that can no longer be sent is not worth waiting for.
     const lifetime = new AbortController();

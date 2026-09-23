@@ -64,7 +64,7 @@ test("a daemon started with --mcp advertises its servers and answers both frames
 
   await expect(
     runMachineDaemon({
-      apiKey: "key",
+      credential: async (): Promise<string> => "key",
       baseUrl: core.url,
       cwd: process.cwd(),
       log: () => {},

@@ -756,11 +756,12 @@ async function handleHttpRequest(
   const auth = await context.authResolver(request.headers);
 
   // Scope resolution for the realtime observability gateway. The gateway calls
-  // this server-side with the client's runtime key to learn which NATS subjects
-  // and Loki/Tempo labels it may stream. Scope comes from the key, never the
-  // client, so a deployment key is required and the response is its own scope.
+  // this server-side with the client's credential to learn which NATS subjects
+  // and Loki/Tempo labels it may stream. Scope comes from the credential, never
+  // the client. Only a member's stage ticket qualifies: the embeddable runtime
+  // key sits in frontends, and logs carry every user's chats and tool payloads.
   if (isObservabilityScopePath(request.path)) {
-    if (auth?.kind !== "deployment") {
+    if (auth?.kind !== "deployment" || auth.stageTicket !== true) {
       return unauthorizedResponse();
     }
 

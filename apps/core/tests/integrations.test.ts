@@ -85,6 +85,40 @@ afterEach(() => {
 });
 
 describe("direct API ingress", () => {
+  it("gives observability scope to a stage ticket, never the embeddable key", async () => {
+    const scopeFor = async (stageTicket: boolean) =>
+      await routeIncomingEvent(
+        createEvent(
+          {},
+          { authorization: "Bearer token" },
+          {
+            rawPath: "/v1/internal/observability-scope",
+            addDefaultAgentId: false,
+          },
+        ),
+        createHandlers(),
+        {
+          authResolver: async () => ({
+            kind: "deployment",
+            account: TEST_ACCOUNT,
+            endpointId: "env-endpoint",
+            projectSlug: "demo",
+            stageSlug: "development",
+            ...(stageTicket ? { stageTicket: true } : {}),
+          }),
+        },
+      );
+
+    expect((await scopeFor(false)).statusCode).toBe(401);
+    const ticket = await scopeFor(true);
+    expect(ticket.statusCode).toBe(200);
+    expect(JSON.parse(ticket.body ?? "{}")).toMatchObject({
+      projectSlug: "demo",
+      stageSlug: "development",
+      endpointIds: ["env-endpoint"],
+    });
+  });
+
   it("returns 401 when the account bearer token is missing", async () => {
     const response = await routeIncomingEvent(
       createEvent({

@@ -43,7 +43,7 @@ export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
   occupied: { code: 4423, reason: "Already connected from another daemon" },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
-  unauthorized: { code: 4401, reason: "Unauthorized; check BROODS_API_KEY" },
+  unauthorized: { code: 4401, reason: "Unauthorized; run broods login" },
   unknownSandbox: {
     code: 4404,
     reason: "No machine sandbox with that name in this account",
