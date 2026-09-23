@@ -9,6 +9,10 @@
  * the commit it published. Nothing writes a bump back to `dev`, so the version
  * in package.json is the last released one at best and stale at worst; asking
  * the tags is asking what actually shipped.
+ *
+ * The one exception is a deliberate cut: a package.json version semver-greater
+ * than the last tag is released as is (`bump: "declared"`). That is how a major
+ * like 1.0.0 ships, since commit subjects never produce one on 0.x.
  */
 
 const PACKAGE_PATH = "packages/broods/package.json";
@@ -17,7 +21,7 @@ const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const BREAKING = /^[a-z]+(\([^)]*\))?!:/;
 const FEATURE = /^feat(\([^)]*\))?:/;
 
-type Bump = "major" | "minor" | "patch" | "none";
+type Bump = "declared" | "major" | "minor" | "patch" | "none";
 
 const write = process.argv.includes("--write");
 // Every path here is repo-relative, so git and the file writes agree no matter
@@ -48,10 +52,13 @@ const subjects = git([
   .split("\n")
   .filter(Boolean);
 
-const bump = classify(subjects);
-const next = bump === "none" ? current : nextVersion(bump);
+const bump =
+  released && Bun.semver.order(declared, released.version) === 1
+    ? "declared"
+    : classify(subjects);
+const next = nextVersion(bump);
 
-if (write && bump !== "none") {
+if (write && next !== declared) {
   // Textual edits, not a re-serialize: bun.lock is JSONC, and rewriting
   // package.json through JSON.stringify would churn its whole formatting.
   // Replace what the files literally hold, which is `declared`, not the tag.
@@ -90,7 +97,8 @@ function classify(commits: string[]): Bump {
     BREAKING.test(subject) || subject.includes("BREAKING CHANGE");
 
   if (commits.length === 0) return "none";
-  // Pre-1.0 has no stable API to break, so `!` lands as a minor.
+  // Pre-1.0 has no stable API to break, so `!` lands as a minor. 1.0.0 itself
+  // is cut by declaring it in package.json, not by a commit subject.
   if (commits.some(breaks)) return major === 0 ? "minor" : "major";
   if (commits.some((subject) => FEATURE.test(subject))) return "minor";
 
@@ -123,19 +131,20 @@ function lastBumpCommit(): string | undefined {
   return undefined;
 }
 
-// The newest release the publish workflow tagged, or undefined before the first
-// one. Sorted by version rather than by date so a re-cut old tag cannot win.
+// The newest stable release the publish workflow tagged, or undefined before
+// the first one. Sorted by version rather than by date so a re-cut old tag
+// cannot win, and a hand-pushed prerelease tag is skipped, not a dead end.
 function lastReleaseTag(): { tag: string; version: string } | undefined {
   const tag = git(["tag", "--list", "broods-v*", "--sort=-v:refname"])
     .split("\n")
-    .filter(Boolean)[0];
-  if (!tag) return undefined;
-  const version = tag.slice("broods-v".length);
+    .find((candidate) => SEMVER.test(candidate.slice("broods-v".length)));
 
-  return SEMVER.test(version) ? { tag: tag, version: version } : undefined;
+  return tag ? { tag: tag, version: tag.slice("broods-v".length) } : undefined;
 }
 
-function nextVersion(bump: Exclude<Bump, "none">): string {
+function nextVersion(bump: Bump): string {
+  if (bump === "declared") return declared;
+  if (bump === "none") return current;
   if (bump === "major") return `${major + 1}.0.0`;
   if (bump === "minor") return `${major}.${minor + 1}.0`;
 

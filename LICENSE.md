@@ -6,7 +6,7 @@ FSL-1.1-Apache-2.0
 
 ## Notice
 
-Copyright 2026 Beeblast
+Copyright 2026 BeeBlast
 
 ## Terms and Conditions
 

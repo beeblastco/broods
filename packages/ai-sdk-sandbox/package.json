@@ -1,6 +1,7 @@
 {
   "name": "@broods/ai-sdk-sandbox",
   "version": "0.0.1",
+  "private": true,
   "description": "AI SDK Harness sandbox adapter for Broods sandbox drivers.",
   "homepage": "https://github.com/beeblastco/broods#readme",
   "bugs": {
@@ -27,7 +28,7 @@
   },
   "scripts": {
     "build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --format esm --packages external && bunx tsc -p tsconfig.build.json",
-    "check": "bunx tsc --noEmit",
+    "check": "tsc --noEmit",
     "test": "bun test"
   },
   "dependencies": {
