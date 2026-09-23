@@ -2,7 +2,7 @@
 import { convexTest, type TestConvex } from "convex-test";
 import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, components } from "../_generated/api";
 // The package exports no schema or test helper, so load the component's own
 // build straight from disk to register it.
 import stripeSchema from "../node_modules/@convex-dev/stripe/dist/component/schema.js";
@@ -13,12 +13,33 @@ const CUSTOMER_ID = "cus_payer";
 const SUBSCRIPTION_ID = "sub_payer";
 const WEBHOOK_SECRET = "whsec_billing_test";
 
+const stripeUpdates = vi.hoisted(() => ({
+  customers: vi.fn(),
+  subscriptions: vi.fn(),
+}));
+
 vi.mock("../auth", () => ({
   authKit: {
-    getAuthUser: async () => ({ id: AUTH_ID, email: null }),
+    getAuthUser: async () => ({ id: AUTH_ID, email: "payer@example.com" }),
     registerRoutes: () => undefined,
   },
 }));
+
+// Real Stripe for signing and verifying events; only the two writes the
+// webhook makes are stubbed so no test reaches the Stripe API.
+vi.mock("stripe", async (importOriginal) => {
+  const { default: RealStripe } =
+    await importOriginal<typeof import("stripe")>();
+  class TestStripe extends RealStripe {
+    constructor(key: string) {
+      super(key);
+      this.customers.update = stripeUpdates.customers;
+      this.subscriptions.update = stripeUpdates.subscriptions;
+    }
+  }
+
+  return { default: TestStripe };
+});
 
 const modules = import.meta.glob("../**/*.ts");
 const stripeModules = import.meta.glob(
@@ -50,9 +71,73 @@ describe("stripe webhook plan sync", () => {
 
     expect(await plans(t)).toEqual({ user: "free", org: "free" });
   });
+
+  test.each<[Stripe.Subscription.Status, string]>([
+    ["trialing", "pro"],
+    ["active", "pro"],
+    ["past_due", "free"],
+    ["paused", "free"],
+    ["canceled", "free"],
+    ["incomplete", "free"],
+    ["incomplete_expired", "free"],
+    ["unpaid", "free"],
+  ])("a %s subscription means the %s plan", async (status, plan) => {
+    const t = billingTest();
+    await seedPayer(t);
+
+    await sendEvent(t, "customer.subscription.updated", subscription(status));
+
+    expect(await plans(t)).toEqual({ user: plan, org: plan });
+  });
+});
+
+describe("payment link checkout", () => {
+  test("stamps the user on the subscription and customer", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+
+    await sendEvent(t, "checkout.session.completed", checkout(AUTH_ID));
+
+    expect(stripeUpdates.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
+      metadata: { userId: AUTH_ID },
+    });
+    expect(stripeUpdates.customers).toHaveBeenCalledWith(CUSTOMER_ID, {
+      metadata: { userId: AUTH_ID },
+    });
+    const customer = await t.query(
+      components.stripe.public.getCustomerByUserId,
+      { userId: AUTH_ID },
+    );
+    expect(customer?.stripeCustomerId).toBe(CUSTOMER_ID);
+  });
+
+  test("ignores a client_reference_id that is no user", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+
+    await sendEvent(t, "checkout.session.completed", checkout("auth_nobody"));
+
+    expect(stripeUpdates.subscriptions).not.toHaveBeenCalled();
+    expect(stripeUpdates.customers).not.toHaveBeenCalled();
+  });
 });
 
 describe("createCheckoutSession", () => {
+  test("returns the payment link for the user when one is set", async () => {
+    vi.stubEnv("STRIPE_PRO_PAYMENT_LINK", "https://buy.stripe.com/test_pro");
+    const t = billingTest();
+    await seedPayer(t);
+
+    const { url } = await t.action(api.stripe.createCheckoutSession, {
+      successUrl: "http://localhost:3000/ok",
+      cancelUrl: "http://localhost:3000/cancel",
+    });
+
+    expect(url).toBe(
+      `https://buy.stripe.com/test_pro?client_reference_id=${AUTH_ID}&prefilled_email=payer%40example.com`,
+    );
+  });
+
   test("refuses a customer who already has a live subscription", async () => {
     const t = billingTest();
     await seedPayer(t);
@@ -110,6 +195,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.clearAllMocks();
 });
 
 function billingTest(): T {
@@ -117,6 +203,20 @@ function billingTest(): T {
   t.registerComponent("stripe", stripeSchema, stripeModules);
 
   return t;
+}
+
+function checkout(clientReferenceId: string): Record<string, unknown> {
+  return {
+    id: "cs_payer",
+    object: "checkout.session",
+    mode: "subscription",
+    status: "complete",
+    client_reference_id: clientReferenceId,
+    customer: CUSTOMER_ID,
+    customer_details: { email: "payer@example.com" },
+    subscription: SUBSCRIPTION_ID,
+    metadata: {},
+  };
 }
 
 async function plans(t: T): Promise<{ user: string; org: string }> {

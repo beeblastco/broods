@@ -311,8 +311,11 @@ async function handleStripeWebhook(
   try {
     await processEvent(ctx, components.stripe, event, stripe);
 
-    // Checkout completion needs no case of its own: Stripe also sends
-    // customer.subscription.created for the subscription it starts.
+    if (event.type === "checkout.session.completed") {
+      await linkCheckoutToUser(ctx, stripe, event.data.object);
+    }
+    // Plan sync needs no checkout case: Stripe also sends
+    // customer.subscription.created for the subscription a checkout starts.
     if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
@@ -332,4 +335,57 @@ async function handleStripeWebhook(
   }
 
   return Response.json({ received: true });
+}
+
+/**
+ * Link a Payment Link checkout to the Broods user in `client_reference_id` by
+ * stamping `metadata.userId` on its subscription and customer. The
+ * customer.subscription.updated that follows files the subscription under the
+ * user and syncs the plan. API checkouts set the metadata up front and carry
+ * no `client_reference_id`, so they skip this.
+ */
+async function linkCheckoutToUser(
+  ctx: ActionCtx,
+  stripe: Stripe,
+  session: Stripe.Checkout.Session,
+): Promise<void> {
+  const authId = session.client_reference_id;
+  const subscriptionId = stripeId(session.subscription);
+  const customerId = stripeId(session.customer);
+  if (session.mode !== "subscription" || !authId) return;
+  if (!subscriptionId || !customerId) return;
+
+  const liveIds = await ctx.runQuery(
+    internal.stripe.getLiveSubscriptionIdsInternal,
+    { authId: authId },
+  );
+  if (liveIds === null) {
+    console.warn(`Checkout ${session.id} names unknown user ${authId}`);
+
+    return;
+  }
+  const otherIds = liveIds.filter((id) => id !== subscriptionId);
+  if (otherIds.length > 0) {
+    console.warn(
+      `User ${authId} paid ${subscriptionId} while ${otherIds.join(", ")} is still live`,
+    );
+  }
+
+  await stripe.subscriptions.update(subscriptionId, {
+    metadata: { userId: authId },
+  });
+  await stripe.customers.update(customerId, { metadata: { userId: authId } });
+  // customer.updated does not copy `metadata.userId` onto the component's
+  // customer row (only customer.created does), so file it here. The portal
+  // finds the customer by that key.
+  await ctx.runMutation(components.stripe.public.createOrUpdateCustomer, {
+    stripeCustomerId: customerId,
+    email: session.customer_details?.email ?? undefined,
+    metadata: { userId: authId },
+  });
+}
+
+/** The id of an expandable Stripe field, whether or not it was expanded. */
+function stripeId(field: string | { id: string } | null): string | null {
+  return typeof field === "string" ? field : (field?.id ?? null);
 }
