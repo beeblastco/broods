@@ -209,6 +209,38 @@ export const listForeignAgentLinks = internalQuery({
   },
 });
 
+/**
+ * The agents of the account's production stages, which is who the bare webhook
+ * URL routes to. Same rule `webhookPath` issues it by: an active deployment on a
+ * `production` stage. An agent in any other stage is reached only through its
+ * own stage URL.
+ */
+export const listForProduction = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(agentDoc),
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
+    const deployments = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
+      .collect();
+    const agents = new Map<Id<"agents">, Doc<"agents">>();
+    for (const deployment of deployments) {
+      const stage = await ctx.db.get(deployment.stageId);
+      if (stage?.kind !== "production") continue;
+      const stageAgents = await agentsInStage(
+        ctx,
+        { projectId: deployment.projectId, stageId: deployment.stageId },
+        args.accountId,
+      );
+      for (const agent of stageAgents) agents.set(agent._id, agent);
+    }
+
+    return [...agents.values()];
+  },
+});
+
 // An endpointId belonging to another account resolves empty, so a guessed
 // stage URL cannot reach across accounts.
 export const listForEndpoint = internalQuery({
