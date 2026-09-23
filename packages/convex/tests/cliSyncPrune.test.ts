@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 /**
- * A CLI prune or single delete terminates the reserved instances of the
- * sandbox configs it drops through core while the config row still exists,
- * and keeps any row whose instance core did not remove.
+ * A CLI prune or single delete terminates the reserved instances of what it
+ * drops through core while the rows still exist. A sandbox config whose
+ * instance core did not remove is kept; a workspace is deleted regardless.
  */
 
 import { convexTest, type TestConvex } from "convex-test";
@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
+import { workspaceNamespace } from "../model/workspaceRules";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -20,12 +21,13 @@ const SECRET = "fp_secret_prune";
 const STAGE = "development";
 const STAGE_PATH = `/v1/account/projects/${PROJECT}/stages/${STAGE}`;
 
-const t = (): T => convexTest(schema, modules);
-
 type T = TestConvex<typeof schema>;
+
+const t = (): T => convexTest(schema, modules);
 
 interface Seeded {
   instanceId: Id<"sandboxInstances">;
+  manualId: Id<"sandboxConfigs">;
   sandboxId: Id<"sandboxConfigs">;
 }
 
@@ -121,6 +123,27 @@ describe("cli prune and delete terminate reserved instances first", () => {
     expect(body.warnings.reservedResources).toEqual(['sandbox "box"']);
     expect(await remainingNames(tt)).toEqual(["box", "manual"]);
   });
+
+  test("a workspace delete tries to terminate, then drops it anyway", async () => {
+    const tt = t();
+    const seeded = await seedStage(tt);
+    const fetchMock = vi.fn(
+      async (): Promise<Response> => new Response("", { status: 502 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await tt.fetch(`${STAGE_PATH}/resources/workspace/ws`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${SECRET}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${CORE_URL}/v1/sandboxes/${seeded.manualId}/terminate`,
+      expect.anything(),
+    );
+    expect(await remainingNames(tt)).toEqual(["box", "manual"]);
+  });
 });
 
 async function deleteSandbox(tt: T): Promise<Response> {
@@ -135,14 +158,14 @@ async function remainingNames(tt: T): Promise<string[]> {
     const sandboxes = await ctx.db.query("sandboxConfigs").collect();
     const workspaces = await ctx.db.query("workspaceConfigs").collect();
 
-    return [...sandboxes, ...workspaces].map((row) => row.name).sort();
+    return [...sandboxes, ...workspaces].map((row): string => row.name).sort();
   });
 }
 
 /**
  * Seeds the account, syncs an empty manifest so the project and stage exist,
- * then writes a CLI sandbox config "box" holding a running reservation, a
- * dashboard sandbox config "manual" and an unreserved CLI workspace "ws".
+ * then writes a CLI sandbox config "box" and a CLI workspace "ws", each holding
+ * a running reservation ("ws" through the dashboard config "manual").
  */
 async function seedStage(tt: T): Promise<Seeded> {
   const secretHash = await sha256Hex(SECRET);
@@ -199,12 +222,12 @@ async function seedStage(tt: T): Promise<Seeded> {
       name: "box",
       managedBy: "cli",
     });
-    await ctx.db.insert("sandboxConfigs", {
+    const manualId = await ctx.db.insert("sandboxConfigs", {
       ...scope,
       name: "manual",
       managedBy: "dashboard",
     });
-    await ctx.db.insert("workspaceConfigs", {
+    const workspaceId = await ctx.db.insert("workspaceConfigs", {
       ...scope,
       name: "ws",
       config: {},
@@ -224,7 +247,23 @@ async function seedStage(tt: T): Promise<Seeded> {
       createdAt: now,
       lastUsedAt: now,
     });
+    // A workspace reservation is keyed by its namespace, not by its config.
+    const namespace = await workspaceNamespace(account._id, workspaceId);
+    await ctx.db.insert("sandboxInstances", {
+      accountId: account._id,
+      projectId: project._id,
+      stageId: stage._id,
+      provider: "sandbox",
+      reservationKey: `${namespace}/manual`,
+      sandboxConfigId: manualId,
+      externalId: "sbx_ws",
+      name: "ws",
+      status: "running",
+      specs: { vcpu: 1, memoryMb: 1024, storageGb: 1 },
+      createdAt: now,
+      lastUsedAt: now,
+    });
 
-    return { instanceId: instanceId, sandboxId: sandboxId };
+    return { instanceId: instanceId, manualId: manualId, sandboxId: sandboxId };
   });
 }

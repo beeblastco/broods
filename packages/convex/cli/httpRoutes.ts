@@ -264,7 +264,7 @@ export async function handleResourceDeleteRoute(
     if (result.reserved) {
       return jsonError(
         409,
-        `${route.resourceKind} "${route.name}" still has a reserved sandbox instance that could not be terminated. ` +
+        `Sandbox "${route.name}" still has a reserved instance that could not be terminated. ` +
           "Terminate it from the dashboard, then retry.",
         { code: "sandbox_instance_reserved" },
       );
@@ -1036,8 +1036,9 @@ async function syncSkillResources(
 /**
  * Terminate, through core, the reserved instances of the sandbox configs and
  * workspaces a prune or delete is about to drop. Must run while the rows still
- * exist: core's lifecycle route loads the config by id. Failures are left to
- * the delete, which keeps any row whose instance core did not remove.
+ * exist: core's lifecycle route loads the sandbox config by id, and a
+ * workspace's namespace is found through its row. A sandbox config whose
+ * instance core did not remove is kept; a workspace is deleted regardless.
  */
 async function terminateDoomedInstances(
   ctx: ActionCtx,
@@ -1055,7 +1056,7 @@ async function terminateDoomedInstances(
     },
   );
   if (holders.length === 0) return;
-  await terminateReservedInstances(ctx, auth.accountId, (instance) =>
-    holders.some((holder) => reservedBy(instance, holder)),
+  await terminateReservedInstances(ctx, auth.accountId, (instance): boolean =>
+    holders.some((holder): boolean => reservedBy(instance, holder)),
   );
 }

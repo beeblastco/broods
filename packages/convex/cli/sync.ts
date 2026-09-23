@@ -153,7 +153,7 @@ export const deleteResourceBySecretHash = internalMutation({
     const normalizedName = resourceName(name);
     const stageId = resolved.stageDoc._id;
 
-    let outcome: "deleted" | "reserved" = "deleted";
+    let reserved = false;
     if (kind === "agent") {
       await deleteAgentResource(
         ctx,
@@ -163,14 +163,9 @@ export const deleteResourceBySecretHash = internalMutation({
         normalizedName,
       );
     } else if (kind === "workspace") {
-      outcome = await deleteWorkspaceResource(
-        ctx,
-        account._id,
-        stageId,
-        normalizedName,
-      );
+      await deleteWorkspaceResource(ctx, stageId, normalizedName);
     } else {
-      outcome = await deleteSandboxResource(
+      reserved = await deleteSandboxResource(
         ctx,
         account._id,
         stageId,
@@ -179,7 +174,7 @@ export const deleteResourceBySecretHash = internalMutation({
     }
     await touchProject(ctx, resolved.projectDoc);
 
-    return { reserved: outcome === "reserved" };
+    return { reserved: reserved };
   },
 });
 
@@ -572,9 +567,10 @@ export const listExternalResourcesForAccount = internalQuery({
 });
 
 /**
- * Deletes the stage's undeclared CLI sandbox configs and workspaces, keeping
- * any that still hold a reserved instance. Runs after the sync and after the
- * HTTP layer terminated their instances. Returns the kept resources.
+ * Deletes the stage's undeclared CLI workspaces and sandbox configs, keeping
+ * any sandbox config that still holds a reserved instance. Runs after the sync
+ * and after the HTTP layer tried to terminate their instances. Returns the
+ * kept resources.
  */
 export const pruneSandboxesBySecretHash = internalMutation({
   args: {
@@ -595,12 +591,7 @@ export const pruneSandboxesBySecretHash = internalMutation({
     if (!resolved) throw new Error("Project/stage not found");
     const { projectDoc, stageDoc } = resolved;
 
-    const workspaces = await pruneWorkspaceResources(
-      ctx,
-      account._id,
-      stageDoc._id,
-      manifest.resources,
-    );
+    await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
     const sandboxes = await pruneSandboxResources(
       ctx,
       account._id,
@@ -609,10 +600,7 @@ export const pruneSandboxesBySecretHash = internalMutation({
     );
     await touchProject(ctx, projectDoc);
 
-    return [
-      ...workspaces.map((name) => `workspace "${name}"`),
-      ...sandboxes.map((name) => `sandbox "${name}"`),
-    ];
+    return sandboxes.map((name): string => `sandbox "${name}"`);
   },
 });
 

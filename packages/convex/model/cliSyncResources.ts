@@ -39,7 +39,7 @@ import {
   loadPolicyReferenceRows,
   type PolicyReferenceRows,
 } from "./policyReferences";
-import { normalizeWorkspaceConfig, workspaceNamespace } from "./workspaceRules";
+import { normalizeWorkspaceConfig } from "./workspaceRules";
 
 /** What a reserved instance belongs to: its sandbox config, or the workspace namespace keying it. */
 export type ReservationHolder =
@@ -77,49 +77,47 @@ export async function deleteAgentResource(
   await ctx.db.delete(config._id);
 }
 
-/** Deletes a CLI-managed sandbox config, unless it still holds a reserved instance. */
+/**
+ * Deletes a CLI-managed sandbox config, unless it still holds a reserved
+ * instance. Returns whether it was kept for that reason.
+ */
 export async function deleteSandboxResource(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   stageId: Id<"stages">,
   name: string,
-): Promise<"deleted" | "reserved"> {
+): Promise<boolean> {
   const sandbox = await sandboxConfigByName(ctx, stageId, name);
-  if (!sandbox) return "deleted";
+  if (!sandbox) return false;
   if (sandbox.managedBy !== "cli") {
     throw new Error(
       `Sandbox "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
     );
   }
   const instances = await accountInstances(ctx, accountId);
-  if (isReserved(instances, { sandboxConfigId: sandbox._id })) {
-    return "reserved";
-  }
+  if (isReserved(instances, { sandboxConfigId: sandbox._id })) return true;
   await ctx.db.delete(sandbox._id);
 
-  return "deleted";
+  return false;
 }
 
-/** Deletes a CLI-managed workspace, unless it still holds a reserved instance. */
+/**
+ * Deletes a CLI-managed workspace. The caller has already sent its reserved
+ * instances a best-effort terminate, which never needs the workspace row.
+ */
 export async function deleteWorkspaceResource(
   ctx: MutationCtx,
-  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   name: string,
-): Promise<"deleted" | "reserved"> {
+): Promise<void> {
   const workspace = await workspaceConfigByName(ctx, stageId, name);
-  if (!workspace) return "deleted";
+  if (!workspace) return;
   if (workspace.managedBy !== "cli") {
     throw new Error(
       `Workspace "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
     );
   }
-  const instances = await accountInstances(ctx, accountId);
-  const namespace = await workspaceNamespace(accountId, workspace._id);
-  if (isReserved(instances, { namespace: namespace })) return "reserved";
   await ctx.db.delete(workspace._id);
-
-  return "deleted";
 }
 
 /** Prunes undeclared CLI agents, and their `agents` rows when `accountId` owns them. */
@@ -215,29 +213,19 @@ export async function pruneSandboxResources(
   return kept;
 }
 
-/** The workspace counterpart of `pruneSandboxResources`. */
+/** Deletes the stage's undeclared CLI workspaces, like `deleteWorkspaceResource`. */
 export async function pruneWorkspaceResources(
   ctx: MutationCtx,
-  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   resources: CliResource[],
-): Promise<string[]> {
-  const instances = await accountInstances(ctx, accountId);
-  const kept: string[] = [];
+): Promise<void> {
   for (const workspace of await undeclaredWorkspaceConfigs(
     ctx,
     stageId,
     resources,
   )) {
-    const namespace = await workspaceNamespace(accountId, workspace._id);
-    if (isReserved(instances, { namespace: namespace })) {
-      kept.push(workspace.name);
-    } else {
-      await ctx.db.delete(workspace._id);
-    }
+    await ctx.db.delete(workspace._id);
   }
-
-  return kept;
 }
 
 /**
@@ -800,7 +788,7 @@ export async function workspaceConfigByName(
     .unique();
 }
 
-/** The account's instance rows; bounded like `sandbox.instances.listForAccount`. */
+/** The account's instance rows. */
 async function accountInstances(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
@@ -810,6 +798,7 @@ async function accountInstances(
     .withIndex("by_accountId_projectId_and_stageId", (q) =>
       q.eq("accountId", accountId),
     )
+    // 1000 is the accepted ceiling, matching `sandbox.instances.listForAccount`.
     .take(1000);
 }
 
@@ -823,12 +812,6 @@ function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
   );
 }
 
-/**
- * Second pass over agents that reference other agents in `subagent.allowed`.
- * Rewrites declared agent names to their deploy-time agent ids (leaving any
- * non-declared string, e.g. a literal agent id, untouched) and re-pushes the
- * encrypted config so the runtime can dispatch the named subagents.
- */
 function isReserved(
   instances: Doc<"sandboxInstances">[],
   holder: ReservationHolder,
@@ -836,6 +819,12 @@ function isReserved(
   return instances.some((instance) => reservedBy(instance, holder));
 }
 
+/**
+ * Second pass over agents that reference other agents in `subagent.allowed`.
+ * Rewrites declared agent names to their deploy-time agent ids (leaving any
+ * non-declared string, e.g. a literal agent id, untouched) and re-pushes the
+ * encrypted config so the runtime can dispatch the named subagents.
+ */
 async function resolveSubagentReferences(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
