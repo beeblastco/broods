@@ -43,9 +43,13 @@ export const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
-// The only option the MicroVM executor reads. Image, version, role and log group
-// are platform resources core takes from its env, so anything else is refused.
-const LAMBDA_OPTION_KEYS: ReadonlySet<string> = new Set(["workspaceRoot"]);
+// The only options core reads for a MicroVM: the executor's workspaceRoot and the
+// reservation pin every provider shares. Image, version, role and log group are
+// platform resources core takes from its env, so anything else is refused.
+const LAMBDA_OPTION_KEYS: ReadonlySet<string> = new Set([
+  "reservationKey",
+  "workspaceRoot",
+]);
 
 export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
 
