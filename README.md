@@ -6,7 +6,7 @@
 
 A serverless, multi-account AI agent harness built on Bun and AWS data-plane services. Configure agents, connect them to Telegram, Discord, Slack, Matrix, GitHub, and more, and run them with your own model keys.
 
-This is the open-source engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
+This is the source-available engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
 
 > [!WARNING]
 > **Pre-release.**
@@ -126,5 +126,5 @@ CI runs on every PR via `.github/workflows/ci.yaml`.
 
 ## License
 
-Core server and application code is licensed under [FSL-1.1-Apache-2.0](LICENSE.md).
+Core server and application code is licensed under [FSL-1.1-Apache-2.0](LICENSE.md): source-available now, and each release becomes Apache 2.0 two years after it ships.
 The `broods` npm package in `packages/broods` is licensed separately under MIT.
