@@ -72,7 +72,7 @@ export class MatrixClient {
   /** User id to display name for everyone joined; no display name maps to undefined. */
   async joinedMembers(
     roomId: string,
-    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal?: AbortSignal,
   ): Promise<Map<string, string | undefined>> {
     const response = await this.request<{
       joined: Record<string, { display_name?: string | null }>;
@@ -94,16 +94,28 @@ export class MatrixClient {
   async rawRequest(
     method: string,
     path: string,
-    body: string,
-    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    body: string | undefined,
+    signal?: AbortSignal,
   ): Promise<string> {
-    return this.call(method, path, body, signal);
+    const response = await fetch(`${this.apiUrl}${API_PREFIX}${path}`, {
+      body: body,
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      method: method,
+      // The account's token rides every call, and the client-server API never
+      // redirects, so a redirect here would hand it to another host.
+      redirect: "error",
+      signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const text = await response.text();
+    if (!response.ok) throw toMatrixError(response.status, text);
+
+    return text;
   }
 
-  async roomEncrypted(
-    roomId: string,
-    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  ): Promise<boolean> {
+  async roomEncrypted(roomId: string, signal?: AbortSignal): Promise<boolean> {
     try {
       await this.request(
         "GET",
@@ -124,7 +136,7 @@ export class MatrixClient {
     roomId: string,
     type: string,
     content: Record<string, unknown>,
-    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal?: AbortSignal,
   ): Promise<string> {
     const response = await this.request<{ event_id: string }>(
       "PUT",
@@ -175,37 +187,13 @@ export class MatrixClient {
     return this.request<WhoAmI>("GET", "/account/whoami");
   }
 
-  private async call(
-    method: string,
-    path: string,
-    body: string | undefined,
-    signal: AbortSignal,
-  ): Promise<string> {
-    const response = await fetch(`${this.apiUrl}${API_PREFIX}${path}`, {
-      body: body,
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      method: method,
-      // The account's token rides every call, and the client-server API never
-      // redirects, so a redirect here would hand it to another host.
-      redirect: "error",
-      signal: signal,
-    });
-    const text = await response.text();
-    if (!response.ok) throw toMatrixError(response.status, text);
-
-    return text;
-  }
-
   private async request<T>(
     method: string,
     path: string,
     body?: object,
-    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal?: AbortSignal,
   ): Promise<T> {
-    const text = await this.call(
+    const text = await this.rawRequest(
       method,
       path,
       body === undefined ? undefined : JSON.stringify(body),

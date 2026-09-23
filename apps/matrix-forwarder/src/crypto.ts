@@ -107,9 +107,7 @@ export class RoomCrypto {
     return this.exclusive(async (): Promise<Record<string, unknown>> => {
       // The lock can be held by a sync's flush for longer than the deadline.
       signal.throwIfAborted();
-      const members = [...joined.keys()].map(
-        (userId): UserId => new UserId(userId),
-      );
+      const members = toUserIds([...joined.keys()]);
       const room = new RoomId(roomId);
       await this.machine.updateTrackedUsers(members);
       await this.flushOutgoing(signal);

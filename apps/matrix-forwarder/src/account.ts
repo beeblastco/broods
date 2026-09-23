@@ -97,12 +97,12 @@ export class MatrixAccount {
   private readonly client: MatrixClient;
   private readonly controller = new AbortController();
   /**
-   * Room id to its members' display names. Reloaded when a sender is missing
-   * or the names are older than MEMBER_NAMES_TTL_MS, so a rename shows up.
+   * Room id to its members' display names, and until when they hold. Reloaded
+   * early when a sender is missing; the expiry lets a rename show up.
    */
   private readonly memberNames = new Map<
     string,
-    { fetchedMs: number; names: Map<string, string | undefined> }
+    { expiresMs: number; names: Map<string, string | undefined> }
   >();
   private readonly options: MatrixAccountOptions;
   private pending: PendingEvent[] = [];
@@ -369,16 +369,16 @@ export class MatrixAccount {
     userId: string,
   ): Promise<string | undefined> {
     const cached = this.memberNames.get(roomId);
-    if (
-      cached?.names.has(userId) &&
-      Date.now() - cached.fetchedMs < MEMBER_NAMES_TTL_MS
-    ) {
+    if (cached?.names.has(userId) && cached.expiresMs > Date.now()) {
       return cached.names.get(userId);
     }
     try {
       const names = await this.client.joinedMembers(roomId);
       if (!names.has(userId)) names.set(userId, undefined);
-      this.memberNames.set(roomId, { fetchedMs: Date.now(), names: names });
+      this.memberNames.set(roomId, {
+        expiresMs: Date.now() + MEMBER_NAMES_TTL_MS,
+        names: names,
+      });
 
       return names.get(userId);
     } catch (error) {
