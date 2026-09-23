@@ -567,6 +567,8 @@ export const sandboxInstancesFields = {
   workspaceName: v.optional(v.string()),
   workspaceId: v.optional(v.string()),
   suspendedAt: v.optional(v.number()),
+  /** The account's own provider credentials pay for it, so it is never metered. */
+  ownCredentials: v.optional(v.boolean()),
   /** Running time before this instant is already on the account's usage meter. */
   meteredUntil: v.optional(v.number()),
   /**

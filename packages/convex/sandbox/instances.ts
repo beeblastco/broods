@@ -249,6 +249,7 @@ export const upsert = internalMutation({
     workspaceId: sandboxInstancesFields.workspaceId,
     logStream: sandboxInstancesFields.logStream,
     ephemeral: sandboxInstancesFields.ephemeral,
+    ownCredentials: sandboxInstancesFields.ownCredentials,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -385,6 +386,7 @@ function upsertRefreshFields(
         | "workspaceId"
         | "logStream"
         | "ephemeral"
+        | "ownCredentials"
       >
     >,
   now: number,
@@ -409,6 +411,7 @@ function upsertRefreshFields(
       | "workspaceId"
       | "logStream"
       | "ephemeral"
+      | "ownCredentials"
       | "errorMessage"
     >
   > {
@@ -436,5 +439,8 @@ function upsertRefreshFields(
     ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
     ...(args.logStream ? { logStream: args.logStream } : {}),
     ...(args.ephemeral ? { ephemeral: true } : {}),
+    // Unset rather than kept: a config moved back to platform credentials is
+    // metered again from its next write.
+    ownCredentials: args.ownCredentials === true ? true : undefined,
   };
 }

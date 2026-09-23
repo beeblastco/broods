@@ -127,18 +127,30 @@ export function meterMonth(now: number): string {
 /**
  * Running time a sandbox has not been billed for yet. Billing runs from where
  * it last stopped (or the last use) to now, but never past the last use plus
- * the idle timeout, since the provider stops an idle machine by then.
+ * the idle timeout, since the provider stops an idle machine by then. Nothing
+ * is billed when the platform does not pay: a sandbox on the account's own
+ * provider credentials, or a machine (the user's own computer).
  */
 export function sandboxAccrual(
   instance: Pick<
     Doc<"sandboxInstances">,
-    "provider" | "specs" | "status" | "lastUsedAt" | "meteredUntil"
+    | "provider"
+    | "specs"
+    | "status"
+    | "lastUsedAt"
+    | "meteredUntil"
+    | "ownCredentials"
   >,
   now: number,
 ): SandboxAccrual {
   const start = instance.meteredUntil ?? instance.lastUsedAt;
   const end = Math.min(now, instance.lastUsedAt + SANDBOX_IDLE_BILL_MS);
-  if (!BILLED_STATUSES.has(instance.status) || end <= start) {
+  if (
+    instance.ownCredentials === true ||
+    instance.provider === "machine" ||
+    !BILLED_STATUSES.has(instance.status) ||
+    end <= start
+  ) {
     return { usage: {}, meteredUntil: Math.max(start, end) };
   }
   const seconds = (end - start) / 1000;
@@ -162,13 +174,11 @@ export function sandboxLaunchUsage(
     : {};
 }
 
-// The size a provider bills: a MicroVM's is fixed by its image, a machine is
-// the user's own computer.
+// The size a provider bills: a MicroVM's is fixed by its image.
 function billedSize(
   instance: Pick<Doc<"sandboxInstances">, "provider" | "specs">,
 ): { vcpu: number; memoryGb: number } {
   if (instance.provider === "lambda") return MICROVM_BASELINE;
-  if (instance.provider === "machine") return { vcpu: 0, memoryGb: 0 };
 
   return {
     vcpu: instance.specs.vcpu,

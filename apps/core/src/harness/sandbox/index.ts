@@ -28,7 +28,8 @@ export const SANDBOX_PROVIDERS = [
 ] as const satisfies readonly SandboxProvider[];
 
 /**
- * The executor for a sandbox config. When the config names its account, every
+ * The executor for a sandbox config. When the config names its account and
+ * runs on the platform's credentials (not the account's own), every
  * call that can start or resume compute first checks the account's monthly
  * budget, so a run admitted just before the budget ran out cannot keep
  * launching machines.
@@ -38,7 +39,7 @@ export function createSandboxExecutor(
 ): SandboxExecutor {
   const executor = providerExecutor(config);
   const accountId = config.controlPlane?.accountId;
-  if (!accountId || config.provider === "machine") return executor;
+  if (!accountId || config.controlPlane?.ownCredentials) return executor;
   const run = executor.run.bind(executor);
   executor.run = async (request): Promise<SandboxRunResult> => {
     await assertSandboxBudget(accountId);

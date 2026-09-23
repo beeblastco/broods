@@ -55,6 +55,8 @@ export interface SandboxControlPlane {
   egress?: SandboxNetworkMode;
   /** Tool approval policy (`edit`/`ask`/`bypass`), mirrored for the dashboard Security view. */
   permissionMode?: SandboxPermissionMode;
+  /** The account's own provider credentials pay for it, so the platform does not meter it. */
+  ownCredentials?: true;
 }
 
 /**

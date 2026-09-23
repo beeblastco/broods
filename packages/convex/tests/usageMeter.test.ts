@@ -57,15 +57,27 @@ describe("sandboxAccrual", () => {
     expect(accrual.meteredUntil).toBe(lastUsedAt + SANDBOX_IDLE_BILL_MS);
   });
 
-  test("bills nothing while suspended, or for the user's own machine", () => {
-    const base = { lastUsedAt: NOW, meteredUntil: NOW - HOUR_MS };
+  test("bills nothing the platform does not pay for", () => {
+    const base = { ...microvm, lastUsedAt: NOW, meteredUntil: NOW - HOUR_MS };
+    const daytona = {
+      ...base,
+      provider: "daytona" as const,
+      specs: { vcpu: 2, memoryMb: 4096, storageGb: 16 },
+    };
 
+    expect(sandboxAccrual({ ...base, status: "suspended" }, NOW).usage).toEqual(
+      {},
+    );
+    expect(sandboxAccrual({ ...base, provider: "machine" }, NOW).usage).toEqual(
+      {},
+    );
     expect(
-      sandboxAccrual({ ...microvm, ...base, status: "suspended" }, NOW).usage,
+      sandboxAccrual({ ...daytona, ownCredentials: true }, NOW).usage,
     ).toEqual({});
-    expect(
-      sandboxAccrual({ ...microvm, ...base, provider: "machine" }, NOW).usage,
-    ).toEqual({ sandboxVcpuSeconds: 0, sandboxGbSeconds: 0 });
+    expect(sandboxAccrual(daytona, NOW).usage).toEqual({
+      sandboxVcpuSeconds: 7200,
+      sandboxGbSeconds: 14400,
+    });
   });
 });
 
@@ -107,6 +119,31 @@ test("a sandbox's launch and running time land on its account's meter", async ()
     sandboxGbSeconds: 1200,
     sandboxSnapshotGb: 2,
   });
+});
+
+test("a sandbox on the account's own credentials never reaches the meter", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+
+  await t.mutation(internal.sandbox.instances.upsert, {
+    accountId: accountId,
+    provider: "daytona",
+    reservationKey: "fs-own",
+    externalId: "dt-1",
+    name: "own-daytona",
+    specs: { vcpu: 2, memoryMb: 4096, storageGb: 16 },
+    ownCredentials: true,
+  });
+  vi.setSystemTime(NOW + 10 * 60 * 1000);
+  await t.mutation(internal.sandbox.instances.remove, {
+    accountId: accountId,
+    reservationKey: "fs-own",
+  });
+
+  expect(
+    await t.run(async (ctx) => ctx.db.query("usageMeters").collect()),
+  ).toEqual([]);
 });
 
 describe("budget", () => {
