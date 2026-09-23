@@ -60,6 +60,7 @@ import type * as mcp from "../mcp.js";
 import type * as migrations from "../migrations.js";
 import type * as model_accountHooks from "../model/accountHooks.js";
 import type * as model_accountSecrets from "../model/accountSecrets.js";
+import type * as model_activeAccount from "../model/activeAccount.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRules from "../model/agentRules.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
@@ -196,6 +197,7 @@ declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
   "model/accountHooks": typeof model_accountHooks;
   "model/accountSecrets": typeof model_accountSecrets;
+  "model/activeAccount": typeof model_activeAccount;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRules": typeof model_agentRules;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;

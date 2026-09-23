@@ -3,7 +3,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -99,12 +99,25 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
     current: config.baseUrl,
     logins: { ...logins, [config.baseUrl]: config },
   };
-  await mkdir(dirname(USER_CONFIG_PATH), { recursive: true });
-  await writeFile(
+  await mkdir(dirname(USER_CONFIG_PATH), { recursive: true, mode: 0o700 });
+  // `mode` only applies on create; an older CLI made this directory 0755.
+  await chmod(dirname(USER_CONFIG_PATH), 0o700);
+  await writePrivateFile(
     USER_CONFIG_PATH,
     `${JSON.stringify(file, null, 2)}\n`,
-    "utf8",
   );
+}
+
+/**
+ * Writes a file only its owner can read. The chmod covers a file an older CLI
+ * created with the default 0644, which `mode` alone leaves as it was.
+ */
+export async function writePrivateFile(
+  path: string,
+  body: string,
+): Promise<void> {
+  await writeFile(path, body, { encoding: "utf8", mode: 0o600 });
+  await chmod(path, 0o600);
 }
 
 export function stageFromEnv(): string | undefined {

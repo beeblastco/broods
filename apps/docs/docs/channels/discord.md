@@ -42,7 +42,7 @@ export const myAgent = defineAgent({
 - `mentionRoleIds` (optional): role ids that also count as addressing the agent, e.g. an on-call role.
 - `channels` (optional): `["*"]` to answer in every channel instead of only the declared ones.
 - `allowedUserIds` (optional): Discord user ids allowed to trigger the agent. Everyone, when omitted.
-- `apiUrl` (optional): Discord API base URL. This maps to `DiscordAdapterConfig["apiUrl"]`.
+- `apiUrl` (optional): Discord API base URL. This maps to `DiscordAdapterConfig["apiUrl"]`. It must be a public `https` URL, checked when the channel is saved, because core sends the bot token to it.
 
 The Chat SDK Discord adapter verifies interaction webhooks. Slash command interactions route `/new`, `/clear`, `/compact`, and `/help` into Broods command handlers. Gateway-forwarded `MESSAGE_CREATE` events route message text into the agent as normal chat input. See [Mentions and the gateway forwarder](#mentions-and-the-gateway-forwarder) for what puts them there.
 

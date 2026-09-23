@@ -36,7 +36,8 @@ import {
   closeOf,
   MACHINE_ACCOUNT_ID,
   MACHINE_READ_ONLY_ROLE_TOKEN,
-  MACHINE_RUNTIME_KEY,
+  MACHINE_ACCOUNT_SECRET,
+  MACHINE_EMBEDDABLE_KEY,
   MACHINE_SANDBOX_ID,
   machineExecutorConfig,
   machineMcpRecord,
@@ -197,6 +198,16 @@ test("an unknown record or a wrong provider closes the socket with 4404", async 
     socket.send(JSON.stringify({ type: "hello", sandbox: "cloud-box" }));
 
   expect((await closeOf(socket)).code).toBe(4404);
+});
+
+test("the embeddable runtime key cannot claim a machine", async () => {
+  const socket = openSocket(core(), MACHINE_EMBEDDABLE_KEY);
+  socket.onopen = (): void =>
+    socket.send(
+      JSON.stringify({ type: "hello", sandbox: "my-mac", force: true }),
+    );
+
+  expect((await closeOf(socket)).code).toBe(4401);
 });
 
 test("a bad bearer still upgrades, and its first frame is refused with 4401", async () => {
@@ -592,7 +603,7 @@ function machine(
 
 function openSocket(
   server: Bun.Server<MachineSocketData>,
-  token: string = MACHINE_RUNTIME_KEY,
+  token: string = MACHINE_ACCOUNT_SECRET,
 ): WebSocket {
   const socket = new WebSocket(
     `ws://127.0.0.1:${server.port}${MACHINE_WEBSOCKET_PATH}`,

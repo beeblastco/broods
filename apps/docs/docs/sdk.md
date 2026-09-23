@@ -604,3 +604,5 @@ broods agent list
 # Show one agent's resolved config
 broods agent get my-agent
 ```
+
+`run` uses the stage runtime key. `stream` and `logs` use your `broods login` token instead, because the logs socket refuses the runtime key.

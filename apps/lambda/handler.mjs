@@ -12,7 +12,13 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +71,7 @@ export const handler = streamifyResponse(async (event, responseStream) => {
     state = matchesWarm(key) ? warm : null;
     if (warm && !state) retire(warm);
     if (!state) {
+      reapStrays();
       // Started before the spawn so the S3 round trip overlaps Node's startup,
       // and done here rather than in the child because this process is warm
       // across invocations and keeps its connection to S3; a fresh child would
@@ -313,6 +320,25 @@ function spawnChild(key, home, bundle) {
   return state;
 }
 
+// This process and every parent up to init, as /proc directory names.
+function ancestorPids() {
+  const pids = new Set();
+  let pid = String(process.pid);
+  while (pid !== "0" && !pids.has(pid)) {
+    pids.add(pid);
+    try {
+      // The ppid follows the state field after comm's closing paren; comm
+      // itself can hold spaces.
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      pid = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] ?? "0";
+    } catch {
+      break;
+    }
+  }
+
+  return pids;
+}
+
 function childRunnerPath() {
   const root = process.env.LAMBDA_TASK_ROOT;
 
@@ -382,6 +408,31 @@ function positiveEnvInt(name, fallback) {
   const value = Number(process.env[name]);
 
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+// Kill every process of this UID that is not this handler or one of its
+// ancestors. A bundle can setsid() out of the group killGroup reaches, and the
+// survivor would share /proc with the next account's child in this warm
+// environment. Runs before each spawn, so a new child never starts next to one.
+// No-op off Linux. The function has no extensions; one would be killed here.
+function reapStrays() {
+  let pids;
+  try {
+    pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
+  } catch {
+    return;
+  }
+  const uid = process.getuid?.();
+  const keep = ancestorPids();
+  for (const pid of pids) {
+    if (keep.has(pid)) continue;
+    try {
+      if (statSync(`/proc/${pid}`).uid !== uid) continue;
+      process.kill(Number(pid), "SIGKILL");
+    } catch {
+      // Exited between the listing and the kill.
+    }
+  }
 }
 
 // Dispose one child: clear the warm slot if it holds it, SIGKILL its group.

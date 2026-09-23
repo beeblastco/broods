@@ -14,17 +14,10 @@ import type {
 
 export interface ObservabilityClientOptions {
   baseUrl: string;
-  apiKey: string;
+  /** Called per connection, so a reconnect can carry a fresh stage ticket. */
+  credential: () => Promise<string>;
   project: string;
   stage: string;
-}
-
-/** What a runtime key actually grants, as core resolves it. */
-export interface ObservabilityScope {
-  accountId: string;
-  projectSlug: string;
-  stageSlug: string;
-  endpointIds: string[];
 }
 
 export interface ObservabilitySubscribeOptions {
@@ -43,45 +36,6 @@ export interface ObservabilitySubscribeOptions {
 
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
-
-/**
- * Ask core which project/stage a runtime key reads. Null when the lookup fails,
- * so callers fall back to whatever they were configured with.
- */
-export async function fetchObservabilityScope(
-  baseUrl: string,
-  apiKey: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<ObservabilityScope | null> {
-  try {
-    const response = await fetchImpl(
-      `${baseUrl.replace(/\/+$/, "")}/v1/internal/observability-scope`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    if (!response.ok) return null;
-    const scope = (await response.json()) as ObservabilityScope;
-    // An empty slug builds a path that matches nothing, which is the silent
-    // failure this lookup exists to prevent.
-    if (
-      typeof scope?.projectSlug !== "string" ||
-      typeof scope?.stageSlug !== "string" ||
-      scope.projectSlug === "" ||
-      scope.stageSlug === ""
-    )
-      return null;
-
-    return scope;
-  } catch {
-    return null;
-  }
-}
 
 /** Resolves after `ms`, or at once when `signal` aborts; never rejects. */
 export function reconnectDelay(
@@ -116,6 +70,9 @@ export function resolveWebSocket(): new (
   return impl;
 }
 
+/** The server refused to mint a stage credential. Reconnecting cannot fix it. */
+export class StageSessionRefusedError extends Error {}
+
 /** Continuously stream logs, reconnecting transient socket failures until aborted. */
 export async function* subscribeObservabilityLogs(
   options: ObservabilityClientOptions,
@@ -140,6 +97,7 @@ export async function* subscribeObservabilityLogs(
       if (subscribeOptions.signal?.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
       if (
+        error instanceof StageSessionRefusedError ||
         /unauthorized|invalid websocket token|scope does not match/i.test(
           message,
         )
@@ -156,7 +114,7 @@ async function* subscribeObservabilityLogsOnce(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions,
 ): AsyncGenerator<ObservabilityLogEntry> {
-  const { baseUrl, apiKey, project, stage } = options;
+  const { baseUrl, credential, project, stage } = options;
   const { backfill = 0, minLevel, sandboxId, signal } = subscribeOptions;
   const liveOnly = subscribeOptions.liveOnly ?? backfill <= 0;
 
@@ -177,7 +135,10 @@ async function* subscribeObservabilityLogsOnce(
     wake = null;
   };
 
-  const socket = new WebSocketImpl(url, webSocketSubprotocols(apiKey));
+  const socket = new WebSocketImpl(
+    url,
+    webSocketSubprotocols(await credential()),
+  );
 
   const cleanup = (): void => {
     if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING) {

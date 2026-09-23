@@ -2,6 +2,8 @@
 
 import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
 import { ConsoleLogger, type Attachment, type FileUpload } from "chat";
+import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
+import { timingSafeStringEqual } from "./auth.ts";
 import {
   channelAttachmentBytes,
   channelAttachmentName,
@@ -11,10 +13,10 @@ import {
   type ChannelImage,
   type ChannelParseResult,
 } from "./channels.ts";
-import { timingSafeStringEqual } from "./auth.ts";
 import { isAllowedId } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 // Discord channel types that are threads. A message inside one of these keys its
@@ -210,9 +212,11 @@ export function createDiscordChannel(
 
     authenticate: function (req) {
       if ("x-discord-gateway-token" in req.headers) {
-        return timingSafeStringEqual(
-          req.headers["x-discord-gateway-token"],
-          botToken,
+        const provided = req.headers["x-discord-gateway-token"];
+
+        return (
+          typeof provided === "string" &&
+          timingSafeStringEqual(provided, botToken)
         );
       }
 
@@ -635,15 +639,19 @@ async function callDiscordApi(
   }
 }
 
+// The url comes from a forwarded gateway event the tenant can write, so it gets
+// the same private-address guard and size cap as every other channel's media.
 async function fetchDiscordFile(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+  const response = await guardedFetch(url, undefined, {
+    binary: true,
+    bodyLimitBytes: MAX_ATTACHMENT_BYTES,
+    timeoutMs: DISCORD_FETCH_TIMEOUT_MS,
   });
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(`Discord answered ${response.status}`);
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  return Buffer.from(response.bodyBytes);
 }
 
 /**

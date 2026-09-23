@@ -57,7 +57,7 @@ Channel telegram (telegram): https://gateway.broods.app/v1/webhooks/acct_.../dev
 - `channels` (optional): `["*"]` to answer in every chat instead of only the declared ones.
 - `allowedUserIds` (optional): Telegram user ids allowed to trigger the agent. Everyone, when omitted.
 - `reactionEmoji` (optional): Emoji to use for reactions, defaults to "👀".
-- `apiUrl` (optional): Telegram Bot API base URL. This maps to `TelegramAdapterConfig["apiUrl"]`. Must be `https`: the bot token travels in the URL path, so a plain `http` endpoint is refused before any request goes out, and a redirect from the endpoint fails instead of being followed.
+- `apiUrl` (optional): Telegram Bot API base URL. This maps to `TelegramAdapterConfig["apiUrl"]`. Must be a public `https` URL, checked when the channel is saved: the bot token travels in the URL path, so a plain `http` or private-network endpoint is refused before any request goes out, and a redirect from the endpoint fails instead of being followed.
 
 ## Being tagged
 

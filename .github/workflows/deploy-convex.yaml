@@ -45,6 +45,8 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
           CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+          # Through env, not ${{ }} in the script: a branch name can carry shell.
+          REF_NAME: ${{ github.ref_name }}
         run: |
           # Self-hosted backends authenticate with an admin key against an
           # explicit URL; there is no deploy key. The environment provides one
@@ -56,7 +58,7 @@ jobs:
             fi
             # Self-hosted URLs carry no prod: marker, so pin main to the
             # production backend by URL instead.
-            if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_SELF_HOSTED_URL" != "https://convex-api.broods.app" ]]; then
+            if [[ "$REF_NAME" == "main" && "$CONVEX_SELF_HOSTED_URL" != "https://convex-api.broods.app" ]]; then
               echo "main requires CONVEX_SELF_HOSTED_URL=https://convex-api.broods.app in the 'production' environment" >&2
               exit 1
             fi
@@ -70,7 +72,7 @@ jobs:
           fi
           # Convex deploy keys encode their target deployment. Refuse to ship a
           # main deploy that would push functions to a non-production deployment.
-          if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_DEPLOY_KEY" != prod:* ]]; then
+          if [[ "$REF_NAME" == "main" && "$CONVEX_DEPLOY_KEY" != prod:* ]]; then
             echo "main requires a production Convex deploy key (prod:...) in the 'production' environment secret CONVEX_DEPLOY_KEY" >&2
             exit 1
           fi
