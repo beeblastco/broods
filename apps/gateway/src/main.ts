@@ -25,6 +25,7 @@ import {
   openTerminalTicketWithSecrets,
   openTerminalUpstream,
   relayTerminalInput,
+  spendTerminalTicket,
   type MachineGatewayData,
   type RelayGatewayData,
   type TerminalGatewayData,
@@ -54,7 +55,6 @@ import {
   normalizedCoreBaseUrls,
   rateLimitHeaders,
   resolveRequestId,
-  warnDeprecatedQueryToken,
   websocketToken,
   websocketUpgradeHeaders,
   withCors,
@@ -107,6 +107,8 @@ export interface GatewayRuntime {
 export function createGateway(config: GatewayConfig): GatewayRuntime {
   const sockets = new Set<Bun.ServerWebSocket<GatewayData>>();
   let pendingUpgrades = 0;
+  // Terminal tickets already used, by token, until they expire.
+  const spentTickets = new Map<string, number>();
 
   async function route(
     request: Request,
@@ -184,17 +186,22 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         const observabilityPath = matchObservabilityWebSocketPath(url.pathname);
         const agentWebSocketPath = matchAgentWebSocketPath(url.pathname);
         if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
-          const ticket = openTerminalTicketWithSecrets(
-            websocketToken(request, url),
+          const token = websocketToken(request);
+          const opened = openTerminalTicketWithSecrets(
+            token,
             config.terminalTicketSecrets,
           );
+          const ticket =
+            opened && spendTerminalTicket(spentTickets, token, opened.expiresAt)
+              ? opened
+              : null;
           // A bad ticket still upgrades: the open handler closes it with a code
           // and reason the browser can show, where a 401 here would be a mute 1006.
           if (!ticket) config.authFailureLimiter.allow(ip);
           data = { kind: "terminal", ticket: ticket };
         } else if (url.pathname === MACHINE_WEBSOCKET_PATH) {
           // Core checks the daemon's bearer and refuses with a close code.
-          const token = websocketToken(request, url);
+          const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
 
           data = {
@@ -205,8 +212,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
             },
           };
         } else if (observabilityPath || agentWebSocketPath) {
-          warnDeprecatedQueryToken(request, url);
-          const token = websocketToken(request, url);
+          const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
 
           const resolved = await resolveSocketScope(token, config.coreBaseUrls);

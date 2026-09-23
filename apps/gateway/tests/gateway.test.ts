@@ -3168,16 +3168,13 @@ test("rate limiter: bounds a window, probes without counting, and resets", async
   expect(limiter.allow("ip-1")).toBe(true);
 });
 
-test("websocket token prefers the Authorization header over the query param", () => {
+test("websocket token reads the Authorization header and never the query param", () => {
   const url = new URL("https://gateway.example.com/ws?token=from-query");
   const withHeader = new Request(url, {
     headers: { authorization: "Bearer from-header" },
   });
-  expect(websocketToken(withHeader, url)).toBe("from-header");
-  expect(websocketToken(new Request(url), url)).toBe("from-query");
-
-  const bare = new URL("https://gateway.example.com/ws");
-  expect(websocketToken(new Request(bare), bare)).toBe("");
+  expect(websocketToken(withHeader)).toBe("from-header");
+  expect(websocketToken(new Request(url))).toBe("");
 });
 
 test("client ip takes the rightmost forwarded hop, then the socket address", () => {
@@ -3631,12 +3628,12 @@ function zeroBufferConnection(
   };
 }
 
-test("websocket token reads the broods.token subprotocol before the query param", () => {
+test("websocket token reads the broods.token subprotocol", () => {
   const url = new URL("https://gateway.example.com/ws?token=from-query");
   const request = new Request(url, {
     headers: { "sec-websocket-protocol": "broods.v1, broods.token.from-proto" },
   });
-  expect(websocketToken(request, url)).toBe("from-proto");
+  expect(websocketToken(request)).toBe("from-proto");
   // The handshake completes only when the offered subprotocol is echoed.
   expect(websocketUpgradeHeaders(request)).toEqual({
     "Sec-WebSocket-Protocol": "broods.v1",

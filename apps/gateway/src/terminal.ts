@@ -30,7 +30,7 @@ export type RelayGatewayData = MachineGatewayData | TerminalGatewayData;
  */
 export const TERMINAL_TICKET_REJECTED = {
   code: 4401,
-  reason: "Invalid or expired terminal ticket",
+  reason: "Invalid, expired or already used terminal ticket",
 } as const;
 
 type TerminalSocketState = {
@@ -56,6 +56,25 @@ export function openTerminalTicketWithSecrets(
   }
 
   return null;
+}
+
+/**
+ * Marks a verified ticket used, dropping entries whose ticket has expired.
+ * False when it was already used: a ticket copied out of a log cannot open a
+ * second shell. The map lives in one gateway process, which holds while the
+ * gateway runs a single replica.
+ */
+export function spendTerminalTicket(
+  spent: Map<string, number>,
+  token: string,
+  expiresAt: number,
+  now = Date.now(),
+): boolean {
+  for (const [key, until] of spent) if (until <= now) spent.delete(key);
+  if (spent.has(token)) return false;
+  spent.set(token, expiresAt);
+
+  return true;
 }
 
 export function isSessionInitFrame(frame: string): boolean {

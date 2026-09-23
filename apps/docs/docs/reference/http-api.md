@@ -189,7 +189,7 @@ Connect to `wss://gateway.broods.app/v1/agents/{endpointId}/ws`, or the scoped f
 Sec-WebSocket-Protocol: broods.v1, broods.token.<runtime key>
 ```
 
-The server answers `broods.v1`. A proxy in front of the gateway must not log request headers. The old `?token=` query parameter still works and is deprecated.
+The server answers `broods.v1`. A proxy in front of the gateway must not log request headers. A `?token=` query parameter is ignored.
 
 ### Client frames
 

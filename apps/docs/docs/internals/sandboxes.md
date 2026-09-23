@@ -271,13 +271,13 @@ sequenceDiagram
   D->>C: openTerminal(sandboxId, reservationKey)
   C->>Core: POST /v1/sandboxes/:id/terminal (service auth)
   Core-->>D: sealed ticket, 2 min TTL
-  D->>G: WS /v1/sandboxes/terminal/ws?token=...
+  D->>G: WS /v1/sandboxes/terminal/ws, subprotocol broods.token.<ticket>
   G->>G: open ticket with TERMINAL_TICKET_SECRET
   G->>P: upstream WS
   P-->>D: TTY bytes and keystrokes
 ```
 
-The upstream URL and provider credential travel inside the AES-256-GCM sealed ticket (`src/shared/terminal-ticket.ts`), so the browser only holds an opaque short-lived token. Workdir tickets carry the org key as a bearer header. MicroVM tickets carry a `CreateMicrovmShellAuthToken` JWE, valid 30 minutes, in `X-aws-proxy-auth` for the VM's native shell. Opening a terminal resumes a suspended instance first.
+The upstream URL and provider credential travel inside the AES-256-GCM sealed ticket (`src/shared/terminal-ticket.ts`), so the browser only holds an opaque short-lived token. The gateway accepts each ticket once, so a copy seen in transit cannot open a second shell. Workdir tickets carry the org key as a bearer header. MicroVM tickets carry a `CreateMicrovmShellAuthToken` JWE, valid 30 minutes, in `X-aws-proxy-auth` for the VM's native shell. Opening a terminal resumes a suspended instance first.
 
 ## Snapshot status model
 

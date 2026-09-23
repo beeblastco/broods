@@ -80,14 +80,13 @@ export function normalizedCoreBaseUrls(values: string[]): string[] {
 /**
  * WebSocket credential: the Authorization header, else the token carried as a
  * `broods.token.<token>` entry in `Sec-WebSocket-Protocol` (browsers cannot
- * set headers on an upgrade, and the query string ends up in access logs),
- * else the legacy `?token=` query parameter.
+ * set headers on an upgrade). A `?token=` query parameter is ignored: query
+ * strings end up in access logs.
  */
-export function websocketToken(request: Request, url: URL): string {
+export function websocketToken(request: Request): string {
   return (
     bearerToken(request.headers.get("authorization")) ??
     subprotocolToken(request) ??
-    url.searchParams.get("token") ??
     ""
   ).trim();
 }
@@ -104,20 +103,6 @@ export function websocketUpgradeHeaders(
   return offeredSubprotocols(request).includes(WEBSOCKET_SUBPROTOCOL)
     ? { "Sec-WebSocket-Protocol": WEBSOCKET_SUBPROTOCOL }
     : undefined;
-}
-
-/** Log once per upgrade when the credential arrived through the query string. */
-export function warnDeprecatedQueryToken(request: Request, url: URL): void {
-  if (
-    bearerToken(request.headers.get("authorization")) ||
-    subprotocolToken(request) ||
-    !url.searchParams.get("token")
-  ) {
-    return;
-  }
-  console.warn(
-    `deprecated WebSocket credential in ?token= on ${url.pathname}; send it as Sec-WebSocket-Protocol "broods.token.<key>"`,
-  );
 }
 
 /**
