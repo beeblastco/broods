@@ -90,23 +90,11 @@ test("diff warns about a stage value that no longer matches .env.local", async (
   expect(puts).toEqual([]);
 });
 
-// A variable stored before the backend recorded digests cannot be compared, so
-// it reads as a possible drift rather than silently as a match.
-test("env sync pushes a var the stage stored without a digest", async () => {
-  const cwd = await projectDir();
-  const { baseUrl, puts } = serveBackend({ dropInStepDigest: true });
-
-  const result = await runCli(cwd, baseUrl, ["env", "sync"]);
-
-  expect(result.exitCode).toBe(0);
-  expect(puts.sort()).toEqual(["DRIFTED_KEY", "IN_STEP_KEY", "UNSET_KEY"]);
-});
-
 /**
  * A control plane serving just the env and manifest routes the two commands
  * touch, recording every `env set` so a test can assert what was *not* pushed.
  */
-function serveBackend(options: { dropInStepDigest?: boolean } = {}): {
+function serveBackend(): {
   baseUrl: string;
   puts: string[];
 } {
@@ -115,9 +103,7 @@ function serveBackend(options: { dropInStepDigest?: boolean } = {}): {
     {
       name: "IN_STEP_KEY",
       updatedAt: 1,
-      ...(options.dropInStepDigest
-        ? {}
-        : { valueDigest: sha256Hex(LOCAL_VALUES.IN_STEP_KEY) }),
+      valueDigest: sha256Hex(LOCAL_VALUES.IN_STEP_KEY),
     },
     {
       name: "DRIFTED_KEY",

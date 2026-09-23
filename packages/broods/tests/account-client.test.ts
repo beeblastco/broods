@@ -372,7 +372,7 @@ test("skills: list unwraps, upload uses PUT, delete returns the flag", async () 
   expect(await client.deleteSkill("flow")).toBe(true);
 });
 
-test("workspace files: upload unwraps the file, rename and delete return flags", async () => {
+test("workspace files: upload unwraps the file, rename and delete return object counts", async () => {
   const { client, calls } = mockClient([
     {
       status: 201,
@@ -380,8 +380,8 @@ test("workspace files: upload unwraps the file, rename and delete return flags",
         file: { path: "memory/notes.md", name: "notes.md", isFolder: false },
       },
     },
-    { status: 200, body: { renamed: true } },
-    { status: 200, body: { deleted: true } },
+    { status: 200, body: { renamed: 1 } },
+    { status: 200, body: { deleted: 1 } },
     { status: 200, body: { url: "https://s3.example.com/signed" } },
   ]);
 
@@ -398,12 +398,10 @@ test("workspace files: upload unwraps the file, rename and delete return flags",
       "memory/notes.md",
       "memory/renamed.md",
     ),
-  ).toBe(true);
+  ).toBe(1);
   expect(calls[1]?.method).toBe("PATCH");
 
-  expect(await client.deleteWorkspaceFile("ws_1", "memory/renamed.md")).toBe(
-    true,
-  );
+  expect(await client.deleteWorkspaceFile("ws_1", "memory/renamed.md")).toBe(1);
   expect(calls[2]?.method).toBe("DELETE");
 
   expect(await client.getWorkspaceFileUrl("ws_1", "memory/renamed.md")).toBe(
