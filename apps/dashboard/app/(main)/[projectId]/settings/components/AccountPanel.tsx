@@ -11,17 +11,13 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
+import { toErrorMessage } from "@/app/lib/errors";
 import type { PlanTier } from "@/app/lib/pricing";
-import {
-  DEFAULT_PLAN,
-  isMaxPlan,
-  PLAN_CONFIGS,
-  UPGRADE_URL,
-} from "@/app/lib/pricing";
+import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
@@ -33,6 +29,7 @@ export function AccountPanel(): React.JSX.Element {
   const { user: authUser } = useAuth();
 
   const currentUser = useQuery(api.user.getCurrent);
+  const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const updateProfile = useMutation(
     api.user.updateProfile,
   ).withOptimisticUpdate((localStore, args) => {
@@ -76,6 +73,8 @@ export function AccountPanel(): React.JSX.Element {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentUser === undefined || isDirty) return;
@@ -138,6 +137,22 @@ export function AccountPanel(): React.JSX.Element {
       );
     } finally {
       setIsSavingProfile(false);
+    }
+  }
+
+  async function handleUpgrade(): Promise<void> {
+    setUpgradeLoading(true);
+    setUpgradeError(null);
+    try {
+      const returnUrl = window.location.href;
+      const { url } = await createCheckoutSession({
+        successUrl: returnUrl,
+        cancelUrl: returnUrl,
+      });
+      window.location.href = url;
+    } catch (err) {
+      setUpgradeError(toErrorMessage(err));
+      setUpgradeLoading(false);
     }
   }
 
@@ -275,15 +290,10 @@ export function AccountPanel(): React.JSX.Element {
               {showUpgrade && (
                 <Button
                   size="xs"
-                  nativeButton={false}
-                  render={
-                    <a
-                      href={UPGRADE_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label="Upgrade plan"
-                    />
-                  }
+                  className="cursor-pointer"
+                  aria-label="Upgrade plan"
+                  onClick={handleUpgrade}
+                  disabled={upgradeLoading}
                 >
                   Upgrade
                   <ArrowUpRight className="size-3" />
@@ -292,6 +302,9 @@ export function AccountPanel(): React.JSX.Element {
             </div>
           </div>
         </div>
+        {upgradeError && (
+          <p className="text-sm text-destructive">{upgradeError}</p>
+        )}
       </Section>
 
       <Separator />
