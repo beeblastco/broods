@@ -13,6 +13,7 @@ import {
   query,
 } from "./_generated/server";
 import { authKit } from "./auth";
+import { ClientError } from "./model/clientError";
 
 // A subscription in one of these statuses is over: it no longer blocks a new
 // checkout and is not the one billing shows.
@@ -98,7 +99,10 @@ export const createCheckoutSession = action({
       { stripeCustomerId: customerId },
     );
     if (subs.some((sub) => !isEnded(sub.status))) {
-      throw new Error("Already subscribed; use Manage Billing to change plan");
+      throw new ClientError(
+        "Already subscribed; use Manage Billing to change plan",
+        "conflict",
+      );
     }
 
     const priceId = process.env.STRIPE_PRO_PRICE_ID;
@@ -215,14 +219,14 @@ function safeDashboardUrl(value: string, label: string): string {
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`${label} must be a valid URL`);
+    throw new ClientError(`${label} must be a valid URL`);
   }
 
   const allowed = allowedDashboardOrigin();
   const isLocalDev =
     url.hostname === "localhost" || url.hostname === "127.0.0.1";
   if (allowed ? url.origin !== allowed : !isLocalDev) {
-    throw new Error(`${label} must use the configured dashboard origin`);
+    throw new ClientError(`${label} must use the configured dashboard origin`);
   }
 
   return url.toString();
