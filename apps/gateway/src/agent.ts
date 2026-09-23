@@ -875,9 +875,9 @@ async function waitForNatsTail(options: {
 }
 
 /**
- * Reads a run's status from core's in-cluster address. Core's `statusUrl` is
- * the public door, so only its path is kept: a started turn answers with it and
- * no run id, and polling the public URL would hairpin through ingress.
+ * Reads a run's status from core's in-cluster address, by run id. Core's
+ * `statusUrl` is the public door, so when only that is known just its path is
+ * kept: polling the public URL would hairpin through ingress.
  */
 async function fetchStatus(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
