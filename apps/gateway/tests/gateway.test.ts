@@ -10,7 +10,6 @@ import {
   handleAgentMessage,
   parseGatewayMessage,
   stopActiveRun,
-  websocketMessageForNatsData,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
 import {
@@ -141,30 +140,26 @@ test("sends question answers instead of events on an execute message", () => {
   ).toBeNull();
 });
 
-test("forwards typed NATS stream payloads directly", () => {
-  expect(
-    websocketMessageForNatsData({
-      type: "text-delta",
-      id: "text-1",
-      text: "hello",
-    }),
-  ).toEqual({
-    type: "text-delta",
-    id: "text-1",
-    text: "hello",
-  });
-  expect(websocketMessageForNatsData({ type: "waiting" })).toEqual({
-    type: "waiting",
-  });
-});
-
-test("forwards stream errors directly", () => {
-  expect(
-    websocketMessageForNatsData({ type: "error", error: "bad key" }),
-  ).toEqual({
-    type: "error",
-    error: "bad key",
-  });
+test("refuses an agent id that is not one NATS subject token", () => {
+  for (const agentId of ["*", ">", "agent.*", "other.agent", "agent one"]) {
+    expect(
+      parseGatewayMessage(
+        JSON.stringify({
+          type: "attach",
+          requestId: "attach-1",
+          agentId: agentId,
+          conversationKey: "conversation-1",
+          eventId: "event-1",
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseGatewayMessage(
+        JSON.stringify({ type: "execute", agentId: agentId, input: "hi" }),
+      ),
+    ).toBeNull();
+  }
 });
 
 test("reuses attach and stream contracts for subagent task identities", () => {
@@ -187,17 +182,6 @@ test("reuses attach and stream contracts for subagent task identities", () => {
     eventId: "subagent_task_123",
     runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   });
-  expect(
-    [
-      { type: "reasoning-delta", text: "thinking" },
-      { type: "text-delta", text: "answer" },
-      { type: "tool-call", toolName: "search" },
-    ].map(websocketMessageForNatsData),
-  ).toEqual([
-    { type: "reasoning-delta", text: "thinking" },
-    { type: "text-delta", text: "answer" },
-    { type: "tool-call", toolName: "search" },
-  ]);
 });
 
 test("attaches virtual and private child streams through durable parent deployment authorization", async () => {
@@ -809,9 +793,10 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
+    // Status is only polled once the stream has been quiet for a while.
     await waitForCondition(
       () => consumerClosed,
-      700,
+      1600,
       () => "consumer close",
     );
     expect(
@@ -827,7 +812,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
   }
-});
+}, 10_000);
 
 test("closes a zero-frame queued execute consumer after durable completion", async () => {
   const originalFetch = globalThis.fetch;
@@ -1151,6 +1136,126 @@ test("rejects a second active agent run on the same websocket", () => {
       type: "error",
       error: "A run is already active on this WebSocket",
     });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a cancelled run's cleanup leaves the next run on the socket alone", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const signals: AbortSignal[] = [];
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      signals.push(init!.signal!);
+      init?.signal?.addEventListener("abort", () =>
+        reject(new Error("aborted")),
+      );
+    })) as typeof fetch;
+  const execute = (eventId: string): void =>
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_1",
+        eventId: eventId,
+        input: "hi",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "10000" }),
+      async () =>
+        zeroBufferConnection(async () => ({
+          [Symbol.asyncIterator]: async function* () {},
+          close: async () => {},
+        })) as never,
+    );
+
+  try {
+    execute("first");
+    await waitForCondition(() => signals.length === 1);
+    handleAgentMessage(
+      socket,
+      JSON.stringify({ type: "cancel" }),
+      gatewayLimitsFromEnv({}),
+      idleNats,
+    );
+    execute("second");
+    await waitForCondition(() => signals.length === 2);
+    // The first run's rejected fetch has settled and its cleanup has run.
+    await Bun.sleep(10);
+
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+    execute("third");
+    expect(sent).toContainEqual({
+      type: "error",
+      error: "A run is already active on this WebSocket",
+    });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a started turn streams from its own start and polls core in-cluster", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const polled: string[] = [];
+  let consumerOptions: { opt_start_seq?: number } | undefined;
+  const connection = zeroBufferConnection(
+    async () => ({
+      [Symbol.asyncIterator]: async function* () {},
+      close: async () => {},
+    }),
+    (options) => {
+      consumerOptions = options;
+    },
+  );
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      return Response.json(
+        {
+          eventId: "direct-task",
+          conversationKey: "direct-conversation",
+          status: "processing",
+          statusUrl:
+            "https://gateway.broods.app/v1/runs/run_5555555555555555555555555555eeee",
+          nats: {
+            accountId: "acct_test",
+            agentId: "agent_child",
+            conversationKey: "direct-conversation",
+          },
+        },
+        { status: 202 },
+      );
+    }
+    polled.push(String(input));
+
+    return Response.json({ eventId: "direct-task", status: "completed" });
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_child",
+        sessionId: "direct-conversation",
+        eventId: "direct-task",
+        input: "go",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(sent, (message) => message.type === "done");
+    // The snapshot was taken before the POST, whose last sequence is 20.
+    expect(consumerOptions?.opt_start_seq).toBe(21);
+    expect(polled[0]).toBe(
+      "https://core.example/v1/runs/run_5555555555555555555555555555eeee",
+    );
   } finally {
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
