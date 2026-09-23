@@ -6,7 +6,7 @@
  */
 
 const API_PREFIX = "/_matrix/client/v3";
-/** Deadline for a call whose caller passes no signal. `/sync` sets its own. */
+/** Deadline for a call whose caller passes no signal, and the least a `/sync` waits. */
 const REQUEST_TIMEOUT_MS = 30_000;
 /** How long past the long-poll timeout a sync may hang before it is aborted. */
 const SYNC_GRACE_MS = 15_000;
@@ -154,9 +154,13 @@ export class MatrixClient {
       timeout: String(options.timeoutMs),
     });
     if (options.since !== undefined) query.set("since", options.since);
+    // Floored: the first sync asks for timeout 0 yet still has to build a
+    // response for every joined room.
     const signal = AbortSignal.any([
       options.signal,
-      AbortSignal.timeout(options.timeoutMs + SYNC_GRACE_MS),
+      AbortSignal.timeout(
+        Math.max(options.timeoutMs, REQUEST_TIMEOUT_MS) + SYNC_GRACE_MS,
+      ),
     ]);
 
     return this.request<SyncResponse>(
