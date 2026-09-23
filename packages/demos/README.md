@@ -32,7 +32,7 @@ doesn't change), then aim the demos at it:
 # 1. Start the core locally (serves http://localhost:3000, path-routed).
 cd apps/core && bun run serve          # fill apps/core/.env first — see its .env.example
 
-# 2. In the demo's .env.local (or packages/demos/.env), point the SDK at it:
+# 2. In the demo's .env.local, point the SDK at it:
 #    BROODS_BASE_URL=http://localhost:3000
 #    BROODS_API_KEY=fp_agent_...        # a runtime key for the demo account
 

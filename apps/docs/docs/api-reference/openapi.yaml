@@ -393,6 +393,24 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/IngressAccepted"
                   - $ref: "#/components/schemas/AnswersAccepted"
+        "400":
+          description: Malformed body, as for `POST /v1/runs`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: An agent outside the key's stage, or an `answers` entry naming no open prompt (`question_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`conversation_busy`, `idempotency_conflict` or `question_already_answered`, as for `POST /v1/runs`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: The runtime key does not match this project and stage
           content:
@@ -1276,6 +1294,24 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/IngressAccepted"
                   - $ref: "#/components/schemas/AnswersAccepted"
+        "400":
+          description: Malformed body, as for `POST /v1/runs`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: An agent outside the key's stage, or an `answers` entry naming no open prompt (`question_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`conversation_busy`, `idempotency_conflict` or `question_already_answered`, as for `POST /v1/runs`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: The runtime key does not match the endpoint
           content:
