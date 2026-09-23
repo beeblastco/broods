@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { ForwarderConfig } from "../src/config.ts";
 import type { ForwarderConnection } from "../src/connections.ts";
 import type { MessageCreate } from "../src/discord.ts";
@@ -232,7 +232,11 @@ describe("reconcile", () => {
           webhookUrl: "https://gateway.example.com/v1/webhooks/old",
         }),
       ]);
-      deliver?.({ channel_id: "channel-1", id: "message-1" });
+      deliver?.({
+        channel_id: "channel-1",
+        guild_id: "guild-1",
+        id: "message-1",
+      });
 
       await until(() => releaseLookup !== undefined);
       forwarder.reconcile([
@@ -247,6 +251,70 @@ describe("reconcile", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe("delivery", () => {
+  const realFetch = globalThis.fetch;
+
+  /** Opens one token and returns what its socket would hand the supervisor. */
+  function delivering(): {
+    deliver: (data: MessageCreate) => void;
+    lookups: string[];
+    posted: string[];
+  } {
+    const lookups: string[] = [];
+    const posted: string[] = [];
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+    ): Promise<Response> => {
+      const url = String(input);
+      if (new URL(url).hostname === "discord.com") {
+        lookups.push(url);
+
+        return new Response("", {
+          headers: { "Retry-After": "0.001" },
+          status: 429,
+        });
+      }
+      posted.push(url);
+
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+    let deliver: (data: MessageCreate) => void = (): void => {};
+    const forwarder = new Forwarder(CONFIG, (options) => {
+      deliver = options.onMessageCreate;
+
+      return new StubSocket();
+    });
+    forwarder.reconcile([connection()]);
+
+    return { deliver: deliver, lookups: lookups, posted: posted };
+  }
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  // Without `thread` core keys a threaded message to the parent channel, which
+  // is a different conversation, so dropping it is the lesser harm.
+  it("drops a guild message whose thread lookup keeps failing", async () => {
+    const { deliver, lookups, posted } = delivering();
+    deliver({ channel_id: "thread-1", guild_id: "guild-1", id: "message-1" });
+
+    await until(() => lookups.length === 2);
+    await Bun.sleep(5);
+
+    expect(posted).toEqual([]);
+  });
+
+  it("forwards a DM without looking up a thread", async () => {
+    const { deliver, lookups, posted } = delivering();
+    deliver({ channel_id: "dm-1", id: "message-1" });
+
+    await until(() => posted.length > 0);
+
+    expect(lookups).toEqual([]);
   });
 });
 

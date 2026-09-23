@@ -12,7 +12,10 @@ function stubChannel(body: unknown, status = 200): { requests: string[] } {
 
     return status === 200
       ? Response.json(body)
-      : new Response("", { status: status });
+      : new Response("", {
+          headers: { "Retry-After": "0.001" },
+          status: status,
+        });
   }) as typeof fetch;
 
   return { requests: requests };
@@ -49,13 +52,31 @@ describe("thread directory", () => {
     expect(stub.requests).toHaveLength(1);
   });
 
-  it("does not cache a failed lookup, so a rate limit self-heals", async () => {
+  // Forwarding without `thread` would key a threaded message to the wrong
+  // conversation, so a lookup that still fails rejects and the message drops.
+  it("retries a rate limit once after Retry-After, then rejects", async () => {
     const stub = stubChannel(null, 429);
     const directory = new ThreadDirectory("token-a");
 
-    expect(await directory.resolve("channel-1")).toBeNull();
-    await directory.resolve("channel-1");
+    await expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 429");
     expect(stub.requests).toHaveLength(2);
+  });
+
+  it("does not retry any other failure", async () => {
+    const stub = stubChannel(null, 403);
+    const directory = new ThreadDirectory("token-a");
+
+    await expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 403");
+    expect(stub.requests).toHaveLength(1);
+  });
+
+  it("does not cache a failed lookup, so a rate limit self-heals", async () => {
+    stubChannel(null, 429);
+    const directory = new ThreadDirectory("token-a");
+    await directory.resolve("channel-1").catch((): void => {});
+
+    stubChannel({ id: "channel-1", type: 0 });
+    expect(await directory.resolve("channel-1")).toBeNull();
   });
 
   it("asks Discord for the channel by id", async () => {

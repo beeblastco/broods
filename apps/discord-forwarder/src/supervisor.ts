@@ -132,7 +132,10 @@ export class Forwarder {
     // about the channel either.
     if (!this.managed.has(botToken)) return;
 
-    const thread = await threads.resolve(data.channel_id);
+    // DMs have no threads, and core drops them anyway.
+    const thread = data.guild_id
+      ? await threads.resolve(data.channel_id)
+      : null;
     // Read after the lookup, not before. `resolve` can wait on Discord, and
     // `reconcile` replaces the array outright, so a set read on the way in is
     // already stale by here, which is the whole reason this goes through the map
@@ -150,12 +153,15 @@ export class Forwarder {
       budget: this.budget,
       config: this.config,
       onMessageCreate: (data: MessageCreate): void => {
-        // Nothing below is meant to reject, but an unhandled rejection here
-        // takes the process down, and a restart is another IDENTIFY.
+        // A failed thread lookup rejects and drops the message here. Anything
+        // unhandled would take the process down, and a restart is another
+        // IDENTIFY.
         void this.deliver(botToken, threads, data).catch(
           (error: unknown): void => {
             logError("Discord message could not be delivered", {
+              channelId: data.channel_id,
               error: error instanceof Error ? error.message : String(error),
+              messageId: data.id,
               tokenHint: tokenHint(botToken),
             });
           },
