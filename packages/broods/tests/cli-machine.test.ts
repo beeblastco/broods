@@ -25,6 +25,22 @@ test("runExec runs bash on this machine with the frame's cwd and env", async () 
   expect(result.timedOut).toBe(false);
 });
 
+test("runExec keeps the CLI's BROODS_ credentials out of the agent's shell", async () => {
+  process.env.BROODS_API_KEY = "fp_agent_secret";
+  try {
+    const result = await runExec(
+      exec({ code: 'echo "${BROODS_API_KEY:-unset} $HOME"' }),
+      process.cwd(),
+    );
+
+    expect(result.stdout).toContain("unset");
+    expect(result.stdout).not.toContain("fp_agent_secret");
+    expect(result.stdout).toContain(process.env.HOME ?? "");
+  } finally {
+    delete process.env.BROODS_API_KEY;
+  }
+});
+
 test("runExec kills a command at the timeout and says so", async () => {
   const result = await runExec(
     exec({ code: "sleep 5; echo late", timeoutSeconds: 1 }),
@@ -73,7 +89,7 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
 
   await expect(
     runMachineDaemon({
-      apiKey: "key",
+      credential: async (): Promise<string> => "key",
       baseUrl: core.url,
       cwd: process.cwd(),
       log: (line: string): void => {

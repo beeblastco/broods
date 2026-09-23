@@ -15,6 +15,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
+import { agentEnv } from "../runtime-config.ts";
 
 const CLIENT_INFO = { name: "broods-machine", version: "1.0.0" };
 
@@ -94,7 +95,7 @@ export class McpHost {
       this.#log(`mcp ${server}: ${[spec.command, ...spec.args].join(" ")}`);
       const transport = new StdioClientTransport({
         ...spec,
-        env: { ...inheritedEnv(), ...spec.env },
+        env: { ...agentEnv(), ...spec.env },
         stderr: "inherit",
       });
       transport.onclose = (): void => {
@@ -129,16 +130,6 @@ export function readMcpServersFile(path: string): Map<string, McpServerSpec> {
       spec.cwd ? { ...spec, cwd: resolve(dirname(file), spec.cwd) } : spec,
     ]),
   );
-}
-
-// The servers run as the user, with the user's own environment.
-function inheritedEnv(): Record<string, string> {
-  const entries: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (typeof value === "string") entries[name] = value;
-  }
-
-  return entries;
 }
 
 function readJson(file: string): unknown {

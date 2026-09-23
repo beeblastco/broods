@@ -27,6 +27,11 @@ login when `.env.local` names neither. With no login for that server it stops
 with `Not logged in to <server>` instead of using another server's token. Run
 `broods login` in that project directory to add one.
 
+Both files hold credentials, so the CLI writes `~/.broods/config.json` and
+`.env.local` readable by you alone (mode `0600`, `~/.broods` at `0700`). It also
+adds `.env*.local` to the project root `.gitignore` when nothing there already
+ignores `.env.local`.
+
 `deploy` is the exception to the stage row: it always targets `production` and
 ignores `BROODS_STAGE`, so `broods stage use staging` followed by `broods deploy`
 writes to Production, not staging. Pass `--stage staging` to deploy elsewhere.

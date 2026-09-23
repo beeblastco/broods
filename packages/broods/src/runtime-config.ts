@@ -61,6 +61,22 @@ export function loadBroodsRuntimeConfig(
 }
 
 /**
+ * The environment `broods machine` hands to agent commands and MCP servers:
+ * the user's own, minus the CLI's `BROODS_*` credentials. An agent shell that
+ * could `echo $BROODS_API_KEY` could call the stage as the developer.
+ */
+export function agentEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (typeof value === "string" && !name.startsWith("BROODS_")) {
+      env[name] = value;
+    }
+  }
+
+  return env;
+}
+
+/**
  * True when the live value of `name` came from the shell rather than from
  * `.env`/`.env.local`, which means rewriting the file cannot change what the
  * next `broods` command reads. Compares against the files instead of the
