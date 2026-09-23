@@ -45,8 +45,6 @@ export const API_POLICY_ACTIONS = [
   "sandboxes:write",
   "skills:read",
   "skills:write",
-  "tools:read",
-  "tools:write",
   "workspaces:read",
   "workspaces:write",
 ] as const;
