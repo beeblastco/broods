@@ -16,7 +16,7 @@ const AWS_PROFILE = process.env.CI
 // sandbox Lambdas this used to gate are gone. The "lambda" provider is now an AWS Lambda
 // MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
 // The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
-// there); its teardown belongs to the Phase 4 infra cleanup. See docs/workspace/sandbox/lambda.md.
+// there); its teardown belongs to the Phase 4 infra cleanup. See apps/docs/docs/internals/sandboxes.md.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 // Convex credentials are required for every stage and back all persistence.
 // Runtime credentials live on the container (infra repo), not here.
@@ -412,7 +412,7 @@ export default $config({
     // Loki. The forwarder is a plain .mjs next to the hosted-MCP runner. It needs
     // the collector's client header line (a CI secret, kept encrypted in state
     // via $util.secret), so a deploy without it skips the bridge rather than
-    // shipping a function that fails every invocation. See docs/observability.md.
+    // shipping a function that fails every invocation. See apps/docs/docs/internals/observability.md.
     if (microvmLogGroup && OTEL_EXPORTER_OTLP_HEADERS) {
       const sandboxLogForwarder = new sst.aws.Function("SandboxLogForwarder", {
         handler: "../lambda/sandbox-log-forwarder.handler",
@@ -754,7 +754,7 @@ export default $config({
     // rejected), so the repo is region-scoped: each deploy region gets its own. The arm64
     // image is pushed by the lambda-just-bash-rust CI; for a brand-new region that push must
     // land before the sandbox functions can be created (the first deploy creates the empty
-    // repo, then re-deploy once the image exists). See docs/workspace/sandbox/lambda.md.
+    // repo, then re-deploy once the image exists). See apps/docs/docs/internals/sandboxes.md.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
     const sandboxImageRepoExists = ecrRepositoryExists(
       sandboxImageRepoName,

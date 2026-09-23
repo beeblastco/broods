@@ -1,272 +1,145 @@
 import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 
+/**
+ * Two sidebars, two audiences. `docs` is for people building agents on Broods.
+ * `internals` is for people working on Broods itself: contributors, self-hosters
+ * and operators. Keep source paths, tables and infra out of `docs`.
+ */
 const sidebars: SidebarsConfig = {
   docs: [
     {
-      type: "doc",
-      id: "home",
-      label: "Home",
+      type: "category",
+      label: "Get started",
+      collapsed: false,
+      items: [
+        { type: "doc", id: "index", label: "Overview" },
+        { type: "doc", id: "quickstart", label: "Quickstart" },
+        { type: "doc", id: "concepts", label: "Concepts" },
+      ],
     },
     {
-      type: "doc",
-      id: "getting-started",
-      label: "Getting Started",
+      type: "category",
+      label: "Build agents",
+      collapsed: false,
+      items: [
+        { type: "doc", id: "guides/agents", label: "Agents" },
+        { type: "doc", id: "guides/tools", label: "Tools and MCP" },
+        {
+          type: "category",
+          label: "Sandboxes",
+          link: { type: "doc", id: "guides/sandboxes/index" },
+          items: [
+            {
+              type: "doc",
+              id: "guides/sandboxes/persistent",
+              label: "Persistent sandboxes",
+            },
+            {
+              type: "doc",
+              id: "guides/sandboxes/providers",
+              label: "Providers",
+            },
+            {
+              type: "doc",
+              id: "guides/sandboxes/machine",
+              label: "Your computer",
+            },
+          ],
+        },
+        { type: "doc", id: "guides/workspaces", label: "Workspaces" },
+        {
+          type: "doc",
+          id: "guides/memory-and-sessions",
+          label: "Memory and sessions",
+        },
+        { type: "doc", id: "guides/skills", label: "Skills" },
+        { type: "doc", id: "guides/subagents", label: "Subagents" },
+        { type: "doc", id: "guides/scheduling", label: "Scheduling" },
+      ],
     },
     {
-      type: "doc",
-      id: "architecture",
-      label: "Architecture and Workflow",
+      type: "category",
+      label: "Channels",
+      link: { type: "doc", id: "channels/index" },
+      items: [
+        {
+          type: "doc",
+          id: "channels/channel-records",
+          label: "Channel records",
+        },
+        { type: "doc", id: "channels/slack", label: "Slack" },
+        { type: "doc", id: "channels/telegram", label: "Telegram" },
+        { type: "doc", id: "channels/discord", label: "Discord" },
+        { type: "doc", id: "channels/github", label: "GitHub" },
+        { type: "doc", id: "channels/matrix", label: "Matrix" },
+        { type: "doc", id: "channels/zalo", label: "Zalo" },
+        { type: "doc", id: "channels/pancake", label: "Pancake" },
+      ],
     },
     {
-      type: "doc",
-      id: "architecture/queue-and-steer",
-      label: "Queue and Steer",
+      type: "category",
+      label: "Control and observe",
+      collapsed: false,
+      items: [
+        { type: "doc", id: "guides/conversations", label: "Conversations" },
+        { type: "doc", id: "guides/policies", label: "Policies" },
+        { type: "doc", id: "guides/hooks", label: "Hooks" },
+        { type: "doc", id: "guides/webhooks", label: "Webhooks" },
+        { type: "doc", id: "guides/observability", label: "Logs and traces" },
+      ],
     },
     {
-      type: "doc",
-      id: "data-security",
-      label: "Data Security",
-    },
-    {
-      type: "doc",
-      id: "observability",
-      label: "Observability",
+      type: "category",
+      label: "Ship",
+      collapsed: false,
+      items: [
+        { type: "doc", id: "guides/deploying", label: "Deploying" },
+        { type: "doc", id: "guides/security", label: "Security and access" },
+      ],
     },
     {
       type: "category",
       label: "Reference",
       collapsed: false,
       items: [
+        { type: "doc", id: "reference/cli", label: "CLI" },
+        { type: "doc", id: "reference/sdk", label: "TypeScript SDK" },
+        { type: "doc", id: "reference/http-api", label: "HTTP and WebSocket" },
+        { type: "doc", id: "reference/configuration", label: "Configuration" },
+        { type: "link", label: "API reference", href: "/api-reference" },
+      ],
+    },
+  ],
+  internals: [
+    { type: "doc", id: "internals/index", label: "Overview" },
+    {
+      type: "category",
+      label: "Runtime",
+      collapsed: false,
+      items: [
+        { type: "doc", id: "internals/architecture", label: "Architecture" },
         {
           type: "doc",
-          id: "cli",
-          label: "CLI",
+          id: "internals/queue-and-steer",
+          label: "Queue and steer",
         },
-        {
-          type: "doc",
-          id: "resources",
-          label: "Resources & Config",
-        },
-        {
-          type: "doc",
-          id: "sdk",
-          label: "SDK & API",
-        },
+        { type: "doc", id: "internals/subagents", label: "Subagents" },
+        { type: "doc", id: "internals/channels", label: "Channels" },
+        { type: "doc", id: "internals/tools-and-mcp", label: "Tools and MCP" },
+        { type: "doc", id: "internals/sandboxes", label: "Sandboxes" },
+        { type: "doc", id: "internals/storage", label: "Storage" },
+        { type: "doc", id: "internals/security", label: "Security" },
+        { type: "doc", id: "internals/observability", label: "Observability" },
       ],
     },
     {
       type: "category",
-      label: "Features",
+      label: "Run Broods",
       collapsed: false,
       items: [
-        {
-          type: "category",
-          label: "Workspace",
-          collapsed: false,
-          link: {
-            type: "doc",
-            id: "workspace/index",
-          },
-          items: [
-            {
-              type: "doc",
-              id: "workspace/memory-and-session",
-              label: "Memory and Session",
-            },
-            {
-              type: "doc",
-              id: "workspace/storage",
-              label: "Storage",
-            },
-            {
-              type: "category",
-              label: "Sandbox",
-              collapsed: true,
-              link: {
-                type: "doc",
-                id: "workspace/sandbox/index",
-              },
-              items: [
-                {
-                  type: "doc",
-                  id: "workspace/sandbox/index",
-                  label: "Core design",
-                },
-                {
-                  type: "doc",
-                  id: "workspace/sandbox/getting-started",
-                  label: "Getting Started",
-                },
-                {
-                  type: "doc",
-                  id: "workspace/sandbox/snapshot",
-                  label: "Snapshot",
-                },
-                {
-                  type: "doc",
-                  id: "workspace/sandbox/networking",
-                  label: "Networking",
-                },
-                {
-                  type: "doc",
-                  id: "workspace/sandbox/security",
-                  label: "Security",
-                },
-                {
-                  type: "doc",
-                  id: "workspace/sandbox/hook",
-                  label: "Hook",
-                },
-                {
-                  type: "doc",
-                  id: "workspace/sandbox/best-practice",
-                  label: "Best practice",
-                },
-                {
-                  type: "category",
-                  label: "Integration",
-                  collapsed: true,
-                  items: [
-                    {
-                      type: "doc",
-                      id: "workspace/sandbox/lambda",
-                      label: "Lambda",
-                    },
-                    {
-                      type: "doc",
-                      id: "workspace/sandbox/daytona",
-                      label: "Daytona",
-                    },
-                    {
-                      type: "doc",
-                      id: "workspace/sandbox/e2b",
-                      label: "E2B",
-                    },
-                    {
-                      type: "doc",
-                      id: "workspace/sandbox/vercel",
-                      label: "Vercel",
-                    },
-                    {
-                      type: "doc",
-                      id: "workspace/sandbox/machine",
-                      label: "Machine",
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-        {
-          type: "doc",
-          id: "webhook",
-          label: "Lifecycle Webhook",
-        },
-        {
-          type: "doc",
-          id: "hooks",
-          label: "Code Hooks",
-        },
-        {
-          type: "doc",
-          id: "tools",
-          label: "External Tool",
-        },
-        {
-          type: "doc",
-          id: "skills",
-          label: "Skills",
-        },
-        {
-          type: "doc",
-          id: "roles",
-          label: "Account Roles",
-        },
-        {
-          type: "category",
-          label: "Channels",
-          collapsed: true,
-          link: {
-            type: "doc",
-            id: "channels/index",
-          },
-          items: [
-            {
-              type: "doc",
-              id: "channels/channel-records",
-              label: "Channel Records",
-            },
-            {
-              type: "doc",
-              id: "channels/telegram",
-              label: "Telegram",
-            },
-            {
-              type: "doc",
-              id: "channels/github",
-              label: "GitHub",
-            },
-            {
-              type: "doc",
-              id: "channels/slack",
-              label: "Slack",
-            },
-            {
-              type: "doc",
-              id: "channels/discord",
-              label: "Discord",
-            },
-            {
-              type: "doc",
-              id: "channels/matrix",
-              label: "Matrix",
-            },
-            {
-              type: "doc",
-              id: "channels/pancake",
-              label: "Pancake",
-            },
-            {
-              type: "doc",
-              id: "channels/zalo",
-              label: "Zalo",
-            },
-          ],
-        },
-        {
-          type: "doc",
-          id: "sub-agents",
-          label: "Subagent",
-        },
-        {
-          type: "doc",
-          id: "crons",
-          label: "Cron Jobs",
-        },
-      ],
-    },
-    {
-      type: "category",
-      label: "Development",
-      collapsed: false,
-      items: [
-        {
-          type: "doc",
-          id: "extending",
-          label: "Extending",
-        },
-        "deployment",
-        {
-          type: "doc",
-          id: "ci-cd",
-          label: "CI/CD",
-        },
-        {
-          type: "doc",
-          id: "operations",
-          label: "Operations",
-        },
+        { type: "doc", id: "internals/self-hosting", label: "Self-hosting" },
+        { type: "doc", id: "internals/operations", label: "Operations" },
+        { type: "doc", id: "internals/ci-cd", label: "CI/CD" },
       ],
     },
   ],

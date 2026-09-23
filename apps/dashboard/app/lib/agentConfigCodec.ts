@@ -25,8 +25,7 @@ import { isPlainObject } from "./utils";
  * Only these are cleared on rewrite so unrelated options the UI doesn't manage
  * (e.g. OpenAI `reasoningSummary`) survive. MiniMax's default provider is
  * Anthropic-compatible, so it reuses the `anthropic` slot. Mirrors the
- * per-provider table in the core docs (getting-started → "Reasoning / thinking
- * tokens").
+ * provider-specific overrides in the docs (guides/agents.md, "Reasoning").
  */
 const REASONING_PROVIDER_KEYS: Record<string, string[]> = {
   openai: ["reasoningEffort"],

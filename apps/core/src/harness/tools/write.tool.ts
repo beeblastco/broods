@@ -46,9 +46,9 @@ Usage notes:
           }
           const q = shellQuote(rel);
           const b64 = toBase64(content ?? "");
-          // `sync ${q}` fsyncs the file so the write commits to the S3 Files server
-          // before the Lambda freezes; without it a cold container loses the write
-          // (close alone does not force an NFS COMMIT). See docs/workspace/sandbox/lambda.md.
+          // `sync ${q}` fsyncs the file so the mount uploads it before the sandbox
+          // can freeze or suspend; without it the write can be lost.
+          // See docs/internals/storage.md.
           const code =
             `mkdir -p "$(dirname -- ${q})" && printf '%s' ${shellQuote(b64)} | base64 -d > ${q} && ` +
             `sync ${q} && ` +

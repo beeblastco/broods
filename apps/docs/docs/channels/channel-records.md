@@ -1,98 +1,21 @@
+---
+title: Channel records
+---
+
 # Channel records
 
-A channel record is one account-scoped row per real place a team talks: a Slack
-channel, a Discord channel, a repository. It binds that place to an agent and
-carries the instructions, workspaces, policies and roles scoped to it.
+A channel record binds one real place, such as a Slack channel, a Discord channel or a repository, to the agents that answer there. It also carries rules for that place, such as extra instructions, workspaces, policies and denied tools.
 
-This is different from `config.channels` on an agent, which holds one adapter's
-credentials. Credentials say _how to reach Slack_; a channel record says _who
-answers in #product-eng, and with what_.
+Every `define*Channel` you declare becomes a record on deploy. Use one when you need any of these:
 
-Without a record, one provider app reaches exactly one agent. With records, one
-Slack install can drive a different agent in every channel.
+- one Slack install driving a different agent in each channel
+- a room-specific instruction, such as "escalate billing to #finance"
+- a tool withheld in one room, or a policy that applies only there
+- several agents answering in one room
 
-## Routing
+Without a record, the agent that holds the connection answers everywhere the connection listens.
 
-There is one webhook shape:
-
-```bash
-{BROODS_BASE_URL}/v1/webhooks/{accountId}/{channel}
-```
-
-The URL names no agent. Whichever of the account's agents holds credentials
-that verify the request is the **credential holder**. Its adapter parses the
-request and sends the reply, because the reply must come from the app that
-received it. The record then decides who runs.
-
-If two agents share one provider app, both verify, and the lower agent id
-receives the request. The order is fixed so it cannot vary between requests,
-and the run is logged. That tie is what a channel record is for; do not rely on
-which agent wins it.
-
-```mermaid
-flowchart TD
-  Provider["Provider webhook"] --> Url["/v1/webhooks/\{accountId\}/\{channel\}"]
-  Url --> Holder["credential holder<br/>first agent whose credentials verify"]
-  Holder --> Parse["adapter.parse → channel identity"]
-  Parse --> Lookup["channel record by (platform, externalId)"]
-  Lookup -->|"record found"| Bound["bound agent + layered config"]
-  Lookup -->|"no record"| Holder2["credential holder runs"]
-  Lookup -->|"lookup failed"| Refused["turn refused"]
-  Bound --> Gate["agent.invoke policy gate"]
-  Holder2 --> Gate
-  Gate -->|"allowed"| Run["agent run"]
-  Gate -->|"denied (enforce)"| Refuse["refusal posted in-channel"]
-```
-
-A lookup that finds nothing falls back to the credential holder, so an
-unregistered channel behaves exactly as it did before records existed.
-
-A lookup that **fails** is different: core refuses the turn rather than running
-it, because executing without a record's policies and `denyTools` would be an
-escalation. The channel path already needs the control plane to admit ingress,
-so this costs no availability that is not already lost.
-
-## Layering
-
-A record **narrows and adds**. It never grants capability the agent lacks, so
-reading an agent still tells you its ceiling.
-
-| Field           | Effect                                                          |
-| --------------- | --------------------------------------------------------------- |
-| `instructions`  | Appended after the agent's own system prompt                    |
-| `workspaces`    | Selects from the agent's own; one it does not attach is ignored |
-| `policies`      | Unioned with the agent's; each policy carries its own mode      |
-| `denyTools`     | Withholds tools here, after the set is built. Covers `bash` too |
-| `partition`     | Splits the workspace folder (`shared` or `conversation`)        |
-| `replyIn`       | Where the reply lands: `thread` or `source` (Slack only)        |
-| `sandboxImages` | Images the agent may stand a sandbox up from for a thread here  |
-| `tagRoles`      | Named groups of people, readable from policy as `userRoles`     |
-
-Provider, model and credentials stay on the agent and are never touched.
-
-A workspace is capability, not configuration: attaching one is what creates the
-sandbox file tools. So a record only selects among the workspaces the agent
-already attaches, by `workspaceId`. The agent's own mount name and sandbox
-apply. Core drops and logs a `workspaceId` the agent does not carry. A record
-that names only such ids runs with no workspace, not with the agent's full list.
-
-`replyIn` decides where the answer appears. `thread` opens a thread
-on the message that tagged the agent, so the whole exchange stays out of the
-channel; `source` answers wherever the message came from, and threads only when
-the message itself arrived in a thread. It applies to Slack alone. Every other
-provider delivers the reply to the one place the message came from, so there is
-no choice to express. Unset, a Slack reply threads in a channel and answers at the
-source in a DM.
-
-`denyTools` applies to the finished tool set rather than to `config.tools`, so
-it reaches every tool the agent ended up with: built-ins, [custom
-tools](../tools.md) by their model-facing name, and sandbox tools such as `bash`
-and `read`. Those last two come from the attached workspaces and never appear in
-`config.tools` at all. Naming a tool the agent does not have is ignored.
-
-## Creating a record
-
-In code, a channel names the connection it belongs to and the agents that answer in it. `platform` is taken from the connection, so it is never written by hand, and the connection's credentials never follow the channel onto the record.
+## Example
 
 ```ts title="broods/index.ts"
 import {
@@ -121,15 +44,49 @@ export const productEng = defineSlackChannel({
 });
 ```
 
-Every agent in `agents` runs when a message arrives. `reply: false` runs one with a silenced channel, so it can work without speaking in the room. Omit `agents` entirely and the connection's own agent answers.
+Every agent in `agents` runs when a message arrives. `reply: false` runs one with a silenced channel, so it can work without speaking. Omit `agents` and the connection's own agent answers.
 
-Nothing points back at a channel. The connection does not list its channels, and the agent does not either. That is what lets a channel name its own app's agent without a circular reference.
+`platform` comes from the connection, and the connection's credentials never copy onto the record.
 
-The per-platform id field is named for what the provider calls it: `channelId` for Slack and Discord, `repo` for GitHub, `chatId` for Telegram and Zalo, `conversationId` for Pancake. All of them are stored as `externalId`.
+## Fields
 
-### One set of rules, several chats
+A record narrows and adds. It never grants something the agent lacks, so an agent's own config is still its ceiling. Provider, model and credentials always come from the agent.
 
-Zalo's `chatId` also takes a list, for when several rooms run on identical rules:
+| Field           | Effect                                                                        |
+| --------------- | ----------------------------------------------------------------------------- |
+| `agents`        | agents that run here. `{ agent, reply: false }` runs one silently             |
+| `instructions`  | appended after each agent's own system prompt                                 |
+| `workspaces`    | picks from the workspaces the agent already attaches. Others are dropped      |
+| `policies`      | added to the agent's policies. Each policy keeps its own `mode`               |
+| `denyTools`     | withholds tools here, including `bash`, `read` and channel tools              |
+| `partition`     | workspace folder split, `{ by: "shared" }` or `{ by: "conversation", alias }` |
+| `replyIn`       | Slack only. `thread` or `source`                                              |
+| `sandboxImages` | images the agent may stand a sandbox up from for a thread here                |
+| `tagRoles`      | named groups of people, readable from policies as `userRoles`                 |
+
+The room id field is named after the provider:
+
+| Provider | Field            | Extra field |
+| -------- | ---------------- | ----------- |
+| Slack    | `channelId`      | `teamId`    |
+| Discord  | `channelId`      | `guildId`   |
+| Matrix   | `channelId`      |             |
+| GitHub   | `repo`           |             |
+| Telegram | `chatId`         |             |
+| Zalo     | `chatId`         |             |
+| Pancake  | `conversationId` |             |
+
+Notes on the fields:
+
+- `workspaces` selects by workspace id among the ones the agent attaches, with the agent's own mount name and sandbox. A record that names only workspaces the agent lacks runs with no workspace, not with the agent's full list.
+- `denyTools` applies to the finished tool set. Naming a tool the agent does not have is ignored. A subagent inherits the parent's denied tools.
+- `replyIn: "thread"` threads the reply on the message that tagged the agent. `"source"` answers where the message came from, and threads only when that message was already in a thread. Unset, Slack threads in channels and answers in place in DMs. Other providers always reply where the message came from.
+
+See [Workspaces](../guides/workspaces.md) for `partition` and [Policies](../guides/policies.md) for policy documents.
+
+## Several chats, one set of rules
+
+Zalo's `chatId` also accepts a list:
 
 ```ts
 export const internalGroups = defineZaloChannel({
@@ -142,17 +99,13 @@ export const internalGroups = defineZaloChannel({
 });
 ```
 
-That deploys three records, `lamy-internal-7788`, `-7789` and `-7790`, each holding the same config. Adding a fourth room is one string. The suffix comes from the id rather than a position, so deleting one leaves the others untouched instead of renaming them.
+That deploys three records, `lamy-internal-7788`, `lamy-internal-7789` and `lamy-internal-7790`. The suffix is the id, so removing one leaves the others' names unchanged. The ids must be known at deploy time.
 
-Nothing about storage changes: there is still one row per room, and the lookup on each inbound message is still a single exact match on `externalId`. The list is an authoring convenience that expands at deploy time, so the ids have to be known when you deploy.
+`"*"` is refused as an id. A record matches one exact room, so a wildcard would open the connection everywhere with none of the rules. To answer everywhere, set `allowedChannelIds: ["*"]` on the connection. Rooms without a record fall back to the connection's own agent.
 
-A room you never declare is not left out. On a lookup miss the runtime falls back to the connection's own agent, so its system prompt is already the default everywhere. Reach for a list when a set of rooms needs the things only a record carries, such as `denyTools`, `policies`, `tagRoles` or `replyIn`.
+## Through the account API
 
-`"*"` is not an id and is refused at deploy time. A record matches one exact room, so a wildcard would bind nothing while still opening the connection's reach: the bot would answer everywhere with none of the channel's rules, and nothing would report an error. To answer everywhere, set `allowedChannelIds: ["*"]` on the connection.
-
-### Through the account API
-
-The API speaks the stored names: send `externalId` where the CLI writes `channelId`, `repo`, `chatId` or `conversationId`, and `agentBindings` where the CLI writes `agents`. Every other field is spelled the same on both sides.
+The API uses the stored names. It says `externalId` for the room id and `agentBindings` for `agents`. Everything else is spelled the same.
 
 ```ts
 import { BroodsAccountClient } from "broods/account";
@@ -167,7 +120,7 @@ await client.createChannel({
   config: {
     agentBindings: [{ agentId: "agent_nhi", isDefault: true }],
     instructions: "Escalate billing questions to #finance.",
-    // `agent_nhi` must already attach ws_incidents; it mounts under the agent's own name.
+    // agent_nhi must already attach ws_incidents.
     workspaces: [{ name: "incidents", workspaceId: "ws_incidents" }],
     partition: { alias: "eng", by: "conversation" },
     replyIn: "thread",
@@ -177,38 +130,33 @@ await client.createChannel({
 });
 ```
 
-One active record per `(platform, externalId)`; creating a second for the same
-place is rejected so the webhook lookup stays unambiguous.
+Only one active record may exist per platform and room. Creating a second is rejected.
+
+## Routing
+
+The webhook URL names no agent. The account's agent whose connection credentials verify the request parses it and sends the reply, because the reply must come from the app that received it. The record for that room then decides which agents run.
+
+If two agents hold the same provider app, the lower agent id receives the request. Do not rely on that order. Declare a record instead.
+
+If the record lookup fails, as opposed to finding nothing, the turn is refused. Running without the room's policies and `denyTools` would grant more than intended.
 
 ## Access control
 
-Reach and policy are two different gates, and they are not interchangeable.
+Three separate gates decide what happens in a room.
 
-**Where the agent listens** is the rooms declared as channels. The adapter
-matches that list while parsing the webhook, before any record read or policy
-call, and drops an undeclared room silently. It is the outer boundary: a policy runs
-inside it and can only narrow it further, never widen it. To widen, declare
-another channel or set `allowedChannelIds: ["*"]` on the connection.
+1. Where the agent listens. Declared channels plus the connection's `allowedChannelIds`. Undeclared rooms are dropped silently, before any policy runs. Policies can narrow this, never widen it.
+2. Who may tag the agent. A policy rule on the `agent.invoke` action runs before the turn starts. In `enforce` mode a denial is posted in the room as a sentence. In `audit` mode it is only logged and the turn runs, which is how you roll a rule out.
+3. What the agent may reach. Policies see `channelId`, `threadId`, `userId`, `userName`, and `userRoles` from `tagRoles`.
 
-**Who may tag the agent here.** `agent.invoke` is evaluated before the turn
-starts, and a refusal reads like a sentence in the channel rather than a stack
-trace. It is not free: core reads the record, may load the agent's deployment,
-fetches every referenced policy document, and makes an HTTP call to the policy
-engine for the decision. It also answers back, which is right for "you may not
-ask me that" and wrong for "this room is not mine", which is what the declared
-channels are for. In `audit` mode core logs the same decision and the turn still
-runs, which is how you roll a rule out on a live channel.
-
-**What it may reach here.** `tagRoles` become `userRoles` on the policy input,
-alongside `channelId`, `threadId`, `userId` and `userName`. A rule can then
-say "production data only in #ops, and only for the on-call group":
+This rule allows `query_prod_db` only for the on-call group:
 
 ```json
 {
   "version": 1,
+  "mode": "enforce",
   "rules": [
     {
-      "id": "prod-data-ops-only",
+      "id": "prod-data-oncall-only",
       "effect": "deny",
       "actions": ["tool.call"],
       "resources": { "toolNames": ["query_prod_db"] },
@@ -220,5 +168,4 @@ say "production data only in #ops, and only for the on-call group":
 }
 ```
 
-See the `PolicyDocument` schema in the [API Reference](/api-reference) for
-the full policy contract and the attributes a condition may read.
+The `agent.invoke` check costs a policy engine call per message. Use declared channels, not policies, to keep an agent out of rooms that are not its own. The full policy contract is `PolicyDocument` in the [API Reference](/api-reference).

@@ -34,7 +34,7 @@ regexTarget = "line"
 paths = [
   '''(^|/)tests/''',
   '''\.test\.ts$''',
-  '''(^|/)apps/docs/docs/architecture/queue-and-steer\.md$''',
+  '''(^|/)apps/docs/docs/internals/queue-and-steer\.md$''',
 ]
 regexes = ['''(?i)(conversation_?key|reservationKey)\b''']
 

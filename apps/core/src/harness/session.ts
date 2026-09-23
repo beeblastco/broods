@@ -963,9 +963,9 @@ export class Session {
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
     // Reads memory/MEMORY.md over the S3 API, not the sandbox mount, so a workspace
-    // with no sandbox still serves memory. A mount write takes ~1-2 min to reach S3
-    // Files, so this can be briefly stale; memory converges across turns. See
-    // docs/workspace/storage.md.
+    // with no sandbox still serves memory. A mount write reaches S3 only once
+    // Mountpoint uploads it on close, so this can be briefly stale; memory
+    // converges across turns. See docs/internals/storage.md.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),
     );

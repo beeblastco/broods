@@ -1,63 +1,84 @@
+---
+title: Slack
+---
+
 # Slack
 
-A Slack app is how the agent reaches channels, private groups, and DMs.
+A Slack app puts your agent in channels, private groups and DMs.
 
-Broods uses [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack) for Slack request verification, streaming, Markdown conversion, reactions, and Web API calls. See Chat SDK [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Slack Primitives](https://chat-sdk.dev/docs/slack-primitives), [Markdown](https://chat-sdk.dev/docs/api/markdown), [Streaming](https://chat-sdk.dev/docs/streaming), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands) for the adapter capabilities.
+## Setup
+
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps). Install it to your workspace and copy the Bot User OAuth Token and the Signing Secret.
+2. Store both:
+
+   ```bash
+   broods env set SLACK_BOT_TOKEN
+   broods env set SLACK_SIGNING_SECRET
+   ```
+
+3. Define the connection and the channels it answers in:
+
+   ```ts title="broods/index.ts"
+   import {
+     defineAgent,
+     defineSlackChannel,
+     defineSlackConnection,
+     env,
+   } from "broods";
+
+   export const slack = defineSlackConnection({
+     botToken: env("SLACK_BOT_TOKEN"),
+     signingSecret: env("SLACK_SIGNING_SECRET"),
+   });
+
+   export const productEng = defineSlackChannel({
+     name: "product-eng",
+     connection: slack,
+     channelId: "C042PRODENG",
+   });
+
+   export const myAgent = defineAgent({
+     name: "my-agent",
+     connections: [slack],
+   });
+   ```
+
+4. Run `broods dev` or `broods deploy` and copy the printed webhook URL.
+5. In the Slack app settings, point Event Subscriptions and the slash commands `/new`, `/clear`, `/compact` and `/help` at that URL. Subscribe the bot to these events:
+   - `app_mention`
+   - `message.channels`
+   - `message.groups`
+   - `message.im`
+   - `message.mpim`
+
+The agent answers in the declared channels only. Set `allowedChannelIds: ["*"]` on the connection to answer in every room the app can see.
 
 ## Configuration
 
-Define a Slack connection with `defineSlackConnection`, name the rooms it answers in with `defineSlackChannel`, and attach the connection to an agent:
+| Field               | Required | Description                                                            |
+| ------------------- | -------- | ---------------------------------------------------------------------- |
+| `botToken`          | yes      | Bot User OAuth Token                                                   |
+| `signingSecret`     | yes      | secret Broods verifies Slack requests against                          |
+| `reactionEmoji`     | no       | emoji name added to accepted messages. Default `eyes`                  |
+| `apiUrl`            | no       | Web API base URL, for GovSlack or a test proxy. Must be public `https` |
+| `allowedChannelIds` | no       | extra channel ids, or `["*"]` for every room                           |
+| `allowedUserIds`    | no       | Slack user ids allowed to trigger the agent. Everyone when omitted     |
+| `trace`             | no       | `"enabled"` adds the dashboard trace link to replies                   |
+| `partition`         | no       | workspace folder split. See [Workspaces](../guides/workspaces.md)      |
 
-```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineSlackChannel,
-  defineSlackConnection,
-  env,
-} from "broods";
+`apiUrl` is checked when saved, because the bot token is sent to it.
 
-export const slack = defineSlackConnection({
-  botToken: env("SLACK_BOT_TOKEN"),
-  signingSecret: env("SLACK_SIGNING_SECRET"),
-  reactionEmoji: "eyes",
-  apiUrl: "https://slack.com/api/",
-});
+## When the agent answers
 
-export const productEng = defineSlackChannel({
-  name: "product-eng",
-  connection: slack,
-  channelId: "C042PRODENG",
-});
+Only `app_mention` runs the agent in a channel. Other messages are kept as context for the next mention.
 
-export const myAgent = defineAgent({
-  name: "my-agent",
-  connections: [slack],
-});
-```
+Channel and group messages get a threaded reply. DMs and App Home messages share one conversation per channel. On a [channel record](channel-records.md), `replyIn: "source"` answers in place instead of opening a thread.
 
-The agent answers in the rooms you declared and nowhere else. To answer in every room the app can see, set `allowedChannelIds: ["*"]` on the connection instead.
+## Replies and media
 
-- `botToken`: Slack Bot User OAuth Token.
-- `signingSecret`: The secret Broods verifies Slack requests against.
-- `channels` (optional): `["*"]` to answer in every room instead of only the declared ones.
-- `allowedUserIds` (optional): Slack user ids allowed to trigger the agent. Everyone, when omitted.
-- `reactionEmoji` (optional): Slack emoji name to add to accepted messages, defaults to `eyes`.
-- `apiUrl` (optional): Slack Web API base URL, for example for GovSlack or a test proxy. This maps to `SlackAdapterConfig["apiUrl"]`. It must be a public `https` URL, checked when the channel is saved, because core sends the bot token to it.
+- Replies stream live when the event has thread and user context. Otherwise the agent sends one final reply.
+- Event replies stay in the current thread. Slash command replies use the command's response URL.
+- The agent can send image blocks, uploaded files, and custom emoji or URL stickers.
+- `ask_questions` renders as numbered text. Reply with an option number, its label, or free text when allowed.
 
-Slack replies stream through Chat SDK's native Slack streaming API when the source event has thread and user context. Otherwise the agent sends one final reply through Chat SDK Slack primitives. Chat SDK does the Markdown and response-url text formatting.
-
-Channel tools support image blocks and custom emoji or URL stickers. Event replies preserve the current Slack thread. Slash-command replies use the Slack response URL.
-
-## Slack app setup
-
-Point Event Subscriptions and Slash Commands (`/new`, `/clear`, `/compact`, `/help`) at the generated Slack webhook URL.
-
-Subscribe the bot to these event types:
-
-- `app_mention`
-- `message.channels`
-- `message.groups`
-- `message.im`
-- `message.mpim`
-
-The agent answers channel and group messages in a thread. Direct messages and App Home messages keep one channel-scoped conversation.
+See [Channels](index.md) for commands, channel tools and attachment limits.

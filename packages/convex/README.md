@@ -117,8 +117,9 @@ Deployment environment variables:
 2. Run `bun run --filter @broods/convex codegen` (or `bunx convex codegen`
    from this directory) and commit the `_generated/` diff. It is committed on
    purpose so core and the dashboard typecheck without codegen.
-3. Deploys happen through the dashboard image build (`convex deploy`); this
-   package is never deployed standalone.
+3. `deploy-convex.yaml` deploys this package on its own when a push to `dev`
+   or `main` touches `packages/convex/**`. The "Promote dev to main" workflow
+   runs it before core and the dashboard roll out.
 
 The convex CLI runs from this directory and reads `CONVEX_DEPLOYMENT` from the
 local `.env.local`.

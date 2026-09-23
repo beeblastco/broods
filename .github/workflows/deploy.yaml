@@ -113,7 +113,7 @@ jobs:
       # workflow bootstraps the region by running one repo-only SST deploy, mirroring the
       # source image, then running the final deploy with sandbox functions enabled.
       # Dev falls back to the legacy repo-wide SANDBOX_IMAGE_READY for backward compatibility.
-      # See docs/workspace/sandbox/lambda.md.
+      # See apps/docs/docs/internals/ci-cd.md.
       SANDBOX_IMAGE_READY_DEV: ${{ vars.SANDBOX_IMAGE_READY_DEV || vars.SANDBOX_IMAGE_READY || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
