@@ -42,6 +42,12 @@ export const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+// Lambda options that name platform resources. Core reads them from its env only.
+const PLATFORM_ONLY_LAMBDA_OPTIONS = [
+  "executionRoleArn",
+  "functionNames",
+  "logGroup",
+] as const;
 
 export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
 
@@ -602,10 +608,14 @@ function validateProviderOptions(
       );
     }
   }
-  if (provider === "lambda" && "functionNames" in options) {
-    throw new Error(
-      "config.options.functionNames is not supported in account sandbox config",
-    );
+  if (provider === "lambda") {
+    for (const key of PLATFORM_ONLY_LAMBDA_OPTIONS) {
+      if (key in options) {
+        throw new Error(
+          `config.options.${key} is not supported in account sandbox config`,
+        );
+      }
+    }
   }
   if (provider === "machine" && "cwd" in options) {
     requireString(options.cwd, "config.options.cwd");

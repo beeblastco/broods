@@ -213,6 +213,14 @@ describe("agent rules", () => {
         },
       }),
     ).toThrow("must not point to a private or internal address");
+    // Core posts to every channel apiUrl from inside the cluster.
+    for (const channel of ["discord", "github", "slack", "telegram"]) {
+      expect(() =>
+        normalizeAgentConfig({
+          channels: { [channel]: { id: "c", apiUrl: "http://10.43.0.1:80#" } },
+        }),
+      ).toThrow(`config.channels.${channel}.apiUrl must use https`);
+    }
     // A patch may rotate the token alone; the merged config still has the URL.
     expect(
       normalizeAgentConfigPatch({

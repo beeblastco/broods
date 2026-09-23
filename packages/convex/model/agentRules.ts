@@ -1009,6 +1009,9 @@ function normalizeTelegramConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.telegram");
   assertOptionalString(config.apiUrl, "config.channels.telegram.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.telegram.apiUrl");
+  }
   assertOptionalString(config.botToken, "config.channels.telegram.botToken");
   assertOptionalString(
     config.webhookSecret,
@@ -1031,6 +1034,9 @@ function normalizeGitHubConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.github");
   assertOptionalString(config.apiUrl, "config.channels.github.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.github.apiUrl");
+  }
   assertOptionalString(
     config.webhookSecret,
     "config.channels.github.webhookSecret",
@@ -1055,6 +1061,9 @@ function normalizeSlackConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.slack");
   assertOptionalString(config.apiUrl, "config.channels.slack.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.slack.apiUrl");
+  }
   assertOptionalString(config.botToken, "config.channels.slack.botToken");
   assertOptionalString(
     config.signingSecret,
@@ -1073,6 +1082,9 @@ function normalizeDiscordConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.discord");
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.discord.apiUrl");
+  }
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalString(config.botUserId, "config.channels.discord.botUserId");

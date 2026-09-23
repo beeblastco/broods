@@ -859,11 +859,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       "imageVersion",
       "MICROVM_IMAGE_VERSION",
     );
-    const executionRoleArn = this.#optionOrEnv(
-      "executionRoleArn",
-      "MICROVM_EXECUTION_ROLE_ARN",
-    );
-    const logGroup = this.#optionOrEnv("logGroup", "MICROVM_LOG_GROUP_NAME");
+    // Role and log group are platform resources, so they come from the runtime
+    // env only. An account naming the build role would get its IMDS credentials.
+    const executionRoleArn = optionalEnv("MICROVM_EXECUTION_ROLE_ARN");
+    const logGroup = optionalEnv("MICROVM_LOG_GROUP_NAME");
     const persistent = this.#persistent(request);
     const lifecycle = resolveSandboxLifecycle(this.#config.lifecycle);
     const runHookPayload = await this.#runHookPayload(request);
