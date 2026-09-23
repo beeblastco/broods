@@ -39,7 +39,12 @@ import {
   loadPolicyReferenceRows,
   type PolicyReferenceRows,
 } from "./policyReferences";
-import { normalizeWorkspaceConfig } from "./workspaceRules";
+import { normalizeWorkspaceConfig, workspaceNamespace } from "./workspaceRules";
+
+/** What a reserved instance belongs to: its sandbox config, or the workspace namespace keying it. */
+export type ReservationHolder =
+  | { sandboxConfigId: Id<"sandboxConfigs"> }
+  | { namespace: string };
 
 /** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
 export async function deleteAgentResource(
@@ -72,34 +77,49 @@ export async function deleteAgentResource(
   await ctx.db.delete(config._id);
 }
 
+/** Deletes a CLI-managed sandbox config, unless it still holds a reserved instance. */
 export async function deleteSandboxResource(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   name: string,
-): Promise<void> {
+): Promise<"deleted" | "reserved"> {
   const sandbox = await sandboxConfigByName(ctx, stageId, name);
-  if (!sandbox) return;
+  if (!sandbox) return "deleted";
   if (sandbox.managedBy !== "cli") {
     throw new Error(
       `Sandbox "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
     );
   }
+  const instances = await accountInstances(ctx, accountId);
+  if (isReserved(instances, { sandboxConfigId: sandbox._id })) {
+    return "reserved";
+  }
   await ctx.db.delete(sandbox._id);
+
+  return "deleted";
 }
 
+/** Deletes a CLI-managed workspace, unless it still holds a reserved instance. */
 export async function deleteWorkspaceResource(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   name: string,
-): Promise<void> {
+): Promise<"deleted" | "reserved"> {
   const workspace = await workspaceConfigByName(ctx, stageId, name);
-  if (!workspace) return;
+  if (!workspace) return "deleted";
   if (workspace.managedBy !== "cli") {
     throw new Error(
       `Workspace "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
     );
   }
+  const instances = await accountInstances(ctx, accountId);
+  const namespace = await workspaceNamespace(accountId, workspace._id);
+  if (isReserved(instances, { namespace: namespace })) return "reserved";
   await ctx.db.delete(workspace._id);
+
+  return "deleted";
 }
 
 /** Prunes undeclared CLI agents, and their `agents` rows when `accountId` owns them. */
@@ -168,36 +188,78 @@ export async function prunePolicyResources(
   }
 }
 
+/**
+ * Deletes the stage's undeclared CLI sandbox configs, keeping any that still
+ * hold a reserved instance. Returns the names kept.
+ */
 export async function pruneSandboxResources(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   resources: CliResource[],
-): Promise<void> {
+): Promise<string[]> {
+  const instances = await accountInstances(ctx, accountId);
+  const kept: string[] = [];
   for (const sandbox of await undeclaredSandboxConfigs(
     ctx,
     stageId,
     resources,
   )) {
-    await ctx.db.delete(sandbox._id);
+    if (isReserved(instances, { sandboxConfigId: sandbox._id })) {
+      kept.push(sandbox.name);
+    } else {
+      await ctx.db.delete(sandbox._id);
+    }
   }
+
+  return kept;
 }
 
+/** The workspace counterpart of `pruneSandboxResources`. */
 export async function pruneWorkspaceResources(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   resources: CliResource[],
-): Promise<void> {
+): Promise<string[]> {
+  const instances = await accountInstances(ctx, accountId);
+  const kept: string[] = [];
   for (const workspace of await undeclaredWorkspaceConfigs(
     ctx,
     stageId,
     resources,
   )) {
-    await ctx.db.delete(workspace._id);
+    const namespace = await workspaceNamespace(accountId, workspace._id);
+    if (isReserved(instances, { namespace: namespace })) {
+      kept.push(workspace.name);
+    } else {
+      await ctx.db.delete(workspace._id);
+    }
   }
+
+  return kept;
+}
+
+/**
+ * Whether an instance row belongs to `holder`. Core deletes the row once a
+ * terminate succeeds, so a matching row means a machine may still be held.
+ */
+export function reservedBy(
+  instance: Doc<"sandboxInstances">,
+  holder: ReservationHolder,
+): boolean {
+  if ("sandboxConfigId" in holder) {
+    return instance.sandboxConfigId === holder.sandboxConfigId;
+  }
+
+  return (
+    instance.reservationKey === holder.namespace ||
+    instance.reservationKey.startsWith(`${holder.namespace}/`)
+  );
 }
 
 export async function sandboxConfigByName(
-  ctx: QueryCtx | MutationCtx,
+  ctx: QueryCtx,
   stageId: Id<"stages">,
   name: string,
 ): Promise<Doc<"sandboxConfigs"> | null> {
@@ -680,13 +742,9 @@ export async function syncWorkspaceResources(
   return ids;
 }
 
-/**
- * The CLI-managed sandbox configs of a stage the manifest no longer declares:
- * what a prune deletes. Read from a query too, so the CLI HTTP layer can tear
- * down their reserved instances before the rows go.
- */
+/** The stage's CLI-managed sandbox configs the manifest no longer declares. */
 export async function undeclaredSandboxConfigs(
-  ctx: QueryCtx | MutationCtx,
+  ctx: QueryCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<Doc<"sandboxConfigs">[]> {
@@ -707,7 +765,7 @@ export async function undeclaredSandboxConfigs(
 
 /** The workspace counterpart of `undeclaredSandboxConfigs`. */
 export async function undeclaredWorkspaceConfigs(
-  ctx: QueryCtx | MutationCtx,
+  ctx: QueryCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<Doc<"workspaceConfigs">[]> {
@@ -730,7 +788,7 @@ export async function undeclaredWorkspaceConfigs(
 }
 
 export async function workspaceConfigByName(
-  ctx: QueryCtx | MutationCtx,
+  ctx: QueryCtx,
   stageId: Id<"stages">,
   name: string,
 ): Promise<Doc<"workspaceConfigs"> | null> {
@@ -740,6 +798,19 @@ export async function workspaceConfigByName(
       q.eq("stageId", stageId).eq("name", name),
     )
     .unique();
+}
+
+/** The account's instance rows; bounded like `sandbox.instances.listForAccount`. */
+async function accountInstances(
+  ctx: QueryCtx,
+  accountId: Id<"accounts">,
+): Promise<Doc<"sandboxInstances">[]> {
+  return await ctx.db
+    .query("sandboxInstances")
+    .withIndex("by_accountId_projectId_and_stageId", (q) =>
+      q.eq("accountId", accountId),
+    )
+    .take(1000);
 }
 
 function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
@@ -758,6 +829,13 @@ function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
  * non-declared string, e.g. a literal agent id, untouched) and re-pushes the
  * encrypted config so the runtime can dispatch the named subagents.
  */
+function isReserved(
+  instances: Doc<"sandboxInstances">[],
+  holder: ReservationHolder,
+): boolean {
+  return instances.some((instance) => reservedBy(instance, holder));
+}
+
 async function resolveSubagentReferences(
   ctx: MutationCtx,
   accountId: Id<"accounts">,

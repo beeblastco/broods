@@ -1,185 +1,230 @@
 /// <reference types="vite/client" />
 /**
- * A CLI prune or delete must name the sandbox configs and workspaces it is
- * about to drop before it drops them: the HTTP layer terminates their reserved
- * instances through core in between, and core needs the config row for that.
+ * A CLI prune or single delete terminates the reserved instances of the
+ * sandbox configs it drops through core while the config row still exists,
+ * and keeps any row whose instance core did not remove.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { sha256Hex } from "../model/accountSecrets";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
+const CORE_URL = "https://core.test";
 const PROJECT = "prune";
+const SECRET = "fp_secret_prune";
 const STAGE = "development";
-const SECRET_HASH = "hash-prune";
+const STAGE_PATH = `/v1/account/projects/${PROJECT}/stages/${STAGE}`;
 
-const keepSandbox = { kind: "sandbox" as const, name: "keep", config: {} };
+const t = (): T => convexTest(schema, modules);
 
-type Seeded = {
-  dropSandboxId: Id<"sandboxConfigs">;
-  keepSandboxId: Id<"sandboxConfigs">;
-  manualSandboxId: Id<"sandboxConfigs">;
-  workspaceId: Id<"workspaceConfigs">;
-};
+type T = TestConvex<typeof schema>;
 
-const t = () => convexTest(schema, modules);
-type T = ReturnType<typeof t>;
+interface Seeded {
+  instanceId: Id<"sandboxInstances">;
+  sandboxId: Id<"sandboxConfigs">;
+}
 
-/**
- * Seeds the account, syncs an empty manifest so the project and stage exist,
- * then writes two CLI-managed sandbox configs, one dashboard-managed sandbox
- * config and one CLI-managed workspace straight into the stage.
- */
-async function seedStage(tt: T): Promise<Seeded> {
-  await tt.run(async (ctx) => {
-    const now = Date.now();
-    const orgId = await ctx.db.insert("orgs", {
-      name: "beeblast",
-      slug: "beeblast",
-      ownerAuthId: "auth_owner@example.com",
-      plan: "free" as const,
-      createdAt: now,
-    });
-    const userId = await ctx.db.insert("users", {
-      authId: "auth_owner@example.com",
-      email: "owner@example.com",
-      name: "Owner",
-      plan: "free" as const,
-    });
-    await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: userId,
-      role: "owner" as const,
-      createdAt: now,
-    });
-    await ctx.db.insert("accounts", {
-      orgId: orgId,
-      username: "beeblast-dev",
-      secretHash: SECRET_HASH,
-      status: "active" as const,
-      createdAt: now,
-      updatedAt: now,
-    });
+describe("cli prune and delete terminate reserved instances first", () => {
+  beforeEach(() => {
+    // The sync reads stage env values, which are stored encrypted.
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    vi.stubEnv("BROODS_ACCOUNT_MANAGE_URL", CORE_URL);
+    vi.stubEnv("SERVICE_AUTH_SECRET", "service-secret");
   });
-  await tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
-    secretHash: SECRET_HASH,
-    manifest: { version: 1, project: PROJECT, stage: STAGE, resources: [] },
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
-  return await tt.run(async (ctx) => {
-    const account = await ctx.db.query("accounts").unique();
-    const project = await ctx.db.query("projects").unique();
-    const stage = await ctx.db.query("stages").unique();
-    if (!account || !project || !stage) throw new Error("stage not synced");
-    const now = Date.now();
-    const sandbox = async (
-      name: string,
-      managedBy: "cli" | "dashboard",
-    ): Promise<Id<"sandboxConfigs">> =>
-      await ctx.db.insert("sandboxConfigs", {
-        accountId: account._id,
-        projectId: project._id,
-        stageId: stage._id,
-        name: name,
-        managedBy: managedBy,
-        createdAt: now,
-        updatedAt: now,
-      });
+  test("a delete terminates while the config exists, then drops it", async () => {
+    const tt = t();
+    const seeded = await seedStage(tt);
+    const terminated: { url: string; configExists: boolean }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string): Promise<Response> => {
+        const configExists = await tt.run(
+          async (ctx): Promise<boolean> =>
+            (await ctx.db.get(seeded.sandboxId)) !== null,
+        );
+        terminated.push({ url: url, configExists: configExists });
+        // Core drops the mirror row once the terminate succeeds.
+        await tt.run(async (ctx): Promise<void> => {
+          await ctx.db.delete(seeded.instanceId);
+        });
 
-    return {
-      dropSandboxId: await sandbox("drop", "cli"),
-      keepSandboxId: await sandbox("keep", "cli"),
-      manualSandboxId: await sandbox("manual", "dashboard"),
-      workspaceId: await ctx.db.insert("workspaceConfigs", {
-        accountId: account._id,
-        projectId: project._id,
-        stageId: stage._id,
-        name: "ws",
-        config: {},
-        managedBy: "cli",
-        createdAt: now,
-        updatedAt: now,
+        return new Response("{}", { status: 200 });
       }),
-    };
+    );
+
+    const response = await deleteSandbox(tt);
+
+    expect(response.status).toBe(200);
+    expect(terminated).toEqual([
+      {
+        url: `${CORE_URL}/v1/sandboxes/${seeded.sandboxId}/terminate`,
+        configExists: true,
+      },
+    ]);
+    expect(await remainingNames(tt)).toEqual(["manual", "ws"]);
+  });
+
+  test("a failed terminate keeps the config and answers 409", async () => {
+    const tt = t();
+    await seedStage(tt);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (): Promise<Response> => new Response("", { status: 502 })),
+    );
+
+    const response = await deleteSandbox(tt);
+    const body: { error: { code: string } } = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("sandbox_instance_reserved");
+    expect(await remainingNames(tt)).toEqual(["box", "manual", "ws"]);
+  });
+
+  test("a prune keeps a still-reserved sandbox and reports it", async () => {
+    const tt = t();
+    await seedStage(tt);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (): Promise<Response> => new Response("", { status: 502 })),
+    );
+
+    const response = await tt.fetch(`${STAGE_PATH}/manifest`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        manifest: {
+          version: 1,
+          project: PROJECT,
+          stage: STAGE,
+          resources: [],
+        },
+        prune: true,
+      }),
+    });
+    const body: { warnings: { reservedResources: string[] } } =
+      await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.warnings.reservedResources).toEqual(['sandbox "box"']);
+    expect(await remainingNames(tt)).toEqual(["box", "manual"]);
+  });
+});
+
+async function deleteSandbox(tt: T): Promise<Response> {
+  return await tt.fetch(`${STAGE_PATH}/resources/sandbox/box`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${SECRET}` },
   });
 }
 
-const targets = (
-  tt: T,
-  target:
-    | { resources: (typeof keepSandbox)[] }
-    | { kind: "workspace" | "sandbox"; name: string },
-) =>
-  tt.query(internal.cli.sync.deleteTargetsBySecretHash, {
-    secretHash: SECRET_HASH,
-    project: PROJECT,
-    stage: STAGE,
-    target: target,
-  });
-
-const remainingNames = async (tt: T): Promise<string[]> =>
-  await tt.run(async (ctx) => {
+async function remainingNames(tt: T): Promise<string[]> {
+  return await tt.run(async (ctx): Promise<string[]> => {
     const sandboxes = await ctx.db.query("sandboxConfigs").collect();
     const workspaces = await ctx.db.query("workspaceConfigs").collect();
 
     return [...sandboxes, ...workspaces].map((row) => row.name).sort();
   });
+}
 
-describe("cli prune and delete name their sandbox and workspace rows first", () => {
-  // The sync reads stage env values, which are stored encrypted.
-  beforeEach(() => {
-    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  test("a prune names the undeclared CLI rows and nothing else", async () => {
-    const tt = t();
-    const seeded = await seedStage(tt);
-
-    expect(await targets(tt, { resources: [keepSandbox] })).toEqual({
-      sandboxConfigIds: [seeded.dropSandboxId],
-      workspaceIds: [seeded.workspaceId],
+/**
+ * Seeds the account, syncs an empty manifest so the project and stage exist,
+ * then writes a CLI sandbox config "box" holding a running reservation, a
+ * dashboard sandbox config "manual" and an unreserved CLI workspace "ws".
+ */
+async function seedStage(tt: T): Promise<Seeded> {
+  const secretHash = await sha256Hex(SECRET);
+  await tt.run(async (ctx): Promise<void> => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free",
+      createdAt: now,
+    });
+    const userId = await ctx.db.insert("users", {
+      authId: "auth_owner",
+      email: "owner@example.com",
+      name: "Owner",
+      plan: "free",
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: userId,
+      role: "owner",
+      createdAt: now,
+    });
+    await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "beeblast-dev",
+      secretHash: secretHash,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
     });
   });
-
-  test("a single delete names its row unless the dashboard owns it", async () => {
-    const tt = t();
-    const seeded = await seedStage(tt);
-
-    expect(await targets(tt, { kind: "sandbox", name: "drop" })).toEqual({
-      sandboxConfigIds: [seeded.dropSandboxId],
-      workspaceIds: [],
-    });
-    expect(await targets(tt, { kind: "workspace", name: "ws" })).toEqual({
-      sandboxConfigIds: [],
-      workspaceIds: [seeded.workspaceId],
-    });
-    expect(await targets(tt, { kind: "sandbox", name: "manual" })).toEqual({
-      sandboxConfigIds: [],
-      workspaceIds: [],
-    });
+  await tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
+    secretHash: secretHash,
+    manifest: { version: 1, project: PROJECT, stage: STAGE, resources: [] },
   });
 
-  test("the prune mutation deletes exactly what the query named", async () => {
-    const tt = t();
-    await seedStage(tt);
-
-    await tt.mutation(internal.cli.sync.pruneManifestBySecretHash, {
-      secretHash: SECRET_HASH,
-      manifest: {
-        version: 1,
-        project: PROJECT,
-        stage: STAGE,
-        resources: [keepSandbox],
-      },
+  return await tt.run(async (ctx): Promise<Seeded> => {
+    const account = await ctx.db.query("accounts").unique();
+    const project = await ctx.db.query("projects").unique();
+    const stage = await ctx.db.query("stages").unique();
+    if (!account || !project || !stage) throw new Error("stage not synced");
+    const now = Date.now();
+    const scope = {
+      accountId: account._id,
+      projectId: project._id,
+      stageId: stage._id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const sandboxId = await ctx.db.insert("sandboxConfigs", {
+      ...scope,
+      name: "box",
+      managedBy: "cli",
+    });
+    await ctx.db.insert("sandboxConfigs", {
+      ...scope,
+      name: "manual",
+      managedBy: "dashboard",
+    });
+    await ctx.db.insert("workspaceConfigs", {
+      ...scope,
+      name: "ws",
+      config: {},
+      managedBy: "cli",
+    });
+    const instanceId = await ctx.db.insert("sandboxInstances", {
+      accountId: account._id,
+      projectId: project._id,
+      stageId: stage._id,
+      provider: "sandbox",
+      reservationKey: "box-reservation",
+      sandboxConfigId: sandboxId,
+      externalId: "sbx_box",
+      name: "box",
+      status: "running",
+      specs: { vcpu: 1, memoryMb: 1024, storageGb: 1 },
+      createdAt: now,
+      lastUsedAt: now,
     });
 
-    expect(await remainingNames(tt)).toEqual(["keep", "manual"]);
+    return { instanceId: instanceId, sandboxId: sandboxId };
   });
-});
+}

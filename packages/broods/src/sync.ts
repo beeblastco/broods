@@ -20,8 +20,11 @@ export interface SyncClientOptions {
 export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
-  /** Non-fatal deploy advisories (e.g. policy refs that resolve to nothing). */
-  warnings?: { missingPolicies?: string[] };
+  /**
+   * Non-fatal deploy advisories: policy refs that resolve to nothing, and
+   * resources a prune kept because a reserved sandbox instance is still live.
+   */
+  warnings?: { missingPolicies?: string[]; reservedResources?: string[] };
   /**
    * The stage's runtime API key context. Deployments include the plaintext
    * `apiKey` so the CLI can write `BROODS_API_KEY` locally.

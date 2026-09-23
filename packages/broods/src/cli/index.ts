@@ -1075,7 +1075,7 @@ async function applyDeploymentKey(
   }
 }
 
-/** Surface non-fatal deploy advisories (e.g. policy refs that resolve to nothing). */
+/** Surface non-fatal deploy advisories (unresolved policy refs, resources a prune kept). */
 function printSyncWarnings(result: RemoteManifestResponse): void {
   const missingPolicies = result.warnings?.missingPolicies ?? [];
   if (missingPolicies.length > 0) {
@@ -1083,6 +1083,13 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
       `${missingPolicies.length} policy ref(s) in agent config match no policy resource ` +
         `in this deploy. One that is not an existing policy id refuses every action ` +
         `at runtime: ${missingPolicies.join(", ")}`,
+    );
+  }
+  const reservedResources = result.warnings?.reservedResources ?? [];
+  if (reservedResources.length > 0) {
+    printWarning(
+      `Kept on prune, a reserved sandbox instance is still live: ` +
+        `${reservedResources.join(", ")}. Terminate it from the dashboard, then deploy again.`,
     );
   }
 }

@@ -11,6 +11,7 @@ import type { Id } from "../_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./types";
 import { terminateReservedInstances } from "../config/routes/shared";
 import { isExternalResourceKind } from "../model/cliSync";
+import { reservedBy } from "../model/cliSyncResources";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeMcpInput } from "../model/mcp";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
@@ -18,7 +19,6 @@ import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
-import { workspaceNamespace } from "../model/workspaceRules";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
 export type CliAuth =
@@ -251,13 +251,24 @@ export async function handleResourceDeleteRoute(
         name: route.name,
       });
     }
-    await ctx.runMutation(internal.cli.sync.deleteResourceBySecretHash, {
-      secretHash: auth.secretHash,
-      project: route.project,
-      stage: route.stage,
-      kind: route.resourceKind,
-      name: route.name,
-    });
+    const result = await ctx.runMutation(
+      internal.cli.sync.deleteResourceBySecretHash,
+      {
+        secretHash: auth.secretHash,
+        project: route.project,
+        stage: route.stage,
+        kind: route.resourceKind,
+        name: route.name,
+      },
+    );
+    if (result.reserved) {
+      return jsonError(
+        409,
+        `${route.resourceKind} "${route.name}" still has a reserved sandbox instance that could not be terminated. ` +
+          "Terminate it from the dashboard, then retry.",
+        { code: "sandbox_instance_reserved" },
+      );
+    }
   }
 
   return json({ deleted: true });
@@ -496,16 +507,21 @@ async function handleManifestSync(
     {
       secretHash: secretHash,
       manifest: syncManifest as never,
+      prune: prune,
     },
   );
+  let reservedResources: string[] = [];
   if (prune) {
     await terminateDoomedInstances(ctx, auth, route, {
-      resources: syncManifest.resources as never,
+      resources: syncManifest.resources,
     });
-    await ctx.runMutation(internal.cli.sync.pruneManifestBySecretHash, {
-      secretHash: secretHash,
-      manifest: syncManifest as never,
-    });
+    reservedResources = await ctx.runMutation(
+      internal.cli.sync.pruneSandboxesBySecretHash,
+      {
+        secretHash: secretHash,
+        manifest: syncManifest,
+      },
+    );
   }
   await syncSkillNodeFiles(ctx, {
     secretHash: secretHash,
@@ -560,7 +576,7 @@ async function handleManifestSync(
       ...result,
       ids: { ...result.ids, ...externalIds, crons: cronIds },
     }),
-    warnings: result.warnings,
+    warnings: { ...result.warnings, reservedResources: reservedResources },
     deployment: deployment,
   });
 }
@@ -1018,11 +1034,10 @@ async function syncSkillResources(
 }
 
 /**
- * Tear down the reserved instances of the sandbox configs and workspaces a
- * prune or delete is about to drop, the way the config-plane DELETE routes do.
- * Must run while the rows still exist: core's lifecycle route loads the config
- * by id, and a reservation whose config is gone can never be released again.
- * Best-effort, like those routes.
+ * Terminate, through core, the reserved instances of the sandbox configs and
+ * workspaces a prune or delete is about to drop. Must run while the rows still
+ * exist: core's lifecycle route loads the config by id. Failures are left to
+ * the delete, which keeps any row whose instance core did not remove.
  */
 async function terminateDoomedInstances(
   ctx: ActionCtx,
@@ -1030,7 +1045,7 @@ async function terminateDoomedInstances(
   route: { project: string; stage: string },
   target: DeleteTarget,
 ): Promise<void> {
-  const targets = await ctx.runQuery(
+  const holders = await ctx.runQuery(
     internal.cli.sync.deleteTargetsBySecretHash,
     {
       secretHash: auth.secretHash,
@@ -1039,29 +1054,8 @@ async function terminateDoomedInstances(
       target: target,
     },
   );
-  if (
-    targets.sandboxConfigIds.length === 0 &&
-    targets.workspaceIds.length === 0
-  ) {
-    return;
-  }
-  const sandboxConfigIds = new Set<string>(targets.sandboxConfigIds);
-  // Workspace-bound reservation keys are the namespace or namespace-prefixed.
-  const namespaces = await Promise.all(
-    targets.workspaceIds.map((workspaceId) =>
-      workspaceNamespace(auth.accountId, workspaceId),
-    ),
+  if (holders.length === 0) return;
+  await terminateReservedInstances(ctx, auth.accountId, (instance) =>
+    holders.some((holder) => reservedBy(instance, holder)),
   );
-  await terminateReservedInstances(
-    ctx,
-    auth.accountId,
-    (instance) =>
-      (instance.sandboxConfigId !== undefined &&
-        sandboxConfigIds.has(instance.sandboxConfigId)) ||
-      namespaces.some(
-        (namespace) =>
-          instance.reservationKey === namespace ||
-          instance.reservationKey.startsWith(`${namespace}/`),
-      ),
-  ).catch(() => undefined);
 }
