@@ -1206,6 +1206,65 @@ describe("runtime ingress", () => {
     ).toMatchObject({ status: "queued" });
   });
 
+  test("recovers the queue behind a released owner without a new arrival", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const released = conversationKeyFor(accountId);
+    const busy = `acct:${accountId}:agent:test-agent:api:busy-conversation`;
+    for (const [label, conversationKey] of [
+      ["released", released],
+      ["busy", busy],
+    ] as const) {
+      for (const role of ["owner", "queued"]) {
+        await t.mutation(
+          internal.runtimeIngress.accept,
+          admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: `${label}-${role}`,
+            mode: "followup",
+          }),
+        );
+      }
+    }
+    // What core does at shutdown: fail the interrupted run, hand the lease back.
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: released,
+      ownerEventId: "released-owner",
+      ownerGeneration: 1,
+      status: "failed",
+      error: "interrupted",
+    });
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: released,
+      ownerEventId: "released-owner",
+      ownerGeneration: 1,
+    });
+
+    const recovered = await t.mutation(internal.runtimeIngress.recoverQueued, {
+      leaseTtlMs: 60_000,
+    });
+
+    // The busy conversation's owner is alive, so its queue is left to it.
+    expect(recovered).toEqual([
+      {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: released,
+        applied: expect.objectContaining({
+          eventId: "released-queued",
+          appliedMode: "followup",
+          ownerGeneration: 2,
+        }),
+      },
+    ]);
+    expect(
+      await t.mutation(internal.runtimeIngress.recoverQueued, {
+        leaseTtlMs: 60_000,
+      }),
+    ).toEqual([]);
+  });
+
   test("returns the queued envelope's own execution context on takeNext", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

@@ -49,7 +49,7 @@ import {
 import {
   ensureObservabilityStream,
   flushObservabilityNats,
-  getObservabilityNatsConn,
+  getSharedNatsConn,
   tracesSubject,
 } from "../shared/nats.ts";
 import { isPlainObject } from "../shared/object.ts";
@@ -916,12 +916,11 @@ export async function runAgentLoop(
         cachedInputTokens: taskTokens.cachedInputTokens,
         cacheWriteTokens: taskCacheWriteTokens,
         totalTokens: taskTokens.totalTokens,
-        runtimeKind: "lambda",
+        runtimeKind: "container",
         runtimeWallMs: durationMs,
-        runtimeMemoryMb: parseInt(
-          process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE ?? "0",
-          10,
-        ),
+        // The pod is shared by every run, so this is its resident size when the
+        // run ended, not memory the run owned.
+        runtimeMemoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
         sandboxUsage: [...sandboxUsageByKey.values()],
         stepCount: stepCount,
         toolCallCount: toolCallCount,
@@ -2250,7 +2249,7 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
 // client. A caller needing delivery before the container freezes (the terminal
 // span) awaits this, then flushObservabilityNats(); others ignore it.
 function publishSpan(row: ObservabilitySpanRow): Promise<void> {
-  const connPromise = getObservabilityNatsConn();
+  const connPromise = getSharedNatsConn();
   if (!connPromise) return Promise.resolve();
 
   const ctx = getObservabilityContext();

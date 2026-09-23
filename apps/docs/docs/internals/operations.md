@@ -9,7 +9,7 @@ The managed service runs on one k3s cluster, deployed from the infra repo (`kube
 | Release                                      | Namespace       | Image                      | Replicas           | Exposed                                                |
 | -------------------------------------------- | --------------- | -------------------------- | ------------------ | ------------------------------------------------------ |
 | `gateway`, `gateway-dev`                     | `beeblast`      | `broods-gateway`           | scale freely       | `gateway.broods.app`, `gateway.dev.broods.app`         |
-| `core`, `core-dev`                           | `beeblast`      | `broods-core`              | as needed          | cluster only: `http://core.beeblast.svc.cluster.local` |
+| `core`, `core-dev`                           | `beeblast`      | `broods-core`              | 1                  | cluster only: `http://core.beeblast.svc.cluster.local` |
 | `dashboard`, `dashboard-dev`                 | `beeblast`      | `broods-dashboard`         | as needed          | `dashboard.broods.app`, `dashboard.dev.broods.app`     |
 | `discord-forwarder`                          | `beeblast`      | `broods-discord-forwarder` | 1, `Recreate`      | none                                                   |
 | `matrix-forwarder`                           | `beeblast`      | `broods-matrix-forwarder`  | 1, `Recreate`, PVC | cluster only, for core's sends                         |
@@ -35,7 +35,10 @@ flowchart LR
 ```
 
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user that SST creates. The key lives in the `core-secrets` k8s secret.
-- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds.
+- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
+- Core runs as a single replica, because the machine sandbox registry and the worker queue live in memory.
+- On boot and every 30 seconds, `apps/core/src/harness/ingress-recovery.ts` starts queued work whose conversation has no live owner. Convex promotes each queue atomically, so an overlapping pod never runs one twice.
+- The gateway buffers each proxied request body and refuses one over 20 MiB (`GATEWAY_MAX_REQUEST_BODY_BYTES`). A WebSocket upgrade whose token core cannot check, on a 5xx or timeout, gets `502` and does not count against `GATEWAY_AUTH_FAILURES_PER_MINUTE`, default 20. On `SIGTERM` the gateway stops listening and closes open sockets with `1012`, so clients reconnect to another pod.
 - Core schedules nothing. The Convex crons component owns every schedule, including the account-deletion cascade. When one fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` to `BROODS_ACCOUNT_MANAGE_URL/v1/cron-runs` with `SERVICE_AUTH_SECRET`.
 - Core's sandbox sweeper releases reserved sandboxes whose conversation never came back, once an hour by default (`SANDBOX_SWEEP_INTERVAL_SECONDS`). A lease keeps two core pods from sweeping at once. It lives in core, not a Convex cron, because deleting a sandbox calls the in-cluster workdir control plane.
 - A green image build deploys nothing. `rollout.yaml` dispatches the infra workflow that rolls the pod. See [CI/CD](ci-cd.md).

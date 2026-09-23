@@ -62,11 +62,11 @@ export interface TaskUsageInput {
   cacheWriteTokens: number;
   /** Total tokens across all dimensions (provider definition). */
   totalTokens: number;
-  /** Harness runtime backend (currently always "lambda"). */
+  /** Harness runtime backend (always "container", the core pod). */
   runtimeKind: string;
-  /** Harness runtime wall-clock ms (durationMs × memoryMb proxy). */
+  /** Harness runtime wall-clock ms. */
   runtimeWallMs: number;
-  /** Harness runtime memory size in MB (AWS_LAMBDA_FUNCTION_MEMORY_SIZE). */
+  /** Core pod resident memory in MB when the run ended. */
   runtimeMemoryMb: number;
   /** CPU per sandbox context; recorded for the self-hosted providers (sandbox/lambda). */
   sandboxUsage: SandboxUsageEntry[];
@@ -115,7 +115,8 @@ interface AccountStore {
 /** Agent reads plus the explicit deletion cleanup used by core. */
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  list(accountId: string): Promise<AgentRecord[]>;
+  /** Agents of the account's production stages, for the bare webhook URL. */
+  listForProduction(accountId: string): Promise<AgentRecord[]>;
   /** Agents of one stage, for the stage-scoped webhook URL. */
   listForEndpoint(
     accountId: string,

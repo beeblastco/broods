@@ -141,7 +141,11 @@ While a run is active, a client sends correlated `control` frames and receives `
 
 Convex and core own admission and status. The gateway only delivers the frames. It sends `ack` after core confirms acceptance and reads later transitions from the authenticated status route. JetStream output, an open socket or gateway polling never count as acceptance.
 
-A busy `execute` that gets queued receives its `ack` and stays open. The gateway streams the queued event's output once it runs, polls its status, and always ends with a terminal `done` or `error` frame, never a bare `ack`.
+A socket holds at most 8 control inputs in flight (`MAX_CONTROLS_IN_FLIGHT` in `apps/gateway/src/agent.ts`). One stays in flight until its status is `applied` or terminal, so a queued `collect` or `followup` holds its place until the run ends. A `control` past the limit gets a `status` frame with `status: "failed"` and an error, and can be sent again once an earlier one settles.
+
+`agentId` on `attach` and `execute` becomes a NATS subject token, so the gateway refuses one that holds `.`, `*`, `>` or whitespace.
+
+A busy `execute` that gets queued receives its `ack` and stays open. The gateway streams the queued event's output once it runs, polls its status, and always ends with a terminal `done` or `error` frame, never a bare `ack`. A turn that starts at once is followed the same way, so a core that dies mid-run still ends the stream on its durable status. The gateway reads status from core's in-cluster address, and only after a run's output has been quiet for 3 seconds.
 
 ### Attach and replay
 

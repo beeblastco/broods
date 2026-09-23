@@ -43,7 +43,7 @@ flowchart TD
   Actions --> Provider
 ```
 
-`handleChannelWebhook` in `integrations.ts` runs the steps in that order. Everything after the ACK runs in `waitUntil`, so the provider gets its response before any model work starts.
+`handleChannelWebhook` in `integrations.ts` runs the steps in that order. The ACK waits for admission, dedup and a durable queue entry in Convex, for at most `CHANNEL_ACK_BUDGET_MS` (2 s). That stays under Slack's and Discord's 3 s retry limit, and a retry never races an admitted message. Model work starts after the ACK, on the `MAX_INPROCESS_WORKERS` pool.
 
 If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
 
@@ -138,7 +138,7 @@ A workspace file leaves as a durable `/v1/media/{ticket}` link served by core, n
 
 ## Inbound attachments
 
-- Parsing never downloads. Core acknowledges the webhook first, then reads the provider, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack.
+- Parsing never downloads. Media is read later in the run, not during parse, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack.
 - With a workspace attached, each attachment is read once and written twice, to the agent's default workspace under `media/` for its own tools, and to the attachment store, a prefix of the managed bucket that no sandbox mounts. The model gets a `/v1/media/{ticket}` link to the attachment-store copy, so it survives the agent tidying its workspace. Nothing is inlined as base64, because the conversation is stored as JSON and a link still resolves when the turn replays later. Deleting the account deletes the store.
 - With no workspace, nothing is stored. The bytes reach the model on the turn they arrive, and the message keeps a reference to the channel's own copy so a later turn re-reads it with the channel's credentials. The channel then decides how long media works. A Telegram file id lasts, and a Discord link expires within a day.
 - Core checks limits twice, on the declared size and on the bytes read. The limits are 6 MB for a picture, 25 MB for anything else, at most ten attachments per message. The media type is sniffed from the bytes, not taken from the provider, except when the sniff only identifies a container, since a `.docx` is a zip. An unreadable attachment becomes a line of text saying so.
@@ -246,7 +246,7 @@ export function createExampleChannel(
 ### Rules
 
 - Verify signatures or webhook secrets before parsing user-controlled payloads deeply.
-- ACK fast. Model work belongs in `afterResponse`.
+- ACK within the 2 s admission budget. Model work belongs after the ACK.
 - Use stable provider ids for `eventId` so duplicate deliveries dedup.
 - Use thread, chat or channel ids for `conversationKey` so follow-ups keep context.
 - Never download attachments during `parse`.

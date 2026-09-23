@@ -7,6 +7,22 @@ on:
       - dev
     paths:
       - "apps/gateway/**"
+      # Modules the gateway imports by relative path, and what those import.
+      # Nothing declares that dependency, so name them here or a change there
+      # ships without a rebuild.
+      - "apps/core/src/shared/env.ts"
+      - "apps/core/src/shared/machine-socket.ts"
+      - "apps/core/src/shared/nats.ts"
+      - "apps/core/src/shared/object.ts"
+      - "apps/core/src/shared/request-id.ts"
+      - "apps/core/src/shared/terminal-ticket.ts"
+      - "packages/broods/src/observability-contracts.ts"
+      - "packages/broods/src/run-input.ts"
+      - "packages/broods/src/stream.ts"
+      - "packages/broods/src/websocket-contracts.ts"
+      - "packages/convex/model/apiError.ts"
+      - "packages/convex/model/httpJson.ts"
+      - "packages/convex/model/serviceBridge.ts"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/build-gateway.yaml"

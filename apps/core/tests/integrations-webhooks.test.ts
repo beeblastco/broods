@@ -231,6 +231,29 @@ describe("account webhook ingress", () => {
     });
   });
 
+  it("acks a channel message only once it is admitted", async (): Promise<void> => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
+      agentLister: async () => [TEST_AGENT],
+    });
+    let admitted = false;
+
+    const response = await routeIncomingEvent(
+      createTelegramEvent(),
+      createHandlers({
+        handleChannelRequest: async (): Promise<void> => {
+          await Bun.sleep(20);
+          admitted = true;
+        },
+      }),
+    );
+
+    // An ack the provider sees must never front a message core could lose.
+    expect(response.statusCode).toBe(200);
+    expect(admitted).toBe(true);
+  });
+
   it("normalizes Pancake webhook events through account webhook routing", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
     const routeIncomingEvent = createIncomingEventRouter({

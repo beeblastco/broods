@@ -50,6 +50,9 @@ export const MACHINE_CLOSE = {
   },
 } as const;
 
+// Largest frame either side sends; the gateway relays up to this too.
+export const MACHINE_MAX_FRAME_BYTES = 4 * 1024 * 1024;
+
 export const MACHINE_WEBSOCKET_PATH = "/v1/machines/ws";
 
 // Anthropic's computer-use field names. Arrays, not tuples: some providers

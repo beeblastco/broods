@@ -63,7 +63,10 @@ export class Forwarder {
   /**
    * Opens sockets for tokens that gained a connection, closes the ones that lost
    * every connection, and re-points the rest. An unchanged token keeps its
-   * socket: its session, sequence number and IDENTIFY history all survive.
+   * socket: its session, sequence number and IDENTIFY history all survive. A
+   * socket parked on a fatal close code is replaced once its own targets change,
+   * the only signal that the owner may have fixed the bot. Any other reconcile,
+   * or a timer, would spend IDENTIFY budget on a bot that is still refused.
    */
   reconcile(connections: readonly ForwarderConnection[]): void {
     const desired = groupConnectionsByToken(connections);
@@ -81,13 +84,20 @@ export class Forwarder {
       const urls = webhookUrls(targets);
       const existing = this.managed.get(botToken);
       if (existing) {
-        // reconcile runs on every config change, so warn only when the fan-out
-        // itself moved.
-        if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
-          warnOnSharedToken("Discord", botToken, urls);
+        // Unchanged projection rows are never rewritten, so equal targets mean
+        // nothing about this token moved.
+        const moved =
+          JSON.stringify(existing.targets) !== JSON.stringify(targets);
+        if (!moved || existing.socket.state !== "fatal") {
+          // reconcile runs on every config change, so warn only when the
+          // fan-out itself moved.
+          if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
+            warnOnSharedToken("Discord", botToken, urls);
+          }
+          existing.targets = targets;
+          continue;
         }
-        existing.targets = targets;
-        continue;
+        existing.socket.stop();
       }
       warnOnSharedToken("Discord", botToken, urls);
       this.open(botToken, targets);
@@ -127,7 +137,10 @@ export class Forwarder {
     // about the channel either.
     if (!this.managed.has(botToken)) return;
 
-    const thread = await threads.resolve(data.channel_id);
+    // DMs have no threads, and core drops them anyway.
+    const thread = data.guild_id
+      ? await threads.resolve(data.channel_id)
+      : null;
     // Read after the lookup, not before. `resolve` can wait on Discord, and
     // `reconcile` replaces the array outright, so a set read on the way in is
     // already stale by here, which is the whole reason this goes through the map
@@ -145,12 +158,15 @@ export class Forwarder {
       budget: this.budget,
       config: this.config,
       onMessageCreate: (data: MessageCreate): void => {
-        // Nothing below is meant to reject, but an unhandled rejection here
-        // takes the process down, and a restart is another IDENTIFY.
+        // A failed thread lookup rejects and drops the message here. Anything
+        // unhandled would take the process down, and a restart is another
+        // IDENTIFY.
         void this.deliver(botToken, threads, data).catch(
           (error: unknown): void => {
             logError("Discord message could not be delivered", {
+              channelId: data.channel_id,
               error: error instanceof Error ? error.message : String(error),
+              messageId: data.id,
               tokenHint: tokenHint(botToken),
             });
           },

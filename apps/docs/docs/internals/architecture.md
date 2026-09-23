@@ -108,7 +108,7 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 2. The gateway proxies to core. `integrations.ts` loads the account and finds the credential holder, the agent whose channel credentials verify the request. On the bare URL, when two agents verify, the lowest agent id wins. A stage URL that resolves to no agent is a `404`.
 3. The holder's adapter (`src/shared/<channel>-channel.ts`) authenticates and parses the request into an `InboundMessage`.
 4. The `channelRecords` row for `(platform, externalId)` decides which agent runs and layers its instructions, workspaces, policies and `denyTools` (`applyChannelRecord`). A failed lookup refuses the turn.
-5. The `agent.invoke` policy gate runs, the provider is acknowledged, and the rest continues under `ctx.waitUntil`. `handleChannelRequest` admits the message, runs the turn, and replies through the adapter's `ChannelActions`. Matrix replies go to the matrix-forwarder's `/v1/send`, since only it holds the room keys.
+5. The `agent.invoke` policy gate runs. `handleChannelRequest` admits the message: it deduplicates it and queues it in Convex. The provider gets its ack once admission finishes or after `CHANNEL_ACK_BUDGET_MS` (2 s), whichever comes first, so a provider retry never races an admitted message. The turn then runs on the same bounded worker pool as async and WebSocket runs, and replies through the adapter's `ChannelActions`. Matrix replies go to the matrix-forwarder's `/v1/send`, since only it holds the room keys.
 
 ### Cron fire
 
@@ -198,7 +198,9 @@ The sandbox needs egress to `PUBLIC_BASE_URL` for step 2. Without it the job sti
 - `Nats-Msg-Id` (`eventId:sequence`) and a 2 minute duplicate window collapse retries.
 - Cursors are opaque, bound to one event, and exclusive. A cursor the stream can no longer serve gets `replay_unavailable` and the durable status.
 - Convex ingress status is the source of truth for acceptance and terminal state for 7 days. JetStream only carries output.
-- `connectNats` in `apps/core/src/shared/nats.ts` picks the transport from `NATS_URL`. `ws://` or `wss://` serves callers outside the cluster, `nats://` or `tls://` inside it.
+- `connectNats` in `apps/core/src/shared/nats.ts` picks the client from the `NATS_URL` scheme: `nats://` or `tls://` for core TCP, `ws://` or `wss://` for WebSocket. NATS is in-cluster only. No ingress exposes it, and core and the gateway dial `nats://` on the cluster service.
+- Core publishes every run's stream, its logs and its spans over one shared connection that reconnects forever (`apps/core/src/harness/nats-publisher.ts`).
+- A frame larger than the server's `max_payload`, 1 MB by default, goes out as the same `type` with `truncated: true` and `originalBytes` and no payload, so a `done` still ends the stream. The full result is on the run status.
 
 Frames, attach and control are specified in [queue and steer](queue-and-steer.md). Logs and traces take the same NATS path on `OBSERVABILITY`, described in [observability](observability.md).
 

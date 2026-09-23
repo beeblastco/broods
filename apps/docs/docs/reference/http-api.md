@@ -52,7 +52,7 @@ curl -N -X POST "https://gateway.broods.app/v1/runs" \
 | `answers`         | no                                  | Answers to open `ask_questions` prompts. Cannot be combined with `events`                                                                                 |
 | `continue`        | no                                  | Re-enter a run that stopped on the step cap or a provider fault                                                                                           |
 
-The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. Long quiet waits send SSE comment lines such as `: waiting for async work pending=2` to keep the connection open. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
+The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. A run that writes nothing for 30 seconds, such as during a long tool call, sends an SSE comment line such as `: keepalive` or `: waiting for async work pending=2`. SSE parsers ignore them, and they keep the connection open. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
 
 The dashboard advertises a scoped form of the same endpoint, `POST /v1/projects/{project}/stages/{stage}/agents/{endpointId}`. It takes the same body and refuses a key from another project or stage with `401`.
 
@@ -227,6 +227,8 @@ The server answers `broods.v1`. A proxy in front of the gateway must not log req
 { "type": "ack", "requestId": "r2", "eventId": "event-2", "status": "queued" }
 { "type": "status", "requestId": "r2", "eventId": "event-2", "status": "applied", "appliedMode": "steer", "appliedToEventId": "event-1" }
 ```
+
+A socket holds up to 8 `control` inputs that have not yet reached `applied` or a terminal status. One more gets a `status` frame with `status: "failed"`. Send it again once an earlier one settles. An `output` part larger than 1 MB arrives as its `type` with `truncated: true` and no payload, so a `done` still ends the stream. Read the full result from the run status.
 
 ### Resume after a disconnect
 

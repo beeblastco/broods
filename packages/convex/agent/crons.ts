@@ -154,10 +154,11 @@ export const createRun = internalMutation({
 });
 
 /**
- * POST one fired cron job to the gateway's /v1/cron-runs leaf, where core
- * starts the configured agent. The crons component (and the Convex scheduler
- * for one-time jobs) invokes this with the same {kind, accountId, cronId}
- * payload EventBridge used to deliver, so core is untouched.
+ * POST one fired cron job straight to core's in-cluster /v1/cron-runs leaf
+ * (the gateway 404s that path), where core starts the configured agent. The
+ * crons component (and the Convex scheduler for one-time jobs) invokes this
+ * with the same {kind, accountId, cronId} payload EventBridge used to
+ * deliver, so core is untouched.
  */
 export const dispatch = internalAction({
   args: { accountId: v.id("accounts"), cronId: v.id("crons") },

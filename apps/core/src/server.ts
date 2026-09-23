@@ -24,6 +24,11 @@ import { logError, logInfo } from "./shared/log.ts";
 import { forceFlushOtel, initOtel } from "./shared/otel.ts";
 
 const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
+// How long shutdown waits to hand back the leases of runs it is abandoning.
+const INTERRUPT_BUDGET_MS = 3_000;
+// What a run cut off by a restart reports as its failure.
+const INTERRUPTED_RUN_ERROR =
+  "The run was interrupted by a core restart. Send the message again.";
 const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
   /^\/v1\/sandboxes\/[^/]+\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
   /^\/v1\/mcp-service\/rpc$/,
@@ -167,6 +172,9 @@ if (import.meta.main) {
   const { handleMediaRequest, routesToMedia } = await import("./media.ts");
   const { drainInProcessWorkers, handler: harnessHandler } =
     await import("./harness/handler.ts");
+  const { interruptLiveOwners } = await import("./harness/ingress.ts");
+  const { startIngressRecovery, stopIngressRecovery } =
+    await import("./harness/ingress-recovery.ts");
   const { prewarmIsolatePool, shutdownIsolatePool } =
     await import("./harness/isolate/executor.ts");
   const { startSandboxSweeper, stopSandboxSweeper } =
@@ -185,6 +193,7 @@ if (import.meta.main) {
   // startup. Failure is not fatal: the pool spawns on demand anyway.
   void prewarmIsolatePool().catch(() => undefined);
   startSandboxSweeper();
+  startIngressRecovery();
 
   const route = createRoute(
     {
@@ -216,6 +225,8 @@ if (import.meta.main) {
     if (shuttingDown) return;
     shuttingDown = true;
     logInfo("Core server shutting down", { signal: signal });
+    stopIngressRecovery();
+    let drained = false;
     const deadline = new Promise<void>((resolve) =>
       setTimeout(resolve, SHUTDOWN_DEADLINE_MS),
     );
@@ -223,6 +234,7 @@ if (import.meta.main) {
       await server.stop();
       await drainInFlight();
       await drainInProcessWorkers();
+      drained = true;
       shutdownIsolatePool();
       stopSandboxSweeper();
     })().catch((err) => {
@@ -231,6 +243,21 @@ if (import.meta.main) {
       });
     });
     await Promise.race([graceful, deadline]);
+    if (!drained) {
+      // A run takes up to ten minutes and the deadline is seconds, so a busy
+      // pod always gets here. Failing the runs and handing their leases back
+      // unlocks each conversation now instead of after the lease TTL, and the
+      // next pod's recovery sweep starts whatever was queued behind them.
+      const interrupted = await Promise.race([
+        interruptLiveOwners(INTERRUPTED_RUN_ERROR),
+        new Promise<number>((resolve): void => {
+          setTimeout((): void => resolve(-1), INTERRUPT_BUDGET_MS);
+        }),
+      ]);
+      logInfo("Core server interrupted runs past the drain deadline", {
+        interrupted: interrupted,
+      });
+    }
     await forceFlushOtel().catch(() => undefined);
     process.exit(0);
   };
