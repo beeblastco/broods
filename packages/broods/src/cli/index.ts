@@ -1875,16 +1875,10 @@ function printChannelEndpoints(
 /**
  * How one `env("NAME")` reference lines up between the local environment
  * (`.env.local`, already loaded into `process.env`) and the stage's stored
- * value. `drifted` and `unverified` are the two worth speaking up about: the
- * stage holds a value, it just is not provably the local one.
+ * value. `drifted` is the one worth speaking up about: the stage holds a
+ * value, it just is not the local one.
  */
-type EnvRefState =
-  | "synced"
-  | "drifted"
-  | "unverified"
-  | "unset"
-  | "stage-only"
-  | "unresolved";
+type EnvRefState = "synced" | "drifted" | "unset" | "stage-only" | "unresolved";
 
 interface EnvRef {
   name: string;
@@ -1927,12 +1921,7 @@ async function pushLocalEnvVars(
   refs: EnvRef[],
 ): Promise<string[]> {
   const pushable = refs
-    .filter(
-      (ref) =>
-        ref.state === "unset" ||
-        ref.state === "drifted" ||
-        ref.state === "unverified",
-    )
+    .filter((ref) => ref.state === "unset" || ref.state === "drifted")
     .map((ref) => ref.name);
   if (pushable.length === 0) return [];
 
@@ -1952,33 +1941,21 @@ async function pushLocalEnvVars(
  */
 function printEnvDriftWarning(refs: EnvRef[], target: string): void {
   const drifted = namesInState(refs, "drifted");
-  const unverified = namesInState(refs, "unverified");
   if (drifted.length > 0) {
     printWarning(
       `.env.local and ${target} disagree on ${drifted.length} variable(s): ${drifted.join(", ")}. ` +
         "Run `broods env sync` to push the local values.",
     );
   }
-  if (unverified.length > 0) {
-    printWarning(
-      `${target} stored ${unverified.length} variable(s) before value digests, so nothing can compare ` +
-        `them: ${unverified.join(", ")}. Run \`broods env sync\` to bring them in step.`,
-    );
-  }
 }
 
-function envRefState(
-  name: string,
-  remote: Map<string, string | undefined>,
-): EnvRefState {
+function envRefState(name: string, remote: Map<string, string>): EnvRefState {
   const local = process.env[name];
-  const onStage = remote.has(name);
-  if (local === undefined || local === "") {
-    return onStage ? "stage-only" : "unresolved";
-  }
-  if (!onStage) return "unset";
   const digest = remote.get(name);
-  if (!digest) return "unverified";
+  if (local === undefined || local === "") {
+    return digest === undefined ? "unresolved" : "stage-only";
+  }
+  if (digest === undefined) return "unset";
 
   return digest === hashEnvValue(local) ? "synced" : "drifted";
 }
