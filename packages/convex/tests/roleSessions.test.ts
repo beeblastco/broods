@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
+import type { ApiErrorBody } from "../model/apiError";
 import type { PolicyDocument } from "../model/policyRules";
 import schema from "../schema";
 
@@ -242,5 +243,31 @@ describe("role sessions on config-plane routes", () => {
     // Sessions cannot chain into new sessions.
     const chained = await assumeRole(t, token, { roleId: roleId });
     expect(chained.status).toBe(401);
+  });
+});
+
+describe("POST /v1/roles", () => {
+  test("rejects the retired tools:write action with a 400", async () => {
+    const t = roleTest();
+    await seed(t);
+
+    const response = await t.fetch("/v1/roles", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCOUNT_SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "tool-writer",
+        policy: {
+          version: 1,
+          rules: [{ id: "tools", effect: "allow", actions: ["tools:write"] }],
+        },
+      }),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as ApiErrorBody;
+    expect(body.error.message).toContain("actions[] must be one of");
+    expect(body.error.message).not.toContain("tools:");
   });
 });

@@ -23,6 +23,7 @@ const POLICY_RULES: readonly PolicyRule[] = [
     id: "read-everything",
     effect: "allow",
     actions: [
+      "account:read",
       "agents:read",
       "channels:read",
       "crons:read",
@@ -32,7 +33,6 @@ const POLICY_RULES: readonly PolicyRule[] = [
       "policies:read",
       "sandboxes:read",
       "skills:read",
-      "tools:read",
       "workspaces:read",
     ],
   },
@@ -45,9 +45,9 @@ const POLICY_RULES: readonly PolicyRule[] = [
     },
   },
   {
-    id: "write-skills",
+    id: "write-skills-and-mcp",
     effect: "allow",
-    actions: ["skills:write", "tools:write"],
+    actions: ["skills:write", "mcp:write"],
     resources: { resourceIds: ["*"] },
   },
   {
