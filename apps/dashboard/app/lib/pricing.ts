@@ -35,21 +35,13 @@ export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
     order: 1,
     badgeVariant: "warning",
   },
-  enterprise: {
-    key: "enterprise",
-    label: "Enterprise",
-    description: "Custom limits and support",
-    order: 2,
-    badgeVariant: "info",
-  },
 };
 
 /**
- * Check whether a user has nothing to upgrade to. Checkout only sells Pro, so
- * Pro and Enterprise both hide the upgrade button.
+ * Check whether a user is on the highest tier, which hides the upgrade button.
  * @param plan current user plan
- * @returns true if no upgrade is offered
+ * @returns true if on Pro
  */
 export function isMaxPlan(plan: PlanTier): boolean {
-  return plan !== "free";
+  return plan === "pro";
 }

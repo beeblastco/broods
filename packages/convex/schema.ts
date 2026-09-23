@@ -2,11 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
-export const planValidator = v.union(
-  v.literal("free"),
-  v.literal("pro"),
-  v.literal("enterprise"),
-);
+export const planValidator = v.union(v.literal("free"), v.literal("pro"));
 
 /** Synced from WorkOS AuthKit webhooks, with app-specific extensions. */
 export const usersFields = {

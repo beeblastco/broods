@@ -4,9 +4,14 @@
 
 import { StripeSubscriptions } from "@convex-dev/stripe";
 import { v } from "convex/values";
-import type Stripe from "stripe";
+import Stripe from "stripe";
 import { components } from "./_generated/api";
-import { action, internalMutation, query } from "./_generated/server";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  query,
+} from "./_generated/server";
 import { authKit } from "./auth";
 
 // A subscription in one of these statuses is over: it no longer blocks a new
@@ -23,6 +28,55 @@ const PAID_STATUSES: ReadonlyArray<Stripe.Subscription.Status> = [
 ];
 
 export const stripeClient = new StripeSubscriptions(components.stripe);
+
+/**
+ * One-off: copy `metadata.authId` to `metadata.userId` on subscriptions
+ * created before checkout wrote `userId`. Stripe then sends
+ * `customer.subscription.updated`, and the webhook files the subscription and
+ * syncs the plan. Idempotent: a subscription that has `userId` is skipped.
+ * Dry run by default; pass `{ "dryRun": false }` to write.
+ * @returns subscriptions scanned and the ids updated (or that would be)
+ */
+export const backfillSubscriptionUserIds = internalAction({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    updated: v.array(v.string()),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ dryRun: boolean; scanned: number; updated: Array<string> }> => {
+    const secretKey = process.env.STRIPE_SECRET_KEY;
+    if (!secretKey) throw new Error("STRIPE_SECRET_KEY is not configured");
+    const dryRun = args.dryRun ?? true;
+    const stripe = new Stripe(secretKey);
+
+    let scanned = 0;
+    const updated: Array<string> = [];
+    for await (const sub of stripe.subscriptions.list({
+      status: "all",
+      limit: 100,
+    })) {
+      scanned += 1;
+      const authId = sub.metadata.authId;
+      if (!authId || sub.metadata.userId) continue;
+
+      console.log(
+        `${dryRun ? "would set" : "setting"} userId=${authId} on ${sub.id}`,
+      );
+      if (!dryRun) {
+        await stripe.subscriptions.update(sub.id, {
+          metadata: { userId: authId },
+        });
+      }
+      updated.push(sub.id);
+    }
+
+    return { dryRun: dryRun, scanned: scanned, updated: updated };
+  },
+});
 
 export const createCheckoutSession = action({
   args: { successUrl: v.string(), cancelUrl: v.string() },
