@@ -44,7 +44,9 @@ Runtime boundary:
 
 - SST provisions the AWS data plane and IAM; the container deployment lives in the infra repo.
 - Handlers receive `CoreRequest` and return Web `Response` objects.
-- `ctx.waitUntil(...)` lets channel webhooks acknowledge quickly, then continue work after the HTTP response.
+- A channel webhook acks after the message is durably admitted (deduplicated and queued in Convex), or after 2 seconds, whichever comes first, so a provider retry never races an admitted message. The agent run happens after the ack, on the same bounded worker pool as async and WebSocket runs (`MAX_INPROCESS_WORKERS`).
+- Core runs as a single replica: the machine sandbox registry and the worker queue live in memory.
+- On shutdown core drains for `SHUTDOWN_DEADLINE_MS` (25 s). Runs still going then are failed with a restart error and their conversation leases handed back, so the conversation is not locked for the 15-minute lease TTL. Core sweeps for queued work whose conversation has no live owner on boot and every 30 seconds, and starts it.
 
 ## High-level architecture
 
