@@ -53,9 +53,13 @@ beforeEach(() => {
   FakeWebSocket.opened = [];
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
   jest.useFakeTimers();
+  // Heartbeat jitter and backoff both draw from it; pinned so the timing
+  // windows below hold on every run.
+  jest.spyOn(Math, "random").mockReturnValue(0.5);
 });
 
 afterEach(() => {
+  jest.restoreAllMocks();
   jest.useRealTimers();
   globalThis.WebSocket = realWebSocket;
 });
@@ -116,21 +120,17 @@ describe("gateway socket", () => {
   });
 
   it("jitters the first heartbeat inside one interval", () => {
-    const random = jest.spyOn(Math, "random").mockReturnValue(0.25);
-    try {
-      const { gateway, first } = readySocket();
-      const beats = (): number =>
-        first.sent.filter((payload) => payload.op === GatewayOpcode.Heartbeat)
-          .length;
+    jest.spyOn(Math, "random").mockReturnValue(0.25);
+    const { gateway, first } = readySocket();
+    const beats = (): number =>
+      first.sent.filter((payload) => payload.op === GatewayOpcode.Heartbeat)
+        .length;
 
-      jest.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 0.25 - 1);
-      expect(beats()).toBe(0);
-      jest.advanceTimersByTime(1);
-      expect(beats()).toBe(1);
-      gateway.stop();
-    } finally {
-      random.mockRestore();
-    }
+    jest.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 0.25 - 1);
+    expect(beats()).toBe(0);
+    jest.advanceTimersByTime(1);
+    expect(beats()).toBe(1);
+    gateway.stop();
   });
 
   it("resumes after a resumable INVALID_SESSION, waiting at least a second", () => {
