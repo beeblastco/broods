@@ -32,7 +32,7 @@ import {
   type RequestContext,
 } from "../shared/http.ts";
 import { logDebug, logError, logInfo } from "../shared/log.ts";
-import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
+import type { NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
@@ -98,6 +98,7 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
+import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   ingestChannelAttachments,
   Session,
@@ -129,7 +130,9 @@ const CHANNEL_APPROVAL_DENIAL_REASON =
   "Tool approval is only supported through the direct API.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
-const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
+// What a subagent or async-tool wait leaves of the request budget, so the parent
+// still has time for the turn that reads the results before the deadline.
+const WAIT_DEADLINE_MARGIN_MS = 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
@@ -209,8 +212,8 @@ export function dispatchInProcessWorker(
 ): void {
   if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
     if (pendingWorkerPayloads.length >= MAX_PENDING_WORKER_PAYLOADS) {
-      // Load-shed like a failed Lambda Event invoke: the awaiting caller
-      // surfaces the error instead of the queue growing without bound.
+      // Load-shed: the awaiting caller surfaces the error instead of the queue
+      // growing without bound.
       throw new Error("In-process worker queue is full");
     }
     pendingWorkerPayloads.push([payload, run]);
@@ -234,7 +237,7 @@ export function dispatchInProcessWorker(
       });
     },
   );
-  // Nothing here kills a hung model stream or tool the way Lambda does, so a few
+  // Nothing here kills a hung model stream or tool, so a few
   // stuck workers would otherwise pin every slot for every tenant on the pod. An
   // overrun frees the slot but leaves the underlying work running.
   let slotTimer: ReturnType<typeof setTimeout> | undefined;
@@ -562,7 +565,7 @@ async function continueAfterAsyncToolSettlement(
     scope.accountId,
     scope.agentId,
   );
-  if (!agent || agent.status !== "active") {
+  if (!agent) {
     return { kind: "skip" };
   }
 
@@ -1224,23 +1227,17 @@ async function handleNatsWorkerRequest(
   if (!connectionId) {
     throw new Error("NATS worker event must include connectionId");
   }
-  const natsUrl = process.env.NATS_URL?.trim();
-  if (!natsUrl) {
+  if (!process.env.NATS_URL?.trim()) {
     throw new Error("NATS worker requires NATS_URL");
   }
-  const natsToken = process.env.NATS_TOKEN?.trim() || undefined;
 
-  const publisher = new LiveNatsPublisher(
-    natsUrl,
-    {
-      accountId: event.accountId,
-      agentId: event.agentId,
-      conversationKey: event.publicConversationKey,
-      eventId: event.publicEventId,
-      connectionId: connectionId,
-    },
-    natsToken,
-  );
+  const publisher = new LiveNatsPublisher({
+    accountId: event.accountId,
+    agentId: event.agentId,
+    conversationKey: event.publicConversationKey,
+    eventId: event.publicEventId,
+    connectionId: connectionId,
+  });
 
   let session: Session | undefined;
   let transferred = false;
@@ -2334,7 +2331,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
   };
 }
 
-/** Fire-and-forget background work; the fan-out runs in-process, not via a Lambda self-invoke. */
+/** Fire-and-forget background work on the in-process worker pool. */
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
@@ -2455,7 +2452,7 @@ async function createCronDirectEvent(
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
   const agent = await getStorage().agents.getById(job.accountId, job.agentId);
-  if (!agent || agent.status !== "active") {
+  if (!agent) {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
   const target = await resolveReentryTarget({
@@ -3059,7 +3056,7 @@ async function pipeAgentStream(
 
 function waitUntilMs(context: RequestContext | undefined): number {
   if (context?.deadlineMs && Number.isFinite(context.deadlineMs)) {
-    return Math.max(Date.now(), context.deadlineMs - LAMBDA_TIMEOUT_SAFETY_MS);
+    return Math.max(Date.now(), context.deadlineMs - WAIT_DEADLINE_MARGIN_MS);
   }
 
   return Date.now() + DEFAULT_PARENT_WAIT_MS;

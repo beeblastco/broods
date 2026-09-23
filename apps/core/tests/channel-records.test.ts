@@ -65,7 +65,6 @@ const SUPPORT_AGENT: AgentRecord = {
   accountId: "acct_test",
   agentId: "agent_support",
   name: "Support",
-  status: "active",
   config: TELEGRAM_CONFIG,
   createdAt: "2026-07-20T00:00:00.000Z",
   updatedAt: "2026-07-20T00:00:00.000Z",

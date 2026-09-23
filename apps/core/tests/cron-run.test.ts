@@ -16,7 +16,6 @@ const AGENT: AgentRecord = {
   accountId: "acct_1",
   agentId: "agent_1",
   name: "scheduler",
-  status: "active",
   config: { model: { provider: "openai", modelId: "gpt-5.5" } },
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-01T00:00:00.000Z",

@@ -917,7 +917,6 @@ async function findChannelCredentialHolder(
   for (const candidate of [...listed].sort((left, right) =>
     left.agentId.localeCompare(right.agentId),
   )) {
-    if (candidate.status !== "active") continue;
     // Cheap key check before building any adapter: an unauthenticated caller
     // should not make us instantiate SDK clients for every agent in the account.
     if (!candidate.config.channels?.[channelName]) continue;
@@ -1026,8 +1025,8 @@ async function resolveChannelTarget(
   }
 
   const bound = await context.agentLoader(account.accountId, boundAgentId);
-  if (!bound || bound.status !== "active") {
-    logWarn("Channel record binds an agent that is missing or inactive", {
+  if (!bound) {
+    logWarn("Channel record binds an agent that is missing", {
       accountId: account.accountId,
       channel: channelName,
       channelRecordId: record.channelRecordId,
@@ -1999,7 +1998,7 @@ async function parseDirectPayload(
   }
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
   const agent = await context.agentLoader(account.accountId, agentId);
-  if (!agent || agent.status !== "active") {
+  if (!agent) {
     throw new DirectNotFoundError("Agent not found");
   }
   const embeddableKey = await admitStageCredential(

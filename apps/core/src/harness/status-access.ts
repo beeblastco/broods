@@ -79,11 +79,7 @@ async function publicAgentDenial(
   context: StatusAccessContext,
 ): Promise<StatusAccessDenial | null> {
   const agent = await context.agentLoader(request.accountId, request.agentId);
-  if (
-    !agent ||
-    agent.status !== "active" ||
-    agent.config.publicAccess !== true
-  ) {
+  if (!agent || agent.config.publicAccess !== true) {
     return {
       code: "public_access_disabled",
       message: `Agent ${request.agentId} is not publicly accessible.`,
@@ -143,7 +139,6 @@ async function subagentDenial(
   ]);
   if (
     !parentAgent ||
-    parentAgent.status !== "active" ||
     parentAgent.config.publicAccess !== true ||
     !deploymentScopeMatches(auth, parentDeployment) ||
     !parentStatus ||

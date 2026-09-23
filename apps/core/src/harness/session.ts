@@ -1045,7 +1045,7 @@ export class Session {
             this.accountId!,
             agentId,
           );
-          if (!agent || agent.status !== "active") {
+          if (!agent) {
             return null;
           }
 

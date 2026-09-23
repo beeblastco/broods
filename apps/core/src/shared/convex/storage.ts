@@ -106,7 +106,6 @@ function agentFromConvex(doc: ConvexAgentDoc | null): AgentRecord | null {
     agentId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
-    status: "active",
     config: config,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),

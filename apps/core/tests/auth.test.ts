@@ -31,7 +31,6 @@ const AGENT: AgentRecord = {
   accountId: "acct_1",
   agentId: "agent_1",
   name: "Tester",
-  status: "active",
   config: {},
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
