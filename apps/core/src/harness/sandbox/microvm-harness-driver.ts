@@ -20,6 +20,7 @@ import { createSandboxExecutor } from "./index.ts";
 import {
   HarnessShellProcess,
   type HarnessShellExecutor,
+  readFileChunk,
   readHarnessStream,
 } from "./harness-shell-process.ts";
 import type { MicrovmHarnessReservation } from "./microvm-executor.ts";
@@ -29,9 +30,6 @@ import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { shellQuote, stringRecord } from "./utils.ts";
 
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
-// Raw bytes per readFile exec. Base64 grows them to 171 KB, under the 256 KB of
-// stdout one MicroVM exec returns.
-const READ_CHUNK_BYTES = 128 * 1024;
 
 export interface MicrovmHarnessDriverOptions {
   /** Existing core reservation identity, already scoped to its account/agent. */
@@ -260,19 +258,27 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
   async readFile(
     options: BroodsSandboxFileOptions,
   ): Promise<Uint8Array | null> {
-    const path = shellQuote(options.path);
-    const chunks: Buffer[] = [];
-    for (let offset = 0; ; offset += READ_CHUNK_BYTES) {
+    // One exec returns at most 256 KB of stdout, so larger files take several.
+    const chunks: Uint8Array[] = [];
+    let first: string | undefined;
+    let offset = 0;
+    while (true) {
       options.abortSignal?.throwIfAborted();
-      const result = await this.#shell.exec(
-        `if [ -f ${path} ]; then tail -c +${offset + 1} ${path} | head -c ${READ_CHUNK_BYTES} | base64 | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
-        options.abortSignal ? { abortSignal: options.abortSignal } : undefined,
+      const chunk = await readFileChunk(
+        this.#shell,
+        options.path,
+        offset,
+        options.abortSignal,
       );
-      if (result.exitCode === 44) return null;
-      if (result.exitCode !== 0) throw microvmError("read file", result);
-      const chunk = Buffer.from(result.stdout.trim(), "base64");
-      chunks.push(chunk);
-      if (chunk.byteLength < READ_CHUNK_BYTES) break;
+      if (chunk === null && first === undefined) return null;
+      if (chunk === null || (first !== undefined && chunk.stamp !== first)) {
+        throw new Error(`${options.path} changed while it was being read`);
+      }
+      first = chunk.stamp;
+      chunks.push(chunk.bytes);
+      offset += chunk.bytes.byteLength;
+      const size = Number(chunk.stamp.split(" ")[0]);
+      if (chunk.bytes.byteLength === 0 || offset >= size) break;
     }
 
     return new Uint8Array(Buffer.concat(chunks));

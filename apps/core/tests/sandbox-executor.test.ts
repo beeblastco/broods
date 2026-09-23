@@ -672,6 +672,28 @@ describe("createSandboxExecutor", () => {
     });
   });
 
+  it("fails a Harness command whose output the MicroVM cut", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const created = await executor.acquireHarnessReservation({
+      reservationKey: "acct:agent:harness",
+    });
+    microvmExecPayload = { ...microvmExecPayload, truncated: true };
+
+    await expect(
+      executor.runHarnessCommand({
+        microvmId: created.microvmId,
+        endpoint: created.endpoint,
+        code: "base64 < large.bin",
+      }),
+    ).rejects.toThrow("passed the exec cap");
+  });
+
   it("exposes persistent MicroVM reservations and port-scoped auth to the Harness driver", async () => {
     const {
       createSandboxExecutor,
@@ -724,16 +746,6 @@ describe("createSandboxExecutor", () => {
       timeout_ms: 45_000,
       env: { CONFIGURED: "base", COMMAND_ONLY: "value" },
     });
-
-    microvmExecPayload = { ...microvmExecPayload, truncated: true };
-    await expect(
-      executor.runHarnessCommand({
-        microvmId: created.microvmId,
-        endpoint: created.endpoint,
-        code: "base64 < large.bin",
-      }),
-    ).rejects.toThrow("passed the exec cap");
-    microvmExecPayload = { ...microvmExecPayload, truncated: false };
 
     expect(await executor.createHarnessAuthToken("microvm-1", 4_321)).toBe(
       "proxy-token",

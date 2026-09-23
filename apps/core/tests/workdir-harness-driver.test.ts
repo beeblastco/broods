@@ -375,18 +375,19 @@ function fakeWorkdir(
         return result();
       }
 
-      if (command.includes("dd if=") && processRoot) {
+      const chunk = command.match(/tail -c \+(\d+) .* head -c (\d+)/);
+      if (chunk && processRoot) {
         const process = processes.get(processRoot);
         const stream = command.includes(".stderr")
           ? process?.stderr
           : process?.stdout;
-        const skip = Number(command.match(/ skip=(\d+)/)?.[1] ?? 0);
-        const count = Number(command.match(/ count=(\d+)/)?.[1] ?? 0);
+        if (!stream) return result("", 44);
+        const start = Number(chunk[1]) - 1;
 
         return result(
-          Buffer.from(
-            stream?.slice(skip, skip + count) ?? new Uint8Array(),
-          ).toString("base64"),
+          `${stream.byteLength} 1 0\n${Buffer.from(
+            stream.slice(start, start + Number(chunk[2])),
+          ).toString("base64")}`,
         );
       }
 
