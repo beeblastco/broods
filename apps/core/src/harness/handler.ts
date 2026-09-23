@@ -1395,6 +1395,20 @@ export async function handleChannelRequest(
 ): Promise<void> {
   const outcome = resolveChannelCommand(event);
   if (outcome.kind === "reply") {
+    // A forwarder retry redelivers the same event, and a second `/clear` would
+    // drop what was said between the two deliveries.
+    if (
+      event.accountId &&
+      !(await claimSession(
+        new Session({
+          eventId: event.eventId,
+          conversationKey: event.conversationKey,
+          accountId: event.accountId,
+        }),
+      ))
+    ) {
+      return;
+    }
     logInfo("Channel command executing", {
       channel: event.channelName,
       accountId: event.accountId,

@@ -270,6 +270,57 @@ describe("channel senders", (): void => {
   });
 });
 
+describe("channel commands", (): void => {
+  it("runs a redelivered /clear once", async (): Promise<void> => {
+    const claims = new Set<string>();
+    let clears = 0;
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      if (name === "claimEvent") {
+        const fresh = !claims.has(String(args.key));
+        claims.add(String(args.key));
+
+        return fresh;
+      }
+      if (name === "acquireIngressClear") return 1;
+      if (name === "clearFencedConversation") {
+        clears += 1;
+
+        return { deleted: 0, hasMore: false };
+      }
+
+      return null;
+    }) as never;
+    const replies: string[] = [];
+    const command: ChannelInboundEvent = {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      eventId: "event-clear",
+      conversationKey: "acct:acct_1:agent:agent_1:discord:C1",
+      content: "/clear",
+      events: [{ role: "user", content: "/clear" }],
+      channelName: "discord",
+      commandToken: "/clear",
+      source: { channelId: "C1" },
+      channel: {
+        sendText: async (text: string): Promise<void> => {
+          replies.push(text);
+        },
+        sendTyping: async (): Promise<void> => {},
+        reactToMessage: async (): Promise<void> => {},
+      },
+    };
+
+    await handleChannelRequest(command);
+    await handleChannelRequest(command);
+
+    expect(clears).toBe(1);
+    expect(replies).toEqual(["Context cleared. Starting fresh."]);
+  });
+});
+
 describe("live owners at shutdown", (): void => {
   const HELD = "acct:acct_1:agent:agent_1:api:held";
   const DONE = "acct:acct_1:agent:agent_1:api:done";
