@@ -167,12 +167,7 @@ export const deleteResourceBySecretHash = internalMutation({
     } else if (kind === "workspace") {
       await deleteWorkspaceResource(ctx, stageId, normalizedName);
     } else {
-      reserved = await deleteSandboxResource(
-        ctx,
-        account._id,
-        stageId,
-        normalizedName,
-      );
+      reserved = await deleteSandboxResource(ctx, stageId, normalizedName);
     }
     await touchProject(ctx, resolved.projectDoc);
 
@@ -597,7 +592,6 @@ export const pruneSandboxesBySecretHash = internalMutation({
     await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
     const sandboxes = await pruneSandboxResources(
       ctx,
-      account._id,
       stageDoc._id,
       manifest.resources,
     );

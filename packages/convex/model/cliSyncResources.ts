@@ -85,7 +85,6 @@ export async function deleteAgentResource(
  */
 export async function deleteSandboxResource(
   ctx: MutationCtx,
-  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   name: string,
 ): Promise<boolean> {
@@ -97,8 +96,7 @@ export async function deleteSandboxResource(
       "conflict",
     );
   }
-  const instances = await accountInstances(ctx, accountId);
-  if (isReserved(instances, { sandboxConfigId: sandbox._id })) return true;
+  if (await hasReservation(ctx, sandbox._id)) return true;
   await ctx.db.delete(sandbox._id);
 
   return false;
@@ -196,18 +194,16 @@ export async function prunePolicyResources(
  */
 export async function pruneSandboxResources(
   ctx: MutationCtx,
-  accountId: Id<"accounts">,
   stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<string[]> {
-  const instances = await accountInstances(ctx, accountId);
   const kept: string[] = [];
   for (const sandbox of await undeclaredSandboxConfigs(
     ctx,
     stageId,
     resources,
   )) {
-    if (isReserved(instances, { sandboxConfigId: sandbox._id })) {
+    if (await hasReservation(ctx, sandbox._id)) {
       kept.push(sandbox.name);
     } else {
       await ctx.db.delete(sandbox._id);
@@ -792,18 +788,19 @@ export async function workspaceConfigByName(
     .unique();
 }
 
-/** The account's instance rows. */
-async function accountInstances(
+/** Whether any instance row still references this sandbox config. */
+async function hasReservation(
   ctx: QueryCtx,
-  accountId: Id<"accounts">,
-): Promise<Doc<"sandboxInstances">[]> {
-  return await ctx.db
+  sandboxConfigId: Id<"sandboxConfigs">,
+): Promise<boolean> {
+  const instance = await ctx.db
     .query("sandboxInstances")
-    .withIndex("by_accountId_projectId_and_stageId", (q) =>
-      q.eq("accountId", accountId),
+    .withIndex("by_sandboxConfigId", (q) =>
+      q.eq("sandboxConfigId", sandboxConfigId),
     )
-    // 1000 is the accepted ceiling, matching `sandbox.instances.listForAccount`.
-    .take(1000);
+    .first();
+
+  return instance !== null;
 }
 
 function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
@@ -814,13 +811,6 @@ function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
     Array.isArray(subagent.allowed) &&
     subagent.allowed.length > 0
   );
-}
-
-function isReserved(
-  instances: Doc<"sandboxInstances">[],
-  holder: ReservationHolder,
-): boolean {
-  return instances.some((instance) => reservedBy(instance, holder));
 }
 
 /**

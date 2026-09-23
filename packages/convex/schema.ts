@@ -1309,7 +1309,8 @@ export default defineSchema({
       "stageId",
     ])
     .index("by_lastUsedAt", ["lastUsedAt"])
-    .index("by_reservationKey", ["reservationKey"]),
+    .index("by_reservationKey", ["reservationKey"])
+    .index("by_sandboxConfigId", ["sandboxConfigId"]),
   machineConnections: defineTable(machineConnectionsFields)
     .index("by_accountId_projectId_and_stageId", [
       "accountId",
