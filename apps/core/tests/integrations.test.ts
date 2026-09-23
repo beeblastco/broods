@@ -12,6 +12,7 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../src/shared/runtime-keys.ts";
+import type { AuthContext } from "../src/shared/auth.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const CHILD_RUN_ID = `run_${"b".repeat(32)}`;
@@ -86,7 +87,7 @@ afterEach(() => {
 
 describe("direct API ingress", () => {
   it("gives observability scope to a stage ticket, never the embeddable key", async () => {
-    const scopeFor = async (stageTicket: boolean) =>
+    const scopeFor = async (stageTicket: boolean): Promise<ResponseShape> =>
       await routeIncomingEvent(
         createEvent(
           {},
@@ -98,7 +99,7 @@ describe("direct API ingress", () => {
         ),
         createHandlers(),
         {
-          authResolver: async () => ({
+          authResolver: async (): Promise<AuthContext> => ({
             kind: "deployment",
             account: TEST_ACCOUNT,
             endpointId: "env-endpoint",

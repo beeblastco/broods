@@ -27,6 +27,7 @@ import { stageNameEquals, resolveProject } from "../model/projectScope";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import {
   mintStageSessionTicket,
+  stageSessionValidator,
   type StageSession,
 } from "../agent/deployments";
 
@@ -218,15 +219,7 @@ export const mintSessionByAccount = internalMutation({
     project: v.string(),
     stage: v.string(),
   },
-  returns: v.union(
-    v.null(),
-    v.object({
-      token: v.string(),
-      expiresAt: v.number(),
-      projectSlug: v.string(),
-      stageSlug: v.string(),
-    }),
-  ),
+  returns: v.union(v.null(), stageSessionValidator),
   handler: async (ctx, args): Promise<StageSession | null> => {
     const projectDoc = await projectForAccount(
       ctx,

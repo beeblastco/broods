@@ -70,6 +70,9 @@ export function resolveWebSocket(): new (
   return impl;
 }
 
+/** The server refused to mint a stage credential. Reconnecting cannot fix it. */
+export class StageSessionRefusedError extends Error {}
+
 /** Continuously stream logs, reconnecting transient socket failures until aborted. */
 export async function* subscribeObservabilityLogs(
   options: ObservabilityClientOptions,
@@ -94,6 +97,7 @@ export async function* subscribeObservabilityLogs(
       if (subscribeOptions.signal?.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
       if (
+        error instanceof StageSessionRefusedError ||
         /unauthorized|invalid websocket token|scope does not match/i.test(
           message,
         )

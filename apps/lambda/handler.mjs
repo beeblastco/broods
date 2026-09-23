@@ -410,12 +410,6 @@ function positiveEnvInt(name, fallback) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-// Dispose one child: clear the warm slot if it holds it, SIGKILL its group.
-function retire(state) {
-  if (warm === state) warm = null;
-  killGroup(state.child);
-}
-
 // Kill every process of this UID that is not this handler or one of its
 // ancestors. A bundle can setsid() out of the group killGroup reaches, and the
 // survivor would share /proc with the next account's child in this warm
@@ -439,6 +433,12 @@ function reapStrays() {
       // Exited between the listing and the kill.
     }
   }
+}
+
+// Dispose one child: clear the warm slot if it holds it, SIGKILL its group.
+function retire(state) {
+  if (warm === state) warm = null;
+  killGroup(state.child);
 }
 
 // Reuse needs the tenant identity in the key: without accountId the call runs

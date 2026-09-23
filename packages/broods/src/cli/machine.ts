@@ -21,7 +21,11 @@ import {
   type MachineMcpToolsFrame,
   type MachineResultFrame,
 } from "../../../../apps/core/src/shared/machine-socket.ts";
-import { reconnectDelay, resolveWebSocket } from "../observability-client.ts";
+import {
+  reconnectDelay,
+  resolveWebSocket,
+  StageSessionRefusedError,
+} from "../observability-client.ts";
 import { agentEnv } from "../runtime-config.ts";
 import { webSocketSubprotocols } from "../websocket.ts";
 import type { DesktopDriver } from "./desktop.ts";
@@ -39,11 +43,11 @@ const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_MIN_MS = 1_000;
 
 export interface MachineDaemonOptions {
-  /** Called per connection, so a reconnect can carry a fresh stage ticket. */
-  credential: () => Promise<string>;
   baseUrl: string;
   /** Serve the computer tool through the desktop helper. */
   computer?: boolean;
+  /** Called per connection, so a reconnect can carry a fresh stage ticket. */
+  credential: () => Promise<string>;
   /** Working directory for an exec that names none. */
   cwd: string;
   /** Take the record over from another daemon. */
@@ -135,9 +139,22 @@ export async function runMachineDaemon(
   try {
     while (!options.signal.aborted) {
       const startedAt = Date.now();
+      let token: string;
+      try {
+        token = await options.credential();
+      } catch (error) {
+        // A refused login is final; an unreachable backend is a reconnect.
+        if (error instanceof StageSessionRefusedError) throw error;
+        options.log(
+          `stage session unavailable (${error instanceof Error ? error.message : String(error)}), retrying in ${Math.round(delayMs / 1000)}s`,
+        );
+        await reconnectDelay(delayMs, options.signal);
+        delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
+        continue;
+      }
       const closed = await serveOnce(
         options,
-        await options.credential(),
+        token,
         instance,
         WebSocketImpl,
         desktop,

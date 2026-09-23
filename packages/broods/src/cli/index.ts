@@ -1150,9 +1150,9 @@ async function streamDevLogs(
   let session: ObservabilityClientOptions;
   try {
     session = await openStageSession(args);
-  } catch {
+  } catch (error) {
     console.log(
-      "· live logs off. This stage has no deployment yet. Run `broods dev --once` to create it.",
+      `· live logs off. ${error instanceof Error ? error.message : String(error)}`,
     );
 
     return;
@@ -2085,8 +2085,6 @@ async function syncEnvFromLocal(
   }
 }
 
-// Runtime API key (BROODS_API_KEY, written by `deploy`/`init`) + base URL
-// for the observability gateway. No dashboard login required.
 /**
  * Parse --all / --level <lvl> into a LogLevel. The terminal defaults
  * to WARN: a healthy run is not what a developer watches a terminal for, and
@@ -2652,8 +2650,10 @@ async function ensureEnvLocalIgnored(): Promise<void> {
   const existing = await readTextIfExists(path);
   const ignored = existing
     .split(/\r?\n/)
-    .some((line) =>
-      [".env.local", ".env*.local", ".env*"].includes(line.trim()),
+    .some((line): boolean =>
+      [".env.local", "/.env.local", ".env*.local", ".env.*", ".env*"].includes(
+        line.trim(),
+      ),
     );
   if (ignored) return;
   const body = existing

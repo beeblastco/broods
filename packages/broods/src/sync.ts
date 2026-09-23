@@ -5,6 +5,7 @@
 import type { CliManifest, GeneratedIds } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
+import { StageSessionRefusedError } from "./observability-client.ts";
 
 export interface SyncClientOptions {
   /**
@@ -74,7 +75,6 @@ export interface CliOnboardingContext {
   user?: CliOnboardingUser;
 }
 
-/** One stage of a project, as listed by `broods stage list`. */
 /** A 15-minute stage ticket and the slugs the gateway paths use. */
 export interface CliStageSession {
   token: string;
@@ -83,6 +83,7 @@ export interface CliStageSession {
   stageSlug: string;
 }
 
+/** One stage of a project, as listed by `broods stage list`. */
 export interface CliStage {
   id: string;
   name: string;
@@ -441,7 +442,17 @@ export class BroodsSyncClient {
       },
     );
     assertRouteMounted(response, "/v1/account/stage-session", "broods logs");
-    await assertOk(response, "Open stage session failed");
+    try {
+      await assertOk(response, "Open stage session failed");
+    } catch (error) {
+      // No login or no deployment: a retry gets the same answer.
+      if (response.status === 401 || response.status === 404) {
+        throw new StageSessionRefusedError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
 
     return (await response.json()) as CliStageSession;
   }

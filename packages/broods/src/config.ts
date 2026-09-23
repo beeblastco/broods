@@ -100,6 +100,8 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
     logins: { ...logins, [config.baseUrl]: config },
   };
   await mkdir(dirname(USER_CONFIG_PATH), { recursive: true, mode: 0o700 });
+  // `mode` only applies on create; an older CLI made this directory 0755.
+  await chmod(dirname(USER_CONFIG_PATH), 0o700);
   await writePrivateFile(
     USER_CONFIG_PATH,
     `${JSON.stringify(file, null, 2)}\n`,

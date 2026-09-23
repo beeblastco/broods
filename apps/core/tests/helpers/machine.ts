@@ -151,7 +151,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
     accounts: {
       getById: async (accountId: string) =>
         accountId === MACHINE_ACCOUNT_ID ? account : null,
-      getBySecretHash: async (hash: string) =>
+      getBySecretHash: async (hash: string): Promise<AccountRecord | null> =>
         hash === hashAccountSecret(MACHINE_ACCOUNT_SECRET) ? account : null,
     },
     agentDeployments: {

@@ -8,7 +8,7 @@
  * recover it for dashboard streaming and CLI reconnect without rotating.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
   internalQuery,
@@ -39,12 +39,15 @@ import {
 
 export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 
-export interface StageSession {
-  token: string;
-  expiresAt: number;
-  projectSlug: string;
-  stageSlug: string;
-}
+/** A minted stage ticket plus the slugs the gateway's observability path uses. */
+export const stageSessionValidator = v.object({
+  token: v.string(),
+  expiresAt: v.number(),
+  projectSlug: v.string(),
+  stageSlug: v.string(),
+});
+
+export type StageSession = Infer<typeof stageSessionValidator>;
 
 /** Safe runtime deployment scope returned to core without stored credentials. */
 const agentDeploymentScopeValidator = v.object({
