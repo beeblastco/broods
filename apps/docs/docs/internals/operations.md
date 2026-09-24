@@ -38,6 +38,34 @@ flowchart LR
 - Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
 - Core runs as a single replica, because the machine sandbox registry and the worker queue live in memory.
 - On boot and every 30 seconds, `apps/core/src/harness/ingress-recovery.ts` starts queued work whose conversation has no live owner. Convex promotes each queue atomically, so an overlapping pod never runs one twice.
+
+What a core restart does to running work, from `shutdown()` and boot in `apps/core/src/server.ts`:
+
+```mermaid
+sequenceDiagram
+  participant K as k8s
+  participant Old as old core pod
+  participant CVX as Convex runtimeIngress
+  participant New as new core pod
+
+  K->>Old: SIGTERM
+  Old->>Old: stopIngressRecovery, server.stop()
+  Old->>Old: drain in-flight requests and in-process workers
+  alt drained before SHUTDOWN_DEADLINE_MS (25 s)
+    Old->>Old: stop isolate pool and sandbox sweeper
+  else runs still going
+    Old->>CVX: interruptLiveOwners, fail runs and release leases (3 s budget)
+  end
+  Old->>Old: flush OTel, exit
+  K->>New: start
+  New->>New: check service secrets, prewarm isolate, start sweeper
+  loop on boot, then every 30 s
+    New->>CVX: recoverQueuedIngress
+    CVX-->>New: orphaned queues, each promoted to a new generation
+    New->>New: dispatchAppliedIngress on in-process workers
+  end
+```
+
 - The gateway buffers each proxied request body and refuses one over 20 MiB (`GATEWAY_MAX_REQUEST_BODY_BYTES`). A WebSocket upgrade whose token core cannot check, on a 5xx or timeout, gets `502` and does not count against `GATEWAY_AUTH_FAILURES_PER_MINUTE`, default 20. On `SIGTERM` the gateway stops listening and closes open sockets with `1012`, so clients reconnect to another pod.
 - Core schedules nothing. The Convex crons component owns every schedule, including the account-deletion cascade. When one fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` to `BROODS_ACCOUNT_MANAGE_URL/v1/cron-runs` with `SERVICE_AUTH_SECRET`.
 - Core's sandbox sweeper releases reserved sandboxes whose conversation never came back, once an hour by default (`SANDBOX_SWEEP_INTERVAL_SECONDS`). A lease keeps two core pods from sweeping at once. It lives in core, not a Convex cron, because deleting a sandbox calls the in-cluster workdir control plane.

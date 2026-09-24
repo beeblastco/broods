@@ -97,6 +97,33 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 - `createTurnContext()` loads history, builds system prompt parts, runs compaction when configured (`compaction.ts`) and prunes model-visible messages (`pruning.ts`).
 - `resolvedWorkspaces()`, backed by `resolveAgentRuntime()` in `src/shared/workspaces.ts`, resolves workspace and sandbox records, applies per-workspace overrides and hashes namespaces.
 
+What one turn reads and writes, and in which store:
+
+```mermaid
+sequenceDiagram
+  participant H as handler.ts
+  participant S as Session
+  participant CVX as Convex
+  participant S3 as S3 workspace bucket
+  participant M as harness.ts
+
+  H->>CVX: admit through runtimeIngress, lease + ownerGeneration
+  H->>S: claim()
+  S->>CVX: claimEvent in runtimeClaims (dedup)
+  H->>S: appendIngressEvents(events)
+  S->>CVX: persist to runtimeConversationEvents
+  Note over S: persist: false system messages stay in memory for this turn
+  H->>S: createTurnContext()
+  par loaded at once
+    S->>CVX: history pages
+    S->>S3: memory/MEMORY.md per workspace (loadMemoryFile)
+    S->>S: resolve workspaces, skill and subagent metadata
+  end
+  S->>S: system prompt parts, compaction, pruning
+  S-->>M: messages + system for streamText
+  M->>CVX: persistModelMessages each step, fenced by ownerGeneration
+```
+
 Structured memory is one markdown file per fact under `memory/`, indexed by `memory/MEMORY.md`. `memory_save` (`tools/memory.tool.ts`) writes an entry and updates the index through the sandbox write path. The index is loaded into the system prompt when it exists.
 
 ## Skills

@@ -83,6 +83,32 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 
 ### Direct run over HTTP
 
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as gateway
+  participant H as core handler.ts
+  participant X as Convex runtimeIngress
+  participant R as harness.ts
+  C->>G: POST /v1/runs (bearer)
+  G->>H: proxyHttp, x-broods-via-gateway
+  H->>H: routeIncomingEvent, resolve credential and agent
+  H->>X: accept envelope
+  alt conversation busy
+    X-->>H: queued or steered
+    H-->>C: 202 runId, statusUrl
+  else sync
+    X-->>H: owner generation
+    H->>R: session.ts claim, then streamText loop
+    R-->>C: SSE stream parts
+  else background: true
+    H->>X: runtimeAsyncAgentResults row
+    H-->>C: 202 runId
+    H->>R: dispatchInProcessWorker
+    C->>G: GET /v1/runs/:runId
+  end
+```
+
 1. The client sends `POST /v1/runs`, or the scoped `POST /v1/projects/:p/stages/:s/agents/:endpointId`, with a bearer credential.
 2. The gateway sees a non-config `/v1/` path and proxies it to core (`apps/gateway/src/upstream.ts` `proxyHttp`), stripping `Host` and stamping `x-broods-via-gateway`.
 3. `apps/core/src/server.ts` routes it to the harness handler. `routeIncomingEvent` in `src/harness/integrations.ts` resolves the credential (`src/shared/auth.ts`), loads the agent, and applies the public-access and run-override rules for a runtime key.
@@ -94,6 +120,29 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 
 ### WebSocket run
 
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as gateway agent.ts
+  participant H as core
+  participant N as NATS WS_RESPONSES
+  C->>G: open /v1/agents/:endpointId/ws
+  G->>H: /v1/internal/observability-scope
+  H-->>G: token scope
+  C->>G: execute frame
+  G->>H: POST run with connectionId
+  H-->>G: accepted, subject name
+  G-->>C: ack
+  H->>H: nats-worker in-process worker
+  loop each stream part
+    H->>N: publish frame
+    N-->>G: ordered consumer, replay then tail
+    G-->>C: output frame with cursor
+  end
+  G->>H: poll run status after 3 s of quiet
+  G-->>C: done or error
+```
+
 1. The client opens `/v1/agents/:endpointId/ws` or the scoped form. The credential rides the `Sec-WebSocket-Protocol` header.
 2. The gateway asks core for the token's scope (`/v1/internal/observability-scope`) and refuses an endpoint outside it. Attach never reaches the core run path, so this is the door check.
 3. On `execute` or `control`, the gateway posts the run to the same core path with a `connectionId` (`apps/gateway/src/agent.ts`). Core admits it and answers JSON naming the NATS subject instead of an SSE stream.
@@ -104,6 +153,8 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 
 ### Channel webhook
 
+The sequence, with what the provider ACK waits on, is in [channels](channels.md#runtime-flow).
+
 1. The provider posts to `/v1/webhooks/:accountId/:channel`, or `/v1/webhooks/:accountId/dev/:endpointId/:channel` for a non-production stage. Discord messages and all Matrix traffic come from the two forwarders, which post to the same URL.
 2. The gateway proxies to core. `integrations.ts` loads the account and finds the credential holder, the agent whose channel credentials verify the request. On the bare URL, when two agents verify, the lowest agent id wins. A stage URL that resolves to no agent is a `404`.
 3. The holder's adapter (`src/shared/<channel>-channel.ts`) authenticates and parses the request into an `InboundMessage`.
@@ -111,6 +162,31 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 5. The `agent.invoke` policy gate runs. `handleChannelRequest` admits the message: it deduplicates it and queues it in Convex. The provider gets its ack once admission finishes or after `CHANNEL_ACK_BUDGET_MS` (2 s), whichever comes first, so a provider retry never races an admitted message. The turn then runs on the same bounded worker pool as async and WebSocket runs, and replies through the adapter's `ChannelActions`. Matrix replies go to the matrix-forwarder's `/v1/send`, since only it holds the room keys.
 
 ### Cron fire
+
+```mermaid
+sequenceDiagram
+  participant S as Convex crons component
+  participant D as agent/crons.ts dispatch
+  participant H as core handleScheduledCron
+  participant X as Convex
+  S->>D: schedule fires
+  D->>H: POST /v1/cron-runs, service token, in-cluster
+  H->>X: crons.getById
+  alt missing or paused
+    H-->>D: skipped
+  else active
+    H->>X: markStarted
+    H->>H: startScheduledAgentRun
+    alt run started
+      H->>X: markCompleted
+    else run failed
+      H->>X: markFailed
+    end
+    opt one-time at(...) job
+      H->>X: removeOneShotCron when the run settles
+    end
+  end
+```
 
 1. A schedule in the Convex crons component fires `packages/convex/agent/crons.ts` `dispatch`.
 2. The action posts `{ kind: "cron", accountId, cronId, scheduledTime }` to core's in-cluster address (`BROODS_ACCOUNT_MANAGE_URL`) at `/v1/cron-runs` with the service token. The gateway answers `404` on that path.
@@ -125,6 +201,22 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 4. Sandbox lifecycle verbs (`/v1/sandboxes/:id/suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec`, `terminal`) and account creation and deletion are the exceptions. They reach core's account handler (`src/accounts/handler.ts`, `routesToAccountManage`). The dashboard reaches them through Convex actions that call core with the service token (`packages/convex/model/serviceBridge.ts`).
 
 ### CLI sync
+
+```mermaid
+sequenceDiagram
+  participant CLI as broods dev / deploy
+  participant G as gateway
+  participant V as Convex cli/http.ts
+  participant S as S3
+  CLI->>CLI: compile broods/ into a manifest
+  CLI->>G: PUT /v1/account/projects/:project/stages/:stage/manifest
+  G->>V: /v1/account/* goes to Convex
+  V->>V: authenticate login token or deploy key
+  V->>V: cliSync: resolve env refs, encrypt agent config
+  V->>S: skill and bundle bytes
+  V-->>CLI: manifest, ids, deployment with the runtime key
+  CLI->>CLI: write broods/_generated/ and BROODS_API_KEY
+```
 
 1. `broods dev` or `broods deploy` compiles `broods/` into a manifest (`packages/broods/src/manifest.ts`). Hosted MCP handlers and code hooks are bundled here.
 2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it.
@@ -149,6 +241,66 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 Channel webhooks use each provider's own signature or secret, checked by the adapter. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
 
 ## Where state lives
+
+### Tenancy model
+
+An org is the billing and login unit, and its account is the tenant every runtime row keys on. Projects and stages scope config, keys and deployments below it.
+
+```mermaid
+classDiagram
+  direction LR
+  class users {
+    authId
+    plan
+  }
+  class orgs {
+    slug
+    plan
+  }
+  class orgMembers {
+    role: owner | admin | member
+  }
+  class accounts {
+    secretHash
+    status: active | disabled
+  }
+  class projects {
+    slug
+  }
+  class stages {
+    kind: development | production | custom
+  }
+  class agentDeployments {
+    endpointId
+    apiKeyHash
+  }
+  class deployKeys {
+    keyHash
+  }
+  class agents {
+    encryptedConfig
+  }
+  class crons {
+    scheduleExpression
+    status: active | paused
+  }
+  class accountRoles
+  class roleSessions
+
+  users "1" -- "*" orgMembers
+  orgs "1" -- "*" orgMembers
+  orgs "1" -- "1" accounts : orgId
+  orgs "1" -- "*" projects
+  projects "1" -- "*" stages
+  stages "1" -- "*" agentDeployments : runtime keys, one active
+  stages "1" -- "*" deployKeys
+  accounts "1" -- "*" agents
+  agents "1" -- "*" crons
+  accounts "1" -- "*" accountRoles
+  accountRoles "1" -- "*" roleSessions
+```
+
+The doc id of `accounts` is the `accountId` every other table carries. Config rows such as `mcp`, `sandboxConfigs` and `workspaceConfigs` also hold `projectId` and `stageId`. Sandbox and workspace rows the account REST API creates leave both unset and are shared across stages.
 
 ### Convex tables
 

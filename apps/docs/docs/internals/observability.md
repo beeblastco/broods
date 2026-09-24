@@ -47,7 +47,30 @@ The durable `OBSERVABILITY` JetStream stream binds `v1.*.*.*.logs.>` and `v1.*.*
 
 ## The observability socket
 
-The dashboard Monitoring and Tracing tabs and `broods logs`, `broods stream` and `broods dev` read through the gateway's observability socket.
+The dashboard Monitoring and Tracing tabs and `broods logs`, `broods stream` and `broods dev` read through the gateway's observability socket. One `logs` subscribe, from `handleObservabilitySubscribe()` in `apps/gateway/src/observability.ts`:
+
+```mermaid
+sequenceDiagram
+  participant C as dashboard or CLI
+  participant G as gateway
+  participant Core as core
+  participant N as NATS OBSERVABILITY
+  participant L as Loki
+
+  C->>G: WS upgrade, fp_dts_ ticket
+  G->>Core: /v1/internal/observability-scope
+  Core-->>G: account, project, stage
+  G->>G: refuse if the path's project or stage differ
+  C->>G: subscribe logs, backfill: n
+  G->>N: ordered consumer, last 30 minutes
+  N-->>C: replayed lines, then live lines
+  G-->>C: ready
+  G->>L: stepped query, 1 h, then 1 day, then 30 days
+  L-->>G: older lines
+  G-->>C: closing backfill message, error set on failure
+```
+
+Traces take the same path, with a Tempo search in place of the Loki query.
 
 - It refuses the stage runtime key. Clients connect with a fifteen-minute stage session ticket (`fp_dts_`), which the CLI mints from a login token at `POST /v1/account/stage-session` and refreshes before each reconnect.
 - A `subscribe` with `backfill` always gets a closing `backfill` message, even when Loki or Tempo failed; that message then carries `error`, so a client can tell an empty stage from a failed query.

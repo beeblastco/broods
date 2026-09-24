@@ -31,6 +31,98 @@ Two sibling repos sit next to the checkout:
 
 The [architecture](architecture.md) page has the system diagram, each request path, and where every record lives.
 
+## Deployment
+
+The managed service runs on one Hetzner k3s cluster and one AWS account. The cluster holds every long-running process, including the self-hosted Convex backends. AWS holds the bytes and the untrusted compute. Dev and production share the cluster as separate releases, `core-dev` next to `core` and so on, and each has its own SST stage in AWS, `dev` and `production-eu-west-1`.
+
+```mermaid
+flowchart TB
+  subgraph Outside["Internet"]
+    Users["SDK, CLI, browsers"]
+    Chat["Slack, Telegram, GitHub,<br/>Zalo, Pancake webhooks"]
+    SaaS["WorkOS, Stripe webhooks"]
+    Machine["broods machine daemon"]
+    Sock["Discord Gateway,<br/>Matrix homeservers"]
+  end
+
+  subgraph K3s["Hetzner k3s cluster, nbg1 (../infra)"]
+    Ingress["Hetzner load balancer<br/>Traefik, cert-manager TLS"]
+
+    subgraph NsApp["namespace beeblast"]
+      GW["gateway, gateway-dev"]
+      Dash["dashboard, dashboard-dev"]
+      Core["core, core-dev<br/>no ingress"]
+      Fwd["discord-forwarder,<br/>matrix-forwarder + volume"]
+      OPA["OPA"]
+    end
+
+    subgraph NsConvex["namespace convex"]
+      CVX["convex-prod, convex-dev"]
+      PG[("Postgres")]
+    end
+
+    NATS[("namespace nats<br/>NATS JetStream")]
+
+    subgraph NsObs["namespace observability"]
+      Otel["OTel collector"]
+      Store[("Loki, Tempo,<br/>VictoriaMetrics")]
+    end
+  end
+
+  subgraph AwsData["AWS eu-west-1, SST stack per stage"]
+    S3[("S3: Filesystem,<br/>Skills, ToolBundles")]
+    MCPR["mcp-runner Lambda"]
+    VM["Lambda MicroVMs"]
+    CW["CloudWatch,<br/>sandbox-log-forwarder"]
+  end
+
+  CS3[("AWS eu-central-1<br/>Convex storage buckets")]
+  Ext["model providers,<br/>Daytona, E2B, Vercel"]
+
+  Users --> Ingress
+  Chat --> Ingress
+  SaaS --> Ingress
+  Machine --> Ingress
+  Sock <--> Fwd
+
+  Ingress --> GW
+  Ingress --> Dash
+  Ingress -->|"convex-api host"| CVX
+
+  Fwd --> GW
+  GW --> Core
+  GW -->|"config paths"| CVX
+  GW --> NATS
+  Core --> CVX
+  Core --> NATS
+  Core --> OPA
+  Core --> Otel
+  Otel --> Store
+  GW -->|"history"| Store
+  CVX --> PG
+  CVX --> CS3
+
+  Core --> S3
+  Core --> MCPR
+  Core --> VM
+  Core --> Ext
+  VM --> S3
+  VM --> CW
+  CW --> Otel
+```
+
+| Where                        | What runs there                                                                                                                                                | Provisioned by                           |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Hetzner k3s, `beeblast`      | gateway, core, dashboard, OPA, the two forwarders. One public door per stage: `gateway.broods.app` and `gateway.dev.broods.app`. Core has no ingress.          | `../infra` Helm releases                 |
+| Hetzner k3s, `convex`        | Self-hosted `convex-backend` for prod and dev, on one Postgres with a block volume. Browsers and CI use the public api host; gateway and core stay in-cluster. | `../infra` Helm releases                 |
+| Hetzner k3s, `nats`          | NATS JetStream for `WS_RESPONSES` and `OBSERVABILITY`. In-cluster only.                                                                                        | `../infra` Helm releases                 |
+| Hetzner k3s, `observability` | OTel collector, Loki, Tempo, VictoriaMetrics, Grafana.                                                                                                         | `../infra` Helm releases                 |
+| AWS `eu-west-1`              | Workspace, skill and bundle buckets, the mcp-runner Lambda, MicroVM images and roles, the MicroVM log group and forwarder, the sandbox VPC.                    | `apps/core/sst.config.ts`, per SST stage |
+| AWS `eu-central-1`           | Convex storage buckets and nightly exports.                                                                                                                    | `../infra` Terraform                     |
+| GitHub                       | Actions for CI and deploys, `ghcr.io/beeblastco/broods-*` images.                                                                                              | `.github/workflows`                      |
+
+The forwarders are one release each for both planes, because a bot token must hold one socket. The docs site is static files on S3 behind CloudFront. How a commit reaches each box is in [CI/CD](ci-cd.md), and how to run the same shape yourself is in [self-hosting](self-hosting.md).
+
 ## Where to start reading
 
 1. [Architecture](architecture.md) for the request path and where each record lives.

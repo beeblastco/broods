@@ -34,6 +34,35 @@ The async subsystem (`async-tools.ts`, `async-tool-result.ts`) creates `runtimeA
 - Detached work, currently `bash` background jobs, settles through the token-authenticated `POST /v1/sandbox-jobs/{resultId}/complete`, which resumes the conversation. See [architecture](architecture.md).
 - The original background-run status row settles through `asyncResultEventId`. The internal continuation uses a separate event id for dedup.
 
+An in-process `async: true` tool, from call to injection:
+
+```mermaid
+sequenceDiagram
+  participant M as model
+  participant A as AsyncToolCoordinator
+  participant T as tool execute
+  participant CV as runtimeAsyncToolResults
+  participant L as runParentContinuationLoop
+
+  M->>A: call the wrapped tool
+  A->>CV: createPendingAsyncToolResult, processing
+  A->>T: start execute, not awaited
+  A-->>M: resultId, status running
+  opt model checks early
+    M->>CV: async_status(statusId)
+  end
+  M-->>L: parent pass ends
+  L->>A: waitForIdle, heartbeat every 15 s
+  T-->>A: output
+  A->>CV: markAsyncToolResultCompleted
+  A-->>L: idle
+  L->>A: drainCompletionsToParent
+  A->>A: persist results as parent user messages
+  L->>M: next parent pass
+```
+
+A call still pending near the request or worker deadline goes through `drainCompletionsAndTimeoutsToParent` instead, which marks it `failed` and injects a timeout notice beside the finished results. `async_status` marks a settled row `observed`, so the detached resume path does not inject the same answer again.
+
 Approval requests on a sync direct API run stream as SSE and persist in the conversation. The caller resumes with a `tool-approval-response`. Channel turns cannot complete approval, so they deny tools with `needsApproval`.
 
 ## MCP servers
@@ -56,10 +85,41 @@ The mcp-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the 
 
 - Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS`, default 10 ms, and sends every call for the same account and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX`, default 8. Setting it to `1` disables batching. The child runs them concurrently and answers each on its own frame.
 - A batch shares one 30 s deadline and one 16 MB output cap. `RUN_TIMEOUT_MS` in `apps/lambda/handler.mjs` sets the deadline, with a 2 s grace for the child to abort itself. Its CPU is split evenly across its calls.
-- Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A child serves at most `MCP_CHILD_MAX_CALLS` calls, default 64, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
+- Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A child serves at most `MCP_CHILD_MAX_CALLS` invokes, default 64, each one batch, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
 - Metering. Each call's span carries `tool.compute.type: "mcp-sandbox"` and `tool.compute.cpu_usec`, billed into the account's tool-sandbox CPU usage.
 - Every invoke carries the account id as its Lambda tenant id, unless `MCP_TENANT_ISOLATION=false` on a non-production stage. See [security](security.md).
 - The bundle reaches the runner as a pre-signed URL valid for 120 s, so the function holds no S3 access.
+
+Two parallel calls from one model step, end to end:
+
+```mermaid
+sequenceDiagram
+  participant M as model step
+  participant H as hosted.ts
+  participant L as mcp-runner handler.mjs
+  participant S3 as ToolBundles bucket
+  participant C as child-runner.mjs
+
+  M->>H: call A
+  M->>H: call B
+  Note over H: enqueueCall parks both under accountId:sha256<br/>until MCP_BATCH_WINDOW_MS or MCP_BATCH_MAX
+  H->>H: flushBatch, presign bundleUrl for 120 s
+  H->>L: InvokeWithResponseStream, mode mcp, requests A and B
+  alt warm child matches accountId and sha256
+    L->>C: reuse the warm child
+  else no match
+    L->>S3: fetch bundleUrl while spawning
+    L->>C: spawn, bundle on fd 3
+    C->>C: check sha256, import from memory
+  end
+  C->>C: run A and B concurrently
+  C-->>L: final frame for A, final frame for B
+  C-->>L: end frame with batch CPU
+  L-->>H: NDJSON frames as they arrive
+  H-->>M: resolve A and B by id, CPU split evenly
+```
+
+A batch that ends on an `error` frame, or on no terminal frame at all, retires the child, and core fails every call it has no answer for.
 
 Because the transport is stateless, per-invoke hosting is a complete implementation, and agents use hosted and external servers the same way. `defineTool` and `POST /v1/tools` are retired; hosted MCP servers replace them.
 

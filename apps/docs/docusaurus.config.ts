@@ -99,6 +99,9 @@ const config: Config = {
         id: "api-reference",
         label: "API Reference",
         route: "/api-reference",
+        // The navbar already has an "API" item in its own slot. Scalar would
+        // append a second link to the same page.
+        showNavLink: false,
         configuration: {
           spec: {
             content: fs.readFileSync(

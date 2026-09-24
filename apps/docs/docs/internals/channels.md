@@ -34,16 +34,47 @@ flowchart TD
   Parse -->|"context"| Context["store as context,<br/>no agent run"]
   Parse --> Record["channel record lookup<br/>(platform, externalId)"]
   Record --> Gate["agent.invoke policy gate"]
-  Gate -->|"message"| Ack["provider ACK"]
-  Ack --> After["afterResponse"]
-  After --> Handler["handleChannelRequest"]
-  Handler --> Session["session.ts"]
+  Gate -->|"message"| Handler["handleChannelRequest<br/>ingest, acceptIngress"]
+  Handler --> Ack["provider ACK<br/>after admission or 2 s"]
+  Handler --> Worker["channel-worker"]
+  Worker --> Session["session.ts"]
   Session --> Harness["harness.ts"]
   Harness --> Actions["ChannelActions"]
   Actions --> Provider
 ```
 
-`handleChannelWebhook` in `integrations.ts` runs the steps in that order. The ACK waits for admission, dedup and a durable queue entry in Convex, for at most `CHANNEL_ACK_BUDGET_MS` (2 s). That stays under Slack's and Discord's 3 s retry limit, and a retry never races an admitted message. Model work starts after the ACK, on the `MAX_INPROCESS_WORKERS` pool.
+`handleChannelWebhook` in `integrations.ts` runs the steps in that order. The ACK waits for attachment ingest, admission, dedup and a durable queue entry in Convex, for at most `CHANNEL_ACK_BUDGET_MS` (2 s). That stays under Slack's and Discord's 3 s retry limit, and a retry never races an admitted message. Model work starts on the `MAX_INPROCESS_WORKERS` pool once admission makes this message the conversation's owner.
+
+One message over time. The `critical` block is what the ACK waits on:
+
+```mermaid
+sequenceDiagram
+  participant P as Provider
+  participant G as gateway
+  participant I as integrations.ts
+  participant H as handler.ts
+  participant CV as Convex runtimeIngress
+  participant W as channel-worker
+  participant R as harness.ts
+
+  P->>G: POST /v1/webhooks/:accountId/:channel
+  G->>I: proxy to core
+  I->>I: authenticate, parse, channel record, agent.invoke gate
+  critical at most CHANNEL_ACK_BUDGET_MS (2 s)
+    I->>H: handleChannelRequest (typing and reaction fire first)
+    H->>H: ingestChannelAttachments
+    H->>CV: acceptIngress, mode steer
+    CV-->>H: owner, queued or duplicate
+    H->>W: dispatchInProcessWorker, only when owner
+  end
+  I-->>G: provider ack
+  G-->>P: 200
+  W->>R: runChannelTurns
+  R->>P: ChannelActions sendText or stream
+  W->>CV: settle envelope, drain queued follow-ups
+```
+
+A `queued` or `duplicate` outcome returns without a worker. The current owner drains the queued envelope on its own worker slot when its turn settles.
 
 If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
 
@@ -53,7 +84,77 @@ A record lookup that finds nothing falls back to the credential holder. A lookup
 
 ## Adapter contract
 
-Each provider implements `ChannelAdapter` from `src/shared/channels.ts`:
+Each provider implements `ChannelAdapter` from `src/shared/channels.ts`. The types it produces and consumes:
+
+```mermaid
+classDiagram
+  direction LR
+  class ChannelAdapter
+  <<interface>> ChannelAdapter
+  ChannelAdapter : +name string
+  ChannelAdapter : +canHandle(req) boolean
+  ChannelAdapter : +authenticate(req) boolean
+  ChannelAdapter : +parse(req) ChannelParseResult
+  ChannelAdapter : +actions(msg) ChannelActions
+  ChannelAdapter : +applyReplyIn?(source, replyIn)
+  ChannelAdapter : +rehydrateAttachment?(attachment)
+
+  class ChannelActions
+  <<interface>> ChannelActions
+  ChannelActions : +sendText(text)
+  ChannelActions : +sendTyping()
+  ChannelActions : +reactToMessage(emoji)
+  ChannelActions : +supportsReactions? boolean
+  ChannelActions : +sendImages?(images, caption)
+  ChannelActions : +sendFiles?(files, caption)
+  ChannelActions : +sendSticker?(sticker)
+  ChannelActions : +sendQuestions?(prompt)
+  ChannelActions : +stream?(textStream, options)
+
+  class ChannelParseResult
+  <<union>> ChannelParseResult
+  class ParsedChannelMessage["ParsedChannelMessage, kind message"]
+  ParsedChannelMessage : +message InboundMessage
+  ParsedChannelMessage : +ack? ChannelResponse
+  class ParsedChannelContext["ParsedChannelContext, kind context"]
+  ParsedChannelContext : +message InboundMessage
+  class ParsedChannelCleanup["ParsedChannelCleanup, kind cleanup"]
+  ParsedChannelCleanup : +channelName string
+  ParsedChannelCleanup : +conversationKey string
+  class Ignore["kind ignore"]
+  Ignore : +response? ChannelResponse
+  class Respond["kind response"]
+  Respond : +response ChannelResponse
+
+  class InboundMessage
+  InboundMessage : +eventId string
+  InboundMessage : +conversationKey string
+  InboundMessage : +channelName string
+  InboundMessage : +content UserContent
+  InboundMessage : +attachments? Attachment[]
+  InboundMessage : +events? ChannelIngressEvent[]
+  InboundMessage : +source Record
+  InboundMessage : +answer? ChannelQuestionAnswer
+
+  class ChannelIdentity
+  ChannelIdentity : +workspaceRef? string
+  ChannelIdentity : +channelId? string
+  ChannelIdentity : +threadId? string
+  ChannelIdentity : +userId? string
+  ChannelIdentity : +userName? string
+  ChannelIdentity : +userRoles? string[]
+
+  ChannelAdapter ..> ChannelParseResult : parse
+  ChannelAdapter ..> ChannelActions : actions
+  ChannelParseResult <|-- ParsedChannelMessage
+  ChannelParseResult <|-- ParsedChannelContext
+  ChannelParseResult <|-- ParsedChannelCleanup
+  ChannelParseResult <|-- Ignore
+  ChannelParseResult <|-- Respond
+  ParsedChannelMessage --> InboundMessage
+  ParsedChannelContext --> InboundMessage
+  InboundMessage --> ChannelIdentity : identity
+```
 
 | Member                   | Purpose                                                                                  |
 | ------------------------ | ---------------------------------------------------------------------------------------- |
@@ -138,7 +239,7 @@ A workspace file leaves as a durable `/v1/media/{ticket}` link served by core, n
 
 ## Inbound attachments
 
-- Parsing never downloads. Media is read later in the run, not during parse, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack.
+- Parsing never downloads. `ingestChannelAttachments` reads media after parse, just before admission, so a queued turn still carries it. The ACK waits at most 2 s for that, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack.
 - With a workspace attached, each attachment is read once and written twice, to the agent's default workspace under `media/` for its own tools, and to the attachment store, a prefix of the managed bucket that no sandbox mounts. The model gets a `/v1/media/{ticket}` link to the attachment-store copy, so it survives the agent tidying its workspace. Nothing is inlined as base64, because the conversation is stored as JSON and a link still resolves when the turn replays later. Deleting the account deletes the store.
 - With no workspace, nothing is stored. The bytes reach the model on the turn they arrive, and the message keeps a reference to the channel's own copy so a later turn re-reads it with the channel's credentials. The channel then decides how long media works. A Telegram file id lasts, and a Discord link expires within a day.
 - Core checks limits twice, on the declared size and on the bytes read. The limits are 6 MB for a picture, 25 MB for anything else, at most ten attachments per message. The media type is sniffed from the bytes, not taken from the provider, except when the sniff only identifies a container, since a `.docx` is a zip. An unreadable attachment becomes a line of text saying so.
@@ -153,6 +254,30 @@ Two providers do not deliver ordinary messages to a webhook, so a separate singl
 | ------------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `apps/discord-forwarder` | Discord sends regular messages only over a Gateway WebSocket                                 | `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }` with the bot token in `x-discord-gateway-token`                                                            | nothing. Replies use the Discord REST API.                                                                           |
 | `apps/matrix-forwarder`  | Matrix has no webhooks. A client long-polls `/sync`. The forwarder also holds the E2EE keys. | `{ "type": "MATRIX_ROOM_EVENT", "encrypted", "event", "roomId", "senderName", "userId" }`, already decrypted, with the access token in `x-matrix-access-token` | `POST /v1/send` and `POST /v1/typing` at `MATRIX_FORWARDER_URL`, because only the forwarder can encrypt for the room |
+
+A Matrix message and its reply make one round trip through the forwarder:
+
+```mermaid
+sequenceDiagram
+  participant HS as Matrix homeserver
+  participant F as matrix-forwarder
+  participant G as gateway
+  participant C as core matrix-channel.ts
+
+  F->>HS: /sync long-poll from the stored sync token
+  HS-->>F: timeline events
+  F->>F: OlmMachine decrypt, hold back until keys arrive
+  F->>G: POST channel webhook, MATRIX_ROOM_EVENT
+  G->>C: proxy, x-matrix-access-token
+  F->>F: write sync token
+  C->>C: admit and run the turn, as above
+  C->>F: POST /v1/send at MATRIX_FORWARDER_URL
+  F->>F: encrypt for the room
+  F->>HS: send m.room.encrypted
+  F-->>C: event id
+```
+
+Media skips the forwarder. The attachment key rides the decrypted event, so core downloads, decrypts, encrypts and uploads files against the homeserver itself.
 
 Core's Discord adapter takes both the interaction webhook and the forwarded shape on one URL and tells them apart by the `x-discord-gateway-token` header.
 

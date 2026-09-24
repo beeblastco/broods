@@ -163,7 +163,54 @@ A `persistent: true` config reserves one instance per workspace namespace, or pe
 - Every provider, workdir included, records the provider id in the Convex `sandboxReservations` table through `instance-store.ts`, and mirrors a row into `sandboxInstances` for the dashboard.
 - `claimSandboxReservation` is conditional, so a concurrent first create has one winner. The loser deletes its duplicate and reconnects to the winner's id. Deletes are conditional on the expected id too, so a stale caller never removes a machine another run replaced.
 - A reservation expires 7 days after its last use, per `SANDBOX_RESERVATION_TTL_SECONDS` in `packages/convex/runtime.ts`.
-- `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`), first after a random delay under 30 s, under a 5 minute lease so one replica sweeps at a time. It pages 100 reservations at a time through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`, deleting the sandbox at the provider before the row.
+- `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`), first after a random delay under 30 s, under a 5 minute lease so one replica sweeps at a time. It pages 100 expired reservations, plus mirror rows no reservation names any more, through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`. That takes the row first, only while it is still expired and still names the same machine, then deletes the sandbox at the provider. If the provider delete fails, it claims the row back so the next sweep retries.
+
+How a persistent executor acquires its machine, using the MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona and Vercel follow the same claim and race rules:
+
+```mermaid
+sequenceDiagram
+  participant T as sandbox tool
+  participant E as executor
+  participant R as Convex sandboxReservations
+  participant P as provider
+
+  T->>E: run(request)
+  E->>R: getSandboxReservation(provider, key)
+  alt reservation exists
+    E->>P: reconnect(externalId), resumes if suspended
+    E-->>R: saveSandboxReservation (refresh expiresAt)
+  else none, or the machine is gone for good
+    E->>P: create (RunMicrovm)
+    E->>R: claimSandboxReservation(key, newId)
+    alt claim lost to a concurrent create
+      E->>P: terminate own duplicate
+      E->>P: reconnect(winner's id)
+    end
+  end
+  E->>P: exec command
+  P-->>T: stdout, stderr, exit code
+```
+
+The dashboard sees each reserved machine through its `sandboxInstances` mirror row. Core writes the steady states, and the dashboard's suspend action parks the row in `suspending` until core answers:
+
+```mermaid
+stateDiagram-v2
+  [*] --> running: claimSandboxReservation wins
+  running --> suspending: dashboard suspend
+  suspending --> suspended: provider suspend done
+  suspending --> running: suspend failed, rolled back
+  running --> suspended: provider idle policy, seen on refresh
+  suspended --> running: next exec, resume or terminal
+  running --> error: refresh reads a provider error
+  suspended --> error: refresh reads a provider error
+  error --> running: refresh reads running
+  running --> [*]: terminate, or refresh finds it gone
+  suspended --> [*]: terminate, or swept 7 days after last use
+  error --> [*]: terminate or sweep
+```
+
+`terminating` is also a valid status, but core treats a provider reporting it as gone: refresh removes the row instead of storing it.
+
 - `lifecycle.maxLifetimeSeconds` is checked on acquire, never on a timer, so it cannot interrupt a running command.
 - Deleting a workspace, sandbox config or account tears down its reservations (`releaseReservedSandboxes()`, `releaseSandboxConfigInstances()`).
 - A persistent MicroVM counts against the account's allocated-memory quota while running or suspended. Too many persistent configs make every new launch fail with `ServiceQuotaExceededException`, and `fallbackProvider` cannot help because reserved sandboxes have none.
@@ -182,6 +229,32 @@ The dashboard and the account API drive reserved sandboxes through `POST /v1/san
 - On exit the job POSTs to `/v1/sandbox-jobs/:resultId/complete` with `x-job-token`, using the image's `python3`. The token rides the launch exec's environment as `__CB_TOKEN`, never the script text that shows in the process table. Unknown ids and bad tokens both return 404.
 - Idle scale-down never pauses a sandbox with a running job.
 - The callback needs egress to `PUBLIC_BASE_URL`. Without it the job still runs and polling still works.
+
+The whole round trip, from `dispatchBackground()` in `src/harness/tools/bash.tool.ts` to the continuation in `src/harness/handler.ts`:
+
+```mermaid
+sequenceDiagram
+  participant M as model
+  participant B as bash tool
+  participant CVX as Convex
+  participant S as sandbox
+  participant Core as core route
+  participant O as origin
+
+  M->>B: bash (background: true)
+  B->>CVX: createDetachedAsyncToolResult (resultId, token, delivery)
+  B->>S: runSandboxBackground, setsid job
+  B-->>M: statusId, turn goes on
+  S->>S: job runs, writes .log and .exit
+  S->>Core: POST /v1/sandbox-jobs/:resultId/complete (x-job-token)
+  Core->>CVX: verify token, settleAsyncToolResultFromCallback
+  Core->>Core: continueAfterAsyncToolSettlement
+  Note over Core: waits until every job in the sealed group settled
+  Core->>CVX: admit continuation as a followup envelope
+  Core->>O: run the turn, reply by channel, NATS or async status
+```
+
+The row exists before the launch, so a fast job's callback never arrives first. A settled row answers `409`, and an unknown id or wrong token answers `404`. The continuation queues behind any live turn as a `followup`, see [queue and steer](queue-and-steer.md).
 
 ## Terminal
 

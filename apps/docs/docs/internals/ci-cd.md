@@ -53,6 +53,36 @@ A green image build deploys nothing by itself. The pods live in a k3s cluster ow
 - A prerequisite that did not run for the sha is skipped. One that fails, or has not finished in 20 minutes, stops the rollout.
 - Images are tagged with the commit sha, plus a floating `dev` or `main` tag on those branches.
 
+A promote, followed through to the core pod:
+
+```mermaid
+sequenceDiagram
+  participant P as promote.yaml
+  participant CVX as deploy-convex.yaml
+  participant SST as deploy.yaml
+  participant B as build-core.yaml
+  participant R as rollout.yaml
+  participant I as infra deploy-core.yaml
+  participant K as k3s cluster
+
+  P->>P: wait for dev's required checks
+  P->>P: fast-forward main to dev, push
+  P->>CVX: dispatch and wait
+  CVX-->>P: schema and functions live
+  par dispatched together
+    P->>SST: dispatch, SST deploy production-eu-west-1
+  and
+    P->>B: dispatch, build ghcr.io/beeblastco/broods-core:sha
+  end
+  B->>R: call with workflow deploy-core.yaml
+  R->>R: wait for deploy-convex and deploy on this sha
+  R->>I: gh workflow run, tag = sha
+  I->>K: helm upgrade --install core, wait for rollout
+  R->>I: gh run watch until done
+```
+
+Gateway, dashboard, docs, npm and both forwarders are dispatched in the same parallel step. Only core and the dashboard gate their rollout on prerequisites.
+
 ## Deploy stages
 
 | Source                      | SST stage              | Region                                | GitHub environment |
