@@ -267,9 +267,12 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
             data: data,
           });
 
-          return upgraded
-            ? undefined
-            : jsonError(400, "WebSocket upgrade failed");
+          if (upgraded) return undefined;
+          // The ticket never opened a socket, so the client may retry with it.
+          if (data.kind === "terminal" && data.ticket)
+            spentTickets.delete(websocketToken(request));
+
+          return jsonError(400, "WebSocket upgrade failed");
         }
       } finally {
         pendingUpgrades -= 1;

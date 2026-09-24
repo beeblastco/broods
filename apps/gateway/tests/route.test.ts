@@ -119,11 +119,11 @@ test("a full gateway answers 503 before the token check", async () => {
   expect(response!.status).toBe(503);
 });
 
-test("an agent socket without a token is refused", async () => {
+test("an agent socket without a token is refused, even with ?token=", async () => {
   const gateway = createGateway(gatewayConfig());
 
   const response = await gateway.fetch(
-    upgradeRequest("/v1/agents/endpoint-1/ws"),
+    upgradeRequest("/v1/agents/endpoint-1/ws?token=runtime-key"),
     fakeServer().server,
   );
 
