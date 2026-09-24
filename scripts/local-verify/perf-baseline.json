@@ -9,6 +9,12 @@
       "sse bash tool turn": 117.8,
       "async text run": 78.8,
       "sse text turn, 10 at once": 408.7
+    },
+    "linux-x64": {
+      "sse text turn": 77,
+      "sse bash tool turn": 191,
+      "async text run": 97.8,
+      "sse text turn, 10 at once": 616.1
     }
   }
 }
