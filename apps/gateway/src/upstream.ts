@@ -38,8 +38,8 @@ export type ProxyOptions = {
   requestId?: string;
   /** Forward a client `X-Account-Id`. Off unless `GATEWAY_FORWARD_ACCOUNT_ID=true`. */
   forwardAccountId?: boolean;
-  /** Upstream path and query, when routing already normalized them. */
-  path?: string;
+  /** Upstream path and query, as routing normalized them. */
+  path: string;
 };
 
 /**
@@ -50,10 +50,8 @@ export type ProxyOptions = {
 export async function proxyHttp(
   request: Request,
   coreBaseUrls: string[],
-  options: ProxyOptions = {},
+  options: ProxyOptions,
 ): Promise<Response> {
-  const url = new URL(request.url);
-  const path = options.path ?? `${url.pathname}${url.search}`;
   const headers = new Headers(request.headers);
   const body =
     request.method === "GET" || request.method === "HEAD"
@@ -70,7 +68,7 @@ export async function proxyHttp(
 
   for (const coreBaseUrl of coreBaseUrls) {
     try {
-      response = await fetch(`${coreBaseUrl}${path}`, {
+      response = await fetch(`${coreBaseUrl}${options.path}`, {
         method: request.method,
         headers: headers,
         body: body,

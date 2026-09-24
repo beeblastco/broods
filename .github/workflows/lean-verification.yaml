@@ -7,36 +7,27 @@ name: Lean verification
 
 on:
   pull_request:
-    paths:
+    paths: &mirrored
       - verification/**
       - .github/workflows/lean-verification.yaml
       - apps/core/src/harness/handler.ts
+      - apps/core/src/harness/subagents.ts
       - apps/gateway/src/main.ts
       - apps/gateway/src/routes.ts
       - apps/gateway/src/upstream.ts
+      - packages/broods/src/cli/index.ts
       - packages/broods/src/manifest.ts
       - packages/broods/src/sync.ts
       - packages/convex/agent/crons.ts
       - packages/convex/cli/httpRoutes.ts
+      - packages/convex/cli/types.ts
+      - packages/convex/model/agentSync.ts
       - packages/convex/model/cliSync*.ts
       - packages/convex/runtime.ts
       - packages/convex/runtimeIngress.ts
   push:
     branches: [dev]
-    paths:
-      - verification/**
-      - .github/workflows/lean-verification.yaml
-      - apps/core/src/harness/handler.ts
-      - apps/gateway/src/main.ts
-      - apps/gateway/src/routes.ts
-      - apps/gateway/src/upstream.ts
-      - packages/broods/src/manifest.ts
-      - packages/broods/src/sync.ts
-      - packages/convex/agent/crons.ts
-      - packages/convex/cli/httpRoutes.ts
-      - packages/convex/model/cliSync*.ts
-      - packages/convex/runtime.ts
-      - packages/convex/runtimeIngress.ts
+    paths: *mirrored
   workflow_dispatch:
 
 concurrency:
@@ -62,6 +53,15 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
             | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # A `sorry` is a warning, which the lakefile turns into an error.
+      # `native_decide` and a new `axiom` compile cleanly, so refuse them here.
+      - name: Refuse unchecked proofs
+        run: |
+          if grep -rnE '\bnative_decide\b|^[[:space:]]*axiom\b' Broods Broods.lean; then
+            echo "native_decide and new axioms are not allowed (verification/AGENTS.md)"
+            exit 1
+          fi
 
       - name: Build and check every proof
         run: lake build

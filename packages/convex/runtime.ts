@@ -58,7 +58,7 @@ export const conversationEventArgs = {
   events: v.optional(v.array(v.object({ cursor: v.string(), event: v.any() }))),
 };
 
-/** An async run's outcome as its polling row records it. */
+/** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
   response: v.optional(v.any()),
@@ -435,23 +435,28 @@ export const updateAsyncAgentResult = internalMutation({
   args: { eventId: v.string(), ...asyncAgentOutcomeValidator.fields },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    await writeAsyncAgentResult(ctx, args.eventId, args);
+    if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
+      throw new Error("Async agent result not found");
+    }
 
     return null;
   },
 });
 
-/** Patches the polling row for `eventId` with a run's outcome. */
+/**
+ * Patches the polling row for `eventId` with a run's outcome.
+ * @returns false when the row no longer exists
+ */
 export async function writeAsyncAgentResult(
   ctx: MutationCtx,
   eventId: string,
   outcome: Infer<typeof asyncAgentOutcomeValidator>,
-): Promise<void> {
+): Promise<boolean> {
   const row = await ctx.db
     .query("runtimeAsyncAgentResults")
     .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
     .unique();
-  if (!row) throw new Error("Async agent result not found");
+  if (!row) return false;
   await requireActiveAccount(ctx, row.accountId);
   await ctx.db.patch(row._id, {
     status: outcome.status,
@@ -462,6 +467,8 @@ export async function writeAsyncAgentResult(
     updatedAt: new Date().toISOString(),
     expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
   });
+
+  return true;
 }
 
 /**

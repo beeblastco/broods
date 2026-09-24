@@ -585,7 +585,7 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("keeps a completed result authoritative when settlement and drain fail", async () => {
+  it("settles a completed child's envelope and row together, and keeps the row when that settle and the drain fail", async () => {
     const originalMutation = runtime.mutate;
     const mutations: string[] = [];
     runtime.mutate = mock(async (name: string) => {
@@ -605,20 +605,30 @@ describe("SubagentCoordinator", () => {
     const drainChildConversation = mock(async () => {
       throw new Error("queued drain failed");
     });
-    const settleIngress = mock(async () => {
-      throw new Error("settlement failed");
-    });
+    const settleIngress = mock(
+      async (_status: string, _options: unknown): Promise<boolean> => {
+        throw new Error("settlement failed");
+      },
+    );
     internals.completeTask = completeTask;
     internals.drainChildConversation = drainChildConversation;
+    const task = persistentChildTask();
 
     try {
       await expect(
         internals.completeSuccessfulRun(
           { settleIngress: settleIngress } as never,
-          persistentChildTask(),
+          task,
           "finished",
         ),
       ).resolves.toBeUndefined();
+      expect(settleIngress).toHaveBeenCalledWith("completed", {
+        result: "finished",
+        asyncResult: {
+          eventIds: [task.eventId],
+          outcome: { status: "completed", response: "finished" },
+        },
+      });
       expect(mutations).toContain("updateAsyncAgentResult");
       expect(completeTask).toHaveBeenCalledTimes(1);
       expect(settleIngress).toHaveBeenCalledTimes(1);

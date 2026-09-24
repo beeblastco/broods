@@ -3,3 +3,5 @@ defaultTargets = ["Broods"]
 
 [[lean_lib]]
 name = "Broods"
+# A `sorry` is only a warning; this makes it, and any other warning, fail the build.
+leanOptions = { warningAsError = true }

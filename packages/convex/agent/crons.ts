@@ -71,12 +71,8 @@ export const completeRun = internalMutation({
     result: v.any(),
   },
   returns: v.null(),
-  handler: (ctx, { accountId, cronId, runId, result }): Promise<null> =>
-    settleRun(
-      ctx,
-      { accountId: accountId, cronId: cronId, runId: runId },
-      { status: "completed", result: result },
-    ),
+  handler: (ctx, args): Promise<null> =>
+    settleRun(ctx, args, { status: "completed", result: args.result }),
 });
 
 /**
@@ -200,12 +196,8 @@ export const failRun = internalMutation({
     error: v.string(),
   },
   returns: v.null(),
-  handler: (ctx, { accountId, cronId, runId, error }): Promise<null> =>
-    settleRun(
-      ctx,
-      { accountId: accountId, cronId: cronId, runId: runId },
-      { status: "failed", error: error },
-    ),
+  handler: (ctx, args): Promise<null> =>
+    settleRun(ctx, args, { status: "failed", error: args.error }),
 });
 
 export const getById = internalQuery({

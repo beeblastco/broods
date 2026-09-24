@@ -33,7 +33,8 @@ inductive Dest where
   | health | preflight | socket (s : Socket) | config | core | notFound
   deriving DecidableEq, Repr
 
-/-- `pathname.replace(/\/+$/, "")` on segments: drops trailing empty segments. -/
+/-- `stripTrailingSlashes` inside `normalizePathname` (`apps/core/src/shared/paths.ts`,
+`apps/gateway/src/routes.ts`), on segments: drops trailing empty segments. -/
 def stripTrailing : Path → Path
   | [] => []
   | x :: xs => if (stripTrailing xs).isEmpty && x.isEmpty then [] else x :: stripTrailing xs

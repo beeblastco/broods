@@ -814,8 +814,9 @@ export const renewOwner = internalMutation({
 
 /**
  * Settles every envelope whose work was applied to the current owner event.
- * An async run passes its polling rows as `asyncResult`, so they settle in the
- * same transaction and can never disagree with the envelope.
+ * An async run passes its polling rows as `asyncResult`; they are written in
+ * the same transaction, and only by the settle that finishes the owner's own
+ * envelope, so they can never disagree with it.
  */
 export const settle = internalMutation({
   args: {
@@ -836,13 +837,13 @@ export const settle = internalMutation({
   handler: async (ctx, args): Promise<number> => {
     const coordinator = await requireOwner(ctx, args);
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
-    if (args.asyncResult) {
+    if (args.asyncResult && settled.ownerFinished) {
       for (const eventId of args.asyncResult.eventIds) {
         await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
       }
     }
 
-    return settled;
+    return settled.count;
   },
 });
 
@@ -1473,7 +1474,12 @@ async function requireOwner(
   return coordinator;
 }
 
-/** Marks the owner event and every envelope applied to it terminal; used by `settle` and `takeNext`. */
+/**
+ * Marks the owner event and every envelope applied to it terminal; used by
+ * `settle` and `takeNext`.
+ * @returns how many envelopes it covered, and whether the owner's own envelope
+ * finished in this call
+ */
 async function settleAppliedEnvelopes(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1485,7 +1491,7 @@ async function settleAppliedEnvelopes(
     result?: unknown;
     error?: string;
   },
-): Promise<number> {
+): Promise<{ count: number; ownerFinished: boolean }> {
   const now = Date.now();
   // A failed settle that was preceded by /stop for this generation is a
   // deliberate stop, not a fault, so mark it and pollers can tell them apart.
@@ -1515,6 +1521,7 @@ async function settleAppliedEnvelopes(
     .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
     .unique();
   if (own?.conversationKey === args.conversationKey) ids.add(own._id);
+  let ownerFinished = false;
   for (const id of ids) {
     const row = await ctx.db.get(id);
     // Only running rows settle: a finished run stays finished, and a queued row
@@ -1528,7 +1535,8 @@ async function settleAppliedEnvelopes(
       ...(args.result !== undefined ? { result: args.result } : {}),
       ...(args.error !== undefined ? { error: args.error } : {}),
     });
+    if (id === own?._id) ownerFinished = true;
   }
 
-  return ids.size;
+  return { count: ids.size, ownerFinished: ownerFinished };
 }

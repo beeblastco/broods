@@ -277,9 +277,9 @@ export const remove = mutation({
 
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
- * deployments and linked broods `agents` rows with their crons), the canvas layout, MCP
- * servers, env vars, and deploy keys. A linked `agents` row goes only when the
- * project's account owns it.
+ * deployments and linked broods `agents` rows with their crons), the canvas
+ * layout, MCP servers, env vars, and deploy keys. A linked `agents` row goes
+ * only when the project's account owns it.
  */
 export async function deleteStageContents(
   ctx: MutationCtx,

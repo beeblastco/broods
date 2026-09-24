@@ -45,6 +45,12 @@ interface LiveOwner {
   ownerGeneration: number;
 }
 
+/** An async run's polling rows, settled in the same mutation as its envelope. */
+export interface AsyncResultSettlement {
+  eventIds: string[];
+  outcome: AsyncAgentOutcome;
+}
+
 /** The terminal outcome `takeNextIngress` can settle in the same mutation. */
 export interface IngressSettlement {
   status: "completed" | "failed";
@@ -459,9 +465,26 @@ export function settleIngress(options: {
   status: "completed" | "failed";
   result?: unknown;
   error?: string;
-  asyncResult?: { eventIds: string[]; outcome: AsyncAgentOutcome };
+  asyncResult?: AsyncResultSettlement;
 }): Promise<number> {
   return runtime.mutate("settleIngress", options);
+}
+
+/**
+ * The envelope settlement that records an async run's outcome. A run waiting on
+ * approval or input completes its envelope with what it waits on.
+ */
+export function outcomeSettlement(
+  outcome: AsyncAgentOutcome,
+): IngressSettlement {
+  if (outcome.status === "completed") {
+    return { status: "completed", result: outcome.response };
+  }
+  if (outcome.status === "failed") {
+    return { status: "failed", error: outcome.error };
+  }
+
+  return { status: "completed", result: outcome };
 }
 
 /** Takes the next FIFO follow-up or contiguous collect application, settling first when given one. */

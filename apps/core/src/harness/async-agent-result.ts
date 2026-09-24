@@ -10,7 +10,7 @@ export type AsyncAgentStatus =
   | "awaiting_input"
   | "completed"
   | "failed";
-/** A finished async run as its polling row records it. */
+/** How an async run ended, or what it waits on, as its polling row records it. */
 export type AsyncAgentOutcome =
   | { status: "completed"; response: JSONValue }
   | { status: "failed"; error: string }

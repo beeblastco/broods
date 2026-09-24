@@ -80,7 +80,7 @@ export interface GatewayConfig {
   denyInternalPaths: boolean;
   httpLimiter: RateLimiter | undefined;
   limits: GatewayLimits;
-  proxyOptions: ProxyOptions;
+  proxyOptions: Omit<ProxyOptions, "path">;
   terminalTicketSecrets: string[];
   upgradeLimiter: RateLimiter;
 }

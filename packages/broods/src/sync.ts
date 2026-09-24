@@ -8,9 +8,10 @@ import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
 /**
- * Keys the server never keeps: artifact bytes, and the upload handle a large
- * MCP bundle is swapped for after the diff. Each artifact's sha256 stays, so a
- * content change still shows as an update.
+ * Keys the local and remote configs never agree on: artifact bytes, which the
+ * server snapshot drops, and the upload handle a large MCP bundle is swapped
+ * for after the diff, which only the remote has. Each artifact's sha256 stays,
+ * so a content change still shows as an update.
  */
 const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
   "bundle",

@@ -285,7 +285,12 @@ describe("stage-scoped sync of account-wide resources", () => {
     );
 
     expect(rows).toEqual([
-      { kind: "skill", name: "release-notes", stageId: otherStageId },
+      {
+        kind: "skill",
+        name: "release-notes",
+        stageId: otherStageId,
+        externalId: `${accountId}/release-notes`,
+      },
     ]);
     expect(() => assertNotForeign(foreign, "skill", "release-notes")).toThrow(
       /managed by another stage/,

@@ -955,6 +955,59 @@ describe("runtime ingress", () => {
     ).toMatchObject({ status: "completed", response: "answer" });
   });
 
+  test("settles the envelope when a polling row is missing, and writes rows only on the settle that finished it", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "owner",
+      conversationKey: conversationKey,
+    });
+    const settle = {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "completed" as const,
+      result: "answer",
+    };
+
+    await t.mutation(internal.runtimeIngress.settle, {
+      ...settle,
+      asyncResult: {
+        eventIds: ["owner", "expired-row"],
+        outcome: { status: "completed" as const, response: "answer" },
+      },
+    });
+    await t.mutation(internal.runtimeIngress.settle, {
+      ...settle,
+      status: "failed",
+      error: "late failure",
+      asyncResult: {
+        eventIds: ["owner"],
+        outcome: { status: "failed" as const, error: "late failure" },
+      },
+    });
+
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_owner",
+      }),
+    ).toMatchObject({ status: "completed" });
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, { eventId: "owner" }),
+    ).toMatchObject({ status: "completed", response: "answer" });
+  });
+
   test("rejects stale owner writes after a new generation acquires the conversation", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

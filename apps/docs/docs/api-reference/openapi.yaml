@@ -1270,6 +1270,7 @@ paths:
       tags:
         - Agents
       summary: Delete agent
+      description: Deletes the agent, its cron jobs and their schedules, and its runtime data.
       security:
         - BearerAuth: []
       parameters:

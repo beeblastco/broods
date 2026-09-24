@@ -64,6 +64,20 @@ describe("cli prune of external resources", () => {
     });
   });
 
+  test("keeps a hook the dashboard recreated under a name this stage recorded", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await recordHook(tt, accountId, STAGE, "notify");
+    await tt.run(async (ctx) => {
+      const recorded = await ctx.db.query("accountHooks").first();
+      await ctx.db.patch(recorded!._id, { status: "deleted" });
+    });
+    await insertHook(tt, accountId, "notify");
+
+    expect((await pruneAll(tt)).status).toBe(200);
+    expect((await activeNames(tt)).hooks).toEqual(["notify"]);
+  });
+
   test("a deploy the manifest sync rejects removes nothing", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
@@ -96,6 +110,66 @@ describe("cli prune of external resources", () => {
         async (ctx) => await ctx.db.query("workspaceFiles").collect(),
       ),
     ).toEqual([expect.objectContaining({ path: "theirs/SKILL.md" })]);
+  });
+
+  test("renames a cron created under its old config.name instead of replacing it", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const agent = {
+      kind: "agent" as const,
+      name: "reporter",
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        agent: { system: "Write the report." },
+      },
+    };
+    const synced = await tt.mutation(
+      internal.cli.sync.syncManifestBySecretHash,
+      {
+        secretHash: await sha256Hex(SECRET),
+        manifest: {
+          version: 1,
+          project: PROJECT,
+          stage: STAGE,
+          resources: [agent],
+        },
+      },
+    );
+    const agentId = synced.ids.agents?.reporter;
+    if (!agentId) throw new Error("agent not synced");
+    await tt.mutation(internal.agent.crons.create, {
+      accountId: accountId,
+      input: {
+        name: "Hourly report",
+        agentId: agentId,
+        input: "run the report",
+        scheduleExpression: "rate(1 hour)",
+      },
+    });
+    const [legacy] = await tt.query(internal.agent.crons.list, {
+      accountId: accountId,
+    });
+
+    const response = await pruneAll(tt, [
+      agent,
+      {
+        kind: "cron",
+        name: "hourly",
+        config: {
+          agentId: "reporter",
+          name: "Hourly report",
+          events: [{ role: "user", content: "run the report" }],
+          scheduleExpression: "rate(1 hour)",
+        },
+      },
+    ]);
+
+    expect(response.status).toBe(200);
+    expect(
+      (await tt.query(internal.agent.crons.list, { accountId: accountId })).map(
+        (cron) => [cron._id, cron.name],
+      ),
+    ).toEqual([[legacy?._id, "hourly"]]);
   });
 
   test("a pruned agent's crons go with it", async () => {
@@ -179,6 +253,7 @@ async function activeNames(
   });
 }
 
+/** An active account hook, as the dashboard makes one. */
 async function insertHook(
   tt: T,
   accountId: Id<"accounts">,
@@ -266,6 +341,28 @@ async function recordHook(
   });
 }
 
+/** A stage MCP server that the development stage recorded as CLI-managed. */
+async function recordMcpServer(
+  tt: T,
+  accountId: Id<"accounts">,
+  name: string,
+): Promise<void> {
+  const serverId = await insertMcpServer(tt, accountId, name);
+  await tt.mutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
+    secretHash: await sha256Hex(SECRET),
+    project: PROJECT,
+    stage: STAGE,
+    resources: [
+      {
+        kind: "mcp",
+        name: name,
+        config: { url: "https://mcp.example.com/mcp" },
+      },
+    ],
+    ids: { skills: {}, hooks: {}, mcp: { [name]: serverId } },
+  });
+}
+
 /** A skill `stage` recorded as CLI-managed, with the file `syncSkillNodeFiles` mirrors. */
 async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
   const secretHash = await sha256Hex(SECRET);
@@ -295,28 +392,7 @@ async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
   });
 }
 
-/** A stage MCP server that the development stage recorded as CLI-managed. */
-async function recordMcpServer(
-  tt: T,
-  accountId: Id<"accounts">,
-  name: string,
-): Promise<void> {
-  const serverId = await insertMcpServer(tt, accountId, name);
-  await tt.mutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
-    secretHash: await sha256Hex(SECRET),
-    project: PROJECT,
-    stage: STAGE,
-    resources: [
-      {
-        kind: "mcp",
-        name: name,
-        config: { url: "https://mcp.example.com/mcp" },
-      },
-    ],
-    ids: { skills: {}, hooks: {}, mcp: { [name]: serverId } },
-  });
-}
-
+/** An org, its owner and an active account whose secret is `SECRET`. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   const secretHash = await sha256Hex(SECRET);
 

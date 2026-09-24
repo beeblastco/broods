@@ -268,7 +268,7 @@ describe("settleCronRun", () => {
     await settleCronRun(
       "acct_1",
       { cronId: "cron_1", runId: "run_1", oneShot: true },
-      { result: "done" },
+      { status: "completed", response: "done" },
     );
 
     expect(completeRun).toHaveBeenCalledWith(
@@ -293,12 +293,12 @@ describe("settleCronRun", () => {
     await settleCronRun(
       "acct_1",
       { cronId: "cron_1", runId: "run_1", oneShot: true },
-      { error: "model refused" },
+      { status: "failed", error: "model refused" },
     );
     await settleCronRun(
       "acct_1",
       { cronId: "cron_2", runId: "run_2" },
-      { error: "model refused" },
+      { status: "failed", error: "model refused" },
     );
 
     expect(failRun).toHaveBeenCalledTimes(2);
@@ -321,7 +321,7 @@ describe("settleCronRun", () => {
       await settleCronRun(
         "acct_1",
         { cronId: "cron_1", runId: "run_1", oneShot: true },
-        { result: "done" },
+        { status: "completed", response: "done" },
       ),
     ).toBeUndefined();
   });

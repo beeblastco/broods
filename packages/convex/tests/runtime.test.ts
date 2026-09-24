@@ -336,18 +336,11 @@ describe("runtime persistence", () => {
     await t.mutation(internal.runtime.observeAsyncToolResult, {
       resultId: "result-observed",
     });
-    expect(
-      await t.query(internal.runtime.getAsyncToolResult, {
-        resultId: "result-observed",
-      }),
-    ).toMatchObject({ status: "processing" });
-    expect(
-      (
-        await t.query(internal.runtime.getAsyncToolResult, {
-          resultId: "result-observed",
-        })
-      )?.observed,
-    ).toBeUndefined();
+    const running = await t.query(internal.runtime.getAsyncToolResult, {
+      resultId: "result-observed",
+    });
+    expect(running).toMatchObject({ status: "processing" });
+    expect(running).not.toHaveProperty("observed");
 
     await t.mutation(internal.runtime.updateAsyncToolResult, {
       resultId: "result-observed",

@@ -38,7 +38,6 @@ import {
   type ResolvedAgentSandbox,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
-import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import {
   ingestInboundAttachments,
@@ -57,6 +56,7 @@ import {
   settleIngress,
   takeNextIngress,
   type AppliedIngress,
+  type AsyncResultSettlement,
   type IngressSettlement,
 } from "./ingress.ts";
 import {
@@ -443,7 +443,7 @@ export class Session {
     options: {
       result?: unknown;
       error?: string;
-      asyncResult?: { eventIds: string[]; outcome: AsyncAgentOutcome };
+      asyncResult?: AsyncResultSettlement;
     } = {},
   ): Promise<boolean> {
     if (this.ownerGeneration === undefined) return false;
