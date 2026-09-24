@@ -1,6 +1,7 @@
 /**
- * The monthly per-account usage meter: adding usage to it, pricing it against
- * the plan's budget, and turning a sandbox's running time into usage. The
+ * The per-account usage meter, by month and by day: adding usage to it,
+ * pricing it against the plan's budget, and turning a sandbox's running time
+ * into usage. The
  * callers are the sandbox mirror (`sandbox/instances.ts`), core's usage writes
  * and the storage snapshot (`account/budget.ts`).
  */
@@ -15,6 +16,7 @@ import {
   type Plan,
 } from "./planLimits";
 import {
+  DAYS_PER_MONTH,
   EMPTY_USAGE,
   meterCostByCategoryEur,
   meterCostEur,
@@ -29,6 +31,9 @@ import {
  * default (core `DEFAULT_IDLE_TIMEOUT_SECONDS`).
  */
 export const SANDBOX_IDLE_BILL_MS = 15 * 60 * 1000;
+
+// How many months back the billing tab's month picker reaches.
+const MONTHS_SHOWN = 12;
 
 // Statuses where the provider is still running (and billing) the machine.
 const BILLED_STATUSES: ReadonlySet<Doc<"sandboxInstances">["status"]> = new Set(
@@ -49,14 +54,16 @@ export interface BudgetStatus {
 }
 
 /**
- * What the dashboard shows of an account's month: percentages, never euros,
- * so the budget behind each plan stays private.
+ * What the dashboard shows of an account's month: amounts and percentages,
+ * never euros, so the budget behind each plan stays private.
  */
 export interface BudgetUsage {
   /** False on a self-hosted install: nothing is limited. */
   enforced: boolean;
   plan: Plan;
   month: string;
+  /** Months with a meter, newest first, always led by the current one. */
+  months: string[];
   /** Share of the plan's budget used. Null when nothing is enforced. */
   usedPercent: number | null;
   /** Each group's share of the budget, or of all usage when nothing is enforced. */
@@ -64,6 +71,20 @@ export interface BudgetUsage {
   /** "warning" from 80% of the budget, "exhausted" once runs stop at 100%. */
   level: "ok" | "warning" | "exhausted";
   runsPerMinute: number;
+  totals: UsageAmounts;
+  /** Days of the month with usage, oldest first. */
+  days: Array<UsageAmounts & { day: string }>;
+}
+
+/** Usage in the units the billing tab shows. */
+export interface UsageAmounts {
+  /** vCPU hours; a MicroVM runs on one vCPU, so these are its hours. */
+  sandboxHours: number;
+  hostedMcpCalls: number;
+  /** GB stored at the latest snapshot. Null for a month metered before snapshots set it. */
+  storageGb: number | null;
+  egressGb: number;
+  ingressGb: number;
 }
 
 /** A sandbox instance's unbilled usage up to `now`, and where billing now stands. */
@@ -72,31 +93,60 @@ export interface SandboxAccrual {
   meteredUntil: number;
 }
 
-/** Add usage to the account's meter for the month `now` falls in. */
+/** Add usage to the account's meter for the month and the day `now` falls in. */
 export async function addUsage(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   usage: Partial<UsageQuantities>,
   now: number,
 ): Promise<void> {
-  if (!Object.values(usage).some((value) => value > 0)) return;
+  const hasUsage = Object.values(usage).some((value) => value > 0);
+  if (!hasUsage && usage.storageGbMonths === undefined) return;
+  // A storage snapshot also sets the stored size. A zero-byte one still lands
+  // on a row that exists, so the size it replaces drops to 0.
+  const snapshot =
+    usage.storageGbMonths === undefined
+      ? {}
+      : { storageGb: usage.storageGbMonths * DAYS_PER_MONTH };
   const month = meterMonth(now);
   const meter = await readMeter(ctx, accountId, month);
-  const totals = { ...EMPTY_USAGE, ...pickUsage(meter) };
-  for (const key of Object.keys(usage) as (keyof UsageQuantities)[]) {
-    totals[key] += usage[key] ?? 0;
-  }
   if (meter) {
-    await ctx.db.patch(meter._id, { ...totals, updatedAt: now });
-
-    return;
+    await ctx.db.patch(meter._id, {
+      ...withUsage(meter, usage),
+      ...snapshot,
+      updatedAt: now,
+    });
+  } else if (hasUsage) {
+    await ctx.db.insert("usageMeters", {
+      accountId: accountId,
+      month: month,
+      ...withUsage(null, usage),
+      ...snapshot,
+      updatedAt: now,
+    });
   }
-  await ctx.db.insert("usageMeters", {
-    accountId: accountId,
-    month: month,
-    ...totals,
-    updatedAt: now,
-  });
+  const day = meterDay(now);
+  const daily = await ctx.db
+    .query("usageDays")
+    .withIndex("by_accountId_and_day", (q) =>
+      q.eq("accountId", accountId).eq("day", day),
+    )
+    .unique();
+  if (daily) {
+    await ctx.db.patch(daily._id, {
+      ...withUsage(daily, usage),
+      ...snapshot,
+      updatedAt: now,
+    });
+  } else if (hasUsage) {
+    await ctx.db.insert("usageDays", {
+      accountId: accountId,
+      day: day,
+      ...withUsage(null, usage),
+      ...snapshot,
+      updatedAt: now,
+    });
+  }
 }
 
 /** The account's plan, meter cost and limits for the month `now` falls in. */
@@ -113,33 +163,65 @@ export async function budgetStatus(
     enforced: isManagedService(),
     plan: plan,
     month: month,
-    usedEur: meterCostEur({ ...EMPTY_USAGE, ...pickUsage(meter) }),
+    usedEur: meterCostEur(pickUsage(meter)),
     limitEur: PLAN_LIMITS[plan].monthlyBudgetEur,
     runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
     warned: meter?.warnedAt !== undefined,
   };
 }
 
-/** The account's month as percentages, for the dashboard billing panel. */
+/**
+ * One month of the account's usage for the dashboard billing panel: amounts,
+ * a daily series, and shares of the plan's budget. A requested month outside
+ * the picker's list falls back to the current one.
+ */
 export async function budgetUsage(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
   now: number,
+  requestedMonth?: string,
 ): Promise<BudgetUsage> {
   const plan = await accountPlan(ctx, accountId);
-  const month = meterMonth(now);
+  const currentMonth = meterMonth(now);
+  const meters = await ctx.db
+    .query("usageMeters")
+    .withIndex("by_accountId_and_month", (q) => q.eq("accountId", accountId))
+    .order("desc")
+    .take(MONTHS_SHOWN);
+  const months = [
+    currentMonth,
+    ...meters.map((row) => row.month).filter((row) => row !== currentMonth),
+  ].slice(0, MONTHS_SHOWN);
+  const month =
+    requestedMonth !== undefined && months.includes(requestedMonth)
+      ? requestedMonth
+      : currentMonth;
   const meter = await readMeter(ctx, accountId, month);
-  const costs = meterCostByCategoryEur({ ...EMPTY_USAGE, ...pickUsage(meter) });
-  const usedEur =
-    costs.sandboxes + costs.hostedMcp + costs.storage + costs.egress;
+  const usage = pickUsage(meter);
+  const costs = meterCostByCategoryEur(usage);
+  const usedEur = meterCostEur(usage);
   const enforced = isManagedService();
   const limitEur = PLAN_LIMITS[plan].monthlyBudgetEur;
   const base = enforced ? limitEur : usedEur;
+  const dayRows = await ctx.db
+    .query("usageDays")
+    .withIndex("by_accountId_and_day", (q) =>
+      q
+        .eq("accountId", accountId)
+        .gte("day", `${month}-01`)
+        .lte("day", `${month}-31`),
+    )
+    .collect();
+  const days = dayRows.map((row) => ({
+    day: row.day,
+    ...toAmounts(pickUsage(row), row.storageGb ?? 0),
+  }));
 
   return {
     enforced: enforced,
     plan: plan,
     month: month,
+    months: months,
     usedPercent: enforced ? toPercent(usedEur, limitEur) : null,
     categories: {
       sandboxes: toPercent(costs.sandboxes, base),
@@ -155,6 +237,8 @@ export async function budgetUsage(
           ? "warning"
           : "ok",
     runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
+    totals: toAmounts(usage, meter?.storageGb ?? null),
+    days: days,
   };
 }
 
@@ -175,6 +259,11 @@ export async function claimBudgetWarning(
   await ctx.db.patch(meter._id, { warnedAt: now });
 
   return true;
+}
+
+/** "YYYY-MM-DD" of the UTC day `now` falls in. */
+export function meterDay(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 /** "YYYY-MM" of the UTC calendar month `now` falls in. */
@@ -244,23 +333,52 @@ function billedSize(
   };
 }
 
+function pickUsage(
+  row: Doc<"usageMeters"> | Doc<"usageDays"> | null,
+): UsageQuantities {
+  if (!row) return { ...EMPTY_USAGE };
+
+  return {
+    sandboxVcpuSeconds: row.sandboxVcpuSeconds,
+    sandboxGbSeconds: row.sandboxGbSeconds,
+    sandboxSnapshotGb: row.sandboxSnapshotGb,
+    hostedMcpGbSeconds: row.hostedMcpGbSeconds,
+    hostedMcpRequests: row.hostedMcpRequests,
+    storageGbMonths: row.storageGbMonths,
+    egressGb: row.egressGb,
+    ingressGb: row.ingressGb ?? 0,
+  };
+}
+
+function toAmounts(
+  usage: UsageQuantities,
+  storageGb: number | null,
+): UsageAmounts {
+  return {
+    sandboxHours: usage.sandboxVcpuSeconds / 3600,
+    hostedMcpCalls: usage.hostedMcpRequests,
+    storageGb: storageGb,
+    egressGb: usage.egressGb,
+    ingressGb: usage.ingressGb,
+  };
+}
+
 // A share of `base` as a percentage with one decimal; 0 when there is no base.
 function toPercent(part: number, base: number): number {
   return base > 0 ? Math.round((part / base) * 1000) / 10 : 0;
 }
 
-function pickUsage(meter: Doc<"usageMeters"> | null): Partial<UsageQuantities> {
-  if (!meter) return {};
+// The row's quantities with `usage` added.
+function withUsage(
+  row: Doc<"usageMeters"> | Doc<"usageDays"> | null,
+  usage: Partial<UsageQuantities>,
+): UsageQuantities {
+  const totals = pickUsage(row);
+  for (const key of Object.keys(usage) as (keyof UsageQuantities)[]) {
+    totals[key] += usage[key] ?? 0;
+  }
 
-  return {
-    sandboxVcpuSeconds: meter.sandboxVcpuSeconds,
-    sandboxGbSeconds: meter.sandboxGbSeconds,
-    sandboxSnapshotGb: meter.sandboxSnapshotGb,
-    hostedMcpGbSeconds: meter.hostedMcpGbSeconds,
-    hostedMcpRequests: meter.hostedMcpRequests,
-    storageGbMonths: meter.storageGbMonths,
-    egressGb: meter.egressGb,
-  };
+  return totals;
 }
 
 async function readMeter(

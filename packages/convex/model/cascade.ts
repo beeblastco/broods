@@ -172,6 +172,11 @@ const accountScopedReads: ReadonlyArray<
       .query("usageMeters")
       .withIndex("by_accountId_and_month", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("usageDays")
+      .withIndex("by_accountId_and_day", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
 ];
 
 /**

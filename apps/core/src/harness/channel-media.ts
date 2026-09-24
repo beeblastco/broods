@@ -55,6 +55,7 @@ import {
 } from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
+import { recordUsage } from "./plan-limits.ts";
 import {
   transcribeAudio,
   TRANSCRIPTION_RETRIES,
@@ -195,6 +196,8 @@ interface StoredAttachment {
   failure?: string;
   /** What the audio says, or why it is not known. Absent for everything else. */
   transcript?: TranscriptOutcome;
+  /** Bytes read from the channel, metered as ingress. Absent when the read failed. */
+  receivedBytes?: number;
 }
 
 type UserContentPart = Exclude<UserContent, string>[number];
@@ -242,6 +245,15 @@ export async function ingestInboundAttachments(
       storeAttachment(attachment, index, context),
     ),
   );
+  // Free to the account; metered once per message so the billing tab can
+  // show the data its channels sent in.
+  const receivedBytes = read.reduce(
+    (sum, item) => sum + (item.receivedBytes ?? 0),
+    0,
+  );
+  if (context.accountId && receivedBytes > 0) {
+    recordUsage(context.accountId, { ingressGb: receivedBytes / 1e9 });
+  }
 
   const provider = context.agentConfig?.model?.provider;
   const ingested = read.map((item): IngestedAttachment => ({
@@ -808,6 +820,7 @@ async function storeAttachment(
         data: bytes,
         ...(reference ? { reference: reference } : {}),
         ...(transcript ? { transcript: transcript } : {}),
+        receivedBytes: bytes.byteLength,
       };
     }
     const path = mediaPath(name, context.eventId, index);
@@ -822,6 +835,7 @@ async function storeAttachment(
       path: path,
       ...(url ? { url: url } : { data: bytes }),
       ...(transcript ? { transcript: transcript } : {}),
+      receivedBytes: bytes.byteLength,
     };
   } catch (err) {
     const failure = err instanceof Error ? err.message : String(err);
