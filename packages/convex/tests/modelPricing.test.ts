@@ -18,9 +18,10 @@ describe("model pricing", () => {
     ).toBe(3.75);
   });
 
-  it("prices input, output, cache reads, and cache writes independently", () => {
+  it("prices cache reads and writes at their own rate, not the input rate", () => {
+    // inputTokens is the SDK total: 1M uncached + 1M cache read + 1M cache write.
     const cost = estimateModelTokenCost("openai", "gpt-5-mini", {
-      inputTokens: 1_000_000,
+      inputTokens: 3_000_000,
       outputTokens: 1_000_000,
       cachedInputTokens: 1_000_000,
       cacheWriteTokens: 1_000_000,

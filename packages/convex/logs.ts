@@ -72,6 +72,29 @@ const RANGE_CONFIG: Record<
   "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
 };
 
+// Bounds the drill-down read: rows scanned per endpoint, and tasks returned.
+const USAGE_TASK_SCAN_LIMIT = 1000;
+const USAGE_TASK_RETURN_LIMIT = 100;
+
+/** One finished task behind a usage bin, linked to its trace. */
+const usageTask = v.object({
+  /** Null for rows written without a trace suffix on `taskId`. */
+  traceId: v.union(v.string(), v.null()),
+  agentId: v.string(),
+  modelProvider: v.string(),
+  modelId: v.string(),
+  finishedAt: v.number(),
+  durationMs: v.number(),
+  status: v.union(v.literal("completed"), v.literal("failed")),
+  inputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningTokens: v.number(),
+  cachedInputTokens: v.number(),
+  cacheWriteTokens: v.number(),
+  totalTokens: v.number(),
+  stepCount: v.number(),
+});
+
 /** One aggregated usage point: bin start, model identity, and the 11 metric counters. */
 type UsageBucketRow = {
   bucketStart: number;
@@ -169,6 +192,69 @@ export const fetchUsageStats = query({
 });
 
 /**
+ * Finished tasks inside one usage chart bin, heaviest first, so the dashboard
+ * can show which traces a bin's tokens came from. Scans at most
+ * `USAGE_TASK_SCAN_LIMIT` rows per endpoint and says so via `truncated`.
+ * `taskUsage` is pruned after 90 days, so older bins return no tasks.
+ */
+export const fetchUsageTasks = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.optional(v.id("stages")),
+    startMs: v.number(),
+    endMs: v.number(),
+  },
+  returns: v.object({
+    tasks: v.array(usageTask),
+    truncated: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const endpointIds = await projectEndpointIds(
+      ctx,
+      authUser.id,
+      args.projectId,
+      args.stageId,
+    );
+    const batches = await Promise.all(
+      endpointIds.map((endpointId) =>
+        collectUsageTasks(ctx, endpointId, args.startMs, args.endMs),
+      ),
+    );
+    const rows = batches.flat();
+    const truncated =
+      rows.length > USAGE_TASK_RETURN_LIMIT ||
+      batches.some((batch) => batch.length === USAGE_TASK_SCAN_LIMIT);
+    const tasks = rows
+      .sort((a, b) => b.totalTokens - a.totalTokens)
+      .slice(0, USAGE_TASK_RETURN_LIMIT)
+      .map((row) => ({
+        traceId: traceIdFromTaskId(row.taskId),
+        agentId: row.agentId,
+        modelProvider: row.modelProvider,
+        modelId: row.modelId,
+        finishedAt: row.finishedAt,
+        durationMs: row.durationMs,
+        status: row.status,
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        reasoningTokens: row.reasoningTokens,
+        cachedInputTokens: row.cachedInputTokens,
+        cacheWriteTokens: row.cacheWriteTokens,
+        totalTokens: row.totalTokens,
+        stepCount: row.stepCount,
+      }));
+
+    return { tasks: tasks, truncated: truncated };
+  },
+});
+
+/**
  * Rollup rows for one endpoint at one grain since `startMs`. Exported for
  * `fetchUsageStats` and its test; not a registered Convex function.
  */
@@ -187,6 +273,27 @@ export async function collectUsageRollups(
         .gte("bucketStart", startMs),
     )
     .collect();
+}
+
+/**
+ * Task usage rows for one endpoint that finished in `[startMs, endMs)`.
+ * Exported for `fetchUsageTasks` and its test; not a registered Convex function.
+ */
+export async function collectUsageTasks(
+  ctx: QueryCtx,
+  endpointId: string,
+  startMs: number,
+  endMs: number,
+): Promise<Doc<"taskUsage">[]> {
+  return await ctx.db
+    .query("taskUsage")
+    .withIndex("by_endpointId_and_finishedAt", (q) =>
+      q
+        .eq("endpointId", endpointId)
+        .gte("finishedAt", startMs)
+        .lt("finishedAt", endMs),
+    )
+    .take(USAGE_TASK_SCAN_LIMIT);
 }
 
 /**
@@ -282,4 +389,11 @@ function aggregateUsage(
   );
 
   return { buckets: buckets, totals: totals };
+}
+
+/** Trace id from a `${eventId}#${traceId}` task id, or null when it has none. */
+function traceIdFromTaskId(taskId: string): string | null {
+  const separator = taskId.lastIndexOf("#");
+
+  return separator === -1 ? null : taskId.slice(separator + 1) || null;
 }

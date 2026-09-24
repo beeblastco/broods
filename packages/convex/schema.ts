@@ -1469,10 +1469,9 @@ export default defineSchema({
     "by_accountId_and_cronId_and_startedAt",
     ["accountId", "cronId", "startedAt"],
   ),
-  taskUsage: defineTable(taskUsageFields).index("by_accountId_and_taskId", [
-    "accountId",
-    "taskId",
-  ]),
+  taskUsage: defineTable(taskUsageFields)
+    .index("by_accountId_and_taskId", ["accountId", "taskId"])
+    .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"]),
   usageRollups: defineTable(usageRollupsFields)
     .index("by_endpointId_and_grain_and_bucketStart", [
       "endpointId",
