@@ -281,7 +281,12 @@ function DailyUsage({
             binSeconds={DAY_SECONDS}
             selected={null}
             formatAxis={(value) => formatAmount(value, row.unit)}
-            formatValue={(value) => formatAmount(value, row.unit)}
+            formatValue={(value, index) =>
+              formatAmount(
+                daily.values[index] === null ? null : value,
+                row.unit,
+              )
+            }
           />
         )}
       </div>
@@ -501,22 +506,29 @@ function billingReset(month: string): string {
 }
 
 // One resource over every day of the month, zero where nothing was used.
+// Storage has no size on a day without a snapshot: its value is null and its
+// bar a gap, so an unknown day never reads as 0 GB.
 function dailySeries(
   budget: BudgetUsage,
   key: UsageRow["key"],
-): { bucketStarts: number[]; rows: number[][] } {
+): { bucketStarts: number[]; rows: number[][]; values: Array<number | null> } {
   const [year, monthNumber] = budget.month.split("-").map(Number);
   const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
   const byDay = new Map(budget.days.map((day) => [day.day, day]));
   const bucketStarts = Array.from({ length: dayCount }, (_, index) =>
     Date.UTC(year, monthNumber - 1, index + 1),
   );
+  const values = bucketStarts.map((start): number | null => {
+    const day = byDay.get(new Date(start).toISOString().slice(0, 10));
+    if (!day) return key === "storageGb" ? null : 0;
+
+    return day[key];
+  });
 
   return {
     bucketStarts: bucketStarts,
-    rows: bucketStarts.map((start) => [
-      byDay.get(new Date(start).toISOString().slice(0, 10))?.[key] ?? 0,
-    ]),
+    rows: values.map((value) => [value ?? 0]),
+    values: values,
   };
 }
 

@@ -69,7 +69,8 @@ interface Props {
   /** Absent on a chart with nothing to drill into; clicks then do nothing. */
   onSelect?: (index: number) => void;
   formatAxis: (n: number) => string;
-  formatValue: (n: number) => string;
+  /** `index` is the hovered bin, for a chart whose bins can be unknown. */
+  formatValue: (n: number, index: number) => string;
   tickCount?: number;
 }
 
@@ -221,7 +222,8 @@ export function UsageChart({
           title={formatBucketLabel(bucketStarts[hover], binSeconds, true)}
           series={series}
           values={rows[hover]}
-          formatValue={formatValue}
+          formatValue={(value) => formatValue(value, hover)}
+          clickable={onSelect !== undefined}
         />
       )}
     </div>
@@ -229,8 +231,9 @@ export function UsageChart({
 }
 
 /**
- * Time label for a bin: clock time for sub-day bins, date for day bins. Day
- * bins start at UTC midnight, so their date is the UTC one.
+ * Time label for a bin: clock time for sub-day bins, date for day bins, and
+ * the first to last day for a long label of a multi-day bin. Day bins start at
+ * UTC midnight, so their dates are the UTC ones.
  */
 export function formatBucketLabel(
   ms: number,
@@ -239,11 +242,16 @@ export function formatBucketLabel(
 ): string {
   const d = new Date(ms);
   if (binSeconds >= 86400) {
-    return d.toLocaleDateString([], {
+    const utcDay: Intl.DateTimeFormatOptions = {
       month: "short",
       day: "numeric",
       timeZone: "UTC",
-    });
+    };
+    const first = d.toLocaleDateString([], utcDay);
+    if (!long || binSeconds === 86400) return first;
+    const last = new Date(ms + (binSeconds - 86400) * 1000);
+
+    return `${first} – ${last.toLocaleDateString([], utcDay)}`;
   }
   const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
   const time = d.toLocaleTimeString([], {
@@ -447,6 +455,7 @@ function ChartTooltip({
   series,
   values,
   formatValue,
+  clickable,
 }: {
   x: number;
   flip: boolean;
@@ -454,6 +463,7 @@ function ChartTooltip({
   series: UsageChartSeries[];
   values: number[];
   formatValue: (n: number) => string;
+  clickable: boolean;
 }): React.JSX.Element {
   return (
     <div
@@ -489,7 +499,9 @@ function ChartTooltip({
             {formatValue(values.reduce((a, b) => a + b, 0))}
           </span>
         </div>
-        <div className="text-muted-foreground">Click to see traces</div>
+        {clickable && (
+          <div className="text-muted-foreground">Click to see traces</div>
+        )}
       </div>
     </div>
   );
