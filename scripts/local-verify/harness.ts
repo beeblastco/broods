@@ -1,51 +1,35 @@
-/**
- * What every local-verify case gets: the context `local-stack.ts verify` builds
- * once (gateway, account, model) and the HTTP helpers that drive the stack
- * through the gateway, the way a client would.
- */
-
 import { existsSync, readFileSync } from "node:fs";
 
-import type { AgentConfig } from "../../packages/broods/src/contracts.ts";
+import type { BroodsAccountClient } from "../../packages/broods/src/account.ts";
+import type { BroodsClient } from "../../packages/broods/src/client.ts";
+import type { AsyncStatus } from "../../packages/broods/src/types.ts";
 
 const DEEPSEEK_SMOKE_MODEL = "deepseek-flash";
-// Without DEEPSEEK_API_KEY runs keep the same provider path and fail at the
-// provider call, which still proves routing, auth, config and storage.
-const NO_KEY = "sk-local-smoke-no-key";
+const RUN_POLL_INTERVAL_MS = 200;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 
 export const MODEL_KEY_HINT = "set DEEPSEEK_API_KEY for the full run";
-
-export interface RunStatus {
-  response?: unknown;
-  status?: string;
-}
 
 export interface SmokeModel {
   model: { modelId: string; provider: "deepseek" };
   provider: { deepseek: { apiKey: string } };
 }
 
-/** One feature check. Cases run in registry order and share one account. */
-export interface VerifyCase {
-  name: string;
-  run: (context: VerifyContext) => Promise<void>;
-}
+export type VerifyCase = (context: VerifyContext) => Promise<void>;
 
 export interface VerifyContext {
+  account: BroodsAccountClient;
   accountSecret: string;
+  client: BroodsClient;
   coreLogPath: string;
   gatewayUrl: string;
-  /** False without DEEPSEEK_API_KEY: runs end `failed`, and cases that need a real reply skip. */
   hasModelKey: boolean;
-  /** Times `fn` into the verify perf record under `step`. */
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
-  /** Unique per verify run, for names and event ids. */
   runId: string;
 }
 
-/** A failed check. `verify` catches it, records perf, and exits 1. */
+/** Thrown by assertStep; verify records the step as the failure. */
 export class VerifyFailure extends Error {
   constructor(
     readonly step: string,
@@ -55,6 +39,7 @@ export class VerifyFailure extends Error {
   }
 }
 
+/** Logs a passed check, or throws VerifyFailure. */
 export function assertStep(
   step: string,
   ok: boolean,
@@ -64,53 +49,7 @@ export function assertStep(
   console.log(`  ok  ${step}`);
 }
 
-/** Creates an agent on the smoke model and returns its id. */
-export async function createAgent(
-  context: VerifyContext,
-  name: string,
-  config: Partial<AgentConfig>,
-): Promise<string> {
-  const response = await httpJson(`${context.gatewayUrl}/v1/agents`, {
-    method: "POST",
-    token: context.accountSecret,
-    body: { name: name, config: { ...context.model, ...config } },
-  });
-  const agentId = (response.body as { agentId?: string }).agentId;
-  assertStep(
-    `create agent ${name} (config plane via gateway)`,
-    response.status === 201 && typeof agentId === "string",
-    `status ${response.status}: ${JSON.stringify(response.body)}`,
-  );
-
-  return agentId;
-}
-
-export async function httpJson(
-  url: string,
-  options: { body?: unknown; method: string; token: string },
-): Promise<{ body: unknown; status: number }> {
-  const response = await fetch(url, {
-    method: options.method,
-    signal: AbortSignal.timeout(15_000),
-    headers: {
-      Authorization: `Bearer ${options.token}`,
-      "Content-Type": "application/json",
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  const text = await response.text();
-  let body: unknown = text;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    // not JSON, keep the raw text
-  }
-
-  return { body: body, status: response.status };
-}
-
-// The logs are append-only, one JSON object per line, so walk from the end and
-// stop at the first match instead of parsing the whole file.
+/** The last JSON line of an append-only log that matches, or null. */
 export function lastJsonLine<T>(
   path: string,
   matches: (record: T) => boolean,
@@ -124,45 +63,14 @@ export function lastJsonLine<T>(
       const record = JSON.parse(line) as T;
       if (matches(record)) return record;
     } catch {
-      // A partial line from a log that is still being written.
+      continue;
     }
   }
 
   return null;
 }
 
-export async function pollRunStatus(
-  statusUrl: string,
-  token: string,
-): Promise<RunStatus> {
-  const doc = await pollUntil(
-    {
-      initialIntervalMs: 200,
-      maxIntervalMs: 1_500,
-      timeoutMs: RUN_POLL_TIMEOUT_MS,
-    },
-    async () => {
-      try {
-        const response = await httpJson(statusUrl, {
-          method: "GET",
-          token: token,
-        });
-        const body = response.body as RunStatus;
-
-        return body.status === "completed" || body.status === "failed"
-          ? body
-          : null;
-      } catch {
-        return null; // transient poll failure, retry until the deadline
-      }
-    },
-  );
-
-  return doc ?? { status: "poll-timeout" };
-}
-
-// Repeats attempt() with doubling backoff until it returns non-null or
-// timeoutMs passes. Returns null on timeout.
+/** Repeats attempt with doubling backoff until non-null; null on timeout. */
 export async function pollUntil<T>(
   options: {
     initialIntervalMs: number;
@@ -183,6 +91,7 @@ export async function pollUntil<T>(
   return null;
 }
 
+/** HTTP status of a GET, or null when unreachable. */
 export async function probeHttp(url: string): Promise<number | null> {
   try {
     const response = await fetch(url, {
@@ -195,21 +104,8 @@ export async function probeHttp(url: string): Promise<number | null> {
   }
 }
 
-/** DeepSeek Flash with DEEPSEEK_API_KEY, else the same model on a dummy key. */
-export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-
-  return {
-    hasModelKey: Boolean(apiKey),
-    model: {
-      model: { provider: "deepseek", modelId: DEEPSEEK_SMOKE_MODEL },
-      provider: { deepseek: { apiKey: apiKey || NO_KEY } },
-    },
-  };
-}
-
-/** Starts a background run through the gateway and returns its status URL. */
-export async function startRun(
+/** Starts a background run through the gateway and waits for its final status. */
+export async function runToTerminal(
   context: VerifyContext,
   run: {
     agentId: string;
@@ -217,27 +113,29 @@ export async function startRun(
     eventId: string;
     text: string;
   },
-): Promise<string> {
-  const response = await httpJson(`${context.gatewayUrl}/v1/runs`, {
-    method: "POST",
-    token: context.accountSecret,
-    body: {
-      agentId: run.agentId,
-      eventId: run.eventId,
-      conversationKey: run.conversationKey,
-      background: true,
-      events: [{ role: "user", content: [{ type: "text", text: run.text }] }],
-    },
+): Promise<AsyncStatus> {
+  const accepted = await context.client.runAsync({
+    agentId: run.agentId,
+    conversationKey: run.conversationKey,
+    eventId: run.eventId,
+    input: run.text,
   });
-  // The 202 names the run by a server-issued id; polling follows its statusUrl.
-  const statusUrl = (response.body as { statusUrl?: string }).statusUrl;
-  assertStep(
-    `start run ${run.eventId} (core via gateway)`,
-    response.status === 202 && typeof statusUrl === "string",
-    `status ${response.status}: ${JSON.stringify(response.body)}`,
-  );
 
-  return statusUrl.startsWith("/")
-    ? `${context.gatewayUrl}${statusUrl}`
-    : statusUrl;
+  return accepted.wait({
+    intervalMs: RUN_POLL_INTERVAL_MS,
+    timeoutMs: RUN_POLL_TIMEOUT_MS,
+  });
+}
+
+/** DeepSeek Flash on DEEPSEEK_API_KEY, or on a dummy key that fails at the provider call. */
+export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+
+  return {
+    hasModelKey: Boolean(apiKey),
+    model: {
+      model: { provider: "deepseek", modelId: DEEPSEEK_SMOKE_MODEL },
+      provider: { deepseek: { apiKey: apiKey || "none" } },
+    },
+  };
 }

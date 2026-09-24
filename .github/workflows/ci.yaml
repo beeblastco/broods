@@ -174,11 +174,9 @@ jobs:
           retention-days: 30
 
   local-stack:
-    # The product end to end on one runner: self-hosted Convex in docker, core
-    # and gateway as bun processes, driven through the gateway by the cases in
-    # scripts/local-verify. Timings land in the job summary. Without the
-    # DEEPSEEK_API_KEY secret (forks) runs stop at the provider call, which
-    # still proves routing, auth, config and storage.
+    # Convex in docker plus core and gateway, driven through the gateway by
+    # scripts/local-verify. Pull requests only, so one push runs it once.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -203,9 +201,8 @@ jobs:
       - name: Verify through the gateway
         run: bun run local:verify
 
-      - name: Upload stack logs and timings
-        # state.json holds the stack's secrets, so only logs and perf go up.
-        if: always()
+      - name: Upload stack logs
+        if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: local-stack-${{ github.run_id }}
