@@ -55,6 +55,7 @@ import {
 } from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
+import { recordUsage } from "./plan-limits.ts";
 import {
   transcribeAudio,
   TRANSCRIPTION_RETRIES,
@@ -905,6 +906,8 @@ async function writeMediaObject(
       { contentType: mediaType },
     ),
   ]);
+  // Free to the account; metered so the billing tab can show data received.
+  recordUsage(accountId, { ingressGb: bytes.byteLength / 1e9 });
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
     return undefined;

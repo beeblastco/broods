@@ -255,27 +255,60 @@ describe("budget", () => {
     expect(claims).toEqual([true, false]);
   });
 
-  test("reaches the dashboard as percentages with no euro figures", async () => {
+  test("reaches the dashboard as amounts and percentages with no euro figures", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 50, storageGbMonths: 50 },
+      usage: { egressGb: 50, storageGbMonths: 50, ingressGb: 2 },
     });
 
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
 
+    const amounts = {
+      sandboxHours: 0,
+      hostedMcpCalls: 0,
+      storageGb: 1500,
+      egressGb: 50,
+      ingressGb: 2,
+    };
     expect(usage).toEqual({
       enforced: true,
       plan: "free",
       month: "2026-09",
+      months: ["2026-09"],
       usedPercent: 101,
-      categories: { sandboxes: 0, hostedMcp: 0, storage: 21, egress: 80 },
+      categories: { sandboxes: 0, hostedMcp: 0, storage: 21, network: 80 },
       level: "exhausted",
-      runsPerMinute: 600,
+      totals: amounts,
+      days: [{ day: "2026-09-23", ...amounts }],
     });
+  });
+
+  test("shows a past month with no warning level", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { egressGb: 100 },
+      at: Date.UTC(2026, 7, 10),
+    });
+
+    const usage = await t.run(async (ctx) =>
+      budgetUsage(ctx, accountId, NOW, "2026-08"),
+    );
+
+    expect(usage).toMatchObject({
+      month: "2026-08",
+      months: ["2026-09", "2026-08"],
+      usedPercent: 160,
+      level: "ok",
+    });
+    expect(usage.days.map((day) => day.day)).toEqual(["2026-08-10"]);
   });
 
   test("splits all usage on a self-hosted install, with no limit", async () => {
@@ -291,7 +324,7 @@ describe("budget", () => {
 
     expect(usage.usedPercent).toBeNull();
     expect(usage.level).toBe("ok");
-    expect(usage.categories.egress + usage.categories.storage).toBeCloseTo(
+    expect(usage.categories.network + usage.categories.storage).toBeCloseTo(
       100,
       0,
     );

@@ -90,6 +90,7 @@
   --color-usage-model-calls: #f472b6;
   --color-usage-storage: #818cf8;
   --color-usage-egress: #f472b6;
+  --color-usage-ingress: #60a5fa;
 
   /* Syntax colors for code samples on --color-code-background. */
   --color-code-background: #1e1e1e;

@@ -1,7 +1,8 @@
 /**
  * The monthly compute budget, as core and the dashboard reach it: core reads
  * the budget at admission, records the usage only it sees (hosted-MCP invokes,
- * media egress) and claims the 80% warning; the dashboard reads percentages.
+ * media egress, attachment ingress) and claims the 80% warning; the dashboard
+ * reads amounts and percentages.
  * Sandbox time is metered by the sandbox mirror itself; storage by the daily
  * snapshot in `aws/storageMeter.ts`. Math lives in `model/usageMeter.ts`.
  */
@@ -37,19 +38,29 @@ const budgetStatusValidator = v.object({
   warned: v.boolean(),
 });
 
+const usageAmountsFields = {
+  sandboxHours: v.number(),
+  hostedMcpCalls: v.number(),
+  storageGb: v.number(),
+  egressGb: v.number(),
+  ingressGb: v.number(),
+};
+
 const budgetUsageValidator = v.object({
   enforced: v.boolean(),
   plan: planValidator,
   month: v.string(),
+  months: v.array(v.string()),
   usedPercent: v.union(v.number(), v.null()),
   categories: v.object({
     sandboxes: v.number(),
     hostedMcp: v.number(),
     storage: v.number(),
-    egress: v.number(),
+    network: v.number(),
   }),
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
-  runsPerMinute: v.number(),
+  totals: v.object(usageAmountsFields),
+  days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
 });
 
 /**
@@ -80,13 +91,14 @@ export const get = internalQuery({
 });
 
 /**
- * Dashboard billing panel: the active org's month as percentages. Euro
- * figures never leave the backend, so the plan budgets stay private.
+ * Dashboard billing panel: the active org's usage for `month` ("YYYY-MM",
+ * default the current one) as amounts, days and percentages. Euro figures
+ * never leave the backend, so the plan budgets stay private.
  */
 export const getForActiveOrg = query({
-  args: {},
+  args: { month: v.optional(v.string()) },
   returns: v.union(budgetUsageValidator, v.null()),
-  handler: async (ctx): Promise<BudgetUsage | null> => {
+  handler: async (ctx, args): Promise<BudgetUsage | null> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -94,7 +106,9 @@ export const getForActiveOrg = query({
     }
     const account = await getActiveAccountForUser(ctx);
 
-    return account ? await budgetUsage(ctx, account._id, Date.now()) : null;
+    return account
+      ? await budgetUsage(ctx, account._id, Date.now(), args.month)
+      : null;
   },
 });
 
@@ -166,6 +180,7 @@ export const record = internalMutation({
       hostedMcpRequests: v.optional(usageQuantityFields.hostedMcpRequests),
       storageGbMonths: v.optional(usageQuantityFields.storageGbMonths),
       egressGb: v.optional(usageQuantityFields.egressGb),
+      ingressGb: v.optional(usageQuantityFields.ingressGb),
     }),
     /** When the usage happened, if not now; picks the meter month. */
     at: v.optional(v.number()),

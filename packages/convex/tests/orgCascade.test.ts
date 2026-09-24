@@ -61,6 +61,19 @@ test("org deletion drains account contents in scheduled batches", async () => {
         egressGb: 0,
         updatedAt: now,
       });
+      await ctx.db.insert("usageDays", {
+        accountId: accountId,
+        day: "2026-09-01",
+        sandboxVcpuSeconds: 1,
+        sandboxGbSeconds: 2,
+        sandboxSnapshotGb: 0,
+        hostedMcpGbSeconds: 0,
+        hostedMcpRequests: 0,
+        storageGbMonths: 0,
+        egressGb: 0,
+        ingressGb: 0,
+        updatedAt: now,
+      });
       // Account-scoped rows no project purge reaches, more than one deletion
       // batch holds, so the drain must reschedule itself at least once.
       for (let index = 0; index < 150; index += 1) {
@@ -100,6 +113,7 @@ test("org deletion drains account contents in scheduled batches", async () => {
       expect(envVars).toHaveLength(0);
       expect(await ctx.db.query("accountRoles").collect()).toEqual([]);
       expect(await ctx.db.query("usageMeters").collect()).toEqual([]);
+      expect(await ctx.db.query("usageDays").collect()).toEqual([]);
     });
   } finally {
     vi.useRealTimers();

@@ -255,7 +255,7 @@ interface BudgetStore {
     accountId: string,
     usage: Pick<
       Partial<UsageQuantities>,
-      "hostedMcpGbSeconds" | "hostedMcpRequests" | "egressGb"
+      "hostedMcpGbSeconds" | "hostedMcpRequests" | "egressGb" | "ingressGb"
     >,
   ): Promise<void>;
   /** True for the one caller that should send this month's 80% warning. */

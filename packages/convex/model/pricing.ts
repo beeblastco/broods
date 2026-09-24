@@ -42,7 +42,12 @@ export const UNIT_RATES_EUR: UsageQuantities = {
   // AWS data transfer out eu-west-1, first 10 TB $0.09/GB, published
   // 2026-09-16. The 100 GB/month free allowance is org-wide, so ignored.
   egressGb: 0.08,
+  // AWS data transfer in is free.
+  ingressGb: 0,
 };
+
+/** A day's storage snapshot bills 1/30 of a GB-month; 31-day months come out 3% high, the safe side. */
+export const DAYS_PER_MONTH = 30;
 
 /**
  * Memory the hosted-MCP runner Lambda is deployed with (`apps/core/sst.config.ts`,
@@ -66,10 +71,11 @@ export const EMPTY_USAGE: UsageQuantities = {
   hostedMcpRequests: 0,
   storageGbMonths: 0,
   egressGb: 0,
+  ingressGb: 0,
 };
 
 /** The groups the dashboard splits a month's usage into. */
-export type UsageCategory = "sandboxes" | "hostedMcp" | "storage" | "egress";
+export type UsageCategory = "sandboxes" | "hostedMcp" | "storage" | "network";
 
 /** The dashboard group each metered quantity counts toward. */
 export const USAGE_CATEGORY: Record<keyof UsageQuantities, UsageCategory> = {
@@ -79,14 +85,15 @@ export const USAGE_CATEGORY: Record<keyof UsageQuantities, UsageCategory> = {
   hostedMcpGbSeconds: "hostedMcp",
   hostedMcpRequests: "hostedMcp",
   storageGbMonths: "storage",
-  egressGb: "egress",
+  egressGb: "network",
+  ingressGb: "network",
 };
 
 /** Price a usage meter in EUR, split by dashboard group. */
 export function meterCostByCategoryEur(
   usage: UsageQuantities,
 ): Record<UsageCategory, number> {
-  const costs = { sandboxes: 0, hostedMcp: 0, storage: 0, egress: 0 };
+  const costs = { sandboxes: 0, hostedMcp: 0, storage: 0, network: 0 };
   for (const key of Object.keys(UNIT_RATES_EUR) as (keyof UsageQuantities)[]) {
     costs[USAGE_CATEGORY[key]] += usage[key] * UNIT_RATES_EUR[key];
   }
@@ -98,5 +105,5 @@ export function meterCostByCategoryEur(
 export function meterCostEur(usage: UsageQuantities): number {
   const costs = meterCostByCategoryEur(usage);
 
-  return costs.sandboxes + costs.hostedMcp + costs.storage + costs.egress;
+  return costs.sandboxes + costs.hostedMcp + costs.storage + costs.network;
 }
