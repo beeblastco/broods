@@ -156,7 +156,9 @@ export const getBillingInfo = query({
       { userId: authUser.id },
     );
 
-    return subs.find((sub) => !isEnded(sub.status)) ?? subs[0] ?? null;
+    // Any subscription that is not over, including past_due and unpaid ones,
+    // so the dashboard offers the portal to fix payment instead of checkout.
+    return subs.find((sub) => !isEnded(sub.status)) ?? null;
   },
 });
 

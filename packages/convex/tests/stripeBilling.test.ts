@@ -73,6 +73,36 @@ describe("createCheckoutSession", () => {
   });
 });
 
+describe("getBillingInfo", () => {
+  test("returns a past_due subscription so the dashboard offers the portal", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("past_due"),
+    );
+
+    const info = await t.query(api.stripe.getBillingInfo, {});
+
+    expect(info?.status).toBe("past_due");
+    expect(await plans(t)).toEqual({ user: "free", org: "free" });
+  });
+
+  test("returns null once the subscription is canceled", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    await sendEvent(
+      t,
+      "customer.subscription.deleted",
+      subscription("canceled"),
+    );
+
+    expect(await t.query(api.stripe.getBillingInfo, {})).toBeNull();
+  });
+});
+
 beforeEach(() => {
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_billing");
   vi.stubEnv("STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET);
