@@ -233,7 +233,8 @@ export default function DashboardPage(): React.JSX.Element {
           />
         );
       case "billing":
-        return <BillingPanel projectId={projectId} />;
+        // Keyed on the org so a switch drops the month picked for the old account.
+        return <BillingPanel key={project?.orgId} projectId={projectId} />;
       case "api-key":
         return copyableKey ? (
           <RuntimeKeyView apiKey={copyableKey} onRotate={rotateViewingKey} />

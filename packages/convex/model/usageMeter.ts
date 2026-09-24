@@ -103,8 +103,8 @@ export async function addUsage(
   const hasUsage = Object.values(usage).some((value) => value > 0);
   if (!hasUsage && usage.storageGbMonths === undefined) return;
   // A storage snapshot also sets the stored size, zero-byte ones included, so
-  // an empty account reads 0 GB. It opens the month's row, but a day row only
-  // comes with real usage, so idle accounts do not add one row a day.
+  // an empty account reads 0 GB for the month and the day. Days with no
+  // snapshot and no usage keep no row and read as unknown.
   const snapshot =
     usage.storageGbMonths === undefined
       ? {}
@@ -139,7 +139,7 @@ export async function addUsage(
       ...snapshot,
       updatedAt: now,
     });
-  } else if (hasUsage) {
+  } else {
     await ctx.db.insert("usageDays", {
       accountId: accountId,
       day: day,
