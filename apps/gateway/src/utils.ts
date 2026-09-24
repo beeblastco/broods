@@ -80,15 +80,23 @@ export function normalizedCoreBaseUrls(values: string[]): string[] {
 /**
  * WebSocket credential: the Authorization header, else the token carried as a
  * `broods.token.<token>` entry in `Sec-WebSocket-Protocol` (browsers cannot
- * set headers on an upgrade). A `?token=` query parameter is ignored: query
- * strings end up in access logs.
+ * set headers on an upgrade). A `?token=` query parameter is ignored, with a
+ * warning: query strings end up in access logs.
  */
 export function websocketToken(request: Request): string {
-  return (
+  const token = (
     bearerToken(request.headers.get("authorization")) ??
     subprotocolToken(request) ??
     ""
   ).trim();
+  const url = new URL(request.url);
+  if (!token && url.searchParams.has("token")) {
+    console.warn(
+      `ignored WebSocket credential in ?token= on ${url.pathname}; send it as Sec-WebSocket-Protocol "broods.token.<key>"`,
+    );
+  }
+
+  return token;
 }
 
 /**
