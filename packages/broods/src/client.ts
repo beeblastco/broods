@@ -12,13 +12,7 @@ import {
   type AgentRunOverrides,
 } from "./run-input.ts";
 import { readSseStream } from "./stream.ts";
-import type {
-  AsyncRequestAccepted,
-  AsyncStatus,
-  Cron,
-  CronRun,
-} from "./types.ts";
-import type { CreateCronInput, UpdateCronInput } from "./contracts.ts";
+import type { AsyncRequestAccepted, AsyncStatus } from "./types.ts";
 
 export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
@@ -136,10 +130,6 @@ export type AgentHandle = {
   continue: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
   stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
 };
-
-export type CreateClientCronInput =
-  | CreateCronInput
-  | (Omit<CreateCronInput, "agentId"> & { agent: AgentReference | string });
 
 export class BroodsClient {
   private readonly baseUrl: string;
@@ -423,118 +413,6 @@ export class BroodsClient {
     throw new Error("Polling timeout");
   }
 
-  async createCron(input: CreateClientCronInput): Promise<Cron> {
-    const response = await this.fetchJson(`${this.baseUrl}/v1/crons`, {
-      method: "POST",
-      headers: this.apiKeyHeaders(),
-      body: JSON.stringify(resolveCronInput(input)),
-    });
-
-    if (response.status !== 201)
-      throw new Error(
-        `Create cron job failed: ${response.status} ${await response.text()}`,
-      );
-
-    return (await response.json()) as Cron;
-  }
-
-  async listCrons(): Promise<Cron[]> {
-    const response = await this.fetchJson(`${this.baseUrl}/v1/crons`, {
-      method: "GET",
-      headers: this.apiKeyHeaders(),
-    });
-
-    if (!response.ok)
-      throw new Error(
-        `List cron jobs failed: ${response.status} ${await response.text()}`,
-      );
-
-    const payload = (await response.json()) as { crons: Cron[] };
-
-    return payload.crons;
-  }
-
-  async getCron(cronId: string): Promise<Cron | null> {
-    const response = await this.fetchJson(
-      `${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`,
-      {
-        method: "GET",
-        headers: this.apiKeyHeaders(),
-      },
-    );
-
-    if (response.status === 404) return null;
-    if (!response.ok)
-      throw new Error(
-        `Get cron job failed: ${response.status} ${await response.text()}`,
-      );
-
-    return (await response.json()) as Cron;
-  }
-
-  async listCronRuns(
-    cronId: string,
-    options: { limit?: number } = {},
-  ): Promise<CronRun[]> {
-    const params = new URLSearchParams();
-    if (options.limit !== undefined) params.set("limit", String(options.limit));
-    const suffix = params.size > 0 ? `?${params}` : "";
-    const response = await this.fetchJson(
-      `${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}/runs${suffix}`,
-      {
-        method: "GET",
-        headers: this.apiKeyHeaders(),
-      },
-    );
-
-    if (!response.ok)
-      throw new Error(
-        `List cron job runs failed: ${response.status} ${await response.text()}`,
-      );
-
-    const payload = (await response.json()) as { runs: CronRun[] };
-
-    return payload.runs;
-  }
-
-  async updateCron(cronId: string, patch: UpdateCronInput): Promise<Cron> {
-    const response = await this.fetchJson(
-      `${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`,
-      {
-        method: "PATCH",
-        headers: this.apiKeyHeaders(),
-        body: JSON.stringify(patch),
-      },
-    );
-
-    if (!response.ok)
-      throw new Error(
-        `Update cron job failed: ${response.status} ${await response.text()}`,
-      );
-
-    return (await response.json()) as Cron;
-  }
-
-  async deleteCron(cronId: string): Promise<boolean> {
-    const response = await this.fetchJson(
-      `${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`,
-      {
-        method: "DELETE",
-        headers: this.apiKeyHeaders(),
-      },
-    );
-
-    if (response.status === 404) return false;
-    if (!response.ok)
-      throw new Error(
-        `Delete cron job failed: ${response.status} ${await response.text()}`,
-      );
-
-    const payload = (await response.json()) as { deleted: boolean };
-
-    return payload.deleted;
-  }
-
   /**
    * Scoped invoke URL for a deployed agent. When codegen embedded the runtime
    * key's scope, this is
@@ -746,13 +624,10 @@ function normalizeAsyncAccepted(
   if (typeof statusUrl !== "string" || statusUrl.length === 0) {
     throw new Error("Async response missing statusUrl");
   }
-  // Older cores answer without a `runId` field, but the id is still in the
-  // status URL they return, so read it back out of there.
-  const runId =
-    typeof (payload as { runId?: unknown }).runId === "string"
-      ? (payload as { runId: string }).runId
-      : runIdFromStatusUrl(statusUrl);
-  if (!runId) throw new Error("Async response missing runId");
+  const runId = (payload as { runId?: unknown }).runId;
+  if (typeof runId !== "string" || runId.length === 0) {
+    throw new Error("Async response missing runId");
+  }
 
   const eventId =
     typeof (payload as { eventId?: unknown }).eventId === "string"
@@ -779,23 +654,6 @@ function normalizeAsyncAccepted(
       ? { requestedMode: requestedMode }
       : {}),
   };
-}
-
-function runIdFromStatusUrl(statusUrl: string): string | undefined {
-  const match = new URL(statusUrl).pathname.match(/\/v1\/runs\/([^/]+)$/);
-
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
-}
-
-function resolveCronInput(input: CreateClientCronInput): CreateCronInput {
-  if ("agentId" in input) return input;
-  const agent = input.agent;
-  const agentId = typeof agent === "string" ? agent : agent.id;
-  const { agent: _agent, ...rest } = input;
-
-  // Spreading erases the input|events discrimination; the caller already
-  // supplied a valid one-of, so re-assert the union shape.
-  return { ...rest, agentId: agentId } as CreateCronInput;
 }
 
 async function responseErrorDetails(

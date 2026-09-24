@@ -114,8 +114,8 @@ export interface CliProject {
 export interface CliEnvVar {
   name: string;
   updatedAt: number;
-  /** SHA-256 hex of the stored value; absent until the variable's next write. */
-  valueDigest?: string;
+  /** SHA-256 hex of the stored value. */
+  valueDigest: string;
 }
 
 export type DiffOperation = "create" | "update" | "delete" | "rename";

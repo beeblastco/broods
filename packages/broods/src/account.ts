@@ -41,6 +41,13 @@ import type { Cron, CronRun, Skill } from "./types.ts";
 const DEFAULT_ACCOUNT_BASE_URL = "https://gateway.broods.app";
 const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 
+/** A config PATCH body: objects merge key by key, `null` deletes a key, arrays and scalars replace. */
+export type ConfigPatch<T> = T extends readonly unknown[]
+  ? T
+  : T extends object
+    ? { [K in keyof T]?: ConfigPatch<T[K]> | null }
+    : T;
+
 export interface BroodsAccountClientOptions {
   /** Base URL of the broods gateway. Falls back to `BROODS_BASE_URL`, then `https://gateway.broods.app`. */
   baseUrl?: string;
@@ -93,7 +100,7 @@ export interface AccountEnvVar {
 export interface UpdateAgentInput {
   name?: string;
   description?: string | null;
-  config?: unknown;
+  config?: ConfigPatch<AgentConfig>;
 }
 
 /** Public workspace record returned by the workspaces routes. */
@@ -238,9 +245,11 @@ export interface AccountMcp {
   stageId: string;
   name: string;
   description?: string;
-  transport: "http" | "hosted";
+  transport: "http" | "hosted" | "machine";
   /** External servers only; a hosted row has no endpoint of its own. */
   url?: string;
+  /** Machine servers only: the machine sandbox (by name) whose daemon serves it. */
+  sandbox?: string;
   /** Hosted servers only: content hash of the uploaded bundle. */
   sha256?: string;
   headers?: Record<string, string>;
@@ -255,12 +264,14 @@ export interface AccountMcp {
 
 /**
  * Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads inline
- * (≤10 MB); a larger bundle goes through `uploadMcpBundle` first.
+ * (≤10 MB); a larger bundle goes through `uploadMcpBundle` first; `sandbox`
+ * runs it on that machine sandbox's daemon.
  */
 export interface CreateMcpInput {
   name: string;
   description?: string;
   url?: string;
+  sandbox?: string;
   bundle?: string;
   bundleStorageId?: string;
   sha256?: string;
@@ -274,6 +285,7 @@ export interface UpdateMcpInput {
   name?: string;
   description?: string;
   url?: string;
+  sandbox?: string;
   bundle?: string;
   bundleStorageId?: string;
   sha256?: string;
@@ -506,7 +518,7 @@ export class BroodsAccountClient {
   async createAgent(input: {
     name: string;
     description?: string;
-    config: unknown;
+    config: AgentConfig;
   }): Promise<CreateAgentResult> {
     const result = await this.request<CreateAgentResult>(
       "POST",
@@ -643,7 +655,7 @@ export class BroodsAccountClient {
   async createWorkspace(input: {
     name: string;
     description?: string;
-    config?: unknown;
+    config?: WorkspaceConfig;
   }): Promise<AccountWorkspace> {
     const result = await this.request<AccountWorkspace>(
       "POST",
@@ -670,7 +682,11 @@ export class BroodsAccountClient {
 
   async updateWorkspace(
     workspaceId: string,
-    patch: { name?: string; description?: string | null; config?: unknown },
+    patch: {
+      name?: string;
+      description?: string | null;
+      config?: ConfigPatch<WorkspaceConfig>;
+    },
   ): Promise<AccountWorkspace | null> {
     return await this.request<AccountWorkspace>(
       "PATCH",
@@ -729,33 +745,40 @@ export class BroodsAccountClient {
     return result.file;
   }
 
-  /** Rename a workspace file or folder. Returns false when the workspace or source path is gone. */
+  /** Rename a workspace file or folder. Returns how many objects moved; throws when the workspace or source path is gone. */
   async renameWorkspaceFile(
     workspaceId: string,
     path: string,
     newPath: string,
-  ): Promise<boolean> {
-    const result = await this.request<{ renamed: boolean }>(
-      "PATCH",
-      `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`,
-      { path: path, newPath: newPath },
-    );
+  ): Promise<number> {
+    const filesPath = `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`;
+    const result = await this.request<{ renamed: number }>("PATCH", filesPath, {
+      path: path,
+      newPath: newPath,
+    });
+    if (!result)
+      throw new BroodsAccountApiError(
+        "PATCH",
+        filesPath,
+        404,
+        "Workspace not found",
+      );
 
-    return result?.renamed ?? false;
+    return result.renamed;
   }
 
-  /** Delete a workspace file or folder. Returns false when the workspace or path is gone. */
+  /** Delete a workspace file or folder. Returns how many objects were deleted, 0 when the workspace or path is gone. */
   async deleteWorkspaceFile(
     workspaceId: string,
     path: string,
-  ): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>(
+  ): Promise<number> {
+    const result = await this.request<{ deleted: number }>(
       "DELETE",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`,
       { path: path },
     );
 
-    return result?.deleted ?? false;
+    return result?.deleted ?? 0;
   }
 
   async listSandboxes(): Promise<AccountSandbox[]> {
@@ -770,7 +793,7 @@ export class BroodsAccountClient {
   async createSandbox(input: {
     name: string;
     description?: string;
-    config?: unknown;
+    config?: SandboxConfig;
   }): Promise<AccountSandbox> {
     const result = await this.request<AccountSandbox>(
       "POST",
@@ -795,10 +818,14 @@ export class BroodsAccountClient {
     );
   }
 
-  /** PATCH a sandbox config. `config` fully replaces the stored config. Returns null when the sandbox is gone. */
+  /** PATCH a sandbox config. `config` deep-merges into the stored config; `null` leaves delete keys. Returns null when the sandbox is gone. */
   async updateSandbox(
     sandboxId: string,
-    patch: { name?: string; description?: string | null; config?: unknown },
+    patch: {
+      name?: string;
+      description?: string | null;
+      config?: ConfigPatch<SandboxConfig>;
+    },
   ): Promise<AccountSandbox | null> {
     return await this.request<AccountSandbox>(
       "PATCH",

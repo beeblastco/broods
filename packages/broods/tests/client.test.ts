@@ -63,6 +63,7 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
           conversationKey: "conversation-1",
           status: "queued",
           requestedMode: "steer",
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           statusUrl:
             "https://gateway.broods.app/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
@@ -255,6 +256,7 @@ test("client starts async runs through generated scoped agent references", async
 
       return Response.json(
         {
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           statusUrl:
             "https://gateway.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
@@ -290,6 +292,25 @@ test("client starts async runs through generated scoped agent references", async
   });
 });
 
+test("runAsync rejects an accepted answer without a runId", async () => {
+  const client = new BroodsClient({
+    baseUrl: "https://core.example",
+    apiKey: "runtime-key",
+    fetch: async () =>
+      Response.json(
+        {
+          statusUrl:
+            "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        },
+        { status: 202 },
+      ),
+  });
+
+  await expect(
+    client.runAsync({ agentId: "agent_1", input: "hello" }),
+  ).rejects.toThrow("Async response missing runId");
+});
+
 test("client passes typed run overrides through async run bodies", async () => {
   const bodies: unknown[] = [];
   const client = new BroodsClient({
@@ -300,6 +321,7 @@ test("client passes typed run overrides through async run bodies", async () => {
 
       return Response.json(
         {
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           statusUrl:
             "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
@@ -354,6 +376,7 @@ test("client defaults async conversation key to the generated event id", async (
 
       return Response.json(
         {
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           statusUrl:
             "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
@@ -423,86 +446,5 @@ test("client polls async status by run id", async () => {
   expect(status).toEqual({ status: "completed", response: { ok: true } });
   expect(urls).toEqual([
     "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  ]);
-});
-
-test("client creates cron jobs using agent references", async () => {
-  const requests: Array<{ url: string; body?: unknown }> = [];
-  const client = new BroodsClient({
-    baseUrl: "https://core.example",
-    apiKey: "runtime-key",
-    fetch: async (input, init) => {
-      expect(init?.headers).toMatchObject({
-        Authorization: "Bearer runtime-key",
-      });
-      requests.push({
-        url: String(input),
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
-      });
-
-      return Response.json(
-        {
-          accountId: "acct_1",
-          cronId: "cron_1",
-          name: "daily",
-          agentId: "agent_1",
-          events: [{ role: "user", content: [{ type: "text", text: "run" }] }],
-          scheduleExpression: "rate(1 day)",
-          status: "active",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-        { status: 201 },
-      );
-    },
-  });
-
-  const cron = await client.createCron({
-    name: "daily",
-    agent: {
-      kind: "agent",
-      name: "support",
-      id: "agent_1",
-      project: "app",
-      stage: "development",
-    },
-    input: "run",
-    scheduleExpression: "rate(1 day)",
-  });
-
-  expect(cron.cronId).toBe("cron_1");
-  expect(requests).toEqual([
-    {
-      url: "https://core.example/v1/crons",
-      body: {
-        name: "daily",
-        agentId: "agent_1",
-        input: "run",
-        scheduleExpression: "rate(1 day)",
-      },
-    },
-  ]);
-});
-
-test("client sends cron job APIs to the configured base URL", async () => {
-  const urls: string[] = [];
-  const client = new BroodsClient({
-    baseUrl: "https://app.example",
-    apiKey: "runtime-key",
-    fetch: async (input) => {
-      urls.push(String(input));
-
-      if (String(input).includes("/runs")) return Response.json({ runs: [] });
-
-      return Response.json({ crons: [] });
-    },
-  });
-
-  await client.listCrons();
-  await client.listCronRuns("cron_1", { limit: 5 });
-
-  expect(urls).toEqual([
-    "https://app.example/v1/crons",
-    "https://app.example/v1/crons/cron_1/runs?limit=5",
   ]);
 });

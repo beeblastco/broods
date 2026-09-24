@@ -46,6 +46,10 @@ export interface AsyncStatus {
     | "failed"
     | "expired"
     | "not_found";
+  /** Set on every core answer. Absent only on the `not_found` the SDK returns for a 404. */
+  runId?: string;
+  eventId?: string;
+  conversationKey?: string;
   requestedMode?: "reject" | "followup" | "collect" | "steer";
   appliedMode?: "reject" | "followup" | "collect" | "steer";
   appliedToEventId?: string;
