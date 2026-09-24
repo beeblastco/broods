@@ -62,12 +62,16 @@ interface Props {
   /** Plot height in px, axis labels included. */
   height: number;
   series: UsageChartSeries[];
-  /** One row per bin, one value per series. Memoize: a new array starts a transition. */
-  rows: number[][];
+  /**
+   * One row per bin, one value per series; null is unknown, drawn as nothing
+   * and "–" in the tooltip. Memoize: a new array starts a transition.
+   */
+  rows: Array<Array<number | null>>;
   bucketStarts: number[];
   binSeconds: number;
   selected: number | null;
-  onSelect: (index: number) => void;
+  /** Absent on a chart with nothing to drill into; clicks then do nothing. */
+  onSelect?: (index: number) => void;
   formatAxis: (n: number) => string;
   formatValue: (n: number) => string;
   tickCount?: number;
@@ -102,17 +106,22 @@ export function UsageChart({
   const [width, measureRef] = useElementWidth(0);
   const [hover, setHover] = useState<number | null>(null);
 
+  // Unknown values stack as 0, which draws no mark.
+  const drawn = useMemo(
+    () => rows.map((row) => row.map((value) => value ?? 0)),
+    [rows],
+  );
   const ticks = useMemo(
     () =>
       niceTicks(
-        Math.max(0, ...rows.map((row) => row.reduce((a, b) => a + b, 0))),
+        Math.max(0, ...drawn.map((row) => row.reduce((a, b) => a + b, 0))),
         tickCount,
       ),
-    [rows, tickCount],
+    [drawn, tickCount],
   );
   const yMaxTarget = useMemo(() => [[ticks[ticks.length - 1]]], [ticks]);
   const yMax = useTween(yMaxTarget)[0][0] || 1;
-  const tweened = useTween(rows);
+  const tweened = useTween(drawn);
   const n = bucketStarts.length;
   // The first frame after a range switch still holds the old bin count.
   const shown = tweened.length === n ? tweened : resampleRows(tweened, n);
@@ -134,8 +143,12 @@ export function UsageChart({
     <div className="relative select-none" ref={measureRef}>
       <button
         type="button"
-        aria-label="Usage over time. Arrow keys move, Enter shows traces."
-        className="block w-full cursor-pointer text-3xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label={
+          onSelect
+            ? "Usage over time. Arrow keys move, Enter shows traces."
+            : "Usage over time. Arrow keys move."
+        }
+        className={`block w-full text-3xs outline-none focus-visible:ring-1 focus-visible:ring-ring ${onSelect ? "cursor-pointer" : "cursor-default"}`}
         onKeyDown={(event) => {
           if (event.key === "ArrowLeft") setHover(Math.max(0, active - 1));
           else if (event.key === "ArrowRight")
@@ -152,7 +165,7 @@ export function UsageChart({
         onMouseLeave={() => setHover(null)}
         onClick={(event) =>
           // detail is 0 when Enter or Space fired the click.
-          onSelect(
+          onSelect?.(
             event.detail === 0
               ? active
               : indexAt(
@@ -207,21 +220,37 @@ export function UsageChart({
           series={series}
           values={rows[hover]}
           formatValue={formatValue}
+          clickable={onSelect !== undefined}
         />
       )}
     </div>
   );
 }
 
-/** Time label for a bin: clock time for sub-day bins, date for day bins. */
+/**
+ * Time label for a bin: clock time for sub-day bins, date for day bins, and
+ * the first to last day for a long label of a multi-day bin. Day bins start at
+ * UTC midnight, so their dates are the UTC ones.
+ */
 export function formatBucketLabel(
   ms: number,
   binSeconds: number,
   long: boolean,
 ): string {
   const d = new Date(ms);
+  if (binSeconds >= 86400) {
+    const utcDay: Intl.DateTimeFormatOptions = {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    };
+    const first = d.toLocaleDateString([], utcDay);
+    if (!long || binSeconds === 86400) return first;
+    const last = new Date(ms + (binSeconds - 86400) * 1000);
+
+    return `${first} – ${last.toLocaleDateString([], utcDay)}`;
+  }
   const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
-  if (binSeconds >= 86400) return date;
   const time = d.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -427,19 +456,22 @@ function ChartTooltip({
   series,
   values,
   formatValue,
+  clickable,
 }: {
   x: number;
   chartWidth: number;
   title: string;
   series: UsageChartSeries[];
-  values: number[];
+  values: Array<number | null>;
   formatValue: (n: number) => string;
+  clickable: boolean;
 }): React.JSX.Element {
   const [boxWidth, measureRef] = useElementWidth(TOOLTIP_MIN_WIDTH_PX);
   const right = x + TOOLTIP_OFFSET_PX;
   const side =
     right + boxWidth > chartWidth ? x - TOOLTIP_OFFSET_PX - boxWidth : right;
   const left = Math.max(0, Math.min(side, chartWidth - boxWidth));
+  const known = values.filter((value) => value !== null);
 
   return (
     <div
@@ -464,16 +496,22 @@ function ChartTooltip({
                 />
                 {s.label}
               </span>
-              <span className="tabular-nums">{formatValue(value)}</span>
+              <span className="tabular-nums">
+                {value === null ? "–" : formatValue(value)}
+              </span>
             </div>
           ))}
         <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border pt-0.5 font-medium">
           <span className="text-muted-foreground">Total</span>
           <span className="tabular-nums">
-            {formatValue(values.reduce((a, b) => a + b, 0))}
+            {known.length === 0
+              ? "–"
+              : formatValue(known.reduce((a, b) => a + b, 0))}
           </span>
         </div>
-        <div className="text-muted-foreground">Click to see traces</div>
+        {clickable && (
+          <div className="text-muted-foreground">Click to see traces</div>
+        )}
       </div>
     </div>
   );
