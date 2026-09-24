@@ -210,7 +210,7 @@ paths:
                 budgetExhausted:
                   value:
                     error:
-                      message: This account has used its €5.00 compute budget for 2026-09 on the free plan. Upgrade to keep running agents, or wait for next month.
+                      message: This account has used its monthly compute allowance for 2026-09 on the free plan. Upgrade to keep running agents, or wait for next month.
                       type: invalid_request_error
                       code: budget_exhausted
         "403":

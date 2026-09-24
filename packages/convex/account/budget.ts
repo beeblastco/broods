@@ -1,7 +1,7 @@
 /**
  * The monthly compute budget, as core and the dashboard reach it: core reads
  * the budget at admission, records the usage only it sees (hosted-MCP invokes,
- * media egress) and claims the 80% warning; the dashboard reads used/limit.
+ * media egress) and claims the 80% warning; the dashboard reads percentages.
  * Sandbox time is metered by the sandbox mirror itself; storage by the daily
  * snapshot in `aws/storageMeter.ts`. Math lives in `model/usageMeter.ts`.
  */
@@ -15,8 +15,10 @@ import { authKit } from "../auth";
 import {
   addUsage,
   budgetStatus,
+  budgetUsage,
   claimBudgetWarning,
   type BudgetStatus,
+  type BudgetUsage,
 } from "../model/usageMeter";
 import { getActiveAccountForUser } from "../org/orgs";
 import { planValidator, usageQuantityFields } from "../schema";
@@ -33,6 +35,21 @@ const budgetStatusValidator = v.object({
   limitEur: v.number(),
   runsPerMinute: v.number(),
   warned: v.boolean(),
+});
+
+const budgetUsageValidator = v.object({
+  enforced: v.boolean(),
+  plan: planValidator,
+  month: v.string(),
+  usedPercent: v.union(v.number(), v.null()),
+  categories: v.object({
+    sandboxes: v.number(),
+    hostedMcp: v.number(),
+    storage: v.number(),
+    egress: v.number(),
+  }),
+  level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
+  runsPerMinute: v.number(),
 });
 
 /**
@@ -62,11 +79,14 @@ export const get = internalQuery({
   },
 });
 
-/** Dashboard billing panel: the active org's budget this month. */
+/**
+ * Dashboard billing panel: the active org's month as percentages. Euro
+ * figures never leave the backend, so the plan budgets stay private.
+ */
 export const getForActiveOrg = query({
   args: {},
-  returns: v.union(budgetStatusValidator, v.null()),
-  handler: async (ctx): Promise<BudgetStatus | null> => {
+  returns: v.union(budgetUsageValidator, v.null()),
+  handler: async (ctx): Promise<BudgetUsage | null> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -74,7 +94,7 @@ export const getForActiveOrg = query({
     }
     const account = await getActiveAccountForUser(ctx);
 
-    return account ? await budgetStatus(ctx, account._id, Date.now()) : null;
+    return account ? await budgetUsage(ctx, account._id, Date.now()) : null;
   },
 });
 
