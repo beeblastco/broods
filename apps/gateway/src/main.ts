@@ -278,8 +278,14 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
 
           if (upgraded) return undefined;
           // The ticket never opened a socket, so the client may retry with it.
-          if (data.kind === "terminal" && data.ticket)
-            await config.spentTickets.release(websocketToken(request));
+          // A failed release leaves it spent, which is the safe side.
+          if (data.kind === "terminal" && data.ticket) {
+            await config.spentTickets
+              .release(websocketToken(request))
+              .catch((error: unknown): void => {
+                console.error("terminal ticket release failed:", error);
+              });
+          }
 
           return jsonError(400, "WebSocket upgrade failed");
         }

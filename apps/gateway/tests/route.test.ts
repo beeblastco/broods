@@ -542,7 +542,6 @@ function limits(overrides: Partial<GatewayLimits> = {}): GatewayLimits {
   };
 }
 
-/** Core answering the scope lookup with a key bound to SCOPE. */
 /** Spent tickets in memory, shared by every gateway given the same one. */
 function memorySpentTickets(): SpentTickets {
   const spent = new Set<string>();
@@ -560,6 +559,7 @@ function memorySpentTickets(): SpentTickets {
   };
 }
 
+/** Core answering the scope lookup with a key bound to SCOPE. */
 function scopeFetch(): typeof fetch {
   return (async () => Response.json(SCOPE)) as unknown as typeof fetch;
 }
