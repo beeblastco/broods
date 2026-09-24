@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import type { BroodsAccountClient } from "../../packages/broods/src/account.ts";
+import { runMachineDaemon } from "../../packages/broods/src/cli/machine.ts";
 import type { BroodsClient } from "../../packages/broods/src/client.ts";
 import type { AsyncStatus } from "../../packages/broods/src/types.ts";
 
 const DEEPSEEK_SMOKE_MODEL = "deepseek-flash";
+const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const RUN_POLL_INTERVAL_MS = 200;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 
@@ -13,6 +15,12 @@ export const MODEL_KEY_HINT = "set DEEPSEEK_API_KEY for the full run";
 export interface SmokeModel {
   model: { modelId: string; provider: "deepseek" };
   provider: { deepseek: { apiKey: string } };
+}
+
+export interface MachineConnection {
+  output: () => string;
+  sandboxId: string;
+  stop: () => Promise<void>;
 }
 
 export type VerifyCase = (context: VerifyContext) => Promise<void>;
@@ -47,6 +55,68 @@ export function assertStep(
 ): asserts ok {
   if (!ok) throw new VerifyFailure(step, detail);
   console.log(`  ok  ${step}`);
+}
+
+/**
+ * Creates a machine sandbox and runs its daemon in-process on the account
+ * secret until `stop`, because the `broods machine` CLI needs a dashboard login.
+ */
+export async function connectMachine(
+  context: VerifyContext,
+  options: { computer: boolean; name: string },
+): Promise<MachineConnection> {
+  const { sandboxId } = await context.account.createSandbox({
+    name: options.name,
+    config: {
+      provider: "machine",
+      permissionMode: "bypass",
+      network: { mode: "allow-all" },
+    },
+  });
+  let output = "";
+  const controller = new AbortController();
+  const daemon = runMachineDaemon({
+    baseUrl: context.gatewayUrl,
+    computer: options.computer,
+    credential: async (): Promise<string> => context.accountSecret,
+    cwd: process.cwd(),
+    log: (line: string): void => {
+      output += `${line}\n`;
+    },
+    sandbox: options.name,
+    signal: controller.signal,
+  }).catch((error: unknown): void => {
+    output += `daemon exited: ${String(error)}\n`;
+  });
+  const stop = async (): Promise<void> => {
+    controller.abort();
+    await daemon;
+  };
+  const connected = await context.measure(
+    "machine connect",
+    (): Promise<true | null> =>
+      pollUntil(
+        {
+          initialIntervalMs: 100,
+          maxIntervalMs: 500,
+          timeoutMs: MACHINE_CONNECT_TIMEOUT_MS,
+        },
+        async (): Promise<true | null> =>
+          output.includes(`connected as ${options.name}`) ? true : null,
+      ),
+  );
+  if (connected !== true) await stop();
+  assertStep(
+    "machine daemon connected through the gateway",
+    connected === true,
+    output,
+  );
+
+  return {
+    output: (): string => output,
+    sandboxId: sandboxId,
+    stop: stop,
+  };
 }
 
 /** The last JSON line of an append-only log that matches, or null. */
