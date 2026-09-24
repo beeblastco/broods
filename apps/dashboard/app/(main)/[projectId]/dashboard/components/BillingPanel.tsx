@@ -529,12 +529,16 @@ function UsageTableRow({
         <span className="col-span-3 text-xs text-muted-foreground">Free</span>
       ) : (
         <>
-          <div className="col-span-2 flex h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full w-(--bar-width) bg-foreground"
-              style={{ "--bar-width": `${Math.min(share, 100)}%` }}
-            />
-          </div>
+          {amount === null ? (
+            <span className="col-span-2" />
+          ) : (
+            <div className="col-span-2 flex h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full w-(--bar-width) bg-foreground"
+                style={{ "--bar-width": `${Math.min(share, 100)}%` }}
+              />
+            </div>
+          )}
           <span className="text-right text-sm tabular-nums text-muted-foreground">
             {amount === null ? "–" : formatPercent(share)}
           </span>
