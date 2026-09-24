@@ -43,7 +43,7 @@ flowchart TD
   Actions --> Provider
 ```
 
-`handleChannelWebhook` in `integrations.ts` runs the steps in that order. The ACK waits for attachment ingest, admission, dedup and a durable queue entry in Convex, for at most `CHANNEL_ACK_BUDGET_MS` (2 s). That stays under Slack's and Discord's 3 s retry limit, and a retry never races an admitted message. Model work starts on the `MAX_INPROCESS_WORKERS` pool once admission makes this message the conversation's owner.
+`handleChannelWebhook` in `integrations.ts` runs the steps in that order. The ACK waits for the `onMessageReceived` hook, attachment ingest, admission, dedup and a durable queue entry in Convex, for at most `CHANNEL_ACK_BUDGET_MS` (2 s). That stays under Slack's and Discord's 3 s retry limit, and a retry never races an admitted message. Model work starts on the `MAX_INPROCESS_WORKERS` pool once admission makes this message the conversation's owner.
 
 One message over time. The `critical` block is what the ACK waits on:
 
@@ -61,6 +61,7 @@ sequenceDiagram
   G->>I: proxy to core
   I->>I: authenticate, parse, channel record, agent.invoke gate
   critical at most CHANNEL_ACK_BUDGET_MS (2 s)
+    I->>I: onMessageReceived hook
     I->>H: handleChannelRequest (typing and reaction fire first)
     H->>H: ingestChannelAttachments
     H->>CV: acceptIngress, mode steer
@@ -74,7 +75,7 @@ sequenceDiagram
   W->>CV: settle envelope, drain queued follow-ups
 ```
 
-A `queued` or `duplicate` outcome returns without a worker. The current owner drains the queued envelope on its own worker slot when its turn settles.
+A `queued` or `duplicate` outcome starts no worker for this message, only one for a group that admission recovered from an expired owner. The current owner drains the queued envelope on its own worker slot when its turn settles.
 
 If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
 
@@ -269,8 +270,10 @@ sequenceDiagram
   F->>F: OlmMachine decrypt, hold back until keys arrive
   F->>G: POST channel webhook, MATRIX_ROOM_EVENT
   G->>C: proxy, x-matrix-access-token
-  F->>F: write sync token
-  C->>C: admit and run the turn, as above
+  C->>C: admit, as above
+  C-->>F: 200
+  F->>F: write sync token after the batch
+  C->>C: run the turn
   C->>F: POST /v1/send at MATRIX_FORWARDER_URL
   F->>F: encrypt for the room
   F->>HS: send m.room.encrypted

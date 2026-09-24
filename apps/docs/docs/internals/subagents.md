@@ -64,20 +64,22 @@ The lifecycle of one persistent child task, as `SubagentCoordinator` in `src/har
 
 ```mermaid
 stateDiagram-v2
-  [*] --> running: run_subagent, accept with mode reject
+  [*] --> running: run_subagent returns the task id
+  running --> failed: accept with mode reject answers rejected
   running --> running: update_subagent steer, applied at the next step
   running --> stopping: stop_subagent, stopOwner
   stopping --> failed: renewOwner answers stopped at the next step
+  stopping --> completed: no further step, stop never seen
   running --> completed: settle completed, result injected
   running --> failed: settle failed, error injected
   completed --> running: takeNext finds a queued continue
   failed --> running: takeNext finds a queued continue
   completed --> [*]: nothing queued, lease released
   failed --> [*]: nothing queued, lease released
-  note right of stopping: settles failed with stoppedByUser, never injected
+  note right of stopping: a seen stop settles failed with stoppedByUser, never injected
 ```
 
-A busy child conversation makes `accept` answer `rejected`, and `run_subagent` fails with `Subagent conversation is not available`. Past the parent's wait budget, `takeNext` is skipped and the queued turn goes to its own worker (`transferChildConversation`).
+`run_subagent` answers `running` before the child is admitted. A busy child conversation then makes `accept` answer `rejected`, and the task settles `failed` with `Subagent conversation is not available: rejected`, which is injected like any failure. Past the parent's wait budget, the envelope `takeNext` promotes runs on its own worker (`transferChildConversation`) and is not injected.
 
 - The parent dispatches a child with mode `reject`, so dispatching into a busy child conversation surfaces the conflict instead of stalling.
 - Control admission and conversation ownership are decided in one transaction. An update can enter the queue only while the child still owns an active fenced generation. If the child finishes at the same moment, the update creates no ingress envelope and returns `not_running`. A late stop follows the same current-owner rule. Both tools pass the `taskId` as `expectedOwnerTaskId`, so a control never lands on a later task that took over the conversation.
@@ -104,9 +106,13 @@ sequenceDiagram
   alt child still owns its generation
     CX-->>T: stopped true
     T-->>P: status stopping
-    Ch->>CX: renewOwner answers stopped
-    Ch->>CX: settle failed, stoppedByUser
-  else child already settled
+    alt child has another step
+      Ch->>CX: renewOwner answers stopped
+      Ch->>CX: settle failed, stoppedByUser
+    else child was on its last step
+      Ch->>CX: settle completed, result injected
+    end
+  else child settled, or another task owns the conversation
     CX-->>T: stopped false
     T-->>P: status not_running
   end

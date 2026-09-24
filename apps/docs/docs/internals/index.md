@@ -87,9 +87,11 @@ flowchart TB
 
   Ingress --> GW
   Ingress --> Dash
-  Ingress -->|"convex-api host"| CVX
+  Ingress -->|"convex-api, convex-site hosts"| CVX
 
-  Fwd --> GW
+  Fwd -->|"channel webhook, public host"| Ingress
+  Fwd -->|"listConnections"| CVX
+  Core -->|"Matrix send"| Fwd
   GW --> Core
   GW -->|"config paths"| CVX
   GW --> NATS
@@ -108,20 +110,21 @@ flowchart TB
   Core --> Ext
   VM --> S3
   VM --> CW
-  CW --> Otel
+  CW -->|"otel host"| Ingress
+  Ingress --> Otel
 ```
 
-| Where                        | What runs there                                                                                                                                                | Provisioned by                           |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Hetzner k3s, `beeblast`      | gateway, core, dashboard, OPA, the two forwarders. One public door per stage: `gateway.broods.app` and `gateway.dev.broods.app`. Core has no ingress.          | `../infra` Helm releases                 |
-| Hetzner k3s, `convex`        | Self-hosted `convex-backend` for prod and dev, on one Postgres with a block volume. Browsers and CI use the public api host; gateway and core stay in-cluster. | `../infra` Helm releases                 |
-| Hetzner k3s, `nats`          | NATS JetStream for `WS_RESPONSES` and `OBSERVABILITY`. In-cluster only.                                                                                        | `../infra` Helm releases                 |
-| Hetzner k3s, `observability` | OTel collector, Loki, Tempo, VictoriaMetrics, Grafana.                                                                                                         | `../infra` Helm releases                 |
-| AWS `eu-west-1`              | Workspace, skill and bundle buckets, the mcp-runner Lambda, MicroVM images and roles, the MicroVM log group and forwarder, the sandbox VPC.                    | `apps/core/sst.config.ts`, per SST stage |
-| AWS `eu-central-1`           | Convex storage buckets and nightly exports.                                                                                                                    | `../infra` Terraform                     |
-| GitHub                       | Actions for CI and deploys, `ghcr.io/beeblastco/broods-*` images.                                                                                              | `.github/workflows`                      |
+| Where                        | What runs there                                                                                                                                                              | Provisioned by                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Hetzner k3s, `beeblast`      | gateway, core, dashboard, OPA, the two forwarders. Public hosts are `gateway.*` for the API, `dashboard.*`, and `opa.beeblast.co` for CI policy checks. Core has no ingress. | `../infra` Helm releases                 |
+| Hetzner k3s, `convex`        | Self-hosted `convex-backend` for prod and dev, on one Postgres with a block volume. Browsers and CI use the public api host; gateway and core stay in-cluster.               | `../infra` Helm releases                 |
+| Hetzner k3s, `nats`          | NATS JetStream for `WS_RESPONSES` and `OBSERVABILITY`. In-cluster only.                                                                                                      | `../infra` Helm releases                 |
+| Hetzner k3s, `observability` | OTel collector, Loki, Tempo, VictoriaMetrics, Grafana.                                                                                                                       | `../infra` Helm releases                 |
+| AWS `eu-west-1`              | Workspace, skill and bundle buckets, the mcp-runner Lambda, the MicroVM artifacts bucket and roles, the MicroVM log group and forwarder, the sandbox VPC.                    | `apps/core/sst.config.ts`, per SST stage |
+| AWS `eu-central-1`           | Convex storage buckets and nightly exports.                                                                                                                                  | `../infra` Terraform                     |
+| GitHub                       | Actions for CI and deploys, `ghcr.io/beeblastco/broods-*` images.                                                                                                            | `.github/workflows`                      |
 
-The forwarders are one release each for both planes, because a bot token must hold one socket. The docs site is static files on S3 behind CloudFront. How a commit reaches each box is in [CI/CD](ci-cd.md), and how to run the same shape yourself is in [self-hosting](self-hosting.md).
+The forwarders are one release each for both planes, because a bot token must hold one socket. They read connections from each plane's Convex in-cluster and post to each plane's public gateway host. MicroVM images are built by `../lambda-sanbdox` CI, not SST. The docs site is static files on S3 behind CloudFront. How a commit reaches each box is in [CI/CD](ci-cd.md), and how to run the same shape yourself is in [self-hosting](self-hosting.md).
 
 ## Where to start reading
 

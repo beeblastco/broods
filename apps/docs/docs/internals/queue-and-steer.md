@@ -95,10 +95,11 @@ sequenceDiagram
 
   W1->>CX: accept, idle
   CX-->>W1: owner, generation N
+  C->>CX: another event, queued behind W1
   Note over W1: stalls, lease lapses
   C->>W2: new event
   W2->>CX: accept
-  CX->>CX: promoteQueuedGroup, generation N+1
+  CX->>CX: queued work exists, promoteQueuedGroup, generation N+1
   CX-->>W2: queued, plus the recovered group
   W2->>W2: dispatch the recovered group
   W1->>CX: appendConversationEvent or settle with N
@@ -128,7 +129,7 @@ stateDiagram-v2
   [*] --> processing: accept, idle conversation
   [*] --> queued: accept, busy conversation
   queued --> processing: applySteering, steer prefix
-  queued --> processing: takeNext or recoverQueued
+  queued --> processing: takeNext, recoverQueued, or recovery in accept
   queued --> expired: past 15 min, maintain
   processing --> completed: settle completed
   processing --> failed: settle failed
@@ -139,13 +140,13 @@ stateDiagram-v2
   note right of queued: reject and capacity refusals write no row
 ```
 
-`accepted` and `applied` are in the `IngressStatus` type, but no envelope row is ever written with them. The run status route overlays the async run record, so while that record is nonterminal a poller sees `awaiting_approval` or `awaiting_input` instead of the envelope status.
+`accepted` and `applied` are in the `IngressStatus` type, but no envelope row is ever written with them. The run status route overlays the async run record, so while that record is nonterminal a poller sees its `processing`, `awaiting_approval` or `awaiting_input` instead of the envelope status. A `failed` envelope still shows through `processing`.
 
 ## The step boundary
 
 Steering enters at one point, the AI SDK `prepareStep` hook. After `onStepEnd` has seen every tool result of the current step, and before the next model call, the coordinator takes the steer prefix, appends it to history, refreshes the next step's messages and system context, and records the active event id as `appliedToEventId`.
 
-Nothing enters mid-stream or between tool calls of one parallel batch. When the run has finished, hit its step limit, entered an approval or terminal path, or has no next model call for any other reason, the steer stays queued. After the owner settles, `takeNext` promotes it, merged with any contiguous steers behind it, as one `followup` application under the next generation.
+Nothing enters mid-stream or between tool calls of one parallel batch. When the run has finished, hit its step limit, entered an approval or terminal path, or has no next model call for any other reason, the steer stays queued. After the owner settles, `takeNext` promotes it, merged with any contiguous steers from the same sender behind it, as one `followup` application under the next generation.
 
 ```mermaid
 sequenceDiagram

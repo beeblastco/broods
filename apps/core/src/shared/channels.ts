@@ -127,12 +127,12 @@ export interface InboundMessage {
   /**
    * Pictures, documents, voice notes and videos that arrived with the message, in
    * the wide Chat SDK attachment shape because inbound is whatever the provider
-   * sent. Adapters name the attachment and leave the bytes alone: parsing runs
-   * before the webhook is acknowledged, so downloading there would hold the
-   * provider's connection open for the length of a video. `fetchData` is the
-   * adapter's own authenticated reader (Telegram resolves a file id through
-   * getFile and signs the download with the bot token; Slack sends a bearer header
-   * for a private file), called once the turn is already running.
+   * sent. Adapters name the attachment and leave the bytes alone, so parsing
+   * stays cheap. `fetchData` is the adapter's own authenticated reader (Telegram
+   * resolves a file id through getFile and signs the download with the bot token;
+   * Slack sends a bearer header for a private file). `ingestChannelAttachments`
+   * calls it after parse and before admission, inside the ACK budget, so a
+   * queued turn still carries its media.
    */
   attachments?: Attachment[];
   events?: ChannelIngressEvent[];
