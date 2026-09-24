@@ -60,3 +60,15 @@ test("a cold project load is one document, no server action, no logo fetch", asy
     "the wordmark is inline",
   ).toEqual([]);
 });
+
+test("a segment that is no project id is the not-found page", async ({
+  page,
+}) => {
+  await page.goto("/not-a-project");
+  await expect(
+    page.getByRole("heading", { name: "Project not found" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Back to projects" }),
+  ).toBeVisible();
+});
