@@ -72,8 +72,9 @@ const RANGE_CONFIG: Record<
   "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
 };
 
-// Bounds the drill-down read: rows scanned per endpoint, and tasks returned.
-const USAGE_TASK_SCAN_LIMIT = 1000;
+// Bounds the drill-down: rows read across all endpoints (far under Convex's
+// per-query read limits), and tasks returned.
+const USAGE_TASK_SCAN_TOTAL = 2000;
 const USAGE_TASK_RETURN_LIMIT = 100;
 
 /** One finished task behind a usage bin, linked to its trace. */
@@ -195,9 +196,11 @@ export const fetchUsageStats = query({
 
 /**
  * Finished tasks inside one usage chart bin, heaviest first, so the dashboard
- * can show which traces a bin's tokens came from. Scans at most
- * `USAGE_TASK_SCAN_LIMIT` rows per endpoint and says so via `truncated`.
- * `taskUsage` is pruned after 90 days, so older bins return no tasks.
+ * can show which traces a bin's tokens came from. `models` narrows to the
+ * dashboard's model filter before the top tasks are picked. Reads at most
+ * `USAGE_TASK_SCAN_TOTAL` rows across the project's endpoints; `truncated`
+ * says some tasks in the bin are not listed. `taskUsage` is pruned after 90
+ * days, so older bins return no tasks.
  */
 export const fetchUsageTasks = query({
   args: {
@@ -205,6 +208,8 @@ export const fetchUsageTasks = query({
     stageId: v.optional(v.id("stages")),
     startMs: v.number(),
     endMs: v.number(),
+    /** `provider::model` keys to keep; omitted keeps every model. */
+    models: v.optional(v.array(v.string())),
   },
   returns: v.object({
     tasks: v.array(usageTask),
@@ -223,15 +228,32 @@ export const fetchUsageTasks = query({
       args.projectId,
       args.stageId,
     );
+    // Split one read budget across endpoints so a big project stays inside
+    // Convex's per-query read limits; one extra row tells a full bin apart.
+    const perEndpoint = Math.max(
+      1,
+      Math.floor(USAGE_TASK_SCAN_TOTAL / Math.max(1, endpointIds.length)),
+    );
     const batches = await Promise.all(
       endpointIds.map((endpointId) =>
-        collectUsageTasks(ctx, endpointId, args.startMs, args.endMs),
+        collectUsageTasks(
+          ctx,
+          endpointId,
+          args.startMs,
+          args.endMs,
+          perEndpoint + 1,
+        ),
       ),
     );
-    const rows = batches.flat();
+    const models = args.models ? new Set(args.models) : null;
+    const rows = batches
+      .flatMap((batch) => batch.slice(0, perEndpoint))
+      .filter(
+        (row) => !models || models.has(`${row.modelProvider}::${row.modelId}`),
+      );
     const truncated =
       rows.length > USAGE_TASK_RETURN_LIMIT ||
-      batches.some((batch) => batch.length === USAGE_TASK_SCAN_LIMIT);
+      batches.some((batch) => batch.length > perEndpoint);
     const tasks = rows
       .sort((a, b) => b.totalTokens - a.totalTokens)
       .slice(0, USAGE_TASK_RETURN_LIMIT)
@@ -279,14 +301,16 @@ export async function collectUsageRollups(
 }
 
 /**
- * Task usage rows for one endpoint that finished in `[startMs, endMs)`.
- * Exported for `fetchUsageTasks` and its test; not a registered Convex function.
+ * Up to `limit` task usage rows for one endpoint that finished in
+ * `[startMs, endMs)`, oldest first. Exported for `fetchUsageTasks` and its
+ * test; not a registered Convex function.
  */
 export async function collectUsageTasks(
   ctx: QueryCtx,
   endpointId: string,
   startMs: number,
   endMs: number,
+  limit: number,
 ): Promise<Doc<"taskUsage">[]> {
   return await ctx.db
     .query("taskUsage")
@@ -296,7 +320,7 @@ export async function collectUsageTasks(
         .gte("finishedAt", startMs)
         .lt("finishedAt", endMs),
     )
-    .take(USAGE_TASK_SCAN_LIMIT);
+    .take(limit);
 }
 
 /**
