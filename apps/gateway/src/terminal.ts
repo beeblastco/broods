@@ -1,5 +1,15 @@
+import { createHash } from "node:crypto";
+import { NatsError as NatsTcpError } from "nats";
+import {
+  Empty,
+  NatsError,
+  StorageType,
+  type KV,
+  type NatsConnection,
+} from "nats.ws";
 import {
   openTerminalTicket,
+  TERMINAL_TICKET_TTL_MS,
   type TerminalTicket,
 } from "../../core/src/shared/terminal-ticket.ts";
 import { MACHINE_MAX_FRAME_BYTES } from "../../core/src/shared/machine-socket.ts";
@@ -8,6 +18,9 @@ import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 // Two of the largest machine frames, so one still in flight never trips it.
 const MAX_UPSTREAM_BUFFERED_BYTES = 2 * MACHINE_MAX_FRAME_BYTES;
+// JetStream's error code for a KV create on a key that already holds a value.
+const KV_KEY_EXISTS = 10071;
+const SPENT_TICKET_BUCKET = "TERMINAL_TICKETS_SPENT";
 
 export type TerminalGatewayData = {
   kind: "terminal";
@@ -22,6 +35,17 @@ export type MachineGatewayData = {
 };
 
 export type RelayGatewayData = MachineGatewayData | TerminalGatewayData;
+
+/**
+ * Where the gateway records used terminal tickets. It spends a ticket before
+ * the upgrade and releases it when the upgrade fails.
+ */
+export interface SpentTickets {
+  /** True when this call spent the ticket, false when it was already spent. */
+  spend(token: string): Promise<boolean>;
+  /** Makes a ticket whose socket never opened usable again. */
+  release(token: string): Promise<void>;
+}
 
 /**
  * Application close code for a ticket the gateway could not open. A refused
@@ -59,22 +83,43 @@ export function openTerminalTicketWithSecrets(
 }
 
 /**
- * Marks a verified ticket used, dropping entries whose ticket has expired.
- * False when it was already used: a ticket copied out of a log cannot open a
- * second shell. The map lives in one gateway process, which holds while the
- * gateway runs a single replica.
+ * Spent terminal tickets in a JetStream KV bucket, shared by every gateway
+ * replica and kept across restarts, so a ticket copied out of a log cannot open
+ * a second shell. Keys live as long as a ticket can, then NATS drops them.
  */
-export function spendTerminalTicket(
-  spent: Map<string, number>,
-  token: string,
-  expiresAt: number,
-  now = Date.now(),
-): boolean {
-  for (const [key, until] of spent) if (until <= now) spent.delete(key);
-  if (spent.has(token)) return false;
-  spent.set(token, expiresAt);
+export function natsSpentTickets(
+  connection: () => Promise<NatsConnection>,
+): SpentTickets {
+  async function bucket(): Promise<KV> {
+    return (await connection()).jetstream().views.kv(SPENT_TICKET_BUCKET, {
+      history: 1,
+      storage: StorageType.File,
+      ttl: TERMINAL_TICKET_TTL_MS,
+    });
+  }
 
-  return true;
+  return {
+    spend: async function (token: string): Promise<boolean> {
+      try {
+        await (await bucket()).create(spentTicketKey(token), Empty);
+
+        return true;
+      } catch (error: unknown) {
+        // `connectNats` dials `nats://` with the TCP client, whose errors are
+        // their own class.
+        if (
+          (error instanceof NatsError || error instanceof NatsTcpError) &&
+          error.api_error?.err_code === KV_KEY_EXISTS
+        ) {
+          return false;
+        }
+        throw error;
+      }
+    },
+    release: async function (token: string): Promise<void> {
+      await (await bucket()).delete(spentTicketKey(token));
+    },
+  };
 }
 
 export function isSessionInitFrame(frame: string): boolean {
@@ -232,4 +277,10 @@ export function cleanupTerminalSocket(
 // A close frame can only carry 1000 or 4000-4999; the daemon retries on 1011.
 function relayCloseCode(code: number): number {
   return code === 1000 || (code >= 4000 && code <= 4999) ? code : 1011;
+}
+
+// A sealed ticket holds characters a KV key cannot, and the bucket should not
+// hold the ticket itself, so the key is its SHA-256.
+function spentTicketKey(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }

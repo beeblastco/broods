@@ -17,6 +17,7 @@ import {
   type GatewayData,
 } from "../src/main.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
+import type { SpentTickets } from "../src/terminal.ts";
 import type { GatewayLimits } from "../src/utils.ts";
 
 const SCOPE = {
@@ -440,6 +441,47 @@ test("a terminal ticket in the subprotocol opens one socket, and a replay spends
   ]);
 });
 
+test("a terminal ticket spent on one gateway replica is refused on another", async () => {
+  const spentTickets = memorySpentTickets();
+  const first = createGateway(gatewayConfig({ spentTickets: spentTickets }));
+  const second = createGateway(gatewayConfig({ spentTickets: spentTickets }));
+  const { server, upgrades } = fakeServer();
+  const ticket = terminalTicket();
+  const token = sealTerminalTicket(ticket, "terminal-secret");
+  const request = (): Request => terminalUpgradeRequest(token);
+
+  expect(await first.fetch(request(), server)).toBeUndefined();
+  expect(await second.fetch(request(), server)).toBeUndefined();
+  expect(upgrades).toEqual([
+    { kind: "terminal", ticket: ticket },
+    { kind: "terminal", ticket: null },
+  ]);
+});
+
+test("a terminal upgrade answers 502 when spent tickets cannot be checked", async () => {
+  const gateway = createGateway(
+    gatewayConfig({
+      spentTickets: {
+        spend: async function (): Promise<boolean> {
+          throw new Error("NATS unavailable");
+        },
+        release: async function (): Promise<void> {},
+      },
+    }),
+  );
+  const { server, upgrades } = fakeServer();
+
+  const response = await gateway.fetch(
+    terminalUpgradeRequest(
+      sealTerminalTicket(terminalTicket(), "terminal-secret"),
+    ),
+    server,
+  );
+
+  expect(response?.status).toBe(502);
+  expect(upgrades).toEqual([]);
+});
+
 /** Upgrades like Bun: a plain empty `headers` object throws. */
 function fakeServer(): {
   server: Bun.Server<GatewayData>;
@@ -481,6 +523,7 @@ function gatewayConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
     httpLimiter: undefined,
     limits: limits(),
     proxyOptions: { forwardAccountId: false },
+    spentTickets: memorySpentTickets(),
     terminalTicketSecrets: ["terminal-secret"],
     upgradeLimiter: new RateLimiter(120, 60_000),
     ...overrides,
@@ -500,8 +543,40 @@ function limits(overrides: Partial<GatewayLimits> = {}): GatewayLimits {
 }
 
 /** Core answering the scope lookup with a key bound to SCOPE. */
+/** Spent tickets in memory, shared by every gateway given the same one. */
+function memorySpentTickets(): SpentTickets {
+  const spent = new Set<string>();
+
+  return {
+    spend: async function (token: string): Promise<boolean> {
+      if (spent.has(token)) return false;
+      spent.add(token);
+
+      return true;
+    },
+    release: async function (token: string): Promise<void> {
+      spent.delete(token);
+    },
+  };
+}
+
 function scopeFetch(): typeof fetch {
   return (async () => Response.json(SCOPE)) as unknown as typeof fetch;
+}
+
+function terminalTicket(): TerminalTicket {
+  return {
+    url: "wss://sandbox.example/pty",
+    authorization: "Bearer workdir-key",
+    accountId: "account-1",
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+function terminalUpgradeRequest(token: string): Request {
+  return upgradeRequest(TERMINAL_WEBSOCKET_PATH, {
+    subprotocols: ["broods.v1", `broods.token.${token}`],
+  });
 }
 
 function upgradeRequest(
