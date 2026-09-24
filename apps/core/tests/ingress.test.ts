@@ -292,6 +292,42 @@ describe("async turn that throws after it settles", (): void => {
     expect(takeNext).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps pending questions when a kept final text follows them", async (): Promise<void> => {
+    const question: PendingQuestionSummary = {
+      statusId: "status-1",
+      questions: [],
+      answerBy: "2026-09-25T00:00:00.000Z",
+    };
+    // An earlier pass's final text is replayed after a later pass asks.
+    const settle = stubTurn(
+      [],
+      async (reply): Promise<PendingQuestionSummary[]> => {
+        await reply.onFinalText("answer");
+        await reply.onQuestionsPending?.([question]);
+
+        return [question];
+      },
+    );
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    const completeRun = spyOn(
+      getStorage().crons,
+      "completeRun",
+    ).mockResolvedValue();
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: {
+        ...completedEvent(),
+        cronRun: { cronId: "cron_1", runId: "run_1" },
+      },
+    });
+
+    expect(
+      settle.mock.calls.map(([options]) => options.asyncResult?.outcome.status),
+    ).toEqual(["awaiting_input"]);
+    expect(completeRun).not.toHaveBeenCalled();
+  });
+
   it("records the answer on the polling rows when the settle loses the lease", async (): Promise<void> => {
     const writes: Array<{ name: string; status?: unknown }> = [];
     stubCompletedTurn(writes).mockRejectedValue(

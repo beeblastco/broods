@@ -1079,8 +1079,13 @@ async function handleAsyncWorkerRequest(
   let outcome: AsyncAgentOutcome | undefined;
   let recorded = false;
   let cronSettled = false;
-  // Records the run's outcome on its envelope and polling rows.
+  // Records the run's outcome on its envelope and polling rows. The first
+  // recorded outcome wins, as in Convex: an earlier pass's final text replays
+  // after a later pass asks questions.
   const finish = async (result: AsyncAgentOutcome): Promise<void> => {
+    if (recorded) {
+      return;
+    }
     outcome = result;
     await settleAsyncRun(session, event, result);
     recorded = true;

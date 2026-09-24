@@ -10,8 +10,12 @@ on:
     paths: &mirrored
       - verification/**
       - .github/workflows/lean-verification.yaml
+      - apps/core/src/harness/async-agent-result.ts
+      - apps/core/src/harness/async-tool-result.ts
       - apps/core/src/harness/handler.ts
+      - apps/core/src/harness/ingress.ts
       - apps/core/src/harness/subagents.ts
+      - apps/core/src/shared/paths.ts
       - apps/gateway/src/main.ts
       - apps/gateway/src/routes.ts
       - apps/gateway/src/upstream.ts
@@ -54,14 +58,7 @@ jobs:
             | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
-      # A `sorry` is a warning, which the lakefile turns into an error.
-      # `native_decide` and a new `axiom` compile cleanly, so refuse them here.
-      - name: Refuse unchecked proofs
-        run: |
-          if grep -rnE '\bnative_decide\b|^[[:space:]]*axiom\b' Broods Broods.lean; then
-            echo "native_decide and new axioms are not allowed (verification/AGENTS.md)"
-            exit 1
-          fi
-
+      # Broods.lean fails the build when a proof rests on `sorry`,
+      # `native_decide` or an axiom past the three standard ones.
       - name: Build and check every proof
         run: lake build

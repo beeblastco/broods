@@ -10,6 +10,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import type { CliManifestResource } from "../cli/types";
 import { sha256Hex } from "../model/accountSecrets";
 import schema from "../schema";
 
@@ -170,6 +171,69 @@ describe("cli prune of external resources", () => {
         (cron) => [cron._id, cron.name],
       ),
     ).toEqual([[legacy?._id, "hourly"]]);
+  });
+
+  test("a legacy name never takes the cron another job owns by name", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const agent = {
+      kind: "agent" as const,
+      name: "reporter",
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        agent: { system: "Write the report." },
+      },
+    };
+    const synced = await tt.mutation(
+      internal.cli.sync.syncManifestBySecretHash,
+      {
+        secretHash: await sha256Hex(SECRET),
+        manifest: {
+          version: 1,
+          project: PROJECT,
+          stage: STAGE,
+          resources: [agent],
+        },
+      },
+    );
+    const agentId = synced.ids.agents?.reporter;
+    if (!agentId) throw new Error("agent not synced");
+    await tt.mutation(internal.agent.crons.create, {
+      accountId: accountId,
+      input: {
+        name: "hourly",
+        agentId: agentId,
+        input: "run the report",
+        scheduleExpression: "rate(1 hour)",
+      },
+    });
+    const [hourly] = await tt.query(internal.agent.crons.list, {
+      accountId: accountId,
+    });
+    const cron = (name: string, legacyName?: string): CliManifestResource => ({
+      kind: "cron",
+      name: name,
+      config: {
+        agentId: "reporter",
+        ...(legacyName ? { name: legacyName } : {}),
+        events: [{ role: "user", content: "run the report" }],
+        scheduleExpression: "rate(1 hour)",
+      },
+    });
+
+    // The job listed first carries the other job's name as its legacy name.
+    const response = await pruneAll(tt, [
+      agent,
+      cron("daily", "hourly"),
+      cron("hourly"),
+    ]);
+
+    expect(response.status).toBe(200);
+    const crons = await tt.query(internal.agent.crons.list, {
+      accountId: accountId,
+    });
+    expect(crons.find((row) => row.name === "hourly")?._id).toBe(hourly?._id);
+    expect(crons.map((row) => row.name).sort()).toEqual(["daily", "hourly"]);
   });
 
   test("a pruned agent's crons go with it", async () => {

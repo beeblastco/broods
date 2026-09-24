@@ -1078,8 +1078,7 @@ async function normalizeConfig(
     const config = { ...(resource.config as Record<string, unknown>) };
     const agent = config.agent;
     config.agentId = isResource(agent) ? agent.name : agent;
-    // The server keys a cron by its resource name, so the diff compares that.
-    config.name = resource.name;
+    config.name = config.name ?? resource.name;
     delete config.agent;
     // Mirror the agent direct API: collapse the `input` shorthand into the
     // canonical events list so local and remote manifests diff identically.

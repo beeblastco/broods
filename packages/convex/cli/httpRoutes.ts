@@ -805,15 +805,24 @@ async function syncCrons(
     accountId: accountId,
   });
   const stageAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
-  const kept = new Set<string>();
   const cronIds: Record<string, string> = {};
+  // Every job's own name claims its cron before any legacy name can, and a
+  // cron is claimed once.
+  const own = desired.map(({ job }) =>
+    stageCronByName(existing, stageAgentIds, job.name),
+  );
+  const kept = new Set<string>(own.flatMap((row) => (row ? [row._id] : [])));
 
-  for (const { job, legacyName } of desired) {
+  for (const [index, { job, legacyName }] of desired.entries()) {
     // Patching a cron found under its legacy name renames it in place.
     const existingJob =
-      stageCronByName(existing, stageAgentIds, job.name) ??
+      own[index] ??
       (legacyName
-        ? stageCronByName(existing, stageAgentIds, legacyName)
+        ? stageCronByName(
+            existing.filter((row) => !kept.has(row._id)),
+            stageAgentIds,
+            legacyName,
+          )
         : undefined);
     if (existingJob) {
       kept.add(existingJob._id);

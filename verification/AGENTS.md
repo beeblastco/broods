@@ -13,7 +13,7 @@ Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun worksp
 
 - the model is hand-written from the TypeScript. change the mirrored code = update the model in the same PR. docstring on each def names the TS it mirrors.
 - `example ... := by decide` blocks are findings: concrete inputs where the code does something surprising. fix the code = flip the example to the fixed outcome.
-- no `sorry`, no `native_decide`, no new `axiom`, so every proof rests on `propext`, `Quot.sound`, `Classical.choice` only. CI enforces it: the lakefile turns warnings (a `sorry`) into errors, and a workflow step refuses `native_decide` and `axiom`.
+- no `sorry`, no `native_decide`, no new `axiom`, so every proof rests on `propext`, `Quot.sound`, `Classical.choice` only. `lake build` enforces it: the audit at the end of `Broods.lean` fails on any other axiom a `Broods` declaration rests on, `sorryAx` and `native_decide`'s included.
 
 ## Run
 

@@ -631,11 +631,6 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Transfers ownership to the next queued envelope for this child, or releases
-   * the lease when nothing is waiting. Ephemeral children never own a
-   * generation, so both calls are no-ops for them.
-   */
-  /**
    * Records a child run's outcome on its envelope and polling row in one
    * mutation, once. A child that owns no envelope, or whose settle fails,
    * still records the row.
@@ -664,6 +659,11 @@ export class SubagentCoordinator {
     this.recorded.add(task.eventId);
   }
 
+  /**
+   * Transfers ownership to the next queued envelope for this child, or releases
+   * the lease when nothing is waiting. Ephemeral children never own a
+   * generation, so both calls are no-ops for them.
+   */
   private async drainChildConversation(
     childSession: Session,
     task: ResolvedSubagentTask,
