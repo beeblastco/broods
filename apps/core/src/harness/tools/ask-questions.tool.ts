@@ -38,6 +38,8 @@ export interface AskQuestionsContext {
   channel?: ChannelToolContext;
   // Tells the harness to end the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
+  // Tells the harness a question is open, blocking or not.
+  onDetachedResult?: (resultId: string) => void;
 }
 
 export interface AskQuestionsInput {
@@ -153,6 +155,7 @@ The tool returns a statusId at once and the answer is delivered into this conver
           input: pending,
           delivery: context.delivery ?? { kind: "async" },
         });
+        context.onDetachedResult?.(resultId);
 
         if (context.channel) {
           const failure = await postToChannel(

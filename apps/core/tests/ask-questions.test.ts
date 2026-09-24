@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
-import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
+import {
+  rootEventId,
+  type AsyncToolResultRecord,
+} from "../src/harness/async-tool-result.ts";
 import {
   answersFromChoice,
   answersFromText,
@@ -52,22 +55,40 @@ afterEach((): void => {
   mutations.length = 0;
 });
 
+describe("rootEventId", () => {
+  it("strips every continuation suffix back to the event a person started", () => {
+    const asked = "acct:a:agent:b:tg:1:msg-9";
+    const answered = `${asked}:async-question:async_tool_1:async-tools`;
+
+    expect(rootEventId(asked)).toBe(asked);
+    expect(rootEventId(answered)).toBe(asked);
+    expect(rootEventId(`${answered}:async-bg:async_tool_2:async-tools`)).toBe(
+      asked,
+    );
+  });
+});
+
 describe("ask_questions tool", () => {
   it("leaves a sealed question row and posts the numbered prompt", async () => {
     stubMutations();
     const sendText = mock(async (_text: string): Promise<void> => {});
+    const detached: string[] = [];
     const execute = toolExecute(
       askQuestionsTool({
         conversationKey: CONVERSATION_KEY,
         eventId: "event-1",
         delivery: { kind: "async" },
         channel: channelContext({ sendText: sendText }),
+        onDetachedResult: (resultId): void => {
+          detached.push(resultId);
+        },
       }),
     );
 
     const output = await execute({ questions: [QUESTION] });
 
     expect(output.blocking).toBe(false);
+    expect(detached).toEqual([output.statusId]);
     expect(output.statusId).toMatch(/^async_tool_/);
     expect(mutations).toHaveLength(1);
     expect(mutations[0]!.name).toBe("createAsyncToolResult");

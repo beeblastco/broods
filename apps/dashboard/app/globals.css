@@ -40,6 +40,7 @@
   --color-card: var(--card);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-needs-input: var(--needs-input);
   --color-info: var(--info);
   --color-folder: var(--folder);
   --color-run-subagent: var(--run-subagent);
@@ -173,6 +174,7 @@ body {
   --sidebar-ring: oklch(0.708 0 0);
   --success: oklch(0.596 0.145 163.225);
   --warning: oklch(0.666 0.179 58.318);
+  --needs-input: oklch(0.558 0.288 302.321);
   --info: oklch(0.546 0.245 262.881);
   --folder: oklch(0.554 0.135 66.442);
   --run-subagent: oklch(0.609 0.126 221.723);
@@ -220,6 +222,7 @@ body {
   --sidebar-ring: oklch(0.556 0 0);
   --success: oklch(0.765 0.177 163.223);
   --warning: oklch(0.828 0.189 84.429);
+  --needs-input: oklch(0.714 0.203 305.504);
   --info: oklch(0.707 0.165 254.624);
   --folder: oklch(0.852 0.199 91.936);
   --run-subagent: oklch(0.789 0.154 211.53);

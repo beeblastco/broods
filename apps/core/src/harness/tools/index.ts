@@ -113,6 +113,9 @@ export interface ToolContext {
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   // A blocking ask_questions call, so the loop ends the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
+  // Every row a tool leaves to settle later (an open question, a background
+  // job), so the run's trace can close as waiting on it.
+  onDetachedResult?: (resultId: string) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
   /** Model-facing tool name → MCP server row id, for per-server policy rules. */
@@ -174,6 +177,9 @@ export async function createTools(
           conversationKey: context.conversationKey,
           ...(context.session.delivery
             ? { delivery: context.session.delivery }
+            : {}),
+          ...(context.onDetachedResult
+            ? { onDetachedResult: context.onDetachedResult }
             : {}),
         }
       : undefined;
@@ -388,6 +394,9 @@ export async function createTools(
         ...(context.channel ? { channel: context.channel } : {}),
         ...(context.onBlockingQuestion
           ? { onBlockingQuestion: context.onBlockingQuestion }
+          : {}),
+        ...(context.onDetachedResult
+          ? { onDetachedResult: context.onDetachedResult }
           : {}),
       }),
     );

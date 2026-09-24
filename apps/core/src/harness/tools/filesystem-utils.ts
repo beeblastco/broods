@@ -102,6 +102,7 @@ export interface SandboxToolContext {
     eventId: string;
     conversationKey: string;
     delivery?: AsyncToolDelivery;
+    onDetachedResult?: (resultId: string) => void;
   };
   // Reports each sandbox exec's CPU so the harness can attribute usage per
   // sandbox type. The agent's bash/fs tools always report role "agent".

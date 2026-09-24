@@ -30,7 +30,10 @@ import {
   type UserModelMessage,
 } from "ai";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
-import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
+import type {
+  ObservabilitySpanRow,
+  TaskWaitingOn,
+} from "../../../../packages/broods/src/observability-contracts.ts";
 import { extractText } from "../shared/channels.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import {
@@ -103,7 +106,11 @@ import {
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
-import type { PendingQuestionSummary } from "./questions.ts";
+import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
+import {
+  ASK_QUESTIONS_TOOL_NAME,
+  type PendingQuestionSummary,
+} from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
@@ -201,6 +208,9 @@ export interface AgentLoopOptions {
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; links its trace to the parent's.
   subagentParent?: SubagentParentContext;
+  // In-process work the handler still waits on once this pass ends, so its
+  // trace closes as waiting rather than ok.
+  pendingWork?: () => TaskWaitingOn | undefined;
   // Request-shared hook dispatcher (one storage load + one ctx.state per
   // request); the loop builds its own when the handler does not pass one.
   hooks?: HookDispatcher;
@@ -426,6 +436,9 @@ export async function runAgentLoop(
     "model.id": agentConfig.model?.modelId ?? "unknown",
     "model.input": traceAttribute(turnContext.messages),
     ...systemTraceAttributes(turnContext.system, traceAttribute),
+    ...(rootEventId(session.eventId) !== session.eventId
+      ? { "task.root_id": rootEventId(session.eventId) }
+      : {}),
     ...(subagentParent
       ? {
           "parent.task_id": subagentParent.parentTaskId,
@@ -572,6 +585,9 @@ export async function runAgentLoop(
         onBlockingQuestion: (question): void => {
           questionSummaries.push(question);
         },
+        onDetachedResult: (resultId): void => {
+          detachedResultIds.push(resultId);
+        },
         approvalRequirements: configuredApprovals,
         policyMcpIdsByName: policyMcpIdsByName,
         sandboxMetadata: sandboxMetadata,
@@ -652,6 +668,7 @@ export async function runAgentLoop(
   );
   let approvalSummaries: ToolApprovalSummary[] = [];
   const questionSummaries: PendingQuestionSummary[] = [];
+  const detachedResultIds: string[] = [];
   let finalResponse: JSONValue | undefined;
   let lastStepText = "";
 
@@ -762,6 +779,29 @@ export async function runAgentLoop(
   let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
+  // What a run that ended cleanly still waits on, the person first: an approval
+  // or an open question needs them, while subagents, async tools and background
+  // jobs settle by themselves. Undefined when it failed or nothing is left open.
+  const openWorkAfterRun = async (
+    status: "completed" | "failed",
+  ): Promise<TaskWaitingOn | undefined> => {
+    if (status === "failed") return undefined;
+    if (approvalSummaries.length > 0) return "approval";
+    if (questionSummaries.length > 0) return "question";
+    const rows = await Promise.all(
+      detachedResultIds.map((resultId) =>
+        getAsyncToolResult(resultId).catch(() => null),
+      ),
+    );
+    const open = rows.filter((row) => row?.status === "processing");
+    if (open.some((row) => row?.toolName === ASK_QUESTIONS_TOOL_NAME)) {
+      return "question";
+    }
+    const pending = options.pendingWork?.();
+    if (pending) return pending;
+
+    return open.length > 0 ? "tool" : undefined;
+  };
   const finalizeUsage = async (
     status: "completed" | "failed",
     usage: LanguageModelUsage | undefined,
@@ -773,6 +813,8 @@ export async function runAgentLoop(
     if (usageFinalized) return;
     usageFinalized = true;
     const taskTokens = usageTokenTotals(usage);
+    const waitingOn = await openWorkAfterRun(status);
+    const rootStatus = rootSpanStatus(status, waitingOn);
 
     const context = getObservabilityContext();
     const sanitizedError = error
@@ -848,14 +890,16 @@ export async function runAgentLoop(
       startTimeMs: runStartedAt,
       endTimeMs: endTimeMs,
       durationMs: durationMs,
-      status: status === "completed" ? "ok" : "error",
+      status: rootStatus,
       endpointId: session.endpointId,
       agentId: session.agentId,
       conversationKey: session.conversationKey,
       attributes: {
         ...rootRunningAttributes,
         ...systemTraceAttributes(turnContext.system, traceAttribute),
-        "task.state": status,
+        ...(waitingOn
+          ? { "task.state": rootStatus, "task.waiting_on": waitingOn }
+          : { "task.state": status }),
         "agent.step_count": stepCount,
         "agent.tool_call_count": toolCallCount,
         "agent.model_provider": configuredModel.providerName,
@@ -2257,6 +2301,19 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
 // Best-effort and non-blocking: returns once the span's bytes reach the NATS
 // client. A caller needing delivery before the container freezes (the terminal
 // span) awaits this, then flushObservabilityNats(); others ignore it.
+/** The root's closing status: a clean run that left something open waits on it. */
+function rootSpanStatus(
+  status: "completed" | "failed",
+  waitingOn: TaskWaitingOn | undefined,
+): ObservabilitySpanRow["status"] {
+  if (status === "failed") return "error";
+  if (!waitingOn) return "ok";
+
+  return waitingOn === "question" || waitingOn === "approval"
+    ? "needs_input"
+    : "waiting";
+}
+
 function publishSpan(row: ObservabilitySpanRow): Promise<void> {
   const connPromise = getSharedNatsConn();
   if (!connPromise) return Promise.resolve();
