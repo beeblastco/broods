@@ -1,6 +1,6 @@
 ---
 name: strict-review
-description: Review a diff the way Phicks would, against their vision and the repo rules, not just bugs. Use when the user asks to review, strict-review, or check a branch, commit range or PR before it ships.
+description: Full pre-merge review of a PR or branch the way Phicks would, against their vision and the repo rules, with checks and dashboard evidence. Use only when the user asks for strict-review or a full review before merging, or when /merge-pr needs it. For a quick bug pass use /code-review.
 argument-hint: "[low|medium|high|xhigh|max] [pr | branch | commit range]"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "[low|medium|high|xhigh|max] [pr | branch | commit range]"
 
 Review with Phicks's eyes. `/code-review` finds bugs; this checks the change against the rules and shows Phicks what they need to judge the rest. The exact rules live in the root and touched workspaces' `AGENTS.md` and `~/.claude/CLAUDE.md`; read them, do not restate them. The principles below are why those rules exist.
 
-You own the verdict on rules, bugs, checks and evidence. Phicks owns taste and whether the solution is the right one: raise those under **Your call** with what you saw and the options, never as a verdict or a blocker.
+You own the verdict on rules, bugs, checks and evidence. Phicks owns taste and whether the solution is the right one: raise those under **Blocked on me** with what you saw and the options, never as a verdict.
 
 ## What they want, and why
 
@@ -25,19 +25,19 @@ You own the verdict on rules, bugs, checks and evidence. Phicks owns taste and w
 ## Steps
 
 1. **Base review.** Run `/code-review <level> <target>`, default `high`. Keep its findings; do not repeat its angles.
-2. **Rules and principles.** Read every changed file in full, not only the hunks. A broken rule is a finding: quote the rule and the line. Where only a principle speaks, or you doubt the approach itself, put it under **Your call**.
-3. **Contract gate.** An API route or `openapi.yaml`, the SDK or CLI in `packages/broods`, or a public Convex function is blocking unless the other surfaces moved with it. Those, and any non-trivial dashboard UI, layout or copy change, are also blocking without a linked mock and quoted approval from Phicks. Never infer approval.
+2. **Rules and principles.** Read every changed file in full, not only the hunks. A broken rule is a finding: quote the rule and the line. Where only a principle speaks, or you doubt the approach itself, raise it for Phicks.
+3. **Contract gate.** When a request or response shape, an SDK export, a CLI command or flag, or a public Convex function's signature changes, the other surfaces must move with it. That change, and any non-trivial dashboard UI, layout or copy change, is blocking without a linked mock and quoted approval from Phicks. Internal changes behind an unchanged contract pass. Never infer approval.
 4. **Bugs.** Confirm each correctness finding with a red loop from `/diagnosing-bugs` phases 1 and 2 before calling it blocking; throwaway, not committed. Unconfirmed stays plausible. Fixes go through `/diagnosing-bugs`.
-5. **Checks.** Read-only: run the check form of each `AGENTS.md` before-done command (`format:check`, not `format`) and the tests for each touched workspace. Type-aware lint: `bunx oxlint --type-aware -A all -D typescript/no-explicit-any -D typescript/no-unsafe-type-assertion <files>`, keeping only findings on lines `git diff -U0` adds. The OpenAPI spec changed: `oasdiff breaking <base>:apps/docs/docs/api-reference/openapi.yaml apps/docs/docs/api-reference/openapi.yaml --fail-on ERR`, with `<base>` the fetched PR target. `packages/broods` changed: `pack:check`. Say what you skipped and why.
-6. **Dashboard evidence.** A UI change in `apps/dashboard` must ship with a live demo, a perf report and screenshots; missing any is blocking. Produce them yourself, running the dashboard as `apps/dashboard/AGENTS.md` describes (`next dev` on `.env.local`; `perf` needs `E2E_EMAIL` and `E2E_PASSWORD`, ask Phicks when they are missing). Drive the changed flow with Playwright, recording video and a screenshot of each changed screen in light and dark, then run `bun run --filter @broods/dashboard perf`. For the base, run the same in a separate `git worktree` of the PR target on another port, pointing `E2E_BASE_URL` at it. Then check them yourself: watch the demo, look at every screenshot against the principles and `apps/dashboard/AGENTS.md`. A page over `PAGE_RENDER_BUDGET_MS` is blocking; slower than the base is only a warning, since timing drifts by machine. Publish it all with `/communication-artifact` and post the link as a PR comment.
+5. **Checks.** Run the `AGENTS.md` before-done commands in their check form (`format:check`, never `format` or `lint:fix`), the tests for each touched workspace, and `local:verify` and `local:perf` when `AGENTS.md` calls for them. A check that leaves the tree changed is a finding. Type-aware lint: `bunx oxlint --type-aware -D typescript/no-explicit-any -D typescript/no-unsafe-type-assertion <files>`, keeping only findings on lines `git diff -U0` adds. The OpenAPI spec changed: `oasdiff breaking <base>:apps/docs/docs/api-reference/openapi.yaml apps/docs/docs/api-reference/openapi.yaml --fail-on ERR` (`brew install oasdiff`), with `<base>` the fetched PR target. `packages/broods` changed: `pack:check`. Say what you skipped and why.
+6. **Dashboard evidence.** A UI change in `apps/dashboard` must ship with a live demo, a perf report and screenshots; missing any is blocking. Produce them yourself, running the dashboard as `apps/dashboard/AGENTS.md` describes (`next dev` on `.env.local`; `perf` needs `E2E_EMAIL` and `E2E_PASSWORD`, ask Phicks when they are missing). Drive the changed flow with Playwright, recording video and a screenshot of each changed screen in light and dark, then run `bun run --filter @broods/dashboard perf`. Check them yourself: watch the demo, look at every screenshot against the principles and `apps/dashboard/AGENTS.md`, and block any page over `PAGE_RENDER_BUDGET_MS`. Publish one artifact page with the video and screenshots as its files and the perf numbers, and post its link as a PR comment.
 7. **The cycle.** Check, do not do: the branch is rebased on the latest default branch, commits and PR are in plain words that open with the user's problem, and the PR was filed with `/file-pr`.
 
 ## Report
 
-Open with **Your call**: taste and solution questions, each with what you saw, the options, and the evidence link. Then blocking, should fix, nit, most severe first: `file:line`, the rule, the fix. Then the checks with pass or fail, the dashboard evidence link, and each contract change with its mock and approval status.
+Open with **Blocked on me**: taste and solution questions, each with what you saw, the options and the evidence link, then any blocking finding that needs Phicks. Then the rest of the findings, most severe first: `file:line`, the rule, the fix. Then the checks with pass or fail, the dashboard evidence link, and each contract change with its mock and approval status.
 
 ## Taste notes
 
-When Phicks overrules a finding, or flags something the review missed, propose one line for here: what they said, and the why. On their yes, land it on the default branch in its own commit, never inside the PR under review. Read these before step 2.
+When Phicks overrules a finding, or flags something the review missed, propose one line for here: what they said, and the why. On their yes, land it through its own `/file-pr` PR, never inside the PR under review. Read these before step 2.
 
 - _(none yet)_
