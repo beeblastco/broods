@@ -1,6 +1,13 @@
 "use client";
 
-import { StatusDot } from "@/app/components/StatusDot";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
 import {
   isRootSpanKind,
   useObservabilityStream,
@@ -21,6 +28,7 @@ import {
   type ModelCostEstimate,
 } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
+import { ChevronDownIcon } from "lucide-react";
 import type { FunctionReturnType } from "convex/server";
 import { useMemo, useState } from "react";
 import { UsageChart, type UsageChartSeries } from "./UsageChart";
@@ -198,7 +206,6 @@ export function TokensUsagePanel({
   const [held, setHeld] = useState<UsageStats | null>(null);
   if (data !== undefined && data !== held) setHeld(data);
   const stats = data ?? held;
-  const isFetching = data === undefined;
 
   // Convex only records usage at task finalize, so a run in flight needs the
   // trace stream to show anything at all. See liveOverlayFromTraces.
@@ -276,12 +283,14 @@ export function TokensUsagePanel({
 
   const selectBin = (index: number): void =>
     setSelectedStart(index === selected ? null : bucketStarts[index]);
+  // Checkbox semantics: a click adds or removes one model. Every model shown,
+  // or none left, reads as the unfiltered view.
   const toggleModel = (key: string): void =>
     setModelFilter((current) => {
-      if (current === null) return [key];
-      const next = current.includes(key)
-        ? current.filter((k) => k !== key)
-        : [...current, key];
+      const shown = current ?? [...modelColors.keys()];
+      const next = shown.includes(key)
+        ? shown.filter((k) => k !== key)
+        : [...shown, key];
 
       return next.length === 0 || next.length === modelColors.size
         ? null
@@ -312,42 +321,13 @@ export function TokensUsagePanel({
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          aria-pressed={modelFilter === null}
-          onClick={() => setModelFilter(null)}
-          className={cn(
-            "cursor-pointer rounded-md border border-border px-2.5 py-1 text-xs transition-colors",
-            modelFilter === null
-              ? "bg-accent text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          All models
-        </button>
-        {[...modelColors].map(([key, color]) => (
-          <button
-            key={key}
-            type="button"
-            aria-pressed={isShown(key)}
-            onClick={() => toggleModel(key)}
-            className={cn(
-              "flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs transition-colors",
-              modelFilter !== null && isShown(key)
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <span
-              className={cn(
-                "size-2 rounded-sm bg-(--series-color) transition-opacity",
-                !isShown(key) && "opacity-30",
-              )}
-              style={{ "--series-color": color }}
-            />
-            {key.split("::")[1]}
-          </button>
-        ))}
+        <ModelMenu
+          modelColors={modelColors}
+          allShown={modelFilter === null}
+          isShown={isShown}
+          onToggle={toggleModel}
+          onShowAll={() => setModelFilter(null)}
+        />
         {selected !== null && (
           <button
             type="button"
@@ -364,23 +344,11 @@ export function TokensUsagePanel({
             <span className="text-muted-foreground">✕</span>
           </button>
         )}
-        <StatusDot
-          className="ml-auto"
-          tone={isFetching ? "running" : "ok"}
-          label={
-            isFetching
-              ? "Connecting…"
-              : liveOverlay.invocations > 0
-                ? "Streaming"
-                : "Live"
-          }
-        />
       </div>
 
-      <UsageTiles
+      <UsageStats
         scope={scope}
         estimatedCost={estimatedCost}
-        modelCount={shownModels.length}
         unpriced={unpriced}
       />
 
@@ -408,6 +376,7 @@ export function TokensUsagePanel({
               ? null
               : { startMs: bucketStarts[selected], binSeconds: binSeconds }
           }
+          binTokens={selected === null ? 0 : bins[selected].totalTokens}
           isModelShown={(provider, id) => isShown(`${provider}::${id}`)}
           onClear={() => setSelectedStart(null)}
         />
@@ -442,35 +411,6 @@ export function TokensUsagePanel({
   );
 }
 
-/** Headline number: color swatch and label over a large value, with one detail line. */
-function ComputeTile({
-  label,
-  value,
-  detail,
-  color,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  color: string;
-}): React.JSX.Element {
-  return (
-    <div className="min-w-0 px-3 py-2.5">
-      <div className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-        <span
-          className="size-2.5 shrink-0 rounded-sm bg-(--series-color)"
-          style={{ "--series-color": color }}
-        />
-        {label}
-      </div>
-      <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
-      <div className="truncate text-2xs text-muted-foreground tabular-nums">
-        {detail || " "}
-      </div>
-    </div>
-  );
-}
-
 function Legend({ series }: { series: UsageChartSeries[] }): React.JSX.Element {
   return (
     <div className="flex flex-wrap gap-3 pt-2 text-2xs text-muted-foreground">
@@ -487,19 +427,74 @@ function Legend({ series }: { series: UsageChartSeries[] }): React.JSX.Element {
   );
 }
 
+/** Model filter as one checkbox menu, so the toolbar never wraps however many models ran. */
+function ModelMenu({
+  modelColors,
+  allShown,
+  isShown,
+  onToggle,
+  onShowAll,
+}: {
+  modelColors: Map<string, string>;
+  allShown: boolean;
+  isShown: (key: string) => boolean;
+  onToggle: (key: string) => void;
+  onShowAll: () => void;
+}): React.JSX.Element {
+  const keys = [...modelColors.keys()];
+  const shown = keys.filter(isShown);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs">
+        <span className="flex gap-0.5">
+          {shown.map((key) => (
+            <span
+              key={key}
+              className="size-2 rounded-sm bg-(--series-color)"
+              style={{ "--series-color": modelColors.get(key) }}
+            />
+          ))}
+        </span>
+        {allShown ? "All models" : `${shown.length} of ${keys.length} models`}
+        <ChevronDownIcon className="size-3 text-muted-foreground" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuItem data-active={allShown} onClick={onShowAll}>
+          All models
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {keys.map((key) => (
+          <DropdownMenuCheckboxItem
+            key={key}
+            checked={isShown(key)}
+            onCheckedChange={() => onToggle(key)}
+          >
+            <span
+              className="size-2 rounded-sm bg-(--series-color)"
+              style={{ "--series-color": modelColors.get(key) }}
+            />
+            {key.split("::")[1]}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
- * The headline row for the range or the clicked bin. Values count to their new
- * number here, so only the tiles repaint during the tween.
+ * The numbers row for the range or the clicked bin: tokens, cost and tasks
+ * large, the rest small beside them. Laid out by its own width, not the
+ * window's, and values count to their new number here so only this row
+ * repaints during the tween.
  */
-function UsageTiles({
+function UsageStats({
   scope,
   estimatedCost,
-  modelCount,
   unpriced,
 }: {
   scope: Counters;
   estimatedCost: number;
-  modelCount: number;
   unpriced: number;
 }): React.JSX.Element {
   const target = useMemo(
@@ -507,82 +502,66 @@ function UsageTiles({
       [
         scope.totalTokens,
         estimatedCost,
-        scope.cachedInputTokens,
-        scope.cacheWriteTokens,
         scope.invocations,
+        scope.cachedInputTokens,
         scope.modelCalls,
-        scope.runtimeWallMs,
         scope.agentSandboxCpuUsec,
+        scope.cacheWriteTokens,
+        scope.runtimeWallMs,
         scope.toolSandboxCpuUsec,
       ],
     ],
     [scope, estimatedCost],
   );
   const values = useTween(target)[0];
-  const cpuTotal = scope.agentSandboxCpuUsec + scope.toolSandboxCpuUsec;
-  const perTask = (n: number): number =>
-    scope.invocations > 0 ? n / scope.invocations : 0;
+  const headline: Array<[string, string]> = [
+    ["Tokens", formatNumber(values[0])],
+    ["Estimated cost", formatUsd(values[1])],
+    ["Tasks", formatNumber(values[2])],
+  ];
+  const details: Array<[string, string]> = [
+    [
+      "Cache read",
+      `${formatNumber(values[3])} · ${percent(scope.cachedInputTokens, scope.inputTokens)}`,
+    ],
+    ["Model calls", formatNumber(values[4])],
+    ["Agent CPU", formatCpuUsec(values[5])],
+    ["Cache write", formatNumber(values[6])],
+    ["Runtime", formatMs(values[7])],
+    ["MCP CPU", formatCpuUsec(values[8])],
+  ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-5 xl:grid-cols-9">
-      <ComputeTile
-        label="Tokens"
-        value={formatNumber(values[0])}
-        detail={`in ${formatNumber(scope.inputTokens)} · out ${formatNumber(scope.outputTokens)}`}
-        color="var(--color-usage-input)"
-      />
-      <ComputeTile
-        label="Estimated cost"
-        value={formatUsd(values[1])}
-        detail={
-          unpriced > 0
-            ? `${unpriced} model${unpriced === 1 ? "" : "s"} unpriced`
-            : `${modelCount} model${modelCount === 1 ? "" : "s"}`
-        }
-        color="var(--color-usage-output)"
-      />
-      <ComputeTile
-        label="Cache read"
-        value={formatNumber(values[2])}
-        detail={`${percent(scope.cachedInputTokens, scope.inputTokens)} of input`}
-        color="var(--color-usage-cache-read)"
-      />
-      <ComputeTile
-        label="Cache write"
-        value={formatNumber(values[3])}
-        detail={`${percent(scope.cacheWriteTokens, scope.inputTokens)} of input`}
-        color="var(--color-usage-cache-write)"
-      />
-      <ComputeTile
-        label="Tasks"
-        value={formatNumber(values[4])}
-        detail={`${formatMs(perTask(scope.runtimeWallMs))} avg`}
-        color="var(--color-usage-tasks)"
-      />
-      <ComputeTile
-        label="Model calls"
-        value={formatNumber(values[5])}
-        detail={`${perTask(scope.modelCalls).toFixed(1)} per task`}
-        color="var(--color-usage-model-calls)"
-      />
-      <ComputeTile
-        label="Runtime"
-        value={formatMs(values[6])}
-        detail="harness wall time"
-        color="var(--color-usage-runtime)"
-      />
-      <ComputeTile
-        label="Agent CPU"
-        value={formatCpuUsec(values[7])}
-        detail={`${percent(scope.agentSandboxCpuUsec, cpuTotal)} of sandbox`}
-        color="var(--color-usage-agent-sandbox)"
-      />
-      <ComputeTile
-        label="MCP CPU"
-        value={formatCpuUsec(values[8])}
-        detail={`${percent(scope.toolSandboxCpuUsec, cpuTotal)} of sandbox`}
-        color="var(--color-usage-mcp-sandbox)"
-      />
+    <div className="@container">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <div className="flex gap-8">
+          {headline.map(([label, value]) => (
+            <div key={label}>
+              <div className="text-xs text-muted-foreground">{label}</div>
+              <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
+        <dl className="grid w-full grid-cols-2 gap-x-6 gap-y-0.5 text-xs @lg:grid-cols-3 @5xl:w-auto @5xl:border-l @5xl:border-border @5xl:pl-8">
+          {details.map(([label, value]) => (
+            <div
+              key={label}
+              className="flex justify-between gap-3 whitespace-nowrap"
+            >
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="font-medium tabular-nums">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+      {unpriced > 0 && (
+        <p className="mt-1 text-2xs text-muted-foreground">
+          {unpriced} model{unpriced === 1 ? " is" : "s are"} left out of the
+          estimate because no standard rate is configured.
+        </p>
+      )}
     </div>
   );
 }
