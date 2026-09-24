@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   dispatchInProcessWorker,
@@ -16,9 +24,13 @@ import {
   type ConversationDispatchTarget,
   type IngressCandidate,
 } from "../src/harness/ingress.ts";
-import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
+import * as ingress from "../src/harness/ingress.ts";
+import type {
+  ChannelInboundEvent,
+  DirectInboundEvent,
+} from "../src/harness/integrations.ts";
 import { Session } from "../src/harness/session.ts";
-import { setStorageForTests } from "../src/shared/storage.ts";
+import { getStorage } from "../src/shared/storage.ts";
 
 const originalMutate = runtime.mutate;
 const originalQuery = runtime.query;
@@ -133,17 +145,15 @@ describe("ingress admission payloads", () => {
 });
 
 describe("settling with takeNext", (): void => {
-  it("still settles the turn when takeNext fails", async (): Promise<void> => {
-    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-    runtime.mutate = (async (
-      name: string,
-      args: Record<string, unknown>,
-    ): Promise<null> => {
-      calls.push({ name: name, args: args });
-      if (name === "takeNextIngress") throw new Error("takeNext failed");
+  afterEach((): void => {
+    mock.restore();
+  });
 
-      return null;
-    }) as never;
+  it("still settles the turn when takeNext fails", async (): Promise<void> => {
+    spyOn(ingress, "takeNextIngress").mockRejectedValue(
+      new Error("takeNext failed"),
+    );
+    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     const session = new Session({
       eventId: "event-1",
       conversationKey: candidate().conversationKey,
@@ -153,17 +163,15 @@ describe("settling with takeNext", (): void => {
       ownerGeneration: 1,
     });
 
-    await expect(
-      session.takeNextIngress({ status: "completed", result: "answer" }),
-    ).rejects.toThrow("takeNext failed");
+    const error = await session
+      .takeNextIngress({ status: "completed", result: "answer" })
+      .catch((err: unknown): unknown => err);
 
     // The rolled-back settle is written on its own, so the caller's failure
     // settle that follows finds the envelope terminal and keeps the answer.
-    expect(calls.map((call) => call.name)).toEqual([
-      "takeNextIngress",
-      "settleIngress",
-    ]);
-    expect(calls[1]!.args).toMatchObject({
+    expect(error).toEqual(new Error("takeNext failed"));
+    expect(settle).toHaveBeenCalledWith({
+      conversationKey: candidate().conversationKey,
       ownerEventId: "event-1",
       ownerGeneration: 1,
       status: "completed",
@@ -173,52 +181,42 @@ describe("settling with takeNext", (): void => {
 });
 
 describe("async turn without model input", (): void => {
-  const originalAppend = Session.prototype.appendIngressEvents;
-  const originalTurnContext = Session.prototype.createTurnContext;
-
   afterEach((): void => {
-    Session.prototype.appendIngressEvents = originalAppend;
-    Session.prototype.createTurnContext = originalTurnContext;
-    setStorageForTests(null);
+    mock.restore();
   });
 
   it("settles the envelope with its own reason when the cron settle fails", async (): Promise<void> => {
-    const settled: unknown[] = [];
-    runtime.mutate = (async (
-      name: string,
-      args: Record<string, unknown>,
-    ): Promise<null> => {
-      if (name === "settleIngress") settled.push(args.error);
-      if (name === "takeNextIngress" && args.settle) {
-        settled.push((args.settle as { error?: string }).error);
-      }
-
-      return null;
-    }) as never;
-    Session.prototype.appendIngressEvents = async (): Promise<[]> => [];
-    Session.prototype.createTurnContext = (async () => ({
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
+    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [{ role: "assistant", content: "already answered" }],
-    })) as never;
-    setStorageForTests({
-      crons: {
-        failRun: async (): Promise<never> => {
-          throw new Error("cron store down");
-        },
-      },
-    } as never);
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    });
+    spyOn(getStorage().crons, "failRun").mockRejectedValue(
+      new Error("cron store down"),
+    );
+    const event: DirectInboundEvent = {
+      ...candidate(),
+      publicEventId: "event-1",
+      publicConversationKey: "conversation-1",
+      events: [],
+      agentConfig: {},
+      ownerGeneration: 1,
+      cronRun: { cronId: "cron_1", runId: "run_1" },
+    };
 
-    await handler({
-      kind: "direct-api-async-worker",
-      event: {
-        ...candidate(),
-        events: [],
-        agentConfig: {},
-        ownerGeneration: 1,
-        cronRun: { cronId: "cron_1", runId: "run_1" },
-      },
-    } as never).catch((): void => {});
+    await handler({ kind: "direct-api-async-worker", event: event }).catch(
+      (): null => null,
+    );
 
-    expect(settled[0]).toBe("Request did not produce pending model input");
+    expect(settle.mock.calls[0]?.[0]).toMatchObject({
+      status: "failed",
+      error: "Request did not produce pending model input",
+    });
   });
 });
 
