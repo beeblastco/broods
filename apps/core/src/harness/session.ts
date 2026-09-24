@@ -449,19 +449,24 @@ export class Session {
 
   /**
    * Transfers to the next durable FIFO application, or atomically releases
-   * ownership. With `settle`, this event is settled in the same mutation.
+   * ownership. With `settle`, this event is settled in the same mutation; if
+   * that mutation fails, the settle is written on its own before the error
+   * reaches the caller, so the turn's outcome is never lost.
    */
   async takeNextIngress(
     settle?: IngressSettlement,
   ): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
-    const next = await takeNextIngress(
-      {
-        conversationKey: this.conversationKey,
-        ownerEventId: this.eventId,
-        ownerGeneration: this.ownerGeneration,
+    const owner = {
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    };
+    const next = await takeNextIngress(owner, settle).catch(
+      async (err: unknown): Promise<never> => {
+        if (settle) await settleIngress({ ...owner, ...settle }).catch(() => 0);
+        throw err;
       },
-      settle,
     );
     this.ownerHandedOff = true;
 
