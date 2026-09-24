@@ -66,6 +66,8 @@ interface LiveOverlay {
   modelCalls: number;
   agentSandboxCpuUsec: number;
   toolSandboxCpuUsec: number;
+  // Each step priced at its root's model, so the cost grows with the tokens.
+  estimatedCost: number;
 }
 
 const RANGE_SECONDS: Record<Range, number> = {
@@ -137,6 +139,7 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   modelCalls: 0,
   agentSandboxCpuUsec: 0,
   toolSandboxCpuUsec: 0,
+  estimatedCost: 0,
 };
 
 // A task still "running" past this likely never reported its terminal span
@@ -244,8 +247,14 @@ export function TokensUsagePanel({
     [bins, selected],
   );
   // Priced per model, since each model has its own rates: the models shown,
-  // over the range or the clicked bin.
+  // over the range or the clicked bin, plus the live overlay wherever the
+  // tokens include it.
   const { estimatedCost, unpriced } = useMemo(() => {
+    const liveCost =
+      activeFilter === null &&
+      (selected === null || selected === bucketStarts.length - 1)
+        ? liveOverlay.estimatedCost
+        : 0;
     const inScope = (stats?.buckets ?? []).filter(
       (b) =>
         (activeFilter === null || activeFilter.includes(modelKey(b))) &&
@@ -257,10 +266,13 @@ export function TokensUsagePanel({
     );
 
     return {
-      estimatedCost: costs.reduce((total, c) => total + (c?.total ?? 0), 0),
+      estimatedCost: costs.reduce(
+        (total, c) => total + (c?.total ?? 0),
+        liveCost,
+      ),
       unpriced: costs.filter((c) => c === null).length,
     };
-  }, [stats, activeFilter, selected, binMs, bucketStarts]);
+  }, [stats, activeFilter, selected, binMs, bucketStarts, liveOverlay]);
 
   const selectBin = (index: number): void =>
     setSelectedStart(index === selected ? null : bucketStarts[index]);
@@ -641,7 +653,9 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
       span.startTimeMs >= freshAfter,
   );
   if (runningRoots.length === 0) return EMPTY_LIVE_OVERLAY;
-  const runningRootSpanIds = new Set(runningRoots.map((root) => root.spanId));
+  const runningRootsById = new Map(
+    runningRoots.map((root) => [root.spanId, root]),
+  );
   const totals = { ...EMPTY_LIVE_OVERLAY };
   totals.invocations = runningRoots.length;
   for (const root of runningRoots) {
@@ -655,20 +669,27 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     );
   }
   for (const span of spans) {
-    if (
-      span.kind !== "model.step" ||
-      !span.parentSpanId ||
-      !runningRootSpanIds.has(span.parentSpanId)
-    )
-      continue;
+    const root = span.parentSpanId
+      ? runningRootsById.get(span.parentSpanId)
+      : undefined;
+    if (span.kind !== "model.step" || !root) continue;
+    const usage = {
+      inputTokens: numericAttribute(span, "model.input_tokens"),
+      outputTokens: numericAttribute(span, "model.output_tokens"),
+      cachedInputTokens: numericAttribute(span, "model.cached_input_tokens"),
+      cacheWriteTokens: 0,
+    };
+    const { "model.provider": provider, "model.id": modelId } =
+      root.attributes ?? {};
     totals.modelCalls += 1;
-    totals.inputTokens += numericAttribute(span, "model.input_tokens");
-    totals.outputTokens += numericAttribute(span, "model.output_tokens");
+    totals.inputTokens += usage.inputTokens;
+    totals.outputTokens += usage.outputTokens;
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
-    totals.cachedInputTokens += numericAttribute(
-      span,
-      "model.cached_input_tokens",
-    );
+    totals.cachedInputTokens += usage.cachedInputTokens;
+    if (typeof provider === "string" && typeof modelId === "string") {
+      totals.estimatedCost +=
+        estimateModelTokenCost(provider, modelId, usage)?.total ?? 0;
+    }
   }
 
   return totals;

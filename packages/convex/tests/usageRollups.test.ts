@@ -197,3 +197,35 @@ test("collectUsageTasks reads only tasks that finished inside the bin", async ()
   expect(rows.map((row) => row.taskId)).toEqual(["first#t1", "last#t2"]);
   expect(rows[0].inputPreview).toBe("prompt for first#t1");
 });
+
+test("collectUsageTasks for one model skips other models before the limit", async () => {
+  const tt = t();
+  const accountId = await seedAccount(tt);
+  const binStart = Date.UTC(2026, 0, 15, 13, 0);
+  for (const [taskId, modelId] of [
+    ["other#t0", "other-model"],
+    ["other#t1", "other-model"],
+    ["kept#t2", "claude-test"],
+  ] as const) {
+    await tt.mutation(internal.usage.recordTaskUsage, {
+      ...taskUsageArgs(accountId, taskId, binStart + 1),
+      modelId: modelId,
+    });
+  }
+
+  const rows = await tt.run(
+    async (ctx) =>
+      await collectUsageTasks(
+        ctx,
+        ENDPOINT_ID,
+        binStart,
+        binStart + HOUR_MS,
+        1,
+        {
+          modelProvider: "anthropic",
+          modelId: "claude-test",
+        },
+      ),
+  );
+  expect(rows.map((row) => row.taskId)).toEqual(["kept#t2"]);
+});
