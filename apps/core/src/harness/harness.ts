@@ -1040,7 +1040,8 @@ export async function runAgentLoop(
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
-      // Persist before steering, so a steer message is stored after the step it interrupted.
+      // Steering waits for both: a steer claimed by a turn that then stops or
+      // fails would be settled with it and never run.
       const [renewal, persisted] = await Promise.allSettled([
         session.renewConversationLease(),
         session.persistModelMessages(

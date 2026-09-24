@@ -86,6 +86,7 @@ import {
   type AppliedIngress,
   type IngressAdmission,
   type IngressDelivery,
+  type IngressSettlement,
   type SessionMessageInput,
   type SessionMessageResult,
 } from "./ingress.ts";
@@ -1093,13 +1094,13 @@ async function handleAsyncWorkerRequest(
         event,
         "Request did not produce pending model input",
       );
-      await session.settleIngress("failed", {
-        error: "Request did not produce pending model input",
-      });
       await settleCronRun(event.accountId, event.cronRun, {
         error: "Request did not produce pending model input",
       });
-      transferred = await dispatchNextIngress(session, event);
+      transferred = await dispatchNextIngress(session, event, {
+        status: "failed",
+        error: "Request did not produce pending model input",
+      });
 
       return;
     }
@@ -1362,29 +1363,8 @@ async function handleNatsWorkerRequest(
         },
       });
 
-      if (result.didFail) {
-        await session.settleIngress("failed", {
-          error: result.failureText ?? AGENT_PROCESSING_FAILED,
-        });
-      } else if (result.approvals.length > 0) {
-        await session.settleIngress("completed", {
-          result: {
-            status: "awaiting_approval",
-            approvals: result.approvals,
-          },
-        });
-      } else if (result.questions.length > 0) {
-        await session.settleIngress("completed", {
-          result: { status: "awaiting_input", questions: result.questions },
-        });
-      } else {
-        await session.settleIngress(
-          "completed",
-          result.finalResponse !== undefined
-            ? { result: result.finalResponse }
-            : {},
-        );
-      }
+      const settlement = turnSettlement(result);
+      await session.settleIngress(settlement.status, settlement);
       await fencedPublisher.publish({ type: "done" });
       transferred = await dispatchNextIngress(session, event);
       // Release here, not in the finally: the crash path must settle the
@@ -2296,12 +2276,16 @@ export async function dispatchAppliedIngress(
   });
 }
 
-/** Transfers the fenced owner to the next durable FIFO application and schedules it. */
+/**
+ * Transfers the fenced owner to the next durable FIFO application and schedules
+ * it. With `settle`, the current event is settled in the same mutation.
+ */
 async function dispatchNextIngress(
   session: Session,
   previous: IngressDispatchScope,
+  settle?: IngressSettlement,
 ): Promise<boolean> {
-  const next = await session.takeNextIngress();
+  const next = await session.takeNextIngress(settle);
   if (!next) {
     return false;
   }
@@ -2821,33 +2805,11 @@ function createDirectContinuationSseBody(
               );
             },
           });
-          if (result.didFail) {
-            await session.settleIngress("failed", {
-              error: result.failureText ?? AGENT_PROCESSING_FAILED,
-            });
-            transferred = await dispatchNextIngress(session, event);
-          } else if (result.approvals.length > 0) {
-            await session.settleIngress("completed", {
-              result: {
-                status: "awaiting_approval",
-                approvals: result.approvals,
-              },
-            });
-            transferred = await dispatchNextIngress(session, event);
-          } else if (result.questions.length > 0) {
-            await session.settleIngress("completed", {
-              result: { status: "awaiting_input", questions: result.questions },
-            });
-            transferred = await dispatchNextIngress(session, event);
-          } else {
-            await session.settleIngress(
-              "completed",
-              result.finalResponse !== undefined
-                ? { result: result.finalResponse }
-                : {},
-            );
-            transferred = await dispatchNextIngress(session, event);
-          }
+          transferred = await dispatchNextIngress(
+            session,
+            event,
+            turnSettlement(result),
+          );
         } catch (err) {
           const error =
             streamFailureText ??
@@ -3459,4 +3421,33 @@ function asyncResultEventIds(event: DirectInboundEvent): string[] {
   return [
     ...new Set([event.asyncResultEventId ?? event.eventId, event.eventId]),
   ];
+}
+
+/** The terminal envelope outcome of a finished parent turn, for settle or takeNext. */
+function turnSettlement(result: ParentContinuationResult): IngressSettlement {
+  if (result.didFail) {
+    return {
+      status: "failed",
+      error: result.failureText ?? AGENT_PROCESSING_FAILED,
+    };
+  }
+  if (result.approvals.length > 0) {
+    return {
+      status: "completed",
+      result: { status: "awaiting_approval", approvals: result.approvals },
+    };
+  }
+  if (result.questions.length > 0) {
+    return {
+      status: "completed",
+      result: { status: "awaiting_input", questions: result.questions },
+    };
+  }
+
+  return {
+    status: "completed",
+    ...(result.finalResponse !== undefined
+      ? { result: result.finalResponse }
+      : {}),
+  };
 }

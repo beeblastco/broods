@@ -2019,15 +2019,16 @@ async function parseDirectPayload(
     throw new Error("Request body must include agentId");
   }
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
-  const agent = await context.agentLoader(account.accountId, agentId);
+  const [agent, deployment] = await Promise.all([
+    context.agentLoader(account.accountId, agentId),
+    deploymentAuth
+      ? context.deploymentLoader(account.accountId, agentId)
+      : Promise.resolve(null),
+  ]);
   if (!agent) {
     throw new DirectNotFoundError("Agent not found");
   }
-  const embeddableKey = await admitStageCredential(
-    deploymentAuth,
-    agent,
-    context,
-  );
+  const embeddableKey = admitStageCredential(deploymentAuth, agent, deployment);
 
   const rawEventId = assertValidPublicEventId(record.eventId as string);
   const conversation = directConversationKeys(
@@ -2169,19 +2170,14 @@ function assertOneDirectPayloadShape(
  * Throws unless the agent is public and in the credential's stage. True for
  * the embeddable runtime key, false for a member's ticket or no credential.
  */
-async function admitStageCredential(
+function admitStageCredential(
   auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
   agent: AgentRecord,
-  context: Pick<HttpRoutingContext, "deploymentLoader">,
-): Promise<boolean> {
+  deployment: AgentDeploymentScope | null,
+): boolean {
   if (!auth) return false;
   // Another stage's agent answers like an unknown one, so nothing leaks.
-  if (
-    !deploymentScopeMatches(
-      auth,
-      await context.deploymentLoader(agent.accountId, agent.agentId),
-    )
-  ) {
+  if (!deploymentScopeMatches(auth, deployment)) {
     throw new DirectNotFoundError("Agent not found");
   }
   if (agent.config.publicAccess !== true) {
