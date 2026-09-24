@@ -1197,6 +1197,8 @@ export const usageQuantityFields = {
   hostedMcpRequests: v.number(),
   storageGbMonths: v.number(),
   egressGb: v.number(),
+  /** Channel attachments core received. Free; shown, never priced. */
+  ingressGb: v.number(),
 };
 
 export const usageQuantitiesValidator = v.object(usageQuantityFields);
@@ -1210,8 +1212,26 @@ export const usageMetersFields = {
   /** "YYYY-MM", UTC. */
   month: v.string(),
   ...usageQuantityFields,
+  /** Absent on months metered before ingress was. */
+  ingressGb: v.optional(v.number()),
+  /** GB stored at the month's latest snapshot, zero-byte ones included. */
+  storageGb: v.optional(v.number()),
   /** When the 80% warning went out; at most once per month. */
   warnedAt: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+/**
+ * The same usage per UTC day, for the dashboard's daily chart. The monthly
+ * meter stays the budget's source, so core's admission check reads one row.
+ */
+export const usageDaysFields = {
+  accountId: v.id("accounts"),
+  /** "YYYY-MM-DD", UTC. */
+  day: v.string(),
+  ...usageQuantityFields,
+  /** GB stored at the day's latest snapshot; absent before one runs. */
+  storageGb: v.optional(v.number()),
   updatedAt: v.number(),
 };
 
@@ -1494,6 +1514,10 @@ export default defineSchema({
   usageMeters: defineTable(usageMetersFields).index("by_accountId_and_month", [
     "accountId",
     "month",
+  ]),
+  usageDays: defineTable(usageDaysFields).index("by_accountId_and_day", [
+    "accountId",
+    "day",
   ]),
   usageWrites: defineTable(usageWritesFields)
     .index("by_writeId", ["writeId"])

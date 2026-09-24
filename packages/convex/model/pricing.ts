@@ -42,7 +42,12 @@ export const UNIT_RATES_EUR: UsageQuantities = {
   // AWS data transfer out eu-west-1, first 10 TB $0.09/GB, published
   // 2026-09-16. The 100 GB/month free allowance is org-wide, so ignored.
   egressGb: 0.08,
+  // AWS data transfer in is free.
+  ingressGb: 0,
 };
+
+/** A day's storage snapshot bills 1/30 of a GB-month; 31-day months come out 3% high, the safe side. */
+export const DAYS_PER_MONTH = 30;
 
 /**
  * Memory the hosted-MCP runner Lambda is deployed with (`apps/core/sst.config.ts`,
@@ -66,6 +71,7 @@ export const EMPTY_USAGE: UsageQuantities = {
   hostedMcpRequests: 0,
   storageGbMonths: 0,
   egressGb: 0,
+  ingressGb: 0,
 };
 
 /** The groups the dashboard splits a month's usage into. */
@@ -80,6 +86,8 @@ export const USAGE_CATEGORY: Record<keyof UsageQuantities, UsageCategory> = {
   hostedMcpRequests: "hostedMcp",
   storageGbMonths: "storage",
   egressGb: "egress",
+  // Free, so it adds nothing to the group.
+  ingressGb: "egress",
 };
 
 /** Price a usage meter in EUR, split by dashboard group. */

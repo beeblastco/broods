@@ -78,7 +78,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);
-  const budget = useQuery(api.account.budget.getForActiveOrg);
+  const budget = useQuery(api.account.budget.getForActiveOrg, {});
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 

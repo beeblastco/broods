@@ -255,27 +255,88 @@ describe("budget", () => {
     expect(claims).toEqual([true, false]);
   });
 
-  test("reaches the dashboard as percentages with no euro figures", async () => {
+  test("reaches the dashboard as amounts and percentages with no euro figures", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 50, storageGbMonths: 50 },
+      usage: { egressGb: 50, storageGbMonths: 50, ingressGb: 2 },
     });
 
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
 
+    const amounts = {
+      sandboxHours: 0,
+      hostedMcpCalls: 0,
+      storageGb: 1500,
+      egressGb: 50,
+      ingressGb: 2,
+    };
     expect(usage).toEqual({
       enforced: true,
       plan: "free",
       month: "2026-09",
+      months: ["2026-09"],
       usedPercent: 101,
       categories: { sandboxes: 0, hostedMcp: 0, storage: 21, egress: 80 },
       level: "exhausted",
       runsPerMinute: 600,
+      totals: amounts,
+      days: [{ day: "2026-09-23", ...amounts }],
     });
+  });
+
+  test("shows the latest storage snapshot, even an empty one", async () => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    // Two snapshots on the 21st (a rescheduled cron), then an empty one.
+    for (const [day, hour, storageGbMonths] of [
+      [21, 1, 0.1],
+      [21, 20, 0.1],
+      [22, 1, 0],
+    ] as const) {
+      await t.mutation(internal.account.budget.record, {
+        accountId: accountId,
+        usage: { storageGbMonths: storageGbMonths },
+        at: Date.UTC(2026, 8, day, hour),
+      });
+    }
+
+    const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+
+    expect(usage.totals.storageGb).toBe(0);
+    expect(usage.days).toMatchObject([{ day: "2026-09-21", storageGb: 3 }]);
+  });
+
+  test("reads a past month from the picker, and nothing outside it", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { egressGb: 100 },
+      at: Date.UTC(2026, 7, 10),
+    });
+
+    const [august, unknown] = await t.run(async (ctx) =>
+      Promise.all([
+        budgetUsage(ctx, accountId, NOW, "2026-08"),
+        budgetUsage(ctx, accountId, NOW, "x"),
+      ]),
+    );
+
+    expect(august).toMatchObject({
+      month: "2026-08",
+      months: ["2026-09", "2026-08"],
+      usedPercent: 160,
+      totals: { storageGb: null },
+    });
+    expect(august.days.map((day) => day.day)).toEqual(["2026-08-10"]);
+    expect(unknown.month).toBe("2026-09");
   });
 
   test("splits all usage on a self-hosted install, with no limit", async () => {

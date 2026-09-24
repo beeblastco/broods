@@ -11,6 +11,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
+import { DAYS_PER_MONTH } from "../model/pricing";
 import { listS3Prefix } from "../model/s3";
 import { skillsBucketName } from "../model/skills";
 import { filesystemBucketName } from "../model/workspaceFs";
@@ -19,8 +20,6 @@ import { workspaceNamespace } from "../model/workspaceRules";
 const ACCOUNT_PAGE_SIZE = 100;
 const WORKSPACE_PAGE_SIZE = 500;
 const BYTES_PER_GB = 1e9;
-// A day bills 1/30 of a GB-month; 31-day months come out 3% high, the safe side.
-const DAYS_PER_MONTH = 30;
 // Core's `ATTACHMENT_STORE_ROOT` (apps/core/src/shared/media-ticket.ts).
 const ATTACHMENT_STORE_ROOT = "attachments/";
 

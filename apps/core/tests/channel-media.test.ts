@@ -28,6 +28,11 @@ import {
 } from "../src/shared/storage.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
+const meterWrites: Array<{
+  accountId: string;
+  usage: Parameters<Storage["budgets"]["record"]>[1];
+}> = [];
+
 const headS3ObjectMock = mock(
   async (_bucket: string, _key: string): Promise<S3ObjectHead | null> => null,
 );
@@ -111,6 +116,17 @@ beforeEach(() => {
   headS3ObjectMock.mockClear();
   writeS3ObjectMock.mockClear();
   transcribeAudioMock.mockClear();
+  meterWrites.length = 0;
+  setStorageForTests({
+    budgets: {
+      record: async function (
+        accountId: string,
+        usage: Parameters<Storage["budgets"]["record"]>[1],
+      ): Promise<void> {
+        meterWrites.push({ accountId: accountId, usage: usage });
+      },
+    },
+  } as never);
 });
 
 afterEach(() => {
@@ -180,6 +196,10 @@ describe("ingestInboundAttachments", () => {
     expect(workspaceOptions).toEqual({ contentType: "image/png" });
     expect(storeKey).toStartWith(`attachments/${ACCOUNT}/media/`);
     expect(storeKey).toEndWith("-photo.png");
+    // Received once, metered once, however many copies are stored.
+    expect(meterWrites).toEqual([
+      { accountId: ACCOUNT, usage: { ingressGb: PNG_BYTES.byteLength / 1e9 } },
+    ]);
   });
 
   it("seals the link against the attachment store, not the workspace", async () => {
@@ -376,8 +396,14 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    // Ten accepted attachments, two copies each.
+    // Ten accepted attachments, two copies each, metered in one write.
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(20);
+    expect(meterWrites).toEqual([
+      {
+        accountId: ACCOUNT,
+        usage: { ingressGb: (10 * PNG_BYTES.byteLength) / 1e9 },
+      },
+    ]);
     expect(noteText(parts)).toContain("2 further attachment(s)");
   });
 
