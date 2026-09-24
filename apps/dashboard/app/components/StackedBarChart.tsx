@@ -253,6 +253,7 @@ export function useChartFontSize(
   return { ref: ref, fontSize: fontSize };
 }
 
+/** A bin's axis label: local time for sub-day bins, the UTC date for day bins, which start at UTC midnight. */
 export function formatBucketLabel(ms: number, binSeconds: number): string {
   const d = new Date(ms);
   if (binSeconds < 24 * 60 * 60) {
@@ -263,5 +264,9 @@ export function formatBucketLabel(ms: number, binSeconds: number): string {
     });
   }
 
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }

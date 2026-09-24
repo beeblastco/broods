@@ -79,7 +79,7 @@ export interface UsageAmounts {
   /** vCPU hours; a MicroVM runs on one vCPU, so these are its hours. */
   sandboxHours: number;
   hostedMcpCalls: number;
-  /** Bytes stored at the latest daily snapshot. */
+  /** GB stored at the latest daily snapshot. */
   storageGb: number;
   egressGb: number;
   ingressGb: number;
@@ -98,10 +98,18 @@ export async function addUsage(
   usage: Partial<UsageQuantities>,
   now: number,
 ): Promise<void> {
-  if (!Object.values(usage).some((value) => value > 0)) return;
+  const hasUsage = Object.values(usage).some((value) => value > 0);
   const month = meterMonth(now);
   const meter = await readMeter(ctx, accountId, month);
-  const monthTotals = withUsage(meter, usage);
+  // A zero-byte storage snapshot still lands on a metered month, so the
+  // stored size it replaces drops to 0 instead of going stale.
+  if (!hasUsage && (usage.storageGbMonths === undefined || !meter)) return;
+  const monthTotals = {
+    ...withUsage(meter, usage),
+    ...(usage.storageGbMonths === undefined
+      ? {}
+      : { storageGb: usage.storageGbMonths * DAYS_PER_MONTH }),
+  };
   if (meter) {
     await ctx.db.patch(meter._id, { ...monthTotals, updatedAt: now });
   } else {
@@ -112,6 +120,7 @@ export async function addUsage(
       updatedAt: now,
     });
   }
+  if (!hasUsage) return;
   const day = meterDay(now);
   const daily = await ctx.db
     .query("usageDays")
@@ -187,7 +196,6 @@ export async function budgetUsage(
     day: row.day,
     ...toAmounts(pickUsage(row), row.storageGbMonths * DAYS_PER_MONTH),
   }));
-  const lastSnapshot = days.findLast((day) => day.storageGb > 0);
   const meters = await ctx.db
     .query("usageMeters")
     .withIndex("by_accountId_and_month", (q) => q.eq("accountId", accountId))
@@ -217,7 +225,7 @@ export async function budgetUsage(
           : usedEur >= limitEur * BUDGET_WARNING_RATIO
             ? "warning"
             : "ok",
-    totals: toAmounts(usage, lastSnapshot?.storageGb ?? 0),
+    totals: toAmounts(usage, meter?.storageGb ?? 0),
     days: days,
   };
 }

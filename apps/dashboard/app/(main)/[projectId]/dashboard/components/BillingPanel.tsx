@@ -262,14 +262,20 @@ function DailyUsage({
         ))}
       </div>
       <div className="rounded-lg border border-border bg-card p-3">
-        <StackedBarChart
-          bins={dailyBins(budget)}
-          binSeconds={DAY_SECONDS}
-          series={[{ key: row.key, label: row.label, color: row.color }]}
-          formatAxis={(value) => formatAmount(value, row.unit)}
-          formatValue={(value) => formatAmount(value, row.unit)}
-          totalLabel={row.label}
-        />
+        {budget.days.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No daily usage recorded for this month.
+          </p>
+        ) : (
+          <StackedBarChart
+            bins={dailyBins(budget)}
+            binSeconds={DAY_SECONDS}
+            series={[{ key: row.key, label: row.label, color: row.color }]}
+            formatAxis={(value) => formatAmount(value, row.unit)}
+            formatValue={(value) => formatAmount(value, row.unit)}
+            totalLabel={row.label}
+          />
+        )}
       </div>
     </Section>
   );
@@ -486,15 +492,14 @@ function billingReset(month: string): string {
   return formatDay(Date.UTC(year, monthNumber, 1));
 }
 
-// Every day of the month as a chart bin, zero where nothing was used. Bins sit
-// at noon UTC so every timezone labels them with the right day.
+// Every day of the month as a chart bin, zero where nothing was used.
 function dailyBins(budget: BudgetUsage): Array<ChartBin<UsageRow["key"]>> {
   const [year, monthNumber] = budget.month.split("-").map(Number);
   const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
   const byDay = new Map(budget.days.map((day) => [day.day, day]));
 
   return Array.from({ length: dayCount }, (_, index) => {
-    const bucketStart = Date.UTC(year, monthNumber - 1, index + 1, 12);
+    const bucketStart = Date.UTC(year, monthNumber - 1, index + 1);
     const used = byDay.get(new Date(bucketStart).toISOString().slice(0, 10));
 
     return {

@@ -287,6 +287,26 @@ describe("budget", () => {
     });
   });
 
+  test("shows the latest storage snapshot, even an empty one", async () => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    for (const [day, storageGbMonths] of [
+      [21, 0.1],
+      [22, 0],
+    ] as const) {
+      await t.mutation(internal.account.budget.record, {
+        accountId: accountId,
+        usage: { storageGbMonths: storageGbMonths },
+        at: Date.UTC(2026, 8, day),
+      });
+    }
+
+    const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+
+    expect(usage.totals.storageGb).toBe(0);
+  });
+
   test("shows a past month with no warning level", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });

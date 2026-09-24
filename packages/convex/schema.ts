@@ -1209,6 +1209,8 @@ export const usageMetersFields = {
   ...usageQuantityFields,
   /** Metered from October 2026, so older months have none. */
   ingressGb: v.optional(v.number()),
+  /** GB stored at the month's latest daily snapshot, zero-byte ones included. */
+  storageGb: v.optional(v.number()),
   /** When the 80% warning went out; at most once per month. */
   warnedAt: v.optional(v.number()),
   updatedAt: v.number(),
