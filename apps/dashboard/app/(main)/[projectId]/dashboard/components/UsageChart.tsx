@@ -148,10 +148,7 @@ export function UsageChart({
             ? "Usage over time. Arrow keys move, Enter shows traces."
             : "Usage over time. Arrow keys move."
         }
-        className={cn(
-          "block w-full text-3xs outline-none focus-visible:ring-1 focus-visible:ring-ring",
-          onSelect ? "cursor-pointer" : "cursor-default",
-        )}
+        className={`block w-full text-3xs outline-none focus-visible:ring-1 focus-visible:ring-ring ${onSelect ? "cursor-pointer" : "cursor-default"}`}
         onKeyDown={(event) => {
           if (event.key === "ArrowLeft") setHover(Math.max(0, active - 1));
           else if (event.key === "ArrowRight")
