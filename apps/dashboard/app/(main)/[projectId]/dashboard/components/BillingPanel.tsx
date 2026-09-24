@@ -29,9 +29,9 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const userPlan: PlanTier = currentUser?.plan ?? DEFAULT_PLAN;
   const planConfig = PLAN_CONFIGS[userPlan];
   // A live subscription in any state (even past_due) goes through the portal;
-  // checkout refuses it.
+  // checkout refuses it. `undefined` is still loading, so no Upgrade yet.
   const hasSubscription = billingInfo != null;
-  const canUpgrade = !isMaxPlan(userPlan) && !hasSubscription;
+  const canUpgrade = billingInfo === null && !isMaxPlan(userPlan);
 
   const isSubscribed =
     billingInfo?.status === "active" || billingInfo?.status === "trialing";
