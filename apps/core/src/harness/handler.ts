@@ -1071,8 +1071,16 @@ async function handleAsyncWorkerRequest(
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
-  // Set once the run's outcome is recorded; after that the catch leaves it be.
-  let didSettle = false;
+  // The run's outcome once recorded; after that the catch never overwrites it.
+  let outcome: AsyncAgentOutcome | undefined;
+  let cronSettled = false;
+  // Records the run's outcome, then settles its cron run with the same outcome.
+  const finish = async (result: AsyncAgentOutcome): Promise<void> => {
+    await settleAsyncRun(session, event, result);
+    outcome = result;
+    await settleCronOutcome(event, result);
+    cronSettled = true;
+  };
   try {
     await createPendingAsyncAgentResult({
       eventId: event.asyncResultEventId ?? event.eventId,
@@ -1087,10 +1095,10 @@ async function handleAsyncWorkerRequest(
     ({ session } = turn);
     const { turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      const error = "Request did not produce pending model input";
-      await settleAsyncRun(session, event, { status: "failed", error: error });
-      didSettle = true;
-      await settleCronRun(event.accountId, event.cronRun, { error: error });
+      await finish({
+        status: "failed",
+        error: "Request did not produce pending model input",
+      });
       transferred = await dispatchNextIngress(session, event);
 
       return;
@@ -1103,14 +1111,7 @@ async function handleAsyncWorkerRequest(
       context,
       {
         onFinalText: async (response, traceId) => {
-          await settleAsyncRun(session, event, {
-            status: "completed",
-            response: response,
-          });
-          didSettle = true;
-          await settleCronRun(event.accountId, event.cronRun, {
-            result: response,
-          });
+          await finish({ status: "completed", response: response });
           // An empty final text means the run already delivered its output
           // through a channel tool; pushing it would post a blank message.
           const responseText =
@@ -1133,14 +1134,7 @@ async function handleAsyncWorkerRequest(
           );
         },
         onErrorText: async (error, traceId) => {
-          await settleAsyncRun(session, event, {
-            status: "failed",
-            error: error,
-          });
-          didSettle = true;
-          await settleCronRun(event.accountId, event.cronRun, {
-            error: error,
-          });
+          await finish({ status: "failed", error: error });
           await pushReplyToChannel(
             session!,
             event,
@@ -1154,22 +1148,14 @@ async function handleAsyncWorkerRequest(
           );
         },
         onApprovalRequired: async (approvals) => {
-          await settleAsyncRun(session, event, {
-            status: "awaiting_approval",
-            approvals: approvals,
-          });
-          didSettle = true;
+          await finish({ status: "awaiting_approval", approvals: approvals });
         },
         onQuestionsPending: async (questions) => {
-          await settleAsyncRun(session, event, {
-            status: "awaiting_input",
-            questions: questions,
-          });
-          didSettle = true;
+          await finish({ status: "awaiting_input", questions: questions });
         },
       },
     );
-    if (didSettle) {
+    if (outcome) {
       transferred = await dispatchNextIngress(session, event);
     }
   } catch (err) {
@@ -1178,9 +1164,8 @@ async function handleAsyncWorkerRequest(
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
-    // A throw after the outcome is recorded must not overwrite it.
-    if (!didSettle) {
-      const failed: AsyncAgentOutcome = { status: "failed", error: error };
+    const failed: AsyncAgentOutcome = { status: "failed", error: error };
+    if (!outcome) {
       // Without the lease the envelope is not ours to settle, but its polling
       // rows still are.
       await settleAsyncRun(session, event, failed)
@@ -1192,14 +1177,16 @@ async function handleAsyncWorkerRequest(
               writeErr instanceof Error ? writeErr.message : String(writeErr),
           });
         });
-      await settleCronRun(event.accountId, event.cronRun, {
-        error: error,
-      }).catch((cronErr: unknown): void => {
-        logError("Cron run outcome lost", {
-          eventId: event.eventId,
-          error: cronErr instanceof Error ? cronErr.message : String(cronErr),
-        });
-      });
+    }
+    if (!cronSettled) {
+      await settleCronOutcome(event, outcome ?? failed).catch(
+        (cronErr: unknown): void => {
+          logError("Cron run outcome lost", {
+            eventId: event.eventId,
+            error: cronErr instanceof Error ? cronErr.message : String(cronErr),
+          });
+        },
+      );
     }
     if (session) {
       transferred = await dispatchNextIngress(session, event).catch(
@@ -3404,6 +3391,25 @@ async function settleAsyncRun(
     asyncResult: { eventIds: asyncResultEventIds(event), outcome: outcome },
   });
   if (!settled) await recordAsyncRun(event, outcome);
+}
+
+/**
+ * Settles the cron run behind an async request with the run's outcome. A run
+ * waiting on approval or input leaves its cron run open.
+ */
+async function settleCronOutcome(
+  event: DirectInboundEvent,
+  outcome: AsyncAgentOutcome,
+): Promise<void> {
+  if (outcome.status === "completed") {
+    await settleCronRun(event.accountId, event.cronRun, {
+      result: outcome.response,
+    });
+  } else if (outcome.status === "failed") {
+    await settleCronRun(event.accountId, event.cronRun, {
+      error: outcome.error,
+    });
+  }
 }
 
 function asyncResultEventIds(event: DirectInboundEvent): string[] {

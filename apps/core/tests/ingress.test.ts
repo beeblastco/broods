@@ -260,8 +260,67 @@ describe("async turn that throws after it settles", (): void => {
     mock.restore();
   });
 
+  it("retries a failed cron settle with the recorded outcome", async (): Promise<void> => {
+    stubCompletedTurn([]);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    const completeRun = spyOn(getStorage().crons, "completeRun")
+      .mockRejectedValueOnce(new Error("cron write failed"))
+      .mockResolvedValue();
+    const failRun = spyOn(getStorage().crons, "failRun").mockResolvedValue();
+
+    const error = await handler({
+      kind: "direct-api-async-worker",
+      event: {
+        ...completedEvent(),
+        cronRun: { cronId: "cron_1", runId: "run_1" },
+      },
+    }).catch((err: unknown): unknown => err);
+
+    expect(error).toEqual(new Error("cron write failed"));
+    expect(completeRun).toHaveBeenCalledTimes(2);
+    expect(failRun).not.toHaveBeenCalled();
+  });
+
   it("keeps the completed result when the next dispatch throws", async (): Promise<void> => {
     const writes: Array<{ name: string; status?: unknown }> = [];
+    const settle = stubCompletedTurn(writes);
+    spyOn(ingress, "takeNextIngress").mockRejectedValue(
+      new Error("takeNext failed"),
+    );
+
+    const error = await handler({
+      kind: "direct-api-async-worker",
+      event: completedEvent(),
+    }).catch((err: unknown): unknown => err);
+
+    expect(error).toEqual(new Error("takeNext failed"));
+    expect(settle.mock.calls.map(([options]) => options.asyncResult)).toEqual([
+      {
+        eventIds: ["event-1"],
+        outcome: { status: "completed", response: "answer" },
+      },
+    ]);
+    expect(
+      writes.filter((write) => write.name === "updateAsyncAgentResult"),
+    ).toEqual([]);
+  });
+
+  /** An async event whose run ends with the final text "answer". */
+  function completedEvent(): DirectInboundEvent {
+    return {
+      ...candidate(),
+      publicEventId: "event-1",
+      publicConversationKey: "conversation-1",
+      events: [],
+      agentConfig: {},
+      ownerGeneration: 1,
+    };
+  }
+
+  /** Stubs a turn that ends with the final text "answer"; returns the settle spy. */
+  function stubCompletedTurn(
+    writes: Array<{ name: string; status?: unknown }>,
+  ): ReturnType<typeof spyOn<typeof ingress, "settleIngress">> {
     spyOn(runtime, "mutate").mockImplementation((async (
       name: string,
       args: Record<string, unknown>,
@@ -272,9 +331,6 @@ describe("async turn that throws after it settles", (): void => {
     }) as never);
     spyOn(runtime, "query").mockResolvedValue(null as never);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
-    spyOn(ingress, "takeNextIngress").mockRejectedValue(
-      new Error("takeNext failed"),
-    );
     spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
     spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [{ role: "user", content: "hello" }],
@@ -298,31 +354,9 @@ describe("async turn that throws after it settles", (): void => {
         failureText: (): null => null,
       };
     }) as never);
-    const event: DirectInboundEvent = {
-      ...candidate(),
-      publicEventId: "event-1",
-      publicConversationKey: "conversation-1",
-      events: [],
-      agentConfig: {},
-      ownerGeneration: 1,
-    };
 
-    const error = await handler({
-      kind: "direct-api-async-worker",
-      event: event,
-    }).catch((err: unknown): unknown => err);
-
-    expect(error).toEqual(new Error("takeNext failed"));
-    expect(settle.mock.calls.map(([options]) => options.asyncResult)).toEqual([
-      {
-        eventIds: ["event-1"],
-        outcome: { status: "completed", response: "answer" },
-      },
-    ]);
-    expect(
-      writes.filter((write) => write.name === "updateAsyncAgentResult"),
-    ).toEqual([]);
-  });
+    return settle;
+  }
 });
 
 describe("channel senders", (): void => {
