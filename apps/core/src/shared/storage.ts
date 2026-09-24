@@ -76,6 +76,8 @@ export interface TaskUsageInput {
   stepCount: number;
   /** Number of tool calls made across all steps. */
   toolCallCount: number;
+  /** Start of the latest user message, as the trace's `task.input` shows it. */
+  inputPreview?: string;
 }
 
 /** Identifies one daemon connection of a `machine` sandbox. */

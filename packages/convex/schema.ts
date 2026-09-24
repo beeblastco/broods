@@ -1172,6 +1172,11 @@ export const taskUsageFields = {
   stepCount: v.number(),
   /** Number of tool calls across all steps. */
   toolCallCount: v.number(),
+  /**
+   * Start of the latest user message, the same text the trace shows as
+   * `task.input`, so the usage tab can label a task. Absent on older rows.
+   */
+  inputPreview: v.optional(v.string()),
 };
 
 /**

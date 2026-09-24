@@ -141,6 +141,8 @@ const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
 // Tracing labels a run with its request. The whole text is already in
 // model.input, so this only has to fill one row.
 const MAX_TASK_INPUT_CHARS = 500;
+// The usage tab shows one line of it per task, and the row is kept 90 days.
+const USAGE_INPUT_PREVIEW_CHARS = 160;
 
 const SPAN_ENCODER = new TextEncoder();
 
@@ -422,6 +424,11 @@ export async function runAgentLoop(
   };
 
   const environment = session.environmentText();
+  // Labels the run in Tracing and its row in the usage tab.
+  const taskInput = traceAttribute(latestUserText(turnContext.messages)).slice(
+    0,
+    MAX_TASK_INPUT_CHARS,
+  );
   // Reassigned once the tool set is known, so the live root span carries the
   // tools injected into the model alongside its system prompt and messages.
   let rootRunningAttributes: Record<string, string | number | boolean> = {
@@ -429,10 +436,7 @@ export async function runAgentLoop(
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
-    "task.input": traceAttribute(latestUserText(turnContext.messages)).slice(
-      0,
-      MAX_TASK_INPUT_CHARS,
-    ),
+    "task.input": taskInput,
     "agent.message_count": turnContext.messages.length,
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
@@ -970,6 +974,7 @@ export async function runAgentLoop(
         sandboxUsage: [...sandboxUsageByKey.values()],
         stepCount: stepCount,
         toolCallCount: toolCallCount,
+        inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
       });
       // Wait for the usage write and the terminal span's publish, then flush
       // the OTLP exporters (Tempo/Loki) AND the live NATS connection so the
