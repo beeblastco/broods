@@ -57,10 +57,15 @@ import {
   prunePolicyResources,
   pruneSandboxResources,
   pruneWorkspaceResources,
+  type ReservationHolder,
+  sandboxConfigByName,
   syncAgentResources,
   syncPolicyResources,
   syncSandboxResources,
   syncWorkspaceResources,
+  undeclaredSandboxConfigs,
+  undeclaredWorkspaceConfigs,
+  workspaceConfigByName,
 } from "../model/cliSyncResources";
 import {
   assertEnvironmentVariableUnreferenced,
@@ -70,6 +75,7 @@ import {
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
 import { ClientError } from "../model/clientError";
+import { workspaceNamespace } from "../model/workspaceRules";
 
 // `touchProject` bumps `updatedAt` at most this often.
 const PROJECT_TOUCH_INTERVAL_MS = 60_000;
@@ -138,8 +144,8 @@ export const deleteResourceBySecretHash = internalMutation({
     ),
     name: v.string(),
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.object({ reserved: v.boolean() }),
+  handler: async (ctx, args): Promise<{ reserved: boolean }> => {
     const { secretHash, project, stage, kind, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
@@ -147,24 +153,105 @@ export const deleteResourceBySecretHash = internalMutation({
     if (!resolved)
       throw new ClientError("Project/stage not found", "not_found");
     const normalizedName = resourceName(name);
+    const stageId = resolved.stageDoc._id;
 
+    let reserved = false;
     if (kind === "agent") {
       await deleteAgentResource(
         ctx,
         account._id,
         resolved.projectDoc._id,
-        resolved.stageDoc._id,
+        stageId,
         normalizedName,
       );
     } else if (kind === "workspace") {
-      await deleteWorkspaceResource(ctx, resolved.stageDoc._id, normalizedName);
+      await deleteWorkspaceResource(ctx, stageId, normalizedName);
     } else {
-      await deleteSandboxResource(ctx, resolved.stageDoc._id, normalizedName);
+      reserved = await deleteSandboxResource(ctx, stageId, normalizedName);
     }
-
     await touchProject(ctx, resolved.projectDoc);
 
-    return null;
+    return { reserved: reserved };
+  },
+});
+
+/**
+ * The reservation holders (sandbox config ids, workspace namespaces) of the
+ * CLI rows a prune (`resources`: the synced manifest) or a single delete
+ * (`kind` + `name`) is about to remove.
+ */
+export const deleteTargetsBySecretHash = internalQuery({
+  args: {
+    secretHash: v.string(),
+    project: v.string(),
+    stage: v.string(),
+    target: v.union(
+      v.object({ resources: v.array(resourceValidator) }),
+      v.object({
+        kind: v.union(v.literal("workspace"), v.literal("sandbox")),
+        name: v.string(),
+      }),
+    ),
+  },
+  returns: v.array(
+    v.union(
+      v.object({ sandboxConfigId: v.id("sandboxConfigs") }),
+      v.object({ namespace: v.string() }),
+    ),
+  ),
+  handler: async (ctx, args): Promise<ReservationHolder[]> => {
+    const { secretHash, project, stage, target } = args;
+    const account = await accountFromSecretHash(ctx, secretHash);
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
+    if (!resolved) return [];
+    const stageId = resolved.stageDoc._id;
+
+    let sandboxes: Doc<"sandboxConfigs">[];
+    let workspaces: Doc<"workspaceConfigs">[];
+    if ("resources" in target) {
+      sandboxes = await undeclaredSandboxConfigs(
+        ctx,
+        stageId,
+        target.resources,
+      );
+      workspaces = await undeclaredWorkspaceConfigs(
+        ctx,
+        stageId,
+        target.resources,
+      );
+    } else if (target.kind === "sandbox") {
+      const sandbox = await sandboxConfigByName(
+        ctx,
+        stageId,
+        resourceName(target.name),
+      );
+      sandboxes = sandbox?.managedBy === "cli" ? [sandbox] : [];
+      workspaces = [];
+    } else {
+      const workspace = await workspaceConfigByName(
+        ctx,
+        stageId,
+        resourceName(target.name),
+      );
+      sandboxes = [];
+      workspaces = workspace?.managedBy === "cli" ? [workspace] : [];
+    }
+    const namespaces = await Promise.all(
+      workspaces.map(
+        async (workspace): Promise<string> =>
+          await workspaceNamespace(account._id, workspace._id),
+      ),
+    );
+
+    return [
+      ...sandboxes.map((sandbox): ReservationHolder => ({
+        sandboxConfigId: sandbox._id,
+      })),
+      ...namespaces.map((namespace): ReservationHolder => ({
+        namespace: namespace,
+      })),
+    ];
   },
 });
 
@@ -476,6 +563,44 @@ export const listExternalResourcesForAccount = internalQuery({
   },
 });
 
+/**
+ * Deletes the stage's undeclared CLI workspaces and sandbox configs, keeping
+ * any sandbox config that still holds a reserved instance. Runs after the sync
+ * and after the HTTP layer tried to terminate their instances. Returns the
+ * kept resources.
+ */
+export const pruneSandboxesBySecretHash = internalMutation({
+  args: {
+    secretHash: v.string(),
+    manifest: manifestValidator,
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args): Promise<string[]> => {
+    const { secretHash, manifest } = args;
+    const account = await accountFromSecretHash(ctx, secretHash);
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      manifest.project,
+      manifest.stage,
+    );
+    if (!resolved)
+      throw new ClientError("Project/stage not found", "not_found");
+    const { projectDoc, stageDoc } = resolved;
+
+    await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
+    const sandboxes = await pruneSandboxResources(
+      ctx,
+      stageDoc._id,
+      manifest.resources,
+    );
+    await touchProject(ctx, projectDoc);
+
+    return sandboxes.map((name): string => `sandbox "${name}"`);
+  },
+});
+
 export const recordExternalResourcesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
@@ -759,6 +884,11 @@ export const setEnvBySecretHash = internalMutation({
   },
 });
 
+/**
+ * Create, rename and update the manifest's resources. `prune` also drops
+ * undeclared agents, channel records and policies; sandbox configs and
+ * workspaces go in `pruneSandboxesBySecretHash`.
+ */
 export const syncManifestBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
@@ -844,8 +974,6 @@ export const syncManifestBySecretHash = internalMutation({
       );
       await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
       await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
-      await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
-      await pruneSandboxResources(ctx, stageDoc._id, manifest.resources);
     }
 
     await syncCanvasLayoutForManifest(ctx, {

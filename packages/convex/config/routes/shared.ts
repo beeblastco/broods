@@ -278,7 +278,8 @@ export async function requireSelfAccount(
 /**
  * Terminate reserved sandbox instances matching a predicate through core's
  * lifecycle route (which owns the decrypted provider credentials). Best-effort:
- * skips rows without a sandboxConfigId and swallows per-instance failures.
+ * skips rows without a sandboxConfigId or already terminating, and swallows
+ * per-instance failures. `error` rows are tried: they may still hold a machine.
  */
 export async function terminateReservedInstances(
   ctx: ActionCtx,
@@ -302,7 +303,6 @@ export async function terminateReservedInstances(
         (instance) =>
           instance.sandboxConfigId !== undefined &&
           instance.status !== "terminating" &&
-          instance.status !== "error" &&
           matches(instance),
       )
       .map(async (instance) => {

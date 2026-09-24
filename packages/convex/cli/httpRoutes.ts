@@ -4,11 +4,14 @@
  * (skills/hooks/mcp bundles, cron reconciliation) the manifest PUT drives.
  */
 
+import type { FunctionArgs } from "convex/server";
 import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./types";
+import { terminateReservedInstances } from "../config/routes/shared";
 import { isExternalResourceKind } from "../model/cliSync";
+import { reservedBy } from "../model/cliSyncResources";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeMcpInput } from "../model/mcp";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
@@ -64,6 +67,11 @@ type CronResponse = {
 type DesiredCron = Omit<CronResponse, "cronId"> & {
   resourceName: string;
 };
+
+/** What a prune or single delete is about to remove, as the query names it. */
+type DeleteTarget = FunctionArgs<
+  typeof internal.cli.sync.deleteTargetsBySecretHash
+>["target"];
 
 type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 
@@ -239,13 +247,30 @@ export async function handleResourceDeleteRoute(
   if (route.resourceKind === "cron") {
     await deleteCronByName(ctx, auth, route);
   } else {
-    await ctx.runMutation(internal.cli.sync.deleteResourceBySecretHash, {
-      secretHash: auth.secretHash,
-      project: route.project,
-      stage: route.stage,
-      kind: route.resourceKind,
-      name: route.name,
-    });
+    if (route.resourceKind !== "agent") {
+      await terminateDoomedInstances(ctx, auth, route, {
+        kind: route.resourceKind,
+        name: route.name,
+      });
+    }
+    const result = await ctx.runMutation(
+      internal.cli.sync.deleteResourceBySecretHash,
+      {
+        secretHash: auth.secretHash,
+        project: route.project,
+        stage: route.stage,
+        kind: route.resourceKind,
+        name: route.name,
+      },
+    );
+    if (result.reserved) {
+      return jsonError(
+        409,
+        `Sandbox "${route.name}" still has a reserved instance that could not be terminated. ` +
+          "Terminate it from the dashboard, then retry.",
+        { code: "sandbox_instance_reserved" },
+      );
+    }
   }
 
   return json({ deleted: true });
@@ -487,6 +512,19 @@ async function handleManifestSync(
       prune: prune,
     },
   );
+  let reservedResources: string[] = [];
+  if (prune) {
+    await terminateDoomedInstances(ctx, auth, route, {
+      resources: syncManifest.resources,
+    });
+    reservedResources = await ctx.runMutation(
+      internal.cli.sync.pruneSandboxesBySecretHash,
+      {
+        secretHash: secretHash,
+        manifest: syncManifest,
+      },
+    );
+  }
   await syncSkillNodeFiles(ctx, {
     secretHash: secretHash,
     project: route.project,
@@ -540,7 +578,7 @@ async function handleManifestSync(
       ...result,
       ids: { ...result.ids, ...externalIds, crons: cronIds },
     }),
-    warnings: result.warnings,
+    warnings: { ...result.warnings, reservedResources: reservedResources },
     deployment: deployment,
   });
 }
@@ -995,4 +1033,32 @@ async function syncSkillResources(
   }
 
   return ids;
+}
+
+/**
+ * Terminate, through core, the reserved instances of the sandbox configs and
+ * workspaces a prune or delete is about to drop. Must run while the rows still
+ * exist: core's lifecycle route loads the sandbox config by id, and a
+ * workspace's namespace is found through its row. A sandbox config whose
+ * instance core did not remove is kept; a workspace is deleted regardless.
+ */
+async function terminateDoomedInstances(
+  ctx: ActionCtx,
+  auth: CliAuth,
+  route: { project: string; stage: string },
+  target: DeleteTarget,
+): Promise<void> {
+  const holders = await ctx.runQuery(
+    internal.cli.sync.deleteTargetsBySecretHash,
+    {
+      secretHash: auth.secretHash,
+      project: route.project,
+      stage: route.stage,
+      target: target,
+    },
+  );
+  if (holders.length === 0) return;
+  await terminateReservedInstances(ctx, auth.accountId, (instance): boolean =>
+    holders.some((holder): boolean => reservedBy(instance, holder)),
+  );
 }

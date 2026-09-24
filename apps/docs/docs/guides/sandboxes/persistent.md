@@ -98,7 +98,8 @@ The dashboard gives you a live terminal on `sandbox` and `lambda` instances, und
 
 ## Cleanup
 
-- Deleting a workspace or the account tears down its reserved machines.
+- Deleting a workspace, a sandbox config or the account from the dashboard or the API tries to terminate its reserved machines, then deletes it. Deleting a workspace this way also removes its files, unless it uses your own bucket.
+- A CLI sync (`broods deploy --prune`, or a resource removed under `broods dev`) tries to terminate the reserved machines first. A sandbox config is kept while a reservation is still live: the prune lists it in a warning, and a single delete answers `409`. Terminate the reservation from the dashboard and run it again. A workspace is deleted after the terminate attempt. The CLI path does not remove workspace files.
 - A reservation that has not been used for 7 days expires, and the machine is deleted at its provider.
 - Terminate a reservation from the dashboard to free it immediately.
 
