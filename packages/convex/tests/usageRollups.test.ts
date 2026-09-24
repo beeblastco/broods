@@ -184,14 +184,15 @@ test("collectUsageTasks reads only tasks that finished inside the bin", async ()
     ["last#t2", binEnd - 1],
     ["after#t3", binEnd],
   ] as const) {
-    await tt.mutation(
-      internal.usage.recordTaskUsage,
-      taskUsageArgs(accountId, taskId, finishedAt),
-    );
+    await tt.mutation(internal.usage.recordTaskUsage, {
+      ...taskUsageArgs(accountId, taskId, finishedAt),
+      inputPreview: `prompt for ${taskId}`,
+    });
   }
 
   const rows = await tt.run(
     async (ctx) => await collectUsageTasks(ctx, ENDPOINT_ID, binStart, binEnd),
   );
   expect(rows.map((row) => row.taskId)).toEqual(["first#t1", "last#t2"]);
+  expect(rows[0].inputPreview).toBe("prompt for first#t1");
 });

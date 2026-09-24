@@ -93,6 +93,8 @@ const usageTask = v.object({
   cacheWriteTokens: v.number(),
   totalTokens: v.number(),
   stepCount: v.number(),
+  /** Start of the prompt, as the trace labels it; null on older rows. */
+  inputPreview: v.union(v.string(), v.null()),
 });
 
 /** One aggregated usage point: bin start, model identity, and the 11 metric counters. */
@@ -248,6 +250,7 @@ export const fetchUsageTasks = query({
         cacheWriteTokens: row.cacheWriteTokens,
         totalTokens: row.totalTokens,
         stepCount: row.stepCount,
+        inputPreview: row.inputPreview ?? null,
       }));
 
     return { tasks: tasks, truncated: truncated };

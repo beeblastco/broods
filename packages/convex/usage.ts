@@ -104,6 +104,7 @@ export const recordTaskUsage = internalMutation({
     ),
     stepCount: v.number(),
     toolCallCount: v.number(),
+    inputPreview: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -153,6 +154,7 @@ export const recordTaskUsage = internalMutation({
       sandboxUsage: args.sandboxUsage,
       stepCount: args.stepCount,
       toolCallCount: args.toolCallCount,
+      inputPreview: args.inputPreview,
     });
 
     // Fold the same task's counts into one bucket per grain so long dashboard

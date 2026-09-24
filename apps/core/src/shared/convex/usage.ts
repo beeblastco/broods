@@ -40,6 +40,7 @@ export const taskUsage: Storage["taskUsage"] = {
           sandboxUsage: input.sandboxUsage,
           stepCount: input.stepCount,
           toolCallCount: input.toolCallCount,
+          inputPreview: input.inputPreview,
         },
         { skipQueue: true },
       );
