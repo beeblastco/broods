@@ -62,7 +62,11 @@ export const runtimeMutations = {
 type RuntimeQueryName = keyof typeof runtimeQueries;
 type RuntimeMutationName = keyof typeof runtimeMutations;
 
-/** Mutable call boundary used by focused core tests without a live deployment. */
+/**
+ * Mutable call boundary used by focused core tests without a live deployment.
+ * Mutations skip the client's process-wide FIFO queue, so concurrent runs never
+ * wait on each other; a caller that needs an order awaits it.
+ */
 export const runtime = {
   query: function <T>(
     name: RuntimeQueryName,
@@ -77,9 +81,8 @@ export const runtime = {
     name: RuntimeMutationName,
     args: Record<string, unknown>,
   ): Promise<T> {
-    return getConvexClient().mutation(
-      runtimeMutations[name],
-      args as any,
-    ) as Promise<T>;
+    return getConvexClient().mutation(runtimeMutations[name], args as any, {
+      skipQueue: true,
+    }) as Promise<T>;
   },
 };

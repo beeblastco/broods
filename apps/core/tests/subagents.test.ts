@@ -524,7 +524,7 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("settles and releases an admitted child when turn context creation fails", async () => {
+  it("settles and hands off an admitted child when turn context creation fails", async () => {
     const originalMutation = runtime.mutate;
     const mutations: string[] = [];
     runtime.mutate = mock(async (name: string) => {
@@ -551,7 +551,7 @@ describe("SubagentCoordinator", () => {
       );
       expect(mutations).toContain("settleIngress");
       expect(mutations).toContain("takeNextIngress");
-      expect(mutations).toContain("releaseIngressOwner");
+      expect(mutations).not.toContain("releaseIngressOwner");
     } finally {
       runtime.mutate = originalMutation;
     }

@@ -922,6 +922,41 @@ describe("context prepare", () => {
     }
   });
 
+  it("re-reads history before a step only after the session writes a system row", async () => {
+    const history = await stubHistory(userRows(2));
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const stubbedQuery = runtime.query;
+    const originalMutate = runtime.mutate;
+    const reads: string[] = [];
+    runtime.query = (async (name: string, args: Record<string, unknown>) => {
+      reads.push(name);
+
+      return stubbedQuery(name as never, args);
+    }) as typeof runtime.query;
+    runtime.mutate = (async () => null) as typeof runtime.mutate;
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext();
+      const prepareReads = reads.length;
+
+      await session.loadRefreshedSystemPromptParts({
+        systemContextSnapshot: turnContext.systemContextSnapshot,
+      });
+      expect(reads).toHaveLength(prepareReads);
+
+      await session.persistModelMessages([
+        { role: "system", content: "steer" },
+      ]);
+      await session.loadRefreshedSystemPromptParts({
+        systemContextSnapshot: turnContext.systemContextSnapshot,
+      });
+      expect(reads.slice(prepareReads)).toEqual(["listConversationEvents"]);
+    } finally {
+      runtime.mutate = originalMutate;
+      history.restore();
+    }
+  });
+
   it("ends the prepare window where compaction starts", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const history = await stubHistory(userRows(2));

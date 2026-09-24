@@ -898,7 +898,7 @@ export async function runAgentLoop(
     const rootPublished = publishSpan(rootSpanRow);
 
     try {
-      await recordTaskUsage({
+      const usageRecorded = recordTaskUsage({
         accountId: session.accountId ?? "",
         endpointId: session.endpointId,
         agentId: session.agentId ?? "unknown",
@@ -928,9 +928,14 @@ export async function runAgentLoop(
       // Wait for the terminal span's publish to be issued, then flush the OTLP
       // exporters (Tempo/Loki) AND the live NATS connection so the durable
       // OBSERVABILITY stream captures every span/log before the container
-      // freezes. A publish still in flight at return is lost.
+      // freezes. A publish still in flight at return is lost. The usage write
+      // overlaps the flush instead of running before it.
       await rootPublished;
-      await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
+      await Promise.allSettled([
+        usageRecorded,
+        forceFlushOtel(),
+        flushObservabilityNats(),
+      ]);
     } finally {
       // The container process is reused, so never retain one task's tenant,
       // trace, or secret values after its exporters have flushed.
@@ -1036,7 +1041,14 @@ export async function runAgentLoop(
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
-      const renewal = await session.renewConversationLease();
+      // Persist before steering, so a steer message is stored after the step it interrupted.
+      const [renewal] = await Promise.all([
+        session.renewConversationLease(),
+        session.persistModelMessages(
+          responseMessages.slice(persistedResponseCount),
+        ),
+      ]);
+      persistedResponseCount = responseMessages.length;
       if (renewal === "stopped") {
         throw new Error(USER_STOP_MESSAGE);
       }
@@ -1045,11 +1057,6 @@ export async function runAgentLoop(
           "Conversation ownership changed before the next model step",
         );
       }
-      // Before steering, so a steer message is stored after the step it interrupted.
-      await session.persistModelMessages(
-        responseMessages.slice(persistedResponseCount),
-      );
-      persistedResponseCount = responseMessages.length;
       const steering = await session.applySteeringIngress();
       let stepMessages = messages;
       if (steering) {

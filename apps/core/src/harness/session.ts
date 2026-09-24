@@ -297,6 +297,11 @@ export class Session {
   private readonly agentConfig: AgentConfig;
   private readonly persist: boolean;
   private messageSequence = 0;
+  // Cursor of the newest system row this session wrote. prepareStep skips the
+  // system-context re-read when the snapshot already covers it.
+  private lastSystemCursor: string | null = null;
+  // takeNext already released or handed on the lease, so release is a no-op.
+  private ownerHandedOff = false;
   private hasLoggedMissingMemoryFile = false;
   // One clock reading for the whole run: the system prompt is rebuilt before
   // every step, so a moving timestamp would break the provider's prompt cache.
@@ -367,7 +372,7 @@ export class Session {
   }
 
   async releaseConversationLease(): Promise<void> {
-    if (this.ownerGeneration === undefined) return;
+    if (this.ownerGeneration === undefined || this.ownerHandedOff) return;
     await releaseIngressOwner({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
@@ -446,12 +451,14 @@ export class Session {
   /** Transfers to the next durable FIFO application, or atomically releases ownership. */
   async takeNextIngress(): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
-
-    return takeNextIngress({
+    const next = await takeNextIngress({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
     });
+    this.ownerHandedOff = true;
+
+    return next;
   }
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
@@ -492,6 +499,9 @@ export class Session {
       batchBytes += entryBytes;
     }
     await this.appendConversationEvents(batch);
+    this.lastSystemCursor =
+      events.findLast((entry): boolean => entry.event.message.role === "system")
+        ?.cursor ?? this.lastSystemCursor;
 
     return events.map((entry): string => entry.cursor);
   }
@@ -676,7 +686,8 @@ export class Session {
   /**
    * Called from harness.ts prepareStep. Keep `systemContextSnapshot` updated across
    * model steps so newly persisted system rows become visible while prior
-   * system rows remain included exactly once.
+   * system rows remain included exactly once. Reads Convex only when this
+   * session wrote a system row the snapshot does not cover yet.
    */
   async loadRefreshedSystemPromptParts(options: {
     systemContextSnapshot: SystemContextSnapshot;
@@ -685,9 +696,14 @@ export class Session {
     systemContextSnapshot: SystemContextSnapshot;
     system: SystemModelMessage[];
   }> {
-    const entries = await this.loadConversationEntries({
-      afterCreatedAt: options.systemContextSnapshot.cursor,
-    });
+    const snapshotCursor = options.systemContextSnapshot.cursor;
+    const entries =
+      this.lastSystemCursor === null ||
+      (snapshotCursor !== null && this.lastSystemCursor <= snapshotCursor)
+        ? []
+        : await this.loadConversationEntries({
+            afterCreatedAt: snapshotCursor,
+          });
 
     const systemContextSnapshot: SystemContextSnapshot =
       entries.length === 0
