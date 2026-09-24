@@ -88,6 +88,8 @@
   --color-usage-mcp-sandbox: #fb923c;
   --color-usage-tasks: #22d3ee;
   --color-usage-model-calls: #f472b6;
+  --color-usage-storage: #818cf8;
+  --color-usage-egress: #f472b6;
 
   /* Syntax colors for code samples on --color-code-background. */
   --color-code-background: #1e1e1e;

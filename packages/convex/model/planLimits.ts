@@ -1,8 +1,9 @@
 /**
  * What each billing plan allows, and the account -> org -> plan lookup the
  * limits hang off. The real limit is the monthly compute budget, priced by
- * `model/pricing.ts`; runs per minute is only burst protection. The dashboard
- * renders these numbers and core enforces them, so the two cannot drift.
+ * `model/pricing.ts`; runs per minute is only burst protection. Core enforces
+ * these numbers. The budgets are private: the dashboard only gets percentages
+ * from `account/budget.ts`, so it must never import this file.
  *
  * Nothing is enforced unless the Convex deployment sets
  * `BROODS_MANAGED_SERVICE=true`. Self-hosted installs leave it unset and get

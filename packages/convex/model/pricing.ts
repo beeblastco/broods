@@ -68,12 +68,35 @@ export const EMPTY_USAGE: UsageQuantities = {
   egressGb: 0,
 };
 
-/** Price a usage meter in EUR. */
-export function meterCostEur(usage: UsageQuantities): number {
-  let total = 0;
+/** The groups the dashboard splits a month's usage into. */
+export type UsageCategory = "sandboxes" | "hostedMcp" | "storage" | "egress";
+
+/** The dashboard group each metered quantity counts toward. */
+export const USAGE_CATEGORY: Record<keyof UsageQuantities, UsageCategory> = {
+  sandboxVcpuSeconds: "sandboxes",
+  sandboxGbSeconds: "sandboxes",
+  sandboxSnapshotGb: "sandboxes",
+  hostedMcpGbSeconds: "hostedMcp",
+  hostedMcpRequests: "hostedMcp",
+  storageGbMonths: "storage",
+  egressGb: "egress",
+};
+
+/** Price a usage meter in EUR, split by dashboard group. */
+export function meterCostByCategoryEur(
+  usage: UsageQuantities,
+): Record<UsageCategory, number> {
+  const costs = { sandboxes: 0, hostedMcp: 0, storage: 0, egress: 0 };
   for (const key of Object.keys(UNIT_RATES_EUR) as (keyof UsageQuantities)[]) {
-    total += usage[key] * UNIT_RATES_EUR[key];
+    costs[USAGE_CATEGORY[key]] += usage[key] * UNIT_RATES_EUR[key];
   }
 
-  return total;
+  return costs;
+}
+
+/** Price a usage meter in EUR. */
+export function meterCostEur(usage: UsageQuantities): number {
+  const costs = meterCostByCategoryEur(usage);
+
+  return costs.sandboxes + costs.hostedMcp + costs.storage + costs.egress;
 }

@@ -16,8 +16,10 @@ import {
 } from "./planLimits";
 import {
   EMPTY_USAGE,
+  meterCostByCategoryEur,
   meterCostEur,
   MICROVM_BASELINE,
+  type UsageCategory,
   type UsageQuantities,
 } from "./pricing";
 
@@ -44,6 +46,24 @@ export interface BudgetStatus {
   runsPerMinute: number;
   /** The 80% warning already went out this month. */
   warned: boolean;
+}
+
+/**
+ * What the dashboard shows of an account's month: percentages, never euros,
+ * so the budget behind each plan stays private.
+ */
+export interface BudgetUsage {
+  /** False on a self-hosted install: nothing is limited. */
+  enforced: boolean;
+  plan: Plan;
+  month: string;
+  /** Share of the plan's budget used. Null when nothing is enforced. */
+  usedPercent: number | null;
+  /** Each group's share of the budget, or of all usage when nothing is enforced. */
+  categories: Record<UsageCategory, number>;
+  /** "warning" from 80% of the budget, "exhausted" once runs stop at 100%. */
+  level: "ok" | "warning" | "exhausted";
+  runsPerMinute: number;
 }
 
 /** A sandbox instance's unbilled usage up to `now`, and where billing now stands. */
@@ -97,6 +117,44 @@ export async function budgetStatus(
     limitEur: PLAN_LIMITS[plan].monthlyBudgetEur,
     runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
     warned: meter?.warnedAt !== undefined,
+  };
+}
+
+/** The account's month as percentages, for the dashboard billing panel. */
+export async function budgetUsage(
+  ctx: QueryCtx,
+  accountId: Id<"accounts">,
+  now: number,
+): Promise<BudgetUsage> {
+  const plan = await accountPlan(ctx, accountId);
+  const month = meterMonth(now);
+  const meter = await readMeter(ctx, accountId, month);
+  const costs = meterCostByCategoryEur({ ...EMPTY_USAGE, ...pickUsage(meter) });
+  const usedEur =
+    costs.sandboxes + costs.hostedMcp + costs.storage + costs.egress;
+  const enforced = isManagedService();
+  const limitEur = PLAN_LIMITS[plan].monthlyBudgetEur;
+  const base = enforced ? limitEur : usedEur;
+
+  return {
+    enforced: enforced,
+    plan: plan,
+    month: month,
+    usedPercent: enforced ? toPercent(usedEur, limitEur) : null,
+    categories: {
+      sandboxes: toPercent(costs.sandboxes, base),
+      hostedMcp: toPercent(costs.hostedMcp, base),
+      storage: toPercent(costs.storage, base),
+      egress: toPercent(costs.egress, base),
+    },
+    level: !enforced
+      ? "ok"
+      : usedEur >= limitEur
+        ? "exhausted"
+        : usedEur >= limitEur * BUDGET_WARNING_RATIO
+          ? "warning"
+          : "ok",
+    runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
   };
 }
 
@@ -184,6 +242,11 @@ function billedSize(
     vcpu: instance.specs.vcpu,
     memoryGb: instance.specs.memoryMb / 1024,
   };
+}
+
+// A share of `base` as a percentage with one decimal; 0 when there is no base.
+function toPercent(part: number, base: number): number {
+  return base > 0 ? Math.round((part / base) * 1000) / 10 : 0;
 }
 
 function pickUsage(meter: Doc<"usageMeters"> | null): Partial<UsageQuantities> {

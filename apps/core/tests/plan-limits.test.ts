@@ -100,7 +100,7 @@ describe("admitRun", () => {
     const { refusal } = await admitRun(ACCOUNT_ID);
 
     expect(refusal?.kind).toBe("budget");
-    expect(refusal?.message).toContain("€5.00 compute budget for 2026-09");
+    expect(refusal?.message).toContain("monthly compute allowance for 2026-09");
   });
 
   it("refuses a burst past the plan's runs per minute", async () => {
@@ -126,7 +126,7 @@ describe("admitRun", () => {
     const first = await admitRun(ACCOUNT_ID, { claimWarning: true });
     const second = await admitRun(ACCOUNT_ID, { claimWarning: true });
 
-    expect(first.warning).toContain("80% of its €5.00 monthly compute budget");
+    expect(first.warning).toContain("80% of its monthly compute allowance");
     expect(second.warning).toBeNull();
     expect(warningClaims).toBe(1);
   });
@@ -198,7 +198,7 @@ describe("refusal over HTTP", () => {
 
     expect(response.status).toBe(402);
     expect(cronFailures).toHaveLength(1);
-    expect(cronFailures[0]).toContain("compute budget");
+    expect(cronFailures[0]).toContain("compute allowance");
   });
 });
 

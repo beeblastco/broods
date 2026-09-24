@@ -9,7 +9,11 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { EMPTY_USAGE, meterCostEur } from "../model/pricing";
-import { SANDBOX_IDLE_BILL_MS, sandboxAccrual } from "../model/usageMeter";
+import {
+  budgetUsage,
+  SANDBOX_IDLE_BILL_MS,
+  sandboxAccrual,
+} from "../model/usageMeter";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -249,6 +253,48 @@ describe("budget", () => {
     expect(budget).toMatchObject({ enforced: true, plan: "free" });
     expect(budget?.usedEur).toBeCloseTo(4, 6);
     expect(claims).toEqual([true, false]);
+  });
+
+  test("reaches the dashboard as percentages with no euro figures", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { egressGb: 50, storageGbMonths: 50 },
+    });
+
+    const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+
+    expect(usage).toEqual({
+      enforced: true,
+      plan: "free",
+      month: "2026-09",
+      usedPercent: 101,
+      categories: { sandboxes: 0, hostedMcp: 0, storage: 21, egress: 80 },
+      level: "exhausted",
+      runsPerMinute: 600,
+    });
+  });
+
+  test("splits all usage on a self-hosted install, with no limit", async () => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { egressGb: 1, storageGbMonths: 1 },
+    });
+
+    const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+
+    expect(usage.usedPercent).toBeNull();
+    expect(usage.level).toBe("ok");
+    expect(usage.categories.egress + usage.categories.storage).toBeCloseTo(
+      100,
+      0,
+    );
   });
 });
 
