@@ -1,13 +1,17 @@
 /**
- * BudgetStore implementation over `account/budget.ts`. Usage writes are
- * best-effort like `usage.ts`: a failed write is logged and never reaches the
- * run that caused it.
+ * BudgetStore implementation over `account/budget.ts`. A usage write never
+ * reaches the run that caused it: it retries in the background, and a write
+ * that still fails is logged with its usage.
  */
 
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { logError } from "../log.ts";
 import type { Storage } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
+
+// A usage write is retried through a Convex blip before it is given up. The
+// caller never waits on it, so the backoff costs a run nothing.
+const RECORD_RETRY_DELAYS_MS = [0, 1_000, 5_000, 30_000];
 
 const internal: any = require("@broods/convex/_generated/api").internal;
 
@@ -24,16 +28,24 @@ export const budgets: Storage["budgets"] = {
     })) as BudgetStatus | null;
   },
   record: async function (accountId, usage): Promise<void> {
-    try {
-      await getConvexClient().mutation(internal.account.budget.record, {
-        accountId: accountId,
-        usage: usage,
-      });
-    } catch (err) {
-      logError("Usage meter write failed (convex)", {
-        accountId: accountId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+    for (const [attempt, delayMs] of RECORD_RETRY_DELAYS_MS.entries()) {
+      await Bun.sleep(delayMs);
+      try {
+        await getConvexClient().mutation(internal.account.budget.record, {
+          accountId: accountId,
+          usage: usage,
+        });
+
+        return;
+      } catch (err) {
+        if (attempt < RECORD_RETRY_DELAYS_MS.length - 1) continue;
+        // The usage rides the log line so it can still be added by hand.
+        logError("Usage meter write failed (convex)", {
+          accountId: accountId,
+          usage: usage,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   },
 };

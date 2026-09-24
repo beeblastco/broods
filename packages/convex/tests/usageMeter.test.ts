@@ -146,6 +146,54 @@ test("a sandbox on the account's own credentials never reaches the meter", async
   ).toEqual([]);
 });
 
+test("the hourly accrual pages through every recent sandbox", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 150; index += 1) {
+      await ctx.db.insert("sandboxInstances", {
+        accountId: accountId,
+        provider: "sandbox",
+        reservationKey: `fs-${index}`,
+        externalId: `sbx-${index}`,
+        name: "default",
+        status: "running",
+        specs: { vcpu: 1, memoryMb: 1024, storageGb: 8 },
+        createdAt: NOW - HOUR_MS,
+        lastUsedAt: NOW,
+        meteredUntil: NOW - 60_000,
+      });
+    }
+  });
+
+  await t.mutation(internal.sandbox.instances.accrueRecent, {});
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  // 150 sandboxes × 60 s each, across two pages.
+  expect(meter?.sandboxVcpuSeconds).toBe(150 * 60);
+});
+
+test("a storage snapshot lands in the month it was taken", async () => {
+  vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 0, 5) });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+
+  await t.mutation(internal.account.budget.record, {
+    accountId: accountId,
+    usage: { storageGbMonths: 1 },
+    at: Date.UTC(2026, 8, 30, 23, 59),
+  });
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  expect(meter).toMatchObject({ month: "2026-09", storageGbMonths: 1 });
+});
+
 describe("budget", () => {
   test("is not enforced unless this is the managed service", async () => {
     const t = meterTest();

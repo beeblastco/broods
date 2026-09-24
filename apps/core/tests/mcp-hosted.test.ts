@@ -14,6 +14,10 @@ import {
 } from "@aws-sdk/client-lambda";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import {
+  resetStorageForTests,
+  setStorageForTests,
+} from "../src/shared/storage.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
 import {
   collectBatchFrames,
@@ -146,6 +150,72 @@ describe("hosted MCP invoke", () => {
       delete process.env.MCP_TENANT_ISOLATION;
       send.mockRestore();
     }
+  });
+});
+
+describe("hosted MCP metering", () => {
+  const recorded: { accountId: string; usage: unknown }[] = [];
+
+  beforeEach(() => {
+    recorded.length = 0;
+    delete process.env.AWS_PROFILE;
+    process.env.AWS_REGION = "eu-west-1";
+    process.env.AWS_ACCESS_KEY_ID = "test";
+    process.env.AWS_SECRET_ACCESS_KEY = "test";
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "bundles";
+    setStorageForTests({
+      budgets: {
+        record: async (accountId: string, usage: unknown): Promise<void> => {
+          recorded.push({ accountId: accountId, usage: usage });
+        },
+      },
+    } as never);
+  });
+  afterEach(() => {
+    resetStorageForTests();
+  });
+
+  it("charges one request for an invoke Lambda accepted", async () => {
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+    const frames = new TextEncoder().encode(
+      `${JSON.stringify({ t: "final", id: "1", result: ok("{}") })}\n{"t":"end"}\n`,
+    );
+    const send = spyOn(LambdaClient.prototype, "send").mockImplementation(
+      async (): Promise<{
+        EventStream: InvokeWithResponseStreamResponseEvent[];
+      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+    );
+
+    try {
+      await hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" });
+      await Promise.resolve();
+    } finally {
+      send.mockRestore();
+    }
+
+    expect(recorded).toEqual([
+      {
+        accountId: "acct_test",
+        usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
+      },
+    ]);
+  });
+
+  it("charges nothing when no invoke starts", async () => {
+    delete process.env.TOOL_RUNNER_FUNCTION_NAME;
+    const send = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      await expect(
+        hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" }),
+      ).rejects.toThrow("TOOL_RUNNER_FUNCTION_NAME");
+      await Promise.resolve();
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      send.mockRestore();
+    }
+
+    expect(recorded).toEqual([]);
   });
 });
 

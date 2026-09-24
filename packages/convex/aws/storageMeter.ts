@@ -17,6 +17,7 @@ import { filesystemBucketName } from "../model/workspaceFs";
 import { workspaceNamespace } from "../model/workspaceRules";
 
 const ACCOUNT_PAGE_SIZE = 100;
+const WORKSPACE_PAGE_SIZE = 500;
 const BYTES_PER_GB = 1e9;
 // A day bills 1/30 of a GB-month; 31-day months come out 3% high, the safe side.
 const DAYS_PER_MONTH = 30;
@@ -28,6 +29,9 @@ export const snapshotAll = internalAction({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
+    // Every account's day is billed to the month the snapshot was taken in,
+    // even when its scheduled action runs after midnight.
+    const snapshotAt = Date.now();
     let cursor: string | null = null;
     let isDone = false;
     while (!isDone) {
@@ -42,7 +46,7 @@ export const snapshotAll = internalAction({
         await ctx.scheduler.runAfter(
           0,
           internal.aws.storageMeter.snapshotAccount,
-          { accountId: accountId },
+          { accountId: accountId, snapshotAt: snapshotAt },
         );
       }
       cursor = result.continueCursor;
@@ -55,13 +59,25 @@ export const snapshotAll = internalAction({
 
 /** Bill one day of the account's stored bytes. */
 export const snapshotAccount = internalAction({
-  args: { accountId: v.id("accounts") },
+  args: { accountId: v.id("accounts"), snapshotAt: v.number() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const workspaceIds = await ctx.runQuery(
-      internal.account.budget.listWorkspaceIds,
-      { accountId: args.accountId },
-    );
+    const workspaceIds: Id<"workspaceConfigs">[] = [];
+    let cursor: string | null = null;
+    let isDone = false;
+    while (!isDone) {
+      const result: {
+        page: Id<"workspaceConfigs">[];
+        isDone: boolean;
+        continueCursor: string;
+      } = await ctx.runQuery(internal.account.budget.listWorkspaceIds, {
+        accountId: args.accountId,
+        paginationOpts: { numItems: WORKSPACE_PAGE_SIZE, cursor: cursor },
+      });
+      workspaceIds.push(...result.page);
+      cursor = result.continueCursor;
+      isDone = result.isDone;
+    }
     const encoded = encodeURIComponent(args.accountId);
     const filesystem = filesystemBucketName();
     const bundles = process.env.TOOL_BUNDLES_BUCKET_NAME;
@@ -88,6 +104,7 @@ export const snapshotAccount = internalAction({
     await ctx.runMutation(internal.account.budget.record, {
       accountId: args.accountId,
       usage: { storageGbMonths: bytes / BYTES_PER_GB / DAYS_PER_MONTH },
+      at: args.snapshotAt,
     });
 
     return null;

@@ -16,6 +16,7 @@
  */
 
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import {
   internalMutation,
@@ -35,6 +36,9 @@ import { recordRuntimeAction } from "./auditEvents";
 
 // Covers two missed hourly accruals before a sandbox's unbilled time is lost.
 const ACCRUE_LOOKBACK_MS = 2 * 60 * 60 * 1000;
+// Each instance also reads and writes its account's meter row; 100 keeps a
+// page far under Convex's per-transaction read limits.
+const ACCRUE_PAGE_SIZE = 100;
 
 const sandboxInstanceDoc = v.object({
   ...sandboxInstancesFields,
@@ -327,24 +331,34 @@ export const upsert = internalMutation({
 /**
  * Bill the running time of every sandbox used recently enough to still have
  * some unbilled, so the meter stays current for one nothing writes to.
- * Hourly cron.
+ * Hourly cron. One bounded page per transaction; the rest is scheduled with
+ * the same `now`, so every page bills up to the same instant.
  */
 export const accrueRecent = internalMutation({
-  args: {},
+  args: {
+    now: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx): Promise<null> => {
-    const now = Date.now();
-    const recent = await ctx.db
+  handler: async (ctx, args): Promise<null> => {
+    const now = args.now ?? Date.now();
+    const page = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_lastUsedAt", (q) =>
         q.gte("lastUsedAt", now - SANDBOX_IDLE_BILL_MS - ACCRUE_LOOKBACK_MS),
       )
-      .collect();
-    for (const instance of recent) {
+      .paginate({ numItems: ACCRUE_PAGE_SIZE, cursor: args.cursor ?? null });
+    for (const instance of page.page) {
       const meteredUntil = await accrue(ctx, instance, now);
       if (meteredUntil !== instance.meteredUntil) {
         await ctx.db.patch(instance._id, { meteredUntil: meteredUntil });
       }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.sandbox.instances.accrueRecent, {
+        now: now,
+        cursor: page.continueCursor,
+      });
     }
 
     return null;

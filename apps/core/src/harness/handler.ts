@@ -31,7 +31,7 @@ import {
   type CoreRequest,
   type RequestContext,
 } from "../shared/http.ts";
-import { logDebug, logError, logInfo } from "../shared/log.ts";
+import { logDebug, logError, logInfo, logWarn } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
   getObservabilityContext,
@@ -1507,8 +1507,15 @@ export async function handleChannelRequest(
 
     return;
   }
+  // Best-effort: the notice is already claimed, and failing it here would drop
+  // the message it rode in on.
   if (plan.warning) {
-    await event.channel.sendText(plan.warning);
+    await event.channel.sendText(plan.warning).catch((err: unknown): void => {
+      logWarn("Budget warning delivery failed", {
+        eventId: event.eventId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
   // Before admission, so a turn that lands in the queue still carries its
   // media: the queued record holds only these events, and the drain loop

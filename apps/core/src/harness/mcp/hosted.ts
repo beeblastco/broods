@@ -227,6 +227,7 @@ async function drainInvokeStream(
   payload: McpHostPayload,
   abortSignal: AbortSignal,
   queue: FrameQueue,
+  onInvoked: () => void,
 ): Promise<void> {
   const result = await client.send(
     new InvokeWithResponseStreamCommand({
@@ -242,6 +243,7 @@ async function drainInvokeStream(
     }),
     { abortSignal: abortSignal },
   );
+  onInvoked();
   // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
   // to carry state across them.
   const decoder = new TextDecoder();
@@ -411,8 +413,18 @@ async function sendBatch(
   };
   const queue = new FrameQueue();
   let transportError: unknown;
-  const startedAt = Date.now();
-  const pump = drainInvokeStream(defaultClient(), payload, abortSignal, queue)
+  // Set once Lambda accepts the invoke. A failure before that (no function
+  // name, a refused or throttled request) runs nothing and costs nothing.
+  let invokedAt: number | undefined;
+  const pump = drainInvokeStream(
+    defaultClient(),
+    payload,
+    abortSignal,
+    queue,
+    (): void => {
+      invokedAt = Date.now();
+    },
+  )
     .catch((error: unknown) => {
       transportError = error;
     })
@@ -431,10 +443,12 @@ async function sendBatch(
   } finally {
     await pump;
     // Lambda bills the invoke's wall time at the function's memory size.
-    recordUsage(record.accountId, {
-      hostedMcpGbSeconds:
-        ((Date.now() - startedAt) / 1000) * HOSTED_MCP_MEMORY_GB,
-      hostedMcpRequests: 1,
-    });
+    if (invokedAt !== undefined) {
+      recordUsage(record.accountId, {
+        hostedMcpGbSeconds:
+          ((Date.now() - invokedAt) / 1000) * HOSTED_MCP_MEMORY_GB,
+        hostedMcpRequests: 1,
+      });
+    }
   }
 }

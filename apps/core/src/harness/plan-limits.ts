@@ -173,7 +173,18 @@ async function claimWarning(
     return null;
   // Whoever loses the race sees `warned` on its next read.
   status.warned = true;
-  if (!(await getStorage().budgets.claimWarning(accountId))) return null;
+  // The notice is optional: a failed claim skips it and never fails the run.
+  const claimed = await getStorage()
+    .budgets.claimWarning(accountId)
+    .catch((err: unknown): boolean => {
+      logWarn("Budget warning claim failed; skipping the notice", {
+        accountId: accountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+
+      return false;
+    });
+  if (!claimed) return null;
 
   return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of its ${euros(status.limitEur)} monthly compute budget on the ${status.plan} plan. Runs stop when it is used up.`;
 }

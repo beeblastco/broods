@@ -250,7 +250,7 @@ interface RoleSessionStore {
 interface BudgetStore {
   /** Null for an unknown account. */
   get(accountId: string): Promise<BudgetStatus | null>;
-  /** Best-effort: a failed write is logged, never thrown. */
+  /** Never throws: a failed write is retried, then logged with its usage. */
   record(
     accountId: string,
     usage: Pick<

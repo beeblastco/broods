@@ -99,17 +99,36 @@ export const listAccountIds = internalQuery({
 
 /** The account's workspace ids, whose S3 namespaces the storage snapshot sums. */
 export const listWorkspaceIds = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(v.id("workspaceConfigs")),
-  handler: async (ctx, args): Promise<Id<"workspaceConfigs">[]> => {
-    const workspaces = await ctx.db
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({
+    page: v.array(v.id("workspaceConfigs")),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    Pick<
+      PaginationResult<Id<"workspaceConfigs">>,
+      "page" | "isDone" | "continueCursor"
+    >
+  > => {
+    const result = await ctx.db
       .query("workspaceConfigs")
       .withIndex("by_accountId_and_name", (q) =>
         q.eq("accountId", args.accountId),
       )
-      .take(1000);
+      .paginate(args.paginationOpts);
 
-    return workspaces.map((workspace) => workspace._id);
+    return {
+      page: result.page.map((workspace) => workspace._id),
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+    };
   },
 });
 
@@ -123,11 +142,15 @@ export const record = internalMutation({
       storageGbMonths: v.optional(usageQuantityFields.storageGbMonths),
       egressGb: v.optional(usageQuantityFields.egressGb),
     }),
+    /** When the usage happened, if not now; picks the meter month. */
+    at: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = ctx.db.normalizeId("accounts", args.accountId);
-    if (accountId) await addUsage(ctx, accountId, args.usage, Date.now());
+    if (accountId) {
+      await addUsage(ctx, accountId, args.usage, args.at ?? Date.now());
+    }
 
     return null;
   },

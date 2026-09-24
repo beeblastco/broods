@@ -2196,6 +2196,57 @@ describe("MicroVM capacity refusal", () => {
       process.env.MICROVM_IMAGE_IDENTIFIER,
     );
   });
+
+  it("holds the fallback to the budget when the primary ran on the account's own key", async () => {
+    const { runSandbox } =
+      await import("../src/harness/tools/filesystem-utils.ts");
+    const { BudgetExhaustedError, resetPlanLimitsForTests } =
+      await import("../src/harness/plan-limits.ts");
+    const { resetStorageForTests, setStorageForTests } =
+      await import("../src/shared/storage.ts");
+    resetPlanLimitsForTests();
+    setStorageForTests({
+      budgets: {
+        get: async () => ({
+          enforced: true,
+          plan: "free",
+          month: "2026-09",
+          usedEur: 5,
+          limitEur: 5,
+          runsPerMinute: 600,
+          warned: true,
+        }),
+      },
+    } as never);
+    daytonaCreateMock.mockImplementationOnce(async () => {
+      throw new Error("No available runners");
+    });
+
+    try {
+      // The account's own Daytona key skips the budget; the MicroVM fallback
+      // runs on the platform's AWS account, so it does not.
+      await expect(
+        runSandbox(
+          {
+            provider: "daytona",
+            fallbackProvider: "lambda",
+            options: { apiKey: "daytona-key" },
+            controlPlane: {
+              accountId: "acct_1",
+              name: "own-daytona",
+              specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+              ownCredentials: true,
+            },
+          },
+          undefined,
+          "echo ok",
+        ),
+      ).rejects.toBeInstanceOf(BudgetExhaustedError);
+    } finally {
+      resetStorageForTests();
+      resetPlanLimitsForTests();
+    }
+  });
 });
 
 describe("classifyVercelError", () => {

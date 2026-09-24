@@ -1,3 +1,8 @@
+/**
+ * Plan enforcement in core: budget and burst admission, the 80% notice, the
+ * refusal's HTTP shape, the cron refusal path and the sandbox launch check.
+ */
+
 import {
   afterEach,
   beforeEach,
@@ -124,6 +129,22 @@ describe("admitRun", () => {
     expect(first.warning).toContain("80% of its €5.00 monthly compute budget");
     expect(second.warning).toBeNull();
     expect(warningClaims).toBe(1);
+  });
+
+  it("admits the run when claiming the notice fails", async () => {
+    budget.usedEur = 4;
+    setStorageForTests({
+      budgets: {
+        get: async (): Promise<BudgetStatus> => ({ ...budget }),
+        claimWarning: async (): Promise<boolean> => {
+          throw new Error("convex unavailable");
+        },
+      },
+    } as unknown as Storage);
+
+    const admission = await admitRun(ACCOUNT_ID, { claimWarning: true });
+
+    expect(admission).toEqual({ refusal: null, warning: null });
   });
 });
 
