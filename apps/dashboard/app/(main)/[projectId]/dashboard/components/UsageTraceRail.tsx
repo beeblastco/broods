@@ -27,8 +27,8 @@ interface Props {
  * The trace list that opens beside the token chart when a bin is clicked:
  * links to the traces behind that bin, heaviest first, with a search over
  * their prompts and trace ids. Each row carries the start of its prompt, as
- * Tracing labels it, and the tokens it contributed, and truncates rather than
- * wraps; the trace itself opens in the Tracing tab. It keeps the chart's height and
+ * Tracing labels it, wrapped to two lines and cut with an ellipsis, and the
+ * tokens it contributed; the trace itself opens in the Tracing tab. It keeps the chart's height and
  * scrolls inside, so opening it never moves the content below.
  */
 export function UsageTraceRail({
@@ -128,8 +128,8 @@ export function UsageTraceRail({
           title={inputPreview ?? "Open in Tracing"}
           className="grid min-w-0 cursor-pointer gap-0.5 border-b border-border px-3 py-2 text-xs hover:bg-accent/40"
         >
-          <span className="flex min-w-0 items-baseline justify-between gap-3">
-            <span className="min-w-0 truncate">
+          <span className="flex min-w-0 items-start justify-between gap-3">
+            <span className="line-clamp-2 min-w-0 break-words">
               {inputPreview ?? "No prompt text"}
             </span>
             <span className="shrink-0 font-medium tabular-nums">
