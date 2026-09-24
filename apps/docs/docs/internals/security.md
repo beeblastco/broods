@@ -88,12 +88,12 @@ Rules the code enforces:
 
 ## Hosted MCP servers
 
-Account-uploaded MCP bundles are untrusted code and never run in the core process. They run on the mcp-runner Lambda, a plain Node.js function outside a VPC, so egress is open internet.
+Account-uploaded MCP bundles are untrusted code and never run in the core process. They run on the tool-runner Lambda, a plain Node.js function outside a VPC, so egress is open internet.
 
 The call path from core through the Lambda to the child is drawn in [tools and MCP](tools-and-mcp.md#hosted-servers).
 
-- SST creates the function as `mcp-runner` with `tenancyConfig: { tenantIsolationMode: "PER_TENANT" }`. Every invoke carries the account id as its tenant id, and Lambda never reuses an execution environment across accounts. An account's first call after idle is a cold start. AWS has to enable tenancy configuration on the AWS account first.
-- `MCP_TENANT_ISOLATION=false`, on both the SST deploy and core, turns this off for a non-production stage and creates the function as `tool-runner`. Accounts then share warm environments and the child process is the only separation. A production stage refuses to deploy with it off.
+- Today the function is `tool-runner`, and accounts share warm execution environments. The separation is the child process, plus a sweep before each spawn that kills any process of the function's user left behind by an earlier bundle.
+- `MCP_TENANT_ISOLATION=true`, on both the SST deploy and core, creates the function as `mcp-runner` with `tenancyConfig: { tenantIsolationMode: "PER_TENANT" }`. Every invoke then carries the account id as its tenant id, and Lambda never reuses an execution environment across accounts. It is off because AWS rejects tenancy config for this AWS account; turn it on once AWS enables it.
 
 - Inside an environment, each bundle runs in a child process with a scrubbed environment and a fresh per-invocation `TMPDIR`. The child is containment, not a trust boundary. It runs as the same OS user as the function and can read the function's environment.
 - These protections hold. The execution role grants only CloudWatch Logs. The bundle arrives through a presigned URL valid for 120 s, reaches the child over a dedicated pipe on fd 3, and is imported from memory without touching disk. The child checks its sha256 before importing it. The function holds no S3 or data-plane access. A child only receives calls for the one `accountId + sha256` it was spawned for.

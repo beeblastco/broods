@@ -234,9 +234,9 @@ async function drainInvokeStream(
       FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
       InvocationType: "RequestResponse",
       // A PER_TENANT function refuses an invoke without a tenant id, and any
-      // other function refuses one with it. On by default, matching the SST
-      // deploy; MCP_TENANT_ISOLATION=false only for a shared local-dev runner.
-      ...(booleanEnv("MCP_TENANT_ISOLATION", true)
+      // other function refuses one with it. Off by default, matching the SST
+      // deploy; set MCP_TENANT_ISOLATION=true on both sides together.
+      ...(booleanEnv("MCP_TENANT_ISOLATION", false)
         ? { TenantId: payload.accountId }
         : {}),
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
