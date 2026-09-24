@@ -191,7 +191,8 @@ test("collectUsageTasks reads only tasks that finished inside the bin", async ()
   }
 
   const rows = await tt.run(
-    async (ctx) => await collectUsageTasks(ctx, ENDPOINT_ID, binStart, binEnd),
+    async (ctx) =>
+      await collectUsageTasks(ctx, ENDPOINT_ID, binStart, binEnd, 10),
   );
   expect(rows.map((row) => row.taskId)).toEqual(["first#t1", "last#t2"]);
   expect(rows[0].inputPreview).toBe("prompt for first#t1");
