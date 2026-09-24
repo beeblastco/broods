@@ -1,8 +1,8 @@
 "use client";
 
 import {
+  TOKEN_SERIES,
   UsageChart,
-  type UsageChartSeries,
 } from "@/app/(main)/[projectId]/dashboard/components/UsageChart";
 import { formatNumber } from "@/app/lib/formatNumber";
 import { formatAxisNumber, tokenParts } from "@/app/lib/usageChart";
@@ -10,34 +10,6 @@ import { useMemo, useState } from "react";
 
 const HOUR_MS = 60 * 60 * 1000;
 const START_MS = Date.UTC(2026, 8, 24, 0, 0);
-
-const SERIES: UsageChartSeries[] = [
-  {
-    key: "uncachedInput",
-    label: "Uncached input",
-    color: "var(--color-usage-input)",
-  },
-  {
-    key: "cacheRead",
-    label: "Cache read",
-    color: "var(--color-usage-cache-read)",
-  },
-  {
-    key: "cacheWrite",
-    label: "Cache write",
-    color: "var(--color-usage-cache-write)",
-  },
-  {
-    key: "textOutput",
-    label: "Text output",
-    color: "var(--color-usage-output)",
-  },
-  {
-    key: "reasoning",
-    label: "Reasoning",
-    color: "var(--color-usage-reasoning)",
-  },
-];
 
 /**
  * The Usage tab's token chart on fixed, cache-heavy data: SDK input totals that
@@ -59,13 +31,7 @@ export function UsageChartStandIn(): React.JSX.Element {
           cacheWriteTokens: Math.round(input * 0.05),
         });
 
-        return [
-          parts.uncachedInput,
-          parts.cacheRead,
-          parts.cacheWrite,
-          parts.textOutput,
-          parts.reasoning,
-        ];
+        return TOKEN_SERIES.map((s) => parts[s.key]);
       }),
     [bins],
   );
@@ -95,7 +61,7 @@ export function UsageChartStandIn(): React.JSX.Element {
         <UsageChart
           kind="area"
           height={250}
-          series={SERIES}
+          series={TOKEN_SERIES}
           rows={rows}
           bucketStarts={bucketStarts}
           binSeconds={3600}

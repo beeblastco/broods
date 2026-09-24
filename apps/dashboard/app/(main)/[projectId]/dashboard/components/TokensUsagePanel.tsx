@@ -16,9 +16,9 @@ import {
 import { useTween } from "@/app/hooks/useTween";
 import { formatNumber } from "@/app/lib/formatNumber";
 import {
+  bucketStartsAcrossRange,
   formatAxisNumber,
   tokenParts,
-  type TokenParts,
 } from "@/app/lib/usageChart";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -31,7 +31,12 @@ import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FunctionReturnType } from "convex/server";
 import { useMemo, useState } from "react";
-import { UsageChart, type UsageChartSeries } from "./UsageChart";
+import {
+  formatBucketLabel,
+  TOKEN_SERIES,
+  UsageChart,
+  type UsageChartSeries,
+} from "./UsageChart";
 import { UsageTraceRail } from "./UsageTraceRail";
 
 type UsageStats = FunctionReturnType<typeof api.logs.fetchUsageStats>;
@@ -108,35 +113,6 @@ const COUNTER_KEYS: CounterKey[] = [
   "toolSandboxCpuUsec",
 ];
 
-// Stacked bottom to top. The parts add up to totalTokens; see tokenParts.
-const TOKEN_SERIES: Array<UsageChartSeries & { key: keyof TokenParts }> = [
-  {
-    key: "uncachedInput",
-    label: "Uncached input",
-    color: "var(--color-usage-input)",
-  },
-  {
-    key: "cacheRead",
-    label: "Cache read",
-    color: "var(--color-usage-cache-read)",
-  },
-  {
-    key: "cacheWrite",
-    label: "Cache write",
-    color: "var(--color-usage-cache-write)",
-  },
-  {
-    key: "textOutput",
-    label: "Text output",
-    color: "var(--color-usage-output)",
-  },
-  {
-    key: "reasoning",
-    label: "Reasoning",
-    color: "var(--color-usage-reasoning)",
-  },
-];
-
 // Sandbox CPU split: the agent's own sandbox vs the MCP sandbox that runs
 // hosted MCP server bundles.
 const CPU_SERIES: UsageChartSeries[] = [
@@ -202,10 +178,16 @@ export function TokensUsagePanel({
     range: range,
   });
   // Hold the last result while another range loads, so the chart morphs from
-  // it instead of collapsing to an empty grid first.
-  const [held, setHeld] = useState<UsageStats | null>(null);
-  if (data !== undefined && data !== held) setHeld(data);
-  const stats = data ?? held;
+  // it instead of collapsing to an empty grid first. Only for the same
+  // project and stage: another stage's numbers never show under this one.
+  const scopeKey = `${projectId}:${stageId ?? ""}`;
+  const [held, setHeld] = useState<{ key: string; stats: UsageStats } | null>(
+    null,
+  );
+  if (data !== undefined && data !== held?.stats) {
+    setHeld({ key: scopeKey, stats: data });
+  }
+  const stats = data ?? (held?.key === scopeKey ? held.stats : null);
 
   // Convex only records usage at task finalize, so a run in flight needs the
   // trace stream to show anything at all. See liveOverlayFromTraces.
@@ -225,20 +207,30 @@ export function TokensUsagePanel({
   const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
   const binMs = binSeconds * 1000;
   const modelColors = useMemo(() => colorModels(stats?.buckets ?? []), [stats]);
+  // The filter applied to what this range and stage have: models that did not
+  // run here drop out, and none or all left reads as the unfiltered view.
+  const activeFilter = useMemo(() => {
+    const kept = (modelFilter ?? []).filter((key) => modelColors.has(key));
+
+    return kept.length === 0 || kept.length === modelColors.size ? null : kept;
+  }, [modelFilter, modelColors]);
   const isShown = (key: string): boolean =>
-    modelFilter === null || modelFilter.includes(key);
+    activeFilter === null || activeFilter.includes(key);
   const bins = useMemo(() => {
     const shown = (stats?.buckets ?? []).filter(
-      (b) => modelFilter === null || modelFilter.includes(modelKey(b)),
+      (b) => activeFilter === null || activeFilter.includes(modelKey(b)),
     );
     const filled = fillBucketsAcrossRange(
       mergeByBucket(shown),
       binSeconds,
       RANGE_SECONDS[shownRange],
     );
+
     // The live overlay has no per-model split, so it only joins the unfiltered view.
-    return modelFilter === null ? withLiveOverlay(filled, liveOverlay) : filled;
-  }, [stats, modelFilter, binSeconds, shownRange, liveOverlay]);
+    return activeFilter === null
+      ? withLiveOverlay(filled, liveOverlay)
+      : filled;
+  }, [stats, activeFilter, binSeconds, shownRange, liveOverlay]);
   const bucketStarts = useMemo(() => bins.map((b) => b.bucketStart), [bins]);
   const tokenRows = useMemo(
     () =>
@@ -283,19 +275,13 @@ export function TokensUsagePanel({
 
   const selectBin = (index: number): void =>
     setSelectedStart(index === selected ? null : bucketStarts[index]);
-  // Checkbox semantics: a click adds or removes one model. Every model shown,
-  // or none left, reads as the unfiltered view.
-  const toggleModel = (key: string): void =>
-    setModelFilter((current) => {
-      const shown = current ?? [...modelColors.keys()];
-      const next = shown.includes(key)
-        ? shown.filter((k) => k !== key)
-        : [...shown, key];
-
-      return next.length === 0 || next.length === modelColors.size
-        ? null
-        : next;
-    });
+  // Checkbox semantics: a click adds or removes one model.
+  const toggleModel = (key: string): void => {
+    const shown = activeFilter ?? [...modelColors.keys()];
+    setModelFilter(
+      shown.includes(key) ? shown.filter((k) => k !== key) : [...shown, key],
+    );
+  };
 
   return (
     <div className="grid gap-4">
@@ -323,7 +309,7 @@ export function TokensUsagePanel({
         </div>
         <ModelMenu
           modelColors={modelColors}
-          allShown={modelFilter === null}
+          allShown={activeFilter === null}
           isShown={isShown}
           onToggle={toggleModel}
           onShowAll={() => setModelFilter(null)}
@@ -334,13 +320,7 @@ export function TokensUsagePanel({
             onClick={() => setSelectedStart(null)}
             className="cursor-pointer rounded-md border border-border px-2.5 py-1 text-xs tabular-nums"
           >
-            {new Date(bucketStarts[selected]).toLocaleString([], {
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })}{" "}
+            {formatBucketLabel(bucketStarts[selected], binSeconds, true)}{" "}
             <span className="text-muted-foreground">✕</span>
           </button>
         )}
@@ -377,7 +357,7 @@ export function TokensUsagePanel({
               : { startMs: bucketStarts[selected], binSeconds: binSeconds }
           }
           binTokens={selected === null ? 0 : bins[selected].totalTokens}
-          isModelShown={(provider, id) => isShown(`${provider}::${id}`)}
+          models={activeFilter}
           onClear={() => setSelectedStart(null)}
         />
       </div>
@@ -726,15 +706,12 @@ function fillBucketsAcrossRange(
 ): Counters[] {
   if (!binSeconds) return merged;
   const binMs = binSeconds * 1000;
-  const endMs = Math.ceil(now / binMs) * binMs;
-  const startMs = endMs - rangeSeconds * 1000;
   const indexed = new Map(
     merged.map((b) => [Math.floor(b.bucketStart / binMs) * binMs, b]),
   );
-  const out: Counters[] = [];
-  for (let t = startMs; t < endMs; t += binMs) {
-    out.push(indexed.get(t) ?? emptyCounters(t));
-  }
+  const out = bucketStartsAcrossRange(binSeconds, rangeSeconds, now).map(
+    (t) => indexed.get(t) ?? emptyCounters(t),
+  );
 
   return out;
 }
