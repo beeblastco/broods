@@ -223,16 +223,16 @@ describe("session system context", () => {
     const schedulerPrompt = turnContext.system.find((message) =>
       message.content.includes("<scheduler>"),
     )?.content;
-    const environment = session.environmentMessage();
+    const environment = session.environmentText();
 
     // A timestamp in the system prompt would invalidate the prompt cache for
     // everything after it; the environment block goes last instead.
     expect(schedulerPrompt).toContain("The current time is in <environment>");
     expect(schedulerPrompt).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
-    expect(environment.content).toMatch(
+    expect(environment).toMatch(
       /^<environment>\n[\s\S]*now: \w+day, \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)[\s\S]*<\/environment>$/,
     );
-    expect(session.environmentMessage()).toEqual(environment);
+    expect(session.environmentText()).toBe(environment);
   });
 
   it("withholds the scheduling clock until the agent opts in", async () => {

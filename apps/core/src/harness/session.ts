@@ -768,27 +768,24 @@ export class Session {
   }
 
   /**
-   * Live state the agent would otherwise spend steps probing for. It goes after
-   * the history as the run's last message and is never stored, so the system
-   * prompt and the history stay a cached prefix and only this block is new.
-   * Built from what the run already holds: no extra storage read.
+   * Live state the agent would otherwise spend steps probing for. The harness
+   * sends it after the history and never stores it, so the system prompt and
+   * the history stay a cached prefix and only this block is new. Built from
+   * what the run already holds: no extra storage read.
    */
-  environmentMessage(): UserModelMessage {
+  environmentText(): string {
     const workspaces = this.resolvedWorkspaces();
     const sandboxes = this.sandboxes();
     const canBash =
       sandboxes.length > 0 || workspaces.some((workspace) => workspace.sandbox);
 
-    return {
-      role: "user",
-      content: formatEnvironmentPrompt({
-        now: this.startedAt,
-        channel: this.channelLabel(),
-        bashTargets: canBash
-          ? bashTargetLines({ workspaces: workspaces, sandboxes: sandboxes })
-          : [],
-      }),
-    };
+    return formatEnvironmentPrompt({
+      now: this.startedAt,
+      channel: this.channelLabel(),
+      bashTargets: canBash
+        ? bashTargetLines({ workspaces: workspaces, sandboxes: sandboxes })
+        : [],
+    });
   }
 
   // Resolved config.sandboxes; the first is the default. Empty when none.
