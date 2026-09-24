@@ -61,16 +61,18 @@ interface Props {
   /** Plot height in px, axis labels included. */
   height: number;
   series: UsageChartSeries[];
-  /** One row per bin, one value per series. Memoize: a new array starts a transition. */
-  rows: number[][];
+  /**
+   * One row per bin, one value per series; null is unknown, drawn as nothing
+   * and "–" in the tooltip. Memoize: a new array starts a transition.
+   */
+  rows: Array<Array<number | null>>;
   bucketStarts: number[];
   binSeconds: number;
   selected: number | null;
   /** Absent on a chart with nothing to drill into; clicks then do nothing. */
   onSelect?: (index: number) => void;
   formatAxis: (n: number) => string;
-  /** `index` is the hovered bin, for a chart whose bins can be unknown. */
-  formatValue: (n: number, index: number) => string;
+  formatValue: (n: number) => string;
   tickCount?: number;
 }
 
@@ -111,17 +113,22 @@ export function UsageChart({
     observerRef.current = observer;
   }, []);
 
+  // Unknown values stack as 0, which draws no mark.
+  const drawn = useMemo(
+    () => rows.map((row) => row.map((value) => value ?? 0)),
+    [rows],
+  );
   const ticks = useMemo(
     () =>
       niceTicks(
-        Math.max(0, ...rows.map((row) => row.reduce((a, b) => a + b, 0))),
+        Math.max(0, ...drawn.map((row) => row.reduce((a, b) => a + b, 0))),
         tickCount,
       ),
-    [rows, tickCount],
+    [drawn, tickCount],
   );
   const yMaxTarget = useMemo(() => [[ticks[ticks.length - 1]]], [ticks]);
   const yMax = useTween(yMaxTarget)[0][0] || 1;
-  const tweened = useTween(rows);
+  const tweened = useTween(drawn);
   const n = bucketStarts.length;
   // The first frame after a range switch still holds the old bin count.
   const shown = tweened.length === n ? tweened : resampleRows(tweened, n);
@@ -219,7 +226,7 @@ export function UsageChart({
           title={formatBucketLabel(bucketStarts[hover], binSeconds, true)}
           series={series}
           values={rows[hover]}
-          formatValue={(value) => formatValue(value, hover)}
+          formatValue={formatValue}
           clickable={onSelect !== undefined}
         />
       )}
@@ -458,10 +465,12 @@ function ChartTooltip({
   flip: boolean;
   title: string;
   series: UsageChartSeries[];
-  values: number[];
+  values: Array<number | null>;
   formatValue: (n: number) => string;
   clickable: boolean;
 }): React.JSX.Element {
+  const known = values.filter((value) => value !== null);
+
   return (
     <div
       className={cn(
@@ -487,13 +496,17 @@ function ChartTooltip({
                 />
                 {s.label}
               </span>
-              <span className="tabular-nums">{formatValue(value)}</span>
+              <span className="tabular-nums">
+                {value === null ? "–" : formatValue(value)}
+              </span>
             </div>
           ))}
         <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border pt-0.5 font-medium">
           <span className="text-muted-foreground">Total</span>
           <span className="tabular-nums">
-            {formatValue(values.reduce((a, b) => a + b, 0))}
+            {known.length === 0
+              ? "–"
+              : formatValue(known.reduce((a, b) => a + b, 0))}
           </span>
         </div>
         {clickable && (

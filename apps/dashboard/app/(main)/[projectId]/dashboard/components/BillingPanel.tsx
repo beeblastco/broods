@@ -25,6 +25,25 @@ import { UsageChart } from "./UsageChart";
 
 const DAY_SECONDS = 24 * 60 * 60;
 
+// Display units for each amount unit, largest first, with how many make one
+// of the amount's own unit. formatAmount picks the largest that reads >= 1.
+const DISPLAY_UNITS: Record<
+  UsageRow["unit"],
+  Array<{ label: string; perUnit: number }>
+> = {
+  count: [{ label: "", perUnit: 1 }],
+  hours: [
+    { label: " h", perUnit: 1 },
+    { label: " min", perUnit: 60 },
+    { label: " s", perUnit: 3600 },
+  ],
+  gb: [
+    { label: " GB", perUnit: 1 },
+    { label: " MB", perUnit: 1000 },
+    { label: " KB", perUnit: 1_000_000 },
+  ],
+};
+
 // Rows of the usage table, grouped like Convex's usage page. `share` is the
 // budget group the row counts toward; ingress is free, so it has none.
 const USAGE_GROUPS: Array<{ label: string; rows: UsageRow[] }> = [
@@ -119,16 +138,12 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [month, setMonth] = useState<string | undefined>(undefined);
 
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);
-  // The plan and its notice always read this month; only the usage section
-  // follows the picker, so switching months never blanks the plan.
+  // The plan and its notice always read this month; only MonthUsage follows
+  // the picker, so switching months never blanks the plan.
   const budget = useQuery(api.account.budget.getForActiveOrg, {});
-  const shownMonth = useQuery(api.account.budget.getForActiveOrg, {
-    month: month,
-  });
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
@@ -179,11 +194,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
     }
   }
 
-  // The current month is the plan's own query: leave `month` unset to share it.
-  function handleMonthChange(value: string): void {
-    setMonth(value === budget?.month ? undefined : value);
-  }
-
   return (
     <div className="grid gap-8">
       <Section title="Plan">
@@ -232,8 +242,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         />
       )}
 
-      <UsageSummary budget={shownMonth} onMonthChange={handleMonthChange} />
-      <DailyUsage budget={shownMonth} />
+      <MonthUsage />
     </div>
   );
 }
@@ -251,24 +260,24 @@ function DailyUsage({
     [budget, row.key],
   );
   if (!budget || !daily) return null;
+  // One unit for the whole axis, picked from the tallest day.
+  const axisMax = Math.max(0, ...daily.rows.map(([value]) => value ?? 0));
 
   return (
     <Section title="Daily usage">
       <div className="flex w-fit flex-wrap items-center gap-1 rounded-md border border-border bg-card p-1">
         {USAGE_ROWS.map((option) => (
-          <button
+          <Button
             key={option.key}
-            type="button"
+            size="xs"
+            variant="nav"
+            className="cursor-pointer"
+            aria-pressed={row.key === option.key}
+            data-active={row.key === option.key}
             onClick={() => setRow(option)}
-            className={cn(
-              "cursor-pointer rounded px-2.5 py-1 text-xs transition-colors",
-              row.key === option.key
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
           >
             {option.label}
-          </button>
+          </Button>
         ))}
       </div>
       <div className="rounded-lg border border-border bg-card p-3">
@@ -285,17 +294,40 @@ function DailyUsage({
             bucketStarts={daily.bucketStarts}
             binSeconds={DAY_SECONDS}
             selected={null}
-            formatAxis={(value) => formatAmount(value, row.unit)}
-            formatValue={(value, index) =>
-              formatAmount(
-                daily.values[index] === null ? null : value,
-                row.unit,
-              )
-            }
+            formatAxis={(value) => formatAmount(value, row.unit, axisMax)}
+            formatValue={(value) => formatAmount(value, row.unit)}
           />
         )}
       </div>
     </Section>
+  );
+}
+
+// The usage table and daily chart for the picked month. Holds the last month
+// while another loads, so both stay mounted and ease to it instead of
+// dropping to a skeleton first.
+function MonthUsage(): React.JSX.Element {
+  const [month, setMonth] = useState<string | undefined>(undefined);
+  const usage = useQuery(api.account.budget.getForActiveOrg, { month: month });
+  const [held, setHeld] = useState<BudgetUsage | null | undefined>(undefined);
+  if (usage !== undefined && usage !== held) setHeld(usage);
+  const shown = usage ?? held;
+
+  // The current month leads `months` and is the plan's own query: leave
+  // `month` unset to share it.
+  function handleMonthChange(value: string): void {
+    setMonth(value === shown?.months[0] ? undefined : value);
+  }
+
+  return (
+    <>
+      <UsageSummary
+        budget={shown}
+        month={month}
+        onMonthChange={handleMonthChange}
+      />
+      <DailyUsage budget={shown} />
+    </>
   );
 }
 
@@ -387,11 +419,14 @@ function PlanSummary({
 }
 
 // The month's allowance used, a month picker, and one row per resource.
+// `month` is the picked one, shown while it loads; unset is the current month.
 function UsageSummary({
   budget,
+  month,
   onMonthChange,
 }: {
   budget: BudgetUsage | null | undefined;
+  month: string | undefined;
   onMonthChange: (month: string) => void;
 }): React.JSX.Element {
   return (
@@ -418,11 +453,11 @@ function UsageSummary({
                 : `${formatPercent(budget.usedPercent)} of monthly allowance`}
             </span>
             <Select
-              items={budget.months.map((month) => ({
-                label: monthLabel(month),
-                value: month,
+              items={budget.months.map((option) => ({
+                label: monthLabel(option),
+                value: option,
               }))}
-              value={budget.month}
+              value={month ?? budget.month}
               onValueChange={(value) => {
                 if (value) onMonthChange(value);
               }}
@@ -431,9 +466,9 @@ function UsageSummary({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {budget.months.map((month) => (
-                  <SelectItem key={month} value={month}>
-                    {monthLabel(month)}
+                {budget.months.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {monthLabel(option)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -481,13 +516,14 @@ function UsageTableRow({
   budget: BudgetUsage;
   row: UsageRow;
 }): React.JSX.Element {
+  const amount = budget.totals[row.key];
   const share = row.share === null ? null : budget.categories[row.share];
 
   return (
     <div className="grid grid-cols-6 items-center gap-4 border-b border-border px-4 py-2.5 last:border-b-0">
       <span className="col-span-2 text-sm text-foreground">{row.label}</span>
       <span className="text-right text-sm tabular-nums text-foreground">
-        {formatAmount(budget.totals[row.key], row.unit)}
+        {formatAmount(amount, row.unit)}
       </span>
       {share === null ? (
         <span className="col-span-3 text-xs text-muted-foreground">Free</span>
@@ -500,7 +536,7 @@ function UsageTableRow({
             />
           </div>
           <span className="text-right text-sm tabular-nums text-muted-foreground">
-            {formatPercent(share)}
+            {amount === null ? "–" : formatPercent(share)}
           </span>
         </>
       )}
@@ -521,7 +557,7 @@ function billingReset(month: string): string {
 function dailySeries(
   budget: BudgetUsage,
   key: UsageRow["key"],
-): { bucketStarts: number[]; rows: number[][]; values: Array<number | null> } {
+): { bucketStarts: number[]; rows: Array<Array<number | null>> } {
   const [year, monthNumber] = budget.month.split("-").map(Number);
   const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
   const byDay = new Map(budget.days.map((day) => [day.day, day]));
@@ -529,30 +565,33 @@ function dailySeries(
     Date.UTC(year, monthNumber - 1, index + 1),
   );
   const now = Date.now();
-  const values = bucketStarts.map((start): number | null => {
+  const rows = bucketStarts.map((start): [number | null] => {
     const day = byDay.get(new Date(start).toISOString().slice(0, 10));
-    if (!day) return key === "storageGb" || start > now ? null : 0;
+    if (!day) return [key === "storageGb" || start > now ? null : 0];
 
-    return day[key];
+    return [day[key]];
   });
 
-  return {
-    bucketStarts: bucketStarts,
-    rows: values.map((value) => [value ?? 0]),
-    values: values,
-  };
+  return { bucketStarts: bucketStarts, rows: rows };
 }
 
-// An amount in its unit, scaling GB down to MB or KB so small numbers stay
-// readable. Null is a storage size no snapshot has measured yet.
-function formatAmount(value: number | null, unit: UsageRow["unit"]): string {
+// An amount in the largest display unit where `scaleBy` reads >= 1: the value
+// itself in the table, the series max on a chart axis so ticks share a unit.
+// A nonzero amount too small to show reads "<0.01"; null reads "–".
+function formatAmount(
+  value: number | null,
+  unit: UsageRow["unit"],
+  scaleBy: number | null = value,
+): string {
   if (value === null) return "–";
-  if (unit === "count") return Math.round(value).toLocaleString();
-  if (unit === "hours") return `${formatDecimal(value)} h`;
-  if (value === 0 || value >= 1) return `${formatDecimal(value)} GB`;
-  if (value >= 0.001) return `${formatDecimal(value * 1000)} MB`;
+  const units = DISPLAY_UNITS[unit];
+  const shown =
+    units.find(({ perUnit }) => (scaleBy ?? 0) * perUnit >= 1) ??
+    units[scaleBy ? units.length - 1 : 0];
+  const scaled = value * shown.perUnit;
+  if (scaled > 0 && scaled < 0.01) return `<0.01${shown.label}`;
 
-  return `${formatDecimal(value * 1_000_000)} KB`;
+  return `${formatDecimal(scaled)}${shown.label}`;
 }
 
 function formatDay(epochMs: number): string {
