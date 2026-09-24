@@ -16,6 +16,8 @@ interface Props {
   stageId: Id<"stages"> | null;
   /** The selected bin, or null when nothing is selected. */
   bin: { startMs: number; binSeconds: number } | null;
+  /** Tokens the selected bin shows for the filtered models, for each trace's share. */
+  binTokens: number;
   /** Model filter: true when a model's traces should be listed. */
   isModelShown: (modelProvider: string, modelId: string) => boolean;
   onClear: () => void;
@@ -23,14 +25,16 @@ interface Props {
 
 /**
  * Right-hand rail of the Usage tab: links to the traces behind the selected
- * chart bin, heaviest first, with the tokens each contributed. The trace
- * itself opens in the Tracing tab. Fixed height with its own scroll, so
- * opening it never moves the content below.
+ * chart bin, heaviest first. Each row carries the start of its prompt, as
+ * Tracing labels it, and the tokens it contributed; the trace itself opens
+ * in the Tracing tab. Beside the chart it keeps the chart's height and
+ * scrolls inside, so opening it never moves the content below.
  */
 export function UsageTraceRail({
   projectId,
   stageId,
   bin,
+  binTokens,
   isModelShown,
   onClear,
 }: Props): React.JSX.Element {
@@ -61,7 +65,13 @@ export function UsageTraceRail({
   // Rows written before trace ids joined the task id have nothing to link to.
   const traced = (result?.tasks ?? []).flatMap((task) =>
     task.traceId && isModelShown(task.modelProvider, task.modelId)
-      ? [{ traceId: task.traceId, totalTokens: task.totalTokens }]
+      ? [
+          {
+            traceId: task.traceId,
+            totalTokens: task.totalTokens,
+            inputPreview: task.inputPreview,
+          },
+        ]
       : [],
   );
   const traceHref = (traceId: string): string => {
@@ -102,18 +112,28 @@ export function UsageTraceRail({
             : "No finished tasks in this bin."}
         </p>
       )}
-      {traced.map(({ traceId, totalTokens }, i) => (
+      {traced.map(({ traceId, totalTokens, inputPreview }, i) => (
         <Link
           key={`${traceId}-${i}`}
           href={traceHref(traceId)}
           title="Open in Tracing"
-          className="flex cursor-pointer items-center justify-between gap-2 border-b border-border px-3 py-1.5 text-xs hover:bg-accent/40"
+          className="grid cursor-pointer gap-0.5 border-b border-border px-3 py-2 text-xs hover:bg-accent/40"
         >
-          <span className="truncate font-mono text-info">
-            {traceId.slice(0, 16)}
+          <span className="flex items-baseline justify-between gap-3">
+            <span className="truncate">{inputPreview ?? "No prompt text"}</span>
+            <span className="font-medium tabular-nums">
+              {formatNumber(totalTokens)}
+            </span>
           </span>
-          <span className="tabular-nums text-muted-foreground">
-            {formatNumber(totalTokens)}
+          <span className="flex items-baseline justify-between gap-3 text-2xs text-muted-foreground">
+            <span className="truncate font-mono text-info">
+              {traceId.slice(0, 16)}
+            </span>
+            <span className="tabular-nums">
+              {binTokens > 0
+                ? `${Math.round((totalTokens / binTokens) * 100)}% of tokens`
+                : ""}
+            </span>
           </span>
         </Link>
       ))}
@@ -128,7 +148,7 @@ export function UsageTraceRail({
 
 function Rail({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="h-75 overflow-y-auto overscroll-contain border-t border-border lg:border-t-0 lg:border-l">
+    <div className="max-h-75 overflow-y-auto overscroll-contain border-t border-border lg:h-75 lg:border-t-0 lg:border-l">
       {children}
     </div>
   );
