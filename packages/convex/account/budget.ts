@@ -173,7 +173,10 @@ export const listWorkspaceIds = internalQuery({
   },
 });
 
-/** Add usage core measured to the account's meter. Unknown ids are dropped. */
+/**
+ * Add usage core measured to the account's meter. Unknown ids and deleted
+ * accounts are dropped, so a late write never re-creates purged rows.
+ */
 export const record = internalMutation({
   args: {
     accountId: v.string(),
@@ -192,7 +195,7 @@ export const record = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = ctx.db.normalizeId("accounts", args.accountId);
-    if (!accountId) return null;
+    if (!accountId || !(await ctx.db.get(accountId))) return null;
     const now = Date.now();
     if (args.writeId !== undefined) {
       const writeId = args.writeId;
