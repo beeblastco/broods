@@ -421,11 +421,11 @@ export async function runAgentLoop(
     return `${serialized.slice(0, MAX_TRACE_ATTRIBUTE_CHARS)}...[truncated]`;
   };
 
-  const environment = session.environmentMessage();
+  const environment = session.environmentText();
   // Reassigned once the tool set is known, so the live root span carries the
   // tools injected into the model alongside its system prompt and messages.
   let rootRunningAttributes: Record<string, string | number | boolean> = {
-    "agent.environment": traceAttribute(environment.content),
+    "agent.environment": traceAttribute(environment),
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
@@ -1066,10 +1066,10 @@ export async function runAgentLoop(
     // History messages carry envelope fields (metadata/createdAt) for hook
     // payloads; the model must see clean AI SDK shapes. The live environment
     // goes last so everything before it stays a cached prefix.
-    messages: [
-      ...stripEnvelopeFieldsFromMessages(turnContext.messages),
+    messages: withEnvironment(
+      stripEnvelopeFieldsFromMessages(turnContext.messages),
       environment,
-    ],
+    ),
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
     ...(toolApproval ? { toolApproval: toolApproval } : {}),
@@ -2194,6 +2194,30 @@ async function applyHarnessSteeringBeforeTurn(
     conversationKey: session.conversationKey,
     steeringEventCount: steeringEventCount,
   });
+}
+
+/**
+ * The history with the live environment after it. It rides on the person's
+ * latest message when that comes last, so the model still reads one request,
+ * and comes as its own message after a tool result.
+ */
+function withEnvironment(
+  messages: ModelMessage[],
+  environment: string,
+): ModelMessage[] {
+  const last = messages.at(-1);
+  if (last?.role !== "user") {
+    return [...messages, { role: "user", content: environment }];
+  }
+  const content =
+    typeof last.content === "string"
+      ? [{ type: "text" as const, text: last.content }]
+      : last.content;
+
+  return [
+    ...messages.slice(0, -1),
+    { ...last, content: [...content, { type: "text", text: environment }] },
+  ];
 }
 
 function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {

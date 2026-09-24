@@ -314,6 +314,7 @@ function session(): Session {
     filesystemNamespace: (): string => "fs-bench",
     resolvedWorkspaces: (): never[] => [],
     sandboxes: (): never[] => [],
+    environmentText: (): string => "<environment>",
     persistModelMessages: async (): Promise<never[]> => [],
     renewConversationLease: async (): Promise<"renewed"> => "renewed",
     applySteeringIngress: async (): Promise<null> => null,
