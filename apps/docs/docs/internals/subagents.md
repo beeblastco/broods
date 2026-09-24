@@ -60,8 +60,58 @@ Reasoning parts are stripped from inherited parent context before the child sees
 
 In `persistent` mode each child is admitted through the same conversation coordinator as a top-level run, under a generated key of the form `subagent-persistent-{uuid}`. That is what makes a child stoppable and steerable. There is no subagent-specific control API. Stop, steer and follow-up requests go to the child's `conversationKey` through the normal ingress endpoints, and the model-facing `get_subagent_status`, `update_subagent` and `stop_subagent` tools use the same path.
 
+The lifecycle of one persistent child task, as `SubagentCoordinator` in `src/harness/subagents.ts` drives it:
+
+```mermaid
+stateDiagram-v2
+  [*] --> running: run_subagent, accept with mode reject
+  running --> running: update_subagent steer, applied at the next step
+  running --> stopping: stop_subagent, stopOwner
+  stopping --> failed: renewOwner answers stopped at the next step
+  running --> completed: settle completed, result injected
+  running --> failed: settle failed, error injected
+  completed --> running: takeNext finds a queued continue
+  failed --> running: takeNext finds a queued continue
+  completed --> [*]: nothing queued, lease released
+  failed --> [*]: nothing queued, lease released
+  note right of stopping: settles failed with stoppedByUser, never injected
+```
+
+A busy child conversation makes `accept` answer `rejected`, and `run_subagent` fails with `Subagent conversation is not available`. Past the parent's wait budget, `takeNext` is skipped and the queued turn goes to its own worker (`transferChildConversation`).
+
 - The parent dispatches a child with mode `reject`, so dispatching into a busy child conversation surfaces the conflict instead of stalling.
-- Control admission and conversation ownership are decided in one transaction. An update can enter the queue only while the child still owns an active fenced generation. If the child finishes at the same moment, the update creates no ingress envelope and returns `not_running`. A late stop follows the same current-owner rule.
+- Control admission and conversation ownership are decided in one transaction. An update can enter the queue only while the child still owns an active fenced generation. If the child finishes at the same moment, the update creates no ingress envelope and returns `not_running`. A late stop follows the same current-owner rule. Both tools pass the `taskId` as `expectedOwnerTaskId`, so a control never lands on a later task that took over the conversation.
+
+```mermaid
+sequenceDiagram
+  participant P as Parent model
+  participant T as update_subagent / stop_subagent
+  participant CX as Convex runtimeIngress
+  participant Ch as Child run
+
+  P->>T: update_subagent(taskId, steer or continue)
+  T->>CX: accept, activeOwnerOnly, expectedOwnerTaskId
+  alt child still owns its generation
+    CX-->>T: queued
+    T-->>P: status queued
+    Ch->>CX: applySteering at the next step, or takeNext after settle
+  else child settled, or another task owns the conversation
+    CX-->>T: not_running, no envelope written
+    T-->>P: status not_running
+  end
+  P->>T: stop_subagent(taskId)
+  T->>CX: stopOwner, expectedOwnerTaskId
+  alt child still owns its generation
+    CX-->>T: stopped true
+    T-->>P: status stopping
+    Ch->>CX: renewOwner answers stopped
+    Ch->>CX: settle failed, stoppedByUser
+  else child already settled
+    CX-->>T: stopped false
+    T-->>P: status not_running
+  end
+```
+
 - The control tools accept only tasks created by the calling parent event, so a child cannot control a sibling and one parent cannot control another's child.
 - A stopped child settles `failed` with `stoppedByUser`. Its partial progress is not injected into the parent, because it was cancelled on purpose. Genuine failures are still reported.
 - A follow-up drained after the child settles runs as another turn of the same task, and its result is injected like the first answer, under the same `subagent.visibility` rules. If the parent's wait budget has already expired, there is no live parent turn to inject into. The envelope runs on its own worker, writes to the child conversation, and is not injected.

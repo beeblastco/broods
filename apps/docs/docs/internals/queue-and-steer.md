@@ -82,7 +82,28 @@ Acceptance is atomic. The coordinator either inserts the envelope with its statu
 
 Every lease acquisition or recovery increments a per-conversation `ownerGeneration` and returns it as a fencing token. The generation survives lease deletion. Dequeue, history writes, status changes, result commits and lease release all carry the token, and Convex refuses any of them once the generation has moved on. Core checks the token again right before it starts a tool, publishes to the stream or posts a channel reply. A call already in flight when ownership changes cannot be revoked, but its result and later writes are refused. Channel delivery stays best effort and uses the provider's idempotency metadata where one exists.
 
-After a crash, maintenance marks elapsed work `expired`. When a new event reaches a conversation whose lease expired with work still queued, admission first promotes the oldest queued group to the new generation and schedules it, and the newcomer queues behind it. A stale worker cannot apply an envelope or commit output after that.
+After a crash, maintenance marks elapsed work `expired`. When a new event reaches a conversation whose lease expired with work still queued, admission first promotes the oldest queued group to the new generation and schedules it, and the newcomer queues behind it. A stale worker cannot apply an envelope or commit output after that. Core also calls `recoverQueued` on boot and on a timer, for queues nobody writes to again.
+
+How the fencing token shuts out a stale owner:
+
+```mermaid
+sequenceDiagram
+  participant W1 as core, stale owner
+  participant CX as Convex runtimeIngress
+  participant W2 as core, another pod
+  participant C as Caller
+
+  W1->>CX: accept, idle
+  CX-->>W1: owner, generation N
+  Note over W1: stalls, lease lapses
+  C->>W2: new event
+  W2->>CX: accept
+  CX->>CX: promoteQueuedGroup, generation N+1
+  CX-->>W2: queued, plus the recovered group
+  W2->>W2: dispatch the recovered group
+  W1->>CX: appendConversationEvent or settle with N
+  CX-->>W1: Stale conversation owner generation
+```
 
 Each envelope carries its own execution context, meaning the resolved agent config with per-run `model` overrides and one-turn `system` messages. The payload digest covers them. A queued request therefore runs with its own overrides and never inherits the previous owner's.
 
@@ -100,11 +121,62 @@ flowchart LR
 
 Every accepted envelope ends as `completed`, `failed` or `expired`. Its status carries `requestedMode`, the `appliedMode` that happened, and `appliedToEventId`. A steer that missed its boundary shows `requestedMode: "steer"`, `appliedMode: "followup"` and the event id of the follow-up turn. An idle request records its own event id, and an idle steer records `appliedMode: "followup"` because it starts a normal turn.
 
+The status an envelope row moves through, with the `runtimeIngress.ts` mutation that moves it:
+
+```mermaid
+stateDiagram-v2
+  [*] --> processing: accept, idle conversation
+  [*] --> queued: accept, busy conversation
+  queued --> processing: applySteering, steer prefix
+  queued --> processing: takeNext or recoverQueued
+  queued --> expired: past 15 min, maintain
+  processing --> completed: settle completed
+  processing --> failed: settle failed
+  processing --> expired: owner lease lapsed, maintain
+  completed --> [*]: deleted after 7 days
+  failed --> [*]: deleted after 7 days
+  expired --> [*]: deleted after 7 days
+  note right of queued: reject and capacity refusals write no row
+```
+
+`accepted` and `applied` are in the `IngressStatus` type, but no envelope row is ever written with them. The run status route overlays the async run record, so while that record is nonterminal a poller sees `awaiting_approval` or `awaiting_input` instead of the envelope status.
+
 ## The step boundary
 
 Steering enters at one point, the AI SDK `prepareStep` hook. After `onStepEnd` has seen every tool result of the current step, and before the next model call, the coordinator takes the steer prefix, appends it to history, refreshes the next step's messages and system context, and records the active event id as `appliedToEventId`.
 
-Nothing enters mid-stream or between tool calls of one parallel batch. When the run has finished, hit its step limit, entered an approval or terminal path, or has no next model call for any other reason, the coordinator converts the envelope to `followup` in the same transaction.
+Nothing enters mid-stream or between tool calls of one parallel batch. When the run has finished, hit its step limit, entered an approval or terminal path, or has no next model call for any other reason, the steer stays queued. After the owner settles, `takeNext` promotes it, merged with any contiguous steers behind it, as one `followup` application under the next generation.
+
+```mermaid
+sequenceDiagram
+  participant A as Client A
+  participant B as Client B
+  participant Core as core, owner
+  participant CX as Convex runtimeIngress
+  participant M as Model
+
+  A->>Core: run event-1
+  Core->>CX: accept, idle
+  CX-->>Core: owner, generation N
+  Core->>M: step 1
+  B->>Core: steer event-2
+  Core->>CX: accept, busy
+  CX-->>Core: queued
+  Core-->>B: 202 queued
+  M-->>Core: step 1 ends with its tool results
+  alt another model call is left
+    Core->>CX: prepareStep: renewOwner, then applySteering
+    CX-->>Core: event-2, appliedToEventId event-1
+    Core->>M: step 2 with event-2 appended
+  else the run has finished
+    Core->>CX: settle completed
+    Core->>CX: takeNext
+    CX-->>Core: event-2 as followup, generation N+1
+    Core->>M: new turn for event-2
+  end
+```
+
+`renewOwner` runs first in `prepareStep`. It answers `stopped` when `/stop` asked this generation to stop, and `stale` when ownership moved, and either one ends the run before steering is applied.
 
 This follows the AI SDK contract. [`prepareStep`](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text) runs before a step and may replace its messages, and the next step's messages already include finished tool results. [`onStepFinish`](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#onstepfinish-callback) fires only once the step's text, tool calls and tool results exist.
 
@@ -134,14 +206,14 @@ While a run is active, a client sends correlated `control` frames and receives `
 ```json
 { "type": "control", "requestId": "r2", "eventId": "event-2", "idempotencyKey": "client-op-2", "events": [] }
 { "type": "ack", "requestId": "r2", "eventId": "event-2", "status": "queued" }
-{ "type": "status", "requestId": "r2", "eventId": "event-2", "status": "applied", "appliedMode": "steer", "appliedToEventId": "event-1" }
+{ "type": "status", "requestId": "r2", "eventId": "event-2", "status": "processing", "appliedMode": "steer", "appliedToEventId": "event-1" }
 ```
 
 `execute` and `control` default to `steer`. `requestId` correlates frames on one socket only. `idempotencyKey` joins the identity above and defaults to `eventId`, and `eventId` ties the frame to the stored envelope.
 
 Convex and core own admission and status. The gateway only delivers the frames. It sends `ack` after core confirms acceptance and reads later transitions from the authenticated status route. JetStream output, an open socket or gateway polling never count as acceptance.
 
-A socket holds at most 8 control inputs in flight (`MAX_CONTROLS_IN_FLIGHT` in `apps/gateway/src/agent.ts`). One stays in flight until its status is `applied` or terminal, so a queued `collect` or `followup` holds its place until the run ends. A `control` past the limit gets a `status` frame with `status: "failed"` and an error, and can be sent again once an earlier one settles.
+A socket holds at most 8 control inputs in flight (`MAX_CONTROLS_IN_FLIGHT` in `apps/gateway/src/agent.ts`). One stays in flight until its status is terminal. The gateway would also release it on `applied`, but no envelope is stored with that status, so a steered control holds its place until the run it joined settles, and a queued `collect` or `followup` until its own run ends. A `control` past the limit gets a `status` frame with `status: "failed"` and an error, and can be sent again once an earlier one settles.
 
 `agentId` on `attach` and `execute` becomes a NATS subject token, so the gateway refuses one that holds `.`, `*`, `>` or whitespace.
 
@@ -195,7 +267,7 @@ With `subagent.stream: true`, a child publishes stream parts on the `WS_RESPONSE
 
 A runtime key attaches to a child only through its parent. Core allows the status read only when the child's event and conversation, the parent's stored ingress status, the active public parent and the server-derived `publicDeploymentIngress` marker all match the key's account, project, stage and endpoint. Endpoint metadata on account, channel, cron or internal work does not count. The gateway then checks the returned conversation key before it picks the NATS subject. Private children stay unreachable through the public endpoint, and no parent field the client sends is trusted. The rest is in [Subagents](subagents.md).
 
-`IngressStatus` is one of `accepted`, `queued`, `applied`, `processing`, `completed`, `failed` or `expired`. The public status can also report `awaiting_approval` with `approvals`. `requestedMode` is present for all coordinated ingress, and absent only for records that never went through the FIFO, such as a subagent result.
+An envelope row is `queued`, `processing`, `completed`, `failed` or `expired`, as in the state diagram above. `IngressStatus` also lists `accepted` and `applied`, which no row carries. The public status can also report `awaiting_approval` with `approvals`, or `awaiting_input`. `requestedMode` is present for all coordinated ingress, and absent only for records that never went through the FIFO, such as a subagent result.
 
 ## Observability
 

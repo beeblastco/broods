@@ -56,6 +56,27 @@ Logs go through one redaction chokepoint. See [observability](observability.md#s
 | `fp_sts_`    | Role session         | The role's policy. Default TTL 1 hour, max 12. Only the hash is stored                         |
 | `fp_dts_`    | Stage session ticket | Fifteen minutes, signed by Convex with `STAGE_TICKET_SECRET`                                   |
 
+Core resolves a bearer in a fixed order in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`). Only `fp_sts_` and `fp_dts_` are routed by prefix. The rest are tried as secrets, then as hashes:
+
+```mermaid
+flowchart TD
+  Bearer["Authorization: Bearer token"] --> Sts{"fp_sts_ prefix?"}
+  Sts -->|yes| Role["roleSessions hash lookup<br/>kind: role"]
+  Sts -->|no| Dts{"fp_dts_ prefix?"}
+  Dts -->|yes| Ticket["open with STAGE_TICKET_SECRET<br/>kind: deployment, stageTicket"]
+  Dts -->|no| Admin{"equals ADMIN_ACCOUNT_SECRET?"}
+  Admin -->|yes| AdminCtx["kind: admin"]
+  Admin -->|no| Svc{"equals SERVICE_AUTH_SECRET<br/>and no x-broods-via-gateway?"}
+  Svc -->|yes| SvcCtx["account from X-Account-Id<br/>kind: account, viaServiceToken"]
+  Svc -->|no| Key{"sha256 in agentDeployments?"}
+  Key -->|yes| Deploy["runtime key<br/>kind: deployment"]
+  Key -->|no| Acct{"secretHash in accounts?"}
+  Acct -->|yes| AcctCtx["kind: account"]
+  Acct -->|no| Deny["null, 401"]
+```
+
+Every branch that names an account also requires it to be `active`. `fp_cli_` and `fp_deploy_` never reach core; the Convex config plane checks them in `packages/convex/cli/http.ts`.
+
 Rules the code enforces:
 
 - The runtime key is meant to sit in a frontend, so it is limited further. It reaches only agents of its own stage, and another stage's `agentId` answers `404`. It needs `publicAccess: true` on the agent. It cannot send `system` or `model` overrides unless the agent sets `allowRunOverrides: true`, and gets `403 run_overrides_disabled` otherwise. With `continue: true` it re-enters only conversations the direct API opened, never a channel session. It cannot open the observability socket, because logs and traces carry every end user's chats and tool payloads.
@@ -69,12 +90,15 @@ Rules the code enforces:
 
 Account-uploaded MCP bundles are untrusted code and never run in the core process. They run on the mcp-runner Lambda, a plain Node.js function outside a VPC, so egress is open internet.
 
+The call path from core through the Lambda to the child is drawn in [tools and MCP](tools-and-mcp.md#hosted-servers).
+
 - SST creates the function as `mcp-runner` with `tenancyConfig: { tenantIsolationMode: "PER_TENANT" }`. Every invoke carries the account id as its tenant id, and Lambda never reuses an execution environment across accounts. An account's first call after idle is a cold start. AWS has to enable tenancy configuration on the AWS account first.
 - `MCP_TENANT_ISOLATION=false`, on both the SST deploy and core, turns this off for a non-production stage and creates the function as `tool-runner`. Accounts then share warm environments and the child process is the only separation. A production stage refuses to deploy with it off.
+
 - Inside an environment, each bundle runs in a child process with a scrubbed environment and a fresh per-invocation `TMPDIR`. The child is containment, not a trust boundary. It runs as the same OS user as the function and can read the function's environment.
-- These protections hold. The execution role grants only CloudWatch Logs. The bundle arrives inline as base64 or through a short-lived presigned URL, reaches the child over a dedicated pipe on fd 3, and is imported from memory without touching disk. The child checks its sha256 before importing it. The function holds no S3 or data-plane access. A child only receives calls for the one `accountId + sha256` it was spawned for.
+- These protections hold. The execution role grants only CloudWatch Logs. The bundle arrives through a presigned URL valid for 120 s, reaches the child over a dedicated pipe on fd 3, and is imported from memory without touching disk. The child checks its sha256 before importing it. The function holds no S3 or data-plane access. A child only receives calls for the one `accountId + sha256` it was spawned for.
 - A changed bundle always gets a fresh process. A retiring child is reaped as a process group, and because `setsid` can escape the group, the function also kills every other process running as its user before each new child.
-- Warm reuse is bounded at 64 calls and 300 s idle per child, set by `MCP_CHILD_MAX_CALLS` and `MCP_CHILD_IDLE_SECONDS`. `MCP_CHILD_REUSE=0` turns reuse off. A timeout, rejected payload or unhandled rejection retires the child. Reuse gives up a clean process per call within one tenant's bundle. Module-level state persists across its own calls, like any long-lived MCP server, while `HOME` and `TMPDIR` are re-pointed at fresh scratch dirs per invocation. The calls of one batch share that scratch dir.
+- Warm reuse is bounded at 64 invokes and 300 s idle per child, set by `MCP_CHILD_MAX_CALLS` and `MCP_CHILD_IDLE_SECONDS`. `MCP_CHILD_REUSE=0` turns reuse off. A timeout, rejected payload or unhandled rejection retires the child. Reuse gives up a clean process per call within one tenant's bundle. Module-level state persists across its own calls, like any long-lived MCP server, while `HOME` and `TMPDIR` are re-pointed at fresh scratch dirs per invocation. The calls of one batch share that scratch dir.
 - An invocation gets 30 s and 16 MiB of output, set in `apps/lambda/handler.mjs`. The child aborts 2 s earlier so the run settles before the handler's SIGKILL. Bundles are capped at 50 MB, or 10 MB inline in a request body.
 
 Treat anything the function can reach as reachable by tenant code.
