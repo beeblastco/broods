@@ -16,7 +16,8 @@ Each demo depends on `broods` as `file:../../broods`, whose entrypoint is
 entrypoint and `Cannot find package 'broods'` at runtime. Build first, and
 re-run `bun install` in the demo if you built afterwards.
 
-Use `.env.local` for local runtime settings. SDK clients automatically read the
+Each demo keeps its local settings in its own folder's `.env.local`; Bun never
+reads a parent folder's file. SDK clients automatically read the
 runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
 writes for the selected stage.
 WebSocket demos use the same `BROODS_BASE_URL` or `BROODS_HOST` override as
@@ -32,7 +33,7 @@ doesn't change), then aim the demos at it:
 # 1. Start the core locally (serves http://localhost:3000, path-routed).
 cd apps/core && bun run serve          # fill apps/core/.env first — see its .env.example
 
-# 2. In the demo's .env.local (or packages/demos/.env), point the SDK at it:
+# 2. In the demo's .env.local, point the SDK at it:
 #    BROODS_BASE_URL=http://localhost:3000
 #    BROODS_API_KEY=fp_agent_...        # a runtime key for the demo account
 
@@ -48,7 +49,17 @@ to `gateway.broods.app`), so this swaps only the base URL. See
 - `basic-async`: start a run with `background: true`, then poll by the returned run id.
 - `cron`: create a scheduled agent run with the SDK cron helper.
 - `websocket`: stream a deployed endpoint and steer its active run with a correlated control message.
-- `channel-telegram`, `channel-github`, `channel-slack`, `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.
+- `structure-output`: stream a run whose answer is parsed as structured output.
+- `structure-output-async`: the same structured answer from a background run, polled by run id.
+- `tool-approval`: stop on a tool that needs approval, then approve it and resume the run.
+- `skill`: load an account skill from a streamed run.
+- `subagent`: dispatch parallel subagents from a parent agent.
+- `agent-hooks`: a code hook that runs in the isolate at `agent.started` and injects a system instruction.
+- `webhook`: deliver agent lifecycle events to your own HTTPS endpoint.
+- `harness-codex`: run an agent on the Codex harness in a persistent sandbox.
+- `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.
+- `multi-channel`: one agent on Slack, Telegram and GitHub, with a register script that wires every webhook.
+- `channel-records`: bind two Slack channels of one app to two different agents.
 - `mcp-connect`: connect an external MCP server and call its tools from an agent.
 - `policy-enforcement-lambda`: compare OPA policy `audit` vs `enforce` behavior against the AWS Lambda MicroVM sandbox using Bedrock MiniMax.
 
@@ -61,3 +72,8 @@ Sandbox examples (one `defineSandbox` per provider/mode):
 - `sandbox-multiple`: two `lambda` sandboxes in `sandboxes`. The first is the default, the second is deny-all, picked per bash call.
 - `sandbox-workspace-lambda`: persistent workspace-backed `lambda` MicroVM.
 - `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-workspace-override`: provider-specific sandbox configs.
+
+Workspace examples:
+
+- `workspace-multiple`: one agent with two named S3-backed workspaces.
+- `workspace-readonly`: one shared workspace, a writer with a sandbox and two read-only readers.

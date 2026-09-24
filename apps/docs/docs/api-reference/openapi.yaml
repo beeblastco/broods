@@ -8,13 +8,14 @@ info:
     - **Account Management.** Tenant configuration (accounts, agents, skills, secrets)
 
     > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, MCP servers) through `broods dev` and `broods deploy`. You do not need to call these account-management endpoints yourself. This reference is for:
+    >
     > - Runtime invocation (`POST /v1/runs`, `GET /v1/runs/{runId}`) from the TypeScript SDK, curl, or Python client
+    > - Advanced integrations that need direct account-management access
+    > - Admin operations using `AdminAccountSecret`
 
     Every response carries `X-Request-Id`. Every non-2xx body is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and the gateway and config-plane 429s also carry the IETF `RateLimit-*` fields.
 
-    WebSocket endpoints are not expressible here. The gateway terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws` and `/v1/sandboxes/terminal/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`fp_dts_...`, see `POST /v1/account/stage-session`), never the stage runtime key, because logs and traces carry every end user's chats and tool payloads.
-    > - Advanced integrations that need direct account-management access
-    > - Admin operations using `AdminAccountSecret`
+    WebSocket endpoints are not expressible here. The gateway terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`fp_dts_...`, see `POST /v1/account/stage-session`), never the stage runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account secret, a role session or a stage session ticket, never the runtime key.
 
     The config plane serves account metadata and secret rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`fp_role_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `fp_sts_...` session token. A session token authenticates like the account secret but is limited to the role's policy.
   version: 0.1.0
@@ -45,6 +46,10 @@ tags:
     description: Account-owned sandbox execution configs.
   - name: Workspaces
     description: Account-owned workspace configs.
+  - name: MCP servers
+    description: Stage-scoped MCP servers agents connect to, external (url), hosted (bundle) or on a machine.
+  - name: Hooks
+    description: Account-owned code hooks that run on agent lifecycle events.
   - name: Policies
     description: Account-owned reusable runtime authorization policies.
   - name: Channels
@@ -93,7 +98,9 @@ paths:
         - Direct API
       summary: Run an agent
       description: |
-        The single runtime entry point. Streams the turn back as SSE by default; send `background: true` in the body to get a 202 with a run id instead, then poll `GET /v1/runs/{eventId}`.
+        The single runtime entry point. Streams the turn back as SSE by default; send `background: true` in the body to get a 202 with a run id instead, then poll `GET /v1/runs/{runId}`.
+
+        A body with `answers` instead of `events` settles open `ask_questions` prompts and resumes the conversation. It answers 202 with an `AnswersAccepted` body, never a stream.
 
         Busy requests use the requested mode; omitted mode defaults to `steer` and joins the active run at its next model boundary.
       requestBody:
@@ -156,11 +163,13 @@ paths:
                     event: 0
                     data: {"type":"finish","finishReason":"stop"}
         "202":
-          description: "Run accepted. Sent for `background: true`, and for a busy conversation whose input was queued rather than streamed."
+          description: "Run accepted. Sent for `background: true`, for a busy conversation whose input was queued rather than streamed, and for an `answers` body (`AnswersAccepted`)."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IngressAccepted"
+                oneOf:
+                  - $ref: "#/components/schemas/IngressAccepted"
+                  - $ref: "#/components/schemas/AnswersAccepted"
               examples:
                 accepted:
                   value:
@@ -170,8 +179,14 @@ paths:
                     status: processing
                     requestedMode: steer
                     statusUrl: https://gateway.broods.app/v1/runs/run_8c1d4a9e2f1b40d7a3c65e90b7412fda
+        "400":
+          description: Malformed body, for example `events` combined with `answers`, neither sent, or an answer that is not `{ statusId, answers }`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
-          description: Conversation busy in reject mode (`conversation_busy`), or the idempotency key is bound to a different payload (`idempotency_conflict`). JSON envelope on a background run; on a streamed run the same message arrives as the first SSE `error` frame.
+          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or an `answers` entry names a prompt that was already answered (`question_already_answered`). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
           content:
             application/json:
               schema:
@@ -207,13 +222,13 @@ paths:
                       code: run_overrides_disabled
                       param: allowRunOverrides
         "404":
-          description: Direct API disabled on this deployment (`ENABLE_DIRECT_API=false`)
+          description: Direct API disabled on this deployment (`ENABLE_DIRECT_API=false`), or an `answers` entry names no open prompt on this conversation (`question_not_found`, param `statusId`).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "401":
-          description: Unauthorized
+          description: Missing or unknown credential, or one that cannot run agents (a role session `fp_sts_...` or the admin secret)
           content:
             application/json:
               schema:
@@ -319,7 +334,7 @@ paths:
                       type: not_found_error
                       code: run_not_found
         "401":
-          description: Unauthorized
+          description: Missing or unknown credential, or one that cannot poll runs (a role session `fp_sts_...` or the admin secret)
           content:
             application/json:
               schema:
@@ -375,7 +390,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IngressAccepted"
+                oneOf:
+                  - $ref: "#/components/schemas/IngressAccepted"
+                  - $ref: "#/components/schemas/AnswersAccepted"
+        "400":
+          description: Malformed body, as for `POST /v1/runs`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: An agent outside the key's stage, or an `answers` entry naming no open prompt (`question_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`conversation_busy`, `idempotency_conflict` or `question_already_answered`, as for `POST /v1/runs`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: The runtime key does not match this project and stage
           content:
@@ -966,8 +1001,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
   /v1/env/{name}:
     put:
       tags:
@@ -1133,8 +1167,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
 
   /v1/agents/{agentId}:
     get:
@@ -1229,13 +1262,14 @@ paths:
 
         A runtime key is safe to embed, so it carries three limits an account secret does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
 
-        Do not confuse `{endpointId}` here with the `{agentId}` that `GET`, `PATCH` and `DELETE /v1/agents/{agentId}` take: they are different identifiers. Prefer `/v1/runs` unless the caller only holds a runtime key.
+        The path segment is the stage's deployment endpoint id, not an agent id, although this path item names it `{agentId}` because it shares the URL with `GET`, `PATCH` and `DELETE /v1/agents/{agentId}`. Prefer `/v1/runs` unless the caller only holds a runtime key.
       security:
         - BearerAuth: []
       parameters:
         - name: agentId
           in: path
           required: true
+          description: The deployment endpoint id of the runtime key's stage, not an agent id. A mismatch with the key is a 401.
           schema:
             type: string
       requestBody:
@@ -1257,7 +1291,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IngressAccepted"
+                oneOf:
+                  - $ref: "#/components/schemas/IngressAccepted"
+                  - $ref: "#/components/schemas/AnswersAccepted"
+        "400":
+          description: Malformed body, as for `POST /v1/runs`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: An agent outside the key's stage, or an `answers` entry naming no open prompt (`question_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`conversation_busy`, `idempotency_conflict` or `question_already_answered`, as for `POST /v1/runs`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: The runtime key does not match the endpoint
           content:
@@ -1505,8 +1559,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
 
   /v1/sandboxes/{sandboxId}:
     get:
@@ -1545,7 +1598,7 @@ paths:
                 description: { type: string }
                 config:
                   type: object
-                  description: Full replacement sandbox config. Uses the same shape as create.
+                  description: Deep-merged into the stored config, same shape as create. Set a field to `null` to delete it; arrays are replaced whole.
       responses:
         "200": { description: Updated }
     delete:
@@ -1730,8 +1783,7 @@ paths:
         "404": { description: No reserved instance for this reservation key }
         "409":
           {
-            description: Provider does not support a live terminal,
-            or the MicroVM was launched without shell ingress,
+            description: "Provider does not support a live terminal, or the MicroVM was launched without shell ingress",
           }
 
   /v1/workspaces:
@@ -1824,8 +1876,7 @@ paths:
         "201": { description: Workspace created }
         "400":
           {
-            description: Invalid config,
-            including a named bucket without its own credentials,
+            description: "Invalid config, including a named bucket without its own credentials",
           }
     get:
       tags: [Workspaces]
@@ -1850,8 +1901,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
 
   /v1/workspaces/{workspaceId}:
     get:
@@ -1879,6 +1929,20 @@ paths:
             required: true,
             schema: { type: string },
           }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description:
+                  type: [string, "null"]
+                  description: "`null` clears it."
+                config:
+                  type: object
+                  description: Deep-merged into the stored config, same shape as create. Set a field to `null` to delete it; arrays are replaced whole.
       responses:
         "200": { description: Updated }
     delete:
@@ -2047,7 +2111,7 @@ paths:
         - { name: token, in: path, required: true, schema: { type: string } }
       responses:
         "302": { description: Redirect to the file }
-        "404": { description: Unknown, expired or revoked token }
+        "404": { description: "Unknown, expired or revoked token" }
 
   /v1/mcp:
     post:
@@ -2078,7 +2142,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Mcp"
-        "400": { description: Missing project or stage, or invalid input }
+        "400": { description: "Missing project or stage, or invalid input" }
         "404": { description: Project or stage not found }
         "409":
           { description: A server with this name already exists in the stage }
@@ -2107,8 +2171,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
         "400": { description: Missing project or stage }
         "404": { description: Project or stage not found }
 
@@ -2229,8 +2292,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
     post:
       tags:
         - Hooks
@@ -2255,11 +2317,16 @@ paths:
                   type: string
                 events:
                   type: array
+                  minItems: 1
                   items:
-                    type: string
+                    $ref: "#/components/schemas/HookEvent"
                 bundle:
                   type: string
-                  description: Base64 hook bundle.
+                  description: >-
+                    The hook's bundled ES module source as plain text, not
+                    base64. At most 1 MB. It runs in core's isolate, so it may
+                    not use `node:` imports, bare package imports, `require()`,
+                    `process` or `__dirname`.
       responses:
         "201":
           description: Hook created
@@ -2320,10 +2387,12 @@ paths:
                   type: string
                 events:
                   type: array
+                  minItems: 1
                   items:
-                    type: string
+                    $ref: "#/components/schemas/HookEvent"
                 bundle:
                   type: string
+                  description: Module source as plain text, as on create.
       responses:
         "200":
           description: Hook updated
@@ -2408,8 +2477,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
   /v1/policies/{policyId}:
     get:
       tags: [Policies]
@@ -2505,8 +2573,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
   /v1/roles/{roleId}:
     get:
       tags: [Roles]
@@ -2602,8 +2669,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
   /v1/channels/{channelId}:
     get:
       tags: [Channels]
@@ -2759,8 +2825,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
 
   /v1/skills/{skillName}:
     get:
@@ -2915,8 +2980,7 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
 
   /v1/crons/{cronId}:
     get:
@@ -3013,19 +3077,28 @@ paths:
                   hasMore:
                     type: boolean
                   nextCursor:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       description: >-
-        Account secret (`fp_acct_...`) obtained from account creation or
-        rotation, or a short-lived role session token (`fp_sts_...`) minted by
-        `POST /v1/account/assume-role`. A session token authenticates the same
-        routes but is limited to its role's policy; role management under
-        `/v1/roles*` accepts only the account secret.
+        Which credential a route takes depends on the route.
+        The account secret (`fp_acct_...`, from account creation or rotation)
+        works on every account route and on `/v1/runs`; the endpoint-addressed
+        run URLs (`POST /v1/agents/{endpointId}` and its scoped form) take only
+        a stage credential.
+        A role session token (`fp_sts_...`, minted by
+        `POST /v1/account/assume-role`) works on the config-plane routes,
+        limited to its role's policy; it gets 401 on `/v1/runs` and every run
+        URL, and role management under `/v1/roles*` refuses it.
+        A stage runtime key (`fp_agent_...`) works only on `/v1/runs`,
+        `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
+        `POST /v1/account/assume-role` (roles pinned to its own stage); every
+        config-plane route answers it with 401.
+        A stage session ticket (`fp_dts_...`) runs agents like the runtime key
+        and also opens the observability socket.
     AdminAuth:
       type: http
       scheme: bearer
@@ -3115,7 +3188,7 @@ components:
         background:
           type: boolean
           default: false
-          description: When true the run answers 202 with a run id instead of streaming SSE. Poll `GET /v1/runs/{eventId}` for the result. A non-boolean is a 400.
+          description: When true the run answers 202 with a run id instead of streaming SSE. Poll `GET /v1/runs/{runId}` for the result. A non-boolean is a 400.
         mode:
           type: string
           enum: [reject, followup, collect, steer]
@@ -3428,8 +3501,7 @@ components:
 
     IngressAccepted:
       type: object
-      required:
-        [runId, eventId, conversationKey, status, requestedMode, statusUrl]
+      required: [runId, eventId, conversationKey, status, requestedMode]
       properties:
         runId:
           type: string
@@ -3451,6 +3523,31 @@ components:
         statusUrl:
           type: string
           format: uri
+          description: Public poll URL for `runId`. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
+
+    AnswersAccepted:
+      type: object
+      description: >-
+        The 202 for a body carrying `answers`. `resultId` is the last prompt
+        settled. `accepted` means the conversation resumed (`invoked`), or had
+        nothing to resume; `waiting_for_async_tools` means other async tools of
+        the same turn are still pending, and the turn resumes once they settle.
+      required: [status, resultId]
+      properties:
+        status:
+          type: string
+          enum: [accepted, waiting_for_async_tools]
+        resultId:
+          type: string
+        eventId:
+          type: string
+          description: Event id of the resumed turn. Present when it resumed.
+        invoked:
+          type: boolean
+          description: Present with `accepted`. True when this request started the resumed turn.
+        pendingCount:
+          type: integer
+          description: Present with `waiting_for_async_tools`. Async tools of the turn still pending.
 
     IngressStatus:
       type: object
@@ -3610,7 +3707,7 @@ components:
         events:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/HookEvent"
         sha256:
           type: string
         status:
@@ -3621,6 +3718,24 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    HookEvent:
+      type: string
+      enum:
+        [
+          agent.started,
+          agent.step.finished,
+          agent.finished,
+          agent.failed,
+          agent.approval.required,
+          tool.call.started,
+          tool.call.finished,
+          tool.result,
+          subagent.task.started,
+          subagent.task.finished,
+          channel.message.received,
+          channel.message.sending,
+        ]
 
     Error:
       type: object
@@ -3714,9 +3829,17 @@ components:
           type: string
         files:
           type: array
-          description: Relative file paths in the bundle (returned by create and get)
+          description: Files in the bundle (returned by create and get)
           items:
-            type: string
+            type: object
+            required: [path]
+            properties:
+              path:
+                type: string
+                description: Path relative to the skill root.
+              size:
+                type: integer
+                description: Size in bytes.
 
     Cron:
       type: object
@@ -3872,8 +3995,6 @@ components:
               type: integer
             asyncToolGroupDeleted:
               type: integer
-            harnessSessionDeleted:
-              type: integer
             sandboxReservationDeleted:
               type: integer
             filesystemObjectsDeleted:
@@ -3887,6 +4008,12 @@ components:
             bundleObjectsDeleted:
               type: integer
             attachmentObjectsDeleted:
+              type: integer
+            accountHooksDeleted:
+              type: integer
+            mcpDeleted:
+              type: integer
+            channelRecordsDeleted:
               type: integer
 
     AgentConfig:
@@ -3944,8 +4071,37 @@ components:
           $ref: "#/components/schemas/SessionConfig"
         tools:
           $ref: "#/components/schemas/ToolsConfig"
+        mcp:
+          type: object
+          description: MCP servers this agent connects to, keyed by server id (`POST /v1/mcp`).
+          additionalProperties:
+            $ref: "#/components/schemas/AgentMcpEntry"
+        denyTools:
+          type: array
+          items: { type: string }
+          description: Tool names withheld from every run, applied after the tool set is built. A channel record adds its own. Names that are not present are ignored.
         channels:
           $ref: "#/components/schemas/ChannelsConfig"
+
+    AgentMcpEntry:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        needsApproval:
+          type: boolean
+          description: Applies to every tool the server exposes.
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: Extra request headers; `${NAME}` values resolve from account env vars at sync.
+        oauth:
+          type: object
+          description: Overrides for the server's oauth credentials, resolved from account env vars at sync. `tokenUrl` stays on the server.
+          properties:
+            clientId: { type: string }
+            clientSecret: { type: string }
+            refreshToken: { type: string }
 
     HarnessConfig:
       type: object
@@ -4045,6 +4201,8 @@ components:
                 env:write,
                 hooks:read,
                 hooks:write,
+                mcp:read,
+                mcp:write,
                 policies:read,
                 policies:write,
                 sandboxes:read,
@@ -4516,6 +4674,23 @@ components:
                 items:
                   type: string
                 description: Optional allow-list; omitted means all events
+        code:
+          type: array
+          description: Code hooks (`POST /v1/hooks`) this agent runs.
+          items:
+            type: object
+            required: [hookId]
+            properties:
+              hookId:
+                type: string
+                description: The hook's id.
+              enabled:
+                type: boolean
+              events:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HookEvent"
+                description: Optional narrowing of the hook's own `events`; omitted means all of them. Events outside the hook's set are ignored.
 
     SkillsConfig:
       type: object
@@ -4559,6 +4734,11 @@ components:
           type: boolean
           default: false
           description: Publish child reasoning, text, and tool stream parts to the existing WebSocket/JetStream attach path
+        visibility:
+          type: string
+          enum: [full, result, none]
+          default: result
+          description: What the parent sees when a child finishes. `none` hides the result from the parent; an `onSubagentFinish` hook overrides it.
 
     SessionConfig:
       type: object
@@ -4694,6 +4874,18 @@ components:
             As on create: http(s) only, no embedded credentials, and the host
             must resolve to a public address. Core refuses a private, loopback,
             link-local or metadata address, and refuses a redirect.
+        sandbox:
+          type: string
+          description: As on create.
+        bundle:
+          type: string
+          description: As on create. Replaces the hosted module.
+        bundleStorageId:
+          type: string
+          description: As on create. Requires `sha256`.
+        sha256:
+          type: string
+          description: As on create; required with bundleStorageId.
         headers:
           type: object
           additionalProperties:
