@@ -282,15 +282,20 @@ async function timed(
   };
 }
 
+/** Every complete trace line; a line core is still appending has no newline yet and waits for the next read. */
 function traceLines(tracePath: string): string[] {
+  let text = "";
   try {
-    return readFileSync(tracePath, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line): string => (JSON.parse(line) as { fn: string }).fn);
+    text = readFileSync(tracePath, "utf8");
   } catch {
     return [];
   }
+
+  return text
+    .slice(0, text.lastIndexOf("\n") + 1)
+    .split("\n")
+    .filter(Boolean)
+    .map((line): string => (JSON.parse(line) as { fn: string }).fn);
 }
 
 /** Waits until core has made no Convex call for QUIET_MS, so a run's tail writes count toward it. */

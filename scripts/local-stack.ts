@@ -331,11 +331,14 @@ async function verify(): Promise<void> {
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
   const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  let currentCase = "";
   let currentStep = "";
-  const measure = <T>(step: string, fn: () => Promise<T>): Promise<T> => {
+  const measure = async <T>(step: string, fn: () => Promise<T>): Promise<T> => {
     currentStep = step;
+    const result = await measureStep(perf, step, fn);
+    currentStep = currentCase;
 
-    return measureStep(perf, step, fn);
+    return result;
   };
   let failedStep: string | undefined;
   try {
@@ -349,6 +352,8 @@ async function verify(): Promise<void> {
     );
     const context = verifyContext(state, accountSecret, runId, measure);
     for (const verifyCase of verifyCases) {
+      currentCase = verifyCase.name;
+      currentStep = currentCase;
       console.log(`\n${verifyCase.name}`);
       await verifyCase(context);
     }
