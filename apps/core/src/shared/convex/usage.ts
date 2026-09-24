@@ -15,30 +15,34 @@ import { getConvexClient } from "./client.ts";
 export const taskUsage: Storage["taskUsage"] = {
   record: async function (input): Promise<void> {
     try {
-      await getConvexClient().mutation(internal.usage.recordTaskUsage, {
-        accountId: input.accountId as any,
-        endpointId: input.endpointId ?? "",
-        agentId: input.agentId,
-        conversationKey: input.conversationKey,
-        taskId: input.taskId,
-        modelProvider: input.modelProvider,
-        modelId: input.modelId,
-        finishedAt: input.finishedAt,
-        durationMs: input.durationMs,
-        status: input.status,
-        inputTokens: input.inputTokens,
-        outputTokens: input.outputTokens,
-        reasoningTokens: input.reasoningTokens,
-        cachedInputTokens: input.cachedInputTokens,
-        cacheWriteTokens: input.cacheWriteTokens,
-        totalTokens: input.totalTokens,
-        runtimeKind: input.runtimeKind,
-        runtimeWallMs: input.runtimeWallMs,
-        runtimeMemoryMb: input.runtimeMemoryMb,
-        sandboxUsage: input.sandboxUsage,
-        stepCount: input.stepCount,
-        toolCallCount: input.toolCallCount,
-      });
+      await getConvexClient().mutation(
+        internal.usage.recordTaskUsage,
+        {
+          accountId: input.accountId as any,
+          endpointId: input.endpointId ?? "",
+          agentId: input.agentId,
+          conversationKey: input.conversationKey,
+          taskId: input.taskId,
+          modelProvider: input.modelProvider,
+          modelId: input.modelId,
+          finishedAt: input.finishedAt,
+          durationMs: input.durationMs,
+          status: input.status,
+          inputTokens: input.inputTokens,
+          outputTokens: input.outputTokens,
+          reasoningTokens: input.reasoningTokens,
+          cachedInputTokens: input.cachedInputTokens,
+          cacheWriteTokens: input.cacheWriteTokens,
+          totalTokens: input.totalTokens,
+          runtimeKind: input.runtimeKind,
+          runtimeWallMs: input.runtimeWallMs,
+          runtimeMemoryMb: input.runtimeMemoryMb,
+          sandboxUsage: input.sandboxUsage,
+          stepCount: input.stepCount,
+          toolCallCount: input.toolCallCount,
+        },
+        { skipQueue: true },
+      );
     } catch (err) {
       logError("Usage write failed (convex)", {
         error: err instanceof Error ? err.message : String(err),
