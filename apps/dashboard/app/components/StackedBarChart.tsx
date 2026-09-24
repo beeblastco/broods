@@ -70,7 +70,8 @@ export function StackedBarChart<K extends string>({
   const binTotal = (b: ChartBin<K>): number =>
     total ? total(b) : series.reduce((sum, s) => sum + b[s.key], 0);
 
-  const maxTotal = Math.max(...bins.map(binTotal), 1);
+  // Scale to the tallest bar, however small; 1 only keeps an all-zero chart drawable.
+  const maxTotal = Math.max(0, ...bins.map(binTotal)) || 1;
   const barW = innerW / bins.length;
   const gap = Math.min(2, barW * 0.2);
   const hovered = hoverIndex !== null ? bins[hoverIndex] : null;
@@ -209,12 +210,14 @@ export function StackedBarChart<K extends string>({
                 </div>
               );
             })}
-            <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/60 pt-0.5 font-medium">
-              <span className="text-muted-foreground">{totalLabel}</span>
-              <span className="tabular-nums">
-                {formatValue(binTotal(hovered))}
-              </span>
-            </div>
+            {series.length > 1 && (
+              <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/60 pt-0.5 font-medium">
+                <span className="text-muted-foreground">{totalLabel}</span>
+                <span className="tabular-nums">
+                  {formatValue(binTotal(hovered))}
+                </span>
+              </div>
+            )}
           </div>
         </ChartTooltip>
       )}

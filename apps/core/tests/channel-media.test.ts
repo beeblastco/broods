@@ -396,8 +396,14 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    // Ten accepted attachments, two copies each.
+    // Ten accepted attachments, two copies each, metered in one write.
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(20);
+    expect(meterWrites).toEqual([
+      {
+        accountId: ACCOUNT,
+        usage: { ingressGb: (10 * PNG_BYTES.byteLength) / 1e9 },
+      },
+    ]);
     expect(noteText(parts)).toContain("2 further attachment(s)");
   });
 

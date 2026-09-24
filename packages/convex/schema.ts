@@ -1192,7 +1192,7 @@ export const usageQuantityFields = {
   hostedMcpRequests: v.number(),
   storageGbMonths: v.number(),
   egressGb: v.number(),
-  /** Channel attachments core received and stored. Free; shown, never priced. */
+  /** Channel attachments core received. Free; shown, never priced. */
   ingressGb: v.number(),
 };
 
@@ -1207,9 +1207,9 @@ export const usageMetersFields = {
   /** "YYYY-MM", UTC. */
   month: v.string(),
   ...usageQuantityFields,
-  /** Metered from October 2026, so older months have none. */
+  /** Absent on months metered before ingress was. */
   ingressGb: v.optional(v.number()),
-  /** GB stored at the month's latest daily snapshot, zero-byte ones included. */
+  /** GB stored at the month's latest snapshot, zero-byte ones included. */
   storageGb: v.optional(v.number()),
   /** When the 80% warning went out; at most once per month. */
   warnedAt: v.optional(v.number()),
@@ -1225,6 +1225,8 @@ export const usageDaysFields = {
   /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
+  /** GB stored at the day's latest snapshot; absent before one runs. */
+  storageGb: v.optional(v.number()),
   updatedAt: v.number(),
 };
 

@@ -41,7 +41,7 @@ const budgetStatusValidator = v.object({
 const usageAmountsFields = {
   sandboxHours: v.number(),
   hostedMcpCalls: v.number(),
-  storageGb: v.number(),
+  storageGb: v.union(v.number(), v.null()),
   egressGb: v.number(),
   ingressGb: v.number(),
 };
@@ -92,7 +92,8 @@ export const get = internalQuery({
 
 /**
  * Dashboard billing panel: the active org's usage for `month` ("YYYY-MM",
- * default the current one) as amounts, days and percentages. Euro figures
+ * one of the returned `months`; anything else reads the current month) as
+ * amounts, days and percentages. Euro figures
  * never leave the backend, so the plan budgets stay private.
  */
 export const getForActiveOrg = query({

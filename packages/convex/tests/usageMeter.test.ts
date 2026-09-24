@@ -291,23 +291,26 @@ describe("budget", () => {
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();
     const accountId = await seedAccount(t);
-    for (const [day, storageGbMonths] of [
-      [21, 0.1],
-      [22, 0],
+    // Two snapshots on the 21st (a rescheduled cron), then an empty one.
+    for (const [day, hour, storageGbMonths] of [
+      [21, 1, 0.1],
+      [21, 20, 0.1],
+      [22, 1, 0],
     ] as const) {
       await t.mutation(internal.account.budget.record, {
         accountId: accountId,
         usage: { storageGbMonths: storageGbMonths },
-        at: Date.UTC(2026, 8, day),
+        at: Date.UTC(2026, 8, day, hour),
       });
     }
 
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
 
     expect(usage.totals.storageGb).toBe(0);
+    expect(usage.days).toMatchObject([{ day: "2026-09-21", storageGb: 3 }]);
   });
 
-  test("shows a past month with no warning level", async () => {
+  test("reads a past month from the picker, and nothing outside it", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();
@@ -318,17 +321,21 @@ describe("budget", () => {
       at: Date.UTC(2026, 7, 10),
     });
 
-    const usage = await t.run(async (ctx) =>
-      budgetUsage(ctx, accountId, NOW, "2026-08"),
+    const [august, unknown] = await t.run(async (ctx) =>
+      Promise.all([
+        budgetUsage(ctx, accountId, NOW, "2026-08"),
+        budgetUsage(ctx, accountId, NOW, "x"),
+      ]),
     );
 
-    expect(usage).toMatchObject({
+    expect(august).toMatchObject({
       month: "2026-08",
       months: ["2026-09", "2026-08"],
       usedPercent: 160,
-      level: "ok",
+      totals: { storageGb: null },
     });
-    expect(usage.days.map((day) => day.day)).toEqual(["2026-08-10"]);
+    expect(august.days.map((day) => day.day)).toEqual(["2026-08-10"]);
+    expect(unknown.month).toBe("2026-09");
   });
 
   test("splits all usage on a self-hosted install, with no limit", async () => {

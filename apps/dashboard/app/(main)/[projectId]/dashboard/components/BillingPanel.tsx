@@ -126,7 +126,10 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);
-  const budget = useQuery(api.account.budget.getForActiveOrg, {
+  // The plan and its notice always read this month; only the usage section
+  // follows the picker, so switching months never blanks the plan.
+  const budget = useQuery(api.account.budget.getForActiveOrg, {});
+  const shownMonth = useQuery(api.account.budget.getForActiveOrg, {
     month: month,
   });
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
@@ -227,8 +230,8 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         />
       )}
 
-      <UsageSummary budget={budget} onMonthChange={setMonth} />
-      <DailyUsage budget={budget} />
+      <UsageSummary budget={shownMonth} onMonthChange={setMonth} />
+      <DailyUsage budget={shownMonth} />
     </div>
   );
 }
@@ -273,7 +276,6 @@ function DailyUsage({
             series={[{ key: row.key, label: row.label, color: row.color }]}
             formatAxis={(value) => formatAmount(value, row.unit)}
             formatValue={(value) => formatAmount(value, row.unit)}
-            totalLabel={row.label}
           />
         )}
       </div>
@@ -513,8 +515,10 @@ function dailyBins(budget: BudgetUsage): Array<ChartBin<UsageRow["key"]>> {
   });
 }
 
-// An amount in its unit, scaling GB down to MB or KB so small numbers stay readable.
-function formatAmount(value: number, unit: UsageRow["unit"]): string {
+// An amount in its unit, scaling GB down to MB or KB so small numbers stay
+// readable. Null is a storage size no snapshot has measured yet.
+function formatAmount(value: number | null, unit: UsageRow["unit"]): string {
+  if (value === null) return "–";
   if (unit === "count") return Math.round(value).toLocaleString();
   if (unit === "hours") return `${formatDecimal(value)} h`;
   if (value === 0 || value >= 1) return `${formatDecimal(value)} GB`;
