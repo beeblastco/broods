@@ -47,10 +47,10 @@ const PAGE_SIZE = 50;
 type SpanStatus = ObservabilitySpanRow["status"];
 type StatusFilter = "all" | SpanStatus;
 
-// Outcome of one Continue click: in flight, or its result text.
-interface ContinueNote {
-  pending: boolean;
-  text: string;
+// A Continue click on one failed task. `error` is null from the click until
+// the continuation's trace arrives, which then replaces the button.
+interface ContinueAttempt {
+  error: string | null;
 }
 
 // One collapsible payload section, with the count line on its header.
@@ -283,6 +283,9 @@ export interface SpanGroup {
   // across tasks, so a longer task always reads as a longer bar. Running tasks
   // fall back to elapsed window so their bar grows as steps stream in.
   taskDurationMs: number;
+  // The next task or cron in the same conversation. Once it exists the failed
+  // task was picked up, so it links there instead of offering Continue.
+  nextRun: ObservabilitySpanRow | null;
 }
 
 export function TracingPanel({
@@ -301,6 +304,9 @@ export function TracingPanel({
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [continueAttempts, setContinueAttempts] = useState<
+    ReadonlyMap<string, ContinueAttempt>
+  >(new Map());
 
   const { entries, status, history, error, refresh, fetchTrace } =
     useObservabilityStream({
@@ -485,6 +491,68 @@ export function TracingPanel({
     [searchParams, pathname, router],
   );
 
+  // Re-enters the failed task's conversation with `continue: true` on the
+  // stage's run endpoint. Keyed by trace, so the row and the detail panel share
+  // one attempt and a second click cannot fire while the first is live.
+  const continueTask = async (root: ObservabilitySpanRow): Promise<void> => {
+    const settle = (error: string | null): void =>
+      setContinueAttempts((current) =>
+        new Map(current).set(root.traceId, { error: error }),
+      );
+    const endpoint = resolveCoreEndpoint();
+    if (!endpoint.ok) return settle(endpoint.message);
+    if (!apiKey || !root.endpointId || !root.agentId || !root.conversationKey) {
+      return settle(
+        "Cannot continue: the task has no endpoint, agent, or conversation",
+      );
+    }
+    settle(null);
+    try {
+      const response = await fetch(
+        `${endpoint.httpBaseUrl}${agentEndpointPath({
+          endpointId: root.endpointId,
+          projectSlug: projectSlug,
+          stageSlug: stageSlug,
+        })}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            agentId: root.agentId,
+            eventId: `continue-${crypto.randomUUID()}`,
+            conversationKey: root.conversationKey,
+            continue: true,
+          }),
+        },
+      );
+      if (response.ok) return;
+      const payload = (await response.json()) as {
+        error?: string | { message?: string };
+      };
+      const error =
+        typeof payload.error === "string"
+          ? payload.error
+          : payload.error?.message;
+      settle(error ?? `Continue failed (${response.status})`);
+    } catch (err) {
+      settle(err instanceof Error ? err.message : "Continue failed");
+    }
+  };
+
+  const renderContinue = (group: SpanGroup, inRow: boolean): ReactNode =>
+    canContinue(group) && (
+      <ContinueAction
+        attempt={continueAttempts.get(group.root.traceId)}
+        inRow={inRow}
+        nextRun={group.nextRun}
+        onContinue={() => void continueTask(group.root)}
+        onFocusTrace={focusTrace}
+      />
+    );
+
   const clearFilters = (): void => {
     setFilter("");
     setStatusFilter("all");
@@ -560,15 +628,8 @@ export function TracingPanel({
                   <span className="font-mono">
                     {spanMetaLine(selected.span)}
                   </span>
-                  {canContinue(selected.span) && (
-                    <ContinueTaskButton
-                      key={selected.span.traceId}
-                      apiKey={apiKey}
-                      projectSlug={projectSlug}
-                      root={selected.span}
-                      stageSlug={stageSlug}
-                    />
-                  )}
+                  {selected.span === selected.group.root &&
+                    renderContinue(selected.group, false)}
                 </div>
               }
               onClose={() => setSelectedKey(null)}
@@ -582,7 +643,7 @@ export function TracingPanel({
           <colgroup>
             <col className="w-33" />
             <col />
-            <col className="w-24" />
+            <col className="w-40" />
             <col className="w-19" />
             <col className="w-[26%]" />
           </colgroup>
@@ -609,6 +670,7 @@ export function TracingPanel({
                 focusTraceId,
                 group.live,
                 focusTrace,
+                renderContinue(group, true),
               ),
             )}
             {groups.length === 0 && (
@@ -799,11 +861,12 @@ function spanSearchText(span: ObservabilitySpanRow): string {
   return text;
 }
 
-// Only a failed top-level run can be continued: a subtask belongs to its
+// Only a failed top-level task can be continued: a subtask belongs to its
 // parent's run, and a task that finished has nothing to pick up.
-function canContinue(span: ObservabilitySpanRow): boolean {
+function canContinue(group: SpanGroup): boolean {
   return (
-    (span.kind === "task" || span.kind === "cron") && span.status === "error"
+    (group.root.kind === "task" || group.root.kind === "cron") &&
+    group.status === "error"
   );
 }
 
@@ -846,9 +909,21 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
     childrenByTrace.set(span.traceId, children);
   }
 
-  return [...runsByTask.values()]
+  const groups = [...runsByTask.values()]
     .map((runs) => taskGroup(runs, childrenByTrace))
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
+
+  // Walk newest to oldest, so the last task seen per conversation is the next one.
+  const newerRun = new Map<string, ObservabilitySpanRow>();
+  for (const group of groups) {
+    const { root } = group;
+    if (root.kind === "subtask" || !root.conversationKey) continue;
+    const conversation = `${root.agentId}:${root.conversationKey}`;
+    group.nextRun = newerRun.get(conversation) ?? null;
+    newerRun.set(conversation, root);
+  }
+
+  return groups;
 }
 
 /** Whether any run of the task is that trace. */
@@ -958,6 +1033,7 @@ function taskGroup(
     windowStart: windowStart,
     windowSpan: Math.max(1, windowEnd - windowStart),
     taskDurationMs: Math.max(windowEnd - root.startTimeMs, 1),
+    nextRun: null,
   };
 }
 
@@ -1173,93 +1249,68 @@ function TimingChip({
 }
 
 /**
- * Re-enters the failed task's conversation with `continue: true` on the stage's
- * run endpoint. State lives here so a click never re-renders the task list;
- * the parent keys it by trace so the note resets when the selection moves.
+ * Continue for a failed task: the button, "Continuing…" until the continuation's
+ * trace arrives, then a link to that next run. `inRow` renders it as the task
+ * row's inline text action, which must not select the row.
  */
-function ContinueTaskButton({
-  apiKey,
-  projectSlug,
-  root,
-  stageSlug,
+function ContinueAction({
+  attempt,
+  inRow,
+  nextRun,
+  onContinue,
+  onFocusTrace,
 }: {
-  apiKey: string | undefined;
-  projectSlug: string | undefined;
-  root: ObservabilitySpanRow;
-  stageSlug: string | undefined;
+  attempt: ContinueAttempt | undefined;
+  inRow: boolean;
+  nextRun: ObservabilitySpanRow | null;
+  onContinue: () => void;
+  onFocusTrace: (traceId: string) => void;
 }): React.JSX.Element {
-  const [note, setNote] = useState<ContinueNote | null>(null);
-  const continueTask = async (): Promise<void> => {
-    const endpoint = resolveCoreEndpoint();
-    if (!endpoint.ok) {
-      setNote({ pending: false, text: endpoint.message });
-
-      return;
-    }
-    if (!apiKey || !root.endpointId || !root.agentId || !root.conversationKey) {
-      setNote({
-        pending: false,
-        text: "Cannot continue: the task has no endpoint, agent, or conversation",
-      });
-
-      return;
-    }
-    setNote({ pending: true, text: "Continuing…" });
-    try {
-      const response = await fetch(
-        `${endpoint.httpBaseUrl}${agentEndpointPath({
-          endpointId: root.endpointId,
-          projectSlug: projectSlug,
-          stageSlug: stageSlug,
-        })}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            agentId: root.agentId,
-            eventId: `continue-${crypto.randomUUID()}`,
-            conversationKey: root.conversationKey,
-            continue: true,
-          }),
-        },
-      );
-      const payload = (await response.json()) as {
-        status?: string;
-        error?: string | { message?: string };
-      };
-      const error =
-        typeof payload.error === "string"
-          ? payload.error
-          : payload.error?.message;
-      setNote({
-        pending: false,
-        text: response.ok
-          ? `Continued: ${payload.status ?? "accepted"}`
-          : (error ?? `Continue failed (${response.status})`),
-      });
-    } catch (err) {
-      setNote({
-        pending: false,
-        text: err instanceof Error ? err.message : "Continue failed",
-      });
+  const pending = attempt?.error === null && !nextRun;
+  const label = nextRun
+    ? attempt
+      ? "Continued ↗"
+      : "Next run ↗"
+    : pending
+      ? "Continuing…"
+      : attempt
+        ? "Retry"
+        : "Continue";
+  const onClick = (event: React.MouseEvent): void => {
+    event.stopPropagation();
+    if (nextRun) {
+      onFocusTrace(nextRun.traceId);
+    } else {
+      onContinue();
     }
   };
 
   return (
     <>
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        disabled={note?.pending === true}
-        onClick={continueTask}
-      >
-        Continue
-      </Button>
-      {note && <span className="text-muted-foreground">{note.text}</span>}
+      {inRow ? (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onClick}
+          title={attempt?.error ?? undefined}
+          className="cursor-pointer whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:no-underline"
+        >
+          {label}
+        </button>
+      ) : (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={pending}
+          onClick={onClick}
+        >
+          {label}
+        </Button>
+      )}
+      {!inRow && attempt?.error && !nextRun && (
+        <span className="text-destructive">{attempt.error}</span>
+      )}
     </>
   );
 }
@@ -1395,6 +1446,7 @@ function SpanRow({
   taskRunning,
   highlighted,
   onFocusTrace,
+  action,
 }: {
   span: ObservabilitySpanRow;
   depth: number;
@@ -1408,6 +1460,7 @@ function SpanRow({
   taskRunning: boolean;
   highlighted: boolean;
   onFocusTrace: (traceId: string) => void;
+  action: ReactNode;
 }): React.JSX.Element {
   // The task row gets the duration bar, the task status and the subtitle. A
   // later run of the same task nests as a timeline row, and a subagent links to
@@ -1492,11 +1545,14 @@ function SpanRow({
         </span>
       </td>
       <td className="px-3 py-1.5">
-        <RowStatus
-          span={span}
-          group={isTaskRow ? group : undefined}
-          taskRunning={taskRunning}
-        />
+        <span className="flex items-center gap-2">
+          <RowStatus
+            span={span}
+            group={isTaskRow ? group : undefined}
+            taskRunning={taskRunning}
+          />
+          {action}
+        </span>
       </td>
       <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
         {durationMs > 0 ? formatDuration(durationMs) : "—"}
@@ -1590,6 +1646,7 @@ function renderSpanRows(
   focusTraceId: string | null,
   enclosingRootLive: boolean,
   onFocusTrace: (traceId: string) => void,
+  rootAction: ReactNode,
 ): ReactNode[] {
   const key = spanKey(span);
   const isExpanded = expanded.has(key);
@@ -1613,6 +1670,7 @@ function renderSpanRows(
       taskRunning={spanRunning}
       highlighted={isRoot && span.traceId === focusTraceId}
       onFocusTrace={onFocusTrace}
+      action={rootAction}
     />,
   ];
 
@@ -1631,6 +1689,7 @@ function renderSpanRows(
           focusTraceId,
           childRootLive,
           onFocusTrace,
+          null,
         ),
       );
     }
