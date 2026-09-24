@@ -634,6 +634,38 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("refuses a snapshot pin outside the platform image account and ignores image options", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    for (const snapshot of [
+      "arn:aws:lambda:us-east-1:999999999999:microvm-image:foreign",
+      "arn:aws:lambda:eu-west-1:123456789012:microvm-image:curated",
+      "img_curated_python",
+    ]) {
+      await expect(
+        createSandboxExecutor({
+          provider: "lambda",
+          snapshot: snapshot,
+        }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }),
+      ).rejects.toThrow("config.snapshot must name a platform MicroVM image");
+    }
+
+    await createSandboxExecutor({
+      provider: "lambda",
+      options: {
+        imageIdentifier:
+          "arn:aws:lambda:us-east-1:999999999999:microvm-image:foreign",
+        imageVersion: "7",
+      },
+    }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+
+    expect(microvmRunInput()).toMatchObject({
+      imageIdentifier: process.env.MICROVM_IMAGE_IDENTIFIER,
+    });
+    expect(microvmRunInput()).not.toHaveProperty("imageVersion");
+  });
+
   it("runs a stateless MicroVM with default internet egress and no workspace mount", async () => {
     const {
       createSandboxExecutor,

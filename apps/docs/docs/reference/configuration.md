@@ -228,23 +228,23 @@ export const codingAgent = defineAgent({
 
 Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes/index.md).
 
-| Field                  | Default    | Description                                                                          |
-| ---------------------- | ---------- | ------------------------------------------------------------------------------------ |
-| `provider`             | `sandbox`  | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`                           |
-| `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                            |
-| `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted` |
-| `timeout`              | 30         | Seconds per call, max 600                                                            |
-| `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                         |
-| `snapshot`             | provider   | Image or snapshot to boot from                                                       |
-| `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                   |
-| `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                          |
-| `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                            |
-| `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                    |
-| `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                 |
-| `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                      |
-| `memoryLimit`          |            | MB, informational                                                                    |
-| `outputLimitBytes`     | 65536      | Output kept per call                                                                 |
-| `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine               |
+| Field                  | Default    | Description                                                                                                                    |
+| ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `provider`             | `sandbox`  | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`                                                                     |
+| `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                      |
+| `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
+| `timeout`              | 30         | Seconds per call, max 600                                                                                                      |
+| `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                   |
+| `snapshot`             | provider   | Image or snapshot to boot from. On `lambda`, a platform MicroVM image ARN                                                      |
+| `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                             |
+| `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                    |
+| `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                                                                      |
+| `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                                                              |
+| `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                                                           |
+| `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                                                                |
+| `memoryLimit`          |            | MB, informational                                                                                                              |
+| `outputLimitBytes`     | 65536      | Output kept per call                                                                                                           |
+| `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey` |
 
 ```ts
 export const lambdaSandbox = defineSandbox({

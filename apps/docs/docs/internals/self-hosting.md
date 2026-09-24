@@ -58,20 +58,20 @@ bun run deploy                             # scripts/build.ts, then sst deploy
 
 `sst.config.ts` reads only these inputs. Runtime secrets are not SST secrets.
 
-| Variable                      | Required | Notes                                                                                                                                      |
-| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AWS_ACCOUNT_ID`              | yes      | Role ARNs, bucket policies, resource names. No default                                                                                     |
-| `PROJECT_NAME`                | yes      | Name prefix: `<stage>-<project>-<service>-<account>-<region>`; production stages drop the stage                                            |
-| `PROJECT_OWNER_EMAIL`         | yes      | Resource tags                                                                                                                              |
-| `AWS_REGION`                  | CI only  | Defaults to `eu-west-1` locally; required when `CI` is set                                                                                 |
-| `AWS_PROFILE`                 | local    | Ignored when `CI` is set                                                                                                                   |
-| `SST_STAGE`                   | yes      | `dev`, `production-eu-west-1`, ... `production` and `production-*` are treated as production                                               |
-| `CONVEX_URL`                  | yes      | The deploy fails without it                                                                                                                |
-| `CONVEX_DEPLOY_KEY`           | yes      | Deploy key, or the self-hosted admin key                                                                                                   |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | no       | Collector for the sandbox log forwarder. Default `https://otel.beeblast.co`, so set it                                                     |
-| `OTEL_EXPORTER_OTLP_HEADERS`  | no       | `Authorization=Basic ...`. Unset skips the sandbox log forwarder, MicroVM logs stay in CloudWatch                                          |
-| `MCP_TENANT_ISOLATION`        | no       | `true` creates the mcp-runner Lambda in per-tenant mode. AWS must enable it for the account first, and the mode cannot change after create |
-| `SANDBOX_IMAGE_READY`         | no       | `true` imports the existing sandbox ECR repo instead of creating it                                                                        |
+| Variable                      | Required | Notes                                                                                                                                                                                                                    |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AWS_ACCOUNT_ID`              | yes      | Role ARNs, bucket policies, resource names. No default                                                                                                                                                                   |
+| `PROJECT_NAME`                | yes      | Name prefix: `<stage>-<project>-<service>-<account>-<region>`; production stages drop the stage                                                                                                                          |
+| `PROJECT_OWNER_EMAIL`         | yes      | Resource tags                                                                                                                                                                                                            |
+| `AWS_REGION`                  | CI only  | Defaults to `eu-west-1` locally; required when `CI` is set                                                                                                                                                               |
+| `AWS_PROFILE`                 | local    | Ignored when `CI` is set                                                                                                                                                                                                 |
+| `SST_STAGE`                   | yes      | `dev`, `production-eu-west-1`, ... `production` and `production-*` are treated as production                                                                                                                             |
+| `CONVEX_URL`                  | yes      | The deploy fails without it                                                                                                                                                                                              |
+| `CONVEX_DEPLOY_KEY`           | yes      | Deploy key, or the self-hosted admin key                                                                                                                                                                                 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no       | Collector for the sandbox log forwarder. Default `https://otel.beeblast.co`, so set it                                                                                                                                   |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | no       | `Authorization=Basic ...`. Unset skips the sandbox log forwarder, MicroVM logs stay in CloudWatch                                                                                                                        |
+| `MCP_TENANT_ISOLATION`        | no       | Default on: the `mcp-runner` Lambda runs per-tenant. `false` creates `tool-runner` with shared environments, non-production only. AWS must enable tenancy for the account first, and the mode cannot change after create |
+| `SANDBOX_IMAGE_READY`         | no       | `true` imports the existing sandbox ECR repo instead of creating it                                                                                                                                                      |
 
 Stack outputs, which the containers and Convex need:
 

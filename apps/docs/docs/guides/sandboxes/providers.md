@@ -43,8 +43,8 @@ export const box = defineSandbox({
 - `restricted` behaves like `deny-all`, and `allowDomains` or `allowCidrs` are rejected. Under `deny-all` the managed workspace bucket stays reachable.
 - A workspace that brings its own bucket cannot be reached under `deny-all`. Pair it with `allow-all`.
 - The workspace mount cannot append or edit in place. `>>` and in-place edits fail. The `write` and `edit` tools rewrite whole files, so tell the agent not to append.
-- The image, roles and log group are managed by the platform. `options.functionNames`, `options.executionRoleArn` and `options.logGroup` are rejected.
-- Create snapshot is not available. MicroVM images are built ahead of time and selected by `snapshot`.
+- The image, roles and log group are managed by the platform. `options` accepts only `workspaceRoot` and `reservationKey`.
+- Create snapshot is not available. MicroVM images are built ahead of time by the platform. `snapshot` can pin another platform image by ARN, in the same AWS account and region as the default. Any other ARN fails the run.
 - `broods logs --sandbox <uuid>` and the Instances Logs tab show what the guest itself writes to stdout and stderr.
 
 The first exec after a resume can take 1 to 10 seconds while the VM restores.
