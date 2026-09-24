@@ -571,7 +571,7 @@ function directRunBody(
   system?: AgentRunOverrides["system"];
   model?: AgentRunOverrides["model"];
 } {
-  const eventId = input.eventId ?? `${prefix}-${Date.now()}`;
+  const eventId = input.eventId ?? `${prefix}-${crypto.randomUUID()}`;
 
   return {
     agentId: input.agentId,
