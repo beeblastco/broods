@@ -385,16 +385,18 @@ test("client defaults async conversation key to the generated event id", async (
     },
   });
 
-  await client.runAsync({
-    agentId: "agent_1",
-    eventId: "async-123",
-    input: "hello",
-  });
+  await Promise.all([
+    client.runAsync({ agentId: "agent_1", input: "hello" }),
+    client.runAsync({ agentId: "agent_1", input: "hello" }),
+  ]);
 
-  expect(bodies[0]).toMatchObject({
-    eventId: "async-123",
-    conversationKey: "async-123",
-  });
+  const [first, second] = bodies as {
+    conversationKey: string;
+    eventId: string;
+  }[];
+  expect(first!.eventId).toStartWith("async-");
+  expect(first!.conversationKey).toBe(first!.eventId);
+  expect(second!.eventId).not.toBe(first!.eventId);
 });
 
 test("client rejects misrouted async SSE responses without dumping stream internals", async () => {
