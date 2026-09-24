@@ -464,8 +464,21 @@ export class Session {
     };
     const next = await takeNextIngress(owner, settle).catch(
       async (err: unknown): Promise<never> => {
-        if (settle)
-          await settleIngress({ ...owner, ...settle }).catch((): number => 0);
+        if (settle) {
+          await settleIngress({ ...owner, ...settle }).catch(
+            (settleErr: unknown): number => {
+              logError("Turn outcome lost: settle after a failed takeNext", {
+                eventId: this.eventId,
+                error:
+                  settleErr instanceof Error
+                    ? settleErr.message
+                    : String(settleErr),
+              });
+
+              return 0;
+            },
+          );
+        }
         throw err;
       },
     );

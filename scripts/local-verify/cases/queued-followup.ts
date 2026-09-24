@@ -54,9 +54,18 @@ export async function queuedFollowup(context: VerifyContext): Promise<void> {
     },
   );
   assertStep(
-    "follow-up admitted while the streamed run owned the conversation",
+    "follow-up admitted",
     queued !== null,
     streamError ?? "the stream ended before its first part",
+  );
+  // Without a model the streamed run can end before the follow-up lands, so
+  // only a real model run proves the follow-up queued behind it.
+  assertStep(
+    context.hasModelKey
+      ? "follow-up queued behind the streamed run"
+      : `follow-up admitted as ${queued.status} (${MODEL_KEY_HINT})`,
+    !context.hasModelKey || queued.status === "queued",
+    JSON.stringify(queued),
   );
   assertStep(
     context.hasModelKey
