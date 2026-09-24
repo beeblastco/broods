@@ -196,8 +196,8 @@ interface StoredAttachment {
   failure?: string;
   /** What the audio says, or why it is not known. Absent for everything else. */
   transcript?: TranscriptOutcome;
-  /** Bytes read from the channel, metered as ingress. Absent when the read failed. */
-  receivedBytes?: number;
+  /** Bytes read from the channel, metered as ingress even when a later step failed. */
+  receivedBytes: number;
 }
 
 type UserContentPart = Exclude<UserContent, string>[number];
@@ -247,10 +247,7 @@ export async function ingestInboundAttachments(
   );
   // Free to the account; metered once per message so the billing tab can
   // show the data its channels sent in.
-  const receivedBytes = read.reduce(
-    (sum, item) => sum + (item.receivedBytes ?? 0),
-    0,
-  );
+  const receivedBytes = read.reduce((sum, item) => sum + item.receivedBytes, 0);
   if (context.accountId && receivedBytes > 0) {
     recordUsage(context.accountId, { ingressGb: receivedBytes / 1e9 });
   }
@@ -783,6 +780,7 @@ async function storeAttachment(
 ): Promise<StoredAttachment> {
   const claimed = attachment.mimeType;
   const fallbackName = attachment.name ?? `${attachment.type}-${index + 1}`;
+  let receivedBytes = 0;
   try {
     if (
       attachment.size !== undefined &&
@@ -793,6 +791,7 @@ async function storeAttachment(
       );
     }
     const bytes = await readAttachmentBytes(attachment);
+    receivedBytes = bytes.byteLength;
     const mediaType = resolveMediaType(bytes, claimed);
     assertWithinLimit(bytes.byteLength, mediaType);
     const name = mediaFileName(attachment, mediaType, index);
@@ -820,7 +819,7 @@ async function storeAttachment(
         data: bytes,
         ...(reference ? { reference: reference } : {}),
         ...(transcript ? { transcript: transcript } : {}),
-        receivedBytes: bytes.byteLength,
+        receivedBytes: receivedBytes,
       };
     }
     const path = mediaPath(name, context.eventId, index);
@@ -835,7 +834,7 @@ async function storeAttachment(
       path: path,
       ...(url ? { url: url } : { data: bytes }),
       ...(transcript ? { transcript: transcript } : {}),
-      receivedBytes: bytes.byteLength,
+      receivedBytes: receivedBytes,
     };
   } catch (err) {
     const failure = err instanceof Error ? err.message : String(err);
@@ -850,6 +849,7 @@ async function storeAttachment(
       name: fallbackName,
       mediaType: claimed ?? "application/octet-stream",
       failure: failure,
+      receivedBytes: receivedBytes,
     };
   }
 }
