@@ -197,7 +197,8 @@ export async function budgetUsage(
     requestedMonth !== undefined && months.includes(requestedMonth)
       ? requestedMonth
       : currentMonth;
-  const meter = await readMeter(ctx, accountId, month);
+  // Every month in the list is one of `meters` or has no row yet.
+  const meter = meters.find((row) => row.month === month) ?? null;
   const usage = pickUsage(meter);
   const costs = meterCostByCategoryEur(usage);
   const usedEur = meterCostEur(usage);

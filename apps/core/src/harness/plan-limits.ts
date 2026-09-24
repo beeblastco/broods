@@ -3,7 +3,8 @@
  * Every new run (API, channel message, cron fire) asks `admitRun` before it
  * touches a model or a sandbox; every sandbox launch asks
  * `assertSandboxBudget`. Usage only core sees (hosted-MCP invokes, media
- * egress) goes to the meter through `recordUsage`. Nothing is enforced unless
+ * egress, attachment ingress) goes to the meter through `recordUsage`.
+ * Nothing is enforced unless
  * the Convex deployment is the managed service (`BROODS_MANAGED_SERVICE`).
  */
 

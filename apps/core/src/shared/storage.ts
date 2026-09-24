@@ -246,8 +246,9 @@ interface RoleSessionStore {
 }
 
 /**
- * The account's monthly compute budget and the usage only core sees. Sandbox
- * time and storage are metered in Convex itself.
+ * The account's monthly compute budget and the usage only core sees:
+ * hosted-MCP invokes, media egress and attachment ingress. Sandbox time and
+ * storage are metered in Convex itself.
  */
 interface BudgetStore {
   /** Null for an unknown account. */
