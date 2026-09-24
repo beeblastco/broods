@@ -22,6 +22,7 @@ import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
   type SandboxRunMetadata,
   workdirSizeResources,
@@ -77,7 +78,6 @@ import {
   SandboxGoneError,
   sandboxReservationKey,
   shellQuote,
-  stripTrailingSlashes,
   truncateText,
   workspacePath,
 } from "./utils.ts";

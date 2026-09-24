@@ -60,12 +60,17 @@ def Outcome.status : Outcome → Status
   | .completed => .completed
   | .failed => .failed
 
-/-- `requireOwner`: same owner event, same generation, lease not yet past `now`. -/
-def requireOwner (c : Coord) (ownerEventId generation now : Nat) : Bool :=
-  c.ownerEventId == some ownerEventId && c.ownerGeneration == generation &&
+/-- `hasActiveOwner`: an owner whose lease has not ended. A lease ending at `now` is
+still live; the fence and every expiry use this one predicate. -/
+def Coord.live (c : Coord) (now : Nat) : Bool :=
+  c.ownerEventId.isSome &&
     match c.leaseExpiresAt with
     | some t => decide (now ≤ t)
     | none => false
+
+/-- `requireOwner`: same owner event, same generation, a live lease. -/
+def requireOwner (c : Coord) (ownerEventId generation now : Nat) : Bool :=
+  c.ownerEventId == some ownerEventId && c.ownerGeneration == generation && c.live now
 
 /-- The effect of one step on one envelope at time `now`. -/
 def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
@@ -83,21 +88,15 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
   | .expireQueued, e =>
     if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired } else e
   | .expireStaleOwner, e =>
-    match c.leaseExpiresAt with
-    | some t =>
-      if decide (t < now) && c.ownerEventId == some e.eventId && !e.status.terminal then
-        { e with status := .expired }
-      else e
-    | none => e
+    if c.ownerEventId == some e.eventId && !c.live now && !e.status.terminal then
+      { e with status := .expired }
+    else e
   | .maintain, e =>
     if (e.status == .queued || e.status == .processing) && decide (e.expiresAt ≤ now) then
-      match c.leaseExpiresAt with
-      | some t =>
-        if e.status == .processing && decide (now ≤ t) &&
-            e.ownerGeneration == some c.ownerGeneration then
-          { e with expiresAt := t }
-        else { e with status := .expired }
-      | none => { e with status := .expired }
+      if e.status == .processing && c.live now &&
+          e.ownerGeneration == some c.ownerGeneration then
+        { e with expiresAt := c.leaseExpiresAt.getD e.expiresAt }
+      else { e with status := .expired }
     else e
 
 /-- Replays a run: each step with the coordinator and clock it saw. -/
@@ -178,17 +177,12 @@ theorem fence_agreement {c : Coord} {now owner : Nat} {e : Envelope}
     (hrun : e.status = .processing) (hgen : e.ownerGeneration = some c.ownerGeneration) :
     (step c now .maintain e).status = .processing ∧
       (step c now .expireStaleOwner e).status = .processing := by
-  simp only [requireOwner, Bool.and_eq_true, beq_iff_eq] at hfence
-  obtain ⟨-, hlease⟩ := hfence
-  cases ht : c.leaseExpiresAt with
-  | none => simp [ht] at hlease
-  | some t =>
-    simp only [ht, decide_eq_true_eq] at hlease
-    have hlt : ¬ t < now := Nat.not_lt.mpr hlease
-    constructor
-    · simp only [step, ht, hrun, hgen]
-      split <;> simp_all
-    · simp [step, ht, hlt, hrun]
+  simp only [requireOwner, Bool.and_eq_true] at hfence
+  have hlive := hfence.2
+  constructor
+  · simp only [step, hrun, hgen, hlive]
+    split <;> simp_all
+  · simp [step, hlive, hrun, Status.terminal]
 
 /-! ## Regression witnesses -/
 

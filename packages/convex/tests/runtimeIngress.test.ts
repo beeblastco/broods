@@ -902,6 +902,59 @@ describe("runtime ingress", () => {
     ).toBeUndefined();
   });
 
+  test("settles an async run's polling row with its envelope, and a stale owner writes neither", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "owner",
+      conversationKey: conversationKey,
+    });
+    const settle = {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      status: "completed" as const,
+      result: "answer",
+      asyncResult: {
+        eventIds: ["owner"],
+        outcome: { status: "completed" as const, response: "answer" },
+      },
+    };
+
+    await expect(
+      t.mutation(internal.runtimeIngress.settle, {
+        ...settle,
+        ownerGeneration: owner.ownerGeneration! + 1,
+      }),
+    ).rejects.toThrow("Stale conversation owner generation");
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, { eventId: "owner" }),
+    ).toMatchObject({ status: "processing" });
+
+    await t.mutation(internal.runtimeIngress.settle, {
+      ...settle,
+      ownerGeneration: owner.ownerGeneration!,
+    });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_owner",
+      }),
+    ).toMatchObject({ status: "completed" });
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, { eventId: "owner" }),
+    ).toMatchObject({ status: "completed", response: "answer" });
+  });
+
   test("rejects stale owner writes after a new generation acquires the conversation", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

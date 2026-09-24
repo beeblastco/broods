@@ -38,6 +38,7 @@ import {
   type ResolvedAgentSandbox,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
+import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import {
   ingestInboundAttachments,
@@ -432,12 +433,20 @@ export class Session {
     });
   }
 
-  /** Marks this event and every applied contributor terminal. */
+  /**
+   * Marks this event and every applied contributor terminal, with an async
+   * run's polling rows in the same mutation.
+   * @returns false when this session owns no envelope, so nothing was written
+   */
   async settleIngress(
     status: "completed" | "failed",
-    options: { result?: unknown; error?: string } = {},
-  ): Promise<void> {
-    if (this.ownerGeneration === undefined) return;
+    options: {
+      result?: unknown;
+      error?: string;
+      asyncResult?: { eventIds: string[]; outcome: AsyncAgentOutcome };
+    } = {},
+  ): Promise<boolean> {
+    if (this.ownerGeneration === undefined) return false;
     await settleIngress({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
@@ -445,6 +454,8 @@ export class Session {
       status: status,
       ...options,
     });
+
+    return true;
   }
 
   /**

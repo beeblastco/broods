@@ -1,16 +1,19 @@
 /-!
 # Cron runs
 
-A `cronRuns` row under `createRun` / `completeRun` / `failRun`
-(`packages/convex/agent/crons.ts`), settled by core through `settleCronRun`
-(the async worker) and the catch in `startScheduledAgentRun`
-(`apps/core/src/harness/handler.ts`), plus the per-job `crons.lastStatus` that
-`recordInvocation` writes around each fire.
+A `cronRuns` row under `createRun` and `settleRun` (behind `completeRun` /
+`failRun`, `packages/convex/agent/crons.ts`), settled by core through
+`settleCronRun` (the async worker) and the catch in `startScheduledAgentRun`
+(`apps/core/src/harness/handler.ts`). A row is `none` once `removeRunsCascade`
+drained it with its one-time cron.
+
+`crons.lastStatus` is not modelled: `recordInvocation` has no invocation id, so two
+overlapping fires can interleave their writes. Reported, not fixed.
 -/
 
 namespace Broods.Cron
 
-/-- `cronRuns.status` and `crons.lastStatus`. -/
+/-- `cronRuns.status`. -/
 inductive Status where
   | started | completed | failed
   deriving DecidableEq, Repr
@@ -25,47 +28,39 @@ def Settle.status : Settle → Status
   | .complete => .completed
   | .fail => .failed
 
-/-- `completeRun` / `failRun` on a started row. `guarded` is the `status ===
-"started"` check; `false` is the pre-fix code without it. -/
-def settle (guarded : Bool) (s : Status) (x : Settle) : Status :=
-  if guarded && s != .started then s else x.status
+/-- `settleRun`: a drained row and a row already settled are left alone. -/
+def settle (row : Option Status) (x : Settle) : Option Status :=
+  match row with
+  | some .started => some x.status
+  | _ => row
 
 /-- Every settle a run receives, in order. -/
-def settleAll (guarded : Bool) (s : Status) (xs : List Settle) : Status :=
-  xs.foldl (settle guarded) s
-
-/-- `recordInvocation`: the job's latest write wins, whichever fire sent it. -/
-def recordInvocation (_last : Status) (s : Status) : Status := s
+def settleAll (row : Option Status) (xs : List Settle) : Option Status :=
+  xs.foldl settle row
 
 /-! ## Properties -/
 
 /-- A run settles once: its first settle decides the outcome for good. -/
 theorem settle_once (x : Settle) (xs : List Settle) :
-    settleAll true .started (x :: xs) = x.status := by
-  simp only [settleAll, List.foldl_cons]
-  have hx : settle true .started x = x.status := by cases x <;> rfl
-  rw [hx]
+    settleAll (some .started) (x :: xs) = some x.status := by
+  simp only [settleAll, List.foldl_cons, settle]
   induction xs with
   | nil => rfl
   | cons y ys ih =>
     simp only [List.foldl_cons]
-    have hy : settle true x.status y = x.status := by cases x <;> cases y <;> rfl
+    have hy : settle (some x.status) y = some x.status := by cases x <;> rfl
     rw [hy, ih]
 
-/-! ## Regression witnesses -/
+/-- Settling a drained run writes nothing and does not fail. -/
+theorem settle_drained (xs : List Settle) : settleAll none xs = none := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simpa [settleAll, settle] using ih
 
-/-- Before the guard: the worker records `completed`, then `invokeAsyncWorker`
-throws in `startScheduledAgentRun` and its catch rewrites the run to `failed`. -/
-example : settleAll false .started [.complete, .fail] = .failed := by decide
+/-! ## Witnesses -/
 
-/-- With the guard the run keeps its first outcome. -/
-example : settleAll true .started [.complete, .fail] = .completed := by decide
-
-/-- `lastStatus` has no invocation id, so two overlapping fires interleave: the first
-fire's `completed` lands while the second is still running. Reported, not fixed. -/
-example :
-    recordInvocation (recordInvocation (recordInvocation .completed .started) .started)
-      .completed = .completed := by
-  decide
+/-- The worker records `completed`, then `invokeAsyncWorker` throws in
+`startScheduledAgentRun` and its catch sends `failRun`: the run stays completed. -/
+example : settleAll (some .started) [.complete, .fail] = some .completed := by decide
 
 end Broods.Cron

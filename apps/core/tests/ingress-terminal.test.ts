@@ -137,6 +137,8 @@ function terminalSession(actions: string[]): TerminalSession {
     },
     settleIngress: async (status, options) => {
       actions.push(`settle:${status}:${options?.error}`);
+
+      return true;
     },
   };
 }

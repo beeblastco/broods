@@ -61,14 +61,15 @@ def syncMcp (recs : List Record) (stage : Nat) (desired : List Nat) (prune : Boo
       row.stage != stage || desired.contains row.name || !ownedMcp recs stage row.name)
   else upserted
 
-/-- `syncExternalResources`: every upsert, then the prunes. A declared resource
-that fails validation throws before any prune (`valid = false`); the upserts
-that landed before the throw are at most all of them. -/
+/-- `handleManifestSync`: every external upsert, the main manifest sync, then
+`pruneExternalResources`. A declared resource or a manifest that fails validation
+throws before any prune (`valid = false`); the upserts that landed before the throw
+are at most all of them. -/
 def syncExternal (recs : List Record) (stage : Nat) (desired : List Key)
     (desiredMcp : List Nat) (prune valid : Bool) (rows : List Key) (mcp : List McpRow) :
     List Key × List McpRow :=
-  if valid then (syncAccount recs stage desired prune rows, syncMcp recs stage desiredMcp prune mcp)
-  else (syncAccount recs stage desired false rows, syncMcp recs stage desiredMcp false mcp)
+  let p := prune && valid
+  (syncAccount recs stage desired p rows, syncMcp recs stage desiredMcp p mcp)
 
 /-! ## Properties -/
 

@@ -7,12 +7,13 @@ The polling row of an async run (`runtimeAsyncAgentResults`) as
 `handleAsyncWorkerRequest` (`apps/core/src/harness/handler.ts`) and
 `SubagentCoordinator.runTask` (`apps/core/src/harness/subagents.ts`) write it next to
 the run's envelope, and the detached tool row (`runtimeAsyncToolResults`) under
-`updateAsyncToolResult` and `bindAsyncToolResultSandbox`
+`updateAsyncToolResult`, `observeAsyncToolResult` and `bindAsyncToolResultSandbox`
 (`packages/convex/runtime.ts`).
 
-A handler is a list of `Act`s. Any await may throw, so a run is the program plus the
-index of the await that throws, if any; the catch block then runs as `recover`,
-whose own result write may throw too.
+An async run settles its envelope and its polling rows in one `runtimeIngress.settle`
+mutation, so the two change together or not at all. A handler is a list of `Act`s;
+any await may throw, so a run is the program plus the index of the await that
+throws, if any, and the catch block then runs as `recover`.
 -/
 
 namespace Broods.AsyncResults
@@ -24,26 +25,32 @@ inductive AgentStatus where
   | processing | awaitingApproval | awaitingInput | completed | failed
   deriving DecidableEq, Repr
 
-/-- How `runAgentLoopUntilSubagentsIdle` ends, or the no-input early return. -/
+/-- `AsyncAgentOutcome`: how an async run ends. -/
+inductive Finish where
+  | completed | failed | awaitingApproval | awaitingInput
+  deriving DecidableEq, Repr
+
+/-- How `runAgentLoopUntilSubagentsIdle` ends, or the no-input early return. A failed
+loop always reaches `onErrorText`, so it is `error`. -/
 inductive Ending where
-  | noInput | final | error | approval | questions | didFail | silent
+  | noInput | final | error | approval | questions | silent
   deriving DecidableEq, Repr
 
 /-- One statement of a handler. -/
 inductive Act where
-  /-- `markAsyncAgentResult*` / `settleAsyncFailure`: `updateAsyncAgentResult`
-  overwrites the row whatever it held. -/
-  | markResult (s : AgentStatus)
-  /-- `session.settleIngress`: moves the owner's envelope only while it runs. -/
-  | settle (o : Outcome)
-  /-- `settleIngress(...).catch(() => {})`: a failure is swallowed, not thrown. -/
-  | settleQuiet (o : Outcome)
+  /-- `settleAsyncRun` with an owned envelope: `runtimeIngress.settle` writes the
+  envelope and the polling rows in one transaction. -/
+  | settle (f : Finish)
+  /-- `recordAsyncRun`: `updateAsyncAgentResult` on the polling rows only. -/
+  | record (f : Finish)
+  /-- `settleIngress(...).catch(...)` without polling rows: a failure is swallowed. -/
+  | settleEnvelope (o : Outcome)
   /-- `didSettle = true`: an assignment, cannot throw. -/
   | setDidSettle
   /-- An await that touches neither row and handles its own errors. -/
   | safe
-  /-- An await that touches neither row and may throw: cron settle, channel
-  push, `dispatchNextIngress`. -/
+  /-- An await that touches neither row and may throw: cron settle, channel push,
+  `dispatchNextIngress`. -/
   | effect
   deriving DecidableEq, Repr
 
@@ -63,7 +70,6 @@ inductive ToolStatus where
 structure ToolRow where
   status : ToolStatus
   sandboxBound : Bool
-  observed : Bool
   deriving DecidableEq, Repr
 
 /-- The mutations core sends for a detached tool row. `reserved` is what
@@ -72,17 +78,35 @@ inductive ToolCall where
   /-- `markAsyncToolResultCompleted` / `Failed` / `settleAsyncToolResultFromCallback`,
   all with `onlyWhenProcessing: true`. -/
   | settle (s : ToolStatus) (reserved : Bool)
-  /-- `markAsyncToolResultObserved`: `observed: true`, status kept. -/
-  | observe (reserved : Bool)
+  /-- `observeAsyncToolResult`: marks a finished row observed, status untouched. -/
+  | observe
   /-- `bindAsyncToolResultSandbox`. -/
   | bind
   deriving DecidableEq, Repr
 
-/-- The effect of one statement. `settle` is the owner's fenced settle from
-`Broods.Ingress.step` (see `settle_matches_ingress`). -/
+/-- The polling status a finish records. -/
+def Finish.result : Finish → AgentStatus
+  | .completed => .completed
+  | .failed => .failed
+  | .awaitingApproval => .awaitingApproval
+  | .awaitingInput => .awaitingInput
+
+/-- The envelope outcome a finish settles: waiting for approval or input completes
+the turn. -/
+def Finish.envelope : Finish → Outcome
+  | .failed => .failed
+  | _ => .completed
+
+/-- The effect of one statement. A settle is the owner's fenced settle from
+`Broods.Ingress.step` (see `settle_matches_ingress`), with the polling rows in the same
+transaction. -/
 def Act.apply : Act → State → State
-  | .markResult r, s => { s with result := r }
-  | .settle o, s | .settleQuiet o, s =>
+  | .settle f, s =>
+    if s.envelope == .processing then
+      { s with envelope := f.envelope.status, result := f.result }
+    else s
+  | .record f, s => { s with result := f.result }
+  | .settleEnvelope o, s =>
     if s.envelope == .processing then { s with envelope := o.status } else s
   | .setDidSettle, s => { s with didSettle := true }
   | .safe, s | .effect, s => s
@@ -96,56 +120,40 @@ def exec (recover : State → State) : List Act → Option Nat → State → Sta
   | a :: as, some 0, s =>
     match a with
     | .setDidSettle | .safe => exec recover as (some 0) (a.apply s)
-    | .settleQuiet _ => exec recover as none s
+    | .settleEnvelope _ => exec recover as none s
     | _ => recover s
 
-/-- `handleAsyncWorkerRequest` from the moment it owns the run, per ending. `fixed`
-is the current code, polling row first; `false` is the pre-fix ordering. -/
-def program (fixed : Bool) : Ending → List Act
-  | .noInput => [.markResult .failed, .settle .failed, .setDidSettle, .effect, .effect]
-  | .final =>
-    if fixed then [.markResult .completed, .settle .completed, .setDidSettle, .effect, .effect, .effect]
-    else [.setDidSettle, .settle .completed, .markResult .completed, .effect, .effect, .effect]
-  | .error =>
-    if fixed then [.markResult .failed, .settle .failed, .setDidSettle, .effect, .effect, .effect]
-    else [.setDidSettle, .settle .failed, .markResult .failed, .effect, .effect, .effect]
-  | .approval =>
-    if fixed then [.markResult .awaitingApproval, .settle .completed, .setDidSettle, .effect]
-    else [.markResult .awaitingApproval, .setDidSettle, .settle .completed, .effect]
-  | .questions =>
-    if fixed then [.markResult .awaitingInput, .settle .completed, .setDidSettle, .effect]
-    else [.markResult .awaitingInput, .setDidSettle, .settle .completed, .effect]
-  | .didFail =>
-    if fixed then [.markResult .failed, .settleQuiet .failed, .setDidSettle, .effect, .effect]
-    else [.setDidSettle, .settleQuiet .failed, .markResult .failed, .effect, .effect]
+/-- `handleAsyncWorkerRequest` from the moment it owns the run, per ending. -/
+def program : Ending → List Act
+  | .noInput => [.settle .failed, .setDidSettle, .effect, .effect]
+  | .final => [.settle .completed, .setDidSettle, .effect, .effect, .effect]
+  | .error => [.settle .failed, .setDidSettle, .effect, .effect, .effect]
+  | .approval => [.settle .awaitingApproval, .setDidSettle, .effect]
+  | .questions => [.settle .awaitingInput, .setDidSettle, .effect]
   | .silent => []
 
-/-- The catch block. Fixed: `settleAsyncFailure` unless `didSettle` (a throw there,
-`catchMarks = false`, ends the catch), then a quiet failed settle that may itself
-fail (`catchSettles`). Pre-fix ordering: the quiet settle, then an unguarded
-`settleAsyncFailure`. -/
-def recover (fixed catchMarks catchSettles : Bool) (s : State) : State :=
-  let settleQuiet := fun s => if catchSettles then Act.apply (.settleQuiet .failed) s else s
-  if fixed then
-    if s.didSettle then settleQuiet s
-    else if catchMarks then settleQuiet { s with result := .failed }
-    else s
-  else { settleQuiet s with result := .failed }
+/-- The catch block: nothing once the outcome is recorded; otherwise a failed settle,
+and when that fails too (the lease is gone), the polling rows alone
+(`catchRecords`: whether that write lands). -/
+def recover (catchSettles catchRecords : Bool) (s : State) : State :=
+  if s.didSettle then s
+  else if catchSettles then Act.apply (.settle .failed) s
+  else if catchRecords then Act.apply (.record .failed) s
+  else s
 
 /-- Both rows start running: the envelope owns the turn, the row was created pending. -/
 def start : State := ⟨.processing, .processing, false⟩
 
 /-- One async worker run. -/
-def worker (fixed catchMarks catchSettles : Bool) (e : Ending) (throwAt : Option Nat) :
-    State :=
-  exec (recover fixed catchMarks catchSettles) (program fixed e) throwAt start
+def worker (catchSettles catchRecords : Bool) (e : Ending) (throwAt : Option Nat) : State :=
+  exec (recover catchSettles catchRecords) (program e) throwAt start
 
-/-- A subagent run (`runTask` then `completeSuccessfulRun`): mark completed, then
+/-- A subagent run (`runTask` then `completeSuccessfulRun`): record completed, then
 `completeTask`, the settle and the drain, which all catch their own failures.
-Its catch settles failed and `startTask`'s catch marks the row failed. -/
+Its catch settles failed and `startTask`'s catch records the row failed. -/
 def subagent (throwAt : Option Nat) : State :=
-  exec (fun s => { Act.apply (.settleQuiet .failed) s with result := .failed })
-    [.markResult .completed, .safe, .settleQuiet .completed, .safe] throwAt start
+  exec (fun s => { Act.apply (.settleEnvelope .failed) s with result := .failed })
+    [.record .completed, .safe, .settleEnvelope .completed, .safe] throwAt start
 
 /-- The two rows agree: a completed envelope never sits next to a failed or still
 running result, and a failed envelope always has a failed result. -/
@@ -153,25 +161,15 @@ def State.consistent (s : State) : Bool :=
   (s.envelope != .completed || (s.result != .failed && s.result != .processing)) &&
     (s.envelope != .failed || s.result == .failed)
 
-/-- Status route merge (`handler.ts` status handler): the polling status wins while
-waiting or while the envelope has not failed. -/
-def mergedStatus (envelope : Status) (result : AgentStatus) : Sum AgentStatus Status :=
-  match result with
-  | .awaitingApproval | .awaitingInput => .inl result
-  | .processing => if envelope == .failed then .inr envelope else .inl result
-  | _ => .inr envelope
-
-/-- `updateAsyncToolResult` / `bindAsyncToolResultSandbox` on one row. A running job
-whose sandbox reservation is gone settles failed whatever it reported. -/
+/-- `updateAsyncToolResult` / `observeAsyncToolResult` / `bindAsyncToolResultSandbox`
+on one row. A running job whose sandbox reservation is gone settles failed whatever
+it reported. -/
 def ToolRow.update (row : ToolRow) : ToolCall → ToolRow
   | .settle s reserved =>
     if row.status != .processing then row
     else if row.sandboxBound && !reserved then { row with status := .failed }
     else { row with status := s }
-  | .observe reserved =>
-    if row.status == .processing && row.sandboxBound && !reserved then
-      { row with status := .failed, observed := true }
-    else { row with observed := true }
+  | .observe => row
   | .bind => if row.status == .processing then { row with sandboxBound := true } else row
 
 /-- How many calls in `cs` change the row's status. -/
@@ -182,7 +180,7 @@ def ToolRow.changes (row : ToolRow) : List ToolCall → Nat
 
 /-! ## Properties -/
 
-/-- The model's `settle` is the owner's settle in `Broods.Ingress`. -/
+/-- The model's settle moves the envelope as the owner's settle in `Broods.Ingress`. -/
 theorem settle_matches_ingress {c : Broods.Ingress.Coord} {now owner g : Nat} {o : Outcome}
     {e : Broods.Ingress.Envelope} (hfence : Broods.Ingress.requireOwner c owner g now = true)
     (hown : e.eventId = owner) :
@@ -198,22 +196,30 @@ private theorem exec_beyond {r : State → State} :
     simp only [exec]
     exact exec_beyond as k _ (by simp at h; omega)
 
-/-- For every ending, every await that may throw, and whether the catch's own result
-write and settle land, the fixed handler leaves the envelope and the polling row
-consistent. -/
-theorem worker_consistent (e : Ending) (catchMarks catchSettles : Bool)
-    (throwAt : Option Nat) : (worker true catchMarks catchSettles e throwAt).consistent = true := by
+/-- For every ending, every await that may throw, and whether the catch's settle and
+its fallback row write land, the envelope and the polling row agree. -/
+theorem worker_consistent (e : Ending) (catchSettles catchRecords : Bool)
+    (throwAt : Option Nat) : (worker catchSettles catchRecords e throwAt).consistent = true := by
   unfold worker
   match throwAt with
-  | none => cases e <;> cases catchMarks <;> cases catchSettles <;> decide
-  | some 0 | some 1 | some 2 | some 3 | some 4 | some 5 =>
-    cases e <;> cases catchMarks <;> cases catchSettles <;> decide
-  | some (k + 6) =>
+  | none => cases e <;> cases catchSettles <;> cases catchRecords <;> decide
+  | some 0 | some 1 | some 2 | some 3 | some 4 =>
+    cases e <;> cases catchSettles <;> cases catchRecords <;> decide
+  | some (k + 5) =>
     rw [exec_beyond _ _ _ (by cases e <;> simp [program])]
-    cases e <;> cases catchMarks <;> cases catchSettles <;> decide
+    cases e <;> cases catchSettles <;> cases catchRecords <;> decide
+
+/-- Once a run's outcome is recorded, no later throw changes either row. -/
+theorem worker_settled_final (e : Ending) (catchSettles catchRecords : Bool) (k : Nat) :
+    worker catchSettles catchRecords e (some (k + 1)) =
+      worker catchSettles catchRecords e none := by
+  unfold worker
+  match k with
+  | 0 | 1 | 2 | 3 => cases e <;> cases catchSettles <;> cases catchRecords <;> decide
+  | k + 4 => rw [exec_beyond _ _ _ (by cases e <;> simp [program])]
 
 /-- A subagent's completed result is never turned into a failure, since everything
-after the mark handles its own errors. -/
+after the record handles its own errors. -/
 theorem subagent_consistent (throwAt : Option Nat) : (subagent throwAt).consistent = true := by
   unfold subagent
   match throwAt with
@@ -250,25 +256,16 @@ theorem tool_settles_once (row : ToolRow) (cs : List ToolCall) : row.changes cs 
       have hdone : (row.update c).status ≠ .processing := fun h => hc (h.trans hp.symm)
       simp [hc, tool_no_changes hdone]
 
-/-! ## Regression witnesses -/
+/-! ## Witnesses -/
 
-/-- Before the fix: the run completes, the channel push throws, and the catch marks
-the polling row failed next to a completed envelope, which the status route reports
-as `completed` with its response erased. -/
-example :
-    worker false true true .final (some 4) = ⟨.completed, .failed, true⟩ ∧
-      mergedStatus .completed .failed = .inr .completed := by
-  decide
+/-- The run completes and the channel push throws: both rows stay completed. -/
+example : worker true true .final (some 3) = ⟨.completed, .completed, true⟩ := by decide
 
-/-- The same throw after the fix leaves both rows completed. -/
-example : worker true true true .final (some 4) = ⟨.completed, .completed, true⟩ := by decide
+/-- The settle itself throws: the catch fails both rows. -/
+example : worker true true .final (some 0) = ⟨.failed, .failed, false⟩ := by decide
 
-/-- A throw between the result write and the envelope settle fails both rows. -/
-example : worker true true true .final (some 1) = ⟨.failed, .failed, false⟩ := by decide
-
-/-- The catch's own result write throwing leaves the envelope running for the lease
-to expire, never failed next to a running row. -/
-example : worker true false true .final (some 0) = ⟨.processing, .processing, false⟩ := by
-  decide
+/-- The lease is gone, so the catch's settle fails too: the row alone records the
+failure and the envelope expires with the lease. -/
+example : worker false true .final (some 0) = ⟨.processing, .failed, false⟩ := by decide
 
 end Broods.AsyncResults

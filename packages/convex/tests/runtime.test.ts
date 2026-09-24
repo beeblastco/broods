@@ -322,7 +322,7 @@ describe("runtime persistence", () => {
     ).toEqual({ deleted: 1, hasMore: false });
   });
 
-  test("marking an async tool row observed never moves its status", async (): Promise<void> => {
+  test("observing an async tool row marks a finished row and leaves a running one", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     await t.mutation(internal.runtime.createAsyncToolResult, {
@@ -333,18 +333,34 @@ describe("runtime persistence", () => {
       toolCallId: "call-1",
       input: {},
     });
+    await t.mutation(internal.runtime.observeAsyncToolResult, {
+      resultId: "result-observed",
+    });
+    expect(
+      await t.query(internal.runtime.getAsyncToolResult, {
+        resultId: "result-observed",
+      }),
+    ).toMatchObject({ status: "processing" });
+    expect(
+      (
+        await t.query(internal.runtime.getAsyncToolResult, {
+          resultId: "result-observed",
+        })
+      )?.observed,
+    ).toBeUndefined();
+
     await t.mutation(internal.runtime.updateAsyncToolResult, {
       resultId: "result-observed",
       status: "completed",
       response: { ok: true },
       onlyWhenProcessing: true,
     });
-
+    await t.mutation(internal.runtime.observeAsyncToolResult, {
+      resultId: "result-observed",
+    });
     expect(
-      await t.mutation(internal.runtime.updateAsyncToolResult, {
+      await t.query(internal.runtime.getAsyncToolResult, {
         resultId: "result-observed",
-        status: "processing",
-        observed: true,
       }),
     ).toMatchObject({
       status: "completed",
@@ -479,10 +495,8 @@ describe("runtime persistence", () => {
         resultId: "result-3",
       }),
     ).toBeNull();
-    await t.mutation(internal.runtime.updateAsyncToolResult, {
+    await t.mutation(internal.runtime.observeAsyncToolResult, {
       resultId: "result-1",
-      status: "completed",
-      observed: true,
     });
     expect(
       await t.query(internal.runtime.getAsyncToolResult, {

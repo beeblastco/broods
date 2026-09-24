@@ -26,8 +26,7 @@ import {
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
-  markAsyncAgentResultCompleted,
-  markAsyncAgentResultFailed,
+  recordAsyncAgentResult,
 } from "./async-agent-result.ts";
 import {
   readAgentFullStream,
@@ -599,8 +598,8 @@ export class SubagentCoordinator {
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
-    await markAsyncAgentResultCompleted({
-      eventId: task.eventId,
+    await recordAsyncAgentResult(task.eventId, {
+      status: "completed",
       response: finalResponse,
     });
     await this.completeTask({
@@ -805,8 +804,8 @@ export class SubagentCoordinator {
     const shouldInjectToParent = this.pending.has(completion.taskId);
 
     if (completion.status === "failed") {
-      await markAsyncAgentResultFailed({
-        eventId: completion.eventId,
+      await recordAsyncAgentResult(completion.eventId, {
+        status: "failed",
         error: completion.error ?? "Subagent task failed",
       }).catch((error) => {
         logError("Failed to mark subagent task failed", {

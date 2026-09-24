@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   getAsyncAgentResult,
-  markAsyncAgentResultAwaitingApproval,
-  markAsyncAgentResultCompleted,
+  recordAsyncAgentResult,
 } from "../src/harness/async-agent-result.ts";
 import {
   createPendingAsyncToolResult,
@@ -41,12 +40,12 @@ describe("async agent result persistence", () => {
         input: { shell: "true" },
       },
     ];
-    await markAsyncAgentResultAwaitingApproval({
-      eventId: "event-1",
+    await recordAsyncAgentResult("event-1", {
+      status: "awaiting_approval",
       approvals: approvals,
     });
-    await markAsyncAgentResultCompleted({
-      eventId: "event-1",
+    await recordAsyncAgentResult("event-1", {
+      status: "completed",
       response: { answer: "done" },
     });
     expect(mutationMock.mock.calls[0]).toEqual([

@@ -24,9 +24,9 @@ inductive Kind where
   | agent | workspace | sandbox | cron | skill | hook | mcp | policy | channelRecord
   deriving DecidableEq, Repr
 
-/-- What equality sees of a resource config: its settings, the inline bytes
-(`bundle`, `contentBase64`), and the `{ bundleStorageId, sha256 }` pair a large
-MCP bundle is uploaded as. -/
+/-- What equality sees of a resource config: its settings (every plain key,
+including an artifact's `sha256`), the inline bytes (`bundle`, `contentBase64`),
+and the `bundleStorageId` handle a large MCP bundle is uploaded as. -/
 structure Config where
   settings : Nat
   bundle : Option Nat
@@ -108,8 +108,8 @@ def diff (localM remote : Manifest) : List Entry :=
     (ul.filter fun x => !pairs.any (·.1.key == x.key)).map (fun x => ⟨.create, x.kind, x.name⟩) ++
     (ur.filter fun y => !pairs.any (·.2.key == y.key)).map (fun y => ⟨.delete, y.kind, y.name⟩)
 where
-  /-- `snapshotResource`: artifact bytes and the large-bundle storage pair of
-  skills, hooks and MCP servers are not compared. -/
+  /-- `snapshotResource`: the artifact bytes and upload handle of skills, hooks
+  and MCP servers are not compared; their `sha256` is. -/
   snapshot (r : Resource) : Resource :=
     if r.kind.external then { r with config := { r.config with bundle := none, storage := none } }
     else r
@@ -139,7 +139,7 @@ def sync (store : Resource → Resource) (m : Manifest) (prune : Bool) (s : Stat
   else upserted
 
 /-- `externalizeLargeMcpBundles`: after the diff, a large MCP bundle is uploaded and
-replaced by its storage pair. -/
+replaced by its storage handle; its `sha256` stays. -/
 def upload (large : Nat → Bool) (r : Resource) : Resource :=
   match r.kind, r.config.bundle with
   | .mcp, some b =>
@@ -356,12 +356,20 @@ theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Res
 
 /-! ## Findings, fixed, as executable witnesses -/
 
-/-- A hosted MCP server now converges: small bundles are stored without their
-bytes, large ones as a storage pair, and the diff compares neither. -/
+/-- A hosted MCP server converges: small bundles are stored without their bytes,
+large ones as a storage handle, and the diff compares neither. -/
 example :
     let m : Manifest := [⟨.mcp, 1, ⟨0, some 42, none⟩⟩]
     diff m (read (sync (storeReal (· > 10) id) m true [])) = [] ∧
       diff m (read (sync (storeReal (· > 100) id) m true [])) = [] := by
+  decide
+
+/-- An edited hosted MCP or hook bundle carries a new `sha256`, so the diff shows it. -/
+example :
+    diff [⟨.mcp, 1, ⟨5, some 43, none⟩⟩] [⟨.mcp, 1, ⟨4, none, none⟩⟩] =
+        [⟨.update, .mcp, 1⟩] ∧
+      diff [⟨.hook, 1, ⟨5, some 43, none⟩⟩] [⟨.hook, 1, ⟨4, none, none⟩⟩] =
+        [⟨.update, .hook, 1⟩] := by
   decide
 
 /-- The server renames an undeclared CLI agent with the same content instead of

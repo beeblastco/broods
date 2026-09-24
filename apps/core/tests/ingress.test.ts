@@ -271,7 +271,7 @@ describe("async turn that throws after it settles", (): void => {
       return null;
     }) as never);
     spyOn(runtime, "query").mockResolvedValue(null as never);
-    spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockRejectedValue(
       new Error("takeNext failed"),
     );
@@ -313,11 +313,15 @@ describe("async turn that throws after it settles", (): void => {
     }).catch((err: unknown): unknown => err);
 
     expect(error).toEqual(new Error("takeNext failed"));
+    expect(settle.mock.calls.map(([options]) => options.asyncResult)).toEqual([
+      {
+        eventIds: ["event-1"],
+        outcome: { status: "completed", response: "answer" },
+      },
+    ]);
     expect(
-      writes
-        .filter((write) => write.name === "updateAsyncAgentResult")
-        .map((write) => write.status),
-    ).toEqual(["completed"]);
+      writes.filter((write) => write.name === "updateAsyncAgentResult"),
+    ).toEqual([]);
   });
 });
 

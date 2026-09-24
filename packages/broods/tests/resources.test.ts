@@ -1930,31 +1930,51 @@ test("diffManifests treats env refs and remote placeholders as equal", () => {
   expect(diffManifests(local, remote)).toEqual([]);
 });
 
-test("diffManifests ignores hosted MCP bundle bytes the server does not keep", () => {
+test("diffManifests compares hosted MCP and hook bundles by digest, not bytes", () => {
   const manifest = (
+    kind: "mcp" | "hook",
     config: Record<string, unknown>,
   ): Parameters<typeof diffManifests>[0] => ({
     version: 1,
     project: "app",
     stage: "dev",
-    resources: [
-      {
-        kind: "mcp",
-        name: "small",
-        config: { transport: "hosted", ...config },
-      },
-    ],
+    resources: [{ kind: kind, name: "small", config: config }],
   });
-  const local = manifest({ bundle: "export default {}" });
+  const local = manifest("mcp", {
+    transport: "hosted",
+    bundle: "export default {}",
+    sha256: "ab",
+  });
 
   // Small bundles are stored without their bytes, large ones as a storage id.
-  expect(diffManifests(local, manifest({}))).toEqual([]);
   expect(
-    diffManifests(local, manifest({ bundleStorageId: "kg2", sha256: "ab" })),
+    diffManifests(
+      local,
+      manifest("mcp", { transport: "hosted", sha256: "ab" }),
+    ),
   ).toEqual([]);
-  expect(diffManifests(local, manifest({ transport: "http" }))).toEqual([
-    { operation: "update", kind: "mcp", name: "small" },
-  ]);
+  expect(
+    diffManifests(
+      local,
+      manifest("mcp", {
+        transport: "hosted",
+        bundleStorageId: "kg2",
+        sha256: "ab",
+      }),
+    ),
+  ).toEqual([]);
+  expect(
+    diffManifests(
+      local,
+      manifest("mcp", { transport: "hosted", sha256: "cd" }),
+    ),
+  ).toEqual([{ operation: "update", kind: "mcp", name: "small" }]);
+  expect(
+    diffManifests(
+      manifest("hook", { events: [], bundle: "b2", sha256: "cd" }),
+      manifest("hook", { events: [], sha256: "ab" }),
+    ),
+  ).toEqual([{ operation: "update", kind: "hook", name: "small" }]);
 });
 
 test("writeGeneratedFiles creates Convex-style typed resource references", async () => {

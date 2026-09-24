@@ -15,6 +15,7 @@ import {
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
 } from "../shared/runtime-keys.ts";
+import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 
 export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -447,7 +448,10 @@ export async function releaseIngressOwner(owner: LiveOwner): Promise<void> {
   forgetOwner(owner);
 }
 
-/** Settles every envelope applied to one active event under the fencing token. */
+/**
+ * Settles every envelope applied to one active event under the fencing token,
+ * and an async run's polling rows in the same mutation.
+ */
 export function settleIngress(options: {
   conversationKey: string;
   ownerEventId: string;
@@ -455,6 +459,7 @@ export function settleIngress(options: {
   status: "completed" | "failed";
   result?: unknown;
   error?: string;
+  asyncResult?: { eventIds: string[]; outcome: AsyncAgentOutcome };
 }): Promise<number> {
   return runtime.mutate("settleIngress", options);
 }

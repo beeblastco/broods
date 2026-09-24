@@ -118,7 +118,8 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
   ): Promise<Response | undefined> {
     // Every decision below and the upstream see one path, so a trailing slash
     // never moves a request to the other plane.
-    const pathname = normalizePathname(new URL(request.url).pathname);
+    const url = new URL(request.url);
+    const pathname = normalizePathname(url.pathname);
 
     if (
       (pathname === "/" || pathname === "/healthz") &&
@@ -305,6 +306,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       return proxyHttp(request, [config.configBaseUrl], {
         ...config.proxyOptions,
         requestId: requestId,
+        path: `${pathname}${url.search}`,
       });
     }
 
@@ -317,6 +319,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
     return proxyHttp(request, config.coreBaseUrls, {
       ...config.proxyOptions,
       requestId: requestId,
+      path: `${pathname}${url.search}`,
     });
   }
 

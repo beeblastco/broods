@@ -39,6 +39,7 @@ export const runtimeMutations = {
   deferSandboxReservations: internal.runtime.deferSandboxReservations,
   deleteAccountRuntimeData: internal.runtime.deleteAccountRuntimeData,
   deleteSandboxReservation: internal.runtime.deleteSandboxReservation,
+  observeAsyncToolResult: internal.runtime.observeAsyncToolResult,
   releaseClaim: internal.runtime.releaseClaim,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   saveHarnessSession: internal.runtime.saveHarnessSession,

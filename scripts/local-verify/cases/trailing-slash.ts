@@ -1,4 +1,4 @@
-import { assertStep, type VerifyContext } from "../harness.ts";
+import { assertStep, probeHttp, type VerifyContext } from "../harness.ts";
 
 interface Answer {
   status: number;
@@ -15,6 +15,7 @@ export async function trailingSlash(context: VerifyContext): Promise<void> {
     const response = await fetch(`${context.gatewayUrl}${path}`, {
       method: method,
       headers: { Authorization: `Bearer ${context.accountSecret}` },
+      signal: AbortSignal.timeout(10_000),
     });
 
     return { status: response.status, body: await response.text() };
@@ -27,20 +28,21 @@ export async function trailingSlash(context: VerifyContext): Promise<void> {
   assertStep(
     "a config path with a trailing slash answers like the bare one",
     bare.status === 200 && slashed.status === 200 && slashed.body === bare.body,
-    `${bare.status} ${slashed.status} ${slashed.body.slice(0, 200)}`,
+    `${bare.status} ${detail(slashed)}`,
   );
 
-  const health = await send("GET", "/healthz/");
-  assertStep(
-    "/healthz/ is the health check",
-    health.status === 200,
-    `${health.status} ${health.body.slice(0, 200)}`,
-  );
+  const health = await probeHttp(`${context.gatewayUrl}/healthz/`);
+  assertStep("/healthz/ is the health check", health === 200, String(health));
 
   const internal = await send("POST", "/v1/cron-runs//");
   assertStep(
     "an internal core path stays a 404 with trailing slashes",
     internal.status === 404,
-    `${internal.status} ${internal.body.slice(0, 200)}`,
+    detail(internal),
   );
+}
+
+/** A failed step's detail: the status and the start of the body. */
+function detail(answer: Answer): string {
+  return `${answer.status} ${answer.body.slice(0, 200)}`;
 }

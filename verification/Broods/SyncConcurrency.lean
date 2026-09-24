@@ -6,7 +6,8 @@ import Broods.Sync
 `handleManifestSync` (`packages/convex/cli/httpRoutes.ts`) is an action, not a
 transaction: it writes the stage's rows in separate mutations, first
 `recordExternalResourcesBySecretHash` (skills, hooks and MCP snapshots), then
-`syncManifestBySecretHash` (everything else). The server has no version or
+`syncManifestBySecretHash` (everything else), and with prune a second record that
+drops what the manifest no longer declares. The server has no version or
 compare-and-set, so two `dev` sessions or deployers on one stage interleave
 mutation by mutation. Each mutation is serializable on its own.
 -/
@@ -44,8 +45,10 @@ def apply (store : Resource → Resource) : Step → Server → Server
   | .record m p, s => { s with ext := sync store (extPart m) p s.ext }
   | .main m p, s => { s with main := sync store (mainPart m) p s.main }
 
-/-- One PUT, in `handleManifestSync` order. -/
-def put (m : Manifest) (prune : Bool) : List Step := [.record m prune, .main m prune]
+/-- One PUT, in `handleManifestSync` order: the record prunes only after the main
+sync succeeded. -/
+def put (m : Manifest) (prune : Bool) : List Step :=
+  [.record m false, .main m prune] ++ if prune then [.record m true] else []
 
 /-- Runs mutations in the order the server committed them. -/
 def run (store : Resource → Resource) (steps : List Step) (s : Server) : Server :=
@@ -116,9 +119,11 @@ theorem serial_last_writer (hkey : ∀ r, (store r).key = r.key)
     diff (extPart mB) (read (run store (put mA pA ++ put mB true) s).ext) = [] ∧
       diff (mainPart mB) (read (run store (put mA pA ++ put mB true) s).main) = [] := by
   constructor
-  · have := last_record_wins hkey hsnap hu (put mA pA) [.main mB true] s (by simp [Step.isRecord])
+  · have := last_record_wins hkey hsnap hu (put mA pA ++ [.record mB false, .main mB true]) []
+      s (by simp)
     simpa [put] using this
-  · have := last_main_wins hkey hsnap hu (put mA pA ++ [.record mB true]) [] s (by simp)
+  · have := last_main_wins hkey hsnap hu (put mA pA ++ [.record mB false]) [.record mB true] s
+      (by simp [Step.isRecord])
     simpa [put] using this
 
 end
@@ -130,7 +135,8 @@ to A's agents. -/
 example :
     let mA : Manifest := [⟨.hook, 1, ⟨0, none, none⟩⟩, ⟨.agent, 1, ⟨0, none, none⟩⟩]
     let mB : Manifest := [⟨.hook, 2, ⟨0, none, none⟩⟩, ⟨.agent, 2, ⟨0, none, none⟩⟩]
-    let s := run id [.record mA true, .record mB true, .main mB true, .main mA true] ⟨[], []⟩
+    let s := run id [.record mA false, .record mB false, .main mB true, .main mA true,
+      .record mA true, .record mB true] ⟨[], []⟩
     readAll s = [⟨.hook, 2, ⟨0, none, none⟩⟩, ⟨.agent, 1, ⟨0, none, none⟩⟩] ∧
       diff mA (readAll s) ≠ [] ∧ diff mB (readAll s) ≠ [] := by
   decide

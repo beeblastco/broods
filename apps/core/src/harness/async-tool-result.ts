@@ -142,13 +142,7 @@ export async function markAsyncToolResultFailed(options: {
 export async function markAsyncToolResultObserved(
   resultId: string,
 ): Promise<void> {
-  const row = await getAsyncToolResult(resultId);
-  if (row && row.status !== "processing")
-    await runtime.mutate("updateAsyncToolResult", {
-      resultId: resultId,
-      status: row.status,
-      observed: true,
-    });
+  await runtime.mutate("observeAsyncToolResult", { resultId: resultId });
 }
 export async function sealDetachedAsyncToolGroup(
   parentEventId: string,

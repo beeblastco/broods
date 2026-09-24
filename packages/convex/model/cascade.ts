@@ -9,8 +9,7 @@ import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
-import { deleteCron, unregisterSchedule } from "./cronSchedules";
-import { cronsInProject } from "./projectScope";
+import { unregisterSchedule } from "./cronSchedules";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 // One bounded read per account-scoped table. Each names the index whose
@@ -277,13 +276,7 @@ export async function purgeProject(
   ctx: MutationCtx,
   projectId: Id<"projects">,
 ): Promise<void> {
-  // Crons hang off the project's agents, so gather them before the stage
-  // cascade deletes those agents. Rows and their schedules go now, in this
-  // transaction; run history can exceed one transaction, so a scheduled
-  // mutation drains it in bounded batches after this commits.
-  const crons = await cronsForProject(ctx, projectId);
-  for (const cron of crons) await deleteCron(ctx, cron);
-
+  // Each stage's cascade deletes its agents, and each agent its crons.
   const stages = await ctx.db
     .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
@@ -414,21 +407,4 @@ export async function purgeUser(
   for (const reveal of cliReveals) await ctx.db.delete(reveal._id);
 
   await ctx.db.delete(user._id);
-}
-
-// Crons are account-scoped, so the project's org resolves the account that
-// owns them.
-async function cronsForProject(
-  ctx: MutationCtx,
-  projectId: Id<"projects">,
-): Promise<Doc<"crons">[]> {
-  const project = await ctx.db.get(projectId);
-  if (!project) return [];
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
-    .unique();
-  if (!account) return [];
-
-  return await cronsInProject(ctx, projectId, account._id);
 }

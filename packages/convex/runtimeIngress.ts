@@ -13,7 +13,12 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { isPlainObject } from "./model/objects";
-import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
+import {
+  asyncAgentOutcomeValidator,
+  conversationEventArgs,
+  conversationEventsFromArgs,
+  writeAsyncAgentResult,
+} from "./runtime";
 import { ingressModeValidator, ingressStatusValidator } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 
@@ -612,8 +617,8 @@ export const maintain = internalMutation({
       const coordinator = await getCoordinator(ctx, row.conversationKey);
       if (
         row.status === "processing" &&
-        coordinator?.leaseExpiresAt &&
-        coordinator.leaseExpiresAt >= now &&
+        coordinator &&
+        hasActiveOwner(coordinator, now) &&
         row.ownerGeneration === coordinator.ownerGeneration
       ) {
         // The owner is alive. Move the row off the head of the due range, or
@@ -640,8 +645,7 @@ export const maintain = internalMutation({
       } else if (
         coordinator?.ownerEventId &&
         row.ownerGeneration === coordinator.ownerGeneration &&
-        coordinator.leaseExpiresAt !== undefined &&
-        coordinator.leaseExpiresAt < now
+        !hasActiveOwner(coordinator, now)
       ) {
         await ctx.db.patch(coordinator._id, {
           ownerEventId: undefined,
@@ -808,7 +812,11 @@ export const renewOwner = internalMutation({
   },
 });
 
-/** Settles every envelope whose work was applied to the current owner event. */
+/**
+ * Settles every envelope whose work was applied to the current owner event.
+ * An async run passes its polling rows as `asyncResult`, so they settle in the
+ * same transaction and can never disagree with the envelope.
+ */
 export const settle = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -817,12 +825,24 @@ export const settle = internalMutation({
     status: v.union(v.literal("completed"), v.literal("failed")),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
+    asyncResult: v.optional(
+      v.object({
+        eventIds: v.array(v.string()),
+        outcome: asyncAgentOutcomeValidator,
+      }),
+    ),
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const coordinator = await requireOwner(ctx, args);
+    const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
+    if (args.asyncResult) {
+      for (const eventId of args.asyncResult.eventIds) {
+        await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
+      }
+    }
 
-    return settleAppliedEnvelopes(ctx, coordinator, args);
+    return settled;
   },
 });
 
@@ -1166,8 +1186,7 @@ async function expireStaleOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
 ): Promise<void> {
-  if (!coordinator.ownerEventId || !coordinator.leaseExpiresAt) return;
-  if (coordinator.leaseExpiresAt >= now) return;
+  if (!coordinator.ownerEventId || hasActiveOwner(coordinator, now)) return;
   const envelope = await ctx.db
     .query("runtimeIngressEnvelopes")
     .withIndex("by_eventId", (q) => q.eq("eventId", coordinator.ownerEventId!))
@@ -1198,11 +1217,17 @@ async function getCoordinator(
     .unique();
 }
 
-/** Returns whether the coordinator currently has an unexpired owner. */
+/**
+ * Whether the coordinator has an owner whose lease has not ended. A lease that
+ * ends this millisecond is still live; the fence and every expiry agree on it.
+ */
 function hasActiveOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
-): boolean {
+): coordinator is Doc<"runtimeConversationCoordinators"> & {
+  ownerEventId: string;
+  leaseExpiresAt: number;
+} {
   return Boolean(
     coordinator.ownerEventId &&
     coordinator.leaseExpiresAt &&
@@ -1440,8 +1465,7 @@ async function requireOwner(
     !coordinator ||
     coordinator.ownerEventId !== options.ownerEventId ||
     coordinator.ownerGeneration !== options.ownerGeneration ||
-    !coordinator.leaseExpiresAt ||
-    coordinator.leaseExpiresAt < now
+    !hasActiveOwner(coordinator, now)
   ) {
     throw new Error("Stale conversation owner generation");
   }

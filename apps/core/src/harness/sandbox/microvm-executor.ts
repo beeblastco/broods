@@ -36,6 +36,7 @@ import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getObservabilityContext } from "../../shared/otel.ts";
+import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -78,7 +79,6 @@ import {
   SandboxCapacityError,
   sandboxReservationKey,
   shellQuote,
-  stripTrailingSlashes,
   truncateText,
 } from "./utils.ts";
 

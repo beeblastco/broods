@@ -7,17 +7,18 @@ import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
-/** Artifact bytes the server never keeps, at any depth of a config. */
-const ARTIFACT_KEYS: ReadonlySet<string> = new Set(["contentBase64", "bundle"]);
 /**
- * The top of an artifact config also drops the `{ bundleStorageId, sha256 }`
- * a large MCP bundle is uploaded as after the diff.
+ * Keys the server never keeps: artifact bytes, and the upload handle a large
+ * MCP bundle is swapped for after the diff. Each artifact's sha256 stays, so a
+ * content change still shows as an update.
  */
-const TOP_ARTIFACT_KEYS: ReadonlySet<string> = new Set([
-  ...ARTIFACT_KEYS,
+const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
+  "bundle",
   "bundleStorageId",
-  "sha256",
+  "contentBase64",
 ]);
+/** Resource kinds whose config carries artifact bytes the server keeps apart. */
+const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
 
 export interface SyncClientOptions {
   /**
@@ -693,17 +694,9 @@ function snapshotResource(
   resource: { kind: string; config: unknown } & Record<string, unknown>,
 ): unknown {
   const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (
-    resource.kind !== "skill" &&
-    resource.kind !== "hook" &&
-    resource.kind !== "mcp"
-  )
-    return normalized;
+  if (!ARTIFACT_KINDS.has(resource.kind)) return normalized;
 
-  return {
-    ...normalized,
-    config: stripArtifactContent(normalized.config, TOP_ARTIFACT_KEYS),
-  };
+  return { ...normalized, config: stripArtifactContent(normalized.config) };
 }
 
 function sortValue(value: unknown): unknown {
@@ -723,17 +716,12 @@ function stableJson(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }
 
-function stripArtifactContent(
-  value: unknown,
-  keys: ReadonlySet<string> = ARTIFACT_KEYS,
-): unknown {
-  if (Array.isArray(value)) {
-    return value.map((entry) => stripArtifactContent(entry));
-  }
+function stripArtifactContent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripArtifactContent);
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).flatMap(([key, entry]) => {
-        if (keys.has(key)) return [];
+        if (ARTIFACT_KEYS.has(key)) return [];
 
         return [[key, stripArtifactContent(entry)]];
       }),

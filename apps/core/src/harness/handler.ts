@@ -50,10 +50,8 @@ import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
   getAsyncAgentResult,
-  markAsyncAgentResultAwaitingApproval,
-  markAsyncAgentResultAwaitingInput,
-  markAsyncAgentResultCompleted,
-  markAsyncAgentResultFailed,
+  recordAsyncAgentResult,
+  type AsyncAgentOutcome,
 } from "./async-agent-result.ts";
 import {
   getAsyncToolResult,
@@ -1073,10 +1071,7 @@ async function handleAsyncWorkerRequest(
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
-  // Every outcome, the catch included, writes the polling row first and settles
-  // the envelope second: a throw between them leaves the envelope running, never
-  // failed next to a running row. This is set after both, so the catch fails
-  // the row only while the envelope could still fail with it.
+  // Set once the run's outcome is recorded; after that the catch leaves it be.
   let didSettle = false;
   try {
     await createPendingAsyncAgentResult({
@@ -1092,41 +1087,26 @@ async function handleAsyncWorkerRequest(
     ({ session } = turn);
     const { turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await settleAsyncFailure(
-        event,
-        "Request did not produce pending model input",
-      );
-      await session.settleIngress("failed", {
-        error: "Request did not produce pending model input",
-      });
+      const error = "Request did not produce pending model input";
+      await settleAsyncRun(session, event, { status: "failed", error: error });
       didSettle = true;
-      await settleCronRun(event.accountId, event.cronRun, {
-        error: "Request did not produce pending model input",
-      });
+      await settleCronRun(event.accountId, event.cronRun, { error: error });
       transferred = await dispatchNextIngress(session, event);
 
       return;
     }
 
-    let terminalSettled = false;
-    let result: Awaited<ReturnType<typeof runAgentLoopUntilSubagentsIdle>>;
-    result = await runAgentLoopUntilSubagentsIdle(
+    await runAgentLoopUntilSubagentsIdle(
       session,
       turnContext,
       event.agentConfig,
       context,
       {
         onFinalText: async (response, traceId) => {
-          terminalSettled = true;
-          await Promise.all(
-            asyncResultEventIds(event).map((eventId) =>
-              markAsyncAgentResultCompleted({
-                eventId: eventId,
-                response: response,
-              }),
-            ),
-          );
-          await session!.settleIngress("completed", { result: response });
+          await settleAsyncRun(session, event, {
+            status: "completed",
+            response: response,
+          });
           didSettle = true;
           await settleCronRun(event.accountId, event.cronRun, {
             result: response,
@@ -1153,9 +1133,10 @@ async function handleAsyncWorkerRequest(
           );
         },
         onErrorText: async (error, traceId) => {
-          terminalSettled = true;
-          await settleAsyncFailure(event, error);
-          await session!.settleIngress("failed", { error: error });
+          await settleAsyncRun(session, event, {
+            status: "failed",
+            error: error,
+          });
           didSettle = true;
           await settleCronRun(event.accountId, event.cronRun, {
             error: error,
@@ -1173,47 +1154,22 @@ async function handleAsyncWorkerRequest(
           );
         },
         onApprovalRequired: async (approvals) => {
-          await Promise.all(
-            asyncResultEventIds(event).map((eventId) =>
-              markAsyncAgentResultAwaitingApproval({
-                eventId: eventId,
-                approvals: approvals,
-              }),
-            ),
-          );
-          terminalSettled = true;
-          await session!.settleIngress("completed", {
-            result: { status: "awaiting_approval", approvals: approvals },
+          await settleAsyncRun(session, event, {
+            status: "awaiting_approval",
+            approvals: approvals,
           });
           didSettle = true;
         },
         onQuestionsPending: async (questions) => {
-          await Promise.all(
-            asyncResultEventIds(event).map((eventId) =>
-              markAsyncAgentResultAwaitingInput({
-                eventId: eventId,
-                questions: questions,
-              }),
-            ),
-          );
-          terminalSettled = true;
-          await session!.settleIngress("completed", {
-            result: { status: "awaiting_input", questions: questions },
+          await settleAsyncRun(session, event, {
+            status: "awaiting_input",
+            questions: questions,
           });
           didSettle = true;
         },
       },
     );
-
-    if (result.didFail && !didSettle) {
-      terminalSettled = true;
-      const error = result.failureText ?? AGENT_PROCESSING_FAILED;
-      await settleAsyncFailure(event, error);
-      await session.settleIngress("failed", { error: error }).catch(() => {});
-      didSettle = true;
-      await settleCronRun(event.accountId, event.cronRun, { error: error });
-    }
-    if (terminalSettled) {
+    if (didSettle) {
       transferred = await dispatchNextIngress(session, event);
     }
   } catch (err) {
@@ -1222,17 +1178,33 @@ async function handleAsyncWorkerRequest(
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
-    // A throw after the run already settled must not overwrite its recorded
-    // outcome, and for a one-time job the run row is gone with the cron.
-    if (!didSettle) await settleAsyncFailure(event, error);
+    // A throw after the outcome is recorded must not overwrite it.
+    if (!didSettle) {
+      const failed: AsyncAgentOutcome = { status: "failed", error: error };
+      // Without the lease the envelope is not ours to settle, but its polling
+      // rows still are.
+      await settleAsyncRun(session, event, failed)
+        .catch(() => recordAsyncRun(event, failed))
+        .catch((writeErr: unknown): void => {
+          logError("Async run outcome lost", {
+            eventId: event.eventId,
+            error:
+              writeErr instanceof Error ? writeErr.message : String(writeErr),
+          });
+        });
+      await settleCronRun(event.accountId, event.cronRun, {
+        error: error,
+      }).catch((cronErr: unknown): void => {
+        logError("Cron run outcome lost", {
+          eventId: event.eventId,
+          error: cronErr instanceof Error ? cronErr.message : String(cronErr),
+        });
+      });
+    }
     if (session) {
-      await session.settleIngress("failed", { error: error }).catch(() => {});
       transferred = await dispatchNextIngress(session, event).catch(
         () => false,
       );
-    }
-    if (!didSettle) {
-      await settleCronRun(event.accountId, event.cronRun, { error: error });
     }
     throw err;
   } finally {
@@ -2059,16 +2031,14 @@ async function claimSession(session: Session): Promise<boolean> {
   return true;
 }
 
-async function settleAsyncFailure(
+/** Records an async run's outcome on its polling rows only. */
+async function recordAsyncRun(
   event: DirectInboundEvent,
-  error: string,
+  outcome: AsyncAgentOutcome,
 ): Promise<void> {
   await Promise.all(
     asyncResultEventIds(event).map((eventId) =>
-      markAsyncAgentResultFailed({
-        eventId: eventId,
-        error: error,
-      }),
+      recordAsyncAgentResult(eventId, outcome),
     ),
   );
 }
@@ -2482,7 +2452,7 @@ async function startOwnedAsyncRun(
       eventId: ownedEvent.eventId,
       error: message,
     });
-    await settleAsyncFailure(ownedEvent, message);
+    await recordAsyncRun(ownedEvent, { status: "failed", error: message });
     await failOwnedIngress(ownedEvent, message);
   }
 }
@@ -3412,6 +3382,28 @@ function isRunnableModelInput(
       message.content.length > 0 &&
       message.content.every((part) => part.type === "tool-approval-response"))
   );
+}
+
+/**
+ * Records an async run's outcome: the envelope and its polling rows settle in
+ * one mutation, and without an owned envelope only the rows are written.
+ */
+async function settleAsyncRun(
+  session: Session | undefined,
+  event: DirectInboundEvent,
+  outcome: AsyncAgentOutcome,
+): Promise<void> {
+  const envelope: IngressSettlement =
+    outcome.status === "completed"
+      ? { status: "completed", result: outcome.response }
+      : outcome.status === "failed"
+        ? { status: "failed", error: outcome.error }
+        : { status: "completed", result: outcome };
+  const settled = await session?.settleIngress(envelope.status, {
+    ...envelope,
+    asyncResult: { eventIds: asyncResultEventIds(event), outcome: outcome },
+  });
+  if (!settled) await recordAsyncRun(event, outcome);
 }
 
 function asyncResultEventIds(event: DirectInboundEvent): string[] {

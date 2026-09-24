@@ -64,6 +64,25 @@ describe("cli prune of external resources", () => {
     });
   });
 
+  test("a deploy the manifest sync rejects removes nothing", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await recordHook(tt, accountId, STAGE, "mine");
+    await recordMcpServer(tt, accountId, "search");
+    const before = await activeNames(tt);
+
+    const response = await pruneAll(tt, [
+      {
+        kind: "agent",
+        name: "support",
+        config: { instructions: { __beeblastEnv: true, name: "UNSET_VALUE" } },
+      },
+    ]);
+
+    expect(response.status).toBe(400);
+    expect(await activeNames(tt)).toEqual(before);
+  });
+
   test("removes this stage's skills and their files, keeps another stage's", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
@@ -202,8 +221,11 @@ async function insertMcpServer(
   });
 }
 
-/** `deploy --prune` of an empty manifest to the development stage. */
-async function pruneAll(tt: T): Promise<Response> {
+/** `deploy --prune` to the development stage, of an empty manifest by default. */
+async function pruneAll(
+  tt: T,
+  resources: Array<{ kind: string; name: string; config: unknown }> = [],
+): Promise<Response> {
   return await tt.fetch(
     `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
     {
@@ -213,7 +235,12 @@ async function pruneAll(tt: T): Promise<Response> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        manifest: { version: 1, project: PROJECT, stage: STAGE, resources: [] },
+        manifest: {
+          version: 1,
+          project: PROJECT,
+          stage: STAGE,
+          resources: resources,
+        },
         prune: true,
       }),
     },
@@ -274,21 +301,9 @@ async function recordMcpServer(
   accountId: Id<"accounts">,
   name: string,
 ): Promise<void> {
-  const secretHash = await sha256Hex(SECRET);
-  const scope = await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
-    secretHash: secretHash,
-    project: PROJECT,
-    stage: STAGE,
-  });
-  const serverId = await tt.mutation(internal.account.mcp.create, {
-    accountId: accountId,
-    projectId: scope.projectId,
-    stageId: scope.stageId,
-    name: name,
-    url: "https://mcp.example.com/mcp",
-  });
+  const serverId = await insertMcpServer(tt, accountId, name);
   await tt.mutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
-    secretHash: secretHash,
+    secretHash: await sha256Hex(SECRET),
     project: PROJECT,
     stage: STAGE,
     resources: [

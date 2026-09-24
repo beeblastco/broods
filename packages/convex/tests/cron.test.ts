@@ -40,19 +40,14 @@ describe("list", () => {
 });
 
 describe("run history", () => {
-  test("a settled run keeps its first outcome", async () => {
+  test("a settled run keeps its first outcome, and a drained run settles as a no-op", async () => {
     const tt = t();
     const { accountId, agentId } = await seed(tt);
-    const cronId = await tt.run(async (ctx) => {
-      const row = await ctx.db
-        .query("crons")
-        .withIndex("by_accountId_and_agentId", (q) =>
-          q.eq("accountId", accountId).eq("agentId", agentId),
-        )
-        .first();
-
-      return row!._id;
+    const [cron] = await tt.query(internal.agent.crons.list, {
+      accountId: accountId,
+      agentId: agentId,
     });
+    const cronId = cron!._id;
     const runId = await tt.mutation(internal.agent.crons.createRun, {
       accountId: accountId,
       cronId: cronId,
@@ -77,6 +72,16 @@ describe("run history", () => {
       status: "completed",
       result: "done",
     });
+
+    await tt.run((ctx) => ctx.db.delete(runId));
+    await expect(
+      tt.mutation(internal.agent.crons.failRun, {
+        accountId: accountId,
+        cronId: cronId,
+        runId: runId,
+        error: "after the drain",
+      }),
+    ).resolves.toBeNull();
   });
 });
 

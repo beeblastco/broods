@@ -8,6 +8,8 @@
  * the config list is the exception table in front of it.
  */
 
+import { stripTrailingSlashes } from "../../core/src/shared/paths.ts";
+
 // Core routes only Convex calls, in-cluster with the service token. 404 here.
 const INTERNAL_CORE_PATHS = new Set(["/v1/cron-runs", "/v1/mcp-service/rpc"]);
 
@@ -61,8 +63,9 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   );
 }
 
+/** Takes a path `normalizePathname` already stripped. */
 export function isInternalCorePath(pathname: string): boolean {
-  return INTERNAL_CORE_PATHS.has(normalizePathname(pathname));
+  return INTERNAL_CORE_PATHS.has(pathname);
 }
 
 /**
@@ -70,7 +73,7 @@ export function isInternalCorePath(pathname: string): boolean {
  * and a trailing slash never changes the upstream. `/` stays `/`.
  */
 export function normalizePathname(pathname: string): string {
-  return pathname.replace(/\/+$/, "") || "/";
+  return stripTrailingSlashes(pathname) || "/";
 }
 
 /**
