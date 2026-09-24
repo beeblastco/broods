@@ -1,16 +1,11 @@
-/**
- * Every case `local-stack.ts verify` runs, in order. A feature that changes
- * what core, gateway, Convex, the SDK or the CLI does end to end adds a case
- * here: one file that drives it through the gateway and asserts the result.
- */
-
 import type { VerifyCase } from "../harness.ts";
-import { agentRunCase } from "./agent-run.ts";
-import { machineSandboxCase } from "./machine-sandbox.ts";
-import { sdkClientCase } from "./sdk-client.ts";
+import { agentRun } from "./agent-run.ts";
+import { machineSandbox } from "./machine-sandbox.ts";
+import { sdkClient } from "./sdk-client.ts";
 
+/** Every case `local-stack.ts verify` runs, in order. A new end-to-end feature adds one here. */
 export const verifyCases: readonly VerifyCase[] = [
-  agentRunCase,
-  sdkClientCase,
-  machineSandboxCase,
+  agentRun,
+  sdkClient,
+  machineSandbox,
 ];

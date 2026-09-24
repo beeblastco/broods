@@ -28,11 +28,12 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { BroodsAccountClient } from "../packages/broods/src/account.ts";
+import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
 import {
   VerifyFailure,
   assertStep,
-  httpJson,
   lastJsonLine,
   pollUntil,
   probeHttp,
@@ -79,7 +80,6 @@ interface InstanceState {
 interface PerfRecord {
   at: string;
   command: string;
-  /** The step that failed; absent on a pass. */
   failed?: string;
   steps: PerfStep[];
   totalMs: number;
@@ -286,33 +286,30 @@ async function verify(): Promise<void> {
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
   const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
-  const measure = <T>(step: string, fn: () => Promise<T>): Promise<T> =>
-    measureStep(perf, step, fn);
-  let failed: VerifyFailure | undefined;
+  let currentStep = "";
+  const measure = <T>(step: string, fn: () => Promise<T>): Promise<T> => {
+    currentStep = step;
+
+    return measureStep(perf, step, fn);
+  };
+  let failedStep: string | undefined;
   try {
-    await measure("gateway healthz", async () => {
+    await measure("gateway healthz", async (): Promise<void> => {
       const health = await probeHttp(`${gatewayUrl}/healthz`);
       assertStep("gateway healthz", health === 200, `status ${health}`);
     });
     const runId = Date.now().toString(36);
-    const accountSecret = await measure("create account", async () => {
-      const response = await httpJson(`${gatewayUrl}/v1/accounts`, {
-        method: "POST",
-        token: state.secrets.adminAccount,
-        body: { username: `smoke-${runId}` },
-      });
-      const secret = (response.body as { secret?: string }).secret;
-      assertStep(
-        "create account (core, admin bearer)",
-        response.status === 201 && typeof secret === "string",
-        `status ${response.status}: ${JSON.stringify(response.body)}`,
-      );
-
-      return secret;
-    });
+    const accountSecret = await measure("create account", (): Promise<string> =>
+      createAccount(gatewayUrl, state.secrets.adminAccount, `smoke-${runId}`),
+    );
     const context: VerifyContext = {
       ...smokeModel(),
+      account: new BroodsAccountClient({
+        accountSecret: accountSecret,
+        baseUrl: gatewayUrl,
+      }),
       accountSecret: accountSecret,
+      client: new BroodsClient({ apiKey: accountSecret, baseUrl: gatewayUrl }),
       coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
       gatewayUrl: gatewayUrl,
       measure: measure,
@@ -320,24 +317,20 @@ async function verify(): Promise<void> {
     };
     for (const verifyCase of verifyCases) {
       console.log(`\n${verifyCase.name}`);
-      await verifyCase.run(context);
+      await verifyCase(context);
     }
   } catch (error) {
-    // A thrown SDK or fetch error fails the run the same way a check does.
-    failed =
-      error instanceof VerifyFailure
-        ? error
-        : new VerifyFailure(
-            "unexpected error",
-            error instanceof Error ? error.message : String(error),
-          );
-    console.error(`  FAIL ${failed.step}\n       ${failed.detail}`);
+    failedStep = error instanceof VerifyFailure ? error.step : currentStep;
+    console.error(`  FAIL ${failedStep}`);
+    console.error(
+      error instanceof VerifyFailure ? `       ${error.detail}` : error,
+    );
   }
 
   const totalMs = Date.now() - startedAt;
-  recordPerf(state.instanceId, "verify", perf, totalMs, failed?.step);
+  recordPerf(state.instanceId, "verify", perf, totalMs, failedStep);
   printPerfBreakdown(perf, totalMs);
-  if (failed) process.exit(1);
+  if (failedStep !== undefined) process.exit(1);
   console.log(`\nverify passed in ${(totalMs / 1000).toFixed(1)}s`);
 }
 
@@ -390,6 +383,8 @@ function convexSourceHash(): string {
   return hash.digest("hex");
 }
 
+// Maps host.docker.internal so Convex reaches core on Linux; Docker Desktop
+// resolves it on its own.
 function ensureConvexContainer(state: InstanceState): void {
   const name = containerName(state.instanceId);
   const containerState = dockerContainerState(name);
@@ -412,8 +407,6 @@ function ensureConvexContainer(state: InstanceState): void {
     `${state.ports.convexSite}:3211`,
     "-v",
     `${dataVolumeName(state.instanceId)}:/convex/data`,
-    // Convex calls core on the host. Docker Desktop resolves this name on its
-    // own, Linux (CI) only with this mapping.
     "--add-host",
     "host.docker.internal:host-gateway",
     "-e",
@@ -447,6 +440,8 @@ function generateConvexAdminKey(state: InstanceState): string {
   return key;
 }
 
+// CONVEX_DEPLOYMENT is empty, not unset, so a cloud deployment a `convex dev`
+// login left in packages/convex/.env.local cannot win over the self-hosted one.
 function runConvexCli(state: InstanceState, args: string[]): void {
   execFileSync("bunx", ["convex", ...args], {
     cwd: join(repoRoot, "packages", "convex"),
@@ -455,8 +450,6 @@ function runConvexCli(state: InstanceState, args: string[]): void {
     env: {
       ...process.env,
       CONVEX_DEPLOY_KEY: undefined,
-      // Empty, not unset: the CLI loads packages/convex/.env.local, and a
-      // `convex dev` login leaves a cloud CONVEX_DEPLOYMENT there.
       CONVEX_DEPLOYMENT: "",
       CONVEX_SELF_HOSTED_ADMIN_KEY: state.adminKey,
       CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${state.ports.convexApi}`,
@@ -640,6 +633,31 @@ function dockerContainerState(name: string): string | null {
 
 // --- http ---------------------------------------------------------------
 
+// Mints a verify account with the admin secret and returns its secret.
+async function createAccount(
+  gatewayUrl: string,
+  adminSecret: string,
+  username: string,
+): Promise<string> {
+  const response = await fetch(`${gatewayUrl}/v1/accounts`, {
+    method: "POST",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      Authorization: `Bearer ${adminSecret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username: username }),
+  });
+  const body = (await response.json()) as { secret?: string };
+  assertStep(
+    "create account (core, admin bearer)",
+    response.status === 201 && typeof body.secret === "string",
+    `status ${response.status}: ${JSON.stringify(body)}`,
+  );
+
+  return body.secret;
+}
+
 async function waitForHttp(
   url: string,
   what: string,
@@ -686,13 +704,13 @@ function lastPerfSummaries(instanceId: string): string[] {
   });
 }
 
+// Times fn into perf, failed steps included.
 async function measureStep<T>(
   perf: PerfStep[],
   step: string,
   fn: () => T | Promise<T>,
 ): Promise<T> {
   const start = Date.now();
-  // finally, so a failed step still shows what it cost.
   try {
     return await fn();
   } finally {
