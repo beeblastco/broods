@@ -203,6 +203,7 @@ export function formatBucketLabel(
   return `${date} ${time}`;
 }
 
+/** Stacked smooth areas, one per series, plus the hover crosshair and dots. */
 function AreaLayers({
   rows,
   series,
@@ -333,6 +334,7 @@ function AxisLabels({
   );
 }
 
+/** Stacked bars, one per bin; bins other than the active one dim. */
 function BarLayers({
   rows,
   series,
@@ -440,6 +442,7 @@ function ChartTooltip({
   );
 }
 
+/** Horizontal gridline per tick, drawn under the data. */
 function GridLines({
   ticks,
   scale,
