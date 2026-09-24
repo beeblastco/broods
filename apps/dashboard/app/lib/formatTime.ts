@@ -32,6 +32,20 @@ export function formatDateTimeMillis(ms: number): string {
   return DATE_TIME_MILLIS.format(ms);
 }
 
+/** Span or task duration: `640ms`, `2.31s`, `4m 12s`, `3h 5m`. */
+export function formatDuration(ms: number): string {
+  // A wait on a person runs minutes to days, where seconds stop reading well.
+  if (ms >= 3_600_000) {
+    return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
+  }
+  if (ms >= 60_000) {
+    return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+  }
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+
+  return `${Math.round(ms)}ms`;
+}
+
 /** Wall-clock `HH:MM:SS` in the viewer's zone, for log and span rows. */
 export function formatTime(ms: number): string {
   return TIME.format(ms);

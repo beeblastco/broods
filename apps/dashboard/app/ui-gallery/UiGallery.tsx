@@ -95,6 +95,7 @@ import {
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
+import { UsageChartStandIn } from "./UsageChartStandIn";
 
 const LEVEL_OPTIONS = [
   { value: "all", label: "All levels" },
@@ -337,6 +338,11 @@ export function UiGallery(): React.JSX.Element {
           isError={false}
         />
         <LogTableStandIn />
+      </section>
+
+      <section data-fixture="usage-chart" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Usage chart</h2>
+        <UsageChartStandIn />
       </section>
 
       <section data-fixture="canvas-controls" className="flex flex-col gap-2">
