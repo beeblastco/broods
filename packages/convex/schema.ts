@@ -567,6 +567,10 @@ export const sandboxInstancesFields = {
   workspaceName: v.optional(v.string()),
   workspaceId: v.optional(v.string()),
   suspendedAt: v.optional(v.number()),
+  /** The account's own provider credentials pay for it, so it is never metered. */
+  ownCredentials: v.optional(v.boolean()),
+  /** Running time before this instant is already on the account's usage meter. */
+  meteredUntil: v.optional(v.number()),
   /**
    * Provider-side guest log stream, when the provider has one. MicroVM (`lambda`):
    * the CloudWatch stream `<accountId>/<project>/<stage>/<uuid>` core named at
@@ -1178,6 +1182,43 @@ export const taskUsageFields = {
  * are sparse (only active windows exist), so row count tracks real activity,
  * not wall-clock time.
  */
+/** What an account used in a month, in the units `model/pricing.ts` prices. */
+export const usageQuantityFields = {
+  sandboxVcpuSeconds: v.number(),
+  sandboxGbSeconds: v.number(),
+  /** Memory GB written and read back by sandbox launches and resumes. */
+  sandboxSnapshotGb: v.number(),
+  hostedMcpGbSeconds: v.number(),
+  hostedMcpRequests: v.number(),
+  storageGbMonths: v.number(),
+  egressGb: v.number(),
+};
+
+export const usageQuantitiesValidator = v.object(usageQuantityFields);
+
+/**
+ * One account's metered usage for one UTC calendar month. Quantities, not
+ * euros: `meterCostEur` prices them, so a price change needs no backfill.
+ */
+export const usageMetersFields = {
+  accountId: v.id("accounts"),
+  /** "YYYY-MM", UTC. */
+  month: v.string(),
+  ...usageQuantityFields,
+  /** When the 80% warning went out; at most once per month. */
+  warnedAt: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+/**
+ * Ids of core usage writes already on a meter, so a retry after a lost
+ * response is not counted twice. Pruned after a day; retries end in seconds.
+ */
+export const usageWritesFields = {
+  writeId: v.string(),
+  createdAt: v.number(),
+};
+
 export const usageRollupsFields = {
   accountId: v.id("accounts"),
   endpointId: v.string(),
@@ -1446,4 +1487,11 @@ export default defineSchema({
       "modelProvider",
       "modelId",
     ]),
+  usageMeters: defineTable(usageMetersFields).index("by_accountId_and_month", [
+    "accountId",
+    "month",
+  ]),
+  usageWrites: defineTable(usageWritesFields)
+    .index("by_writeId", ["writeId"])
+    .index("by_createdAt", ["createdAt"]),
 });

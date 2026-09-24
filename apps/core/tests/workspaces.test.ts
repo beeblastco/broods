@@ -164,6 +164,48 @@ describe("agentSandboxReservation", () => {
 });
 
 describe("resolveAgentRuntime", () => {
+  it("marks only sandboxes on the account's own credentials as unmetered", async () => {
+    const configs: Record<string, Record<string, unknown>> = {
+      own_daytona: { provider: "daytona", options: { apiKey: "dtn_own" } },
+      platform_daytona: { provider: "daytona" },
+      own_vercel: { provider: "vercel", options: { token: "vc_own" } },
+      own_workdir: {
+        provider: "sandbox",
+        options: { workdirUrl: "https://workdir.example.com", apiKey: "k" },
+      },
+      microvm: { provider: "lambda" },
+    };
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: id,
+          config: configs[id],
+        }),
+      },
+    } as never);
+
+    const resolved = await resolveAgentRuntime(
+      { sandboxes: Object.keys(configs) },
+      { accountId: "acct_1" },
+    );
+
+    expect(
+      Object.fromEntries(
+        resolved.sandboxes.map((entry) => [
+          entry.name,
+          entry.sandbox.controlPlane?.ownCredentials === true,
+        ]),
+      ),
+    ).toEqual({
+      own_daytona: true,
+      platform_daytona: false,
+      own_vercel: true,
+      own_workdir: true,
+      microvm: false,
+    });
+  });
+
   it("resolves sandbox + workspace references through storage", async () => {
     setStorageForTests({
       sandboxConfigs: {

@@ -9,6 +9,7 @@
  */
 
 import type * as account_accounts from "../account/accounts.js";
+import type * as account_budget from "../account/budget.js";
 import type * as account_envVars from "../account/envVars.js";
 import type * as account_hooks from "../account/hooks.js";
 import type * as account_mcp from "../account/mcp.js";
@@ -23,6 +24,7 @@ import type * as agent_policies from "../agent/policies.js";
 import type * as auth from "../auth.js";
 import type * as aws_bundles from "../aws/bundles.js";
 import type * as aws_skills from "../aws/skills.js";
+import type * as aws_storageMeter from "../aws/storageMeter.js";
 import type * as aws_workspaceFiles from "../aws/workspaceFiles.js";
 import type * as canvas from "../canvas.js";
 import type * as channel_connections from "../channel/connections.js";
@@ -97,8 +99,10 @@ import type * as model_objects from "../model/objects.js";
 import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_ownership_stage from "../model/ownership/stage.js";
+import type * as model_planLimits from "../model/planLimits.js";
 import type * as model_policyReferences from "../model/policyReferences.js";
 import type * as model_policyRules from "../model/policyRules.js";
+import type * as model_pricing from "../model/pricing.js";
 import type * as model_projectScope from "../model/projectScope.js";
 import type * as model_responses from "../model/responses.js";
 import type * as model_roleRules from "../model/roleRules.js";
@@ -113,6 +117,7 @@ import type * as model_slackDirectory from "../model/slackDirectory.js";
 import type * as model_stageSessionTicket from "../model/stageSessionTicket.js";
 import type * as model_uploads from "../model/uploads.js";
 import type * as model_usageEndpoints from "../model/usageEndpoints.js";
+import type * as model_usageMeter from "../model/usageMeter.js";
 import type * as model_workspaceFs from "../model/workspaceFs.js";
 import type * as model_workspaceRules from "../model/workspaceRules.js";
 import type * as org_lifecycle from "../org/lifecycle.js";
@@ -147,6 +152,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "account/accounts": typeof account_accounts;
+  "account/budget": typeof account_budget;
   "account/envVars": typeof account_envVars;
   "account/hooks": typeof account_hooks;
   "account/mcp": typeof account_mcp;
@@ -161,6 +167,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   "aws/bundles": typeof aws_bundles;
   "aws/skills": typeof aws_skills;
+  "aws/storageMeter": typeof aws_storageMeter;
   "aws/workspaceFiles": typeof aws_workspaceFiles;
   canvas: typeof canvas;
   "channel/connections": typeof channel_connections;
@@ -235,8 +242,10 @@ declare const fullApi: ApiFromModules<{
   "model/ownership/org": typeof model_ownership_org;
   "model/ownership/project": typeof model_ownership_project;
   "model/ownership/stage": typeof model_ownership_stage;
+  "model/planLimits": typeof model_planLimits;
   "model/policyReferences": typeof model_policyReferences;
   "model/policyRules": typeof model_policyRules;
+  "model/pricing": typeof model_pricing;
   "model/projectScope": typeof model_projectScope;
   "model/responses": typeof model_responses;
   "model/roleRules": typeof model_roleRules;
@@ -251,6 +260,7 @@ declare const fullApi: ApiFromModules<{
   "model/stageSessionTicket": typeof model_stageSessionTicket;
   "model/uploads": typeof model_uploads;
   "model/usageEndpoints": typeof model_usageEndpoints;
+  "model/usageMeter": typeof model_usageMeter;
   "model/workspaceFs": typeof model_workspaceFs;
   "model/workspaceRules": typeof model_workspaceRules;
   "org/lifecycle": typeof org_lifecycle;

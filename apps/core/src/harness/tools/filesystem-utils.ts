@@ -260,11 +260,13 @@ export async function runSandbox(
   } catch (error) {
     // `options` (URL, key, template) and `snapshot` (workdir image name vs
     // MicroVM image ARN) are the primary provider's; the fallback runs on the
-    // platform's own defaults for that provider.
+    // platform's own defaults for that provider, so the platform pays for it
+    // even when the primary ran on the account's own credentials.
     const {
       fallbackProvider,
       options: _options,
       snapshot: _snapshot,
+      controlPlane,
       ...primary
     } = config;
     if (!fallbackProvider || !(error instanceof SandboxCapacityError)) {
@@ -276,7 +278,13 @@ export async function runSandbox(
       error: toErrorMessage(error),
     });
     result = await runSandboxOn(
-      { ...primary, provider: fallbackProvider },
+      {
+        ...primary,
+        provider: fallbackProvider,
+        ...(controlPlane
+          ? { controlPlane: { ...controlPlane, ownCredentials: undefined } }
+          : {}),
+      },
       namespace,
       code,
       options?.metadata,

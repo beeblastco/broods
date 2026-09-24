@@ -60,6 +60,7 @@ export async function upsertSandboxInstance(
       snapshotId: controlPlane.snapshotId,
       egress: controlPlane.egress,
       permissionMode: controlPlane.permissionMode,
+      ownCredentials: controlPlane.ownCredentials,
       lastUsedTraceId: meta.traceId,
       createdByTraceId: meta.traceId,
       lastUsedTaskId: meta.taskId,

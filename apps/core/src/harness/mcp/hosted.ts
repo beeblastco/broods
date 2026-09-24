@@ -11,6 +11,7 @@ import {
   InvokeWithResponseStreamCommand,
   LambdaClient,
 } from "@aws-sdk/client-lambda";
+import { HOSTED_MCP_MEMORY_GB } from "@broods/convex/model/pricing";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import {
   booleanEnv,
@@ -19,6 +20,7 @@ import {
 } from "../../shared/env.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
 import { FrameQueue, toolBundlesBucket, type RunnerFrame } from "../frames.ts";
+import { recordUsage } from "../plan-limits.ts";
 
 /** Placeholder origin the SDK transport points at; never actually dialed. */
 export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
@@ -225,6 +227,7 @@ async function drainInvokeStream(
   payload: McpHostPayload,
   abortSignal: AbortSignal,
   queue: FrameQueue,
+  onInvoked: () => void,
 ): Promise<void> {
   const result = await client.send(
     new InvokeWithResponseStreamCommand({
@@ -240,6 +243,7 @@ async function drainInvokeStream(
     }),
     { abortSignal: abortSignal },
   );
+  onInvoked();
   // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
   // to carry state across them.
   const decoder = new TextDecoder();
@@ -409,7 +413,18 @@ async function sendBatch(
   };
   const queue = new FrameQueue();
   let transportError: unknown;
-  const pump = drainInvokeStream(defaultClient(), payload, abortSignal, queue)
+  // Set once Lambda accepts the invoke. A failure before that (no function
+  // name, a refused or throttled request) runs nothing and costs nothing.
+  let invokedAt: number | undefined;
+  const pump = drainInvokeStream(
+    defaultClient(),
+    payload,
+    abortSignal,
+    queue,
+    (): void => {
+      invokedAt = Date.now();
+    },
+  )
     .catch((error: unknown) => {
       transportError = error;
     })
@@ -427,5 +442,13 @@ async function sendBatch(
     return collected.result;
   } finally {
     await pump;
+    // Lambda bills the invoke's wall time at the function's memory size.
+    if (invokedAt !== undefined) {
+      recordUsage(record.accountId, {
+        hostedMcpGbSeconds:
+          ((Date.now() - invokedAt) / 1000) * HOSTED_MCP_MEMORY_GB,
+        hostedMcpRequests: 1,
+      });
+    }
   }
 }

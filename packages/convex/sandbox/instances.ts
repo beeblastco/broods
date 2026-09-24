@@ -9,14 +9,36 @@
  * `upsert` is the create-time populate keyed by reservationKey (carrying the size
  * `specs`), called when broods reserves a persistent sandbox; `setStatus`/`remove`
  * mirror later transitions; `listForActiveOrg` is the dashboard read.
+ *
+ * Every write here also bills the running time since the last one onto the
+ * account's usage meter (`model/usageMeter.ts`); `accrueRecent` does the same
+ * hourly for sandboxes nothing wrote to.
  */
 
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
-import { internalMutation, internalQuery, query } from "../_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type MutationCtx,
+} from "../_generated/server";
+import {
+  addUsage,
+  SANDBOX_IDLE_BILL_MS,
+  sandboxAccrual,
+  sandboxLaunchUsage,
+} from "../model/usageMeter";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxInstancesFields } from "../schema";
 import { recordRuntimeAction } from "./auditEvents";
+
+// Covers two missed hourly accruals before a sandbox's unbilled time is lost.
+const ACCRUE_LOOKBACK_MS = 2 * 60 * 60 * 1000;
+// Each instance also reads and writes its account's meter row; 100 keeps a
+// page far under Convex's per-transaction read limits.
+const ACCRUE_PAGE_SIZE = 100;
 
 const sandboxInstanceDoc = v.object({
   ...sandboxInstancesFields,
@@ -129,6 +151,7 @@ export const remove = internalMutation({
       instance.accountId === accountId &&
       (externalId === undefined || instance.externalId === externalId)
     ) {
+      await accrue(ctx, instance, Date.now());
       await ctx.db.delete(instance._id);
     }
 
@@ -167,7 +190,12 @@ export const setStatus = internalMutation({
     if (!instance || instance.accountId !== accountId) return false;
 
     const now = Date.now();
+    await accrue(ctx, instance, now);
+    if (instance.status === "suspended" && status === "running") {
+      await addUsage(ctx, accountId, sandboxLaunchUsage(instance), now);
+    }
     await ctx.db.patch(instance._id, {
+      meteredUntil: now,
       status: status,
       // `undefined` unsets the field, so a reason never outlives its error.
       errorMessage: status === "error" ? errorMessage : undefined,
@@ -225,6 +253,7 @@ export const upsert = internalMutation({
     workspaceId: sandboxInstancesFields.workspaceId,
     logStream: sandboxInstancesFields.logStream,
     ephemeral: sandboxInstancesFields.ephemeral,
+    ownCredentials: sandboxInstancesFields.ownCredentials,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -243,8 +272,19 @@ export const upsert = internalMutation({
       // found the old machine gone at the provider and launched another, so
       // this is a fresh reservation with its own creating trace.
       const replaced = existing.externalId !== args.externalId;
+      await accrue(ctx, existing, now);
+      // A new machine, a suspended one resumed, or one that idled past its
+      // timeout (so the provider suspended it) loads its snapshot again.
+      if (
+        replaced ||
+        existing.status === "suspended" ||
+        now > existing.lastUsedAt + SANDBOX_IDLE_BILL_MS
+      ) {
+        await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
+      }
       const patch = {
         ...fields,
+        meteredUntil: now,
         ...(replaced || !existing.createdByTraceId
           ? { createdByTraceId: args.createdByTraceId }
           : {}),
@@ -280,12 +320,62 @@ export const upsert = internalMutation({
         : {}),
       ...fields,
     };
-    await ctx.db.insert("sandboxInstances", row);
+    await ctx.db.insert("sandboxInstances", { ...row, meteredUntil: now });
+    await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
     await recordRuntimeAction(ctx, row, "reserve");
 
     return null;
   },
 });
+
+/**
+ * Bill the running time of every sandbox used recently enough to still have
+ * some unbilled, so the meter stays current for one nothing writes to.
+ * Hourly cron. One bounded page per transaction; the rest is scheduled with
+ * the same `now`, so every page bills up to the same instant.
+ */
+export const accrueRecent = internalMutation({
+  args: {
+    now: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const now = args.now ?? Date.now();
+    const page = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_lastUsedAt", (q) =>
+        q.gte("lastUsedAt", now - SANDBOX_IDLE_BILL_MS - ACCRUE_LOOKBACK_MS),
+      )
+      .paginate({ numItems: ACCRUE_PAGE_SIZE, cursor: args.cursor ?? null });
+    for (const instance of page.page) {
+      const meteredUntil = await accrue(ctx, instance, now);
+      if (meteredUntil !== instance.meteredUntil) {
+        await ctx.db.patch(instance._id, { meteredUntil: meteredUntil });
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.sandbox.instances.accrueRecent, {
+        now: now,
+        cursor: page.continueCursor,
+      });
+    }
+
+    return null;
+  },
+});
+
+// Add a sandbox's unbilled running time to its account's meter.
+async function accrue(
+  ctx: MutationCtx,
+  instance: Doc<"sandboxInstances">,
+  now: number,
+): Promise<number> {
+  const accrual = sandboxAccrual(instance, now);
+  await addUsage(ctx, instance.accountId, accrual.usage, now);
+
+  return accrual.meteredUntil;
+}
 
 /**
  * The refreshed registry columns `upsert` writes on both the patch and the
@@ -310,6 +400,7 @@ function upsertRefreshFields(
         | "workspaceId"
         | "logStream"
         | "ephemeral"
+        | "ownCredentials"
       >
     >,
   now: number,
@@ -334,6 +425,7 @@ function upsertRefreshFields(
       | "workspaceId"
       | "logStream"
       | "ephemeral"
+      | "ownCredentials"
       | "errorMessage"
     >
   > {
@@ -361,5 +453,8 @@ function upsertRefreshFields(
     ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
     ...(args.logStream ? { logStream: args.logStream } : {}),
     ...(args.ephemeral ? { ephemeral: true } : {}),
+    // Unset rather than kept: a config moved back to platform credentials is
+    // metered again from its next write.
+    ownCredentials: args.ownCredentials === true ? true : undefined,
   };
 }

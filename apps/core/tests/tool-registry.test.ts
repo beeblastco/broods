@@ -1478,6 +1478,7 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
   return {
     accounts: {} as never,
     agents: {} as never,
+    budgets: {} as never,
     channelRecords: {} as never,
     agentDeployments: {} as never,
     crons: crons as Storage["crons"],
