@@ -28,8 +28,9 @@ interface Props {
  * links to the traces behind that bin, heaviest first, with a search over
  * their prompts and trace ids. Each row carries the start of its prompt, as
  * Tracing labels it, wrapped to two lines and cut with an ellipsis, and the
- * tokens it contributed; the trace itself opens in the Tracing tab. It keeps the chart's height and
- * scrolls inside, so opening it never moves the content below.
+ * tokens it contributed; the trace itself opens in the Tracing tab. It keeps
+ * the chart's height and scrolls inside, so opening it never moves the
+ * content below.
  */
 export function UsageTraceRail({
   projectId,

@@ -148,9 +148,9 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
 const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
 /**
- * The dashboard Usage tab: range and model filter, headline tiles, the token
- * chart with a trace rail for the clicked bin, then per-model totals beside
- * sandbox CPU. Everything below the toolbar follows the clicked bin.
+ * The dashboard Usage tab: range and model filter, the numbers row, the token
+ * chart that splits to list a clicked bin's traces, then a full-width sandbox
+ * CPU chart. Everything below the toolbar follows the clicked bin.
  */
 export function TokensUsagePanel({
   projectId,
@@ -478,7 +478,10 @@ function Sparkline({
         <rect
           x={Math.max(0, selected * step - step / 2)}
           y={0}
-          width={step}
+          width={
+            Math.min(100, selected * step + step / 2) -
+            Math.max(0, selected * step - step / 2)
+          }
           height={28}
           className="fill-foreground/10"
         />
@@ -534,10 +537,10 @@ function UsageStats({
         estimatedCost,
         scope.invocations,
         scope.modelCalls,
-        scope.agentSandboxCpuUsec + scope.toolSandboxCpuUsec,
+        cpu,
       ],
     ],
-    [scope, estimatedCost],
+    [scope, estimatedCost, cpu],
   );
   const values = useTween(target)[0];
   const perTask = (n: number): number =>

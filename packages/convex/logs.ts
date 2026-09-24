@@ -228,14 +228,7 @@ export const fetchUsageTasks = query({
       args.projectId,
       args.stageId,
     );
-    const models = args.models?.map((key) => {
-      const split = key.indexOf("::");
-
-      return {
-        modelProvider: key.slice(0, split),
-        modelId: key.slice(split + 2),
-      };
-    });
+    const models = args.models ? parseModelKeys(args.models) : undefined;
     // One index range per endpoint, or per endpoint and model when filtered,
     // so excluded models never use up the read budget. The budget is split
     // across ranges to stay inside Convex's per-query read limits; one extra
@@ -350,6 +343,23 @@ export async function collectUsageTasks(
         .lt("finishedAt", endMs),
     )
     .take(limit);
+}
+
+/**
+ * The dashboard's `provider::model` filter keys as one index scan each:
+ * repeats collapse, so no range is read twice, and a key without the
+ * separator matches no model. Exported for `fetchUsageTasks` and its test.
+ */
+export function parseModelKeys(
+  keys: string[],
+): Array<{ modelProvider: string; modelId: string }> {
+  return [...new Set(keys)].flatMap((key) => {
+    const split = key.indexOf("::");
+
+    return split > 0
+      ? [{ modelProvider: key.slice(0, split), modelId: key.slice(split + 2) }]
+      : [];
+  });
 }
 
 /**

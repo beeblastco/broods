@@ -6,6 +6,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import {
   collectUsageRollups,
   collectUsageTasks,
+  parseModelKeys,
   usageGrainForBinSeconds,
 } from "../logs";
 import schema from "../schema";
@@ -228,4 +229,19 @@ test("collectUsageTasks for one model skips other models before the limit", asyn
       ),
   );
   expect(rows.map((row) => row.taskId)).toEqual(["kept#t2"]);
+});
+
+test("parseModelKeys scans each model once and skips keys without a provider", () => {
+  expect(
+    parseModelKeys([
+      "anthropic::claude-sonnet-5",
+      "anthropic::claude-sonnet-5",
+      "no-separator",
+      "::orphan",
+      "vercel::openai/gpt-5.4",
+    ]),
+  ).toEqual([
+    { modelProvider: "anthropic", modelId: "claude-sonnet-5" },
+    { modelProvider: "vercel", modelId: "openai/gpt-5.4" },
+  ]);
 });
