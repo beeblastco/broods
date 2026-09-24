@@ -1090,7 +1090,6 @@ async function handleAsyncWorkerRequest(
     ({ session } = turn);
     const { turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      didSettle = true;
       await settleAsyncFailure(
         event,
         "Request did not produce pending model input",
@@ -1098,6 +1097,7 @@ async function handleAsyncWorkerRequest(
       await session.settleIngress("failed", {
         error: "Request did not produce pending model input",
       });
+      didSettle = true;
       await settleCronRun(event.accountId, event.cronRun, {
         error: "Request did not produce pending model input",
       });
@@ -2280,8 +2280,8 @@ export async function dispatchAppliedIngress(
 /**
  * Transfers the fenced owner to the next durable FIFO application and schedules
  * it. With `settle`, the current event is settled in the same mutation; when
- * that throws, the settle is already stored on its own, so a caller's failure
- * settle leaves the real outcome in place.
+ * that throws, the settle has been retried on its own, so a caller's failure
+ * settle normally leaves the real outcome in place.
  */
 async function dispatchNextIngress(
   session: Session,

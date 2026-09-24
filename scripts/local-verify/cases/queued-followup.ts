@@ -24,11 +24,13 @@ export async function queuedFollowup(context: VerifyContext): Promise<void> {
       }),
   );
 
-  let queued: AsyncAgentRun | null = null;
-  // The SDK throws on a failed run's error part, so the error is the outcome.
-  const streamError = await context.measure(
+  const { queued, streamError } = await context.measure(
     "streamed run",
-    async (): Promise<string | null> => {
+    async (): Promise<{
+      queued: AsyncAgentRun | null;
+      streamError: string | null;
+    }> => {
+      let admitted: AsyncAgentRun | null = null;
       try {
         for await (const _part of context.client.stream({
           agentId: agentId,
@@ -38,7 +40,7 @@ export async function queuedFollowup(context: VerifyContext): Promise<void> {
         })) {
           // The first part means this run owns the conversation, so the next
           // message has to queue behind it.
-          queued ??= await context.client.runAsync({
+          admitted ??= await context.client.runAsync({
             agentId: agentId,
             conversationKey: key,
             eventId: `${key}-queued`,
@@ -47,10 +49,14 @@ export async function queuedFollowup(context: VerifyContext): Promise<void> {
           });
         }
       } catch (err) {
-        return err instanceof Error ? err.message : String(err);
+        // The SDK throws on a failed run's error part, so the error is the outcome.
+        return {
+          queued: admitted,
+          streamError: err instanceof Error ? err.message : String(err),
+        };
       }
 
-      return null;
+      return { queued: admitted, streamError: null };
     },
   );
   assertStep(
@@ -78,7 +84,7 @@ export async function queuedFollowup(context: VerifyContext): Promise<void> {
   const status = await context.measure(
     "queued follow-up",
     (): Promise<AsyncStatus> =>
-      queued!.wait({ intervalMs: 500, timeoutMs: FOLLOWUP_TIMEOUT_MS }),
+      queued.wait({ intervalMs: 500, timeoutMs: FOLLOWUP_TIMEOUT_MS }),
   );
   assertStep(
     context.hasModelKey
