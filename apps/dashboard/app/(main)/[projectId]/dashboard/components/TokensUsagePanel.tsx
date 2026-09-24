@@ -689,7 +689,7 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
 }
 
-/** `provider::model`, the key the filter, colors and table share. */
+/** `provider::model`, the key the model filter, its colors and the trace query share. */
 function modelKey(b: { modelProvider: string; modelId: string }): string {
   return `${b.modelProvider}::${b.modelId}`;
 }
@@ -700,7 +700,7 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
   return typeof value === "number" ? value : 0;
 }
 
-/** Whole-number share for the numbers row and model table, 0% when empty. */
+/** Whole-number share for the numbers row, 0% when empty. */
 function percent(part: number, whole: number): string {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%";
 }

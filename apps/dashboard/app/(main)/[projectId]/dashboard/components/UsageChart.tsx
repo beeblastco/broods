@@ -16,7 +16,7 @@ const PAD_BOTTOM = 18;
 const LABEL_GAP_PX = 64;
 const WIDE_LABEL_GAP_PX = 120;
 // Widest tooltip plus its offset from the hovered point: closer than this to
-// the right edge, it opens to the left instead.
+// the right edge, it opens to the left instead, when the left has the room.
 const TOOLTIP_FLIP_PX = 220;
 
 export interface UsageChartSeries {
@@ -137,6 +137,7 @@ export function UsageChart({
       Math.min(n - 1, Math.floor((clientX - rect.left) / scale.slot)),
     );
   const active = hover ?? selected ?? n - 1;
+  const tooltipX = hover === null ? 0 : hover * scale.slot + scale.slot / 2;
 
   return (
     <div className="relative select-none" ref={measureRef}>
@@ -209,8 +210,10 @@ export function UsageChart({
       </button>
       {hover !== null && hover < n && rows[hover] && (
         <ChartTooltip
-          x={hover * scale.slot + scale.slot / 2}
-          flip={hover * scale.slot + scale.slot / 2 + TOOLTIP_FLIP_PX > width}
+          x={tooltipX}
+          flip={
+            tooltipX + TOOLTIP_FLIP_PX > width && tooltipX >= TOOLTIP_FLIP_PX
+          }
           title={formatBucketLabel(bucketStarts[hover], binSeconds, true)}
           series={series}
           values={rows[hover]}
