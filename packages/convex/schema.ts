@@ -1210,6 +1210,15 @@ export const usageMetersFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * Ids of core usage writes already on a meter, so a retry after a lost
+ * response is not counted twice. Pruned after a day; retries end in seconds.
+ */
+export const usageWritesFields = {
+  writeId: v.string(),
+  createdAt: v.number(),
+};
+
 export const usageRollupsFields = {
   accountId: v.id("accounts"),
   endpointId: v.string(),
@@ -1482,4 +1491,7 @@ export default defineSchema({
     "accountId",
     "month",
   ]),
+  usageWrites: defineTable(usageWritesFields)
+    .index("by_writeId", ["writeId"])
+    .index("by_createdAt", ["createdAt"]),
 });

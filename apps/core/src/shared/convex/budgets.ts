@@ -28,12 +28,15 @@ export const budgets: Storage["budgets"] = {
     })) as BudgetStatus | null;
   },
   record: async function (accountId, usage): Promise<void> {
+    // One id for every attempt: a retry after a lost response is applied once.
+    const writeId = crypto.randomUUID();
     for (const [attempt, delayMs] of RECORD_RETRY_DELAYS_MS.entries()) {
       await Bun.sleep(delayMs);
       try {
         await getConvexClient().mutation(internal.account.budget.record, {
           accountId: accountId,
           usage: usage,
+          writeId: writeId,
         });
 
         return;

@@ -34,9 +34,16 @@ describe("budgets.record", () => {
       mutation.mockRestore();
     }
 
-    expect(writes).toEqual([
-      { accountId: "acct_1", usage: { egressGb: 2 } },
-      { accountId: "acct_1", usage: { egressGb: 2 } },
-    ]);
+    // Both attempts carry the same write id, so Convex applies the usage once
+    // even when the first one committed and only its response was lost.
+    const write = {
+      accountId: "acct_1",
+      usage: { egressGb: 2 },
+      writeId: expect.any(String),
+    };
+    expect(writes).toEqual([write, write]);
+    expect((writes[0] as { writeId: string }).writeId).toBe(
+      (writes[1] as { writeId: string }).writeId,
+    );
   });
 });

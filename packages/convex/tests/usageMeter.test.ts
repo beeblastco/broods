@@ -194,6 +194,24 @@ test("a storage snapshot lands in the month it was taken", async () => {
   expect(meter).toMatchObject({ month: "2026-09", storageGbMonths: 1 });
 });
 
+test("a retried usage write with the same id counts once", async () => {
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  const write = {
+    accountId: accountId,
+    usage: { egressGb: 1 },
+    writeId: "write-1",
+  };
+
+  await t.mutation(internal.account.budget.record, write);
+  await t.mutation(internal.account.budget.record, write);
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  expect(meter?.egressGb).toBe(1);
+});
+
 describe("budget", () => {
   test("is not enforced unless this is the managed service", async () => {
     const t = meterTest();

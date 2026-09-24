@@ -8,6 +8,7 @@
 
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import { authKit } from "../auth";
@@ -19,6 +20,10 @@ import {
 } from "../model/usageMeter";
 import { getActiveAccountForUser } from "../org/orgs";
 import { planValidator, usageQuantityFields } from "../schema";
+
+// Core's retries end within a minute; a day of ids is ample.
+const USAGE_WRITE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const USAGE_WRITE_PRUNE_BATCH = 500;
 
 const budgetStatusValidator = v.object({
   enforced: v.boolean(),
@@ -144,12 +149,49 @@ export const record = internalMutation({
     }),
     /** When the usage happened, if not now; picks the meter month. */
     at: v.optional(v.number()),
+    /** Same on every retry of one write, so a retry is applied once. */
+    writeId: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = ctx.db.normalizeId("accounts", args.accountId);
-    if (accountId) {
-      await addUsage(ctx, accountId, args.usage, args.at ?? Date.now());
+    if (!accountId) return null;
+    const now = Date.now();
+    if (args.writeId !== undefined) {
+      const writeId = args.writeId;
+      const applied = await ctx.db
+        .query("usageWrites")
+        .withIndex("by_writeId", (q) => q.eq("writeId", writeId))
+        .first();
+      if (applied) return null;
+      await ctx.db.insert("usageWrites", { writeId: writeId, createdAt: now });
+    }
+    await addUsage(ctx, accountId, args.usage, args.at ?? now);
+
+    return null;
+  },
+});
+
+/** Daily cron: forget write ids older than a day, one bounded batch per run. */
+export const pruneUsageWrites = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const expired = await ctx.db
+      .query("usageWrites")
+      .withIndex("by_createdAt", (q) =>
+        q.lt("createdAt", Date.now() - USAGE_WRITE_RETENTION_MS),
+      )
+      .take(USAGE_WRITE_PRUNE_BATCH);
+    for (const row of expired) {
+      await ctx.db.delete(row._id);
+    }
+    if (expired.length === USAGE_WRITE_PRUNE_BATCH) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.account.budget.pruneUsageWrites,
+        {},
+      );
     }
 
     return null;

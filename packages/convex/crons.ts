@@ -64,6 +64,12 @@ crons.interval(
   {},
 );
 crons.interval(
+  "prune usage write ids",
+  { hours: 24 },
+  internal.account.budget.pruneUsageWrites,
+  {},
+);
+crons.interval(
   "snapshot storage usage",
   { hours: 24 },
   internal.aws.storageMeter.snapshotAll,
