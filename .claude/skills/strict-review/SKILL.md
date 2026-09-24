@@ -6,7 +6,9 @@ argument-hint: "[low|medium|high|xhigh|max] [pr | branch | commit range]"
 
 # Strict review
 
-Review as Phicks would. `/code-review` finds bugs; this judges whether the change is one they would have written. The exact rules live in the root and touched workspaces' `AGENTS.md` and `~/.claude/CLAUDE.md`; read them, do not restate them. The principles below are why those rules exist. When a rule is silent, decide by the principle.
+Review with Phicks's eyes. `/code-review` finds bugs; this checks the change against the rules and shows Phicks what they need to judge the rest. The exact rules live in the root and touched workspaces' `AGENTS.md` and `~/.claude/CLAUDE.md`; read them, do not restate them. The principles below are why those rules exist.
+
+You own the verdict on rules, bugs, checks and evidence. Phicks owns taste and whether the solution is the right one: raise those under **Your call** with what you saw and the options, never as a verdict or a blocker.
 
 ## What they want, and why
 
@@ -23,15 +25,16 @@ Review as Phicks would. `/code-review` finds bugs; this judges whether the chang
 ## Steps
 
 1. **Base review.** Run `/code-review <level> <target>`, default `high`. Keep its findings; do not repeat its angles.
-2. **Vision and rules.** Read every changed file in full, not only the hunks, against the principles and the rule files. For each finding, quote the rule or name the principle, and the line.
+2. **Rules and principles.** Read every changed file in full, not only the hunks. A broken rule is a finding: quote the rule and the line. Where only a principle speaks, or you doubt the approach itself, put it under **Your call**.
 3. **Contract gate.** An API route or `openapi.yaml`, the SDK or CLI in `packages/broods`, a public Convex function, or dashboard UI is blocking unless the other surfaces moved with it, a mock is linked, and approval from Phicks is quoted. Never infer approval.
 4. **Bugs.** Confirm each correctness finding with a red loop from `/diagnosing-bugs` phases 1 and 2 before calling it blocking; throwaway, not committed. Unconfirmed stays plausible. Fixes go through `/diagnosing-bugs`.
 5. **Checks.** Run the `AGENTS.md` before-done commands and tests for each touched workspace. For lines the diff adds: `bunx oxlint --type-aware -A all -D typescript/no-explicit-any -D typescript/no-unsafe-type-assertion <files>`. `openapi.yaml` changed: `oasdiff breaking`. `packages/broods` changed: `pack:check`. Say what you skipped and why.
-6. **The cycle.** Branch rebased on the latest default branch, commits and PR in plain words that open with the user's problem, PR filed with `/file-pr`.
+6. **Dashboard evidence.** Any change to `apps/dashboard` UI must ship with a live demo, its perf report and screenshots; missing any is blocking. Produce them yourself from the PR branch: `bun run local:up`, then `bun run dashboard`, then drive the changed flow with Playwright, recording video and a screenshot of each changed screen in light and dark. Run `bun run --filter @broods/dashboard perf` against that server (setup in `apps/dashboard/AGENTS.md`), and again on the base branch for comparison. Then check them yourself: watch the demo, look at every screenshot against the principles and `apps/dashboard/AGENTS.md`, and flag any page over `PAGE_RENDER_BUDGET_MS` or slower than the base. Publish the video, screenshots and perf numbers with `/communication-artifact` and link it in the PR body.
+7. **The cycle.** Branch rebased on the latest default branch, commits and PR in plain words that open with the user's problem, PR filed with `/file-pr`.
 
 ## Report
 
-Blocking, should fix, nit, most severe first: `file:line`, the rule or principle, the fix. Then the checks with pass or fail, and each contract change with its mock and approval status. Lead with what Phicks must decide.
+Open with **Your call**: taste and solution questions, each with what you saw, the options, and the evidence link. Then blocking, should fix, nit, most severe first: `file:line`, the rule, the fix. Then the checks with pass or fail, the dashboard evidence link, and each contract change with its mock and approval status.
 
 ## Taste notes
 
