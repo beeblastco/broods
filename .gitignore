@@ -25,6 +25,7 @@ build/
 
 .claude/*
 !.claude/settings.json
+!.claude/skills
 .agents/*
 !.agents/skills
 resource.enc
