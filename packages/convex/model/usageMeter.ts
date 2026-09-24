@@ -81,7 +81,7 @@ export interface UsageAmounts {
   /** vCPU hours; a MicroVM runs on one vCPU, so these are its hours. */
   sandboxHours: number;
   hostedMcpCalls: number;
-  /** GB stored at the latest snapshot. Null for a month metered before snapshots set it. */
+  /** GB stored at the latest snapshot. Null when no snapshot measured this month or day. */
   storageGb: number | null;
   egressGb: number;
   ingressGb: number;
@@ -102,8 +102,9 @@ export async function addUsage(
 ): Promise<void> {
   const hasUsage = Object.values(usage).some((value) => value > 0);
   if (!hasUsage && usage.storageGbMonths === undefined) return;
-  // A storage snapshot also sets the stored size. A zero-byte one still lands
-  // on a row that exists, so the size it replaces drops to 0.
+  // A storage snapshot also sets the stored size, zero-byte ones included, so
+  // an empty account reads 0 GB. It opens the month's row, but a day row only
+  // comes with real usage, so idle accounts do not add one row a day.
   const snapshot =
     usage.storageGbMonths === undefined
       ? {}
@@ -116,7 +117,7 @@ export async function addUsage(
       ...snapshot,
       updatedAt: now,
     });
-  } else if (hasUsage) {
+  } else {
     await ctx.db.insert("usageMeters", {
       accountId: accountId,
       month: month,
@@ -214,7 +215,7 @@ export async function budgetUsage(
     .collect();
   const days = dayRows.map((row) => ({
     day: row.day,
-    ...toAmounts(pickUsage(row), row.storageGb ?? 0),
+    ...toAmounts(pickUsage(row), row.storageGb ?? null),
   }));
 
   return {

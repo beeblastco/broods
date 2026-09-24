@@ -311,6 +311,21 @@ describe("budget", () => {
     expect(usage.days).toMatchObject([{ day: "2026-09-21", storageGb: 3 }]);
   });
 
+  test("reads an empty account's first snapshot as 0 GB, not unknown", async () => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { storageGbMonths: 0 },
+    });
+
+    const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+
+    expect(usage.totals.storageGb).toBe(0);
+    expect(usage.days).toEqual([]);
+  });
+
   test("reads a past month from the picker, and nothing outside it", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
