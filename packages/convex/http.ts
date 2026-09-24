@@ -311,16 +311,17 @@ async function handleStripeWebhook(
   try {
     await processEvent(ctx, components.stripe, event, stripe);
 
+    // Checkout completion needs no case of its own: Stripe also sends
+    // customer.subscription.created for the subscription it starts.
     if (
+      event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      const subscription = event.data.object as Stripe.Subscription;
-      const authId = subscription.metadata.authId;
+      const authId = event.data.object.metadata.userId;
       if (authId) {
         await ctx.runMutation(internal.stripe.syncPlanInternal, {
           authId: authId,
-          status: subscription.status,
         });
       }
     }

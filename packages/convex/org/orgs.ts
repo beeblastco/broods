@@ -114,7 +114,7 @@ export const adoptExternalAccount = internalMutation({
       name: args.orgName,
       slug: slug,
       ownerAuthId: owner.authId,
-      plan: "free",
+      plan: owner.plan,
       createdAt: now,
       // An adopted org is not a first-time signup: without this,
       // project.getOrCreateDefault treats the owner's first dashboard
@@ -154,13 +154,10 @@ export const adoptExternalAccount = internalMutation({
 export const create = mutation({
   args: {
     name: v.string(),
-    plan: v.optional(
-      v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
-    ),
   },
   returns: v.id("orgs"),
   handler: async (ctx, args): Promise<Id<"orgs">> => {
-    const { name, plan } = args;
+    const { name } = args;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -182,7 +179,7 @@ export const create = mutation({
       name: name,
       slug: slug,
       ownerAuthId: authUser.id,
-      plan: plan ?? "free",
+      plan: user.plan,
       createdAt: now,
     });
 
@@ -328,7 +325,7 @@ export const getOrCreate = mutation({
       name: baseName,
       slug: slug,
       ownerAuthId: authUser.id,
-      plan: "free",
+      plan: user.plan,
       createdAt: now,
     });
 
@@ -440,18 +437,15 @@ export const setActive = mutation({
   },
 });
 
-/** Renames an org or updates its plan. Owner/admin only. */
+/** Renames an org. Owner/admin only. The plan comes from Stripe, never from here. */
 export const update = mutation({
   args: {
     orgId: v.id("orgs"),
     name: v.optional(v.string()),
-    plan: v.optional(
-      v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
-    ),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { orgId, name, plan } = args;
+    const { orgId, name } = args;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -469,10 +463,7 @@ export const update = mutation({
 
     await requireOrgMember(ctx, orgId, user._id, "admin");
 
-    await ctx.db.patch(orgId, {
-      ...(name !== undefined ? { name: name } : {}),
-      ...(plan !== undefined ? { plan: plan } : {}),
-    });
+    if (name !== undefined) await ctx.db.patch(orgId, { name: name });
 
     return null;
   },

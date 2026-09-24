@@ -4,8 +4,8 @@ import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { toErrorMessage } from "@/app/lib/errors";
-import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
-import { isMaxPlan, PLAN_CONFIGS, resolvePlan } from "@/app/lib/pricing";
+import type { PlanTier } from "@/app/lib/pricing";
+import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
@@ -26,11 +26,12 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
-  const userPlan: ConfiguredPlanTier = resolvePlan(
-    currentUser?.plan as PlanTier | undefined,
-  );
+  const userPlan: PlanTier = currentUser?.plan ?? DEFAULT_PLAN;
   const planConfig = PLAN_CONFIGS[userPlan];
-  const onMaxPlan = isMaxPlan(userPlan);
+  // A live subscription in any state (even past_due) goes through the portal;
+  // checkout refuses it. `undefined` is still loading, so no Upgrade yet.
+  const hasSubscription = billingInfo != null;
+  const canUpgrade = billingInfo === null && !isMaxPlan(userPlan);
 
   const isSubscribed =
     billingInfo?.status === "active" || billingInfo?.status === "trialing";
@@ -95,7 +96,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
                 {planConfig.label} Plan
               </p>
               <p className="text-xs text-muted-foreground">
-                {isSubscribed ? "Monthly billing via Stripe" : "Free tier"}
+                {hasSubscription ? "Monthly billing via Stripe" : "Free tier"}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -130,7 +131,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         )}
 
         <div className="flex items-center gap-2 justify-end">
-          {isSubscribed && (
+          {hasSubscription && (
             <Button
               size="sm"
               variant="outline"
@@ -142,7 +143,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
               {portalLoading ? "Loading…" : "Manage Billing"}
             </Button>
           )}
-          {!onMaxPlan && (
+          {canUpgrade && (
             <Button
               size="sm"
               className="cursor-pointer"
@@ -175,7 +176,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         </div>
       </Section>
 
-      {!onMaxPlan && (
+      {canUpgrade && (
         <Section
           title="Upgrade to Pro"
           description="Higher limits and priority support."

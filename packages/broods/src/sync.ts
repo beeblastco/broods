@@ -44,7 +44,7 @@ export interface CliOnboardingOrg {
   slug: string;
   role: "owner" | "admin" | "member";
   /** Absent on backends that predate plan reporting. */
-  plan?: "free" | "pro" | "enterprise";
+  plan?: "free" | "pro";
   accountStatus: "active" | "missing" | "disabled";
 }
 

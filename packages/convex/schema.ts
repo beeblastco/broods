@@ -1,6 +1,9 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+/** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
+export const planValidator = v.union(v.literal("free"), v.literal("pro"));
+
 /** Synced from WorkOS AuthKit webhooks, with app-specific extensions. */
 export const usersFields = {
   authId: v.string(),
@@ -8,7 +11,8 @@ export const usersFields = {
   name: v.string(),
   avatarUrl: v.optional(v.string()),
   accountHandle: v.optional(v.string()),
-  plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
+  /** Source of truth for the user's tier, set from their Stripe subscriptions. */
+  plan: planValidator,
   deletionScheduledFor: v.optional(v.number()),
   /** Set when a WorkOS deletion webhook has queued irreversible teardown. */
   workosDeletionRequestedAt: v.optional(v.number()),
@@ -394,7 +398,8 @@ export const orgsFields = {
   name: v.string(),
   slug: v.string(),
   ownerAuthId: v.string(),
-  plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
+  /** Copy of the owner's `users.plan`; set at insert and by the Stripe plan sync. */
+  plan: planValidator,
   createdAt: v.number(),
   /** Set the first time a project is created in this org; gates the home-page auto-onboarding. */
   onboardedAt: v.optional(v.number()),

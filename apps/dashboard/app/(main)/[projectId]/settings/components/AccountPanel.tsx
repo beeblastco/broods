@@ -11,11 +11,11 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
-import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
+import type { PlanTier } from "@/app/lib/pricing";
 import {
+  DEFAULT_PLAN,
   isMaxPlan,
   PLAN_CONFIGS,
-  resolvePlan,
   UPGRADE_URL,
 } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
@@ -99,9 +99,7 @@ export function AccountPanel(): React.JSX.Element {
   const avatarUrl = currentUser?.avatarUrl ?? claimAvatar;
   const accountId = currentUser?._id ?? authUser?.id ?? "";
   const email = currentUser?.email ?? claimEmail;
-  const userPlan: ConfiguredPlanTier = resolvePlan(
-    currentUser?.plan as PlanTier | undefined,
-  );
+  const userPlan: PlanTier = currentUser?.plan ?? DEFAULT_PLAN;
   const planConfig = PLAN_CONFIGS[userPlan];
   const showUpgrade = !isMaxPlan(userPlan);
 
