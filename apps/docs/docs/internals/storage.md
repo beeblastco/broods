@@ -91,7 +91,7 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 
 `Session` in `src/harness/session.ts` owns the runtime path:
 
-- `claim()` dedups an inbound event in `runtimeClaims`.
+- An agent turn is deduplicated at admission, by its ingress identity. `claim()` in `runtimeClaims` only guards channel commands such as `/clear` and context-only messages, which never enter the queue.
 - The conversation lease serializes work per conversation, fenced by owner generation. See [queue and steer](queue-and-steer.md).
 - `appendIngressEvents()` persists incoming user, assistant, tool and persisted system messages to `runtimeConversationEvents`.
 - `createTurnContext()` loads history, builds system prompt parts, runs compaction when configured (`compaction.ts`) and prunes model-visible messages (`pruning.ts`).
@@ -107,9 +107,7 @@ sequenceDiagram
   participant S3 as S3 workspace bucket
   participant M as harness.ts
 
-  H->>CVX: admit through runtimeIngress, lease + ownerGeneration
-  H->>S: claim()
-  S->>CVX: claimEvent in runtimeClaims (dedup)
+  H->>CVX: admit through runtimeIngress, dedup by identity, lease + ownerGeneration
   H->>S: appendIngressEvents(events)
   S->>CVX: persist to runtimeConversationEvents
   Note over S: persist: false system messages stay in memory for this turn

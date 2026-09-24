@@ -75,7 +75,7 @@ flowchart TD
   Acct -->|no| Deny["null, 401"]
 ```
 
-Every branch that names an account also requires it to be `active`. `fp_cli_` and `fp_deploy_` never reach core; the Convex config plane checks them in `packages/convex/cli/http.ts`.
+Every branch that names an account also requires it to be `active`, except the account secret on `DELETE /v1/account`, which accepts a disabled account so the owner can retry a deletion. `fp_cli_` and `fp_deploy_` never reach core; the Convex config plane checks them in `packages/convex/cli/http.ts`, and `fp_cli_` also in `config/routes/roles.ts`.
 
 Rules the code enforces:
 

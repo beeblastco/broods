@@ -163,9 +163,9 @@ A `persistent: true` config reserves one instance per workspace namespace, or pe
 - Every provider, workdir included, records the provider id in the Convex `sandboxReservations` table through `instance-store.ts`, and mirrors a row into `sandboxInstances` for the dashboard.
 - `claimSandboxReservation` is conditional, so a concurrent first create has one winner. The loser deletes its duplicate and reconnects to the winner's id. Deletes are conditional on the expected id too, so a stale caller never removes a machine another run replaced.
 - A reservation expires 7 days after its last use, per `SANDBOX_RESERVATION_TTL_SECONDS` in `packages/convex/runtime.ts`.
-- `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`), first after a random delay under 30 s, under a 5 minute lease so one replica sweeps at a time. It pages 100 expired reservations, plus mirror rows no reservation names any more, through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`. That takes the row first, only while it is still expired and still names the same machine, then deletes the sandbox at the provider. If the provider delete fails, it claims the row back so the next sweep retries.
+- `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`), first after a random delay under 30 s, under a 5 minute lease so one replica sweeps at a time. It pages 100 expired reservations, plus mirror rows no reservation names any more, through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`. That takes the row first, only while it is still expired and still names the same machine, then deletes the sandbox at the provider. If the provider delete fails, it claims the row back, which pushes its expiry out by the 7-day reservation TTL, so a later sweep retries instead of every hourly pass.
 
-How a persistent executor acquires its machine, using the MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona and Vercel follow the same claim and race rules:
+How a persistent executor acquires its machine, using the MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B and Vercel follow the same claim and race rules. A warm MicroVM call skips both reservation reads through a 3 minute in-memory endpoint cache:
 
 ```mermaid
 sequenceDiagram
@@ -204,7 +204,7 @@ stateDiagram-v2
   running --> error: refresh reads a provider error
   suspended --> error: refresh reads a provider error
   error --> running: refresh reads running
-  running --> [*]: terminate, or refresh finds it gone
+  running --> [*]: terminate, refresh finds it gone, or swept 7 days after last use
   suspended --> [*]: terminate, or swept 7 days after last use
   error --> [*]: terminate or sweep
 ```
@@ -249,7 +249,7 @@ sequenceDiagram
   S->>Core: POST /v1/sandbox-jobs/:resultId/complete (x-job-token)
   Core->>CVX: verify token, settleAsyncToolResultFromCallback
   Core->>Core: continueAfterAsyncToolSettlement
-  Note over Core: waits until every job in the sealed group settled
+  Note over Core: each job is its own sealed group, skipped if async_status already observed it
   Core->>CVX: admit continuation as a followup envelope
   Core->>O: run the turn, reply by channel, NATS or async status
 ```

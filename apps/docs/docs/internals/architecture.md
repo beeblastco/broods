@@ -94,17 +94,21 @@ sequenceDiagram
   G->>H: proxyHttp, x-broods-via-gateway
   H->>H: routeIncomingEvent, resolve credential and agent
   H->>X: accept envelope
-  alt conversation busy
-    X-->>H: queued or steered
+  alt busy: queued or duplicate
+    X-->>H: queued
     H-->>C: 202 runId, statusUrl
-  else sync
-    X-->>H: owner generation
-    H->>R: session.ts claim, then streamText loop
+  else reject mode or full queue
+    X-->>H: rejected or capacity
+    H-->>C: 409 or 429
+  else owner, sync
+    X-->>H: owner, generation N
+    H->>R: session.ts turn context, streamText loop
     R-->>C: SSE stream parts
-  else background: true
+  else owner, background: true
+    X-->>H: owner, generation N
     H->>X: runtimeAsyncAgentResults row
-    H-->>C: 202 runId
     H->>R: dispatchInProcessWorker
+    H-->>C: 202 runId
     C->>G: GET /v1/runs/:runId
   end
 ```
@@ -113,7 +117,7 @@ sequenceDiagram
 2. The gateway sees a non-config `/v1/` path and proxies it to core (`apps/gateway/src/upstream.ts` `proxyHttp`), stripping `Host` and stamping `x-broods-via-gateway`.
 3. `apps/core/src/server.ts` routes it to the harness handler. `routeIncomingEvent` in `src/harness/integrations.ts` resolves the credential (`src/shared/auth.ts`), loads the agent, and applies the public-access and run-override rules for a runtime key.
 4. `src/harness/handler.ts` admits the request through the conversation coordinator in `src/harness/ingress.ts` and Convex `runtimeIngress.ts`. A busy conversation queues or steers per [queue and steer](queue-and-steer.md).
-5. `src/harness/session.ts` claims the event, loads history and builds the turn context. `src/harness/harness.ts` runs the AI SDK `streamText` loop with tools from `src/harness/tools/index.ts`.
+5. `src/harness/session.ts` persists the incoming events, loads history and builds the turn context. Dedup already happened at admission, on the ingress identity. `src/harness/harness.ts` runs the AI SDK `streamText` loop with tools from `src/harness/tools/index.ts`.
 6. Without `background`, the response is the SSE stream. With `background: true`, core stores a `runtimeAsyncAgentResults` row, answers `202` with a `runId`, and runs the turn on an in-process worker. `dispatchInProcessWorker` starts it, capped by `MAX_INPROCESS_WORKERS`, default 8. The client polls `GET /v1/runs/:runId`.
 
 `ENABLE_DIRECT_API` gates these routes and defaults to `true`.
@@ -130,13 +134,19 @@ sequenceDiagram
   G->>H: /v1/internal/observability-scope
   H-->>G: token scope
   C->>G: execute frame
+  G-->>C: meta
+  G->>N: snapshot the subject's last sequence
   G->>H: POST run with connectionId
-  H-->>G: accepted, subject name
-  G-->>C: ack
-  H->>H: nats-worker in-process worker
+  alt owner
+    H->>H: start nats-worker in-process worker
+    H-->>G: processing, nats scope
+  else queued behind another run
+    H-->>G: queued, no nats scope
+    G-->>C: ack
+  end
   loop each stream part
     H->>N: publish frame
-    N-->>G: ordered consumer, replay then tail
+    N-->>G: ordered consumer from snapshot + 1, live only
     G-->>C: output frame with cursor
   end
   G->>H: poll run status after 3 s of quiet
@@ -145,9 +155,9 @@ sequenceDiagram
 
 1. The client opens `/v1/agents/:endpointId/ws` or the scoped form. The credential rides the `Sec-WebSocket-Protocol` header.
 2. The gateway asks core for the token's scope (`/v1/internal/observability-scope`) and refuses an endpoint outside it. Attach never reaches the core run path, so this is the door check.
-3. On `execute` or `control`, the gateway posts the run to the same core path with a `connectionId` (`apps/gateway/src/agent.ts`). Core admits it and answers JSON naming the NATS subject instead of an SSE stream.
+3. On `execute` or `control`, the gateway posts the run to the same core path with a `connectionId` (`apps/gateway/src/agent.ts`). Core admits it and answers JSON instead of an SSE stream. An owner run carries its NATS scope. A queued one does not, and the gateway sends `ack`.
 4. Core runs the turn as a `nats-worker` in-process worker and publishes each stream part to `WS_RESPONSES`.
-5. The gateway reads that subject with one ordered consumer, replay first and then the live tail, and relays `output` frames with a cursor. It polls the run status route in parallel and always closes with a terminal frame.
+5. The gateway snapshots the subject before the POST and reads it with one ordered consumer from the next sequence, so every frame is live, and relays `output` frames with a cursor. Replay first, then tail, is the `attach` path. It polls the run status route in parallel and always closes with a terminal frame.
 
 `ENABLE_WEBSOCKET=true` and `NATS_URL` are required for the worker path.
 
@@ -176,14 +186,15 @@ sequenceDiagram
     H-->>D: skipped
   else active
     H->>X: markStarted
-    H->>H: startScheduledAgentRun
-    alt run started
+    H->>H: startScheduledAgentRun, mode reject
+    alt worker started
       H->>X: markCompleted
-    else run failed
+      Note over H,X: the run settles later through completeRun or failRun
+    else start failed, such as a busy conversation
       H->>X: markFailed
     end
     opt one-time at(...) job
-      H->>X: removeOneShotCron when the run settles
+      H->>X: removeOneShotCron, on settle or at once if the start failed
     end
   end
 ```
@@ -191,7 +202,7 @@ sequenceDiagram
 1. A schedule in the Convex crons component fires `packages/convex/agent/crons.ts` `dispatch`.
 2. The action posts `{ kind: "cron", accountId, cronId, scheduledTime }` to core's in-cluster address (`BROODS_ACCOUNT_MANAGE_URL`) at `/v1/cron-runs` with the service token. The gateway answers `404` on that path.
 3. `handleScheduledCron` in `handler.ts` loads the job, skips it if paused, marks it started, and starts the run. A conversation key that names a live channel session resumes it and replies there.
-4. A one-time `at(...)` job is deleted when its run settles.
+4. A one-time `at(...)` job is deleted when its run settles, or at once when the run fails to start.
 
 ### Config-plane call
 
@@ -292,7 +303,7 @@ classDiagram
   orgs "1" -- "1" accounts : orgId
   orgs "1" -- "*" projects
   projects "1" -- "*" stages
-  stages "1" -- "*" agentDeployments : runtime keys, one active
+  stages "1" -- "1" agentDeployments : runtime key, rotated in place
   stages "1" -- "*" deployKeys
   accounts "1" -- "*" agents
   agents "1" -- "*" crons
