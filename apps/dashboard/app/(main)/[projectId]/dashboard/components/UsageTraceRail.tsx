@@ -4,6 +4,7 @@ import { formatNumber } from "@/app/lib/formatNumber";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
+import { X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { formatBucketLabel } from "./UsageChart";
@@ -11,20 +12,20 @@ import { formatBucketLabel } from "./UsageChart";
 interface Props {
   projectId: Id<"projects">;
   stageId: Id<"stages"> | null;
-  /** The selected bin, or null when nothing is selected. */
-  bin: { startMs: number; binSeconds: number } | null;
+  /** The clicked bin. */
+  bin: { startMs: number; binSeconds: number };
   /** Tokens the selected bin shows for the filtered models, for each trace's share. */
   binTokens: number;
   /** The model filter as `provider::model` keys, or null for every model. */
   models: string[] | null;
-  onClear: () => void;
+  onClose: () => void;
 }
 
 /**
- * Right-hand rail of the Usage tab: links to the traces behind the selected
- * chart bin, heaviest first. Each row carries the start of its prompt, as
- * Tracing labels it, and the tokens it contributed; the trace itself opens
- * in the Tracing tab. Beside the chart it keeps the chart's height and
+ * The trace list that opens beside the token chart when a bin is clicked:
+ * links to the traces behind that bin, heaviest first. Each row carries the
+ * start of its prompt, as Tracing labels it, and the tokens it contributed;
+ * the trace itself opens in the Tracing tab. It keeps the chart's height and
  * scrolls inside, so opening it never moves the content below.
  */
 export function UsageTraceRail({
@@ -33,32 +34,17 @@ export function UsageTraceRail({
   bin,
   binTokens,
   models,
-  onClear,
+  onClose,
 }: Props): React.JSX.Element {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const result = useQuery(
-    api.logs.fetchUsageTasks,
-    bin
-      ? {
-          projectId: projectId,
-          stageId: stageId ?? undefined,
-          startMs: bin.startMs,
-          endMs: bin.startMs + bin.binSeconds * 1000,
-          models: models ?? undefined,
-        }
-      : "skip",
-  );
-
-  if (!bin) {
-    return (
-      <Rail>
-        <p className="px-4 py-10 text-center text-xs text-muted-foreground">
-          Click the chart to see the traces behind that time.
-        </p>
-      </Rail>
-    );
-  }
+  const result = useQuery(api.logs.fetchUsageTasks, {
+    projectId: projectId,
+    stageId: stageId ?? undefined,
+    startMs: bin.startMs,
+    endMs: bin.startMs + bin.binSeconds * 1000,
+    models: models ?? undefined,
+  });
 
   // Rows written before trace ids joined the task id have nothing to link to.
   const traced = (result?.tasks ?? []).flatMap((task) =>
@@ -91,10 +77,11 @@ export function UsageTraceRail({
         </span>
         <button
           type="button"
-          onClick={onClear}
-          className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+          aria-label="Close traces"
+          className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
         >
-          Clear
+          <X className="size-3.5" />
         </button>
       </div>
       {result === undefined && (
