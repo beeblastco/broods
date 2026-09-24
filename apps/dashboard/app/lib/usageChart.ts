@@ -22,6 +22,23 @@ export interface TokenParts {
   reasoning: number;
 }
 
+/**
+ * Start of every bin in the range ending at `now`, floored to whole bins the
+ * way the server floors `bucketStart`, so filled bins meet the data bins even
+ * when the range is not a whole number of bins (a year of weeks).
+ */
+export function bucketStartsAcrossRange(
+  binSeconds: number,
+  rangeSeconds: number,
+  now: number,
+): number[] {
+  const binMs = binSeconds * 1000;
+  const endMs = Math.ceil(now / binMs) * binMs;
+  const count = Math.ceil(rangeSeconds / binSeconds);
+
+  return Array.from({ length: count }, (_, i) => endMs - (count - i) * binMs);
+}
+
 /** Axis label for a round tick: formatNumber without the trailing ".0". */
 export function formatAxisNumber(n: number): string {
   return formatNumber(n).replace(".0", "");

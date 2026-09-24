@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  bucketStartsAcrossRange,
   formatAxisNumber,
   niceTicks,
   resampleRows,
@@ -30,6 +31,19 @@ test("ticks are round and reach the max", () => {
   expect(niceTicks(400, 4)).toEqual([0, 100, 200, 300, 400]);
   expect(niceTicks(0, 4)).toEqual([0, 1]);
   expect(formatAxisNumber(500_000)).toBe("500K");
+});
+
+test("range bins line up with the server's bins, even when the range is not whole bins", () => {
+  const week = 7 * 24 * 60 * 60;
+  const starts = bucketStartsAcrossRange(
+    week,
+    365 * 24 * 60 * 60,
+    Date.UTC(2026, 8, 24, 14),
+  );
+  const weekMs = week * 1000;
+
+  expect(starts.every((t) => t % weekMs === 0)).toBe(true);
+  expect(starts).toHaveLength(53);
 });
 
 test("resampling keeps the endpoints and interpolates between them", () => {

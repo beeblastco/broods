@@ -8,9 +8,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { formatBucketLabel } from "./UsageChart";
 
-// Matches `taskUsage` retention in packages/convex/usage.ts.
-const TASK_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
-
 interface Props {
   projectId: Id<"projects">;
   stageId: Id<"stages"> | null;
@@ -18,8 +15,8 @@ interface Props {
   bin: { startMs: number; binSeconds: number } | null;
   /** Tokens the selected bin shows for the filtered models, for each trace's share. */
   binTokens: number;
-  /** Model filter: true when a model's traces should be listed. */
-  isModelShown: (modelProvider: string, modelId: string) => boolean;
+  /** The model filter as `provider::model` keys, or null for every model. */
+  models: string[] | null;
   onClear: () => void;
 }
 
@@ -35,7 +32,7 @@ export function UsageTraceRail({
   stageId,
   bin,
   binTokens,
-  isModelShown,
+  models,
   onClear,
 }: Props): React.JSX.Element {
   const pathname = usePathname();
@@ -48,6 +45,7 @@ export function UsageTraceRail({
           stageId: stageId ?? undefined,
           startMs: bin.startMs,
           endMs: bin.startMs + bin.binSeconds * 1000,
+          models: models ?? undefined,
         }
       : "skip",
   );
@@ -64,7 +62,7 @@ export function UsageTraceRail({
 
   // Rows written before trace ids joined the task id have nothing to link to.
   const traced = (result?.tasks ?? []).flatMap((task) =>
-    task.traceId && isModelShown(task.modelProvider, task.modelId)
+    task.traceId
       ? [
           {
             traceId: task.traceId,
@@ -81,7 +79,6 @@ export function UsageTraceRail({
 
     return `${pathname}?${next.toString()}`;
   };
-  const expired = bin.startMs < Date.now() - TASK_RETENTION_MS;
 
   return (
     <Rail>
@@ -107,9 +104,7 @@ export function UsageTraceRail({
       )}
       {result && traced.length === 0 && (
         <p className="px-4 py-10 text-center text-xs text-muted-foreground">
-          {expired
-            ? "Trace details are kept for 90 days."
-            : "No finished tasks in this bin."}
+          No traces listed for this time.
         </p>
       )}
       {traced.map(({ traceId, totalTokens, inputPreview }, i) => (
@@ -139,7 +134,7 @@ export function UsageTraceRail({
       ))}
       {result?.truncated && (
         <p className="px-3 py-2 text-2xs text-muted-foreground">
-          Showing the {result.tasks.length} largest tasks.
+          Some tasks in this bin are not listed.
         </p>
       )}
     </Rail>

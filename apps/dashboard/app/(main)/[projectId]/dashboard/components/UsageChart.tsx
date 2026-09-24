@@ -1,7 +1,12 @@
 "use client";
 
 import { useTween } from "@/app/hooks/useTween";
-import { monotonePath, niceTicks, resampleRows } from "@/app/lib/usageChart";
+import {
+  monotonePath,
+  niceTicks,
+  resampleRows,
+  type TokenParts,
+} from "@/app/lib/usageChart";
 import { cn } from "@/app/lib/utils";
 import { useCallback, useMemo, useRef, useState } from "react";
 
@@ -19,6 +24,37 @@ export interface UsageChartSeries {
   /** CSS color, usually a `var(--color-usage-*)` token. */
   color: string;
 }
+
+// The token chart's series, stacked bottom to top. The parts add up to
+// totalTokens; see tokenParts. Shared by the Usage tab and its gallery fixture.
+export const TOKEN_SERIES: Array<UsageChartSeries & { key: keyof TokenParts }> =
+  [
+    {
+      key: "uncachedInput",
+      label: "Uncached input",
+      color: "var(--color-usage-input)",
+    },
+    {
+      key: "cacheRead",
+      label: "Cache read",
+      color: "var(--color-usage-cache-read)",
+    },
+    {
+      key: "cacheWrite",
+      label: "Cache write",
+      color: "var(--color-usage-cache-write)",
+    },
+    {
+      key: "textOutput",
+      label: "Text output",
+      color: "var(--color-usage-output)",
+    },
+    {
+      key: "reasoning",
+      label: "Reasoning",
+      color: "var(--color-usage-reasoning)",
+    },
+  ];
 
 interface Props {
   kind: "area" | "bars";
@@ -65,7 +101,7 @@ export function UsageChart({
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<number | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
-  const measureRef = useCallback((el: HTMLDivElement | null) => {
+  const measureRef = useCallback((el: HTMLDivElement | null): void => {
     observerRef.current?.disconnect();
     if (!el) return;
     const observer = new ResizeObserver(() => setWidth(el.clientWidth));
