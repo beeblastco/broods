@@ -23,10 +23,7 @@ import {
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import {
-  estimateModelTokenCost,
-  type ModelCostEstimate,
-} from "@broods/convex/model/modelPricing";
+import { estimateModelTokenCost } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FunctionReturnType } from "convex/server";
@@ -69,12 +66,6 @@ interface LiveOverlay {
   modelCalls: number;
   agentSandboxCpuUsec: number;
   toolSandboxCpuUsec: number;
-}
-
-interface ModelRow extends Bucket {
-  key: string;
-  color: string;
-  estimatedCost: ModelCostEstimate | null;
 }
 
 const RANGE_SECONDS: Record<Range, number> = {
@@ -252,26 +243,24 @@ export function TokensUsagePanel({
     () => sumCounters(selected === null ? bins : [bins[selected]]),
     [bins, selected],
   );
-  const models = useMemo((): ModelRow[] => {
+  // Priced per model, since each model has its own rates: the models shown,
+  // over the range or the clicked bin.
+  const { estimatedCost, unpriced } = useMemo(() => {
     const inScope = (stats?.buckets ?? []).filter(
       (b) =>
-        selected === null ||
-        Math.floor(b.bucketStart / binMs) * binMs === bucketStarts[selected],
+        (activeFilter === null || activeFilter.includes(modelKey(b))) &&
+        (selected === null ||
+          Math.floor(b.bucketStart / binMs) * binMs === bucketStarts[selected]),
+    );
+    const costs = aggregateByModel(inScope).map((b) =>
+      estimateModelTokenCost(b.modelProvider, b.modelId, b),
     );
 
-    return aggregateByModel(inScope).map((b) => ({
-      ...b,
-      key: modelKey(b),
-      color: modelColors.get(modelKey(b)) ?? MODEL_COLORS[0],
-      estimatedCost: estimateModelTokenCost(b.modelProvider, b.modelId, b),
-    }));
-  }, [stats, selected, binMs, bucketStarts, modelColors]);
-  const shownModels = models.filter((m) => isShown(m.key));
-  const estimatedCost = shownModels.reduce(
-    (total, m) => total + (m.estimatedCost?.total ?? 0),
-    0,
-  );
-  const unpriced = shownModels.filter((m) => m.estimatedCost === null).length;
+    return {
+      estimatedCost: costs.reduce((total, c) => total + (c?.total ?? 0), 0),
+      unpriced: costs.filter((c) => c === null).length,
+    };
+  }, [stats, activeFilter, selected, binMs, bucketStarts]);
 
   const selectBin = (index: number): void =>
     setSelectedStart(index === selected ? null : bucketStarts[index]);
@@ -332,8 +321,13 @@ export function TokensUsagePanel({
         unpriced={unpriced}
       />
 
-      <div className="grid rounded-lg border border-border bg-card lg:grid-cols-3">
-        <div className="p-3 lg:col-span-2">
+      <div
+        className={cn(
+          "grid rounded-lg border border-border bg-card",
+          selected !== null && "lg:grid-cols-3",
+        )}
+      >
+        <div className={cn("p-3", selected !== null && "lg:col-span-2")}>
           <UsageChart
             kind="area"
             height={250}
@@ -348,44 +342,34 @@ export function TokensUsagePanel({
           />
           <Legend series={TOKEN_SERIES} />
         </div>
-        <UsageTraceRail
-          projectId={projectId}
-          stageId={stageId}
-          bin={
-            selected === null
-              ? null
-              : { startMs: bucketStarts[selected], binSeconds: binSeconds }
-          }
-          binTokens={selected === null ? 0 : bins[selected].totalTokens}
-          models={activeFilter}
-          onClear={() => setSelectedStart(null)}
-        />
+        {selected !== null && (
+          <UsageTraceRail
+            projectId={projectId}
+            stageId={stageId}
+            bin={{ startMs: bucketStarts[selected], binSeconds: binSeconds }}
+            binTokens={bins[selected].totalTokens}
+            models={activeFilter}
+            onClose={() => setSelectedStart(null)}
+          />
+        )}
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-5">
-        <ModelTable
-          models={models}
-          isShown={isShown}
-          onToggle={toggleModel}
-          className="lg:col-span-3"
+      <div className="rounded-lg border border-border bg-card p-3">
+        <h3 className="mb-2 text-xs font-medium">Sandbox CPU</h3>
+        <UsageChart
+          kind="bars"
+          height={150}
+          tickCount={3}
+          series={CPU_SERIES}
+          rows={cpuRows}
+          bucketStarts={bucketStarts}
+          binSeconds={binSeconds}
+          selected={selected}
+          onSelect={selectBin}
+          formatAxis={formatCpuUsec}
+          formatValue={formatCpuUsec}
         />
-        <div className="rounded-lg border border-border bg-card p-3 lg:col-span-2">
-          <h3 className="mb-2 text-xs font-medium">Sandbox CPU</h3>
-          <UsageChart
-            kind="bars"
-            height={112}
-            tickCount={2}
-            series={CPU_SERIES}
-            rows={cpuRows}
-            bucketStarts={bucketStarts}
-            binSeconds={binSeconds}
-            selected={selected}
-            onSelect={selectBin}
-            formatAxis={formatCpuUsec}
-            formatValue={formatCpuUsec}
-          />
-          <Legend series={CPU_SERIES} />
-        </div>
+        <Legend series={CPU_SERIES} />
       </div>
     </div>
   );
@@ -460,110 +444,6 @@ function ModelMenu({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-/** Per-model totals for the range or clicked bin; the model name toggles the filter. */
-function ModelTable({
-  models,
-  isShown,
-  onToggle,
-  className,
-}: {
-  models: ModelRow[];
-  isShown: (key: string) => boolean;
-  onToggle: (key: string) => void;
-  className: string;
-}): React.JSX.Element {
-  const shownTotal =
-    models.reduce((t, m) => t + (isShown(m.key) ? m.totalTokens : 0), 0) || 1;
-
-  return (
-    <div
-      className={cn(
-        "overflow-x-auto rounded-lg border border-border bg-card",
-        className,
-      )}
-    >
-      <table className="w-full min-w-120 text-xs">
-        <thead>
-          <tr className="border-b border-border text-left text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Model</th>
-            <th className="w-1/5 px-3 py-2 font-medium">Share</th>
-            <th className="px-3 py-2 text-right font-medium">Tokens</th>
-            <th className="px-3 py-2 text-right font-medium">Cache hit</th>
-            <th className="px-3 py-2 text-right font-medium">Calls</th>
-            <th className="px-3 py-2 text-right font-medium">Est. cost</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border tabular-nums">
-          {models.length === 0 && (
-            <tr>
-              <td
-                colSpan={6}
-                className="px-3 py-6 text-center text-muted-foreground"
-              >
-                Waiting for model activity…
-              </td>
-            </tr>
-          )}
-          {models.map((m) => (
-            <tr
-              key={m.key}
-              className={cn(
-                "transition-opacity",
-                !isShown(m.key) && "opacity-40",
-              )}
-            >
-              <td className="px-3 py-2">
-                <button
-                  type="button"
-                  title="Show or hide this model"
-                  onClick={() => onToggle(m.key)}
-                  className="flex cursor-pointer items-center gap-1.5 text-left whitespace-nowrap"
-                >
-                  <span
-                    className="size-2 shrink-0 rounded-sm bg-(--series-color)"
-                    style={{ "--series-color": m.color }}
-                  />
-                  {m.modelId}
-                  <span className="text-muted-foreground">
-                    {m.modelProvider}
-                  </span>
-                </button>
-              </td>
-              <td className="px-3 py-2">
-                <span className="sr-only">
-                  {percent(isShown(m.key) ? m.totalTokens : 0, shownTotal)} of
-                  tokens
-                </span>
-                <div
-                  className="h-1.5 w-(--share) rounded-sm bg-(--series-color) transition-all duration-500"
-                  style={{
-                    "--share": `${isShown(m.key) ? (m.totalTokens / shownTotal) * 100 : 0}%`,
-                    "--series-color": m.color,
-                  }}
-                />
-              </td>
-              <td className="px-3 py-2 text-right">
-                {formatNumber(m.totalTokens)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {percent(m.cachedInputTokens, m.inputTokens)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {formatNumber(m.modelCalls)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {m.estimatedCost
-                  ? formatUsd(m.estimatedCost.total)
-                  : "Unpriced"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 

@@ -15,8 +15,9 @@ const PAD_BOTTOM = 18;
 // Minimum pixels between x-axis labels; wider for "Sep 24 06:00" style labels.
 const LABEL_GAP_PX = 64;
 const WIDE_LABEL_GAP_PX = 120;
-// Tooltip width plus its offset, to flip it left near the right edge.
-const TOOLTIP_FLIP_PX = 190;
+// Widest tooltip plus its offset from the hovered point: closer than this to
+// the right edge, it opens to the left instead.
+const TOOLTIP_FLIP_PX = 220;
 
 export interface UsageChartSeries {
   key: string;
@@ -209,7 +210,7 @@ export function UsageChart({
       {hover !== null && hover < n && rows[hover] && (
         <ChartTooltip
           x={hover * scale.slot + scale.slot / 2}
-          flip={hover * scale.slot + TOOLTIP_FLIP_PX > width}
+          flip={hover * scale.slot + scale.slot / 2 + TOOLTIP_FLIP_PX > width}
           title={formatBucketLabel(bucketStarts[hover], binSeconds, true)}
           series={series}
           values={rows[hover]}
