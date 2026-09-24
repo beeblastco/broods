@@ -928,8 +928,7 @@ export async function runAgentLoop(
       // Wait for the terminal span's publish to be issued, then flush the OTLP
       // exporters (Tempo/Loki) AND the live NATS connection so the durable
       // OBSERVABILITY stream captures every span/log before the container
-      // freezes. A publish still in flight at return is lost. The usage write
-      // overlaps the flush instead of running before it.
+      // freezes. A publish still in flight at return is lost.
       await rootPublished;
       await Promise.allSettled([
         usageRecorded,
@@ -1042,21 +1041,23 @@ export async function runAgentLoop(
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
       // Persist before steering, so a steer message is stored after the step it interrupted.
-      const [renewal] = await Promise.all([
+      const [renewal, persisted] = await Promise.allSettled([
         session.renewConversationLease(),
         session.persistModelMessages(
           responseMessages.slice(persistedResponseCount),
         ),
       ]);
-      persistedResponseCount = responseMessages.length;
-      if (renewal === "stopped") {
+      if (renewal.status === "rejected") throw renewal.reason;
+      if (renewal.value === "stopped") {
         throw new Error(USER_STOP_MESSAGE);
       }
-      if (renewal === "stale") {
+      if (renewal.value === "stale") {
         throw new Error(
           "Conversation ownership changed before the next model step",
         );
       }
+      if (persisted.status === "rejected") throw persisted.reason;
+      persistedResponseCount = responseMessages.length;
       const steering = await session.applySteeringIngress();
       let stepMessages = messages;
       if (steering) {

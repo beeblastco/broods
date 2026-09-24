@@ -297,10 +297,7 @@ export class Session {
   private readonly agentConfig: AgentConfig;
   private readonly persist: boolean;
   private messageSequence = 0;
-  // Cursor of the newest system row this session wrote. prepareStep skips the
-  // system-context re-read when the snapshot already covers it.
   private lastSystemCursor: string | null = null;
-  // takeNext already released or handed on the lease, so release is a no-op.
   private ownerHandedOff = false;
   private hasLoggedMissingMemoryFile = false;
   // One clock reading for the whole run: the system prompt is rebuilt before
@@ -499,9 +496,15 @@ export class Session {
       batchBytes += entryBytes;
     }
     await this.appendConversationEvents(batch);
-    this.lastSystemCursor =
-      events.findLast((entry): boolean => entry.event.message.role === "system")
-        ?.cursor ?? this.lastSystemCursor;
+    const systemCursor = events.findLast(
+      (entry): boolean => entry.event.message.role === "system",
+    )?.cursor;
+    if (
+      systemCursor !== undefined &&
+      (this.lastSystemCursor === null || systemCursor > this.lastSystemCursor)
+    ) {
+      this.lastSystemCursor = systemCursor;
+    }
 
     return events.map((entry): string => entry.cursor);
   }
