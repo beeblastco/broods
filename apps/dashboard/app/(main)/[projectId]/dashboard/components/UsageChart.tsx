@@ -417,8 +417,8 @@ function BarLayers({
 
 /**
  * Hover card that glides between bins instead of jumping. Opens right of the
- * point, or left when its measured width does not fit, and never past the
- * chart's left edge.
+ * point, or left when its measured width does not fit, clamped inside the
+ * chart on both sides.
  */
 function ChartTooltip({
   x,
@@ -437,10 +437,9 @@ function ChartTooltip({
 }): React.JSX.Element {
   const [boxWidth, measureRef] = useElementWidth(TOOLTIP_MIN_WIDTH_PX);
   const right = x + TOOLTIP_OFFSET_PX;
-  const left =
-    right + boxWidth > chartWidth
-      ? Math.max(0, x - TOOLTIP_OFFSET_PX - boxWidth)
-      : right;
+  const side =
+    right + boxWidth > chartWidth ? x - TOOLTIP_OFFSET_PX - boxWidth : right;
+  const left = Math.max(0, Math.min(side, chartWidth - boxWidth));
 
   return (
     <div
