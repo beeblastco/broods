@@ -211,33 +211,28 @@ describe("session system context", () => {
     );
   });
 
-  it("gives a scheduling agent one clock reading for the whole run", async () => {
+  it("keeps the clock out of the system prompt and in the environment block", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const session = await newSession({
       scheduler: { enabled: true },
     });
 
-    const first = await session.createEphemeralTurnContext([
+    const turnContext = await session.createEphemeralTurnContext([
       { role: "user", content: "remind me at 8:45 tonight" },
     ]);
-    const second = await session.createEphemeralTurnContext([
-      { role: "user", content: "and again tomorrow" },
-    ]);
-    const schedulerPrompt = first.system.find((message) =>
+    const schedulerPrompt = turnContext.system.find((message) =>
       message.content.includes("<scheduler>"),
     )?.content;
+    const environment = session.environmentMessage();
 
-    expect(schedulerPrompt).toMatch(
-      /The current time is \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)/,
+    // A timestamp in the system prompt would invalidate the prompt cache for
+    // everything after it; the environment block goes last instead.
+    expect(schedulerPrompt).toContain("The current time is in <environment>");
+    expect(schedulerPrompt).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(environment.content).toMatch(
+      /^<environment>\n[\s\S]*now: \w+day, \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)[\s\S]*<\/environment>$/,
     );
-    expect(schedulerPrompt).toContain(
-      "list_schedules is what is actually pending",
-    );
-    // A timestamp that moved between steps would invalidate the prompt cache.
-    expect(
-      second.system.find((message) => message.content.includes("<scheduler>"))
-        ?.content,
-    ).toBe(schedulerPrompt);
+    expect(session.environmentMessage()).toEqual(environment);
   });
 
   it("withholds the scheduling clock until the agent opts in", async () => {
@@ -338,7 +333,7 @@ describe("session system context", () => {
       'this conversation\'s scope is "slack:T1:C2"',
     );
     expect(memoryGuidance).toContain("memory/MEMORY.md");
-    expect(memoryGuidance).toContain("Today is");
+    expect(memoryGuidance).not.toContain("Today is");
     const workspacePrompt = writableContext.system.find((message) =>
       message.content.includes("<workspace>"),
     )?.content;

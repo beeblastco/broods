@@ -1266,7 +1266,7 @@ describe("write/edit approval policy", () => {
         workspace: "notes",
         sandbox: "own-sandbox",
       }),
-    ).rejects.toThrow("not both");
+    ).rejects.toThrow(/not both[\s\S]*- workspace=notes \(default\)/);
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 

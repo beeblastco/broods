@@ -419,6 +419,16 @@ async function claimSandbox(
   });
 }
 
+/** Whether a machine sandbox's daemon holds its socket right now. */
+export function isMachineConnected(config: SandboxExecutorConfig): boolean {
+  const plane = config.controlPlane;
+
+  return Boolean(
+    plane?.sandboxConfigId &&
+    connections.has(registryKey(plane.accountId, plane.sandboxConfigId)),
+  );
+}
+
 function connectedMachine(config: SandboxExecutorConfig): MachineConnection {
   const plane = config.controlPlane;
   if (!plane?.sandboxConfigId) {

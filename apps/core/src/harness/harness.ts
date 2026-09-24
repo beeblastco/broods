@@ -421,9 +421,11 @@ export async function runAgentLoop(
     return `${serialized.slice(0, MAX_TRACE_ATTRIBUTE_CHARS)}...[truncated]`;
   };
 
+  const environment = session.environmentMessage();
   // Reassigned once the tool set is known, so the live root span carries the
   // tools injected into the model alongside its system prompt and messages.
   let rootRunningAttributes: Record<string, string | number | boolean> = {
+    "agent.environment": traceAttribute(environment.content),
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
@@ -1062,8 +1064,12 @@ export async function runAgentLoop(
     model: attemptTrackedModel,
     instructions: turnContext.system,
     // History messages carry envelope fields (metadata/createdAt) for hook
-    // payloads; the model must see clean AI SDK shapes.
-    messages: stripEnvelopeFieldsFromMessages(turnContext.messages),
+    // payloads; the model must see clean AI SDK shapes. The live environment
+    // goes last so everything before it stays a cached prefix.
+    messages: [
+      ...stripEnvelopeFieldsFromMessages(turnContext.messages),
+      environment,
+    ],
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
     ...(toolApproval ? { toolApproval: toolApproval } : {}),
