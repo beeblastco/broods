@@ -347,7 +347,11 @@ export const appendConversationEvent = internalMutation({
   },
 });
 
-/** Applies the contiguous FIFO steer prefix at one step boundary. */
+/**
+ * Applies the contiguous FIFO steer prefix at one step boundary. Claims nothing
+ * once a stop is requested for this generation, so a stop that lands after
+ * core's renew leaves the steer queued for the next turn.
+ */
 export const applySteering = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -362,6 +366,9 @@ export const applySteering = internalMutation({
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
     const coordinator = await requireOwner(ctx, { ...args, now: now });
+    if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
+      return null;
+    }
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
     const rows = await ctx.db
       .query("runtimeIngressEnvelopes")
@@ -814,52 +821,8 @@ export const settle = internalMutation({
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const coordinator = await requireOwner(ctx, args);
-    const now = Date.now();
-    // A failed settle that was preceded by /stop for this generation is a
-    // deliberate stop, not a fault, so mark it and pollers can tell them apart.
-    const stoppedByUser =
-      args.status === "failed" &&
-      coordinator.stopRequestedGeneration === args.ownerGeneration;
-    const ids = new Set<Id<"runtimeIngressEnvelopes">>();
-    // Page by sequence so more than one drain batch of contributors still
-    // settles; a fixed take() would leave the tail stuck in processing.
-    let afterSequence = -1;
-    while (true) {
-      const rows = await ctx.db
-        .query("runtimeIngressEnvelopes")
-        .withIndex(
-          "by_conversationKey_and_appliedToEventId_and_sequence",
-          (q) =>
-            q
-              .eq("conversationKey", args.conversationKey)
-              .eq("appliedToEventId", args.ownerEventId)
-              .gt("sequence", afterSequence),
-        )
-        .take(MAX_DRAIN_ENVELOPES);
-      for (const row of rows) ids.add(row._id);
-      if (rows.length < MAX_DRAIN_ENVELOPES) break;
-      afterSequence = rows[rows.length - 1]!.sequence;
-    }
-    const own = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
-      .unique();
-    if (own?.conversationKey === args.conversationKey) ids.add(own._id);
-    for (const id of ids) {
-      const row = await ctx.db.get(id);
-      if (!row || ["completed", "failed", "expired"].includes(row.status))
-        continue;
-      await ctx.db.patch(id, {
-        ...RELEASED_PAYLOAD,
-        status: args.status,
-        updatedAt: now,
-        ...(stoppedByUser ? { stoppedByUser: true } : {}),
-        ...(args.result !== undefined ? { result: args.result } : {}),
-        ...(args.error !== undefined ? { error: args.error } : {}),
-      });
-    }
 
-    return ids.size;
+    return settleAppliedEnvelopes(ctx, coordinator, args);
   },
 });
 
@@ -897,13 +860,23 @@ export const stopOwner = internalMutation({
   },
 });
 
-/** Applies the oldest runnable group, or releases ownership when none remains. */
+/**
+ * Applies the oldest runnable group, or releases ownership when none remains.
+ * With `settle`, first settles the owner's envelopes in the same transaction.
+ */
 export const takeNext = internalMutation({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
+    settle: v.optional(
+      v.object({
+        status: v.union(v.literal("completed"), v.literal("failed")),
+        result: v.optional(v.any()),
+        error: v.optional(v.string()),
+      }),
+    ),
   },
   returns: v.union(appliedEnvelopeValidator, v.null()),
   handler: async (
@@ -912,6 +885,12 @@ export const takeNext = internalMutation({
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
     const coordinator = await requireOwner(ctx, { ...args, now: now });
+    if (args.settle) {
+      await settleAppliedEnvelopes(ctx, coordinator, {
+        ...args,
+        ...args.settle,
+      });
+    }
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
     const promoted = await promoteQueuedGroup(ctx, {
       coordinator: coordinator,
@@ -1468,4 +1447,63 @@ async function requireOwner(
   }
 
   return coordinator;
+}
+
+/** Marks the owner event and every envelope applied to it terminal; used by `settle` and `takeNext`. */
+async function settleAppliedEnvelopes(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  args: {
+    conversationKey: string;
+    ownerEventId: string;
+    ownerGeneration: number;
+    status: "completed" | "failed";
+    result?: unknown;
+    error?: string;
+  },
+): Promise<number> {
+  const now = Date.now();
+  // A failed settle that was preceded by /stop for this generation is a
+  // deliberate stop, not a fault, so mark it and pollers can tell them apart.
+  const stoppedByUser =
+    args.status === "failed" &&
+    coordinator.stopRequestedGeneration === args.ownerGeneration;
+  const ids = new Set<Id<"runtimeIngressEnvelopes">>();
+  // Page by sequence so more than one drain batch of contributors still
+  // settles; a fixed take() would leave the tail stuck in processing.
+  let afterSequence = -1;
+  while (true) {
+    const rows = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_conversationKey_and_appliedToEventId_and_sequence", (q) =>
+        q
+          .eq("conversationKey", args.conversationKey)
+          .eq("appliedToEventId", args.ownerEventId)
+          .gt("sequence", afterSequence),
+      )
+      .take(MAX_DRAIN_ENVELOPES);
+    for (const row of rows) ids.add(row._id);
+    if (rows.length < MAX_DRAIN_ENVELOPES) break;
+    afterSequence = rows[rows.length - 1]!.sequence;
+  }
+  const own = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
+    .unique();
+  if (own?.conversationKey === args.conversationKey) ids.add(own._id);
+  for (const id of ids) {
+    const row = await ctx.db.get(id);
+    if (!row || ["completed", "failed", "expired"].includes(row.status))
+      continue;
+    await ctx.db.patch(id, {
+      ...RELEASED_PAYLOAD,
+      status: args.status,
+      updatedAt: now,
+      ...(stoppedByUser ? { stoppedByUser: true } : {}),
+      ...(args.result !== undefined ? { result: args.result } : {}),
+      ...(args.error !== undefined ? { error: args.error } : {}),
+    });
+  }
+
+  return ids.size;
 }

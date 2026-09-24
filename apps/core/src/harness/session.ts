@@ -56,6 +56,7 @@ import {
   settleIngress,
   takeNextIngress,
   type AppliedIngress,
+  type IngressSettlement,
 } from "./ingress.ts";
 import {
   modelIdentityFromModelConfig,
@@ -445,14 +446,22 @@ export class Session {
     });
   }
 
-  /** Transfers to the next durable FIFO application, or atomically releases ownership. */
-  async takeNextIngress(): Promise<AppliedIngress | null> {
+  /**
+   * Transfers to the next durable FIFO application, or atomically releases
+   * ownership. With `settle`, this event is settled in the same mutation.
+   */
+  async takeNextIngress(
+    settle?: IngressSettlement,
+  ): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
-    const next = await takeNextIngress({
-      conversationKey: this.conversationKey,
-      ownerEventId: this.eventId,
-      ownerGeneration: this.ownerGeneration,
-    });
+    const next = await takeNextIngress(
+      {
+        conversationKey: this.conversationKey,
+        ownerEventId: this.eventId,
+        ownerGeneration: this.ownerGeneration,
+      },
+      settle,
+    );
     this.ownerHandedOff = true;
 
     return next;

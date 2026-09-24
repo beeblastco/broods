@@ -706,11 +706,12 @@ describe("runAgentLoop", () => {
   it("stops before the next model call when the owner requests a boundary stop, even if the same step's persist fails", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
-    const applySteeringIngress = mock(async () => null);
+    const appendIngressEvents = mock(async () => []);
     await runAgentLoop(
       {
         conversationKey: "acct:test:agent:test:api:conversation",
         eventId: "owner",
+        appendIngressEvents: appendIngressEvents,
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
@@ -718,7 +719,11 @@ describe("runAgentLoop", () => {
           throw new Error("persist failed");
         },
         renewConversationLease: async () => "stopped",
-        applySteeringIngress: applySteeringIngress,
+        applySteeringIngress: async () => ({
+          events: [{ role: "user", content: "late steer" }],
+          contributingEventIds: ["steer"],
+          appliedMode: "steer",
+        }),
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -743,7 +748,7 @@ describe("runAgentLoop", () => {
         messages: [{ role: "user", content: "original" }],
       }),
     ).rejects.toThrow("Stopped by user at the model boundary");
-    expect(applySteeringIngress).not.toHaveBeenCalled();
+    expect(appendIngressEvents).not.toHaveBeenCalled();
   });
 
   it("stores every step of a tool turn", async () => {

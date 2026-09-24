@@ -743,7 +743,7 @@ describe("runtime ingress", () => {
     });
   });
 
-  test("requests a boundary stop and promotes queued work after settlement", async () => {
+  test("requests a boundary stop, keeps a queued steer out of the stopped turn, and settles with takeNext", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -761,8 +761,8 @@ describe("runtime ingress", () => {
       admission({
         accountId: accountId,
         conversationKey: conversationKey,
-        eventId: "queued-followup",
-        mode: "followup",
+        eventId: "queued-steer",
+        mode: "steer",
       }),
     );
 
@@ -788,22 +788,27 @@ describe("runtime ingress", () => {
         ownerGeneration: owner.ownerGeneration!,
       }),
     ).toBe(true);
+    expect(
+      await t.mutation(internal.runtimeIngress.applySteering, {
+        conversationKey: conversationKey,
+        ownerEventId: "owner",
+        ownerGeneration: owner.ownerGeneration!,
+        leaseTtlMs: 60_000,
+      }),
+    ).toBeNull();
 
-    await t.mutation(internal.runtimeIngress.settle, {
-      conversationKey: conversationKey,
-      ownerEventId: "owner",
-      ownerGeneration: owner.ownerGeneration!,
-      status: "failed",
-      error: "Stopped by user at the model boundary",
-    });
     const next = await t.mutation(internal.runtimeIngress.takeNext, {
       conversationKey: conversationKey,
       ownerEventId: "owner",
       ownerGeneration: owner.ownerGeneration!,
       leaseTtlMs: 60_000,
+      settle: {
+        status: "failed",
+        error: "Stopped by user at the model boundary",
+      },
     });
     expect(next).toMatchObject({
-      eventId: "queued-followup",
+      eventId: "queued-steer",
       appliedMode: "followup",
       ownerGeneration: 2,
     });

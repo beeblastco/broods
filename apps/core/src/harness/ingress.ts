@@ -44,6 +44,13 @@ interface LiveOwner {
   ownerGeneration: number;
 }
 
+/** The terminal outcome `takeNextIngress` can settle in the same mutation. */
+export interface IngressSettlement {
+  status: "completed" | "failed";
+  result?: unknown;
+  error?: string;
+}
+
 /** Queued work `recoverQueuedIngress` promoted, and the scope it runs under. */
 export interface RecoveredIngress {
   accountId: string;
@@ -452,13 +459,15 @@ export function settleIngress(options: {
   return runtime.mutate("settleIngress", options);
 }
 
-/** Takes the next FIFO follow-up or contiguous collect application. */
+/** Takes the next FIFO follow-up or contiguous collect application, settling first when given one. */
 export async function takeNextIngress(
   options: LiveOwner,
+  settle?: IngressSettlement,
 ): Promise<AppliedIngress | null> {
   const next = await runtime.mutate<AppliedIngress | null>("takeNextIngress", {
     ...options,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+    ...(settle ? { settle: settle } : {}),
   });
   // Either the lease moved to the next application or it was released.
   forgetOwner(options);
