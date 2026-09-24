@@ -19,10 +19,16 @@ import type {
   ObservabilityLogEntry,
   ObservabilityServerMessage,
   ObservabilitySpanRow,
+  TaskWaitingOn,
 } from "../../../../packages/broods/src/observability-contracts";
 
 export { isRootSpanKind, isTraceId };
-export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
+export type {
+  LogLevel,
+  ObservabilityLogEntry,
+  ObservabilitySpanRow,
+  TaskWaitingOn,
+};
 
 export type ObservabilityStreamStatus =
   | "idle"

@@ -6,12 +6,13 @@ import {
   type DetailRow,
 } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
-import { StatusDot } from "@/app/components/StatusDot";
+import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import {
   isRootSpanKind,
   useObservabilityStream,
   type ObservabilitySpanRow,
+  type TaskWaitingOn,
 } from "@/app/hooks/useObservabilityStream";
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatNumber } from "@/app/lib/formatNumber";
@@ -43,7 +44,8 @@ interface Props {
 // Task groups rendered before the "Load more" pager.
 const PAGE_SIZE = 50;
 
-type StatusFilter = "all" | ObservabilitySpanRow["status"];
+type SpanStatus = ObservabilitySpanRow["status"];
+type StatusFilter = "all" | SpanStatus;
 
 // Outcome of one Continue click: in flight, or its result text.
 interface ContinueNote {
@@ -56,12 +58,46 @@ interface PayloadSection extends DetailRow {
   summary: string;
 }
 
+// A task reads as the request's outcome, so its status column uses these words.
+const TASK_STATUS_WORD: Record<SpanStatus, string> = {
+  running: "Running",
+  waiting: "Waiting",
+  needs_input: "Needs input",
+  ok: "Done",
+  error: "Failed",
+};
+
+const STATUS_TONE: Record<SpanStatus, StatusTone> = {
+  running: "running",
+  waiting: "warn",
+  needs_input: "input",
+  ok: "ok",
+  error: "error",
+};
+
 const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "all", label: "All statuses" },
-  { value: "running", label: "running" },
-  { value: "ok", label: "ok" },
-  { value: "error", label: "error" },
+  ...(Object.keys(TASK_STATUS_WORD) as SpanStatus[]).map((status) => ({
+    value: status,
+    label: TASK_STATUS_WORD[status],
+  })),
 ];
+
+// The synthetic span that stands for the time between a run that closed on
+// something open and the next run of its task.
+const WAIT_SPAN_NAME = "task.wait";
+
+const WAITING_ON_LABEL: Record<TaskWaitingOn, string> = {
+  question: "needs input · question",
+  approval: "needs input · approval",
+  subagent: "waiting · on subagent",
+  tool: "waiting · on tool",
+};
+
+const WAIT_BAR: Partial<Record<SpanStatus, string>> = {
+  waiting: "bg-warning/50",
+  needs_input: "bg-needs-input/50",
+};
 
 // Collapsible payload sections. Each row shows the count that describes it, so
 // Details never repeats those counts. The per-tool `tool.output` on each child
@@ -154,7 +190,9 @@ const DETAIL_FIELDS: ReadonlyArray<DetailField> = [
   ),
   { key: "model.finish_reason", label: "Finish reason", words: true },
   { key: "tool.success", label: "Succeeded", words: true },
+  { key: "task.waiting_on", label: "Waiting on", words: true },
   { key: "task.id", label: "Task id" },
+  { key: "task.root_id", label: "Resumes task" },
 ];
 
 // Attribute keys the panel already shows as its title, header, a section row, a
@@ -190,6 +228,7 @@ const SHOWN_KEYS: ReadonlySet<string> = new Set([
   "tool.name",
   "tool.state",
   "usage.total_tokens",
+  "wait.open",
 ]);
 
 // Search text per span object, built on first search. See spanSearchText.
@@ -220,8 +259,17 @@ const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
 // Otherwise it reads as running forever.
 const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
-interface SpanGroup {
+// One request: its first run is the row, and every later pass, answer
+// continuation, subagent and wait between them nests under it.
+export interface SpanGroup {
   root: ObservabilitySpanRow;
+  // The request's status: its latest run decides, and a finished request with a
+  // subagent still running is waiting on it.
+  status: SpanStatus;
+  // Whether the latest run is still live, so a stale "running" reads as ended.
+  live: boolean;
+  // Tool calls that failed, even when the run recovered.
+  issueCount: number;
   childrenByParent: Map<string, ObservabilitySpanRow[]>;
   // Root first, then every child, for search and selection.
   spans: ObservabilitySpanRow[];
@@ -281,7 +329,7 @@ export function TracingPanel({
 
     return allGroups.filter((group) => {
       const { root, spans } = group;
-      if (statusFilter !== "all" && root.status !== statusFilter) return false;
+      if (statusFilter !== "all" && group.status !== statusFilter) return false;
       if (fromMs !== null && root.startTimeMs < fromMs) return false;
       if (toMs !== null && root.startTimeMs > toMs) return false;
 
@@ -350,14 +398,12 @@ export function TracingPanel({
     if (!focusTraceId) return;
     const focusKey = `${focusTraceId}:${refocusNonce}`;
     if (focusedRef.current === focusKey) return;
-    const index = groups.findIndex(
-      (group) => group.root.traceId === focusTraceId,
-    );
+    const index = groups.findIndex((group) => hasTrace(group, focusTraceId));
     if (index === -1) {
       // The trace is in the buffer but a filter is hiding it: clear the filters
       // so it renders, then let the effect re-run and scroll to it. Only a
       // trace absent from the whole buffer is a candidate for a Tempo fetch.
-      if (allGroups.some((group) => group.root.traceId === focusTraceId)) {
+      if (allGroups.some((group) => hasTrace(group, focusTraceId))) {
         setFilter("");
         setStatusFilter("all");
         setFromTime("");
@@ -381,7 +427,7 @@ export function TracingPanel({
 
       return;
     }
-    const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
+    const rootKey = spanKey(groups[index].root);
     setExpanded((current) =>
       current.has(rootKey) ? current : new Set([...current, rootKey]),
     );
@@ -393,7 +439,9 @@ export function TracingPanel({
 
       return;
     }
-    const target = document.getElementById(`task-${focusTraceId}`);
+    const target = document.getElementById(
+      `task-${groups[index].root.traceId}`,
+    );
     if (!target) return;
     focusedRef.current = focusKey;
     target.scrollIntoView({ block: "center" });
@@ -503,8 +551,9 @@ export function TracingPanel({
                     tone={
                       isStale(selected.span, isTaskRunning(selected.group.root))
                         ? "ended"
-                        : selected.span.status
+                        : STATUS_TONE[selected.span.status]
                     }
+                    label={selected.span.status}
                   />
                   <span className="font-mono">
                     {spanMetaLine(selected.span)}
@@ -556,7 +605,7 @@ export function TracingPanel({
                 selectedKey,
                 setSelectedKey,
                 focusTraceId,
-                isTaskRunning(group.root),
+                group.live,
                 focusTrace,
               ),
             )}
@@ -659,6 +708,13 @@ function displayAttribute(value: unknown): string {
 }
 
 function formatDuration(ms: number): string {
+  // A wait on a person runs minutes to days, where seconds stop reading well.
+  if (ms >= 3_600_000) {
+    return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
+  }
+  if (ms >= 60_000) {
+    return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+  }
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
   return `${Math.round(ms)}ms`;
@@ -767,11 +823,20 @@ function kindTheme(kind: ObservabilitySpanRow["kind"]): KindTheme {
   return KIND_THEME[kind] ?? KIND_THEME["tool.call"];
 }
 
-/** Newest task first. */
-function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
-  const tasks = spans.filter((span) => isRootSpanKind(span.kind));
+/**
+ * Newest task first. A task is every run one request started: the passes that
+ * share its event id, the runs an answer or finished job resumed (task.root_id),
+ * and its subagents (parent.trace_id).
+ */
+export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
+  const roots = spans.filter((span) => isRootSpanKind(span.kind));
+  const rootByTrace = new Map(roots.map((root) => [root.traceId, root]));
+  const runsByTask = new Map<string, ObservabilitySpanRow[]>();
+  for (const root of roots) {
+    const key = taskKey(root, rootByTrace);
+    runsByTask.set(key, [...(runsByTask.get(key) ?? []), root]);
+  }
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
-
   for (const span of spans) {
     if (isRootSpanKind(span.kind)) continue;
     const children = childrenByTrace.get(span.traceId) ?? [];
@@ -779,54 +844,173 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
     childrenByTrace.set(span.traceId, children);
   }
 
-  return tasks
-    .map((root) => {
-      const children = childrenByTrace.get(root.traceId) ?? [];
-      const spanIds = new Set([
-        root.spanId,
-        ...children.map((child) => child.spanId),
-      ]);
-      const childrenByParent = new Map<string, ObservabilitySpanRow[]>();
-      for (const child of children) {
-        // Re-parent orphans (a parent that never arrived) onto the root so they
-        // still render instead of disappearing.
-        const parentId =
-          child.parentSpanId && spanIds.has(child.parentSpanId)
-            ? child.parentSpanId
-            : root.spanId;
-        const siblings = childrenByParent.get(parentId) ?? [];
-        siblings.push(child);
-        childrenByParent.set(parentId, siblings);
-      }
-      for (const siblings of childrenByParent.values()) {
-        siblings.sort((left, right) => left.startTimeMs - right.startTimeMs);
-      }
-
-      const spans = [root, ...children];
-      const taskRunning = isTaskRunning(root);
-      const windowStart = Math.min(...spans.map((span) => span.startTimeMs));
-      const windowEnd = Math.max(
-        ...spans.map((span) =>
-          isStale(span, taskRunning) ? span.startTimeMs : span.endTimeMs,
-        ),
-      );
-
-      const windowSpan = Math.max(1, windowEnd - windowStart);
-
-      return {
-        root: root,
-        childrenByParent: childrenByParent,
-        spans: spans,
-        windowStart: windowStart,
-        windowSpan: windowSpan,
-        taskDurationMs: Math.max(
-          root.durationMs,
-          taskRunning ? windowEnd - root.startTimeMs : 0,
-          1,
-        ),
-      };
-    })
+  return [...runsByTask.values()]
+    .map((runs) => taskGroup(runs, childrenByTrace))
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
+}
+
+/** Whether any run of the task is that trace. */
+function hasTrace(group: SpanGroup, traceId: string): boolean {
+  return group.spans.some(
+    (span) => isRootSpanKind(span.kind) && span.traceId === traceId,
+  );
+}
+
+/** The request a root belongs to. A subagent follows its parent up the chain. */
+function taskKey(
+  root: ObservabilitySpanRow,
+  rootByTrace: Map<string, ObservabilitySpanRow>,
+): string {
+  let current = root;
+  const seen = new Set<string>();
+  while (current.kind === "subtask" && !seen.has(current.traceId)) {
+    seen.add(current.traceId);
+    const parent = rootByTrace.get(
+      String(current.attributes?.["parent.trace_id"]),
+    );
+    if (!parent) return current.traceId;
+    current = parent;
+  }
+  const taskId =
+    current.attributes?.["task.root_id"] ?? current.attributes?.["task.id"];
+
+  return typeof taskId === "string" && taskId ? taskId : current.traceId;
+}
+
+/** One task's rows, window and status, from its runs and their children. */
+function taskGroup(
+  runs: ObservabilitySpanRow[],
+  childrenByTrace: Map<string, ObservabilitySpanRow[]>,
+): SpanGroup {
+  runs.sort((left, right) => left.startTimeMs - right.startTimeMs);
+  const parentRuns = runs.filter((run) => run.kind !== "subtask");
+  const root = parentRuns[0] ?? runs[0];
+  const runSpanIdByTrace = new Map(
+    runs.map((run) => [run.traceId, run.spanId]),
+  );
+  const waits = parentRuns.flatMap((run, index) =>
+    WAIT_BAR[run.status]
+      ? [waitSpan(run, parentRuns[index + 1], root.spanId)]
+      : [],
+  );
+  const children = runs.flatMap(
+    (run) => childrenByTrace.get(run.traceId) ?? [],
+  );
+  const members = [
+    ...children,
+    ...runs.filter((run) => run !== root),
+    ...waits,
+  ];
+  const spanIds = new Set([root.spanId, ...members.map((span) => span.spanId)]);
+  const childrenByParent = new Map<string, ObservabilitySpanRow[]>();
+  for (const member of members) {
+    // A subagent nests under the run that started it, a later pass or a wait
+    // under the task row. Orphans (a parent that never arrived) fall back to
+    // their own run so they still render.
+    const parentId =
+      member.parentSpanId && spanIds.has(member.parentSpanId)
+        ? member.parentSpanId
+        : member.kind === "subtask"
+          ? (runSpanIdByTrace.get(
+              String(member.attributes?.["parent.trace_id"]),
+            ) ?? root.spanId)
+          : isRootSpanKind(member.kind)
+            ? root.spanId
+            : (runSpanIdByTrace.get(member.traceId) ?? root.spanId);
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(member);
+    childrenByParent.set(parentId, siblings);
+  }
+  for (const siblings of childrenByParent.values()) {
+    siblings.sort((left, right) => left.startTimeMs - right.startTimeMs);
+  }
+
+  const last = parentRuns.at(-1) ?? root;
+  const live = isTaskRunning(last);
+  // An open wait runs until now, which would stretch the window; its row shows
+  // the elapsed time instead.
+  const timed = [root, ...members].filter(
+    (span) => span.attributes?.["wait.open"] !== true,
+  );
+  const windowStart = Math.min(...timed.map((span) => span.startTimeMs));
+  const windowEnd = Math.max(
+    ...timed.map((span) =>
+      isStale(span, isRootSpanKind(span.kind) ? isTaskRunning(span) : live)
+        ? span.startTimeMs
+        : span.endTimeMs,
+    ),
+  );
+  const subagentRunning = runs.some(
+    (run) => run.kind === "subtask" && isTaskRunning(run),
+  );
+
+  return {
+    root: root,
+    status: last.status === "ok" && subagentRunning ? "waiting" : last.status,
+    live: live,
+    issueCount: children.filter(
+      (span) => span.kind === "tool.call" && span.status === "error",
+    ).length,
+    childrenByParent: childrenByParent,
+    spans: [root, ...members],
+    windowStart: windowStart,
+    windowSpan: Math.max(1, windowEnd - windowStart),
+    taskDurationMs: Math.max(windowEnd - root.startTimeMs, 1),
+  };
+}
+
+/**
+ * The wait after a run that closed on something open: until the next run of the
+ * task starts, or still open when there is none.
+ */
+function waitSpan(
+  run: ObservabilitySpanRow,
+  next: ObservabilitySpanRow | undefined,
+  parentSpanId: string,
+): ObservabilitySpanRow {
+  const waitingOn = run.attributes?.["task.waiting_on"];
+  const endTimeMs = next ? next.startTimeMs : Date.now();
+
+  return {
+    traceId: run.traceId,
+    spanId: `${run.spanId}:wait`,
+    parentSpanId: parentSpanId,
+    name: WAIT_SPAN_NAME,
+    kind: "phase",
+    startTimeMs: run.endTimeMs,
+    endTimeMs: endTimeMs,
+    durationMs: Math.max(0, endTimeMs - run.endTimeMs),
+    status: run.status,
+    endpointId: run.endpointId,
+    agentId: run.agentId,
+    conversationKey: run.conversationKey,
+    attributes: {
+      "phase.name":
+        typeof waitingOn === "string" && waitingOn in WAITING_ON_LABEL
+          ? WAITING_ON_LABEL[waitingOn as TaskWaitingOn]
+          : TASK_STATUS_WORD[run.status].toLowerCase(),
+      ...(typeof waitingOn === "string"
+        ? { "task.waiting_on": waitingOn }
+        : {}),
+      ...(next ? {} : { "wait.open": true }),
+    },
+  };
+}
+
+/** A subagent's parent trace, for its jump link. */
+function parentTraceOf(span: ObservabilitySpanRow): string | undefined {
+  const parentTraceId = span.attributes?.["parent.trace_id"];
+
+  return span.kind === "subtask" && typeof parentTraceId === "string"
+    ? parentTraceId || undefined
+    : undefined;
+}
+
+/** A row's name. A later run nested under its task reads as resumed. */
+function rowLabel(span: ObservabilitySpanRow, isTaskRow: boolean): string {
+  return !isTaskRow && (span.kind === "task" || span.kind === "cron")
+    ? "resumed"
+    : spanLabel(span);
 }
 
 /** The span's own name: the request for a root, the tool or step for a child. */
@@ -871,7 +1055,7 @@ function TaskDurationBar({
   group: SpanGroup;
   scaleMaxMs: number;
 }): React.JSX.Element {
-  const live = isTaskRunning(group.root);
+  const live = group.live;
   const barColor = kindTheme(group.root.kind).bar;
   const widthPct = Math.max(
     1.5,
@@ -884,7 +1068,7 @@ function TaskDurationBar({
       <div
         className={cn(
           "absolute top-1/2 h-2 w-(--bar-width) -translate-y-1/2 rounded-sm",
-          group.root.status === "error" ? "bg-destructive/70" : barColor,
+          group.status === "error" ? "bg-destructive/70" : barColor,
           live &&
             "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
         )}
@@ -914,7 +1098,9 @@ function TimelineBar({
 }): React.JSX.Element {
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
-  const barColor = kindTheme(span.kind).bar;
+  const barColor =
+    (span.name === WAIT_SPAN_NAME ? WAIT_BAR[span.status] : undefined) ??
+    kindTheme(span.kind).bar;
   const end = live
     ? windowStart + windowSpan
     : Math.max(span.endTimeMs, span.startTimeMs);
@@ -1221,11 +1407,14 @@ function SpanRow({
   highlighted: boolean;
   onFocusTrace: (traceId: string) => void;
 }): React.JSX.Element {
-  // Every root gets its own duration bar, anchor id, and subtitle.
+  // The task row gets the duration bar, the task status and the subtitle. A
+  // later run of the same task nests as a timeline row, and a subagent links to
+  // its parent only when the parent is not in view to nest under.
   const isRoot = isRootSpanKind(span.kind);
-  const label = spanLabel(span);
-  const parentTraceId =
-    span.kind === "subtask" ? span.attributes?.["parent.trace_id"] : undefined;
+  const isTaskRow = depth === 0;
+  const label = rowLabel(span, isTaskRow);
+  const parentTraceId = isTaskRow ? parentTraceOf(span) : undefined;
+  const durationMs = isTaskRow ? group.taskDurationMs : span.durationMs;
 
   return (
     <tr
@@ -1247,7 +1436,7 @@ function SpanRow({
         className="px-3 py-1.5 font-mono whitespace-nowrap tabular-nums text-muted-foreground"
         title={new Date(span.startTimeMs).toLocaleString()}
       >
-        {isRoot
+        {isTaskRow
           ? formatDateTime(span.startTimeMs)
           : formatTime(span.startTimeMs)}
       </td>
@@ -1277,20 +1466,15 @@ function SpanRow({
           )}
           <span className="min-w-0 truncate" title={label}>
             {label}
-            {isRoot ? (
-              <span className="text-muted-foreground">
-                {" · "}
-                {span.agentId ?? "unknown agent"}
-                {" · "}
-                {span.conversationKey ?? "no conversation"}
-              </span>
+            {isTaskRow ? (
+              <TaskSubtitle group={group} />
             ) : (
               <span className="ml-2 text-muted-foreground">
                 {kindTheme(span.kind).word}
               </span>
             )}
           </span>
-          {typeof parentTraceId === "string" && parentTraceId && (
+          {parentTraceId && (
             <button
               type="button"
               className="shrink-0 cursor-pointer whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline"
@@ -1306,13 +1490,17 @@ function SpanRow({
         </span>
       </td>
       <td className="px-3 py-1.5">
-        <StatusDot tone={isStale(span, taskRunning) ? "ended" : span.status} />
+        <RowStatus
+          span={span}
+          group={isTaskRow ? group : undefined}
+          taskRunning={taskRunning}
+        />
       </td>
       <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
-        {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
+        {durationMs > 0 ? formatDuration(durationMs) : "—"}
       </td>
       <td className="px-3 py-1.5">
-        {isRoot ? (
+        {isTaskRow ? (
           <TaskDurationBar group={group} scaleMaxMs={scaleMaxMs} />
         ) : (
           <TimelineBar
@@ -1324,6 +1512,61 @@ function SpanRow({
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * A task row reads the whole request's status as a dot and a word; any other
+ * row shows its own span's dot.
+ */
+function RowStatus({
+  span,
+  group,
+  taskRunning,
+}: {
+  span: ObservabilitySpanRow;
+  group: SpanGroup | undefined;
+  taskRunning: boolean;
+}): React.JSX.Element {
+  if (!group) {
+    return (
+      <StatusDot
+        tone={isStale(span, taskRunning) ? "ended" : STATUS_TONE[span.status]}
+        label={span.status}
+      />
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1.5 whitespace-nowrap">
+      <StatusDot
+        tone={
+          group.status === "running" && !group.live
+            ? "ended"
+            : STATUS_TONE[group.status]
+        }
+        label={group.status}
+      />
+      {TASK_STATUS_WORD[group.status]}
+    </span>
+  );
+}
+
+/** Agent, conversation, and failed tool calls after a task row's request. */
+function TaskSubtitle({ group }: { group: SpanGroup }): React.JSX.Element {
+  return (
+    <span className="text-muted-foreground">
+      {" · "}
+      {group.root.agentId ?? "unknown agent"}
+      {" · "}
+      {group.root.conversationKey ?? "no conversation"}
+      {group.issueCount > 0 && (
+        <span className="text-destructive">
+          {" · "}
+          {group.issueCount} tool error{group.issueCount === 1 ? "" : "s"}
+        </span>
+      )}
+    </span>
   );
 }
 

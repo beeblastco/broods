@@ -2756,6 +2756,42 @@ test("reconstructs full Tempo span trees with tenant attributes and errors", () 
   });
 });
 
+test("keeps a root's waiting and needs_input state from task.state", () => {
+  const rootSpan = (
+    spanId: string,
+    state: string,
+  ): Record<string, unknown> => ({
+    traceId: `trace-${spanId}`,
+    spanId: spanId,
+    name: "agent.task",
+    startTimeUnixNano: "1000000000",
+    endTimeUnixNano: "2000000000",
+    attributes: [{ key: "task.state", value: { stringValue: state } }],
+    status: { code: 1 },
+  });
+  const rows = tempoTraceRowsFromResponse({
+    batches: [
+      {
+        scopeSpans: [
+          {
+            spans: [
+              rootSpan("asked", "needs_input"),
+              rootSpan("delegated", "waiting"),
+              rootSpan("done", "completed"),
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(rows.map((row) => row.status)).toEqual([
+    "needs_input",
+    "waiting",
+    "ok",
+  ]);
+});
+
 test("normalizes base64 Tempo ids to hex so backfill keys match live spans", () => {
   // 16-byte trace id and 8-byte span id, hex then base64-encoded.
   const traceHex = "2e4a86cf02516e0768dff2a96ae9eb12";

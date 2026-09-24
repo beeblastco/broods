@@ -166,6 +166,18 @@ export async function sealDetachedAsyncToolGroup(
       }
     : null;
 }
+/**
+ * The event a person started, for a run that continues it. A detached row keys
+ * on `${eventId}:${tag}:${resultId}` and its continuation on
+ * `${parentEventId}:async-tools`, so the root is everything before the first
+ * `:async-` segment. Traces use it to group an answer's run with the run that
+ * asked.
+ */
+export function rootEventId(eventId: string): string {
+  const index = eventId.indexOf(":async-");
+
+  return index === -1 ? eventId : eventId.slice(0, index);
+}
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";

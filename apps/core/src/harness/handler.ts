@@ -4,6 +4,7 @@
  */
 
 import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
+import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
@@ -2991,6 +2992,12 @@ async function runParentContinuationLoop(options: {
           input: SessionMessageInput,
         ): Promise<SessionMessageResult> =>
           dispatchSessionMessage(options.session, input),
+        pendingWork: (): TaskWaitingOn | undefined =>
+          options.subagentCoordinator.pendingCount > 0
+            ? "subagent"
+            : options.asyncToolCoordinator.pendingCount > 0
+              ? "tool"
+              : undefined,
         hooks: hooks,
       },
     );

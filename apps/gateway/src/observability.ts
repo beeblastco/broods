@@ -443,6 +443,13 @@ export function tempoTraceRowsFromResponse(
           | undefined;
         const isError =
           status?.code === 2 || status?.code === "STATUS_CODE_ERROR";
+        // OTel only knows ok and error, so a root that closed waiting on
+        // something keeps that in task.state.
+        const taskState = attributes["task.state"];
+        const openState =
+          taskState === "waiting" || taskState === "needs_input"
+            ? taskState
+            : undefined;
 
         rows.push({
           traceId: traceId,
@@ -453,7 +460,7 @@ export function tempoTraceRowsFromResponse(
           startTimeMs: startTimeMs,
           endTimeMs: endTimeMs,
           durationMs: Math.max(0, endTimeMs - startTimeMs),
-          status: isError ? "error" : "ok",
+          status: isError ? "error" : (openState ?? "ok"),
           ...(typeof attributes.endpoint_id === "string"
             ? { endpointId: attributes.endpoint_id }
             : {}),

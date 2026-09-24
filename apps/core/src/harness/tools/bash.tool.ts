@@ -265,6 +265,7 @@ async function dispatchBackground(
     delivery: context.background.delivery ?? { kind: "async" },
     completionToken: completionToken,
   });
+  context.background.onDetachedResult?.(resultId);
 
   try {
     const handle = await runSandboxBackground(
