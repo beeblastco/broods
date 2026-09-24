@@ -703,7 +703,7 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
   });
 
-  it("stops before the next model call when the owner requests a boundary stop", async () => {
+  it("stops before the next model call when the owner requests a boundary stop, even if the same step's persist fails", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const applySteeringIngress = mock(async () => null);
@@ -714,7 +714,9 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
-        persistModelMessages: async () => [],
+        persistModelMessages: async (): Promise<string[]> => {
+          throw new Error("persist failed");
+        },
         renewConversationLease: async () => "stopped",
         applySteeringIngress: applySteeringIngress,
         loadRefreshedSystemPromptParts: async () => ({
