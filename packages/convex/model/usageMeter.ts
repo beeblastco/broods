@@ -70,9 +70,8 @@ export interface BudgetUsage {
   categories: Record<UsageCategory, number>;
   /** "warning" from 80% of the budget, "exhausted" once runs stop at 100%. */
   level: "ok" | "warning" | "exhausted";
-  runsPerMinute: number;
   totals: UsageAmounts;
-  /** Days of the month with usage, oldest first. */
+  /** Days of the month with usage or a storage snapshot, oldest first. */
   days: Array<UsageAmounts & { day: string }>;
 }
 
@@ -238,7 +237,6 @@ export async function budgetUsage(
         : usedEur >= limitEur * BUDGET_WARNING_RATIO
           ? "warning"
           : "ok",
-    runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
     totals: toAmounts(usage, meter?.storageGb ?? null),
     days: days,
   };

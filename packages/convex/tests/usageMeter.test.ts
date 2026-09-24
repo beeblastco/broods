@@ -298,7 +298,6 @@ describe("budget", () => {
       usedPercent: 101,
       categories: { sandboxes: 0, hostedMcp: 0, storage: 21, egress: 80 },
       level: "exhausted",
-      runsPerMinute: 600,
       totals: amounts,
       days: [{ day: "2026-09-23", ...amounts }],
     });
