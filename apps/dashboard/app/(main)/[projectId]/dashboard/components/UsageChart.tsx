@@ -7,7 +7,6 @@ import {
   resampleRows,
   type TokenParts,
 } from "@/app/lib/usageChart";
-import { cn } from "@/app/lib/utils";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 const PAD_TOP = 6;
@@ -15,8 +14,10 @@ const PAD_BOTTOM = 18;
 // Minimum pixels between x-axis labels; wider for "Sep 24 06:00" style labels.
 const LABEL_GAP_PX = 64;
 const WIDE_LABEL_GAP_PX = 120;
-// Tooltip width plus its offset, to flip it left near the right edge.
-const TOOLTIP_FLIP_PX = 190;
+// Gap between the hovered point and the tooltip, on whichever side it opens.
+const TOOLTIP_OFFSET_PX = 12;
+// The tooltip's `min-w-44`, used until its real width is measured.
+const TOOLTIP_MIN_WIDTH_PX = 176;
 
 export interface UsageChartSeries {
   key: string;
@@ -102,16 +103,8 @@ export function UsageChart({
   formatValue,
   tickCount = 4,
 }: Props): React.JSX.Element {
-  const [width, setWidth] = useState(0);
+  const [width, measureRef] = useElementWidth(0);
   const [hover, setHover] = useState<number | null>(null);
-  const observerRef = useRef<ResizeObserver | null>(null);
-  const measureRef = useCallback((el: HTMLDivElement | null): void => {
-    observerRef.current?.disconnect();
-    if (!el) return;
-    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
-    observer.observe(el);
-    observerRef.current = observer;
-  }, []);
 
   // Unknown values stack as 0, which draws no mark.
   const drawn = useMemo(
@@ -222,7 +215,7 @@ export function UsageChart({
       {hover !== null && hover < n && rows[hover] && (
         <ChartTooltip
           x={hover * scale.slot + scale.slot / 2}
-          flip={hover * scale.slot + TOOLTIP_FLIP_PX > width}
+          chartWidth={width}
           title={formatBucketLabel(bucketStarts[hover], binSeconds, true)}
           series={series}
           values={rows[hover]}
@@ -451,10 +444,14 @@ function BarLayers({
   );
 }
 
-/** Hover card that glides between bins instead of jumping. */
+/**
+ * Hover card that glides between bins instead of jumping. Opens right of the
+ * point, or left when its measured width does not fit, clamped inside the
+ * chart on both sides.
+ */
 function ChartTooltip({
   x,
-  flip,
+  chartWidth,
   title,
   series,
   values,
@@ -462,22 +459,25 @@ function ChartTooltip({
   clickable,
 }: {
   x: number;
-  flip: boolean;
+  chartWidth: number;
   title: string;
   series: UsageChartSeries[];
   values: Array<number | null>;
   formatValue: (n: number) => string;
   clickable: boolean;
 }): React.JSX.Element {
+  const [boxWidth, measureRef] = useElementWidth(TOOLTIP_MIN_WIDTH_PX);
+  const right = x + TOOLTIP_OFFSET_PX;
+  const side =
+    right + boxWidth > chartWidth ? x - TOOLTIP_OFFSET_PX - boxWidth : right;
+  const left = Math.max(0, Math.min(side, chartWidth - boxWidth));
   const known = values.filter((value) => value !== null);
 
   return (
     <div
-      className={cn(
-        "pointer-events-none absolute top-1.5 left-0 z-10 min-w-44 translate-x-(--tooltip-x) rounded-md border border-border bg-popover px-2.5 py-1.5 text-2xs shadow-sm transition-transform duration-150 ease-out",
-        flip ? "-ml-48" : "ml-3",
-      )}
-      style={{ "--tooltip-x": `${Math.round(x)}px` }}
+      ref={measureRef}
+      className="pointer-events-none absolute top-1.5 left-0 z-10 min-w-44 translate-x-(--tooltip-x) rounded-md border border-border bg-popover px-2.5 py-1.5 text-2xs shadow-sm transition-transform duration-150 ease-out"
+      style={{ "--tooltip-x": `${Math.round(left)}px` }}
     >
       <div className="mb-1 font-medium tabular-nums">{title}</div>
       <div className="grid gap-0.5">
@@ -544,4 +544,21 @@ function GridLines({
       })}
     </>
   );
+}
+
+/** Width of the element under the returned callback ref, kept current as it resizes. */
+function useElementWidth(
+  initial: number,
+): [number, (el: HTMLElement | null) => void] {
+  const [width, setWidth] = useState(initial);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const measureRef = useCallback((el: HTMLElement | null): void => {
+    observerRef.current?.disconnect();
+    if (!el) return;
+    const observer = new ResizeObserver(() => setWidth(el.offsetWidth));
+    observer.observe(el);
+    observerRef.current = observer;
+  }, []);
+
+  return [width, measureRef];
 }
