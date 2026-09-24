@@ -28,9 +28,10 @@ test("a cold project load is one document, no server action, no logo fetch", asy
 
   await page.goto(`/${readProjectId()}`);
   await page.locator(CANVAS_READY).waitFor();
-  // The default stage lands in the URL and the header shows it selected.
-  await expect(page).toHaveURL(/[?&]stage=[a-z0-9]+/);
+  // The header shows the default stage selected, and the URL stays bare: a
+  // history write on load would discard a header click made meanwhile.
   await expect(page.getByRole("button", { name: "Development" })).toBeVisible();
+  expect(page.url()).not.toContain("stage=");
 
   const urls = (keep: (request: Request) => boolean): string[] =>
     requests.filter(keep).map((request) => request.url());
