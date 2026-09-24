@@ -2,10 +2,9 @@
 # Run lifecycle
 
 Model of one `runtimeIngressEnvelopes` row (the run behind `GET /v1/runs/{runId}`)
-under the mutations in `packages/convex/runtimeIngress.ts`, plus the
-`runtimeAsyncAgentResults` row that `handleAsyncWorkerRequest`
-(`apps/core/src/harness/handler.ts`) writes next to it. Each mutation is a Convex
-transaction, so a run is a sequence of `Step`s.
+under the mutations in `packages/convex/runtimeIngress.ts`. Each mutation is a
+Convex transaction, so a run is a sequence of `Step`s. The polling row written
+next to it lives in `Broods.AsyncResults`.
 -/
 
 namespace Broods.Ingress
@@ -18,11 +17,6 @@ inductive Status where
 /-- How an owner ends its turn in `settle` / `takeNext`. -/
 inductive Outcome where
   | completed | failed
-  deriving DecidableEq, Repr
-
-/-- `runtimeAsyncAgentResults.status`, the polling status. -/
-inductive AgentStatus where
-  | processing | awaitingApproval | awaitingInput | completed | failed
   deriving DecidableEq, Repr
 
 /-- The `runtimeConversationCoordinators` fields the fence reads. -/
@@ -79,7 +73,7 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
     else e
   | .settle owner g o, e =>
     if requireOwner c owner g now && (e.eventId == owner || e.appliedToEventId == some owner) &&
-        !e.status.terminal then
+        e.status == .processing then
       { e with
         status := o.status
         stoppedByUser := e.stoppedByUser || (o == .failed && c.stopRequestedGeneration == some g) }
@@ -97,7 +91,7 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
     if (e.status == .queued || e.status == .processing) && decide (e.expiresAt ≤ now) then
       match c.leaseExpiresAt with
       | some t =>
-        if e.status == .processing && decide (now < t) &&
+        if e.status == .processing && decide (now ≤ t) &&
             e.ownerGeneration == some c.ownerGeneration then
           { e with expiresAt := t }
         else { e with status := .expired }
@@ -115,17 +109,6 @@ inductive Allowed : Status → Status → Prop where
   | expireQueued : Allowed .queued .expired
   | expireRunning : Allowed .processing .expired
   | finish (o : Outcome) : Allowed .processing o.status
-  /-- `settleAppliedEnvelopes` guards "not terminal", not "is processing". Unreached
-  only because the owner row and the rows applied to it are never queued. -/
-  | finishQueued (o : Outcome) : Allowed .queued o.status
-
-/-- Status route merge (`handler.ts` status handler): the polling status wins while
-waiting or while the envelope has not failed. -/
-def mergedStatus (envelope : Status) (result : AgentStatus) : Sum AgentStatus Status :=
-  match result with
-  | .awaitingApproval | .awaitingInput => .inl result
-  | .processing => if envelope == .failed then .inr envelope else .inl result
-  | _ => .inr envelope
 
 /-! ## Properties -/
 
@@ -154,9 +137,10 @@ theorem step_allowed {c : Coord} {now : Nat} {e : Envelope} (s : Step) :
   | settle owner g o =>
     simp only [step]
     split
-    · cases hst : e.status <;> simp_all [Status.terminal]
-      · exact .finishQueued o
-      · exact .finish o
+    · rename_i hc
+      simp only [Bool.and_eq_true, beq_iff_eq] at hc
+      rw [hc.2]
+      exact .finish o
     · exact .stay _
   | _ =>
     simp only [step]
@@ -185,43 +169,42 @@ theorem stop_scoped {c : Coord} {now owner g : Nat} {o : Outcome} {e : Envelope}
     simp_all
   · simp_all
 
-/-! ## Findings, as executable witnesses -/
+/-- The expiry sweeps agree with the fence: while `requireOwner` accepts the
+owner, neither `maintain` nor `expireStaleOwner` expires its running row. -/
+theorem fence_agreement {c : Coord} {now owner : Nat} {e : Envelope}
+    (hfence : requireOwner c owner c.ownerGeneration now = true)
+    (hrun : e.status = .processing) (hgen : e.ownerGeneration = some c.ownerGeneration) :
+    (step c now .maintain e).status = .processing ∧
+      (step c now .expireStaleOwner e).status = .processing := by
+  simp only [requireOwner, Bool.and_eq_true, beq_iff_eq] at hfence
+  obtain ⟨-, hlease⟩ := hfence
+  cases ht : c.leaseExpiresAt with
+  | none => simp [ht] at hlease
+  | some t =>
+    simp only [ht, decide_eq_true_eq] at hlease
+    have hlt : ¬ t < now := Nat.not_lt.mpr hlease
+    constructor
+    · simp only [step, ht, hrun, hgen]
+      split <;> simp_all
+    · simp [step, ht, hlt, hrun]
 
-/-- At `now = leaseExpiresAt` the fence still accepts the owner, but `maintain`
-(which defers only when `now < leaseExpiresAt`) expires its running row, so the
-owner's settle a moment later is a no-op on an `expired` run. -/
+/-! ## Regression witnesses -/
+
+/-- At `now = leaseExpiresAt` the fence accepts the owner, `maintain` defers its
+running row, and the owner's settle completes the run. -/
 example :
     let c : Coord := ⟨1, some 7, some 10, none⟩
     let e : Envelope := ⟨7, .processing, 10, some 1, some 7, false⟩
     requireOwner c 7 1 10 = true ∧
-      (step c 10 .maintain e).status = .expired ∧
-      (run e [(c, 10, .maintain), (c, 10, .settle 7 1 .completed)]).status = .expired := by
+      (step c 10 .maintain e).status = .processing ∧
+      (run e [(c, 10, .maintain), (c, 10, .settle 7 1 .completed)]).status = .completed := by
   decide
 
-/-- `handleAsyncWorkerRequest`, the path where the run settles `completed` and a
-later await (`pushReplyToChannel`, `dispatchNextIngress`) throws. The catch retries
-a fenced failed settle, which the envelope ignores, and then calls
-`settleAsyncFailure` unless `guarded` (a `didSettle` check, which is absent today). -/
-def asyncWorkerAfterThrow (c : Coord) (now owner g : Nat) (e : Envelope) (guarded : Bool) :
-    Status × AgentStatus :=
-  let settled := step c now (.settle owner g .completed) e
-  let caught := step c now (.settle owner g .failed) settled
-  (caught.status, if guarded then .completed else .failed)
-
-/-- Today: the envelope says completed, the polling row says failed with its response
-erased, and the status route reports `completed`. -/
+/-- A queued row that names the owner is left queued by its settle. -/
 example :
     let c : Coord := ⟨1, some 7, some 10, none⟩
-    let e : Envelope := ⟨7, .processing, 20, some 1, some 7, false⟩
-    asyncWorkerAfterThrow c 5 7 1 e false = (.completed, .failed) ∧
-      mergedStatus .completed .failed = .inr .completed := by
+    let e : Envelope := ⟨8, .queued, 20, none, some 7, false⟩
+    (step c 5 (.settle 7 1 .completed) e).status = .queued := by
   decide
-
-/-- With the `didSettle` guard both rows agree for every owner and run. -/
-theorem asyncWorker_guarded_agrees {c : Coord} {now owner g : Nat} {e : Envelope}
-    (hfence : requireOwner c owner g now = true) (hown : e.eventId = owner)
-    (hrun : e.status = .processing) :
-    asyncWorkerAfterThrow c now owner g e true = (.completed, .completed) := by
-  simp [asyncWorkerAfterThrow, step, hfence, hown, hrun, Status.terminal, Outcome.status]
 
 end Broods.Ingress

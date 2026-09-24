@@ -2,9 +2,12 @@
 
 Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun workspace. No Mathlib, core Lean only.
 
-- `Broods/Gateway.lean`: `apps/gateway/src/routes.ts` + `route()` in `main.ts`. proves internal core paths are 404 for every method.
-- `Broods/Ingress.lean`: `packages/convex/runtimeIngress.ts` envelope lifecycle + the async result row from `handleAsyncWorkerRequest`. proves terminal runs stay terminal, every step moves forward, settle is fenced, `/stop` hits only its generation.
-- `Broods/Sync.lean`: `broods dev` / `deploy` manifest sync. proves the next diff after a sync is deletes only, empty after prune, given the server reads back what it stored.
+- `Broods/Gateway.lean`: `apps/gateway/src/routes.ts` + `route()` in `main.ts`. proves internal core paths are 404 for every method, and routing ignores trailing slashes.
+- `Broods/Ingress.lean`: `packages/convex/runtimeIngress.ts` envelope lifecycle. proves terminal runs stay terminal, every step moves forward, settle is fenced, `/stop` hits only its generation, `maintain` never expires a run its owner still holds.
+- `Broods/AsyncResults.lean`: the async result row written by `handleAsyncWorkerRequest` and subagents, plus `runtimeAsyncToolResults`. proves envelope and result row agree at every throw point, a tool row settles once.
+- `Broods/Cron.lean`: `packages/convex/agent/crons.ts` run rows. proves the first settle wins.
+- `Broods/Sync.lean`: `broods dev` / `deploy` manifest sync with server rename matching. proves the next diff after a sync is deletes only, empty after prune; outright for skill/hook/mcp, given `normalize` round-trips for the rest.
+- `Broods/SyncExternal.lean`, `SyncCron.lean`, `SyncEnv.lean`, `SyncConcurrency.lean`: stage-scoped external prune, cron keys and orphans, env push, and interleaved PUTs (last writer per row group wins; mixed stage witnessed).
 
 ## Rules
 

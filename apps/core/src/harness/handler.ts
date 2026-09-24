@@ -1073,8 +1073,9 @@ async function handleAsyncWorkerRequest(
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
-  // Scoped to the whole request so the catch below can tell a throw that
-  // follows a terminal result from one that replaces it.
+  // Every outcome writes the polling row first and settles the envelope second,
+  // then sets this, so the catch below fails the row only while the envelope
+  // could still fail with it.
   let didSettle = false;
   try {
     await createPendingAsyncAgentResult({
@@ -1115,9 +1116,7 @@ async function handleAsyncWorkerRequest(
       context,
       {
         onFinalText: async (response, traceId) => {
-          didSettle = true;
           terminalSettled = true;
-          await session!.settleIngress("completed", { result: response });
           await Promise.all(
             asyncResultEventIds(event).map((eventId) =>
               markAsyncAgentResultCompleted({
@@ -1126,6 +1125,8 @@ async function handleAsyncWorkerRequest(
               }),
             ),
           );
+          await session!.settleIngress("completed", { result: response });
+          didSettle = true;
           await settleCronRun(event.accountId, event.cronRun, {
             result: response,
           });
@@ -1151,10 +1152,10 @@ async function handleAsyncWorkerRequest(
           );
         },
         onErrorText: async (error, traceId) => {
-          didSettle = true;
           terminalSettled = true;
-          await session!.settleIngress("failed", { error: error });
           await settleAsyncFailure(event, error);
+          await session!.settleIngress("failed", { error: error });
+          didSettle = true;
           await settleCronRun(event.accountId, event.cronRun, {
             error: error,
           });
@@ -1179,11 +1180,11 @@ async function handleAsyncWorkerRequest(
               }),
             ),
           );
-          didSettle = true;
           terminalSettled = true;
           await session!.settleIngress("completed", {
             result: { status: "awaiting_approval", approvals: approvals },
           });
+          didSettle = true;
         },
         onQuestionsPending: async (questions) => {
           await Promise.all(
@@ -1194,17 +1195,16 @@ async function handleAsyncWorkerRequest(
               }),
             ),
           );
-          didSettle = true;
           terminalSettled = true;
           await session!.settleIngress("completed", {
             result: { status: "awaiting_input", questions: questions },
           });
+          didSettle = true;
         },
       },
     );
 
     if (result.didFail && !didSettle) {
-      didSettle = true;
       terminalSettled = true;
       await session
         .settleIngress("failed", {
@@ -1215,6 +1215,7 @@ async function handleAsyncWorkerRequest(
         event,
         result.failureText ?? AGENT_PROCESSING_FAILED,
       );
+      didSettle = true;
       await settleCronRun(event.accountId, event.cronRun, {
         error: result.failureText ?? AGENT_PROCESSING_FAILED,
       });
@@ -1235,13 +1236,13 @@ async function handleAsyncWorkerRequest(
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
-    await settleAsyncFailure(
-      event,
-      err instanceof Error ? err.message : "Async request failed",
-    );
     // A throw after the run already settled must not overwrite its recorded
     // outcome, and for a one-time job the run row is gone with the cron.
     if (!didSettle) {
+      await settleAsyncFailure(
+        event,
+        err instanceof Error ? err.message : "Async request failed",
+      );
       await settleCronRun(event.accountId, event.cronRun, {
         error: err instanceof Error ? err.message : "Async request failed",
       });

@@ -77,6 +77,9 @@ export const completeRun = internalMutation({
         "Cron job run does not belong to the supplied accountId and cronId",
       );
     }
+    // A run settles once. A later settle of the same run is a no-op, so a
+    // throw after the outcome was recorded cannot rewrite it.
+    if (run.status !== "started") return null;
 
     await ctx.db.patch(runId, {
       status: "completed",
@@ -216,6 +219,9 @@ export const failRun = internalMutation({
         "Cron job run does not belong to the supplied accountId and cronId",
       );
     }
+    // A run settles once. A later settle of the same run is a no-op, so a
+    // throw after the outcome was recorded cannot rewrite it.
+    if (run.status !== "started") return null;
 
     await ctx.db.patch(runId, {
       status: "failed",

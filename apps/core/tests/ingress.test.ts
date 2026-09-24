@@ -24,6 +24,7 @@ import {
   type ConversationDispatchTarget,
   type IngressCandidate,
 } from "../src/harness/ingress.ts";
+import * as harness from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
 import type {
   ChannelInboundEvent,
@@ -251,6 +252,72 @@ describe("async turn without model input", (): void => {
       "run_1",
       "convex down",
     );
+  });
+});
+
+describe("async turn that throws after it settles", (): void => {
+  afterEach((): void => {
+    mock.restore();
+  });
+
+  it("keeps the completed result when the next dispatch throws", async (): Promise<void> => {
+    const writes: Array<{ name: string; status?: unknown }> = [];
+    spyOn(runtime, "mutate").mockImplementation((async (
+      name: string,
+      args: Record<string, unknown>,
+    ) => {
+      writes.push({ name: name, status: args.status });
+
+      return null;
+    }) as never);
+    spyOn(runtime, "query").mockResolvedValue(null as never);
+    spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockRejectedValue(
+      new Error("takeNext failed"),
+    );
+    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
+    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    });
+    spyOn(harness, "runAgentLoop").mockImplementation((async (
+      _session: unknown,
+      _turn: unknown,
+      _config: unknown,
+      reply: { onFinalText(response: string): Promise<void> },
+    ) => {
+      await reply.onFinalText("answer");
+
+      return {
+        traceId: (): undefined => undefined,
+        consumeStream: async (): Promise<void> => {},
+        questionSummaries: (): [] => [],
+        didFail: (): boolean => false,
+        failureText: (): null => null,
+      };
+    }) as never);
+    const event: DirectInboundEvent = {
+      ...candidate(),
+      publicEventId: "event-1",
+      publicConversationKey: "conversation-1",
+      events: [],
+      agentConfig: {},
+      ownerGeneration: 1,
+    };
+
+    const error = await handler({
+      kind: "direct-api-async-worker",
+      event: event,
+    }).catch((err: unknown): unknown => err);
+
+    expect(error).toEqual(new Error("takeNext failed"));
+    expect(
+      writes
+        .filter((write) => write.name === "updateAsyncAgentResult")
+        .map((write) => write.status),
+    ).toEqual(["completed"]);
   });
 });
 

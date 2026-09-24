@@ -1,5 +1,6 @@
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import type { ObservabilityScope } from "./observability.ts";
+import { normalizePathname } from "./routes.ts";
 import { jsonError } from "./utils.ts";
 
 // Headers that describe the client's hop, not the request, so never forwarded.
@@ -67,14 +68,17 @@ export async function proxyHttp(
 
   for (const coreBaseUrl of coreBaseUrls) {
     try {
-      response = await fetch(`${coreBaseUrl}${url.pathname}${url.search}`, {
-        method: request.method,
-        headers: headers,
-        body: body,
-        redirect: "manual",
-        signal: request.signal,
-        decompress: false,
-      });
+      response = await fetch(
+        `${coreBaseUrl}${normalizePathname(url.pathname)}${url.search}`,
+        {
+          method: request.method,
+          headers: headers,
+          body: body,
+          redirect: "manual",
+          signal: request.signal,
+          decompress: false,
+        },
+      );
     } catch {
       unreachable = true;
       if (!RETRYABLE_METHODS.has(request.method)) break;

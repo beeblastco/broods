@@ -613,7 +613,7 @@ export const maintain = internalMutation({
       if (
         row.status === "processing" &&
         coordinator?.leaseExpiresAt &&
-        coordinator.leaseExpiresAt > now &&
+        coordinator.leaseExpiresAt >= now &&
         row.ownerGeneration === coordinator.ownerGeneration
       ) {
         // The owner is alive. Move the row off the head of the due range, or
@@ -641,7 +641,7 @@ export const maintain = internalMutation({
         coordinator?.ownerEventId &&
         row.ownerGeneration === coordinator.ownerGeneration &&
         coordinator.leaseExpiresAt !== undefined &&
-        coordinator.leaseExpiresAt <= now
+        coordinator.leaseExpiresAt < now
       ) {
         await ctx.db.patch(coordinator._id, {
           ownerEventId: undefined,
@@ -1493,8 +1493,9 @@ async function settleAppliedEnvelopes(
   if (own?.conversationKey === args.conversationKey) ids.add(own._id);
   for (const id of ids) {
     const row = await ctx.db.get(id);
-    if (!row || ["completed", "failed", "expired"].includes(row.status))
-      continue;
+    // Only running rows settle: a finished run stays finished, and a queued row
+    // never ran, so it waits for its own owner or expiry.
+    if (row?.status !== "processing") continue;
     await ctx.db.patch(id, {
       ...RELEASED_PAYLOAD,
       status: args.status,

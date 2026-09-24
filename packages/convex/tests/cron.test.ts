@@ -39,6 +39,47 @@ describe("list", () => {
   });
 });
 
+describe("run history", () => {
+  test("a settled run keeps its first outcome", async () => {
+    const tt = t();
+    const { accountId, agentId } = await seed(tt);
+    const cronId = await tt.run(async (ctx) => {
+      const row = await ctx.db
+        .query("crons")
+        .withIndex("by_accountId_and_agentId", (q) =>
+          q.eq("accountId", accountId).eq("agentId", agentId),
+        )
+        .first();
+
+      return row!._id;
+    });
+    const runId = await tt.mutation(internal.agent.crons.createRun, {
+      accountId: accountId,
+      cronId: cronId,
+      eventId: "event-1",
+      conversationKey: "api:cron",
+    });
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+    await tt.mutation(internal.agent.crons.failRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      error: "late throw",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+      result: "done",
+    });
+  });
+});
+
 describe("translateScheduleExpression", () => {
   test("maps rate(...) to an interval", () => {
     expect(translateScheduleExpression("rate(2 hours)", undefined)).toEqual({

@@ -33,14 +33,20 @@ inductive Dest where
   | health | preflight | socket (s : Socket) | config | core | notFound
   deriving DecidableEq, Repr
 
-/-- `isInternalCorePath`: exact match after stripping trailing slashes. -/
+/-- `pathname.replace(/\/+$/, "")` on segments: drops trailing empty segments. -/
+def stripTrailing : Path → Path
+  | [] => []
+  | x :: xs => if (stripTrailing xs).isEmpty && x.isEmpty then [] else x :: stripTrailing xs
+
+/-- `normalizePathname`: strip trailing slashes, and `/` stays `/`. -/
+def normalize (p : Path) : Path :=
+  match stripTrailing p with
+  | [] => [""]
+  | q => q
+
+/-- `isInternalCorePath`: exact match after `normalizePathname`. -/
 def isInternal (p : Path) : Bool :=
-  stripTrailing p == ["v1", "cron-runs"] || stripTrailing p == ["v1", "mcp-service", "rpc"]
-where
-  /-- `pathname.replace(/\/+$/, "")` on segments: drops trailing empty segments. -/
-  stripTrailing : Path → Path
-    | [] => []
-    | x :: xs => if (stripTrailing xs).isEmpty && x.isEmpty then [] else x :: stripTrailing xs
+  normalize p == ["v1", "cron-runs"] || normalize p == ["v1", "mcp-service", "rpc"]
 
 /-- Anchored match of a regex like `^/v1/agents/[^/]+$`. -/
 def shape : List Pat → Path → Bool
@@ -53,9 +59,10 @@ def shape : List Pat → Path → Bool
 def rootOrItem (root : String) (p : Path) : Bool :=
   shape [.lit "v1", .lit root] p || shape [.lit "v1", .lit root, .any] p
 
-/-- `route()`: health, then CORS preflight, then a matched socket upgrade, then
-config plane, then core. An upgrade on a non-socket path falls through to HTTP. -/
-def route (denyInternal upgrade : Bool) (m : Method) (p : Path) : Dest :=
+/-- The decisions in `route()` on an already normalized path: health, CORS
+preflight, a matched socket upgrade, config plane, then core. An upgrade on a
+non-socket path falls through to HTTP. -/
+def dispatch (denyInternal upgrade : Bool) (m : Method) (p : Path) : Dest :=
   if (p == [""] || p == ["healthz"]) && m == .get then .health
   else if m == .options then .preflight
   else match (if upgrade then socket p else none) with
@@ -106,12 +113,37 @@ where
     | "v1" :: "account" :: _ :: _ => true
     | _ => false
 
+/-- `route()`: normalize the path once, then dispatch. The upstream receives the
+same normalized path (`proxyHttp`). -/
+def route (denyInternal upgrade : Bool) (m : Method) (raw : Path) : Dest :=
+  dispatch denyInternal upgrade m (normalize raw)
+
 /-! ## Properties -/
+
+/-- Stripping twice is stripping once. -/
+theorem stripTrailing_idem : ∀ p : Path, stripTrailing (stripTrailing p) = stripTrailing p
+  | [] => rfl
+  | x :: xs => by
+    have ih := stripTrailing_idem xs
+    by_cases hc : ((stripTrailing xs).isEmpty && x.isEmpty) = true
+    · simp only [stripTrailing.eq_2, hc, ↓reduceIte, stripTrailing.eq_1]
+    · simp only [stripTrailing.eq_2, ih, hc, Bool.false_eq_true, ↓reduceIte]
+
+theorem normalize_idem (p : Path) : normalize (normalize p) = normalize p := by
+  cases h : stripTrailing p with
+  | nil =>
+    simp only [normalize, h]
+    decide
+  | cons x xs =>
+    have hn : normalize p = x :: xs := by simp only [normalize, h]
+    have hs : stripTrailing (x :: xs) = x :: xs := by rw [← h, stripTrailing_idem]
+    rw [hn]
+    simp only [normalize, hs]
 
 /-- Nothing `isInternalCorePath` matches is ever proxied to core while the deny is on. -/
 theorem core_never_internal {u : Bool} {m : Method} {p : Path}
     (h : route true u m p = .core) : isInternal p = false := by
-  unfold route at h
+  unfold route dispatch at h
   split at h
   · contradiction
   split at h
@@ -124,44 +156,47 @@ theorem core_never_internal {u : Bool} {m : Method} {p : Path}
   · contradiction
   rename_i hn
   simp only [Bool.not_eq_true, Bool.or_eq_false_iff, Bool.and_eq_false_iff] at hn
-  simpa using hn.2
+  have := hn.2
+  simp only [isInternal, normalize_idem] at this ⊢
+  simpa using this
 
-/-- Stripping trailing slashes only removes a suffix. -/
-theorem stripTrailing_prefix : ∀ p : Path, ∃ t, p = isInternal.stripTrailing p ++ t
-  | [] => ⟨[], rfl⟩
-  | x :: xs => by
-    obtain ⟨t, ht⟩ := stripTrailing_prefix xs
-    simp only [isInternal.stripTrailing]
-    split
-    · exact ⟨x :: xs, rfl⟩
-    · exact ⟨t, by rw [List.cons_append, ← ht]⟩
+/-- One more trailing slash does not change the stripped path. -/
+theorem stripTrailing_snoc : ∀ p : Path, stripTrailing (p ++ [""]) = stripTrailing p
+  | [] => rfl
+  | x :: xs => by simp only [List.cons_append, stripTrailing, stripTrailing_snoc xs]
 
-/-- Internal paths are `/v1/cron-runs` or `/v1/mcp-service/rpc` plus trailing slashes. -/
-theorem internal_shape {p : Path} (h : isInternal p = true) :
-    ∃ t, p = "v1" :: "cron-runs" :: t ∨ p = "v1" :: "mcp-service" :: "rpc" :: t := by
-  obtain ⟨t, ht⟩ := stripTrailing_prefix p
-  simp only [isInternal, Bool.or_eq_true, beq_iff_eq] at h
-  refine ⟨t, ?_⟩
-  rcases h with h | h <;> rw [h] at ht <;> simp [ht]
+/-- A trailing slash never changes where a request goes. -/
+theorem route_trailing_slash (d u : Bool) (m : Method) (p : Path) :
+    route d u m (p ++ [""]) = route d u m p := by
+  simp only [route, normalize, stripTrailing_snoc]
+
+/-- Any number of trailing slashes never changes where a request goes. -/
+theorem route_trailing_slashes (d u : Bool) (m : Method) (p : Path) (n : Nat) :
+    route d u m (p ++ List.replicate n "") = route d u m p := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    rw [List.replicate_succ', ← List.append_assoc, route_trailing_slash, ih]
 
 /-- The whole routing table sends an internal path to 404 for every method and
 upgrade flag, except that OPTIONS is answered locally as a preflight. -/
 theorem internal_is_not_found {u : Bool} {m : Method} {p : Path}
     (hm : m ≠ .options) (h : isInternal p = true) : route true u m p = .notFound := by
-  obtain ⟨t, rfl | rfl⟩ := internal_shape h <;>
-    cases u <;> simp [route, route.isConfig, route.isCore, route.socket, route.underAccount,
-      rootOrItem, shape, hm, h]
+  simp only [isInternal, Bool.or_eq_true, beq_iff_eq] at h
+  rcases h with h | h <;> cases u <;> cases m <;> simp only [route, h] <;> first
+    | decide
+    | exact absurd rfl hm
 
 /-! ## Findings, as executable witnesses -/
 
-/-- Trailing slash splits one resource across two planes: `/v1/agents` is config,
-`/v1/agents/` goes to core, which strips the slash and sees `/v1/agents`. -/
-example : route true false .get ["v1", "agents"] = .config := by decide
-example : route true false .get ["v1", "agents", ""] = .core := by decide
+/-- Fixed: `/v1/agents/` stays on the config plane with `/v1/agents`. -/
+example : route true false .get ["v1", "agents", ""] = .config := by decide
 
-/-- `DELETE /v1/account` goes to core, `DELETE /v1/account/` goes to config. -/
-example : route true false .delete ["v1", "account"] = .core := by decide
-example : route true false .delete ["v1", "account", ""] = .config := by decide
+/-- Fixed: `DELETE /v1/account/` goes to core like `DELETE /v1/account`. -/
+example : route true false .delete ["v1", "account", ""] = .core := by decide
+
+/-- `/healthz/` is a health check now. -/
+example : route true false .get ["healthz", ""] = .health := by decide
 
 /-- An upgrade on a non-socket path is proxied as plain HTTP. -/
 example : route true true .get ["v1", "agents"] = .config := by decide

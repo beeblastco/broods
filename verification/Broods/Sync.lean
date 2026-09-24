@@ -1,15 +1,20 @@
 /-!
 # SDK manifest sync
 
-Model of `broods dev` / `broods deploy`. The CLI PUTs the whole manifest with a
-`prune` flag (`packages/broods/src/sync.ts` `putManifest`). The server upserts every
-resource by name and, with prune, drops CLI-managed rows the manifest no longer
-declares (`packages/convex/model/cliSyncResources.ts`). `GET /manifest` reads the
-CLI-managed rows back, and `diffManifests` compares them with the local manifest.
+Model of `broods dev` / `broods deploy` against one stage. The CLI PUTs the whole
+manifest with a `prune` flag (`packages/broods/src/sync.ts` `putManifest`). The
+server upserts every resource by name, claims an undeclared CLI row with the same
+content as a rename, and with prune drops the CLI-managed rows the manifest no
+longer declares (`packages/convex/model/cliSyncResources.ts`, and
+`recordExternalResourcesBySecretHash` for skills, hooks and MCP servers).
+`GET /manifest` reads the CLI-managed rows back, and `diffManifests` compares them
+with the local manifest.
 
-Simplifications: names are `Nat`, a config is its settings plus an optional
-artifact bundle, env refs are already normalized, the diff is unsorted (sorting
-is a permutation), and server-side rename matching is left out.
+Simplifications: names are `Nat`, a config is its settings plus artifact bytes,
+env refs are already normalized, and the diff is unsorted (sorting is a
+permutation). The account-wide rows behind skills and hooks are in
+`Broods.SyncExternal`, crons in `Broods.SyncCron`, env vars in `Broods.SyncEnv`,
+and two sessions at once in `Broods.SyncConcurrency`.
 -/
 
 namespace Broods.Sync
@@ -18,11 +23,13 @@ inductive Kind where
   | agent | workspace | sandbox | cron | skill | hook | mcp | policy | channelRecord
   deriving DecidableEq, Repr
 
-/-- What equality sees of a resource config: its settings and, for skills, hooks
-and hosted MCP servers, the bundle or file bytes. -/
+/-- What equality sees of a resource config: its settings, the inline bytes
+(`bundle`, `contentBase64`), and the `{ bundleStorageId, sha256 }` pair a large
+MCP bundle is uploaded as. -/
 structure Config where
   settings : Nat
   bundle : Option Nat
+  storage : Option Nat
   deriving DecidableEq, Repr
 
 structure Resource where
@@ -52,18 +59,38 @@ structure Row where
 
 abbrev State := List Row
 
-def Resource.key (r : Resource) : Kind × Nat := (r.kind, r.name)
+/-- Skills, hooks and MCP servers: account-service resources whose bytes the
+server does not keep in the manifest snapshot. -/
+def Kind.external : Kind → Bool
+  | .skill | .hook | .mcp => true
+  | _ => false
 
-/-- Upsert by name: the same-name row is replaced and becomes CLI-managed,
-including a row the dashboard created. -/
-def upsert (store : Resource → Resource) (s : State) (r : Resource) : State :=
-  ⟨store r, true⟩ :: s.filter (fun row => row.res.key != r.key)
+/-- Kinds the server and the diff pair up as renames. -/
+def Kind.renamable : Kind → Bool
+  | .agent | .workspace | .sandbox | .policy => true
+  | _ => false
+
+def Resource.key (r : Resource) : Kind × Nat := (r.kind, r.name)
 
 def lookup (m : Manifest) (k : Kind × Nat) : Option Resource := m.find? (·.key == k)
 
 /-- A manifest declares each `kind:name` once (`assertUniqueResources`). -/
 def Manifest.unique (m : Manifest) : Prop :=
   ∀ x ∈ m, ∀ y ∈ m, x.key = y.key → x = y
+
+/-- An undeclared CLI row the server may rename to `r`: same kind, same stored
+content, and a name the manifest no longer declares. -/
+def claimable (store : Resource → Resource) (m : Manifest) (r : Resource) (row : Row) : Bool :=
+  row.cli && r.kind.renamable && row.res.kind == r.kind &&
+    !m.any (·.key == row.res.key) && row.res.config == (store r).config
+
+/-- Upsert by name. With no same-name row, the first claimable row is renamed to
+`r`. Either way the row becomes CLI-managed, including one the dashboard made. -/
+def upsert (store : Resource → Resource) (m : Manifest) (s : State) (r : Resource) : State :=
+  let gone :=
+    if s.any (·.res.key == r.key) then none
+    else (s.find? (claimable store m r)).map (·.res.key)
+  ⟨store r, true⟩ :: s.filter (fun row => row.res.key != r.key && some row.res.key != gone)
 
 /-- `diffManifests`: updates, greedy renames, creates, deletes. -/
 def diff (localM remote : Manifest) : List Entry :=
@@ -74,6 +101,18 @@ def diff (localM remote : Manifest) : List Entry :=
     (ul.filter fun x => !pairs.any (·.1.key == x.key)).map (fun x => ⟨.create, x.kind, x.name⟩) ++
     (ur.filter fun y => !pairs.any (·.2.key == y.key)).map (fun y => ⟨.delete, y.kind, y.name⟩)
 where
+  /-- `snapshotResource`: artifact bytes and the large-bundle storage pair of
+  skills, hooks and MCP servers are not compared. -/
+  snapshot (r : Resource) : Resource :=
+    if r.kind.external then { r with config := { r.config with bundle := none, storage := none } }
+    else r
+  /-- First-fit rename pairing in local order, as in `diffManifests`. -/
+  renames (ul ur : Manifest) : List (Resource × Resource) :=
+    ul.foldl (fun acc x =>
+      match ur.find? (fun y => !acc.any (·.2.key == y.key) && x.kind.renamable &&
+          x.kind == y.kind && (snapshot x).config == (snapshot y).config) with
+      | some y => acc ++ [(x, y)]
+      | none => acc) []
   /-- Resources on both sides whose snapshots differ. -/
   updates (localM remote : Manifest) : List Entry :=
     localM.filterMap fun x =>
@@ -82,29 +121,33 @@ where
       | none => none
   /-- Resources in `a` with no same-key resource in `b`. -/
   unmatched (a b : Manifest) : Manifest := a.filter fun x => (lookup b x.key).isNone
-  /-- `snapshotResource`: skill and hook bytes are not compared. -/
-  snapshot (r : Resource) : Resource :=
-    if r.kind == .skill || r.kind == .hook then { r with config := { r.config with bundle := none } }
-    else r
-  /-- First-fit rename pairing in local order, as in `diffManifests`. -/
-  renames (ul ur : Manifest) : List (Resource × Resource) :=
-    ul.foldl (fun acc x =>
-      match ur.find? (fun y => !acc.any (·.2.key == y.key) && renamable x.kind &&
-          x.kind == y.kind && (snapshot x).config == (snapshot y).config) with
-      | some y => acc ++ [(x, y)]
-      | none => acc) []
-  renamable : Kind → Bool
-    | .agent | .workspace | .sandbox | .policy => true
-    | _ => false
 
 /-- `GET /manifest`: the CLI-managed rows. -/
 def read (s : State) : Manifest := (s.filter (·.cli)).map (·.res)
 
 /-- `PUT /manifest`. `store` is what the server keeps and reads back for a resource. -/
 def sync (store : Resource → Resource) (m : Manifest) (prune : Bool) (s : State) : State :=
-  let upserted := m.foldl (upsert store) s
+  let upserted := m.foldl (upsert store m) s
   if prune then upserted.filter (fun row => !row.cli || m.any (·.key == row.res.key))
   else upserted
+
+/-- `externalizeLargeMcpBundles`: after the diff, a large MCP bundle is uploaded and
+replaced by its storage pair. -/
+def upload (large : Nat → Bool) (r : Resource) : Resource :=
+  match r.kind, r.config.bundle with
+  | .mcp, some b =>
+    if large b then { r with config := { r.config with bundle := none, storage := some b } } else r
+  | _, _ => r
+
+/-- `snapshotExternalConfig`: the recorded snapshot of an external resource drops
+its bytes and keeps everything else. -/
+def storeExternal (r : Resource) : Resource :=
+  if r.kind.external then { r with config := { r.config with bundle := none } } else r
+
+/-- What the server keeps for a resource: external kinds as their recorded
+snapshot of the uploaded config, every other kind through `normalize`. -/
+def storeReal (large : Nat → Bool) (normalize : Resource → Resource) (r : Resource) : Resource :=
+  if r.kind.external then storeExternal (upload large r) else normalize r
 
 /-! ## Lemmas -/
 
@@ -134,39 +177,49 @@ private theorem find?_filter_same {p q : Row → Bool} (s : State)
     · simp [hp, h row hp]
     · cases hq : q row <;> simp_all
 
-private theorem find?_filter_none {p q : Row → Bool} (s : State)
-    (h : ∀ row, p row = true → q row = false) : (s.filter q).find? p = none := by
-  rw [List.find?_eq_none]
-  intro row hrow hp
-  have := (List.mem_filter.mp hrow).2
-  simp_all
+/-- A renamed-away row is never one the manifest declares. -/
+private theorem claimable_undeclared {m : Manifest} {r : Resource} {row : Row}
+    (h : claimable store m r row = true) : ∀ x ∈ m, x.key ≠ row.res.key := by
+  intro x hx heq
+  simp only [claimable, Bool.and_eq_true, Bool.not_eq_true', List.any_eq_false,
+    beq_iff_eq] at h
+  exact h.1.2 x hx heq
 
 private theorem lookupRow_upsert (hkey : ∀ r, (store r).key = r.key)
-    (s : State) (r : Resource) (k : Kind × Nat) :
-    lookupRow (upsert store s r) k =
+    {m : Manifest} (s : State) (r : Resource) {k : Kind × Nat} (hk : ∃ x ∈ m, x.key = k) :
+    lookupRow (upsert store m s r) k =
       if r.key = k then some ⟨store r, true⟩ else lookupRow s k := by
-  by_cases hk : r.key = k
-  · simp [lookupRow, upsert, hkey, hk]
-  · have hk' : (r.key == k) = false := by simpa using hk
-    simp only [hk, ite_false]
-    simp only [lookupRow, upsert, List.find?_cons, hkey, Bool.true_and, hk']
-    exact find?_filter_same s (fun row hp => by
-      simp only [Bool.and_eq_true, beq_iff_eq] at hp
-      simp only [bne_iff_ne, ne_eq]
-      intro heq
-      exact hk (heq ▸ hp.2))
+  by_cases hrk : r.key = k
+  · simp [lookupRow, upsert, hkey, hrk]
+  · have hrk' : (r.key == k) = false := by simpa using hrk
+    simp only [hrk, ite_false]
+    simp only [lookupRow, upsert, List.find?_cons, hkey, Bool.true_and, hrk']
+    refine find?_filter_same s (fun row hp => ?_)
+    simp only [Bool.and_eq_true, beq_iff_eq] at hp
+    obtain ⟨x, hx, hxk⟩ := hk
+    have hne : row.res.key ≠ r.key := fun heq => hrk (heq ▸ hp.2)
+    simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, hne, not_false_eq_true, true_and]
+    split
+    · simp
+    · cases hf : s.find? (claimable store m r) with
+      | none => simp
+      | some old =>
+        have hold := claimable_undeclared (List.find?_some hf) x hx
+        simp only [Option.map_some, Option.some.injEq]
+        intro heq
+        exact hold (hxk.trans (hp.2.symm.trans heq))
 
 private theorem lookupRow_fold (hkey : ∀ r, (store r).key = r.key)
-    (m : Manifest) (s : State) (k : Kind × Nat) :
-    lookupRow (m.foldl (upsert store) s) k =
-      match m.reverse.find? (·.key == k) with
+    {m : Manifest} (l : Manifest) (s : State) {k : Kind × Nat} (hk : ∃ x ∈ m, x.key = k) :
+    lookupRow (l.foldl (upsert store m) s) k =
+      match l.reverse.find? (·.key == k) with
       | some x => some ⟨store x, true⟩
       | none => lookupRow s k := by
-  induction m generalizing s with
+  induction l generalizing s with
   | nil => rfl
   | cons x xs ih =>
-    rw [List.foldl_cons, ih, lookupRow_upsert hkey, List.reverse_cons, List.find?_append]
-    cases xs.reverse.find? (·.key == k) <;> by_cases hk : x.key = k <;> simp [hk]
+    rw [List.foldl_cons, ih, lookupRow_upsert hkey _ _ hk, List.reverse_cons, List.find?_append]
+    cases xs.reverse.find? (·.key == k) <;> by_cases hxk : x.key = k <;> simp [hxk]
 
 private theorem find_self {m : Manifest} (hu : m.unique) {x : Resource} (hx : x ∈ m) :
     m.reverse.find? (·.key == x.key) = some x := by
@@ -180,7 +233,7 @@ private theorem find_self {m : Manifest} (hu : m.unique) {x : Resource} (hx : x 
     simp only [beq_iff_eq] at hk
     rw [hu y hy x hx hk]
 
-private theorem lookup_self {m : Manifest} {x : Resource} (hx : x ∈ m) :
+theorem lookup_self {m : Manifest} {x : Resource} (hx : x ∈ m) :
     (lookup m x.key).isSome := by
   cases h : lookup m x.key with
   | none =>
@@ -189,12 +242,12 @@ private theorem lookup_self {m : Manifest} {x : Resource} (hx : x ∈ m) :
   | some _ => rfl
 
 /-- After a sync every declared resource reads back as its stored form. -/
-private theorem lookup_after_sync (hkey : ∀ r, (store r).key = r.key)
+theorem lookup_after_sync (hkey : ∀ r, (store r).key = r.key)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) {x : Resource} (hx : x ∈ m) :
     lookup (read (sync store m prune s)) x.key = some (store x) := by
   rw [lookup_read]
-  have hfold : lookupRow (m.foldl (upsert store) s) x.key = some ⟨store x, true⟩ := by
-    rw [lookupRow_fold hkey, find_self hu hx]
+  have hfold : lookupRow (m.foldl (upsert store m) s) x.key = some ⟨store x, true⟩ := by
+    rw [lookupRow_fold hkey m s ⟨x, hx, rfl⟩, find_self hu hx]
   cases prune
   · simp [sync, hfold]
   · simp only [sync, ite_true, lookupRow]
@@ -227,9 +280,9 @@ private theorem diff_of_lookups {m r : Manifest}
 
 /-! ## Properties -/
 
-/-- `dev` and `deploy` converge: when the server reads back what it was given (up to
-what the diff compares), the next `broods diff` holds only deletes, and none at all
-after a pruning sync. -/
+/-- `dev` and `deploy` converge, with the server's rename matching in play: when
+the server reads back what it was given (up to what the diff compares), the next
+`broods diff` holds only deletes, and none at all after a pruning sync. -/
 theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
     (hsnap : ∀ r, diff.snapshot (store r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
@@ -255,41 +308,62 @@ theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
 
 end
 
-/-! ## Findings, as executable witnesses -/
+/-- Skills, hooks and MCP servers, small or large bundle, read back equal to what
+the diff compares. -/
+theorem storeExternal_snapshot (large : Nat → Bool) (r : Resource) (h : r.kind.external = true) :
+    diff.snapshot (storeExternal (upload large r)) = diff.snapshot r := by
+  obtain ⟨kind, name, ⟨settings, bundle, storage⟩⟩ := r
+  cases bundle with
+  | none => cases kind <;> simp_all [upload, storeExternal, diff.snapshot, Kind.external]
+  | some b =>
+    by_cases hl : large b <;> cases kind <;>
+      simp_all [upload, storeExternal, diff.snapshot, Kind.external]
 
-/-- Server read-back for external kinds: `snapshotExternalConfig` drops the bundle. -/
-def storeExternal (r : Resource) : Resource :=
-  if r.kind == .skill || r.kind == .hook || r.kind == .mcp then
-    { r with config := { r.config with bundle := none } }
-  else r
+/-- Upload and the recorded snapshot keep a resource's key. -/
+theorem storeExternal_key (large : Nat → Bool) (r : Resource) :
+    (storeExternal (upload large r)).key = r.key := by
+  have hu : (upload large r).key = r.key := by
+    unfold upload
+    split <;> (try split) <;> rfl
+  rw [← hu]
+  unfold storeExternal
+  split <;> rfl
 
-/-- The client strips bytes for skills and hooks but not hosted MCP servers, so a
-hosted MCP server never converges: every `diff` and `dev` prints `update mcp:X`. -/
+/-- The fixed sync converges for every kind: external kinds with the server's real
+snapshot and upload, every other kind given its normalization round trip. -/
+theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Resource)
+    (hkey : ∀ r, (normalize r).key = r.key)
+    (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
+    {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
+    (∀ e ∈ diff m (read (sync (storeReal large normalize) m prune s)), e.op = .delete) ∧
+      (prune = true → diff m (read (sync (storeReal large normalize) m prune s)) = []) := by
+  refine sync_converges (fun r => ?_) (fun r => ?_) hu prune s
+  · unfold storeReal
+    split
+    · exact storeExternal_key large r
+    · exact hkey r
+  · unfold storeReal
+    split
+    · exact storeExternal_snapshot large r (by assumption)
+    · exact hround r (by simpa using ‹¬r.kind.external = true›)
+
+/-! ## Findings, fixed, as executable witnesses -/
+
+/-- A hosted MCP server now converges: small bundles are stored without their
+bytes, large ones as a storage pair, and the diff compares neither. -/
 example :
-    let m : Manifest := [⟨.mcp, 1, ⟨0, some 42⟩⟩]
-    diff m (read (sync storeExternal m true [])) = [⟨.update, .mcp, 1⟩] := by
+    let m : Manifest := [⟨.mcp, 1, ⟨0, some 42, none⟩⟩]
+    diff m (read (sync (storeReal (· > 10) id) m true [])) = [] ∧
+      diff m (read (sync (storeReal (· > 100) id) m true [])) = [] := by
   decide
 
-/-- An account hook row (`accountHooks`), with the stage that declares it. -/
-structure Hook where
-  name : Nat
-  stage : Nat
-  deriving DecidableEq, Repr
-
-/-- `syncHookResources` with prune: it returns early when the manifest declares no
-hooks, and otherwise prunes every account hook not declared by this manifest. -/
-def syncHooks (desired : List Nat) (stage : Nat) (prune : Bool) (hooks : List Hook) :
-    List Hook :=
-  if desired.isEmpty then hooks
-  else
-    let kept := if prune then hooks.filter (fun h => desired.contains h.name) else hooks
-    kept ++ (desired.filter fun n => !kept.any (·.name == n)).map (⟨·, stage⟩)
-
-/-- With a login token, `deploy --prune` on stage 1 deletes hook 9 that stage 2 declares. -/
-example : syncHooks [5] 1 true [⟨5, 1⟩, ⟨9, 2⟩] = [⟨5, 1⟩] := by decide
-
-/-- Removing the last hook never prunes it: the account row survives while the stage
-snapshot row is deleted, so `broods diff` shows nothing to do. -/
-example : syncHooks [] 1 true [⟨5, 1⟩] = [⟨5, 1⟩] := by decide
+/-- The server renames an undeclared CLI agent with the same content instead of
+creating a second one, and the next diff is empty. -/
+example :
+    let old : Resource := ⟨.agent, 1, ⟨7, none, none⟩⟩
+    let m : Manifest := [⟨.agent, 2, ⟨7, none, none⟩⟩]
+    let s := sync id m false [⟨old, true⟩]
+    read s = m ∧ diff m (read s) = [] := by
+  decide
 
 end Broods.Sync

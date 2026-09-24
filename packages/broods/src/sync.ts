@@ -681,12 +681,21 @@ function snapshotResource(
   resource: { kind: string; config: unknown } & Record<string, unknown>,
 ): unknown {
   const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (resource.kind !== "skill" && resource.kind !== "hook") return normalized;
+  if (
+    resource.kind !== "skill" &&
+    resource.kind !== "hook" &&
+    resource.kind !== "mcp"
+  )
+    return normalized;
+  // The server keeps no artifact bytes, and a large MCP bundle is uploaded as
+  // { bundleStorageId, sha256 } after the diff, so neither side compares them.
+  const {
+    bundleStorageId: _bundleStorageId,
+    sha256: _sha256,
+    ...config
+  } = stripArtifactContent(normalized.config) as Record<string, unknown>;
 
-  return {
-    ...normalized,
-    config: stripArtifactContent(normalized.config),
-  };
+  return { ...normalized, config: config };
 }
 
 function sortValue(value: unknown): unknown {

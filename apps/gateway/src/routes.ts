@@ -62,7 +62,15 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
 }
 
 export function isInternalCorePath(pathname: string): boolean {
-  return INTERNAL_CORE_PATHS.has(pathname.replace(/\/+$/, ""));
+  return INTERNAL_CORE_PATHS.has(normalizePathname(pathname));
+}
+
+/**
+ * Strips trailing slashes so `/v1/agents/` routes and forwards as `/v1/agents`
+ * and a trailing slash never changes the upstream. `/` stays `/`.
+ */
+export function normalizePathname(pathname: string): string {
+  return pathname.replace(/\/+$/, "") || "/";
 }
 
 /**

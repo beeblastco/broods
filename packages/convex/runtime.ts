@@ -697,7 +697,8 @@ export const updateAsyncToolResult = internalMutation({
             error: REPLACED_SANDBOX_ERROR,
           }
         : {
-            status: args.status,
+            // Marking a row observed never moves its status.
+            status: args.observed !== undefined ? row.status : args.status,
             response:
               args.observed !== undefined && args.response === undefined
                 ? row.response

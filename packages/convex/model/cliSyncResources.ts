@@ -6,6 +6,7 @@
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
+import { internal } from "../_generated/api";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizePolicyDocument } from "../agent/policies";
 import {
@@ -15,6 +16,7 @@ import {
   substituteEnvPlaceholders,
 } from "./agentConfigCodec";
 import { saveAgentRuntimeSecrets } from "./agentRuntimeSecrets";
+import { unregisterSchedule } from "./cronSchedules";
 import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
@@ -69,13 +71,7 @@ export async function deleteAgentResource(
       "conflict",
     );
   }
-  if (config.agentId) {
-    const agentId = ctx.db.normalizeId("agents", config.agentId);
-    if (agentId) {
-      const agent = await ctx.db.get(agentId);
-      if (agent?.accountId === accountId) await ctx.db.delete(agentId);
-    }
-  }
+  if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
   await ctx.db.delete(config._id);
 }
 
@@ -143,13 +139,7 @@ export async function pruneAgents(
     .collect();
   for (const config of existing) {
     if (config.managedBy !== "cli" || declared.has(config.name)) continue;
-    if (config.agentId) {
-      const agentId = ctx.db.normalizeId("agents", config.agentId);
-      if (agentId) {
-        const agent = await ctx.db.get(agentId);
-        if (agent?.accountId === accountId) await ctx.db.delete(agentId);
-      }
-    }
+    if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
     await ctx.db.delete(config._id);
   }
 }
@@ -789,6 +779,37 @@ export async function workspaceConfigByName(
 }
 
 /** Whether any instance row still references this sandbox config. */
+/**
+ * Deletes the `agents` row when `accountId` owns it, with its crons and their
+ * schedules, as `purgeProject` does: a cron must not outlive its agent. Run
+ * history drains in bounded batches after this commits.
+ */
+async function deleteOwnedAgent(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  rawAgentId: string,
+): Promise<void> {
+  const agentId = ctx.db.normalizeId("agents", rawAgentId);
+  if (!agentId) return;
+  const agent = await ctx.db.get(agentId);
+  if (agent?.accountId !== accountId) return;
+  const crons = await ctx.db
+    .query("crons")
+    .withIndex("by_accountId_and_agentId", (q) =>
+      q.eq("accountId", accountId).eq("agentId", agentId),
+    )
+    .collect();
+  for (const cron of crons) {
+    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
+      accountId: accountId,
+      cronId: cron._id,
+    });
+    await unregisterSchedule(ctx, cron);
+    await ctx.db.delete(cron._id);
+  }
+  await ctx.db.delete(agentId);
+}
+
 async function hasReservation(
   ctx: QueryCtx,
   sandboxConfigId: Id<"sandboxConfigs">,
