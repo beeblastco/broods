@@ -409,9 +409,6 @@ export function TokensUsagePanel({
               : { startMs: bucketStarts[selected], binSeconds: binSeconds }
           }
           isModelShown={(provider, id) => isShown(`${provider}::${id}`)}
-          modelColor={(provider, id) =>
-            modelColors.get(`${provider}::${id}`) ?? MODEL_COLORS[0]
-          }
           onClear={() => setSelectedStart(null)}
         />
       </div>
