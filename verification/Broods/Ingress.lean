@@ -50,10 +50,12 @@ inductive Step where
   /-- The `maintain` cron. -/
   | maintain
 
+/-- `TERMINAL_STATUSES` in `runtimeIngress.ts`. -/
 def Status.terminal : Status → Bool
   | .completed | .failed | .expired => true
   | _ => false
 
+/-- The envelope status a `settle` / `takeNext` outcome writes. -/
 def Outcome.status : Outcome → Status
   | .completed => .completed
   | .failed => .failed

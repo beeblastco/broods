@@ -11,6 +11,7 @@ import { authKit } from "../auth";
 import { accountIdForProject } from "../model/auditEvents";
 import {
   backSyncCanvasFromAgentRow,
+  deleteAgentRow,
   mirrorAgentRowOntoConfig,
 } from "../model/agentSync";
 import { syncApiAgentCanvasWiring } from "../model/apiCanvasSync";
@@ -389,7 +390,7 @@ export const remove = internalMutation({
       }
     }
 
-    await ctx.db.delete(normalized);
+    await deleteAgentRow(ctx, agent);
     await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return null;

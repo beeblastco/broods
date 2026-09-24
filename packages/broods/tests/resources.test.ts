@@ -1423,6 +1423,41 @@ export const myAgent = defineAgent({
   expect(api).not.toContain('"my-agent": { kind: "agent"');
 });
 
+test("compileProject keys a cron's config name to its resource name", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineCron } from "${RESOURCES_MODULE}";
+
+export const agent = defineAgent({
+  name: "cron-agent",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+
+export const nightly = defineCron({
+  name: "nightly",
+  agent: agent,
+  conversationKey: "cron:nightly",
+  input: "Run the report.",
+  scheduleExpression: "at(2030-01-01T00:00:00)",
+  timezone: "UTC",
+});
+// Untyped code can still set the name the server keys a cron by.
+Object.assign(nightly.config, { name: "stray" });
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "cron",
+      name: "nightly",
+      config: expect.objectContaining({ name: "nightly" }),
+    }),
+  );
+});
+
 test("writeGeneratedFiles keys non-agent resources by export alias under api.crons", async () => {
   const cwd = await fixtureProject(
     "",

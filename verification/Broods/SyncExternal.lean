@@ -35,22 +35,40 @@ def owned (recs : List Record) (stage : Nat) (k : Key) : Bool :=
   recs.any (fun r => r.stage == stage && (r.kind, r.name) == k) &&
     !recs.any (fun r => r.stage != stage && (r.kind, r.name) == k)
 
-/-- `syncSkillResources` and `syncHookResources`: upsert the declared names, and
-with prune remove only undeclared names this stage alone owns. Runs with prune
-even when the manifest declares none. -/
+/-- `externalOwnership(...).owned.mcp`: `stage` records the server. MCP rows belong
+to one stage, so another stage's record of the same name is its own server. -/
+def ownedMcp (recs : List Record) (stage name : Nat) : Bool :=
+  recs.any (fun r => r.stage == stage && r.kind == .mcp && r.name == name)
+
+/-- `syncSkillResources` and `syncHookResources` upsert the declared names; with
+prune, `pruneExternalResources` then removes only undeclared names this stage
+alone owns. Runs with prune even when the manifest declares none. -/
 def syncAccount (recs : List Record) (stage : Nat) (desired : List Key) (prune : Bool)
     (rows : List Key) : List Key :=
   let upserted := rows ++ desired.filter (fun k => !rows.contains k)
   if prune then upserted.filter (fun k => desired.contains k || !owned recs stage k)
   else upserted
 
-/-- `syncMcpResources`: upsert by name within the stage (`listForStage`), and with
-prune remove the stage's undeclared servers. Other stages' rows are never read. -/
-def syncMcp (stage : Nat) (desired : List Nat) (prune : Bool) (rows : List McpRow) :
-    List McpRow :=
+/-- `syncMcpResources` upserts by name within the stage (`listForStage`); with
+prune, `pruneExternalResources` then removes the stage's undeclared servers this
+stage recorded. Other stages' rows are never read, and a server the dashboard or
+config API made is never recorded. -/
+def syncMcp (recs : List Record) (stage : Nat) (desired : List Nat) (prune : Bool)
+    (rows : List McpRow) : List McpRow :=
   let upserted := rows ++ (desired.filter fun n => !rows.contains ⟨stage, n⟩).map (⟨stage, ·⟩)
-  if prune then upserted.filter (fun row => row.stage != stage || desired.contains row.name)
+  if prune then
+    upserted.filter (fun row =>
+      row.stage != stage || desired.contains row.name || !ownedMcp recs stage row.name)
   else upserted
+
+/-- `syncExternalResources`: every upsert, then the prunes. A declared resource
+that fails validation throws before any prune (`valid = false`); the upserts
+that landed before the throw are at most all of them. -/
+def syncExternal (recs : List Record) (stage : Nat) (desired : List Key)
+    (desiredMcp : List Nat) (prune valid : Bool) (rows : List Key) (mcp : List McpRow) :
+    List Key × List McpRow :=
+  if valid then (syncAccount recs stage desired prune rows, syncMcp recs stage desiredMcp prune mcp)
+  else (syncAccount recs stage desired false rows, syncMcp recs stage desiredMcp false mcp)
 
 /-! ## Properties -/
 
@@ -107,20 +125,43 @@ theorem prune_owned_agrees {recs : List Record} {stage : Nat} {desired : List Ke
   exact h.2
 
 /-- Syncing MCP servers for stage A leaves every other stage's servers alone. -/
-theorem mcp_other_stage {stage : Nat} {desired : List Nat} {prune : Bool} {rows : List McpRow}
-    {row : McpRow} (hr : row ∈ rows) (hs : row.stage ≠ stage) :
-    row ∈ syncMcp stage desired prune rows := by
+theorem mcp_other_stage {recs : List Record} {stage : Nat} {desired : List Nat} {prune : Bool}
+    {rows : List McpRow} {row : McpRow} (hr : row ∈ rows) (hs : row.stage ≠ stage) :
+    row ∈ syncMcp recs stage desired prune rows := by
   cases prune
   · simp [syncMcp, hr]
   · simp [syncMcp, hr, hs]
 
-/-- A prune removes the stage's last MCP server too. -/
-theorem mcp_prune_empty {stage : Nat} {rows : List McpRow} :
-    ∀ row ∈ syncMcp stage [] true rows, row.stage ≠ stage := by
+/-- A prune never removes an MCP server the stage did not record, such as one made
+on the dashboard or through the config API. -/
+theorem mcp_prune_keeps_unrecorded {recs : List Record} {stage : Nat} {desired : List Nat}
+    {prune : Bool} {rows : List McpRow} {row : McpRow} (hr : row ∈ rows)
+    (ho : ownedMcp recs stage row.name = false) :
+    row ∈ syncMcp recs stage desired prune rows := by
+  cases prune
+  · simp [syncMcp, hr]
+  · simp [syncMcp, hr, ho]
+
+/-- A prune removes every server the stage recorded and no longer declares, the
+last one too. -/
+theorem mcp_prune_empty {recs : List Record} {stage : Nat} {rows : List McpRow} :
+    ∀ row ∈ syncMcp recs stage [] true rows,
+      row.stage ≠ stage ∨ ownedMcp recs stage row.name = false := by
   intro row h
   simp only [syncMcp, ite_true, List.mem_filter, List.contains_nil, Bool.or_false,
-    bne_iff_ne] at h
+    Bool.or_eq_true, bne_iff_ne, Bool.not_eq_true'] at h
   exact h.2
+
+/-- A sync that fails validation removes nothing, whatever it prunes. -/
+theorem aborted_keeps {recs : List Record} {stage : Nat} {desired : List Key}
+    {desiredMcp : List Nat} {prune : Bool} {rows : List Key} {mcp : List McpRow} :
+    (∀ k ∈ rows, k ∈ (syncExternal recs stage desired desiredMcp prune false rows mcp).1) ∧
+      ∀ row ∈ mcp, row ∈ (syncExternal recs stage desired desiredMcp prune false rows mcp).2 := by
+  constructor
+  · intro k hk
+    simp [syncExternal, syncAccount, hk]
+  · intro row hr
+    simp [syncExternal, syncMcp, hr]
 
 /-! ## Findings, fixed, as executable witnesses -/
 
@@ -130,5 +171,9 @@ example : syncAccount [⟨1, .hook, 5⟩, ⟨2, .hook, 9⟩] 1 [(.hook, 5)] true
 
 /-- Removing the last hook now prunes its account row along with its record. -/
 example : syncAccount [⟨1, .hook, 5⟩] 1 [] true [(.hook, 5)] = [] := by decide
+
+/-- `deploy --prune` of an empty manifest removes the MCP server stage 1 recorded
+and keeps the one made on the dashboard. -/
+example : syncMcp [⟨1, .mcp, 3⟩] 1 [] true [⟨1, 3⟩, ⟨1, 4⟩] = [⟨1, 4⟩] := by decide
 
 end Broods.SyncExternal

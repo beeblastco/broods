@@ -27,14 +27,19 @@ inductive Step where
   | main (m : Manifest) (prune : Bool)
   deriving DecidableEq, Repr
 
+/-- What `recordExternalResourcesBySecretHash` writes: the skills, hooks and MCP servers. -/
 def extPart (m : Manifest) : Manifest := m.filter (·.kind.external)
 
+/-- What `syncManifestBySecretHash` writes: every other kind. -/
 def mainPart (m : Manifest) : Manifest := m.filter (!·.kind.external)
 
+/-- Whether the step is `recordExternalResourcesBySecretHash`. -/
 def Step.isRecord : Step → Bool
   | .record _ _ => true
   | .main _ _ => false
 
+/-- One committed mutation: `recordExternalResourcesBySecretHash` reconciles the
+external rows, `syncManifestBySecretHash` the rest, each in its own transaction. -/
 def apply (store : Resource → Resource) : Step → Server → Server
   | .record m p, s => { s with ext := sync store (extPart m) p s.ext }
   | .main m p, s => { s with main := sync store (mainPart m) p s.main }

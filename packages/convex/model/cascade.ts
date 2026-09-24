@@ -9,7 +9,7 @@ import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
-import { unregisterSchedule } from "./cronSchedules";
+import { deleteCron, unregisterSchedule } from "./cronSchedules";
 import { cronsInProject } from "./projectScope";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
@@ -282,14 +282,7 @@ export async function purgeProject(
   // transaction; run history can exceed one transaction, so a scheduled
   // mutation drains it in bounded batches after this commits.
   const crons = await cronsForProject(ctx, projectId);
-  for (const cron of crons) {
-    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
-      accountId: cron.accountId,
-      cronId: cron._id,
-    });
-    await unregisterSchedule(ctx, cron);
-    await ctx.db.delete(cron._id);
-  }
+  for (const cron of crons) await deleteCron(ctx, cron);
 
   const stages = await ctx.db
     .query("stages")

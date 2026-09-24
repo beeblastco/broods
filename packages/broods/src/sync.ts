@@ -7,6 +7,18 @@ import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
+/** Artifact bytes the server never keeps, at any depth of a config. */
+const ARTIFACT_KEYS: ReadonlySet<string> = new Set(["contentBase64", "bundle"]);
+/**
+ * The top of an artifact config also drops the `{ bundleStorageId, sha256 }`
+ * a large MCP bundle is uploaded as after the diff.
+ */
+const TOP_ARTIFACT_KEYS: ReadonlySet<string> = new Set([
+  ...ARTIFACT_KEYS,
+  "bundleStorageId",
+  "sha256",
+]);
+
 export interface SyncClientOptions {
   /**
    * Base URL serving the /v1/account/* control-plane routes: the Convex
@@ -687,15 +699,11 @@ function snapshotResource(
     resource.kind !== "mcp"
   )
     return normalized;
-  // The server keeps no artifact bytes, and a large MCP bundle is uploaded as
-  // { bundleStorageId, sha256 } after the diff, so neither side compares them.
-  const {
-    bundleStorageId: _bundleStorageId,
-    sha256: _sha256,
-    ...config
-  } = stripArtifactContent(normalized.config) as Record<string, unknown>;
 
-  return { ...normalized, config: config };
+  return {
+    ...normalized,
+    config: stripArtifactContent(normalized.config, TOP_ARTIFACT_KEYS),
+  };
 }
 
 function sortValue(value: unknown): unknown {
@@ -715,12 +723,17 @@ function stableJson(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }
 
-function stripArtifactContent(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripArtifactContent);
+function stripArtifactContent(
+  value: unknown,
+  keys: ReadonlySet<string> = ARTIFACT_KEYS,
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripArtifactContent(entry));
+  }
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).flatMap(([key, entry]) => {
-        if (key === "contentBase64" || key === "bundle") return [];
+        if (keys.has(key)) return [];
 
         return [[key, stripArtifactContent(entry)]];
       }),

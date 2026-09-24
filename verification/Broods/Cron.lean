@@ -20,12 +20,13 @@ inductive Settle where
   | complete | fail
   deriving DecidableEq, Repr
 
+/-- The `cronRuns.status` a settle writes: `completeRun` or `failRun`. -/
 def Settle.status : Settle → Status
   | .complete => .completed
   | .fail => .failed
 
 /-- `completeRun` / `failRun` on a started row. `guarded` is the `status ===
-"started"` check; `false` is the code before it. -/
+"started"` check; `false` is the pre-fix code without it. -/
 def settle (guarded : Bool) (s : Status) (x : Settle) : Status :=
   if guarded && s != .started then s else x.status
 

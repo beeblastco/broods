@@ -288,11 +288,14 @@ test("core routes only in-cluster callers use are a 404 at the public door", asy
 
 test("a trailing slash keeps a request on its plane and is stripped upstream", async (): Promise<void> => {
   const forwarded: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    forwarded.push(String(input));
+  globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL): Promise<Response> => {
+      forwarded.push(input instanceof Request ? input.url : input.toString());
 
-    return new Response(null, { status: 204 });
-  }) as typeof fetch;
+      return new Response(null, { status: 204 });
+    },
+    { preconnect: realFetch.preconnect },
+  );
   const gateway = createGateway(gatewayConfig());
   const { server } = fakeServer();
   const send = (method: string, path: string): Promise<Response | undefined> =>

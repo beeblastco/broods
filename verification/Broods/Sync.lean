@@ -19,6 +19,7 @@ and two sessions at once in `Broods.SyncConcurrency`.
 
 namespace Broods.Sync
 
+/-- `CliManifestResource.kind` (`packages/convex/cli/types.ts`). -/
 inductive Kind where
   | agent | workspace | sandbox | cron | skill | hook | mcp | policy | channelRecord
   deriving DecidableEq, Repr
@@ -32,14 +33,17 @@ structure Config where
   storage : Option Nat
   deriving DecidableEq, Repr
 
+/-- A `CliManifestResource`, its name reduced to a `Nat`. -/
 structure Resource where
   kind : Kind
   name : Nat
   config : Config
   deriving DecidableEq, Repr
 
+/-- `CliManifest.resources`. -/
 abbrev Manifest := List Resource
 
+/-- `DiffOperation` (`packages/broods/src/sync.ts`). -/
 inductive Op where
   | create | update | delete | rename
   deriving DecidableEq, Repr
@@ -57,6 +61,7 @@ structure Row where
   cli : Bool
   deriving DecidableEq, Repr
 
+/-- The stage's rows the server reconciles, across every resource family. -/
 abbrev State := List Row
 
 /-- Skills, hooks and MCP servers: account-service resources whose bytes the
@@ -70,8 +75,10 @@ def Kind.renamable : Kind → Bool
   | .agent | .workspace | .sandbox | .policy => true
   | _ => false
 
+/-- The `${kind}:${name}` key `diffManifests` and `assertUniqueResources` use. -/
 def Resource.key (r : Resource) : Kind × Nat := (r.kind, r.name)
 
+/-- The resource with key `k`, as the `Map` lookups in `diffManifests` find it. -/
 def lookup (m : Manifest) (k : Kind × Nat) : Option Resource := m.find? (·.key == k)
 
 /-- A manifest declares each `kind:name` once (`assertUniqueResources`). -/

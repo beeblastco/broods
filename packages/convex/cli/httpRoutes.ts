@@ -84,7 +84,9 @@ type ForeignExternalResources = Set<string>;
 
 /**
  * Who manages the account's external resources. `owned` holds, per kind, the
- * names only this stage records: the only account-wide rows a prune removes.
+ * names this stage records and no other stage does: the only rows a prune
+ * removes. MCP servers are stage rows, so another stage's record never
+ * disowns one.
  */
 type ExternalOwnership = {
   foreign: ForeignExternalResources;
@@ -92,7 +94,7 @@ type ExternalOwnership = {
 };
 
 /**
- * Refuse to create, replace, or prune an account-wide resource whose name is
+ * Refuse to create or replace an account-wide resource whose name is
  * recorded as managed by a different stage.
  */
 export function assertNotForeign(
@@ -467,7 +469,7 @@ async function externalOwnership(
   for (const row of rows) {
     if (
       row.stageId === scope.stageId &&
-      !foreign.has(`${row.kind}:${row.name}`)
+      (row.kind === "mcp" || !foreign.has(`${row.kind}:${row.name}`))
     )
       owned[row.kind].add(row.name);
   }
@@ -619,6 +621,69 @@ function optionalStringField(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Remove the skills, hooks and MCP servers this stage's manifests declared
+ * before and no longer do. Rows another stage, the dashboard or the config API
+ * made are not in `owned`, so they stay.
+ */
+async function pruneExternalResources(
+  ctx: ActionCtx,
+  options: {
+    accountId: Id<"accounts">;
+    scope: ProjectStageScope;
+    manifest: CliManifest;
+    owned: ExternalOwnership["owned"];
+    secretHash: string;
+  },
+): Promise<void> {
+  const { accountId, manifest, owned } = options;
+  const declared = new Set(
+    manifest.resources.map((entry) => `${entry.kind}:${entry.name}`),
+  );
+  const doomed = (kind: "skill" | "hook" | "mcp", name: string): boolean =>
+    owned[kind].has(name) && !declared.has(`${kind}:${name}`);
+
+  for (const name of owned.skill) {
+    if (!doomed("skill", name)) continue;
+    await ctx.runAction(internal.aws.skills.remove, {
+      accountId: accountId,
+      skillName: name,
+    });
+    // An empty replace drops the files `syncSkillNodeFiles` mirrored.
+    await ctx.runMutation(internal.cli.sync.replaceSkillNodeFilesBySecretHash, {
+      secretHash: options.secretHash,
+      project: manifest.project,
+      stage: manifest.stage,
+      skillName: name,
+      files: [],
+    });
+  }
+  if (owned.hook.size > 0) {
+    const hooks = await ctx.runQuery(internal.account.hooks.list, {
+      accountId: accountId,
+    });
+    for (const hook of hooks) {
+      if (!doomed("hook", hook.name)) continue;
+      await ctx.runMutation(internal.account.hooks.remove, {
+        accountId: accountId,
+        hookId: hook._id,
+      });
+    }
+  }
+  if (owned.mcp.size > 0) {
+    const servers = await ctx.runQuery(internal.account.mcp.listForStage, {
+      stageId: options.scope.stageId,
+    });
+    for (const server of servers) {
+      if (!doomed("mcp", server.name)) continue;
+      await ctx.runMutation(internal.account.mcp.remove, {
+        accountId: accountId,
+        serverId: server._id,
+      });
+    }
+  }
+}
+
 function rewriteExternalConfigRefs(
   config: Record<string, unknown>,
   ids: ExternalIds,
@@ -742,7 +807,7 @@ async function syncCrons(
 
 async function syncExternalResources(
   ctx: ActionCtx,
-  accountId: string,
+  accountId: Id<"accounts">,
   scope: ProjectStageScope,
   manifest: CliManifest,
   prune: boolean,
@@ -755,39 +820,26 @@ async function syncExternalResources(
   if (!hasExternalResources && prune !== true)
     return { skills: {}, hooks: {}, mcp: {} };
 
-  const ownership = await externalOwnership(
-    ctx,
-    accountId as Id<"accounts">,
-    scope,
-  );
   // Skills and hooks are account-wide, so the org secret and a login token
   // may move a name between stages (dev then deploy). Only a stage-scoped
-  // deploy key is fenced to the names its own stage recorded. A prune, for
-  // every token, removes only names this stage alone recorded.
-  const foreign = "deployKeyId" in auth ? ownership.foreign : new Set<string>();
-  const skills = await syncSkillResources(
-    ctx,
-    accountId as Id<"accounts">,
-    manifest,
-    prune,
-    foreign,
-    ownership.owned.skill,
-  );
-  const hooks = await syncHookResources(
-    ctx,
-    accountId as Id<"accounts">,
-    manifest,
-    prune,
-    foreign,
-    ownership.owned.hook,
-  );
-  const mcp = await syncMcpResources(
-    ctx,
-    accountId as Id<"accounts">,
-    scope,
-    manifest,
-    prune,
-  );
+  // deploy key is fenced to the names its own stage recorded.
+  const fenced = "deployKeyId" in auth;
+  const ownership =
+    fenced || prune ? await externalOwnership(ctx, accountId, scope) : null;
+  const foreign = fenced && ownership ? ownership.foreign : new Set<string>();
+  const skills = await syncSkillResources(ctx, accountId, manifest, foreign);
+  const hooks = await syncHookResources(ctx, accountId, manifest, foreign);
+  const mcp = await syncMcpResources(ctx, accountId, scope, manifest);
+  // Last, so a resource that fails validation aborts before anything is gone.
+  if (prune && ownership) {
+    await pruneExternalResources(ctx, {
+      accountId: accountId,
+      scope: scope,
+      manifest: manifest,
+      owned: ownership.owned,
+      secretHash: auth.secretHash,
+    });
+  }
 
   return { skills: skills, hooks: hooks, mcp: mcp };
 }
@@ -796,17 +848,14 @@ async function syncHookResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   manifest: CliManifest,
-  prune: boolean,
   foreign: ForeignExternalResources,
-  owned: Set<string>,
 ): Promise<Record<string, string>> {
   const desired = manifest.resources.filter((entry) => entry.kind === "hook");
-  if (desired.length === 0 && prune !== true) return {};
+  if (desired.length === 0) return {};
   const existingHooks = await ctx.runQuery(internal.account.hooks.list, {
     accountId: accountId,
   });
   const existing = new Map(existingHooks.map((hook) => [hook.name, hook]));
-  const desiredNames = new Set(desired.map((resource) => resource.name));
   const ids: Record<string, string> = {};
 
   for (const resource of desired) {
@@ -869,34 +918,22 @@ async function syncHookResources(
     }
   }
 
-  if (prune === true) {
-    for (const hook of existing.values()) {
-      if (!desiredNames.has(hook.name) && owned.has(hook.name)) {
-        await ctx.runMutation(internal.account.hooks.remove, {
-          accountId: accountId,
-          hookId: hook._id,
-        });
-      }
-    }
-  }
-
   return ids;
 }
 
 /**
- * Upsert the manifest's MCP server registrations by name within the stage, and
- * prune rows whose name is no longer desired (#331). A hosted server's bundle
- * is content-addressed and re-uploads only when its sha256 changed.
+ * Upsert the manifest's MCP server registrations by name within the stage. A
+ * hosted server's bundle is content-addressed and re-uploads only when its
+ * sha256 changed.
  */
 async function syncMcpResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   scope: ProjectStageScope,
   manifest: CliManifest,
-  prune: boolean,
 ): Promise<Record<string, string>> {
   const desired = manifest.resources.filter((entry) => entry.kind === "mcp");
-  if (desired.length === 0 && prune !== true) return {};
+  if (desired.length === 0) return {};
   const existingServers = await ctx.runQuery(
     internal.account.mcp.listForStage,
     {
@@ -906,7 +943,6 @@ async function syncMcpResources(
   const existing = new Map(
     existingServers.map((server) => [server.name, server]),
   );
-  const desiredNames = new Set(desired.map((resource) => resource.name));
   const ids: Record<string, string> = {};
 
   for (const resource of desired) {
@@ -968,17 +1004,6 @@ async function syncMcpResources(
         ...patch,
       });
       ids[resource.name] = serverId;
-    }
-  }
-
-  if (prune === true) {
-    for (const server of existing.values()) {
-      if (!desiredNames.has(server.name)) {
-        await ctx.runMutation(internal.account.mcp.remove, {
-          accountId: accountId,
-          serverId: server._id,
-        });
-      }
     }
   }
 
@@ -1044,9 +1069,7 @@ async function syncSkillResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   manifest: CliManifest,
-  prune: boolean,
   foreign: ForeignExternalResources,
-  owned: Set<string>,
 ): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
   const desired = manifest.resources.filter((entry) => entry.kind === "skill");
@@ -1062,17 +1085,6 @@ async function syncSkillResources(
       input: { source: "files", files: files },
     });
     ids[resource.name] = skill.path;
-  }
-
-  if (prune === true) {
-    const desiredNames = new Set(desired.map((resource) => resource.name));
-    for (const name of owned) {
-      if (desiredNames.has(name)) continue;
-      await ctx.runAction(internal.aws.skills.remove, {
-        accountId: accountId,
-        skillName: name,
-      });
-    }
   }
 
   return ids;

@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 /**
- * A CLI prune removes the account-wide hooks and the MCP servers its own stage
- * recorded, even when the manifest now declares none, and never a hook another
- * stage records or the dashboard created. A pruned agent takes its crons along.
+ * A CLI prune removes the skills, hooks and MCP servers its own stage recorded,
+ * even when the manifest now declares none, and never one another stage
+ * records or the dashboard created. A pruned agent takes its crons along.
  */
 
 import cronsComponent from "@convex-dev/crons/test";
@@ -12,6 +12,15 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
 import schema from "../schema";
+
+const { deleteSkill } = vi.hoisted(() => ({
+  deleteSkill: vi.fn(async (): Promise<number> => 1),
+}));
+
+vi.mock("../model/skills", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../model/skills")>()),
+  deleteSkill: deleteSkill,
+}));
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -35,6 +44,7 @@ describe("cli prune of external resources", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
+    deleteSkill.mockClear();
   });
 
   test("removes this stage's last hook and MCP server, keeps other owners'", async () => {
@@ -44,33 +54,29 @@ describe("cli prune of external resources", () => {
     await recordHook(tt, accountId, OTHER_STAGE, "theirs");
     await insertHook(tt, accountId, "dashboard");
     await recordMcpServer(tt, accountId, "search");
+    await insertMcpServer(tt, accountId, "dashboard-search");
 
-    const response = await tt.fetch(
-      `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
-      {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${SECRET}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          manifest: {
-            version: 1,
-            project: PROJECT,
-            stage: STAGE,
-            resources: [],
-          },
-          prune: true,
-        }),
-      },
-    );
-
-    expect(response.status).toBe(200);
+    expect((await pruneAll(tt)).status).toBe(200);
     expect(await activeNames(tt)).toEqual({
       hooks: ["dashboard", "theirs"],
-      mcp: [],
+      mcp: ["dashboard-search"],
       recorded: ["production:hook:theirs"],
     });
+  });
+
+  test("removes this stage's skills and their files, keeps another stage's", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await recordSkill(tt, STAGE, "mine");
+    await recordSkill(tt, OTHER_STAGE, "theirs");
+
+    expect((await pruneAll(tt)).status).toBe(200);
+    expect(deleteSkill.mock.calls).toEqual([[accountId, "mine"]]);
+    expect(
+      await tt.run(
+        async (ctx) => await ctx.db.query("workspaceFiles").collect(),
+      ),
+    ).toEqual([expect.objectContaining({ path: "theirs/SKILL.md" })]);
   });
 
   test("a pruned agent's crons go with it", async () => {
@@ -175,6 +181,45 @@ async function insertHook(
   });
 }
 
+/** A stage MCP server nothing recorded, as the dashboard or config API makes one. */
+async function insertMcpServer(
+  tt: T,
+  accountId: Id<"accounts">,
+  name: string,
+): Promise<Id<"mcp">> {
+  const scope = await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
+    secretHash: await sha256Hex(SECRET),
+    project: PROJECT,
+    stage: STAGE,
+  });
+
+  return await tt.mutation(internal.account.mcp.create, {
+    accountId: accountId,
+    projectId: scope.projectId,
+    stageId: scope.stageId,
+    name: name,
+    url: "https://mcp.example.com/mcp",
+  });
+}
+
+/** `deploy --prune` of an empty manifest to the development stage. */
+async function pruneAll(tt: T): Promise<Response> {
+  return await tt.fetch(
+    `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        manifest: { version: 1, project: PROJECT, stage: STAGE, resources: [] },
+        prune: true,
+      }),
+    },
+  );
+}
+
 /** An account hook that `stage` recorded as CLI-managed. */
 async function recordHook(
   tt: T,
@@ -191,6 +236,35 @@ async function recordHook(
       { kind: "hook", name: name, config: { events: ["agent.finished"] } },
     ],
     ids: { skills: {}, hooks: { [name]: hookId }, mcp: {} },
+  });
+}
+
+/** A skill `stage` recorded as CLI-managed, with the file `syncSkillNodeFiles` mirrors. */
+async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
+  const secretHash = await sha256Hex(SECRET);
+  await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
+    secretHash: secretHash,
+    project: PROJECT,
+    stage: stage,
+  });
+  const storageId = await tt.run(
+    async (ctx) => await ctx.storage.store(new Blob(["# skill"])),
+  );
+  await tt.mutation(internal.cli.sync.replaceSkillNodeFilesBySecretHash, {
+    secretHash: secretHash,
+    project: PROJECT,
+    stage: stage,
+    skillName: name,
+    files: [
+      { path: `${name}/SKILL.md`, name: "SKILL.md", storageId: storageId },
+    ],
+  });
+  await tt.mutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
+    secretHash: secretHash,
+    project: PROJECT,
+    stage: stage,
+    resources: [{ kind: "skill", name: name, config: { files: [] } }],
+    ids: { skills: { [name]: `skills/${name}` }, hooks: {}, mcp: {} },
   });
 }
 

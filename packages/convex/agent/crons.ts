@@ -27,6 +27,7 @@ import {
   normalizeUpdateCronInput,
 } from "../model/cronRules";
 import {
+  deleteCron,
   deleteRegistrationIfExists,
   registerSchedule,
   unregisterSchedule,
@@ -448,9 +449,7 @@ export const recordInvocation = internalMutation({
 });
 
 /**
- * Delete a cron job and its schedule in one transaction. Run history can
- * exceed one transaction, so a scheduled mutation drains it in bounded
- * batches after this commits.
+ * Delete a cron job and its schedule in one transaction (`deleteCron`).
  * @param accountId account id owning the cron job
  * @param cronId the cron job id
  * @returns true when the job existed and was removed
@@ -461,12 +460,7 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const cron = await getOwnedByString(ctx, args.accountId, args.cronId);
     if (!cron) return false;
-    await unregisterSchedule(ctx, cron);
-    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
-      accountId: cron.accountId,
-      cronId: cron._id,
-    });
-    await ctx.db.delete(cron._id);
+    await deleteCron(ctx, cron);
 
     return true;
   },
@@ -475,7 +469,7 @@ export const remove = internalMutation({
 /**
  * Drains a deleted cron's run history: deletes one bounded batch per
  * invocation and reschedules itself until none remain. Scheduled by
- * `purgeProject`, which deletes the cron row in its own transaction; run rows
+ * `deleteCron`, which deletes the cron row in its own transaction; run rows
  * stay reachable through the account+cron index prefix.
  */
 export const removeRunsCascade = internalMutation({

@@ -1073,9 +1073,10 @@ async function handleAsyncWorkerRequest(
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
-  // Every outcome writes the polling row first and settles the envelope second,
-  // then sets this, so the catch below fails the row only while the envelope
-  // could still fail with it.
+  // Every outcome, the catch included, writes the polling row first and settles
+  // the envelope second: a throw between them leaves the envelope running, never
+  // failed next to a running row. This is set after both, so the catch fails
+  // the row only while the envelope could still fail with it.
   let didSettle = false;
   try {
     await createPendingAsyncAgentResult({
@@ -1206,46 +1207,32 @@ async function handleAsyncWorkerRequest(
 
     if (result.didFail && !didSettle) {
       terminalSettled = true;
-      await session
-        .settleIngress("failed", {
-          error: result.failureText ?? AGENT_PROCESSING_FAILED,
-        })
-        .catch(() => {});
-      await settleAsyncFailure(
-        event,
-        result.failureText ?? AGENT_PROCESSING_FAILED,
-      );
+      const error = result.failureText ?? AGENT_PROCESSING_FAILED;
+      await settleAsyncFailure(event, error);
+      await session.settleIngress("failed", { error: error }).catch(() => {});
       didSettle = true;
-      await settleCronRun(event.accountId, event.cronRun, {
-        error: result.failureText ?? AGENT_PROCESSING_FAILED,
-      });
+      await settleCronRun(event.accountId, event.cronRun, { error: error });
     }
     if (terminalSettled) {
       transferred = await dispatchNextIngress(session, event);
     }
   } catch (err) {
-    if (session) {
-      const error = err instanceof Error ? err.message : "Async request failed";
-      await session.settleIngress("failed", { error: error }).catch(() => {});
-      transferred = await dispatchNextIngress(session, event).catch(
-        () => false,
-      );
-    }
-
+    const error = err instanceof Error ? err.message : "Async request failed";
     logError("Async direct request processing failed", {
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
     // A throw after the run already settled must not overwrite its recorded
     // outcome, and for a one-time job the run row is gone with the cron.
-    if (!didSettle) {
-      await settleAsyncFailure(
-        event,
-        err instanceof Error ? err.message : "Async request failed",
+    if (!didSettle) await settleAsyncFailure(event, error);
+    if (session) {
+      await session.settleIngress("failed", { error: error }).catch(() => {});
+      transferred = await dispatchNextIngress(session, event).catch(
+        () => false,
       );
-      await settleCronRun(event.accountId, event.cronRun, {
-        error: err instanceof Error ? err.message : "Async request failed",
-      });
+    }
+    if (!didSettle) {
+      await settleCronRun(event.accountId, event.cronRun, { error: error });
     }
     throw err;
   } finally {

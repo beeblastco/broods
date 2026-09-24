@@ -322,6 +322,37 @@ describe("runtime persistence", () => {
     ).toEqual({ deleted: 1, hasMore: false });
   });
 
+  test("marking an async tool row observed never moves its status", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await t.mutation(internal.runtime.createAsyncToolResult, {
+      resultId: "result-observed",
+      parentEventId: `acct:${accountId}:parent`,
+      conversationKey: conversationKeyFor(accountId),
+      toolName: "bash",
+      toolCallId: "call-1",
+      input: {},
+    });
+    await t.mutation(internal.runtime.updateAsyncToolResult, {
+      resultId: "result-observed",
+      status: "completed",
+      response: { ok: true },
+      onlyWhenProcessing: true,
+    });
+
+    expect(
+      await t.mutation(internal.runtime.updateAsyncToolResult, {
+        resultId: "result-observed",
+        status: "processing",
+        observed: true,
+      }),
+    ).toMatchObject({
+      status: "completed",
+      response: { ok: true },
+      observed: true,
+    });
+  });
+
   test("settles async tools once and seals fan-in groups", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

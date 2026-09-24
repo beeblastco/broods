@@ -9,6 +9,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import {
+  deleteAgentRow,
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
@@ -276,7 +277,7 @@ export const remove = mutation({
 
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
- * deployments and linked broods `agents` rows), the canvas layout, MCP
+ * deployments and linked broods `agents` rows with their crons), the canvas layout, MCP
  * servers, env vars, and deploy keys. A linked `agents` row goes only when the
  * project's account owns it.
  */
@@ -302,9 +303,8 @@ export async function deleteStageContents(
         accountId,
       )
     : [];
-  for (const agentId of new Set(ownAgents.map((agent) => agent._id))) {
-    await ctx.db.delete(agentId);
-  }
+  const unique = new Map(ownAgents.map((agent) => [agent._id, agent]));
+  for (const agent of unique.values()) await deleteAgentRow(ctx, agent);
 
   for (const config of configs) {
     // Runtime secrets are keyed to the agent config, so they orphan unless
