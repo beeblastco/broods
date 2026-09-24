@@ -29,6 +29,7 @@ export function AccountPanel(): React.JSX.Element {
   const { user: authUser } = useAuth();
 
   const currentUser = useQuery(api.user.getCurrent);
+  const billingInfo = useQuery(api.stripe.getBillingInfo);
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const updateProfile = useMutation(
     api.user.updateProfile,
@@ -100,7 +101,9 @@ export function AccountPanel(): React.JSX.Element {
   const email = currentUser?.email ?? claimEmail;
   const userPlan: PlanTier = currentUser?.plan ?? DEFAULT_PLAN;
   const planConfig = PLAN_CONFIGS[userPlan];
-  const showUpgrade = !isMaxPlan(userPlan);
+  // Same rule as BillingPanel: any subscription that has not ended goes
+  // through the portal, and `undefined` is still loading.
+  const showUpgrade = billingInfo === null && !isMaxPlan(userPlan);
 
   async function handleSaveProfile(): Promise<void> {
     const trimmedName = name.trim();
