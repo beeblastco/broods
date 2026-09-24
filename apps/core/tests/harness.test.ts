@@ -642,6 +642,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         renewConversationLease: async () => "renewed",
         applySteeringIngress: applySteeringIngress,
@@ -715,6 +719,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async (): Promise<string[]> => {
           throw new Error("persist failed");
         },
@@ -771,6 +779,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: persistModelMessages,
         renewConversationLease: async () => "renewed",
         applySteeringIngress: async () => null,
@@ -897,6 +909,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -964,6 +980,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1018,6 +1038,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1093,6 +1117,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1145,6 +1173,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1191,6 +1223,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1254,6 +1290,10 @@ describe("runAgentLoop", () => {
             sandbox: { provider: "lambda", permissionMode: "ask" },
           },
         ],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1360,6 +1400,10 @@ describe("runAgentLoop", () => {
             sandbox: { provider: "lambda", permissionMode: "bypass" },
           },
         ],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async (): Promise<{
           systemContextSnapshot: SystemContextSnapshot;
@@ -1428,6 +1472,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1497,6 +1545,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1562,6 +1614,10 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentMessage: () => ({
+        role: "user",
+        content: "<environment>",
+      }),
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1649,6 +1705,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1705,6 +1765,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1769,6 +1833,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1831,6 +1899,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1952,6 +2024,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2021,6 +2097,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2065,6 +2145,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2116,6 +2200,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadSkillPrompt: loadSkillPrompt,
         loadRefreshedSystemPromptParts: async () => ({
@@ -2183,6 +2271,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2243,6 +2335,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2328,6 +2424,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2395,6 +2495,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2450,6 +2554,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2500,6 +2608,10 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentMessage: () => ({
+          role: "user",
+          content: "<environment>",
+        }),
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2550,6 +2662,10 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentMessage: () => ({
+        role: "user",
+        content: "<environment>",
+      }),
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -2597,6 +2713,10 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentMessage: () => ({
+        role: "user",
+        content: "<environment>",
+      }),
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -2861,6 +2981,10 @@ async function startTwoStepTurn(
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentMessage: () => ({
+        role: "user",
+        content: "<environment>",
+      }),
       persistModelMessages: persistModelMessages,
       renewConversationLease: async () => "renewed",
       applySteeringIngress: async () => null,

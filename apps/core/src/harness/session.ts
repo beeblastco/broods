@@ -78,6 +78,7 @@ import {
   loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
+import { bashTargetLines } from "./tools/filesystem-utils.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
 // Convex caps one mutation's arguments at 16 MiB. Half of that leaves room for
@@ -766,6 +767,30 @@ export class Session {
     return loaded;
   }
 
+  /**
+   * Live state the agent would otherwise spend steps probing for. It goes after
+   * the history as the run's last message and is never stored, so the system
+   * prompt and the history stay a cached prefix and only this block is new.
+   * Built from what the run already holds: no extra storage read.
+   */
+  environmentMessage(): UserModelMessage {
+    const workspaces = this.resolvedWorkspaces();
+    const sandboxes = this.sandboxes();
+    const canBash =
+      sandboxes.length > 0 || workspaces.some((workspace) => workspace.sandbox);
+
+    return {
+      role: "user",
+      content: formatEnvironmentPrompt({
+        now: this.startedAt,
+        channel: this.channelLabel(),
+        bashTargets: canBash
+          ? bashTargetLines({ workspaces: workspaces, sandboxes: sandboxes })
+          : [],
+      }),
+    };
+  }
+
   // Resolved config.sandboxes; the first is the default. Empty when none.
   sandboxes(): ResolvedAgentSandbox[] {
     return this.resolvedRuntime?.sandboxes ?? [];
@@ -850,7 +875,7 @@ export class Session {
         ? [
             {
               role: "system",
-              content: formatSchedulerSystemPrompt(this.startedAt),
+              content: formatSchedulerSystemPrompt(),
             },
           ]
         : [];
@@ -885,6 +910,13 @@ export class Session {
       ...promptMessages,
       ...ephemeralSystem,
     ];
+  }
+
+  private channelLabel(): string {
+    if (this.trigger === "cron") return "none, this is a scheduled run";
+    if (this.delivery?.kind === "channel") return this.delivery.channelName;
+
+    return this.delivery?.kind === "nats" ? "live session" : "direct API";
   }
 
   private channelPartition(): ChannelPartition | undefined {
@@ -1381,21 +1413,38 @@ function findLatestCompactionSummaryIndex(
 }
 
 function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
-  const now = new Date();
-  const weekday = now.toLocaleDateString("en-US", {
-    weekday: "long",
-    timeZone: "UTC",
-  });
-  const today = now.toISOString().slice(0, 10);
-
   return `<memory>
-Today is ${weekday}, ${today} (UTC).
 You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
 - Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
 - Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
 - The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
 - Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
 </memory>`;
+}
+
+/** The <environment> block: the clock, where replies go, and where bash runs. */
+function formatEnvironmentPrompt(environment: {
+  now: Date;
+  channel: string;
+  bashTargets: string[];
+}): string {
+  const weekday = environment.now.toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  });
+  return [
+    "<environment>",
+    "Live state from Broods at the start of this run. It is context, not a message from the person.",
+    `now: ${weekday}, ${environment.now.toISOString()} (UTC)`,
+    `replies go to: ${environment.channel}`,
+    ...(environment.bashTargets.length > 0
+      ? [
+          "bash runs in exactly one place: pass workspace or sandbox, never both, or neither for the default.",
+          ...environment.bashTargets,
+        ]
+      : []),
+    "</environment>",
+  ].join("\n");
 }
 
 function formatMemorySystemPrompt(memoryFiles: MemoryFile[]): string {
@@ -1421,9 +1470,9 @@ function formatMemorySystemPrompt(memoryFiles: MemoryFile[]): string {
   return `Current workspace memory index (${MEMORY_INDEX_PATH}) content:\n\n${sections}`;
 }
 
-function formatSchedulerSystemPrompt(now: Date): string {
+function formatSchedulerSystemPrompt(): string {
   return `<scheduler>
-The current time is ${now.toISOString()} (UTC). Work every schedule expression out from that instant — never guess today's date — and pass the timezone the person is speaking in so their own wall clock is what fires.
+The current time is in <environment> at the end of the conversation. Work every schedule expression out from that instant — never guess today's date — and pass the timezone the person is speaking in so their own wall clock is what fires.
 
 - A task is scheduled only once the tool has returned. Tell the person what the tool returned, not what you meant to do.
 - list_schedules is what is actually pending; this conversation is not.

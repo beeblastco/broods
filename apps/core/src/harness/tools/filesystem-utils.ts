@@ -35,6 +35,7 @@ import type {
 } from "../../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
+import { isMachineConnected } from "../sandbox/machine-executor.ts";
 import { SandboxCapacityError } from "../sandbox/utils.ts";
 import {
   resolveS3ReadTarget,
@@ -435,6 +436,26 @@ export function machineSandboxes(
   );
 }
 
+/**
+ * Where a bash call can run, one line each, for the agent's environment block
+ * and for the error a call gets when it names two places. A machine says
+ * whether its daemon is connected, since a call to an offline one only fails.
+ */
+export function bashTargetLines(context: SandboxToolContext): string[] {
+  const sandboxIsDefault = context.workspaces.length === 0;
+  const workspaces = context.workspaces.map(
+    (workspace, index): string =>
+      `- workspace=${workspace.name}${index === 0 ? " (default)" : ""}${workspace.sandbox ? "" : " (read-only, no bash)"}`,
+  );
+  const sandboxes = selectableSandboxes(context).map((entry, index): string => {
+    const isDefault = sandboxIsDefault && index === 0 ? " (default)" : "";
+
+    return `- sandbox=${entry.name}${isDefault} (${entry.sandbox.provider}, no workspace mounted${machineState(entry)})`;
+  });
+
+  return [...workspaces, ...sandboxes];
+}
+
 /** Every sandbox a bash call can name: the default while standalone, then the rest. */
 export function selectableSandboxes(
   context: SandboxToolContext,
@@ -785,6 +806,14 @@ function isEphemeralPath(path: string): boolean {
   return EPHEMERAL_WRITE_ROOTS.some(
     (root) => path === root.slice(0, -1) || path.startsWith(root),
   );
+}
+
+function machineState(entry: ResolvedAgentSandbox): string {
+  if (entry.sandbox.provider !== "machine") return "";
+
+  return isMachineConnected(entry.sandbox)
+    ? ", connected"
+    : `, offline: the person must run \`broods machine ${entry.name}\``;
 }
 
 function permissionModeFor(

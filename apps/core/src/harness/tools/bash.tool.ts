@@ -27,6 +27,7 @@ import type {
 import { shellQuote } from "../sandbox/utils.ts";
 import {
   bashSandboxTarget,
+  bashTargetLines,
   disallowedRuntimeCommand,
   formatRunText,
   isAgentOwnSandbox,
@@ -86,7 +87,10 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           // that the run never touches, so an incoherent selection is refused.
           if (workspace !== undefined && selected !== undefined) {
             return toolError(
-              "Error: pass either workspace or sandbox, not both — they select different places to run",
+              [
+                "Error: pass either workspace or sandbox, not both. They select different places to run. Pick one of:",
+                ...bashTargetLines(context),
+              ].join("\n"),
             );
           }
           // Resolved before the workspace fallback so a name that picks nothing

@@ -117,6 +117,8 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
     countLabel: "parts",
     charsKey: "model.system_chars",
   },
+  // The live <environment> block the run's last message carried.
+  { key: "agent.environment", label: "Environment" },
   {
     key: "agent.tools",
     label: "Tools",
