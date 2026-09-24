@@ -146,6 +146,7 @@ export function UsageTraceRail({
   );
 }
 
+/** The rail's frame: the chart's height beside it, up to that height when stacked. */
 function Rail({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="max-h-75 overflow-y-auto overscroll-contain border-t border-border lg:h-75 lg:border-t-0 lg:border-l">

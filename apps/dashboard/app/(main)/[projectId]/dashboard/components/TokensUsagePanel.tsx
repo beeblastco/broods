@@ -411,6 +411,7 @@ export function TokensUsagePanel({
   );
 }
 
+/** Swatch and label per series, under each chart. */
 function Legend({ series }: { series: UsageChartSeries[] }): React.JSX.Element {
   return (
     <div className="flex flex-wrap gap-3 pt-2 text-2xs text-muted-foreground">
@@ -479,90 +480,6 @@ function ModelMenu({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-/**
- * The numbers row for the range or the clicked bin: tokens, cost and tasks
- * large, the rest small beside them. Laid out by its own width, not the
- * window's, and values count to their new number here so only this row
- * repaints during the tween.
- */
-function UsageStats({
-  scope,
-  estimatedCost,
-  unpriced,
-}: {
-  scope: Counters;
-  estimatedCost: number;
-  unpriced: number;
-}): React.JSX.Element {
-  const target = useMemo(
-    () => [
-      [
-        scope.totalTokens,
-        estimatedCost,
-        scope.invocations,
-        scope.cachedInputTokens,
-        scope.modelCalls,
-        scope.agentSandboxCpuUsec,
-        scope.cacheWriteTokens,
-        scope.runtimeWallMs,
-        scope.toolSandboxCpuUsec,
-      ],
-    ],
-    [scope, estimatedCost],
-  );
-  const values = useTween(target)[0];
-  const headline: Array<[string, string]> = [
-    ["Tokens", formatNumber(values[0])],
-    ["Estimated cost", formatUsd(values[1])],
-    ["Tasks", formatNumber(values[2])],
-  ];
-  const details: Array<[string, string]> = [
-    [
-      "Cache read",
-      `${formatNumber(values[3])} · ${percent(scope.cachedInputTokens, scope.inputTokens)}`,
-    ],
-    ["Model calls", formatNumber(values[4])],
-    ["Agent CPU", formatCpuUsec(values[5])],
-    ["Cache write", formatNumber(values[6])],
-    ["Runtime", formatMs(values[7])],
-    ["MCP CPU", formatCpuUsec(values[8])],
-  ];
-
-  return (
-    <div className="@container">
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-        <div className="flex gap-8">
-          {headline.map(([label, value]) => (
-            <div key={label}>
-              <div className="text-xs text-muted-foreground">{label}</div>
-              <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
-                {value}
-              </div>
-            </div>
-          ))}
-        </div>
-        <dl className="grid w-full grid-cols-2 gap-x-6 gap-y-0.5 text-xs @lg:grid-cols-3 @5xl:w-auto @5xl:border-l @5xl:border-border @5xl:pl-8">
-          {details.map(([label, value]) => (
-            <div
-              key={label}
-              className="flex justify-between gap-3 whitespace-nowrap"
-            >
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-medium tabular-nums">{value}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-      {unpriced > 0 && (
-        <p className="mt-1 text-2xs text-muted-foreground">
-          {unpriced} model{unpriced === 1 ? " is" : "s are"} left out of the
-          estimate because no standard rate is configured.
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -670,6 +587,90 @@ function ModelTable({
   );
 }
 
+/**
+ * The numbers row for the range or the clicked bin: tokens, cost and tasks
+ * large, the rest small beside them. Laid out by its own width, not the
+ * window's, and values count to their new number here so only this row
+ * repaints during the tween.
+ */
+function UsageStats({
+  scope,
+  estimatedCost,
+  unpriced,
+}: {
+  scope: Counters;
+  estimatedCost: number;
+  unpriced: number;
+}): React.JSX.Element {
+  const target = useMemo(
+    () => [
+      [
+        scope.totalTokens,
+        estimatedCost,
+        scope.invocations,
+        scope.cachedInputTokens,
+        scope.modelCalls,
+        scope.agentSandboxCpuUsec,
+        scope.cacheWriteTokens,
+        scope.runtimeWallMs,
+        scope.toolSandboxCpuUsec,
+      ],
+    ],
+    [scope, estimatedCost],
+  );
+  const values = useTween(target)[0];
+  const headline: Array<[string, string]> = [
+    ["Tokens", formatNumber(values[0])],
+    ["Estimated cost", formatUsd(values[1])],
+    ["Tasks", formatNumber(values[2])],
+  ];
+  const details: Array<[string, string]> = [
+    [
+      "Cache read",
+      `${formatNumber(values[3])} · ${percent(scope.cachedInputTokens, scope.inputTokens)}`,
+    ],
+    ["Model calls", formatNumber(values[4])],
+    ["Agent CPU", formatCpuUsec(values[5])],
+    ["Cache write", formatNumber(values[6])],
+    ["Runtime", formatMs(values[7])],
+    ["MCP CPU", formatCpuUsec(values[8])],
+  ];
+
+  return (
+    <div className="@container">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <div className="flex gap-8">
+          {headline.map(([label, value]) => (
+            <div key={label}>
+              <div className="text-xs text-muted-foreground">{label}</div>
+              <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
+        <dl className="grid w-full grid-cols-2 gap-x-6 gap-y-0.5 text-xs @lg:grid-cols-3 @5xl:w-auto @5xl:border-l @5xl:border-border @5xl:pl-8">
+          {details.map(([label, value]) => (
+            <div
+              key={label}
+              className="flex justify-between gap-3 whitespace-nowrap"
+            >
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="font-medium tabular-nums">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+      {unpriced > 0 && (
+        <p className="mt-1 text-2xs text-muted-foreground">
+          {unpriced} model{unpriced === 1 ? " is" : "s are"} left out of the
+          estimate because no standard rate is configured.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Per-(provider, model) totals, heaviest first. */
 function aggregateByModel(buckets: Bucket[]): Bucket[] {
   const map = new Map<string, Bucket>();
@@ -694,11 +695,22 @@ function colorModels(buckets: Bucket[]): Map<string, string> {
   );
 }
 
+/** A zeroed bin, for gaps in the range and as the start of a sum. */
 function emptyCounters(bucketStart: number): Counters {
-  const counters = { bucketStart: bucketStart } as Counters;
-  for (const key of COUNTER_KEYS) counters[key] = 0;
-
-  return counters;
+  return {
+    bucketStart: bucketStart,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    invocations: 0,
+    modelCalls: 0,
+    runtimeWallMs: 0,
+    agentSandboxCpuUsec: 0,
+    toolSandboxCpuUsec: 0,
+  };
 }
 
 /**
@@ -820,6 +832,7 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
 }
 
+/** `provider::model`, the key the filter, colors and table share. */
 function modelKey(b: { modelProvider: string; modelId: string }): string {
   return `${b.modelProvider}::${b.modelId}`;
 }
@@ -830,10 +843,12 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
   return typeof value === "number" ? value : 0;
 }
 
+/** Whole-number share for the numbers row and model table, 0% when empty. */
 function percent(part: number, whole: number): string {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%";
 }
 
+/** Totals across bins: the whole range, or the one clicked bin. */
 function sumCounters(bins: Counters[]): Counters {
   const total = emptyCounters(bins[0]?.bucketStart ?? 0);
   for (const b of bins) {
