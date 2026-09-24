@@ -14,6 +14,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `apps/docs` (`@broods/docs`) is the Docusaurus docs. core, public API, whole architecture.
 - `packages/broods` (`broods`) is the published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
+- `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
 
 they are one product, not eight islands. gateway is the door, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
 

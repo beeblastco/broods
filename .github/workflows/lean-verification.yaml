@@ -1,0 +1,43 @@
+name: Lean verification
+
+# Rebuilds the Lean 4 models in verification/. A proof that stops checking means
+# the model or the property moved; update the model when the TypeScript it
+# mirrors changes.
+
+on:
+  pull_request:
+    paths:
+      - verification/**
+      - .github/workflows/lean-verification.yaml
+  push:
+    branches: [dev]
+    paths:
+      - verification/**
+      - .github/workflows/lean-verification.yaml
+  workflow_dispatch:
+
+concurrency:
+  group: lean-verification-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: verification
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # elan reads verification/lean-toolchain and installs that exact Lean.
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build and check every proof
+        run: lake build

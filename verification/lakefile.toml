@@ -1,0 +1,5 @@
+name = "broods-verification"
+defaultTargets = ["Broods"]
+
+[[lean_lib]]
+name = "Broods"
