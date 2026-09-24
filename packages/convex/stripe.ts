@@ -1,5 +1,8 @@
 /**
  * Stripe subscription queries, checkout/portal actions, and webhook plan sync.
+ * Checkout goes through the Stripe Payment Link in `STRIPE_PRO_PAYMENT_LINK`
+ * when set, so Stripe owns the price and trial; otherwise through an API
+ * Checkout Session for `STRIPE_PRO_PRICE_ID`.
  */
 
 import { StripeSubscriptions } from "@convex-dev/stripe";
@@ -10,6 +13,7 @@ import {
   action,
   internalAction,
   internalMutation,
+  internalQuery,
   query,
 } from "./_generated/server";
 import { authKit } from "./auth";
@@ -86,17 +90,12 @@ export const createCheckoutSession = action({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("Not authenticated");
 
-    const { customerId } = await stripeClient.getOrCreateCustomer(ctx, {
-      userId: authUser.id,
-      email: authUser.email ?? undefined,
-    });
-
     // Stops a second click or tab. It reads webhook-synced rows, so a checkout
     // paid seconds ago can still slip through; Stripe's "limit customers to
     // one subscription" Checkout setting closes that window.
     const subs = await ctx.runQuery(
-      components.stripe.public.listSubscriptions,
-      { stripeCustomerId: customerId },
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: authUser.id },
     );
     if (subs.some((sub) => !isEnded(sub.status))) {
       throw new ClientError(
@@ -104,6 +103,25 @@ export const createCheckoutSession = action({
         "conflict",
       );
     }
+
+    // The link carries no customer or metadata. The webhook reads
+    // `client_reference_id` off checkout.session.completed and stamps
+    // `metadata.userId` on the subscription and customer.
+    const paymentLink = process.env.STRIPE_PRO_PAYMENT_LINK;
+    if (paymentLink) {
+      const url = new URL(paymentLink);
+      url.searchParams.set("client_reference_id", authUser.id);
+      if (authUser.email) {
+        url.searchParams.set("prefilled_email", authUser.email);
+      }
+
+      return { url: url.toString() };
+    }
+
+    const { customerId } = await stripeClient.getOrCreateCustomer(ctx, {
+      userId: authUser.id,
+      email: authUser.email ?? undefined,
+    });
 
     const priceId = process.env.STRIPE_PRO_PRICE_ID;
     if (!priceId) throw new Error("STRIPE_PRO_PRICE_ID is not configured");
@@ -159,6 +177,32 @@ export const getBillingInfo = query({
     // Any subscription that is not over, including past_due and unpaid ones,
     // so the dashboard offers the portal to fix payment instead of checkout.
     return subs.find((sub) => !isEnded(sub.status)) ?? null;
+  },
+});
+
+/**
+ * Ids of a user's subscriptions that have not ended, or null when `authId` is
+ * not a Broods user. The webhook checks both before it links a Payment Link
+ * checkout to the user.
+ */
+export const getLiveSubscriptionIdsInternal = internalQuery({
+  args: { authId: v.string() },
+  returns: v.union(v.null(), v.array(v.string())),
+  handler: async (ctx, args): Promise<Array<string> | null> => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .unique();
+    if (!user) return null;
+
+    const subs = await ctx.runQuery(
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: args.authId },
+    );
+
+    return subs
+      .filter((sub) => !isEnded(sub.status))
+      .map((sub) => sub.stripeSubscriptionId);
   },
 });
 

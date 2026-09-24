@@ -17,9 +17,6 @@ export interface PlanConfig {
 /** Tier shown while the user row is still loading. */
 export const DEFAULT_PLAN: PlanTier = "free";
 
-export const UPGRADE_URL =
-  process.env.NEXT_PUBLIC_UPGRADE_URL ?? "https://github.com/beeblastco/broods";
-
 export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
   free: {
     key: "free",

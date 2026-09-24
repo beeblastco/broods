@@ -94,23 +94,24 @@ Production stages keep their buckets on removal and protect them. Add every long
 
 Set the deployment env with `bunx convex env set NAME value` from `packages/convex`:
 
-| Variable                                                                   | Required  | Notes                                                                                                                                   |
-| -------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                         | yes       | Same value as core. Encrypts agent and sandbox config                                                                                   |
-| `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same value as core. Admin bearer for the account admin routes                                                                           |
-| `SERVICE_AUTH_SECRET`                                                      | yes       | Same value as core. Cron trigger and service calls                                                                                      |
-| `STAGE_TICKET_SECRET`                                                      | yes       | Same value as core. Signs `fp_dts_` tickets                                                                                             |
-| `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, for example `http://core.<ns>.svc.cluster.local`. Never the public gateway: core refuses the service token there |
-| `AWS_REGION`                                                               | yes       | The data plane region                                                                                                                   |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                                                                            |
-| `CONVEX_AWS_ROLE_ARN`                                                      | yes       | `convexAwsRoleArn` output                                                                                                               |
-| `CONVEX_AWS_EXTERNAL_ID`                                                   | no        | Default `broods-convex`                                                                                                                 |
-| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                                                                           |
-| `MICROVM_ARTIFACTS_BUCKET_NAME`                                            | no        | Also refuses that bucket as a workspace's own storage                                                                                   |
-| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core                                              |
-| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | dashboard | WorkOS AuthKit: user sync and cleanup for dashboard logins                                                                              |
-| `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs. Falls back to the origin of `NEXT_PUBLIC_WORKOS_REDIRECT_URI`                                    |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`        | no        | Billing. Leave unset without it                                                                                                         |
+| Variable                                                                   | Required  | Notes                                                                                                                                        |
+| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                         | yes       | Same value as core. Encrypts agent and sandbox config                                                                                        |
+| `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same value as core. Admin bearer for the account admin routes                                                                                |
+| `SERVICE_AUTH_SECRET`                                                      | yes       | Same value as core. Cron trigger and service calls                                                                                           |
+| `STAGE_TICKET_SECRET`                                                      | yes       | Same value as core. Signs `fp_dts_` tickets                                                                                                  |
+| `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, for example `http://core.<ns>.svc.cluster.local`. Never the public gateway: core refuses the service token there      |
+| `AWS_REGION`                                                               | yes       | The data plane region                                                                                                                        |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                                                                                 |
+| `CONVEX_AWS_ROLE_ARN`                                                      | yes       | `convexAwsRoleArn` output                                                                                                                    |
+| `CONVEX_AWS_EXTERNAL_ID`                                                   | no        | Default `broods-convex`                                                                                                                      |
+| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                                                                                |
+| `MICROVM_ARTIFACTS_BUCKET_NAME`                                            | no        | Also refuses that bucket as a workspace's own storage                                                                                        |
+| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core                                                   |
+| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | dashboard | WorkOS AuthKit: user sync and cleanup for dashboard logins                                                                                   |
+| `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs. Falls back to the origin of `NEXT_PUBLIC_WORKOS_REDIRECT_URI`                                         |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`        | no        | Billing. Leave unset without it                                                                                                              |
+| `STRIPE_PRO_PAYMENT_LINK`                                                  | no        | Stripe Payment Link that Upgrade opens, so Stripe owns the price and trial. Unset falls back to a Checkout Session for `STRIPE_PRO_PRICE_ID` |
 
 Then deploy the functions:
 
