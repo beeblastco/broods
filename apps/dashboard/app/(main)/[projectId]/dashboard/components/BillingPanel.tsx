@@ -179,6 +179,11 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
     }
   }
 
+  // The current month is the plan's own query: leave `month` unset to share it.
+  function handleMonthChange(value: string): void {
+    setMonth(value === budget?.month ? undefined : value);
+  }
+
   return (
     <div className="grid gap-8">
       <Section title="Plan">
@@ -227,7 +232,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         />
       )}
 
-      <UsageSummary budget={shownMonth} onMonthChange={setMonth} />
+      <UsageSummary budget={shownMonth} onMonthChange={handleMonthChange} />
       <DailyUsage budget={shownMonth} />
     </div>
   );
@@ -360,6 +365,13 @@ function PlanSummary({
   cancelAtPeriodEnd: boolean;
 }): React.JSX.Element {
   const selfHosted = budget?.enforced === false;
+  const detail = planDetail(
+    budget,
+    selfHosted,
+    status,
+    periodEnd,
+    cancelAtPeriodEnd,
+  );
 
   return (
     <div className="grid gap-0.5">
@@ -369,9 +381,7 @@ function PlanSummary({
         </span>
         <PlanBadge selfHosted={selfHosted} status={status} />
       </div>
-      <p className="text-xs text-muted-foreground">
-        {planDetail(budget, selfHosted, status, periodEnd, cancelAtPeriodEnd)}
-      </p>
+      {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
     </div>
   );
 }
@@ -506,8 +516,8 @@ function billingReset(month: string): string {
 }
 
 // One resource over every day of the month, zero where nothing was used.
-// Storage has no size on a day without a snapshot: its value is null and its
-// bar a gap, so an unknown day never reads as 0 GB.
+// A day after today, and a storage day without a snapshot, has no value yet:
+// it is null and its bar a gap, so it never reads as 0.
 function dailySeries(
   budget: BudgetUsage,
   key: UsageRow["key"],
@@ -518,9 +528,10 @@ function dailySeries(
   const bucketStarts = Array.from({ length: dayCount }, (_, index) =>
     Date.UTC(year, monthNumber - 1, index + 1),
   );
+  const now = Date.now();
   const values = bucketStarts.map((start): number | null => {
     const day = byDay.get(new Date(start).toISOString().slice(0, 10));
-    if (!day) return key === "storageGb" ? null : 0;
+    if (!day) return key === "storageGb" || start > now ? null : 0;
 
     return day[key];
   });
@@ -625,7 +636,7 @@ function planDetail(
   status: string | undefined,
   periodEnd: number | undefined,
   cancelAtPeriodEnd: boolean,
-): string {
+): string | null {
   if (selfHosted) return "Your own install. Every feature, no limits.";
   if (periodEnd) {
     const day = formatDay(periodEnd * 1000);
@@ -634,5 +645,5 @@ function planDetail(
     return `${cancelAtPeriodEnd ? "Cancels on" : "Renews on"} ${day}`;
   }
 
-  return budget ? `Resets ${billingReset(budget.months[0])}` : "";
+  return budget ? `Resets ${billingReset(budget.month)}` : null;
 }
