@@ -82,7 +82,10 @@ export interface ModelTokenRates {
   cacheWrite: number;
 }
 
-/** Raw token counts used to estimate one model's cost. */
+/**
+ * Raw token counts used to estimate one model's cost. `inputTokens` is the AI
+ * SDK total, so it already includes `cachedInputTokens` and `cacheWriteTokens`.
+ */
 export interface ModelTokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -115,7 +118,11 @@ export function estimateModelTokenCost(
   const rates = resolveModelTokenRates(provider, modelId);
   if (!rates) return null;
 
-  const input = (usage.inputTokens * rates.input) / 1_000_000;
+  const uncachedInput = Math.max(
+    0,
+    usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteTokens,
+  );
+  const input = (uncachedInput * rates.input) / 1_000_000;
   const output = (usage.outputTokens * rates.output) / 1_000_000;
   const cacheRead = (usage.cachedInputTokens * rates.cacheRead) / 1_000_000;
   const cacheWrite = (usage.cacheWriteTokens * rates.cacheWrite) / 1_000_000;

@@ -3,7 +3,11 @@ import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import { collectUsageRollups, usageGrainForBinSeconds } from "../logs";
+import {
+  collectUsageRollups,
+  collectUsageTasks,
+  usageGrainForBinSeconds,
+} from "../logs";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -167,4 +171,27 @@ test("each range reads only its own grain", async () => {
     async (ctx) => await collectUsageRollups(ctx, ENDPOINT_ID, "5m", startMs),
   );
   expect(fiveMinuteRows.map((row) => row.grain)).toEqual(["5m"]);
+});
+
+test("collectUsageTasks reads only tasks that finished inside the bin", async () => {
+  const tt = t();
+  const accountId = await seedAccount(tt);
+  const binStart = Date.UTC(2026, 0, 15, 13, 0);
+  const binEnd = binStart + HOUR_MS;
+  for (const [taskId, finishedAt] of [
+    ["before#t0", binStart - 1],
+    ["first#t1", binStart],
+    ["last#t2", binEnd - 1],
+    ["after#t3", binEnd],
+  ] as const) {
+    await tt.mutation(
+      internal.usage.recordTaskUsage,
+      taskUsageArgs(accountId, taskId, finishedAt),
+    );
+  }
+
+  const rows = await tt.run(
+    async (ctx) => await collectUsageTasks(ctx, ENDPOINT_ID, binStart, binEnd),
+  );
+  expect(rows.map((row) => row.taskId)).toEqual(["first#t1", "last#t2"]);
 });
