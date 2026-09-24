@@ -113,7 +113,7 @@ describe("hosted MCP fetch adapter", () => {
 });
 
 describe("hosted MCP invoke", () => {
-  it("carries the account id as the Lambda tenant id unless MCP_TENANT_ISOLATION is off", async () => {
+  it("carries the account id as the Lambda tenant id only when MCP_TENANT_ISOLATION is on", async () => {
     // AWS_PROFILE outranks static keys; a real profile must never sign here.
     delete process.env.AWS_PROFILE;
     process.env.AWS_REGION = "eu-west-1";
@@ -121,7 +121,7 @@ describe("hosted MCP invoke", () => {
     process.env.AWS_SECRET_ACCESS_KEY = "test";
     process.env.TOOL_BUNDLES_BUCKET_NAME = "bundles";
     process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
-    delete process.env.MCP_TENANT_ISOLATION;
+    process.env.MCP_TENANT_ISOLATION = "true";
     const frames = new TextEncoder().encode(
       `${JSON.stringify({ t: "final", id: "1", result: ok("{}") })}\n{"t":"end"}\n`,
     );
@@ -143,7 +143,7 @@ describe("hosted MCP invoke", () => {
         FunctionName: "mcp-runner",
         TenantId: "acct_test",
       });
-      process.env.MCP_TENANT_ISOLATION = "false";
+      delete process.env.MCP_TENANT_ISOLATION;
       await hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" });
       expect(send.mock.calls[1]?.[0]?.input).not.toHaveProperty("TenantId");
     } finally {

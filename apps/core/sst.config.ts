@@ -805,17 +805,13 @@ export default $config({
 
     // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
     // process. No VPC gives internet egress; core invokes it via
-    // TOOL_RUNNER_FUNCTION_NAME. PER_TENANT mode is the default so warm
-    // environments never cross accounts; MCP_TENANT_ISOLATION=false opts a
-    // non-production stage out, and production refuses it. The mode is immutable
-    // after create, so each mode owns its logical id and physical name. It also
-    // rules out a function URL, provisioned concurrency and SnapStart.
-    const mcpTenantIsolation = parseBooleanEnv("MCP_TENANT_ISOLATION", true);
-    if (!mcpTenantIsolation && isProductionStage(stage)) {
-      throw new Error(
-        "MCP_TENANT_ISOLATION cannot be off on a production stage",
-      );
-    }
+    // TOOL_RUNNER_FUNCTION_NAME. MCP_TENANT_ISOLATION=true creates it in
+    // PER_TENANT mode so warm environments never cross accounts. Off until AWS
+    // enables tenancy config for this account (CreateFunction rejects it today);
+    // tracked in #654. The mode is immutable after create,
+    // so each mode owns its logical id and physical name. It also rules out a
+    // function URL, provisioned concurrency and SnapStart.
+    const mcpTenantIsolation = parseBooleanEnv("MCP_TENANT_ISOLATION", false);
     const mcpRunnerFn = new sst.aws.Function(
       mcpTenantIsolation ? "McpRunner" : "ToolRunner",
       {

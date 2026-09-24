@@ -81,13 +81,13 @@ A hosted row with `transport: "hosted"` stores a bundle under the `account-mcp/`
 
 The handler factory must build a fresh server on every call. The stateless transport connects one per request, and the parallel calls of a model step run concurrently in one process, where a shared instance would have every in-flight handler aborted when one request's transport closes.
 
-The mcp-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the bundle. `src/harness/mcp/hosted.ts` is the core side:
+The tool-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the bundle. `src/harness/mcp/hosted.ts` is the core side:
 
 - Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS`, default 10 ms, and sends every call for the same account and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX`, default 8. Setting it to `1` disables batching. The child runs them concurrently and answers each on its own frame.
 - A batch shares one 30 s deadline and one 16 MB output cap. `RUN_TIMEOUT_MS` in `apps/lambda/handler.mjs` sets the deadline, with a 2 s grace for the child to abort itself. Its CPU is split evenly across its calls.
 - Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A child serves at most `MCP_CHILD_MAX_CALLS` invokes, default 64, each one batch, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
 - Metering. Each call's span carries `tool.compute.type: "mcp-sandbox"` and `tool.compute.cpu_usec`, billed into the account's tool-sandbox CPU usage.
-- Every invoke carries the account id as its Lambda tenant id, unless `MCP_TENANT_ISOLATION=false` on a non-production stage. See [security](security.md).
+- With `MCP_TENANT_ISOLATION=true`, every invoke carries the account id as its Lambda tenant id. See [security](security.md).
 - The bundle reaches the runner as a pre-signed URL valid for 120 s, so the function holds no S3 access.
 
 Two parallel calls from one model step, end to end:
@@ -96,7 +96,7 @@ Two parallel calls from one model step, end to end:
 sequenceDiagram
   participant M as model step
   participant H as hosted.ts
-  participant L as mcp-runner handler.mjs
+  participant L as tool-runner handler.mjs
   participant S3 as ToolBundles bucket
   participant C as child-runner.mjs
 
