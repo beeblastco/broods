@@ -3,6 +3,13 @@
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/select";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { toErrorMessage } from "@/app/lib/errors";
 import type { PlanTier } from "@/app/lib/pricing";
@@ -13,40 +20,67 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { ArrowUpRight, CreditCard } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { UsageChart } from "./UsageChart";
 
-// Rows of the usage table, in the groups the backend splits the meter into.
-const USAGE_ROWS: Array<{
-  key: keyof BudgetUsage["categories"];
-  label: string;
-  description: string;
-  barClass: string;
-}> = [
+const DAY_SECONDS = 24 * 60 * 60;
+
+// Rows of the usage table, grouped like Convex's usage page. `share` is the
+// budget group the row counts toward; ingress is free, so it has none.
+const USAGE_GROUPS: Array<{ label: string; rows: UsageRow[] }> = [
   {
-    key: "sandboxes",
-    label: "Sandboxes",
-    description: "Agent sandbox running time",
-    barClass: "bg-usage-agent-sandbox",
+    label: "Compute",
+    rows: [
+      {
+        key: "sandboxHours",
+        label: "Sandbox time",
+        unit: "hours",
+        share: "sandboxes",
+        color: "var(--color-usage-agent-sandbox)",
+      },
+      {
+        key: "hostedMcpCalls",
+        label: "Hosted MCP calls",
+        unit: "count",
+        share: "hostedMcp",
+        color: "var(--color-usage-mcp-sandbox)",
+      },
+    ],
   },
   {
-    key: "hostedMcp",
-    label: "Hosted MCP",
-    description: "Uploaded MCP server calls",
-    barClass: "bg-usage-mcp-sandbox",
-  },
-  {
-    key: "storage",
     label: "Storage",
-    description: "Workspaces, skills and bundles",
-    barClass: "bg-usage-storage",
+    rows: [
+      {
+        key: "storageGb",
+        label: "Workspaces and files",
+        unit: "gb",
+        share: "storage",
+        color: "var(--color-usage-storage)",
+      },
+    ],
   },
   {
-    key: "egress",
-    label: "Egress",
-    description: "Data sent out of Broods",
-    barClass: "bg-usage-egress",
+    label: "Network",
+    rows: [
+      {
+        key: "egressGb",
+        label: "Egress",
+        unit: "gb",
+        share: "egress",
+        color: "var(--color-usage-egress)",
+      },
+      {
+        key: "ingressGb",
+        label: "Ingress",
+        unit: "gb",
+        share: null,
+        color: "var(--color-usage-ingress)",
+      },
+    ],
   },
 ];
+
+const USAGE_ROWS = USAGE_GROUPS.flatMap((group) => group.rows);
 
 // Stripe states where a payment is owed and the portal can fix it.
 const PAYMENT_DUE_STATUSES = new Set(["past_due", "unpaid", "incomplete"]);
@@ -54,6 +88,15 @@ const PAYMENT_DUE_STATUSES = new Set(["past_due", "unpaid", "incomplete"]);
 type BudgetUsage = NonNullable<
   FunctionReturnType<typeof api.account.budget.getForActiveOrg>
 >;
+type UsageAmounts = BudgetUsage["totals"];
+
+interface UsageRow {
+  key: keyof UsageAmounts;
+  label: string;
+  unit: "hours" | "count" | "gb";
+  share: keyof BudgetUsage["categories"] | null;
+  color: string;
+}
 
 interface Notice {
   tone: "warning" | "destructive" | "info";
@@ -68,17 +111,24 @@ interface Props {
 
 /**
  * Billing tab: the plan with its one action, a single notice when something
- * needs attention, and this month's usage as shares of the plan's allowance.
- * Euro budgets never reach the browser; the backend sends percentages.
+ * needs attention, then a month's usage in real units with each resource's
+ * share of the allowance and a daily chart. Euro budgets never reach the
+ * browser; the backend sends amounts and percentages.
  */
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [month, setMonth] = useState<string | undefined>(undefined);
 
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);
+  // The plan and its notice always read this month; only the usage section
+  // follows the picker, so switching months never blanks the plan.
   const budget = useQuery(api.account.budget.getForActiveOrg, {});
+  const shownMonth = useQuery(api.account.budget.getForActiveOrg, {
+    month: month,
+  });
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
@@ -177,8 +227,65 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         />
       )}
 
-      <UsageTable budget={budget} />
+      <UsageSummary budget={shownMonth} onMonthChange={setMonth} />
+      <DailyUsage budget={shownMonth} />
     </div>
+  );
+}
+
+// One resource's usage per day of the month, picked with the toggle above it.
+function DailyUsage({
+  budget,
+}: {
+  budget: BudgetUsage | null | undefined;
+}): React.JSX.Element | null {
+  const [row, setRow] = useState<UsageRow>(USAGE_ROWS[0]);
+  // UsageChart eases to each new rows array, so only rebuild on real change.
+  const daily = useMemo(
+    () => (budget ? dailySeries(budget, row.key) : null),
+    [budget, row.key],
+  );
+  if (!budget || !daily) return null;
+
+  return (
+    <Section title="Daily usage">
+      <div className="flex w-fit flex-wrap items-center gap-1 rounded-md border border-border bg-card p-1">
+        {USAGE_ROWS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => setRow(option)}
+            className={cn(
+              "cursor-pointer rounded px-2.5 py-1 text-xs transition-colors",
+              row.key === option.key
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <div className="rounded-lg border border-border bg-card p-3">
+        {budget.days.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No daily usage recorded for this month.
+          </p>
+        ) : (
+          <UsageChart
+            kind="bars"
+            height={160}
+            series={[{ key: row.key, label: row.label, color: row.color }]}
+            rows={daily.rows}
+            bucketStarts={daily.bucketStarts}
+            binSeconds={DAY_SECONDS}
+            selected={null}
+            formatAxis={(value) => formatAmount(value, row.unit)}
+            formatValue={(value) => formatAmount(value, row.unit)}
+          />
+        )}
+      </div>
+    </Section>
   );
 }
 
@@ -233,7 +340,7 @@ function PlanBadge({
   return <Badge variant="secondary">Free</Badge>;
 }
 
-// Plan name, status badge, and when it renews or how fast it may run.
+// Plan name, status badge, and when it renews or resets.
 function PlanSummary({
   budget,
   plan,
@@ -264,80 +371,28 @@ function PlanSummary({
   );
 }
 
-// This month's usage, one row per group and a total, like Convex's usage page.
-function UsageTable({
+// The month's allowance used, a month picker, and one row per resource.
+function UsageSummary({
   budget,
+  onMonthChange,
 }: {
   budget: BudgetUsage | null | undefined;
+  onMonthChange: (month: string) => void;
 }): React.JSX.Element {
-  const period = budget ? billingPeriod(budget.month) : null;
-
   return (
-    <Section
-      title="Usage"
-      description={
-        period ? `${period.range} · resets ${period.reset}` : "This month"
-      }
-    >
+    <Section title="Usage">
       {budget === undefined ? (
-        <Skeleton className="h-64 rounded-lg" />
+        <Skeleton className="h-72 rounded-lg" />
       ) : budget === null ? (
         <p className="text-sm text-muted-foreground">
           No account in this organization yet.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="grid grid-cols-5 items-center gap-4 border-b border-border px-4 py-2 text-xs text-muted-foreground">
-            <span className="col-span-2">Resource</span>
-            <span className="col-span-2">
-              {budget.enforced
-                ? "Share of monthly allowance"
-                : "Share of usage"}
-            </span>
-            <span className="text-right">Used</span>
-          </div>
-          {USAGE_ROWS.map((row) => (
-            <div
-              key={row.key}
-              className="grid grid-cols-5 items-center gap-4 border-b border-border px-4 py-2.5"
-            >
-              <div className="col-span-2 grid">
-                <span className="text-sm text-foreground">{row.label}</span>
-                <span className="text-xs text-muted-foreground">
-                  {row.description}
-                </span>
-              </div>
-              <div className="col-span-2 flex h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn("h-full w-(--bar-width)", row.barClass)}
-                  style={{
-                    "--bar-width": `${Math.min(budget.categories[row.key], 100)}%`,
-                  }}
-                />
-              </div>
-              <span className="text-right text-sm tabular-nums text-foreground">
-                {formatPercent(budget.categories[row.key])}
-              </span>
-            </div>
-          ))}
-          <div className="grid grid-cols-5 items-center gap-4 bg-muted/40 px-4 py-2.5">
-            <span className="col-span-2 text-sm font-medium text-foreground">
-              Total
-            </span>
-            <div className="col-span-2 flex h-1.5 gap-px overflow-hidden rounded-full bg-muted">
-              {USAGE_ROWS.map((row) => (
-                <div
-                  key={row.key}
-                  className={cn("h-full w-(--bar-width)", row.barClass)}
-                  style={{
-                    "--bar-width": `${budget.categories[row.key]}%`,
-                  }}
-                />
-              ))}
-            </div>
+        <>
+          <div className="flex items-center justify-between gap-4">
             <span
               className={cn(
-                "text-right text-sm font-medium tabular-nums",
+                "text-sm tabular-nums",
                 budget.level === "warning" && "text-warning",
                 budget.level === "exhausted" && "text-destructive",
                 budget.level === "ok" && "text-foreground",
@@ -345,29 +400,136 @@ function UsageTable({
             >
               {budget.usedPercent === null
                 ? "No limit"
-                : formatPercent(Math.min(budget.usedPercent, 100))}
+                : `${formatPercent(budget.usedPercent)} of monthly allowance`}
             </span>
+            <Select
+              items={budget.months.map((month) => ({
+                label: monthLabel(month),
+                value: month,
+              }))}
+              value={budget.month}
+              onValueChange={(value) => {
+                if (value) onMonthChange(value);
+              }}
+            >
+              <SelectTrigger size="sm" className="cursor-pointer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {budget.months.map((month) => (
+                  <SelectItem key={month} value={month}>
+                    {monthLabel(month)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </div>
+          {budget.usedPercent !== null && (
+            <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full w-(--bar-width) bg-foreground"
+                style={{
+                  "--bar-width": `${Math.min(budget.usedPercent, 100)}%`,
+                }}
+              />
+            </div>
+          )}
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="grid grid-cols-6 items-center gap-4 border-b border-border px-4 py-2 text-xs text-muted-foreground">
+              <span className="col-span-2">Resource</span>
+              <span className="text-right">Used</span>
+              <span className="col-span-2">
+                {budget.enforced ? "Share of allowance" : "Share of usage"}
+              </span>
+            </div>
+            {USAGE_GROUPS.map((group) => (
+              <div key={group.label}>
+                <div className="border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+                  {group.label}
+                </div>
+                {group.rows.map((row) => (
+                  <UsageTableRow key={row.key} budget={budget} row={row} />
+                ))}
+              </div>
+            ))}
+          </div>
+        </>
       )}
-      <p className="text-xs text-muted-foreground">
-        Model tokens run on your own provider keys and never count.
-      </p>
     </Section>
   );
 }
 
-// Calendar month "YYYY-MM" as the UTC range it covers and the day it resets.
-function billingPeriod(month: string): { range: string; reset: string } {
+function UsageTableRow({
+  budget,
+  row,
+}: {
+  budget: BudgetUsage;
+  row: UsageRow;
+}): React.JSX.Element {
+  const share = row.share === null ? null : budget.categories[row.share];
+
+  return (
+    <div className="grid grid-cols-6 items-center gap-4 border-b border-border px-4 py-2.5 last:border-b-0">
+      <span className="col-span-2 text-sm text-foreground">{row.label}</span>
+      <span className="text-right text-sm tabular-nums text-foreground">
+        {formatAmount(budget.totals[row.key], row.unit)}
+      </span>
+      {share === null ? (
+        <span className="col-span-3 text-xs text-muted-foreground">Free</span>
+      ) : (
+        <>
+          <div className="col-span-2 flex h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full w-(--bar-width) bg-foreground"
+              style={{ "--bar-width": `${Math.min(share, 100)}%` }}
+            />
+          </div>
+          <span className="text-right text-sm tabular-nums text-muted-foreground">
+            {formatPercent(share)}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Calendar month "YYYY-MM" as the UTC day it resets on.
+function billingReset(month: string): string {
   const [year, monthNumber] = month.split("-").map(Number);
-  const start = Date.UTC(year, monthNumber - 1, 1);
-  const end = Date.UTC(year, monthNumber, 0);
-  const reset = Date.UTC(year, monthNumber, 1);
+
+  return formatDay(Date.UTC(year, monthNumber, 1));
+}
+
+// One resource over every day of the month, zero where nothing was used.
+function dailySeries(
+  budget: BudgetUsage,
+  key: UsageRow["key"],
+): { bucketStarts: number[]; rows: number[][] } {
+  const [year, monthNumber] = budget.month.split("-").map(Number);
+  const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const byDay = new Map(budget.days.map((day) => [day.day, day]));
+  const bucketStarts = Array.from({ length: dayCount }, (_, index) =>
+    Date.UTC(year, monthNumber - 1, index + 1),
+  );
 
   return {
-    range: `${formatDay(start)} to ${formatDay(end)}, ${year}`,
-    reset: formatDay(reset),
+    bucketStarts: bucketStarts,
+    rows: bucketStarts.map((start) => [
+      byDay.get(new Date(start).toISOString().slice(0, 10))?.[key] ?? 0,
+    ]),
   };
+}
+
+// An amount in its unit, scaling GB down to MB or KB so small numbers stay
+// readable. Null is a storage size no snapshot has measured yet.
+function formatAmount(value: number | null, unit: UsageRow["unit"]): string {
+  if (value === null) return "–";
+  if (unit === "count") return Math.round(value).toLocaleString();
+  if (unit === "hours") return `${formatDecimal(value)} h`;
+  if (value === 0 || value >= 1) return `${formatDecimal(value)} GB`;
+  if (value >= 0.001) return `${formatDecimal(value * 1000)} MB`;
+
+  return `${formatDecimal(value * 1_000_000)} KB`;
 }
 
 function formatDay(epochMs: number): string {
@@ -378,10 +540,26 @@ function formatDay(epochMs: number): string {
   });
 }
 
+function formatDecimal(value: number): string {
+  return value.toLocaleString([], {
+    maximumFractionDigits: value < 10 ? 2 : 1,
+  });
+}
+
 function formatPercent(percent: number): string {
   if (percent > 0 && percent < 1) return "<1%";
 
   return `${Math.round(percent)}%`;
+}
+
+function monthLabel(month: string): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+
+  return new Date(Date.UTC(year, monthNumber - 1, 1)).toLocaleDateString([], {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 // The one notice worth showing, most urgent first.
@@ -392,7 +570,7 @@ function pickNotice(
   canUpgrade: boolean,
 ): Notice | null {
   if (!budget) return null;
-  const reset = billingPeriod(budget.month).reset;
+  const reset = billingReset(budget.month);
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return {
       tone: "destructive",
@@ -437,14 +615,12 @@ function planDetail(
   cancelAtPeriodEnd: boolean,
 ): string {
   if (selfHosted) return "Your own install. Every feature, no limits.";
-  const runs = budget
-    ? `${budget.runsPerMinute.toLocaleString()} runs / min`
-    : null;
-  const renewal = !periodEnd
-    ? "Monthly compute allowance"
-    : status === "trialing"
-      ? `Trial ends ${formatDay(periodEnd * 1000)}`
-      : `${cancelAtPeriodEnd ? "Cancels on" : "Renews on"} ${formatDay(periodEnd * 1000)}`;
+  if (periodEnd) {
+    const day = formatDay(periodEnd * 1000);
+    if (status === "trialing") return `Trial ends ${day}`;
 
-  return runs ? `${renewal} · ${runs}` : renewal;
+    return `${cancelAtPeriodEnd ? "Cancels on" : "Renews on"} ${day}`;
+  }
+
+  return budget ? `Resets ${billingReset(budget.months[0])}` : "";
 }

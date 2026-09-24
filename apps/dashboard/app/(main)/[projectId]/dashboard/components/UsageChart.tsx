@@ -66,7 +66,8 @@ interface Props {
   bucketStarts: number[];
   binSeconds: number;
   selected: number | null;
-  onSelect: (index: number) => void;
+  /** Absent on a chart with nothing to drill into; clicks then do nothing. */
+  onSelect?: (index: number) => void;
   formatAxis: (n: number) => string;
   formatValue: (n: number) => string;
   tickCount?: number;
@@ -141,8 +142,15 @@ export function UsageChart({
     <div className="relative select-none" ref={measureRef}>
       <button
         type="button"
-        aria-label="Usage over time. Arrow keys move, Enter shows traces."
-        className="block w-full cursor-pointer text-3xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label={
+          onSelect
+            ? "Usage over time. Arrow keys move, Enter shows traces."
+            : "Usage over time. Arrow keys move."
+        }
+        className={cn(
+          "block w-full text-3xs outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          onSelect ? "cursor-pointer" : "cursor-default",
+        )}
         onKeyDown={(event) => {
           if (event.key === "ArrowLeft") setHover(Math.max(0, active - 1));
           else if (event.key === "ArrowRight")
@@ -159,7 +167,7 @@ export function UsageChart({
         onMouseLeave={() => setHover(null)}
         onClick={(event) =>
           // detail is 0 when Enter or Space fired the click.
-          onSelect(
+          onSelect?.(
             event.detail === 0
               ? active
               : indexAt(
@@ -220,15 +228,24 @@ export function UsageChart({
   );
 }
 
-/** Time label for a bin: clock time for sub-day bins, date for day bins. */
+/**
+ * Time label for a bin: clock time for sub-day bins, date for day bins. Day
+ * bins start at UTC midnight, so their date is the UTC one.
+ */
 export function formatBucketLabel(
   ms: number,
   binSeconds: number,
   long: boolean,
 ): string {
   const d = new Date(ms);
+  if (binSeconds >= 86400) {
+    return d.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  }
   const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
-  if (binSeconds >= 86400) return date;
   const time = d.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
