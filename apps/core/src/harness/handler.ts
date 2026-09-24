@@ -2279,7 +2279,9 @@ export async function dispatchAppliedIngress(
 
 /**
  * Transfers the fenced owner to the next durable FIFO application and schedules
- * it. With `settle`, the current event is settled in the same mutation.
+ * it. With `settle`, the current event is settled in the same mutation; when
+ * that throws, the settle is already stored on its own, so a caller's failure
+ * settle leaves the real outcome in place.
  */
 async function dispatchNextIngress(
   session: Session,
