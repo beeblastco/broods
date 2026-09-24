@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { coreRequest, responseJson } from "./helpers/http.ts";
+import { resetPlanLimitsForTests } from "../src/harness/plan-limits.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -105,6 +107,8 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 // The Convex instance registry is what authorizes every lifecycle request: on means the
 // account + config own a reserved instance under that key, off means no such row exists.
 let registryOwnsReservation = true;
+// This month's metered cost the fake budget store reports against a €5 budget.
+let budgetUsedEur = 0;
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
   setSandboxInstanceStatus: mock(async () => {}),
@@ -186,6 +190,8 @@ afterEach(() => {
   microvmSendMock.mockClear();
   microvmShellTokenError = null;
   registryOwnsReservation = true;
+  budgetUsedEur = 0;
+  resetPlanLimitsForTests();
   setStorageForTests(null);
   resetStorageForTests();
 });
@@ -404,6 +410,67 @@ describe("account-manage sandbox endpoints", () => {
     ).toMatchObject({
       cmd: "timeout -k 5 30 bash -c 'exit 7'",
     });
+  });
+
+  it("refuses exec and resume on the platform's machines once the budget is used", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    budgetUsedEur = 5;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    for (const action of ["exec", "resume"]) {
+      const response = await handler(
+        createEvent(
+          "POST",
+          `/v1/sandboxes/${created.sandboxId}/${action}`,
+          {
+            authorization: "Bearer service-secret",
+            "x-account-id": ACCOUNT_ID,
+          },
+          { reservationKey: reservationKey, code: "echo hi" },
+        ),
+      );
+
+      expect(response.status).toBe(402);
+      expect(await responseJson(response)).toMatchObject({
+        error: { code: "budget_exhausted" },
+      });
+    }
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("runs exec on the account's own workdir whatever the budget", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    budgetUsedEur = 5;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: {
+        reservationKey: reservationKey,
+        workdirUrl: "https://workdir.example.com",
+        apiKey: "own-key",
+      },
+    });
+
+    const response = await handler(
+      createEvent(
+        "POST",
+        `/v1/sandboxes/${created.sandboxId}/exec`,
+        { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+        { reservationKey: reservationKey, code: "exit 7" },
+      ),
+    );
+
+    expect(response.status).toBe(200);
   });
 
   it("mints a sealed terminal ticket that targets the reserved workdir PTY", async () => {
@@ -667,6 +734,19 @@ function createFakeStorage() {
     agentDeployments: {
       getByApiKeyHash: async function () {
         return null;
+      },
+    },
+    budgets: {
+      get: async function (): Promise<BudgetStatus> {
+        return {
+          enforced: true,
+          plan: "free",
+          month: "2026-09",
+          usedEur: budgetUsedEur,
+          limitEur: 5,
+          runsPerMinute: 600,
+          warned: false,
+        };
       },
     },
     crons: {} as never,
