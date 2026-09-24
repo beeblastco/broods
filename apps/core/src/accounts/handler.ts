@@ -4,6 +4,11 @@ import {
   roleDenial,
   rolePrincipal,
 } from "@broods/convex/model/apiAuthorization";
+import {
+  assertSandboxBudget,
+  BudgetExhaustedError,
+  planRefusalResponse,
+} from "../harness/plan-limits.ts";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import type { SandboxExecutor } from "../harness/sandbox/types.ts";
 import {
@@ -53,6 +58,7 @@ import { isPlainObject } from "../shared/object.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";
+import { runsOnOwnCredentials } from "../shared/workspaces.ts";
 import {
   sealTerminalTicket,
   TERMINAL_TICKET_TTL_MS,
@@ -74,6 +80,15 @@ const UNREACHABLE_ERROR_CODES = new Set([
   "ENETUNREACH",
   "ENOTFOUND",
   "FailedToOpenSocket",
+]);
+
+// Verbs that run or wake a machine. The executor below is built from the
+// stored config with no control plane, so the budget check its wrapper does
+// for agent runs never fires here; the handler checks instead.
+const COMPUTE_ACTIONS: ReadonlySet<SandboxLifecycleAction> = new Set([
+  "exec",
+  "resume",
+  "terminal",
 ]);
 
 type SandboxLifecycleAction =
@@ -332,6 +347,16 @@ async function handleSandboxLifecycle(
       403,
       "reservationKey does not belong to this account or sandbox config",
     );
+  }
+
+  if (COMPUTE_ACTIONS.has(action) && !runsOnOwnCredentials(record.config)) {
+    try {
+      await assertSandboxBudget(accountId);
+    } catch (err) {
+      if (!(err instanceof BudgetExhaustedError)) throw err;
+
+      return planRefusalResponse({ kind: "budget", message: err.message });
+    }
   }
 
   const actor = sandboxAuditActor(body.actor);

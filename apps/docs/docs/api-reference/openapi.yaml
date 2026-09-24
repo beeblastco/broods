@@ -1697,6 +1697,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Running }
+        "402":
+          {
+            description: "The account has used its monthly compute budget (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
@@ -1804,6 +1808,10 @@ paths:
                   token: { type: string }
                   expiresAt: { type: number }
                   websocketPath: { type: string }
+        "402":
+          {
+            description: "The account has used its monthly compute budget (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,

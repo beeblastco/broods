@@ -346,6 +346,32 @@ export function resolveWorkspaceRefs(
   return agentConfig.workspaces ?? [];
 }
 
+/**
+ * True when the account's own provider account pays for this sandbox, so the
+ * platform must not meter it or hold it to the plan's budget. Mirrors where
+ * each executor takes its credentials: the config's own key wins over the
+ * platform env. A MicroVM always runs on the platform's AWS account; a machine
+ * is the user's computer.
+ */
+export function runsOnOwnCredentials(config: SandboxConfig): boolean {
+  const options = config.options ?? {};
+  const has = (key: string): boolean =>
+    typeof options[key] === "string" && options[key] !== "";
+  switch (config.provider) {
+    case "daytona":
+    case "e2b":
+      return has("apiKey");
+    case "vercel":
+      return has("token");
+    case "sandbox":
+      return has("workdirUrl");
+    case "machine":
+      return true;
+    case "lambda":
+      return false;
+  }
+}
+
 export function workspaceNamespace(
   accountId: string | undefined,
   workspaceId: string,
@@ -440,29 +466,4 @@ function sandboxControlPlane(
       : {}),
     ...(runsOnOwnCredentials(record.config) ? { ownCredentials: true } : {}),
   };
-}
-
-/**
- * True when the account's own provider account pays for this sandbox, so the
- * platform must not meter it. Mirrors where each executor takes its
- * credentials: the config's own key wins over the platform env. A MicroVM
- * always runs on the platform's AWS account; a machine is the user's computer.
- */
-function runsOnOwnCredentials(config: SandboxConfig): boolean {
-  const options = config.options ?? {};
-  const has = (key: string): boolean =>
-    typeof options[key] === "string" && options[key] !== "";
-  switch (config.provider) {
-    case "daytona":
-    case "e2b":
-      return has("apiKey");
-    case "vercel":
-      return has("token");
-    case "sandbox":
-      return has("workdirUrl");
-    case "machine":
-      return true;
-    case "lambda":
-      return false;
-  }
 }
