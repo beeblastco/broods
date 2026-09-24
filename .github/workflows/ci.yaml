@@ -201,6 +201,14 @@ jobs:
       - name: Verify through the gateway
         run: bun run local:verify
 
+      - name: Perf report
+        # Restarts core with the model answered in process. More Convex calls
+        # per turn than scripts/local-verify/perf-baseline.json fails the job;
+        # timing drift only warns, since runners differ.
+        run: |
+          bun run local:up -- --perf
+          bun run local:perf
+
       - name: Upload stack logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -209,6 +217,7 @@ jobs:
           path: |
             ~/.broods-local/*/logs/
             ~/.broods-local/*/perf.jsonl
+            ~/.broods-local/*/convex-calls.jsonl
           if-no-files-found: ignore
           retention-days: 14
 

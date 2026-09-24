@@ -29,6 +29,7 @@
     "local:down": "bun scripts/local-stack.ts down",
     "local:status": "bun scripts/local-stack.ts status",
     "local:verify": "bun scripts/local-stack.ts verify",
+    "local:perf": "bun scripts/local-stack.ts perf",
     "dashboard": "bun run --filter @broods/dashboard dev",
     "dashboard:build": "bun run --filter @broods/dashboard build",
     "docs": "bun run --filter @broods/docs start",

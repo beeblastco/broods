@@ -8,9 +8,11 @@
  * skips `convex deploy` while packages/convex is unchanged.
  *
  * `verify` drives the cases in scripts/local-verify/cases through the gateway.
+ * `up --perf` answers the model in process and traces core's Convex calls, and
+ * `perf` then grades scripts/local-verify/perf.ts against its baseline.
  * Under GitHub Actions each command also writes its timings to the job summary.
  *
- * Usage: bun scripts/local-stack.ts <up|down|status|verify> [--fresh|--purge]
+ * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--record]
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -31,6 +33,7 @@ import { join, resolve } from "node:path";
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
+import { runPerf } from "./local-verify/perf.ts";
 import {
   VerifyFailure,
   assertStep,
@@ -72,6 +75,7 @@ interface InstanceState {
   deploymentEnvConfigured?: boolean;
   instanceId: string;
   instanceSecret: string;
+  perf?: boolean;
   pids: { core?: number; gateway?: number };
   ports: InstancePorts;
   secrets: InstanceSecrets;
@@ -96,7 +100,7 @@ const flags = new Set(process.argv.slice(3));
 
 switch (command) {
   case "up":
-    await up(flags.has("--fresh"));
+    await up(flags.has("--fresh"), flags.has("--perf"));
     break;
   case "down":
     await down(flags.has("--purge"));
@@ -107,9 +111,12 @@ switch (command) {
   case "verify":
     await verify();
     break;
+  case "perf":
+    await perf(flags.has("--record"));
+    break;
   default:
     console.error(
-      "Usage: bun scripts/local-stack.ts <up|down|status|verify> [--fresh|--purge]",
+      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--record]",
     );
     process.exit(2);
 }
@@ -186,7 +193,7 @@ async function status(): Promise<void> {
   }
 }
 
-async function up(fresh: boolean): Promise<void> {
+async function up(fresh: boolean, perfMode: boolean): Promise<void> {
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
   if (fresh) {
@@ -236,6 +243,11 @@ async function up(fresh: boolean): Promise<void> {
     console.log("convex functions unchanged, skipping deploy");
   }
 
+  if (state.perf !== perfMode && isProcessAlive(state.pids.core)) {
+    await stopProcess(state.pids.core, "core");
+    state.pids.core = undefined;
+  }
+  state.perf = perfMode;
   await measureStep(perf, "start core + gateway", () => {
     startCore(state);
     startGateway(state);
@@ -267,7 +279,40 @@ async function up(fresh: boolean): Promise<void> {
   console.log(
     `  perf      ${join(instanceDir(state.instanceId), "perf.jsonl")}`,
   );
-  console.log(`\nnext: bun scripts/local-stack.ts verify`);
+  console.log(
+    `\nnext: bun scripts/local-stack.ts ${perfMode ? "perf" : "verify"}`,
+  );
+}
+
+/**
+ * Perf report: needs core started by `up --perf`. Exits 1 when a scenario
+ * makes more Convex calls than perf-baseline.json allows; `--record` rewrites
+ * that file from this run instead.
+ */
+async function perf(record: boolean): Promise<void> {
+  const state = loadState(currentInstanceId());
+  if (!state?.perf || !isProcessAlive(state.pids.core)) {
+    console.error("core is not running in perf mode. Run `up --perf` first");
+    process.exit(1);
+  }
+
+  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const runId = Date.now().toString(36);
+  const accountSecret = await createAccount(
+    gatewayUrl,
+    state.secrets.adminAccount,
+    `perf-${runId}`,
+  );
+  const passed = await runPerf(
+    verifyContext(
+      state,
+      accountSecret,
+      runId,
+      <T>(_step: string, fn: () => Promise<T>): Promise<T> => fn(),
+    ),
+    { record: record, tracePath: convexTracePath(state.instanceId) },
+  );
+  if (!passed) process.exit(1);
 }
 
 /**
@@ -302,19 +347,7 @@ async function verify(): Promise<void> {
     const accountSecret = await measure("create account", (): Promise<string> =>
       createAccount(gatewayUrl, state.secrets.adminAccount, `smoke-${runId}`),
     );
-    const context: VerifyContext = {
-      ...smokeModel(),
-      account: new BroodsAccountClient({
-        accountSecret: accountSecret,
-        baseUrl: gatewayUrl,
-      }),
-      accountSecret: accountSecret,
-      client: new BroodsClient({ apiKey: accountSecret, baseUrl: gatewayUrl }),
-      coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
-      gatewayUrl: gatewayUrl,
-      measure: measure,
-      runId: runId,
-    };
+    const context = verifyContext(state, accountSecret, runId, measure);
     for (const verifyCase of verifyCases) {
       console.log(`\n${verifyCase.name}`);
       await verifyCase(context);
@@ -513,9 +546,21 @@ function startCore(state: InstanceState): void {
     stdio: "inherit",
   });
   state.pids.core = spawnDetached({
-    args: ["--watch", "src/server.ts"],
+    args: [
+      ...(state.perf
+        ? [
+            "--preload",
+            join(repoRoot, "scripts", "local-verify", "fake-model.ts"),
+          ]
+        : []),
+      "--watch",
+      "src/server.ts",
+    ],
     cwd: coreDir,
     env: {
+      ...(state.perf
+        ? { BROODS_LOCAL_CONVEX_TRACE: convexTracePath(state.instanceId) }
+        : {}),
       ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
       ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
       CONVEX_DEPLOY_KEY: state.adminKey ?? "",
@@ -658,6 +703,30 @@ async function createAccount(
   return body.secret;
 }
 
+// The clients and paths a verify case or perf run gets for one account.
+function verifyContext(
+  state: InstanceState,
+  accountSecret: string,
+  runId: string,
+  measure: VerifyContext["measure"],
+): VerifyContext {
+  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+
+  return {
+    ...smokeModel(),
+    account: new BroodsAccountClient({
+      accountSecret: accountSecret,
+      baseUrl: gatewayUrl,
+    }),
+    accountSecret: accountSecret,
+    client: new BroodsClient({ apiKey: accountSecret, baseUrl: gatewayUrl }),
+    coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
+    gatewayUrl: gatewayUrl,
+    measure: measure,
+    runId: runId,
+  };
+}
+
 async function waitForHttp(
   url: string,
   what: string,
@@ -716,6 +785,10 @@ async function measureStep<T>(
   } finally {
     perf.push({ ms: Date.now() - start, step: step });
   }
+}
+
+function convexTracePath(instanceId: string): string {
+  return join(instanceDir(instanceId), "convex-calls.jsonl");
 }
 
 function perfLogPath(instanceId: string): string {
