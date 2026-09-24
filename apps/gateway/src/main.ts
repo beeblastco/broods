@@ -8,7 +8,10 @@ import {
   machineSocketUrl,
 } from "../../core/src/shared/machine-socket.ts";
 import { requireSecretsEnv } from "../../core/src/shared/env.ts";
-import { TERMINAL_WEBSOCKET_PATH } from "../../core/src/shared/terminal-ticket.ts";
+import {
+  TERMINAL_WEBSOCKET_PATH,
+  type TerminalTicket,
+} from "../../core/src/shared/terminal-ticket.ts";
 import {
   handleAgentMessage,
   stopActiveRun,
@@ -22,12 +25,13 @@ import {
 } from "./observability.ts";
 import {
   cleanupTerminalSocket,
+  natsSpentTickets,
   openTerminalTicketWithSecrets,
   openTerminalUpstream,
   relayTerminalInput,
-  spendTerminalTicket,
   type MachineGatewayData,
   type RelayGatewayData,
+  type SpentTickets,
   type TerminalGatewayData,
 } from "./terminal.ts";
 import {
@@ -80,6 +84,7 @@ export interface GatewayConfig {
   httpLimiter: RateLimiter | undefined;
   limits: GatewayLimits;
   proxyOptions: ProxyOptions;
+  spentTickets: SpentTickets;
   terminalTicketSecrets: string[];
   upgradeLimiter: RateLimiter;
 }
@@ -107,8 +112,6 @@ export interface GatewayRuntime {
 export function createGateway(config: GatewayConfig): GatewayRuntime {
   const sockets = new Set<Bun.ServerWebSocket<GatewayData>>();
   let pendingUpgrades = 0;
-  // Terminal tickets already used, by token, until they expire.
-  const spentTickets = new Map<string, number>();
 
   async function route(
     request: Request,
@@ -191,10 +194,16 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
             token,
             config.terminalTicketSecrets,
           );
-          const ticket =
-            opened && spendTerminalTicket(spentTickets, token, opened.expiresAt)
-              ? opened
-              : null;
+          let ticket: TerminalTicket | null = null;
+          if (opened) {
+            try {
+              ticket = (await config.spentTickets.spend(token)) ? opened : null;
+            } catch (error: unknown) {
+              console.error("terminal ticket spend failed:", error);
+
+              return jsonError(502, "Could not verify the terminal ticket");
+            }
+          }
           // A bad ticket still upgrades: the open handler closes it with a code
           // and reason the browser can show, where a 401 here would be a mute 1006.
           if (!ticket) config.authFailureLimiter.allow(ip);
@@ -270,7 +279,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           if (upgraded) return undefined;
           // The ticket never opened a socket, so the client may retry with it.
           if (data.kind === "terminal" && data.ticket)
-            spentTickets.delete(websocketToken(request));
+            await config.spentTickets.release(websocketToken(request));
 
           return jsonError(400, "WebSocket upgrade failed");
         }
@@ -467,6 +476,7 @@ export function gatewayConfigFromEnv(): GatewayConfig {
     proxyOptions: {
       forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID === "true",
     },
+    spentTickets: natsSpentTickets(getNatsConnection),
     terminalTicketSecrets: requireSecretsEnv("TERMINAL_TICKET_SECRET"),
     upgradeLimiter: new RateLimiter(
       Number(process.env.GATEWAY_UPGRADES_PER_MINUTE ?? "") || 120,
