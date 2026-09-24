@@ -1266,7 +1266,10 @@ describe("write/edit approval policy", () => {
         workspace: "notes",
         sandbox: "own-sandbox",
       }),
-    ).rejects.toThrow(/not both[\s\S]*- workspace=notes \(default\)/);
+    ).rejects.toThrow(
+      // A lone workspace has no argument to name it; a second sandbox does.
+      /not both[\s\S]*- workspace notes, omit workspace \(default\)\n- sandbox=own-sandbox \(lambda/,
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 

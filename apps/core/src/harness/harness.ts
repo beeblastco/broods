@@ -1938,7 +1938,7 @@ export async function runAgentLoop(
     }
     stream = harnessRuntime
       ? await harnessRuntime.agent.stream({
-          messages: harnessPromptMessages(turnContext.messages),
+          messages: harnessPromptMessages(turnContext.messages, environment),
           session: activeHarnessSession!,
           abortSignal: runAbort.signal,
         })
@@ -2220,7 +2220,14 @@ function withEnvironment(
   ];
 }
 
-function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {
+/**
+ * The new turn an AI SDK Harness session receives. A tool continuation stays
+ * assistant + tool as it is; a user turn carries the live environment.
+ */
+function harnessPromptMessages(
+  messages: ModelMessage[],
+  environment: string,
+): ModelMessage[] {
   const lastMessage = messages.at(-1);
   if (lastMessage?.role === "tool") {
     const assistantIndex = messages.findLastIndex(
@@ -2244,16 +2251,18 @@ function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {
       "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
     );
   }
-  if (userMessages.length === 1) {
-    return userMessages;
-  }
   const content = userMessages.flatMap((message) =>
     typeof message.content === "string"
       ? [{ type: "text" as const, text: message.content }]
       : message.content,
   );
 
-  return [{ role: "user", content: content }];
+  return withEnvironment(
+    userMessages.length === 1
+      ? userMessages
+      : [{ role: "user", content: content }],
+    environment,
+  );
 }
 
 function requireHarnessSandbox(

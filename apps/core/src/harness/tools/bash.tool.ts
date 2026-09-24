@@ -10,10 +10,7 @@ import { getHarnessPublicUrl } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logDebug, logInfo, logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import type {
-  ResolvedAgentSandbox,
-  ResolvedWorkspace,
-} from "../../shared/workspaces.ts";
+import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
   bindAsyncToolResultSandbox,
   createDetachedAsyncToolResult,
@@ -37,10 +34,10 @@ import {
   runSandbox,
   runSandboxBackground,
   runtimeDescription,
+  sandboxParamChoices,
   sandboxRunMetadata,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
-  selectableSandboxes,
   targetsAgentSandbox,
   workspaceParamSchema,
   writesOutsideAllowed,
@@ -446,16 +443,6 @@ ${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 // What the `sandbox` param offers. A lone default with no workspace is where bash
 // already runs, so it earns no field; beside a workspace or another sandbox it is a
 // choice.
-function sandboxParamChoices(
-  context: SandboxToolContext,
-): ResolvedAgentSandbox[] {
-  const choices = selectableSandboxes(context);
-  const onlyTheDefault =
-    choices.length === 1 && context.workspaces.length === 0;
-
-  return onlyTheDefault ? [] : choices;
-}
-
 // `sandbox` names the sandbox to run on.
 function sandboxParamSchema(
   context: SandboxToolContext,
