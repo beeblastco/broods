@@ -442,18 +442,36 @@ export function machineSandboxes(
  * whether its daemon is connected, since a call to an offline one only fails.
  */
 export function bashTargetLines(context: SandboxToolContext): string[] {
-  const sandboxIsDefault = context.workspaces.length === 0;
+  // A lone workspace or sandbox has no argument to name it: bash leaves the
+  // field out of its schema, so the line says to omit it instead.
+  const namesWorkspace = workspaceParamSchema(context.workspaces) !== undefined;
+  const namesSandbox = sandboxParamChoices(context).length > 0;
   const workspaces = context.workspaces.map(
     (workspace, index): string =>
-      `- workspace=${workspace.name}${index === 0 ? " (default)" : ""}${workspace.sandbox ? "" : " (read-only, no bash)"}`,
+      `- ${namesWorkspace ? `workspace=${workspace.name}` : `workspace ${workspace.name}, omit workspace`}${index === 0 ? " (default)" : ""}${workspace.sandbox ? "" : " (read-only, no bash)"}`,
   );
   const sandboxes = selectableSandboxes(context).map((entry, index): string => {
-    const isDefault = sandboxIsDefault && index === 0 ? " (default)" : "";
+    const target = namesSandbox
+      ? `sandbox=${entry.name}`
+      : `sandbox ${entry.name}, omit sandbox`;
+    const isDefault =
+      context.workspaces.length === 0 && index === 0 ? " (default)" : "";
 
-    return `- sandbox=${entry.name}${isDefault} (${entry.sandbox.provider}, no workspace mounted${machineState(entry)})`;
+    return `- ${target}${isDefault} (${entry.sandbox.provider}, no workspace mounted${machineState(entry)})`;
   });
 
   return [...workspaces, ...sandboxes];
+}
+
+/** The sandboxes bash's `sandbox` field offers; none when the default is the only one. */
+export function sandboxParamChoices(
+  context: SandboxToolContext,
+): ResolvedAgentSandbox[] {
+  const choices = selectableSandboxes(context);
+  const onlyTheDefault =
+    choices.length === 1 && context.workspaces.length === 0;
+
+  return onlyTheDefault ? [] : choices;
 }
 
 /** Every sandbox a bash call can name: the default while standalone, then the rest. */
