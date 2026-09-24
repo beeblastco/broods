@@ -1095,13 +1095,13 @@ async function handleAsyncWorkerRequest(
         event,
         "Request did not produce pending model input",
       );
+      await session.settleIngress("failed", {
+        error: "Request did not produce pending model input",
+      });
       await settleCronRun(event.accountId, event.cronRun, {
         error: "Request did not produce pending model input",
       });
-      transferred = await dispatchNextIngress(session, event, {
-        status: "failed",
-        error: "Request did not produce pending model input",
-      });
+      transferred = await dispatchNextIngress(session, event);
 
       return;
     }

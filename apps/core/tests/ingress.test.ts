@@ -4,6 +4,7 @@ import {
   dispatchInProcessWorker,
   drainInProcessWorkers,
   handleChannelRequest,
+  handler,
 } from "../src/harness/handler.ts";
 import {
   acceptIngress,
@@ -17,6 +18,7 @@ import {
 } from "../src/harness/ingress.ts";
 import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
 import { Session } from "../src/harness/session.ts";
+import { setStorageForTests } from "../src/shared/storage.ts";
 
 const originalMutate = runtime.mutate;
 const originalQuery = runtime.query;
@@ -127,6 +129,96 @@ describe("ingress admission payloads", () => {
     await acceptIngress(candidate());
     await acceptIngress(candidate());
     expect(calls[0]!.payloadDigest).toBe(calls[1]!.payloadDigest);
+  });
+});
+
+describe("settling with takeNext", (): void => {
+  it("still settles the turn when takeNext fails", async (): Promise<void> => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<null> => {
+      calls.push({ name: name, args: args });
+      if (name === "takeNextIngress") throw new Error("takeNext failed");
+
+      return null;
+    }) as never;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      accountId: "acct_1",
+      agentId: "agent_1",
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+
+    await expect(
+      session.takeNextIngress({ status: "completed", result: "answer" }),
+    ).rejects.toThrow("takeNext failed");
+
+    // The rolled-back settle is written on its own, so the caller's failure
+    // settle that follows finds the envelope terminal and keeps the answer.
+    expect(calls.map((call) => call.name)).toEqual([
+      "takeNextIngress",
+      "settleIngress",
+    ]);
+    expect(calls[1]!.args).toMatchObject({
+      ownerEventId: "event-1",
+      ownerGeneration: 1,
+      status: "completed",
+      result: "answer",
+    });
+  });
+});
+
+describe("async turn without model input", (): void => {
+  const originalAppend = Session.prototype.appendIngressEvents;
+  const originalTurnContext = Session.prototype.createTurnContext;
+
+  afterEach((): void => {
+    Session.prototype.appendIngressEvents = originalAppend;
+    Session.prototype.createTurnContext = originalTurnContext;
+    setStorageForTests(null);
+  });
+
+  it("settles the envelope with its own reason when the cron settle fails", async (): Promise<void> => {
+    const settled: unknown[] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<null> => {
+      if (name === "settleIngress") settled.push(args.error);
+      if (name === "takeNextIngress" && args.settle) {
+        settled.push((args.settle as { error?: string }).error);
+      }
+
+      return null;
+    }) as never;
+    Session.prototype.appendIngressEvents = async (): Promise<[]> => [];
+    Session.prototype.createTurnContext = (async () => ({
+      messages: [{ role: "assistant", content: "already answered" }],
+    })) as never;
+    setStorageForTests({
+      crons: {
+        failRun: async (): Promise<never> => {
+          throw new Error("cron store down");
+        },
+      },
+    } as never);
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: {
+        ...candidate(),
+        events: [],
+        agentConfig: {},
+        ownerGeneration: 1,
+        cronRun: { cronId: "cron_1", runId: "run_1" },
+      },
+    } as never).catch((): void => {});
+
+    expect(settled[0]).toBe("Request did not produce pending model input");
   });
 });
 

@@ -971,16 +971,12 @@ export async function runAgentLoop(
         stepCount: stepCount,
         toolCallCount: toolCallCount,
       });
-      // Wait for the terminal span's publish to be issued, then flush the OTLP
-      // exporters (Tempo/Loki) AND the live NATS connection so the durable
-      // OBSERVABILITY stream captures every span/log before the container
-      // freezes. A publish still in flight at return is lost.
-      await rootPublished;
-      await Promise.allSettled([
-        usageRecorded,
-        forceFlushOtel(),
-        flushObservabilityNats(),
-      ]);
+      // Wait for the usage write and the terminal span's publish, then flush
+      // the OTLP exporters (Tempo/Loki) AND the live NATS connection so the
+      // durable OBSERVABILITY stream captures every span/log, a failed usage
+      // write's included, before the container freezes.
+      await Promise.allSettled([usageRecorded, rootPublished]);
+      await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     } finally {
       // The container process is reused, so never retain one task's tenant,
       // trace, or secret values after its exporters have flushed.
