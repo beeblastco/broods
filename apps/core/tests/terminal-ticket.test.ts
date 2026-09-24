@@ -75,4 +75,23 @@ describe("terminal tickets", () => {
     expect(openTerminalTicket("", SECRET)).toBeNull();
     expect(openTerminalTicket(`${sealed}.extra`, SECRET)).toBeNull();
   });
+
+  test("opens only the spelling it sealed", () => {
+    const sealed = sealTerminalTicket(ticket(), SECRET);
+    const [version, iv, tag, ciphertext] = sealed.split(".") as [
+      string,
+      string,
+      string,
+      string,
+    ];
+
+    // Each of these decodes to the same bytes under lenient base64url.
+    for (const respelled of [
+      [version, `${iv}=`, tag, ciphertext],
+      [version, `${iv.slice(0, 4)}!${iv.slice(4)}`, tag, ciphertext],
+      [version, iv, tag, `${ciphertext}==`],
+    ]) {
+      expect(openTerminalTicket(respelled.join("."), SECRET)).toBeNull();
+    }
+  });
 });

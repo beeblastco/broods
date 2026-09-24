@@ -50,15 +50,27 @@ export function openTerminalTicket(
     extra !== undefined
   )
     return null;
+  // Node decodes base64url leniently, so one ticket has many spellings. Only
+  // the one sealTerminalTicket writes opens, or the gateway's single-use
+  // check, keyed on the token, could be dodged by re-spelling it.
+  const ivBytes = Buffer.from(iv, "base64url");
+  const tagBytes = Buffer.from(tag, "base64url");
+  const ciphertextBytes = Buffer.from(ciphertext, "base64url");
+  if (
+    ivBytes.toString("base64url") !== iv ||
+    tagBytes.toString("base64url") !== tag ||
+    ciphertextBytes.toString("base64url") !== ciphertext
+  )
+    return null;
   try {
     const decipher = createDecipheriv(
       TICKET_ALGORITHM,
       ticketKey(secret),
-      Buffer.from(iv, "base64url"),
+      ivBytes,
     );
-    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    decipher.setAuthTag(tagBytes);
     const plaintext = Buffer.concat([
-      decipher.update(Buffer.from(ciphertext, "base64url")),
+      decipher.update(ciphertextBytes),
       decipher.final(),
     ]).toString("utf-8");
     const parsed: unknown = JSON.parse(plaintext);
