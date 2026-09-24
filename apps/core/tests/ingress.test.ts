@@ -218,6 +218,40 @@ describe("async turn without model input", (): void => {
       error: "Request did not produce pending model input",
     });
   });
+
+  it("still settles the cron run when the envelope settle fails", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(ingress, "settleIngress").mockRejectedValue(new Error("convex down"));
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
+    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      messages: [],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    });
+    const failRun = spyOn(getStorage().crons, "failRun").mockResolvedValue();
+    const event: DirectInboundEvent = {
+      ...candidate(),
+      publicEventId: "event-1",
+      publicConversationKey: "conversation-1",
+      events: [],
+      agentConfig: {},
+      ownerGeneration: 1,
+      cronRun: { cronId: "cron_1", runId: "run_1" },
+    };
+
+    await handler({ kind: "direct-api-async-worker", event: event }).catch(
+      (): null => null,
+    );
+
+    expect(failRun).toHaveBeenCalledWith(
+      "acct_1",
+      "cron_1",
+      "run_1",
+      "convex down",
+    );
+  });
 });
 
 describe("channel senders", (): void => {

@@ -451,7 +451,8 @@ export class Session {
    * Transfers to the next durable FIFO application, or atomically releases
    * ownership. With `settle`, this event is settled in the same mutation; if
    * that mutation fails, the settle is written on its own before the error
-   * reaches the caller, so the turn's outcome is never lost.
+   * reaches the caller. Only when that write fails too is the outcome lost,
+   * and that is logged.
    */
   async takeNextIngress(
     settle?: IngressSettlement,
