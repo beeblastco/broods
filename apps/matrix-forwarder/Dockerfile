@@ -54,4 +54,6 @@ COPY --from=builder --chown=1001:1001 /out/main.js ./main.js
 COPY --from=deps --chown=1001:1001 /out/node_modules ./node_modules
 USER 1001
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD wget --quiet --tries=1 --timeout=4 --output-document=/dev/null "http://127.0.0.1:${PORT:-3000}/healthz" || exit 1
 CMD ["bun", "main.js"]
