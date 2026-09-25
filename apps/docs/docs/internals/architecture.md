@@ -232,7 +232,7 @@ sequenceDiagram
 ```
 
 1. `broods dev` or `broods deploy` compiles `broods/` into a manifest (`packages/broods/src/manifest.ts`). Hosted MCP handlers and code hooks are bundled here.
-2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it.
+2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it. The PUT's first mutation claims the stage's next manifest revision (`stageSyncs`). `broods dev` sends the revision it read, and a PUT whose revision another sync already moved past gets a 409 `manifest_conflict` before it writes anything. `broods deploy` sends none and always applies.
 3. The sync first runs the manifest's rules on every resource, skills, hooks, MCP servers and crons included, so a manifest they refuse changes nothing. Checks against live rows (name conflicts, a channel place another record owns) still run inside the sync. It then resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the stage runtime key if the stage has none.
 4. The CLI writes `broods/_generated/` and `BROODS_API_KEY`.
 
