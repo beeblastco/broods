@@ -184,14 +184,15 @@ sequenceDiagram
   H->>X: crons.getById
   alt missing or paused
     H-->>D: skipped
+  else refused by the plan
+    H->>X: markFailed
   else active
-    H->>X: markStarted
+    H->>X: createRun, the cron's last run
     H->>H: startScheduledAgentRun, mode reject
     alt worker started
-      H->>X: markCompleted
       Note over H,X: the run settles later through completeRun or failRun
     else start failed, such as a busy conversation
-      H->>X: markFailed
+      H->>X: failRun
     end
     opt one-time at(...) job
       H->>X: removeOneShotCron, on settle or at once if the start failed
@@ -201,7 +202,7 @@ sequenceDiagram
 
 1. A schedule in the Convex crons component fires `packages/convex/agent/crons.ts` `dispatch`.
 2. The action posts `{ kind: "cron", accountId, cronId, scheduledTime }` to core's in-cluster address (`BROODS_ACCOUNT_MANAGE_URL`) at `/v1/cron-runs` with the service token. The gateway answers `404` on that path.
-3. `handleScheduledCron` in `handler.ts` loads the job, skips it if paused, marks it started, and starts the run. A conversation key that names a live channel session resumes it and replies there.
+3. `handleScheduledCron` in `handler.ts` loads the job, skips it if paused, opens a run row and starts the run. The job's `lastStatus` follows its latest run row, so an older run that settles late cannot overwrite a newer one. A conversation key that names a live channel session resumes it and replies there.
 4. A one-time `at(...)` job is deleted when its run settles, or at once when the run fails to start.
 
 ### Config-plane call
@@ -223,6 +224,7 @@ sequenceDiagram
   CLI->>G: PUT /v1/account/projects/:project/stages/:stage/manifest
   G->>V: /v1/account/* goes to Convex
   V->>V: authenticate login token or deploy key
+  V->>V: check the manifest's rules, before any write
   V->>V: cliSync: resolve env refs, encrypt agent config
   V->>S: skill and bundle bytes
   V-->>CLI: manifest, ids, deployment with the runtime key
@@ -230,8 +232,8 @@ sequenceDiagram
 ```
 
 1. `broods dev` or `broods deploy` compiles `broods/` into a manifest (`packages/broods/src/manifest.ts`). Hosted MCP handlers and code hooks are bundled here.
-2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it.
-3. The sync resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the stage runtime key if the stage has none.
+2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it. The PUT's first mutation claims the stage's next manifest revision (`stageSyncs`). `broods dev` sends the revision it read, and a PUT whose revision another sync already moved past gets a 409 `manifest_conflict` before it writes anything. `broods deploy` sends none and always applies.
+3. The sync first runs the manifest's rules on every resource, skills, hooks, MCP servers and crons included, so a manifest they refuse changes nothing. Checks against live rows (name conflicts, a channel place another record owns) still run inside the sync. It then resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the stage runtime key if the stage has none.
 4. The CLI writes `broods/_generated/` and `BROODS_API_KEY`.
 
 ## Credentials

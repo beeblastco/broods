@@ -255,8 +255,6 @@ function fakeStorage(): Storage {
       list: empty,
       remove: async () => false,
       update: none,
-      markStarted: async () => undefined,
-      markCompleted: async () => undefined,
       markFailed: async () => undefined,
       createRun: async () => {
         throw new Error("not in bench");

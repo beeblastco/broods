@@ -35,6 +35,11 @@ export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
   /**
+   * The stage's manifest revision, which a later PUT sends back to be refused
+   * if another sync landed in between. Absent on backends that predate it.
+   */
+  revision?: number;
+  /**
    * Non-fatal deploy advisories: policy refs that resolve to nothing, and
    * resources a prune kept because a reserved sandbox instance is still live.
    */
@@ -144,6 +149,9 @@ export interface DiffEntry {
   previousName?: string;
 }
 
+/** The stage changed since the revision a sync sent: read it again and retry. */
+export class ManifestConflictError extends Error {}
+
 export class BroodsSyncClient {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -168,10 +176,16 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
+  /**
+   * Syncs the manifest. With `revision`, the revision this client last read,
+   * the server refuses the write with a `ManifestConflictError` when another
+   * sync landed since; without it the write always applies.
+   */
   async putManifest(
     manifest: CliManifest,
     prune: boolean,
     rotateRuntimeKey = false,
+    revision?: number,
   ): Promise<RemoteManifestResponse> {
     const uploaded = await this.externalizeLargeMcpBundles(manifest);
     const response = await this.request(
@@ -185,6 +199,7 @@ export class BroodsSyncClient {
           manifest: uploaded,
           prune: prune,
           rotateRuntimeKey: rotateRuntimeKey,
+          ...(revision !== undefined ? { revision: revision } : {}),
         }),
       },
     );
@@ -741,15 +756,35 @@ function stripArtifactContent(value: unknown): unknown {
 async function assertOk(response: Response, message: string): Promise<void> {
   if (response.ok) return;
   const body = await response.text();
-  let reason = body;
-  try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } };
-    reason = parsed.error?.message ?? body;
-  } catch {
-    // Not JSON: the raw body is the best reason available.
-  }
+  // Without an envelope, the raw body is the best reason available.
+  const { message: reason = body, code } = errorEnvelope(body);
+  if (code === "manifest_conflict") throw new ManifestConflictError(reason);
 
   throw new Error(`${message}: ${response.status} ${reason}`);
+}
+
+/** The `message` and `code` of an error envelope body, or neither. */
+function errorEnvelope(body: string): { message?: string; code?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return {};
+  }
+  const error =
+    typeof parsed === "object" && parsed !== null && "error" in parsed
+      ? parsed.error
+      : undefined;
+  if (typeof error !== "object" || error === null) return {};
+
+  return {
+    ...("message" in error && typeof error.message === "string"
+      ? { message: error.message }
+      : {}),
+    ...("code" in error && typeof error.code === "string"
+      ? { code: error.code }
+      : {}),
+  };
 }
 
 /**
