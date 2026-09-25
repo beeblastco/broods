@@ -484,7 +484,7 @@ async function readStream(
   if (stream === null) return null;
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
-  while (true) {
+  for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     chunks.push(value);

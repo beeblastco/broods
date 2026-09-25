@@ -262,7 +262,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     const chunks: Uint8Array[] = [];
     let first: string | undefined;
     let offset = 0;
-    while (true) {
+    for (;;) {
       options.abortSignal?.throwIfAborted();
       const chunk = await readFileChunk(
         this.#shell,

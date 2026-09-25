@@ -449,7 +449,7 @@ async function collectStream(
   }
 
   try {
-    while (true) {
+    for (;;) {
       abortSignal?.throwIfAborted();
       const read = reader.read();
       const { value, done } = abortPromise

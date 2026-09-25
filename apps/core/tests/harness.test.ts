@@ -1256,7 +1256,7 @@ describe("runAgentLoop", () => {
 
     // Drain stream the way the channel streamer does (no consumeStream call).
     const reader = stream.stream.getReader();
-    while (true) {
+    for (;;) {
       const { done } = await reader.read();
       if (done) break;
     }

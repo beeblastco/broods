@@ -535,7 +535,7 @@ async function uniqueOrgSlug(
 ): Promise<string> {
   const baseSlug = slugifyName(baseName);
   let suffix = 0;
-  while (true) {
+  for (;;) {
     const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
     const existing = await ctx.db
       .query("orgs")
