@@ -8,19 +8,17 @@ argument-hint: "[low|medium|high|xhigh|max] [pr | branch | commit range]"
 
 Review with Phicks's eyes. `/code-review` finds bugs; this checks the change against the rules and shows Phicks what they need to judge the rest. The exact rules live in the root and touched workspaces' `AGENTS.md` and `~/.claude/CLAUDE.md`; read them, do not restate them. The principles below are why those rules exist.
 
-You own the verdict on rules, bugs, checks and evidence. Phicks owns taste and whether the solution is the right one: raise those under **Blocked on me** with what you saw and the options, never as a verdict.
+You own the verdict on rules, bugs, checks and evidence. Phicks owns taste and whether the solution is the right one: raise those for them, never as a verdict.
 
 ## What they want, and why
 
 - **Less is the job.** Every line is debt in a big codebase. Ask: could this be less code, an existing function, or no change at all? A new function, option, layer or flag must earn its place now (YAGNI), not someday.
 - **Types carry the truth.** Real and inferred types let the system adapt when something changes; `any`, casts and runtime guards hide the break until production. Ask: would a change elsewhere fail the type check here?
-- **Fix the cause, not the symptom.** A workaround that needs a paragraph to justify it means the code is wrong. Dead formats get a clean reset, not a compat shim.
+- **Fix the cause, not the symptom.** Dead formats get a clean reset, not a compat shim.
 - **One product.** Gateway, core, Convex, SDK, CLI, dashboard and docs are one system. A contract that moves in one and not the others is a bug a user hits later.
-- **The user sees it before it is built.** Interface changes (API, SDK, CLI, dashboard) cost users, so they need a mock and an explicit yes from Phicks first. Results show where the action happened.
-- **Read top-down, like prose.** Overview, then detail, then helpers; plain names that say what a thing holds, reusing the codebase's existing words. Short comments say how a thing is used, and match the code.
-- **Dense, quiet UI.** Information over decoration, minimal copy, nothing that repaints forever.
-- **Done means proven.** A claim needs a command that ran. Tests are focused on the new behavior; no smoke tests, no tests for deleted things.
-- **Blast radius.** Nothing touches production, live data, deploys or force-pushes without a word from Phicks.
+- **The user sees it before it is built.** Interface changes cost users, so Phicks sees a mock first (step 3).
+- **Plain names.** A name says what the thing holds and reuses the codebase's existing words.
+- **Done means proven.** A claim needs a command that ran (step 5).
 
 ## Steps
 
@@ -29,7 +27,7 @@ You own the verdict on rules, bugs, checks and evidence. Phicks owns taste and w
 3. **Contract gate.** When a request or response shape, an SDK export, a CLI command or flag, or a public Convex function's signature changes, the other surfaces must move with it. That change, and any non-trivial dashboard UI, layout or copy change, is blocking without a linked mock and quoted approval from Phicks. Internal changes behind an unchanged contract pass. Never infer approval.
 4. **Bugs.** Confirm each correctness finding with a red loop from `/diagnosing-bugs` phases 1 and 2 before calling it blocking; delete the repro before step 5. Unconfirmed stays plausible. Fixes go through `/diagnosing-bugs`.
 5. **Checks.** Run the `AGENTS.md` before-done commands in their check form (`format:check`, never `format` or `lint:fix`), the tests for each touched workspace, and `local:verify` and `local:perf` when `AGENTS.md` calls for them (`local:up`, with `-- --perf` for perf, first; `local:down` after). A check that leaves the tree changed is a finding. Type-aware lint: `bun run lint:types -- -D typescript/no-explicit-any -D typescript/no-unsafe-type-assertion <files>`, keeping only findings on lines `git diff -U0 $B` adds. The OpenAPI spec changed: `oasdiff breaking $B:apps/docs/docs/api-reference/openapi.yaml apps/docs/docs/api-reference/openapi.yaml --fail-on ERR` (`brew install oasdiff`). `packages/broods` changed: `bun run --filter broods pack:check`. Say what you skipped and why.
-6. **Dashboard evidence.** A UI change in `apps/dashboard` must ship with a live demo, a perf report and screenshots; missing any is blocking. Produce them yourself, running the dashboard as `apps/dashboard/AGENTS.md` describes: `next dev` on a `.env.local` copied from the main checkout, signed in only as the E2E probe user (`E2E_EMAIL`, `E2E_PASSWORD`, saved in that `.env.local`) against the dev backend, the way CI does. Never production, never a real account; ask Phicks only when the main checkout's `.env.local` has no probe login. Keep secret and env screens out of every recording. Drive the changed flow with Playwright, recording video and a screenshot of each changed screen in light and dark, then run `bun run --filter @broods/dashboard perf`. Check them yourself: watch the demo, look at every screenshot against the principles and `apps/dashboard/AGENTS.md`, and block any page over `PAGE_RENDER_BUDGET_MS`. Publish one artifact page with the video and screenshots as its files and the perf numbers, and post its link as a PR comment, or in the report when the target is not a PR.
+6. **Dashboard evidence.** A UI change in `apps/dashboard` must ship with a live demo, a perf report and screenshots; missing any is blocking. Produce them yourself, running the dashboard as `apps/dashboard/AGENTS.md` describes: `next dev` on a `.env.local` copied from the main checkout, signed in only as the E2E probe user (`E2E_EMAIL`, `E2E_PASSWORD`, saved in that `.env.local`) against the dev backend, the way CI does. Never production, never a real account; ask Phicks only when the main checkout's `.env.local` has no probe login. Keep secret and env screens out of every recording. Drive the changed flow with Playwright, recording video and a screenshot of each changed screen in light and dark, then run `bun run --filter @broods/dashboard perf`. Check them yourself: watch the demo, look at every screenshot against `apps/dashboard/AGENTS.md` and the design rules in `~/.claude/CLAUDE.md`, and block any page over `PAGE_RENDER_BUDGET_MS`. Publish one artifact page with the video and screenshots as its files and the perf numbers, and post its link as a PR comment, or in the report when the target is not a PR.
 7. **The cycle.** Check, do not do: the branch is up to date with the latest default branch (rebased before the PR opened, the default branch merged in after it was pushed, never force-pushed), commits and PR are in plain words that open with the user's problem, and the PR was filed with `/file-pr`.
 
 ## Report
