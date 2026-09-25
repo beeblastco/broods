@@ -298,7 +298,6 @@ describe("budget", () => {
       usedPercent: 101,
       categories: { sandboxes: 0, hostedMcp: 0, storage: 21, egress: 80 },
       level: "exhausted",
-      runsPerMinute: 600,
       totals: amounts,
       days: [{ day: "2026-09-23", ...amounts }],
     });
@@ -324,7 +323,10 @@ describe("budget", () => {
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
 
     expect(usage.totals.storageGb).toBe(0);
-    expect(usage.days).toMatchObject([{ day: "2026-09-21", storageGb: 3 }]);
+    expect(usage.days).toMatchObject([
+      { day: "2026-09-21", storageGb: 3 },
+      { day: "2026-09-22", storageGb: 0 },
+    ]);
   });
 
   test("reads an empty account's first snapshot as 0 GB, not unknown", async () => {
@@ -339,7 +341,7 @@ describe("budget", () => {
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
 
     expect(usage.totals.storageGb).toBe(0);
-    expect(usage.days).toEqual([]);
+    expect(usage.days).toMatchObject([{ storageGb: 0 }]);
   });
 
   test("reads a past month from the picker, and nothing outside it", async () => {

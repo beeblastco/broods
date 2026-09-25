@@ -16,6 +16,7 @@ import {
 } from "@broods/convex/model/planLimits";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { errorResponse } from "../shared/http.ts";
+import { waitUntil } from "../shared/in-flight.ts";
 import { logWarn } from "../shared/log.ts";
 import { getStorage, type Storage } from "../shared/storage.ts";
 
@@ -123,12 +124,15 @@ export function planRefusalResponse(refusal: PlanRefusal): Response {
   );
 }
 
-/** Add usage core measured to the account's meter, in the background. */
+/**
+ * Add usage core measured to the account's meter, in the background. The write
+ * is registered with `waitUntil`, so shutdown drains it before the process exits.
+ */
 export function recordUsage(
   accountId: string,
   usage: Parameters<Storage["budgets"]["record"]>[1],
 ): void {
-  void getStorage().budgets.record(accountId, usage);
+  waitUntil(getStorage().budgets.record(accountId, usage));
 }
 
 export function resetPlanLimitsForTests(): void {

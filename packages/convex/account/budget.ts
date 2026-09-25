@@ -59,7 +59,6 @@ const budgetUsageValidator = v.object({
     egress: v.number(),
   }),
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
-  runsPerMinute: v.number(),
   totals: v.object(usageAmountsFields),
   days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
 });

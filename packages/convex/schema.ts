@@ -1496,7 +1496,13 @@ export default defineSchema({
   ),
   taskUsage: defineTable(taskUsageFields)
     .index("by_accountId_and_taskId", ["accountId", "taskId"])
-    .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"]),
+    .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
+    .index("by_endpointId_and_modelProvider_and_modelId_and_finishedAt", [
+      "endpointId",
+      "modelProvider",
+      "modelId",
+      "finishedAt",
+    ]),
   usageRollups: defineTable(usageRollupsFields)
     .index("by_endpointId_and_grain_and_bucketStart", [
       "endpointId",

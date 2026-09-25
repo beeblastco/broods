@@ -197,8 +197,8 @@ export const fetchUsageStats = query({
 /**
  * Finished tasks inside one usage chart bin, heaviest first, so the dashboard
  * can show which traces a bin's tokens came from. `models` narrows to the
- * dashboard's model filter before the top tasks are picked. Reads at most
- * `USAGE_TASK_SCAN_TOTAL` rows across the project's endpoints; `truncated`
+ * dashboard's model filter through the index, before any row is read. Reads
+ * at most `USAGE_TASK_SCAN_TOTAL` rows across the project's endpoints; `truncated`
  * says some tasks in the bin are not listed. `taskUsage` is pruned after 90
  * days, so older bins return no tasks.
  */
@@ -228,32 +228,37 @@ export const fetchUsageTasks = query({
       args.projectId,
       args.stageId,
     );
-    // Split one read budget across endpoints so a big project stays inside
-    // Convex's per-query read limits; one extra row tells a full bin apart.
-    const perEndpoint = Math.max(
+    const models = args.models ? parseModelKeys(args.models) : undefined;
+    // One index range per endpoint, or per endpoint and model when filtered,
+    // so excluded models never use up the read budget. The budget is split
+    // across ranges to stay inside Convex's per-query read limits; one extra
+    // row tells a full range apart.
+    const scans = endpointIds.flatMap((endpointId) =>
+      (models ?? [undefined]).map((model) => ({
+        endpointId: endpointId,
+        model: model,
+      })),
+    );
+    const perScan = Math.max(
       1,
-      Math.floor(USAGE_TASK_SCAN_TOTAL / Math.max(1, endpointIds.length)),
+      Math.floor(USAGE_TASK_SCAN_TOTAL / Math.max(1, scans.length)),
     );
     const batches = await Promise.all(
-      endpointIds.map((endpointId) =>
+      scans.map((scan) =>
         collectUsageTasks(
           ctx,
-          endpointId,
+          scan.endpointId,
           args.startMs,
           args.endMs,
-          perEndpoint + 1,
+          perScan + 1,
+          scan.model,
         ),
       ),
     );
-    const models = args.models ? new Set(args.models) : null;
-    const rows = batches
-      .flatMap((batch) => batch.slice(0, perEndpoint))
-      .filter(
-        (row) => !models || models.has(`${row.modelProvider}::${row.modelId}`),
-      );
+    const rows = batches.flatMap((batch) => batch.slice(0, perScan));
     const truncated =
       rows.length > USAGE_TASK_RETURN_LIMIT ||
-      batches.some((batch) => batch.length > perEndpoint);
+      batches.some((batch) => batch.length > perScan);
     const tasks = rows
       .sort((a, b) => b.totalTokens - a.totalTokens)
       .slice(0, USAGE_TASK_RETURN_LIMIT)
@@ -301,9 +306,9 @@ export async function collectUsageRollups(
 }
 
 /**
- * Up to `limit` task usage rows for one endpoint that finished in
- * `[startMs, endMs)`, oldest first. Exported for `fetchUsageTasks` and its
- * test; not a registered Convex function.
+ * Up to `limit` task usage rows for one endpoint, and one model when given,
+ * that finished in `[startMs, endMs)`, oldest first. Exported for
+ * `fetchUsageTasks` and its test; not a registered Convex function.
  */
 export async function collectUsageTasks(
   ctx: QueryCtx,
@@ -311,7 +316,24 @@ export async function collectUsageTasks(
   startMs: number,
   endMs: number,
   limit: number,
+  model?: Pick<Doc<"taskUsage">, "modelProvider" | "modelId">,
 ): Promise<Doc<"taskUsage">[]> {
+  if (model) {
+    return await ctx.db
+      .query("taskUsage")
+      .withIndex(
+        "by_endpointId_and_modelProvider_and_modelId_and_finishedAt",
+        (q) =>
+          q
+            .eq("endpointId", endpointId)
+            .eq("modelProvider", model.modelProvider)
+            .eq("modelId", model.modelId)
+            .gte("finishedAt", startMs)
+            .lt("finishedAt", endMs),
+      )
+      .take(limit);
+  }
+
   return await ctx.db
     .query("taskUsage")
     .withIndex("by_endpointId_and_finishedAt", (q) =>
@@ -321,6 +343,23 @@ export async function collectUsageTasks(
         .lt("finishedAt", endMs),
     )
     .take(limit);
+}
+
+/**
+ * The dashboard's `provider::model` filter keys as one index scan each:
+ * repeats collapse, so no range is read twice, and a key without the
+ * separator matches no model. Exported for `fetchUsageTasks` and its test.
+ */
+export function parseModelKeys(
+  keys: string[],
+): Array<{ modelProvider: string; modelId: string }> {
+  return [...new Set(keys)].flatMap((key) => {
+    const split = key.indexOf("::");
+
+    return split > 0
+      ? [{ modelProvider: key.slice(0, split), modelId: key.slice(split + 2) }]
+      : [];
+  });
 }
 
 /**

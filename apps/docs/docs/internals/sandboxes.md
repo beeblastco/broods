@@ -277,7 +277,7 @@ sequenceDiagram
   P-->>D: TTY bytes and keystrokes
 ```
 
-The upstream URL and provider credential travel inside the AES-256-GCM sealed ticket (`src/shared/terminal-ticket.ts`), so the browser only holds an opaque short-lived token. The gateway accepts each ticket once, so a copy seen in transit cannot open a second shell. Workdir tickets carry the org key as a bearer header. MicroVM tickets carry a `CreateMicrovmShellAuthToken` JWE, valid 30 minutes, in `X-aws-proxy-auth` for the VM's native shell. Opening a terminal resumes a suspended instance first.
+The upstream URL and provider credential travel inside the AES-256-GCM sealed ticket (`src/shared/terminal-ticket.ts`), so the browser only holds an opaque short-lived token. The gateway accepts each ticket once, so a copy seen in transit cannot open a second shell. It records spent tickets by SHA-256 in the `TERMINAL_TICKETS_SPENT` JetStream KV bucket, whose keys expire with the ticket TTL, so the record holds across replicas and restarts. If NATS cannot be reached the upgrade answers 502 rather than skip the check. Workdir tickets carry the sandbox's workdir API key as a bearer header: `options.apiKey`, required with a custom `options.workdirUrl`, else `WORKDIR_API_KEY` for the platform node. MicroVM tickets carry a `CreateMicrovmShellAuthToken` JWE, valid 30 minutes, in `X-aws-proxy-auth` for the VM's native shell. Opening a terminal resumes a suspended instance first.
 
 ## Snapshot status model
 

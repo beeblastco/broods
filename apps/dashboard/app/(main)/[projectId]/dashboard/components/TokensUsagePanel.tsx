@@ -23,10 +23,7 @@ import {
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import {
-  estimateModelTokenCost,
-  type ModelCostEstimate,
-} from "@broods/convex/model/modelPricing";
+import { estimateModelTokenCost } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FunctionReturnType } from "convex/server";
@@ -69,12 +66,8 @@ interface LiveOverlay {
   modelCalls: number;
   agentSandboxCpuUsec: number;
   toolSandboxCpuUsec: number;
-}
-
-interface ModelRow extends Bucket {
-  key: string;
-  color: string;
-  estimatedCost: ModelCostEstimate | null;
+  // Each step priced at its root's model, so the cost grows with the tokens.
+  estimatedCost: number;
 }
 
 const RANGE_SECONDS: Record<Range, number> = {
@@ -146,6 +139,7 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   modelCalls: 0,
   agentSandboxCpuUsec: 0,
   toolSandboxCpuUsec: 0,
+  estimatedCost: 0,
 };
 
 // A task still "running" past this likely never reported its terminal span
@@ -154,9 +148,9 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
 const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
 /**
- * The dashboard Usage tab: range and model filter, headline tiles, the token
- * chart with a trace rail for the clicked bin, then per-model totals beside
- * sandbox CPU. Everything below the toolbar follows the clicked bin.
+ * The dashboard Usage tab: range and model filter, the numbers row, the token
+ * chart that splits to list a clicked bin's traces, then a full-width sandbox
+ * CPU chart. Everything below the toolbar follows the clicked bin.
  */
 export function TokensUsagePanel({
   projectId,
@@ -252,26 +246,34 @@ export function TokensUsagePanel({
     () => sumCounters(selected === null ? bins : [bins[selected]]),
     [bins, selected],
   );
-  const models = useMemo((): ModelRow[] => {
-    const inScope = (stats?.buckets ?? []).filter(
-      (b) =>
-        selected === null ||
-        Math.floor(b.bucketStart / binMs) * binMs === bucketStarts[selected],
-    );
+  // Priced per model, since each model has its own rates, then summed per
+  // bin so the cost trend line lines up with the chart. The live overlay's
+  // cost joins the newest bin whenever the tokens include it.
+  const { binCosts, estimatedCost, unpriced } = useMemo(() => {
+    const byStart = new Map<number, number>();
+    const unpricedModels = new Set<string>();
+    for (const b of stats?.buckets ?? []) {
+      if (activeFilter !== null && !activeFilter.includes(modelKey(b)))
+        continue;
+      const cost = estimateModelTokenCost(b.modelProvider, b.modelId, b);
+      if (cost === null) unpricedModels.add(modelKey(b));
+      const start = Math.floor(b.bucketStart / binMs) * binMs;
+      byStart.set(start, (byStart.get(start) ?? 0) + (cost?.total ?? 0));
+    }
+    const costs = bucketStarts.map((start) => byStart.get(start) ?? 0);
+    if (activeFilter === null && costs.length > 0) {
+      costs[costs.length - 1] += liveOverlay.estimatedCost;
+    }
 
-    return aggregateByModel(inScope).map((b) => ({
-      ...b,
-      key: modelKey(b),
-      color: modelColors.get(modelKey(b)) ?? MODEL_COLORS[0],
-      estimatedCost: estimateModelTokenCost(b.modelProvider, b.modelId, b),
-    }));
-  }, [stats, selected, binMs, bucketStarts, modelColors]);
-  const shownModels = models.filter((m) => isShown(m.key));
-  const estimatedCost = shownModels.reduce(
-    (total, m) => total + (m.estimatedCost?.total ?? 0),
-    0,
-  );
-  const unpriced = shownModels.filter((m) => m.estimatedCost === null).length;
+    return {
+      binCosts: costs,
+      estimatedCost:
+        selected === null
+          ? costs.reduce((total, cost) => total + cost, 0)
+          : costs[selected],
+      unpriced: unpricedModels.size,
+    };
+  }, [stats, activeFilter, binMs, bucketStarts, selected, liveOverlay]);
 
   const selectBin = (index: number): void =>
     setSelectedStart(index === selected ? null : bucketStarts[index]);
@@ -285,55 +287,45 @@ export function TokensUsagePanel({
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5">
-          {RANGES.map((id) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={range === id}
-              onClick={() => {
-                setRange(id);
-                setSelectedStart(null);
-              }}
-              className={cn(
-                "cursor-pointer rounded px-2.5 py-1 text-xs transition-colors",
-                range === id
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {id}
-            </button>
-          ))}
-        </div>
-        <ModelMenu
-          modelColors={modelColors}
-          allShown={activeFilter === null}
-          isShown={isShown}
-          onToggle={toggleModel}
-          onShowAll={() => setModelFilter(null)}
-        />
-        {selected !== null && (
-          <button
-            type="button"
-            onClick={() => setSelectedStart(null)}
-            className="cursor-pointer rounded-md border border-border px-2.5 py-1 text-xs tabular-nums"
-          >
-            {formatBucketLabel(bucketStarts[selected], binSeconds, true)}{" "}
-            <span className="text-muted-foreground">✕</span>
-          </button>
-        )}
-      </div>
+      <UsageToolbar
+        range={range}
+        onRangeChange={(id) => {
+          setRange(id);
+          setSelectedStart(null);
+        }}
+        modelMenu={
+          <ModelMenu
+            modelColors={modelColors}
+            allShown={activeFilter === null}
+            isShown={isShown}
+            onToggle={toggleModel}
+            onShowAll={() => setModelFilter(null)}
+          />
+        }
+        // Only while that bin is still on the chart; the live window slides.
+        selectedStart={selected === null ? null : selectedStart}
+        binSeconds={binSeconds}
+        onClearSelection={() => setSelectedStart(null)}
+      />
 
       <UsageStats
+        bins={bins}
+        binCosts={binCosts}
+        selected={selected}
         scope={scope}
         estimatedCost={estimatedCost}
         unpriced={unpriced}
+        modelFilter={activeFilter}
+        modelsTotal={modelColors.size}
       />
 
-      <div className="grid rounded-lg border border-border bg-card lg:grid-cols-3">
-        <div className="p-3 lg:col-span-2">
+      <div
+        className={cn(
+          "grid rounded-lg border border-border bg-card",
+          selected !== null && "lg:grid-cols-3",
+        )}
+      >
+        <div className={cn("p-3", selected !== null && "lg:col-span-2")}>
           <UsageChart
             kind="area"
             height={250}
@@ -348,44 +340,36 @@ export function TokensUsagePanel({
           />
           <Legend series={TOKEN_SERIES} />
         </div>
-        <UsageTraceRail
-          projectId={projectId}
-          stageId={stageId}
-          bin={
-            selected === null
-              ? null
-              : { startMs: bucketStarts[selected], binSeconds: binSeconds }
-          }
-          binTokens={selected === null ? 0 : bins[selected].totalTokens}
-          models={activeFilter}
-          onClear={() => setSelectedStart(null)}
-        />
+        {selected !== null && (
+          <UsageTraceRail
+            // A new bin starts with an empty search.
+            key={bucketStarts[selected]}
+            projectId={projectId}
+            stageId={stageId}
+            bin={{ startMs: bucketStarts[selected], binSeconds: binSeconds }}
+            binTokens={bins[selected].totalTokens}
+            models={activeFilter}
+            onClose={() => setSelectedStart(null)}
+          />
+        )}
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-5">
-        <ModelTable
-          models={models}
-          isShown={isShown}
-          onToggle={toggleModel}
-          className="lg:col-span-3"
+      <div className="rounded-lg border border-border bg-card p-3">
+        <h3 className="mb-2 text-xs font-medium">Sandbox CPU</h3>
+        <UsageChart
+          kind="bars"
+          height={150}
+          tickCount={3}
+          series={CPU_SERIES}
+          rows={cpuRows}
+          bucketStarts={bucketStarts}
+          binSeconds={binSeconds}
+          selected={selected}
+          onSelect={selectBin}
+          formatAxis={formatCpuUsec}
+          formatValue={formatCpuUsec}
         />
-        <div className="rounded-lg border border-border bg-card p-3 lg:col-span-2">
-          <h3 className="mb-2 text-xs font-medium">Sandbox CPU</h3>
-          <UsageChart
-            kind="bars"
-            height={112}
-            tickCount={2}
-            series={CPU_SERIES}
-            rows={cpuRows}
-            bucketStarts={bucketStarts}
-            binSeconds={binSeconds}
-            selected={selected}
-            onSelect={selectBin}
-            formatAxis={formatCpuUsec}
-            formatValue={formatCpuUsec}
-          />
-          <Legend series={CPU_SERIES} />
-        </div>
+        <Legend series={CPU_SERIES} />
       </div>
     </div>
   );
@@ -463,207 +447,225 @@ function ModelMenu({
   );
 }
 
-/** Per-model totals for the range or clicked bin; the model name toggles the filter. */
-function ModelTable({
-  models,
-  isShown,
-  onToggle,
-  className,
+/** A small trend line for one number across the range, marking the clicked bin. */
+function Sparkline({
+  values,
+  selected,
+  color,
 }: {
-  models: ModelRow[];
-  isShown: (key: string) => boolean;
-  onToggle: (key: string) => void;
-  className: string;
+  values: number[];
+  selected: number | null;
+  color: string;
 }): React.JSX.Element {
-  const shownTotal =
-    models.reduce((t, m) => t + (isShown(m.key) ? m.totalTokens : 0), 0) || 1;
+  const max = Math.max(0, ...values) || 1;
+  const step = values.length > 1 ? 100 / (values.length - 1) : 100;
+  const line = values
+    .map(
+      (v, i) =>
+        `${i === 0 ? "M" : "L"}${(i * step).toFixed(1)},${(26 - (v / max) * 23).toFixed(1)}`,
+    )
+    .join("");
 
   return (
-    <div
-      className={cn(
-        "overflow-x-auto rounded-lg border border-border bg-card",
-        className,
-      )}
+    <svg
+      viewBox="0 0 100 28"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      className="block h-7 w-full"
+      style={{ "--series-color": color }}
     >
-      <table className="w-full min-w-120 text-xs">
-        <thead>
-          <tr className="border-b border-border text-left text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Model</th>
-            <th className="w-1/5 px-3 py-2 font-medium">Share</th>
-            <th className="px-3 py-2 text-right font-medium">Tokens</th>
-            <th className="px-3 py-2 text-right font-medium">Cache hit</th>
-            <th className="px-3 py-2 text-right font-medium">Calls</th>
-            <th className="px-3 py-2 text-right font-medium">Est. cost</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border tabular-nums">
-          {models.length === 0 && (
-            <tr>
-              <td
-                colSpan={6}
-                className="px-3 py-6 text-center text-muted-foreground"
-              >
-                Waiting for model activity…
-              </td>
-            </tr>
-          )}
-          {models.map((m) => (
-            <tr
-              key={m.key}
-              className={cn(
-                "transition-opacity",
-                !isShown(m.key) && "opacity-40",
-              )}
-            >
-              <td className="px-3 py-2">
-                <button
-                  type="button"
-                  title="Show or hide this model"
-                  onClick={() => onToggle(m.key)}
-                  className="flex cursor-pointer items-center gap-1.5 text-left whitespace-nowrap"
-                >
-                  <span
-                    className="size-2 shrink-0 rounded-sm bg-(--series-color)"
-                    style={{ "--series-color": m.color }}
-                  />
-                  {m.modelId}
-                  <span className="text-muted-foreground">
-                    {m.modelProvider}
-                  </span>
-                </button>
-              </td>
-              <td className="px-3 py-2">
-                <span className="sr-only">
-                  {percent(isShown(m.key) ? m.totalTokens : 0, shownTotal)} of
-                  tokens
-                </span>
-                <div
-                  className="h-1.5 w-(--share) rounded-sm bg-(--series-color) transition-all duration-500"
-                  style={{
-                    "--share": `${isShown(m.key) ? (m.totalTokens / shownTotal) * 100 : 0}%`,
-                    "--series-color": m.color,
-                  }}
-                />
-              </td>
-              <td className="px-3 py-2 text-right">
-                {formatNumber(m.totalTokens)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {percent(m.cachedInputTokens, m.inputTokens)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {formatNumber(m.modelCalls)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {m.estimatedCost
-                  ? formatUsd(m.estimatedCost.total)
-                  : "Unpriced"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+      {selected !== null && (
+        <rect
+          x={Math.max(0, selected * step - step / 2)}
+          y={0}
+          width={
+            Math.min(100, selected * step + step / 2) -
+            Math.max(0, selected * step - step / 2)
+          }
+          height={28}
+          className="fill-foreground/10"
+        />
+      )}
+      <path
+        d={`${line}L100,28L0,28Z`}
+        fillOpacity={0.2}
+        className="fill-(--series-color)"
+      />
+      <path
+        d={line}
+        fill="none"
+        strokeWidth={1.5}
+        vectorEffect="non-scaling-stroke"
+        className="stroke-(--series-color)"
+      />
+    </svg>
   );
 }
 
 /**
- * The numbers row for the range or the clicked bin: tokens, cost and tasks
- * large, the rest small beside them. Laid out by its own width, not the
- * window's, and values count to their new number here so only this row
- * repaints during the tween.
+ * The numbers row for the range or the clicked bin: five evenly spaced
+ * columns, each a large value over a trend line in the chart's colours and
+ * one detail line. Laid out by its own width, not the window's; values count
+ * to their new number here, so only this row repaints during the tween.
  */
 function UsageStats({
+  bins,
+  binCosts,
+  selected,
   scope,
   estimatedCost,
   unpriced,
+  modelFilter,
+  modelsTotal,
 }: {
+  bins: Counters[];
+  binCosts: number[];
+  selected: number | null;
   scope: Counters;
   estimatedCost: number;
   unpriced: number;
+  /** Model keys shown, or null for every model. */
+  modelFilter: string[] | null;
+  modelsTotal: number;
 }): React.JSX.Element {
+  const modelsShown = modelFilter?.length ?? modelsTotal;
+  const cpu = scope.agentSandboxCpuUsec + scope.toolSandboxCpuUsec;
   const target = useMemo(
     () => [
       [
         scope.totalTokens,
         estimatedCost,
         scope.invocations,
-        scope.cachedInputTokens,
         scope.modelCalls,
-        scope.agentSandboxCpuUsec,
-        scope.cacheWriteTokens,
-        scope.runtimeWallMs,
-        scope.toolSandboxCpuUsec,
+        cpu,
       ],
     ],
-    [scope, estimatedCost],
+    [scope, estimatedCost, cpu],
   );
   const values = useTween(target)[0];
-  const headline: Array<[string, string]> = [
-    ["Tokens", formatNumber(values[0])],
-    ["Estimated cost", formatUsd(values[1])],
-    ["Tasks", formatNumber(values[2])],
-  ];
-  const details: Array<[string, string]> = [
-    [
-      "Cache read",
-      `${formatNumber(values[3])} · ${percent(scope.cachedInputTokens, scope.inputTokens)}`,
-    ],
-    ["Model calls", formatNumber(values[4])],
-    ["Agent CPU", formatCpuUsec(values[5])],
-    ["Cache write", formatNumber(values[6])],
-    ["Runtime", formatMs(values[7])],
-    ["MCP CPU", formatCpuUsec(values[8])],
+  const perTask = (n: number): number =>
+    scope.invocations > 0 ? n / scope.invocations : 0;
+  const columns = [
+    {
+      label: "Tokens",
+      value: formatNumber(values[0]),
+      detail: `${percent(scope.cachedInputTokens, scope.inputTokens)} served from cache`,
+      trend: bins.map((b) => b.totalTokens),
+      color: "var(--color-usage-input)",
+    },
+    {
+      label: "Estimated cost",
+      value: formatUsd(values[1]),
+      detail:
+        unpriced > 0
+          ? `${unpriced} model${unpriced === 1 ? "" : "s"} not priced`
+          : `${modelsShown} of ${modelsTotal} models`,
+      trend: binCosts,
+      color: "var(--color-usage-output)",
+    },
+    {
+      label: "Tasks",
+      value: formatNumber(values[2]),
+      detail:
+        scope.invocations > 0
+          ? `${formatMs(perTask(scope.runtimeWallMs))} average run`
+          : "No runs",
+      trend: bins.map((b) => b.invocations),
+      color: "var(--color-usage-tasks)",
+    },
+    {
+      label: "Model calls",
+      value: formatNumber(values[3]),
+      detail: `${perTask(scope.modelCalls).toFixed(1)} per task`,
+      trend: bins.map((b) => b.modelCalls),
+      color: "var(--color-usage-model-calls)",
+    },
+    {
+      label: "Sandbox CPU",
+      value: formatCpuUsec(values[4]),
+      detail: `${percent(scope.agentSandboxCpuUsec, cpu)} agent · ${percent(scope.toolSandboxCpuUsec, cpu)} MCP`,
+      trend: bins.map((b) => b.agentSandboxCpuUsec + b.toolSandboxCpuUsec),
+      color: "var(--color-usage-agent-sandbox)",
+    },
   ];
 
   return (
     <div className="@container">
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-        <div className="flex gap-8">
-          {headline.map(([label, value]) => (
-            <div key={label}>
-              <div className="text-xs text-muted-foreground">{label}</div>
-              <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
-                {value}
-              </div>
+      <div className="grid grid-cols-2 border-y border-border @2xl:grid-cols-3 @5xl:grid-cols-5">
+        {columns.map((column) => (
+          <div
+            key={column.label}
+            className="grid min-w-0 gap-1 border-border px-4 py-3 @5xl:border-l @5xl:first:border-l-0"
+          >
+            <div className="text-xs text-muted-foreground">{column.label}</div>
+            <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
+              {column.value}
             </div>
-          ))}
-        </div>
-        <dl className="grid w-full grid-cols-2 gap-x-6 gap-y-0.5 text-xs @lg:grid-cols-3 @5xl:w-auto @5xl:border-l @5xl:border-border @5xl:pl-8">
-          {details.map(([label, value]) => (
-            <div
-              key={label}
-              className="flex justify-between gap-3 whitespace-nowrap"
-            >
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-medium tabular-nums">{value}</dd>
+            <Sparkline
+              values={column.trend}
+              selected={selected}
+              color={column.color}
+            />
+            <div className="truncate text-2xs text-muted-foreground">
+              {column.detail}
             </div>
-          ))}
-        </dl>
+          </div>
+        ))}
       </div>
-      {unpriced > 0 && (
-        <p className="mt-1 text-2xs text-muted-foreground">
-          {unpriced} model{unpriced === 1 ? " is" : "s are"} left out of the
-          estimate because no standard rate is configured.
-        </p>
-      )}
     </div>
   );
 }
 
-/** Per-(provider, model) totals, heaviest first. */
-function aggregateByModel(buckets: Bucket[]): Bucket[] {
-  const map = new Map<string, Bucket>();
-  for (const b of buckets) {
-    const existing = map.get(modelKey(b));
-    if (!existing) {
-      map.set(modelKey(b), { ...b });
-      continue;
-    }
-    for (const key of COUNTER_KEYS) existing[key] += b[key];
-  }
-
-  return Array.from(map.values()).sort((a, b) => b.totalTokens - a.totalTokens);
+/** Range buttons, the model menu, and a chip that clears the clicked bin. */
+function UsageToolbar({
+  range,
+  onRangeChange,
+  modelMenu,
+  selectedStart,
+  binSeconds,
+  onClearSelection,
+}: {
+  range: Range;
+  onRangeChange: (range: Range) => void;
+  modelMenu: React.ReactNode;
+  /** Start of the clicked bin, or null when none is selected. */
+  selectedStart: number | null;
+  binSeconds: number;
+  onClearSelection: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5">
+        {RANGES.map((id) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={range === id}
+            onClick={() => onRangeChange(id)}
+            className={cn(
+              "cursor-pointer rounded px-2.5 py-1 text-xs transition-colors",
+              range === id
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {id}
+          </button>
+        ))}
+      </div>
+      {modelMenu}
+      {selectedStart !== null && (
+        <button
+          type="button"
+          onClick={onClearSelection}
+          className="cursor-pointer rounded-md border border-border px-2.5 py-1 text-xs tabular-nums"
+        >
+          {formatBucketLabel(selectedStart, binSeconds, true)}{" "}
+          <span className="text-muted-foreground">✕</span>
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** Stable color per model: models sorted by key take the palette in order. */
@@ -761,7 +763,9 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
       span.startTimeMs >= freshAfter,
   );
   if (runningRoots.length === 0) return EMPTY_LIVE_OVERLAY;
-  const runningRootSpanIds = new Set(runningRoots.map((root) => root.spanId));
+  const runningRootsById = new Map(
+    runningRoots.map((root) => [root.spanId, root]),
+  );
   const totals = { ...EMPTY_LIVE_OVERLAY };
   totals.invocations = runningRoots.length;
   for (const root of runningRoots) {
@@ -775,20 +779,27 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     );
   }
   for (const span of spans) {
-    if (
-      span.kind !== "model.step" ||
-      !span.parentSpanId ||
-      !runningRootSpanIds.has(span.parentSpanId)
-    )
-      continue;
+    const root = span.parentSpanId
+      ? runningRootsById.get(span.parentSpanId)
+      : undefined;
+    if (span.kind !== "model.step" || !root) continue;
+    const usage = {
+      inputTokens: numericAttribute(span, "model.input_tokens"),
+      outputTokens: numericAttribute(span, "model.output_tokens"),
+      cachedInputTokens: numericAttribute(span, "model.cached_input_tokens"),
+      cacheWriteTokens: 0,
+    };
+    const { "model.provider": provider, "model.id": modelId } =
+      root.attributes ?? {};
     totals.modelCalls += 1;
-    totals.inputTokens += numericAttribute(span, "model.input_tokens");
-    totals.outputTokens += numericAttribute(span, "model.output_tokens");
+    totals.inputTokens += usage.inputTokens;
+    totals.outputTokens += usage.outputTokens;
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
-    totals.cachedInputTokens += numericAttribute(
-      span,
-      "model.cached_input_tokens",
-    );
+    totals.cachedInputTokens += usage.cachedInputTokens;
+    if (typeof provider === "string" && typeof modelId === "string") {
+      totals.estimatedCost +=
+        estimateModelTokenCost(provider, modelId, usage)?.total ?? 0;
+    }
   }
 
   return totals;
@@ -809,7 +820,7 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
 }
 
-/** `provider::model`, the key the filter, colors and table share. */
+/** `provider::model`, the key the model filter, its colors and the trace query share. */
 function modelKey(b: { modelProvider: string; modelId: string }): string {
   return `${b.modelProvider}::${b.modelId}`;
 }
@@ -820,7 +831,7 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
   return typeof value === "number" ? value : 0;
 }
 
-/** Whole-number share for the numbers row and model table, 0% when empty. */
+/** Whole-number share for the numbers row, 0% when empty. */
 function percent(part: number, whole: number): string {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%";
 }
