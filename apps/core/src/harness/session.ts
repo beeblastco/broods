@@ -1704,6 +1704,8 @@ function projectEntriesToMessages(
         ];
       case "tool":
         return [event.message];
+      default:
+        throw new Error("Unsupported conversation message role");
     }
   });
 
