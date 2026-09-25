@@ -1096,6 +1096,10 @@ export const cronsFields = {
     v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
   ),
   lastError: v.optional(v.string()),
+  // The run `lastStatus` mirrors: only that run's settle may change it.
+  // `lastInvokedAt` is that fire's scheduled time, so an older fire never
+  // takes the status back.
+  lastRunId: v.optional(v.id("cronRuns")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };

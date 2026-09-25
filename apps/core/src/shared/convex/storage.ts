@@ -331,29 +331,15 @@ const crons: Storage["crons"] = {
       patch: patch,
     })) as CronRecord | null;
   },
-  markStarted: async function (accountId, cronId) {
-    await getConvexClient().mutation(internal.agent.crons.recordInvocation, {
+  markFailed: async function (accountId, cronId, error, firedAt) {
+    await getConvexClient().mutation(internal.agent.crons.recordFailedFire, {
       accountId: accountId,
       cronId: cronId,
-      lastStatus: "started",
+      error: error,
+      firedAt: firedAt.getTime(),
     });
   },
-  markCompleted: async function (accountId, cronId) {
-    await getConvexClient().mutation(internal.agent.crons.recordInvocation, {
-      accountId: accountId,
-      cronId: cronId,
-      lastStatus: "completed",
-    });
-  },
-  markFailed: async function (accountId, cronId, error) {
-    await getConvexClient().mutation(internal.agent.crons.recordInvocation, {
-      accountId: accountId,
-      cronId: cronId,
-      lastStatus: "failed",
-      lastError: error,
-    });
-  },
-  createRun: async function (input) {
+  createRun: async function (input, firedAt) {
     const runId = (await getConvexClient().mutation(
       internal.agent.crons.createRun,
       {
@@ -361,6 +347,7 @@ const crons: Storage["crons"] = {
         cronId: input.cronId,
         eventId: input.eventId,
         conversationKey: input.conversationKey,
+        firedAt: firedAt.getTime(),
       },
     )) as string;
 
