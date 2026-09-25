@@ -7,10 +7,12 @@ A `cronRuns` row under `createRun` and `settleRun` (behind `completeRun` /
 (`apps/core/src/harness/handler.ts`). A row is `none` once `removeRunsCascade`
 drained it with its one-time cron.
 
-The cron row's `lastStatus` follows `lastRunId`, the run `createRun` opened last.
-`settleRun` writes it only for that run, and `recordFailedFire` (a fire refused
-before it had a run row) writes `failed` and detaches it, so an older fire that
-settles late cannot overwrite a newer one.
+The cron row's `lastStatus` follows `lastRunId`, the run of the latest fire by
+scheduled time (`lastInvokedAt`). `createRun` takes the cron only for a fire at
+least as late as the one it shows, `settleRun` writes the status only for the run
+the cron names, and `recordFailedFire` (a fire refused before it had a run row)
+writes `failed` and detaches the run, again only for a fire at least as late. An
+older fire, however late its writes land, never takes the status back.
 -/
 
 namespace Broods.Cron
@@ -40,10 +42,11 @@ def settle (row : Option Status) (x : Settle) : Option Status :=
 def settleAll (row : Option Status) (xs : List Settle) : Option Status :=
   xs.foldl settle row
 
-/-- The cron row's `lastRunId` and `lastStatus`. -/
+/-- The cron row's `lastRunId`, `lastStatus` and `lastInvokedAt`. -/
 structure CronRow where
   lastRunId : Option Nat
   lastStatus : Option Status
+  lastFired : Option Nat
   deriving DecidableEq, Repr
 
 /-- Every `cronRuns` row of one cron, by run id, and the cron row. -/
@@ -51,36 +54,46 @@ structure State where
   runs : Nat → Option Status
   cron : CronRow
 
-/-- One write to a cron: `createRun` opens run `r`, `completeRun` / `failRun`
-settle it, or `recordFailedFire` records a fire with no run row. -/
+/-- One write to a cron: `createRun` opens run `r` for a fire scheduled at `t`,
+`completeRun` / `failRun` settle it, or `recordFailedFire` records a fire at `t`
+with no run row. -/
 inductive Step where
-  | start (r : Nat)
+  | start (r t : Nat)
   | settle (r : Nat) (x : Settle)
-  | refuse
+  | refuse (t : Nat)
 
 /-- The run table with run `r` set to `v`. -/
 def update (runs : Nat → Option Status) (r : Nat) (v : Option Status) :
     Nat → Option Status :=
   fun r' => if r' = r then v else runs r'
 
-/-- One write. A settle that changes its run also changes the cron, but only
-while that run is the cron's last. -/
+/-- `isLatestFire`: a fire at `t` is at least as late as the one the cron shows. -/
+def latest (c : CronRow) (t : Nat) : Bool :=
+  c.lastFired.all (· ≤ t)
+
+/-- One write. `createRun` inserts a fresh run id. A settle that changes its run
+also changes the cron, but only while that run is the cron's last. -/
 def step (s : State) : Step → State
-  | .start r => ⟨update s.runs r (some .started), ⟨some r, some .started⟩⟩
+  | .start r t =>
+    if s.runs r = none then
+      ⟨update s.runs r (some .started),
+        if latest s.cron t then ⟨some r, some .started, some t⟩ else s.cron⟩
+    else s
   | .settle r x =>
     if s.runs r = some .started then
       ⟨update s.runs r (settle (s.runs r) x),
-        if s.cron.lastRunId = some r then ⟨some r, some x.status⟩ else s.cron⟩
+        if s.cron.lastRunId = some r then { s.cron with lastStatus := some x.status }
+        else s.cron⟩
     else s
-  | .refuse => ⟨s.runs, ⟨none, some .failed⟩⟩
+  | .refuse t => if latest s.cron t then ⟨s.runs, ⟨none, some .failed, some t⟩⟩ else s
 
 /-- Writes in the order Convex commits them. -/
 def run (s : State) (steps : List Step) : State :=
   steps.foldl step s
 
-/-- The cron shows the status of the run it names. -/
+/-- The cron shows the status of the run it names, and that run exists. -/
 def Mirrors (s : State) : Prop :=
-  ∀ r, s.cron.lastRunId = some r → s.cron.lastStatus = s.runs r
+  ∀ r, s.cron.lastRunId = some r → s.cron.lastStatus = s.runs r ∧ s.runs r ≠ none
 
 /-! ## Properties -/
 
@@ -108,33 +121,58 @@ theorem stale_settle_noop (s : State) (r : Nat) (x : Settle)
   · simp [step, hs, h]
   · simp [step, hs]
 
+/-- A fire older than the one the cron shows leaves the cron alone, whether it
+opens a run or is refused. -/
+theorem older_fire_noop (s : State) (r t t' : Nat) (hf : s.cron.lastFired = some t')
+    (ht : t < t') :
+    (step s (.start r t)).cron = s.cron ∧ (step s (.refuse t)).cron = s.cron := by
+  have hl : latest s.cron t = false := by
+    simp only [latest, hf, Option.all_some, decide_eq_false_iff_not, Nat.not_le]
+    exact ht
+  constructor
+  · by_cases hn : s.runs r = none
+    · simp [step, hn, hl]
+    · simp [step, hn]
+  · simp [step, hl]
+
 /-- Every write keeps the cron showing its last run's status. -/
 theorem step_mirrors (s : State) (t : Step) (h : Mirrors s) : Mirrors (step s t) := by
   intro r' hr
   cases t with
-  | start r =>
-    simp only [step, Option.some.injEq] at hr
-    subst hr
-    simp [step, update]
+  | start r t =>
+    by_cases hn : s.runs r = none
+    · by_cases hl : latest s.cron t
+      · simp only [step, hn, hl, ite_true, Option.some.injEq] at hr ⊢
+        subst hr
+        simp [update]
+      · simp only [step, hn, hl, ite_true] at hr ⊢
+        have hne : r' ≠ r := by
+          intro heq
+          exact (h r' hr).2 (heq ▸ hn)
+        simp [update, hne, h r' hr]
+    · simp only [step, hn, ite_false] at hr ⊢
+      exact h r' hr
   | settle r x =>
-    simp only [step] at hr ⊢
     by_cases hs : s.runs r = some .started
-    · simp only [hs, ite_true] at hr ⊢
-      by_cases hl : s.cron.lastRunId = some r
-      · simp only [hl, ite_true, Option.some.injEq] at hr ⊢
+    · by_cases hl : s.cron.lastRunId = some r
+      · simp only [step, hs, hl, ite_true, Option.some.injEq] at hr ⊢
         subst hr
         simp [update, settle]
-      · simp only [hl, ite_false] at hr ⊢
+      · simp only [step, hs, hl, ite_true, ite_false] at hr ⊢
         have hne : r' ≠ r := by
           intro heq
           exact hl (heq ▸ hr)
         simp [update, hne, h r' hr]
-    · simp only [hs, ite_false] at hr ⊢
+    · simp only [step, hs, ite_false] at hr ⊢
       exact h r' hr
-  | refuse => simp [step] at hr
+  | refuse t =>
+    by_cases hl : latest s.cron t
+    · simp [step, hl] at hr
+    · simp only [step, hl] at hr ⊢
+      exact h r' hr
 
-/-- Whatever order the settles arrive in, the cron shows the status of the
-run it names. -/
+/-- Whatever order the writes commit in, the cron shows the status of the run
+it names. -/
 theorem run_mirrors (s : State) (ts : List Step) (h : Mirrors s) :
     Mirrors (run s ts) := by
   induction ts generalizing s with
@@ -144,17 +182,21 @@ theorem run_mirrors (s : State) (ts : List Step) (h : Mirrors s) :
 /-! ## Witnesses -/
 
 /-- No run yet. -/
-def fresh : State := ⟨fun _ => none, ⟨none, none⟩⟩
+def fresh : State := ⟨fun _ => none, ⟨none, none, none⟩⟩
 
 /-- Fire 1 is slow, fire 2 starts and completes, then fire 1 fails because
 fire 2 holds the conversation: the cron still shows fire 2's `completed`. -/
 example :
-    (run fresh [.start 1, .start 2, .settle 2 .complete, .settle 1 .fail]).cron =
-      ⟨some 2, some .completed⟩ := by decide
+    (run fresh [.start 1 1000, .start 2 2000, .settle 2 .complete, .settle 1 .fail]).cron =
+      ⟨some 2, some .completed, some 2000⟩ := by decide
 
-/-- A refused fire's `failed` survives a run that settles after it. -/
-example : (run fresh [.start 1, .refuse, .settle 1 .complete]).cron = ⟨none, some .failed⟩ := by
-  decide
+/-- A newer fire's refusal survives the older run settling after it. -/
+example : (run fresh [.start 1 1000, .refuse 2000, .settle 1 .complete]).cron =
+    ⟨none, some .failed, some 2000⟩ := by decide
+
+/-- An older fire refused late leaves the newer run on the cron. -/
+example : (run fresh [.start 2 2000, .refuse 1000, .settle 2 .complete]).cron =
+    ⟨some 2, some .completed, some 2000⟩ := by decide
 
 /-- The worker records `completed`, then `invokeAsyncWorker` throws in
 `startScheduledAgentRun` and its catch sends `failRun`: the run stays completed. -/

@@ -49,6 +49,9 @@ const cronDoc = v.object({
   _creationTime: v.number(),
 });
 
+// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it.
+const projectCronDoc = cronDoc.omit("lastRunId");
+
 const cronRunDoc = v.object({
   ...cronRunsFields,
   _id: v.id("cronRuns"),
@@ -114,7 +117,7 @@ export const create = internalMutation({
 
 /**
  * Creates a cron job run history row when a schedule fires, and makes it the
- * run the cron's last status follows.
+ * run the cron's last status follows unless a later fire already did.
  */
 export const createRun = internalMutation({
   args: {
@@ -122,9 +125,10 @@ export const createRun = internalMutation({
     cronId: v.id("crons"),
     eventId: v.string(),
     conversationKey: v.string(),
+    firedAt: v.number(),
   },
   returns: v.id("cronRuns"),
-  handler: async (ctx, args): Promise<Id<"cronRuns">> => {
+  handler: async (ctx, { firedAt, ...args }): Promise<Id<"cronRuns">> => {
     const cron = await getOwned(ctx, args.accountId, args.cronId);
     if (!cron) {
       throw new ClientError(
@@ -138,13 +142,15 @@ export const createRun = internalMutation({
       status: "started",
       startedAt: startedAt,
     });
-    await ctx.db.patch(cron._id, {
-      lastRunId: runId,
-      lastStatus: "started",
-      lastError: undefined,
-      lastInvokedAt: startedAt,
-      updatedAt: startedAt,
-    });
+    if (isLatestFire(cron, firedAt)) {
+      await ctx.db.patch(cron._id, {
+        lastRunId: runId,
+        lastStatus: "started",
+        lastError: undefined,
+        lastInvokedAt: firedAt,
+        updatedAt: startedAt,
+      });
+    }
 
     return runId;
   },
@@ -290,8 +296,8 @@ export const listPage = internalQuery({
  */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
-  returns: v.array(cronDoc),
-  handler: async (ctx, args): Promise<Doc<"crons">[]> => {
+  returns: v.array(projectCronDoc),
+  handler: async (ctx, args): Promise<Omit<Doc<"crons">, "lastRunId">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -304,7 +310,9 @@ export const listForProject = query({
     const accountId = await accountIdForProject(ctx, args.projectId);
     if (!accountId) return [];
 
-    return await cronsInProject(ctx, args.projectId, accountId);
+    const crons = await cronsInProject(ctx, args.projectId, accountId);
+
+    return crons.map(({ lastRunId: _lastRunId, ...cron }) => cron);
   },
 });
 
@@ -387,17 +395,22 @@ export const pruneExpiredRuns = internalMutation({
 });
 
 /**
- * Records a fire that failed before it had a run row, such as a plan refusal.
- * It detaches the last run, so an older run settling later leaves it alone.
+ * Records a fire that failed before it had a run row, such as a plan refusal,
+ * unless a later fire already reported. It detaches the last run, so an older
+ * run settling later leaves it alone.
  */
 export const recordFailedFire = internalMutation({
   args: {
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
     error: v.string(),
+    firedAt: v.number(),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, cronId, error }): Promise<null> => {
+  handler: async (
+    ctx,
+    { accountId, cronId, error, firedAt },
+  ): Promise<null> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) {
       throw new ClientError(
@@ -405,13 +418,13 @@ export const recordFailedFire = internalMutation({
       );
     }
 
-    const now = Date.now();
+    if (!isLatestFire(cron, firedAt)) return null;
     await ctx.db.patch(cronId, {
       lastRunId: undefined,
       lastStatus: "failed",
       lastError: error,
-      lastInvokedAt: now,
-      updatedAt: now,
+      lastInvokedAt: firedAt,
+      updatedAt: Date.now(),
     });
 
     return null;
@@ -580,6 +593,11 @@ async function getOwnedByString(
   const normalized = ctx.db.normalizeId("crons", cronId);
 
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
+}
+
+/** Whether a fire scheduled at `firedAt` is at least as late as the one the cron shows. */
+function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
+  return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
 }
 
 /**

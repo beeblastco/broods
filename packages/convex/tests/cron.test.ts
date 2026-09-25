@@ -42,18 +42,8 @@ describe("list", () => {
 describe("run history", () => {
   test("a settled run keeps its first outcome, and a drained run settles as a no-op", async () => {
     const tt = t();
-    const { accountId, agentId } = await seed(tt);
-    const [cron] = await tt.query(internal.agent.crons.list, {
-      accountId: accountId,
-      agentId: agentId,
-    });
-    const cronId = cron!._id;
-    const runId = await tt.mutation(internal.agent.crons.createRun, {
-      accountId: accountId,
-      cronId: cronId,
-      eventId: "event-1",
-      conversationKey: "api:cron",
-    });
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await startRun(tt, accountId, cronId, 1_000);
 
     await tt.mutation(internal.agent.crons.completeRun, {
       accountId: accountId,
@@ -87,8 +77,8 @@ describe("run history", () => {
   test("an older run settling late leaves the newer run's status on the cron", async (): Promise<void> => {
     const tt = t();
     const { accountId, cronId } = await firstCron(tt);
-    const older = await startRun(tt, accountId, cronId, "event-a");
-    const newer = await startRun(tt, accountId, cronId, "event-b");
+    const older = await startRun(tt, accountId, cronId, 1_000);
+    const newer = await startRun(tt, accountId, cronId, 2_000);
 
     await tt.mutation(internal.agent.crons.completeRun, {
       accountId: accountId,
@@ -111,12 +101,13 @@ describe("run history", () => {
   test("a run settling after a refused fire leaves the refusal on the cron", async (): Promise<void> => {
     const tt = t();
     const { accountId, cronId } = await firstCron(tt);
-    const runId = await startRun(tt, accountId, cronId, "event-a");
+    const runId = await startRun(tt, accountId, cronId, 1_000);
 
     await tt.mutation(internal.agent.crons.recordFailedFire, {
       accountId: accountId,
       cronId: cronId,
       error: "monthly compute allowance used",
+      firedAt: 2_000,
     });
     await tt.mutation(internal.agent.crons.completeRun, {
       accountId: accountId,
@@ -128,6 +119,31 @@ describe("run history", () => {
     expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
       lastStatus: "failed",
       lastError: "monthly compute allowance used",
+    });
+  });
+
+  test("an older fire refused late leaves the newer run on the cron", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await startRun(tt, accountId, cronId, 2_000);
+
+    await tt.mutation(internal.agent.crons.recordFailedFire, {
+      accountId: accountId,
+      cronId: cronId,
+      error: "monthly compute allowance used",
+      firedAt: 1_000,
+    });
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+      lastRunId: runId,
+      lastStatus: "completed",
+      lastInvokedAt: 2_000,
     });
   });
 });
@@ -521,12 +537,13 @@ async function startRun(
   tt: T,
   accountId: Id<"accounts">,
   cronId: Id<"crons">,
-  eventId: string,
+  firedAt: number,
 ): Promise<Id<"cronRuns">> {
   return await tt.mutation(internal.agent.crons.createRun, {
     accountId: accountId,
     cronId: cronId,
-    eventId: eventId,
+    eventId: `event-${firedAt}`,
     conversationKey: "api:cron",
+    firedAt: firedAt,
   });
 }

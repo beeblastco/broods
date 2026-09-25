@@ -475,18 +475,17 @@ async function handleScheduledCron(
 
     return null;
   }
+  const firedAt = scheduledFireTime(event.scheduledTime);
   const { refusal } = await admitRun(job.accountId);
   if (refusal) {
     // A refused fire is spent like a failed one, one-shot included.
-    await crons.markFailed(job.accountId, job.cronId, refusal.message);
+    await crons.markFailed(job.accountId, job.cronId, refusal.message, firedAt);
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
 
     return refusal;
   }
-
-  const firedAt = scheduledFireTime(event.scheduledTime);
 
   try {
     const result = await startScheduledAgentRun(job, firedAt);
@@ -2455,6 +2454,7 @@ async function startScheduledAgentRun(
         job.accountId,
         job.cronId,
         err instanceof Error ? err.message : String(err),
+        firedAt,
       );
       throw err;
     },
@@ -2528,12 +2528,15 @@ async function openCronRun(
   firedAt: Date,
 ): Promise<{ event: DirectInboundEvent; run: CronRunRecord }> {
   const event = await createCronDirectEvent(job, firedAt);
-  const run = await getStorage().crons.createRun({
-    accountId: job.accountId,
-    cronId: job.cronId,
-    eventId: event.publicEventId,
-    conversationKey: event.publicConversationKey,
-  });
+  const run = await getStorage().crons.createRun(
+    {
+      accountId: job.accountId,
+      cronId: job.cronId,
+      eventId: event.publicEventId,
+      conversationKey: event.publicConversationKey,
+    },
+    firedAt,
+  );
 
   return { event: event, run: run };
 }
