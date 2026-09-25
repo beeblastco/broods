@@ -32,15 +32,17 @@ inductive Finish where
   deriving DecidableEq, Repr
 
 /-- How `runAgentLoopUntilSubagentsIdle` ends, or the no-input branch. A failed loop
-always reaches `onErrorText`, so it is `error`; `silent` returns with no callback. -/
+always reaches `onErrorText`, so it is `error`; `silent` returns with no callback;
+`replayed` asks questions, then replays an earlier pass's final text. -/
 inductive Ending where
-  | noInput | final | error | approval | questions | silent
+  | noInput | final | error | approval | questions | silent | replayed
   deriving DecidableEq, Repr
 
 /-- One statement of a handler. -/
 inductive Act where
-  /-- `finish`: sets `outcome`, then `settleAsyncRun` (`runtimeIngress.settle` with the
-  polling rows), then `recorded = true`. -/
+  /-- `finish`: returns at once when `recorded`; otherwise keeps the first `outcome`,
+  `settleAsyncRun`s it (`runtimeIngress.settle` with the polling rows), then
+  `recorded = true`. -/
   | finish (f : Finish)
   /-- `finish` called inside the harness, which catches a callback's throw
   (`onQuestionsPending` in `runAgentLoop`'s `onEnd`), so a throw goes no further. -/
@@ -110,9 +112,13 @@ def settle (f : Finish) (s : State) : State :=
 /-- `recordAsyncRun`: `updateAsyncAgentResult` on the polling rows only. -/
 def record (f : Finish) (s : State) : State := { s with result := f.result }
 
-/-- A `finish` that ran to the end. -/
+/-- A `finish` that ran to the end: a recorded run keeps its outcome, and an
+unrecorded one settles the first outcome it produced. -/
 def finished (f : Finish) (s : State) : State :=
-  { settle f s with recorded := true, outcome := some f }
+  if s.recorded then s
+  else
+    let o := s.outcome.getD f
+    { settle o s with recorded := true, outcome := some o }
 
 /-- A statement that cannot throw hands a pending throw to the next statement. -/
 def pass : Option Nat → Option Nat
@@ -129,8 +135,12 @@ def exec (recover : State → State) : List Act → Option Nat → State → Sta
     exec recover as none (finished f s)
   | .finish f :: as, some (k + 1), s | .finishSwallowed f :: as, some (k + 1), s =>
     exec recover as (some k) (finished f s)
-  | .finish f :: _, some 0, s => recover { s with outcome := some f }
-  | .finishSwallowed f :: as, some 0, s => exec recover as none { s with outcome := some f }
+  | .finish f :: as, some 0, s =>
+    if s.recorded then exec recover as (some 0) s
+    else recover { s with outcome := some (s.outcome.getD f) }
+  | .finishSwallowed f :: as, some 0, s =>
+    if s.recorded then exec recover as (some 0) s
+    else exec recover as none { s with outcome := some (s.outcome.getD f) }
   | .effect :: as, none, s => exec recover as none s
   | .effect :: as, some (k + 1), s => exec recover as (some k) s
   | .effect :: _, some 0, s => recover s
@@ -143,6 +153,9 @@ def program : Ending → List Act
   | .approval => [.finish .awaitingApproval, .requireRecorded, .effect, .effect]
   | .questions => [.finishSwallowed .awaitingInput, .requireRecorded, .effect, .effect]
   | .silent => [.requireRecorded, .effect, .effect]
+  | .replayed =>
+    [.finishSwallowed .awaitingInput, .finish .completed, .safe, .requireRecorded, .effect,
+      .effect]
 
 /-- The catch block: nothing once the outcome is recorded; otherwise it records the
 outcome the run produced, or a failure when there is none: first through the settle,
@@ -218,9 +231,9 @@ theorem worker_consistent (e : Ending) (catchSettles catchRecords : Bool)
   unfold worker
   match throwAt with
   | none => cases e <;> cases catchSettles <;> cases catchRecords <;> decide
-  | some 0 | some 1 | some 2 | some 3 | some 4 =>
+  | some 0 | some 1 | some 2 | some 3 | some 4 | some 5 =>
     cases e <;> cases catchSettles <;> cases catchRecords <;> decide
-  | some (k + 5) =>
+  | some (k + 6) =>
     rw [exec_beyond _ _ _ (by cases e <;> simp [program])]
     cases e <;> cases catchSettles <;> cases catchRecords <;> decide
 
@@ -230,8 +243,8 @@ theorem worker_settled_final (e : Ending) (catchSettles catchRecords : Bool) (k 
       worker catchSettles catchRecords e none := by
   unfold worker
   match k with
-  | 0 | 1 | 2 | 3 => cases e <;> cases catchSettles <;> cases catchRecords <;> decide
-  | k + 4 => rw [exec_beyond _ _ _ (by cases e <;> simp [program])]
+  | 0 | 1 | 2 | 3 | 4 => cases e <;> cases catchSettles <;> cases catchRecords <;> decide
+  | k + 5 => rw [exec_beyond _ _ _ (by cases e <;> simp [program])]
 
 /-- A throw before the outcome is recorded never loses what the run produced: when
 either catch write lands, the polling row holds that outcome. -/
@@ -239,7 +252,7 @@ theorem worker_keeps_produced (e : Ending) (catchSettles : Bool) :
     (worker catchSettles true e (some 0)).result =
       match e with
       | .final => .completed
-      | .questions => .awaitingInput
+      | .questions | .replayed => .awaitingInput
       | .approval => .awaitingApproval
       | _ => .failed := by
   cases e <;> cases catchSettles <;> decide
@@ -292,6 +305,13 @@ the catch records the pending questions. -/
 example :
     worker true true .questions (some 0) =
       ⟨.completed, .awaitingInput, false, some .awaitingInput⟩ := by
+  decide
+
+/-- The questions write fails and the harness swallows it; the replayed final text then
+retries the pending questions, not `completed`, so a one-shot cron is not retired. -/
+example :
+    worker true true .replayed (some 0) =
+      ⟨.completed, .awaitingInput, true, some .awaitingInput⟩ := by
   decide
 
 end Broods.AsyncResults

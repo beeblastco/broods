@@ -328,6 +328,34 @@ describe("async turn that throws after it settles", (): void => {
     expect(completeRun).not.toHaveBeenCalled();
   });
 
+  it("retries the pending questions when their settle fails before a kept final text", async (): Promise<void> => {
+    const question: PendingQuestionSummary = {
+      statusId: "status-1",
+      questions: [],
+      answerBy: "2026-09-25T00:00:00.000Z",
+    };
+    const settle = stubTurn(
+      [],
+      async (reply): Promise<PendingQuestionSummary[]> => {
+        await reply.onFinalText("answer");
+        await reply.onQuestionsPending?.([question]).catch((): void => {});
+
+        return [question];
+      },
+    );
+    settle.mockRejectedValueOnce(new Error("settle failed"));
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: completedEvent(),
+    });
+
+    expect(
+      settle.mock.calls.map(([options]) => options.asyncResult?.outcome.status),
+    ).toEqual(["awaiting_input", "awaiting_input"]);
+  });
+
   it("records the answer on the polling rows when the settle loses the lease", async (): Promise<void> => {
     const writes: Array<{ name: string; status?: unknown }> = [];
     stubCompletedTurn(writes).mockRejectedValue(
