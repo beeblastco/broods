@@ -76,6 +76,25 @@ describe("terminal tickets", () => {
     expect(openTerminalTicket(`${sealed}.extra`, SECRET)).toBeNull();
   });
 
+  test("rejects truncated authentication tags", () => {
+    const sealed = sealTerminalTicket(ticket(), SECRET);
+    const [version, iv, tag, ciphertext, extra] = sealed.split(".");
+    if (!version || !iv || !tag || !ciphertext || extra !== undefined) {
+      throw new Error("Expected four nonempty terminal ticket segments");
+    }
+    const tagBytes = Buffer.from(tag, "base64url");
+    expect(tagBytes.length).toBe(16);
+    for (const length of [4, 8, 12, 13, 14, 15]) {
+      const truncated = tagBytes.subarray(0, length).toString("base64url");
+      expect(
+        openTerminalTicket(
+          [version, iv, truncated, ciphertext].join("."),
+          SECRET,
+        ),
+      ).toBeNull();
+    }
+  });
+
   test("opens only the spelling it sealed", () => {
     const sealed = sealTerminalTicket(ticket(), SECRET);
     const [version, iv, tag, ciphertext] = sealed.split(".") as [
