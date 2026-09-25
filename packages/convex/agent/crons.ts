@@ -27,6 +27,7 @@ import {
   normalizeUpdateCronInput,
 } from "../model/cronRules";
 import {
+  deleteCron,
   deleteRegistrationIfExists,
   registerSchedule,
   unregisterSchedule,
@@ -70,22 +71,8 @@ export const completeRun = internalMutation({
     result: v.any(),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, cronId, runId, result }): Promise<null> => {
-    const run = await ctx.db.get(runId);
-    if (!run || run.accountId !== accountId || run.cronId !== cronId) {
-      throw new ClientError(
-        "Cron job run does not belong to the supplied accountId and cronId",
-      );
-    }
-
-    await ctx.db.patch(runId, {
-      status: "completed",
-      result: result,
-      completedAt: Date.now(),
-    });
-
-    return null;
-  },
+  handler: (ctx, args): Promise<null> =>
+    settleRun(ctx, args, { status: "completed", result: args.result }),
 });
 
 /**
@@ -209,22 +196,8 @@ export const failRun = internalMutation({
     error: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, cronId, runId, error }): Promise<null> => {
-    const run = await ctx.db.get(runId);
-    if (!run || run.accountId !== accountId || run.cronId !== cronId) {
-      throw new ClientError(
-        "Cron job run does not belong to the supplied accountId and cronId",
-      );
-    }
-
-    await ctx.db.patch(runId, {
-      status: "failed",
-      error: error,
-      completedAt: Date.now(),
-    });
-
-    return null;
-  },
+  handler: (ctx, args): Promise<null> =>
+    settleRun(ctx, args, { status: "failed", error: args.error }),
 });
 
 export const getById = internalQuery({
@@ -442,9 +415,7 @@ export const recordInvocation = internalMutation({
 });
 
 /**
- * Delete a cron job and its schedule in one transaction. Run history can
- * exceed one transaction, so a scheduled mutation drains it in bounded
- * batches after this commits.
+ * Delete a cron job and its schedule in one transaction (`deleteCron`).
  * @param accountId account id owning the cron job
  * @param cronId the cron job id
  * @returns true when the job existed and was removed
@@ -455,12 +426,7 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const cron = await getOwnedByString(ctx, args.accountId, args.cronId);
     if (!cron) return false;
-    await unregisterSchedule(ctx, cron);
-    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
-      accountId: cron.accountId,
-      cronId: cron._id,
-    });
-    await ctx.db.delete(cron._id);
+    await deleteCron(ctx, cron);
 
     return true;
   },
@@ -469,7 +435,7 @@ export const remove = internalMutation({
 /**
  * Drains a deleted cron's run history: deletes one bounded batch per
  * invocation and reschedules itself until none remain. Scheduled by
- * `purgeProject`, which deletes the cron row in its own transaction; run rows
+ * `deleteCron`, which deletes the cron row in its own transaction; run rows
  * stay reachable through the account+cron index prefix.
  */
 export const removeRunsCascade = internalMutation({
@@ -610,4 +576,33 @@ async function getOwnedByString(
   const normalized = ctx.db.normalizeId("crons", cronId);
 
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
+}
+
+/**
+ * Records a run's outcome once, for `completeRun` and `failRun`. A run already
+ * settled, or drained with its one-time cron, is left alone; a run of another
+ * account or cron is refused.
+ */
+async function settleRun(
+  ctx: MutationCtx,
+  ids: {
+    accountId: Id<"accounts">;
+    cronId: Id<"crons">;
+    runId: Id<"cronRuns">;
+  },
+  outcome:
+    | { status: "completed"; result: unknown }
+    | { status: "failed"; error: string },
+): Promise<null> {
+  const run = await ctx.db.get(ids.runId);
+  if (!run) return null;
+  if (run.accountId !== ids.accountId || run.cronId !== ids.cronId) {
+    throw new ClientError(
+      "Cron job run does not belong to the supplied accountId and cronId",
+    );
+  }
+  if (run.status !== "started") return null;
+  await ctx.db.patch(ids.runId, { ...outcome, completedAt: Date.now() });
+
+  return null;
 }

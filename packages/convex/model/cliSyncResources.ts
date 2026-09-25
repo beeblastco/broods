@@ -16,6 +16,7 @@ import {
 } from "./agentConfigCodec";
 import { saveAgentRuntimeSecrets } from "./agentRuntimeSecrets";
 import {
+  deleteAgentRow,
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
   syncAgentRowFields,
@@ -47,7 +48,10 @@ export type ReservationHolder =
   | { sandboxConfigId: Id<"sandboxConfigs"> }
   | { namespace: string };
 
-/** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
+/**
+ * Deletes a CLI-managed agent, and its `agents` row with that row's crons when
+ * `accountId` owns it.
+ */
 export async function deleteAgentResource(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -69,13 +73,7 @@ export async function deleteAgentResource(
       "conflict",
     );
   }
-  if (config.agentId) {
-    const agentId = ctx.db.normalizeId("agents", config.agentId);
-    if (agentId) {
-      const agent = await ctx.db.get(agentId);
-      if (agent?.accountId === accountId) await ctx.db.delete(agentId);
-    }
-  }
+  if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
   await ctx.db.delete(config._id);
 }
 
@@ -122,7 +120,10 @@ export async function deleteWorkspaceResource(
   await ctx.db.delete(workspace._id);
 }
 
-/** Prunes undeclared CLI agents, and their `agents` rows when `accountId` owns them. */
+/**
+ * Prunes undeclared CLI agents, and their `agents` rows with those rows' crons
+ * when `accountId` owns them.
+ */
 export async function pruneAgents(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -143,13 +144,7 @@ export async function pruneAgents(
     .collect();
   for (const config of existing) {
     if (config.managedBy !== "cli" || declared.has(config.name)) continue;
-    if (config.agentId) {
-      const agentId = ctx.db.normalizeId("agents", config.agentId);
-      if (agentId) {
-        const agent = await ctx.db.get(agentId);
-        if (agent?.accountId === accountId) await ctx.db.delete(agentId);
-      }
-    }
+    if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
     await ctx.db.delete(config._id);
   }
 }
@@ -786,6 +781,18 @@ export async function workspaceConfigByName(
       q.eq("stageId", stageId).eq("name", name),
     )
     .unique();
+}
+
+/** Deletes the `agents` row a config links to, when `accountId` owns it. */
+async function deleteOwnedAgent(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  rawAgentId: string,
+): Promise<void> {
+  const agentId = ctx.db.normalizeId("agents", rawAgentId);
+  if (!agentId) return;
+  const agent = await ctx.db.get(agentId);
+  if (agent?.accountId === accountId) await deleteAgentRow(ctx, agent);
 }
 
 /** Whether any instance row still references this sandbox config. */

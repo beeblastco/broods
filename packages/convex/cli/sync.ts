@@ -538,6 +538,7 @@ export const listExternalResourcesForAccount = internalQuery({
       kind: v.union(v.literal("skill"), v.literal("hook"), v.literal("mcp")),
       name: v.string(),
       stageId: v.id("stages"),
+      externalId: v.string(),
     }),
   ),
   handler: async (
@@ -548,6 +549,7 @@ export const listExternalResourcesForAccount = internalQuery({
       kind: "skill" | "hook" | "mcp";
       name: string;
       stageId: Id<"stages">;
+      externalId: string;
     }>
   > => {
     const rows = await ctx.db
@@ -559,6 +561,7 @@ export const listExternalResourcesForAccount = internalQuery({
       kind: row.kind,
       name: row.name,
       stageId: row.stageId,
+      externalId: row.externalId,
     }));
   },
 });

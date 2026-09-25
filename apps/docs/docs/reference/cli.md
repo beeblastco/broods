@@ -185,7 +185,7 @@ broods deploy [--prune] [--rotate-key] [--stage <name>]
 | `--prune`      | Delete remote resources the project no longer declares                           |
 | `--rotate-key` | Mint a fresh runtime key and write it to `.env.local`. The old key stops working |
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a rejected deploy removes nothing. A removed agent takes its cron jobs with it.
 
 ## env
 

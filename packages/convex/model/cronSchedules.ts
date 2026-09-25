@@ -32,6 +32,23 @@ export interface RegisterScheduleOptions {
 }
 
 /**
+ * Deletes a cron job and what fires it, in the caller's transaction. Run
+ * history can exceed one transaction, so a scheduled mutation drains it in
+ * bounded batches after this commits.
+ */
+export async function deleteCron(
+  ctx: MutationCtx,
+  cron: Doc<"crons">,
+): Promise<void> {
+  await unregisterSchedule(ctx, cron);
+  await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
+    accountId: cron.accountId,
+    cronId: cron._id,
+  });
+  await ctx.db.delete(cron._id);
+}
+
+/**
  * Deletes the component registration under `name` when one exists; a missing
  * registration is done. The existence probe is load-bearing. The component's
  * delete throws on an unknown name.

@@ -1,0 +1,64 @@
+name: Lean verification
+
+# Rebuilds the Lean 4 models in verification/. A proof that stops checking means
+# the model or the property moved; update the model when the TypeScript it
+# mirrors changes. The mirrored TypeScript files trigger it too, so a PR that
+# touches them shows this check next to the change.
+
+on:
+  pull_request:
+    paths: &mirrored
+      - verification/**
+      - .github/workflows/lean-verification.yaml
+      - apps/core/src/harness/async-agent-result.ts
+      - apps/core/src/harness/async-tool-result.ts
+      - apps/core/src/harness/handler.ts
+      - apps/core/src/harness/ingress.ts
+      - apps/core/src/harness/subagents.ts
+      - apps/core/src/shared/paths.ts
+      - apps/gateway/src/main.ts
+      - apps/gateway/src/routes.ts
+      - apps/gateway/src/upstream.ts
+      - packages/broods/src/cli/index.ts
+      - packages/broods/src/manifest.ts
+      - packages/broods/src/sync.ts
+      - packages/convex/agent/crons.ts
+      - packages/convex/cli/httpRoutes.ts
+      - packages/convex/cli/types.ts
+      - packages/convex/model/agentSync.ts
+      - packages/convex/model/cliSync*.ts
+      - packages/convex/runtime.ts
+      - packages/convex/runtimeIngress.ts
+  push:
+    branches: [dev]
+    paths: *mirrored
+  workflow_dispatch:
+
+concurrency:
+  group: lean-verification-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: verification
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # elan reads verification/lean-toolchain and installs that exact Lean.
+      # The installer is pinned to the v4.2.4 release commit.
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # Broods.lean fails the build when a proof rests on `sorry`,
+      # `native_decide` or an axiom past the three standard ones.
+      - name: Build and check every proof
+        run: lake build

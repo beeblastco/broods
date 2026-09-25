@@ -287,6 +287,35 @@ test("core routes only in-cluster callers use are a 404 at the public door", asy
   ]);
 });
 
+test("a trailing slash keeps a request on its plane and is stripped upstream", async (): Promise<void> => {
+  const forwarded: string[] = [];
+  globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL): Promise<Response> => {
+      forwarded.push(input instanceof Request ? input.url : input.toString());
+
+      return new Response(null, { status: 204 });
+    },
+    { preconnect: realFetch.preconnect },
+  );
+  const gateway = createGateway(gatewayConfig());
+  const { server } = fakeServer();
+  const send = (method: string, path: string): Promise<Response | undefined> =>
+    gateway.fetch(
+      new Request(`https://gw.example${path}`, { method: method }),
+      server,
+    );
+
+  await send("GET", "/v1/agents/");
+  await send("DELETE", "/v1/account/");
+  await send("PUT", "/v1/skills/x//?draft=1");
+
+  expect(forwarded).toEqual([
+    "https://config.example/v1/agents",
+    "https://core.example/v1/account",
+    "https://config.example/v1/skills/x?draft=1",
+  ]);
+});
+
 test("the opt-in HTTP ceiling meters the proxied branch", async () => {
   const gateway = createGateway(
     gatewayConfig({ httpLimiter: new RateLimiter(1, 60_000) }),

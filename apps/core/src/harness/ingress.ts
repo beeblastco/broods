@@ -15,6 +15,7 @@ import {
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
 } from "../shared/runtime-keys.ts";
+import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 
 export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -42,6 +43,12 @@ interface LiveOwner {
   conversationKey: string;
   ownerEventId: string;
   ownerGeneration: number;
+}
+
+/** An async run's polling rows, settled in the same mutation as its envelope. */
+export interface AsyncResultSettlement {
+  eventIds: string[];
+  outcome: AsyncAgentOutcome;
 }
 
 /** The terminal outcome `takeNextIngress` can settle in the same mutation. */
@@ -447,7 +454,10 @@ export async function releaseIngressOwner(owner: LiveOwner): Promise<void> {
   forgetOwner(owner);
 }
 
-/** Settles every envelope applied to one active event under the fencing token. */
+/**
+ * Settles every envelope applied to one active event under the fencing token,
+ * and an async run's polling rows in the same mutation.
+ */
 export function settleIngress(options: {
   conversationKey: string;
   ownerEventId: string;
@@ -455,8 +465,26 @@ export function settleIngress(options: {
   status: "completed" | "failed";
   result?: unknown;
   error?: string;
+  asyncResult?: AsyncResultSettlement;
 }): Promise<number> {
   return runtime.mutate("settleIngress", options);
+}
+
+/**
+ * The envelope settlement that records an async run's outcome. A run waiting on
+ * approval or input completes its envelope with what it waits on.
+ */
+export function outcomeSettlement(
+  outcome: AsyncAgentOutcome,
+): IngressSettlement {
+  if (outcome.status === "completed") {
+    return { status: "completed", result: outcome.response };
+  }
+  if (outcome.status === "failed") {
+    return { status: "failed", error: outcome.error };
+  }
+
+  return { status: "completed", result: outcome };
 }
 
 /** Takes the next FIFO follow-up or contiguous collect application, settling first when given one. */

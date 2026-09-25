@@ -40,6 +40,7 @@ import {
   isInternalCorePath,
   matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
+  normalizePathname,
 } from "./routes.ts";
 import { RateLimiter } from "./rate-limiter.ts";
 import {
@@ -83,7 +84,7 @@ export interface GatewayConfig {
   denyInternalPaths: boolean;
   httpLimiter: RateLimiter | undefined;
   limits: GatewayLimits;
-  proxyOptions: ProxyOptions;
+  proxyOptions: Omit<ProxyOptions, "path">;
   spentTickets: SpentTickets;
   terminalTicketSecrets: string[];
   upgradeLimiter: RateLimiter;
@@ -118,10 +119,13 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
     server: Bun.Server<GatewayData>,
     requestId: string,
   ): Promise<Response | undefined> {
+    // Every decision below and the upstream see one path, so a trailing slash
+    // never moves a request to the other plane.
     const url = new URL(request.url);
+    const pathname = normalizePathname(url.pathname);
 
     if (
-      (url.pathname === "/" || url.pathname === "/healthz") &&
+      (pathname === "/" || pathname === "/healthz") &&
       request.method === "GET"
     ) {
       return json(
@@ -186,9 +190,9 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       pendingUpgrades += 1;
       try {
         let data: GatewayData | undefined;
-        const observabilityPath = matchObservabilityWebSocketPath(url.pathname);
-        const agentWebSocketPath = matchAgentWebSocketPath(url.pathname);
-        if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
+        const observabilityPath = matchObservabilityWebSocketPath(pathname);
+        const agentWebSocketPath = matchAgentWebSocketPath(pathname);
+        if (pathname === TERMINAL_WEBSOCKET_PATH) {
           const token = websocketToken(request);
           const opened = openTerminalTicketWithSecrets(
             token,
@@ -208,7 +212,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           // and reason the browser can show, where a 401 here would be a mute 1006.
           if (!ticket) config.authFailureLimiter.allow(ip);
           data = { kind: "terminal", ticket: ticket };
-        } else if (url.pathname === MACHINE_WEBSOCKET_PATH) {
+        } else if (pathname === MACHINE_WEBSOCKET_PATH) {
           // Core checks the daemon's bearer and refuses with a close code.
           const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
@@ -263,7 +267,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
             }
             data = {
               kind: "agent-test",
-              corePath: url.pathname.slice(0, -"/ws".length),
+              corePath: pathname.slice(0, -"/ws".length),
               token: token,
               coreBaseUrl: resolved.coreBaseUrl,
               accountId: scope.accountId,
@@ -307,7 +311,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       );
     }
 
-    if (isConfigHttpPath(url.pathname, request.method)) {
+    if (isConfigHttpPath(pathname, request.method)) {
       if (!config.configBaseUrl)
         return jsonError(
           503,
@@ -317,18 +321,20 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       return proxyHttp(request, [config.configBaseUrl], {
         ...config.proxyOptions,
         requestId: requestId,
+        path: `${pathname}${url.search}`,
       });
     }
 
     if (
-      !isCoreHttpRoute(url.pathname) ||
-      (config.denyInternalPaths && isInternalCorePath(url.pathname))
+      !isCoreHttpRoute(pathname) ||
+      (config.denyInternalPaths && isInternalCorePath(pathname))
     )
       return jsonError(404, "Not found");
 
     return proxyHttp(request, config.coreBaseUrls, {
       ...config.proxyOptions,
       requestId: requestId,
+      path: `${pathname}${url.search}`,
     });
   }
 

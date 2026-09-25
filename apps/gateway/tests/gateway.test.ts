@@ -1561,6 +1561,7 @@ test("proxyHttp strips hop-by-hop headers and preserves method query and body", 
         body: "hello",
       }),
       ["https://core.example"],
+      { path: "/v1/agents?debug=1" },
     );
 
     expect(response.status).toBe(200);
@@ -1597,6 +1598,7 @@ test("proxyHttp falls through to the next upstream only on 401", async () => {
     const response = await proxyHttp(
       new Request("https://gateway.example/status/request-1"),
       ["https://dev.example", "https://prod.example"],
+      { path: "/status/request-1" },
     );
 
     expect(response.status).toBe(200);
@@ -3216,6 +3218,7 @@ test("proxyHttp never replays a POST to the next upstream after a network error"
         body: "{}",
       }),
       ["https://dev.example", "https://prod.example"],
+      { path: "/v1/runs" },
     );
 
     expect(response.status).toBe(502);
@@ -3229,6 +3232,7 @@ test("proxyHttp returns 502 when every upstream is unreachable", async () => {
   const response = await proxyHttp(
     new Request("https://gateway.example.com/v1/agents"),
     ["http://127.0.0.1:9", "http://127.0.0.1:1"],
+    { path: "/v1/agents" },
   );
   expect(response.status).toBe(502);
   expect(await response.json()).toMatchObject({
@@ -3703,8 +3707,10 @@ test("proxyHttp drops a client X-Account-Id unless told to forward it, and alway
         },
         body: "{}",
       });
-    await proxyHttp(request(), ["https://core.example"]);
+    const path = "/v1/sandboxes/sb_1/terminate";
+    await proxyHttp(request(), ["https://core.example"], { path: path });
     await proxyHttp(request(), ["https://core.example"], {
+      path: path,
       forwardAccountId: true,
     });
 

@@ -3,7 +3,6 @@
  */
 
 import { v } from "convex/values";
-import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import type { CanvasNode } from "../canvas";
@@ -13,6 +12,7 @@ import {
   mergeCanvasSandboxes,
 } from "../model/agentRules";
 import {
+  deleteAgentRow,
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
   syncAgentRowFields,
@@ -250,16 +250,7 @@ export const remove = mutation({
       : null;
     const agent = normalized ? await ctx.db.get(normalized) : null;
     const foreignAgent = agent !== null && agent.accountId !== accountId;
-    if (agent && !foreignAgent) {
-      await ctx.db.delete(agent._id);
-      // Its conversations, queued work and status rows are keyed by agent
-      // and nothing else would ever collect them. Batches continue on their
-      // own, so this is scheduled rather than awaited to completion.
-      await ctx.scheduler.runAfter(0, internal.runtime.deleteAgentRuntimeData, {
-        accountId: agent.accountId,
-        agentId: agent._id,
-      });
-    }
+    if (agent && !foreignAgent) await deleteAgentRow(ctx, agent);
 
     await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
       projectId: existing.projectId,

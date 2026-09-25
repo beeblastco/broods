@@ -26,8 +26,8 @@ import {
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
-  markAsyncAgentResultCompleted,
-  markAsyncAgentResultFailed,
+  recordAsyncAgentResult,
+  type AsyncAgentOutcome,
 } from "./async-agent-result.ts";
 import {
   readAgentFullStream,
@@ -40,7 +40,7 @@ import {
   createAgentHookDispatcher,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
-import { acceptIngress } from "./ingress.ts";
+import { acceptIngress, outcomeSettlement } from "./ingress.ts";
 import type { IngressDispatchScope } from "./integrations.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
@@ -127,6 +127,8 @@ export class SubagentCoordinator {
     Omit<SubagentCompletion, "status" | "response" | "error" | "visibleResult">
   >();
   private readonly waiters = new Set<() => void>();
+  // Child runs whose outcome is recorded; a later failure never overwrites it.
+  private readonly recorded = new Set<string>();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -563,17 +565,18 @@ export class SubagentCoordinator {
       );
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
-      await childSession
-        .settleIngress("failed", { error: errorText })
-        .catch((settlementError) => {
-          logError("Failed to settle subagent ingress failure", {
-            taskId: task.taskId,
-            error:
-              settlementError instanceof Error
-                ? settlementError.message
-                : String(settlementError),
-          });
+      await this.recordOutcome(childSession, task, {
+        status: "failed",
+        error: errorText,
+      }).catch((settlementError: unknown): void => {
+        logError("Failed to record subagent failure", {
+          taskId: task.taskId,
+          error:
+            settlementError instanceof Error
+              ? settlementError.message
+              : String(settlementError),
         });
+      });
       await this.drainChildConversation(
         childSession,
         task,
@@ -599,8 +602,8 @@ export class SubagentCoordinator {
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
-    await markAsyncAgentResultCompleted({
-      eventId: task.eventId,
+    await this.recordOutcome(childSession, task, {
+      status: "completed",
       response: finalResponse,
     });
     await this.completeTask({
@@ -612,16 +615,8 @@ export class SubagentCoordinator {
       status: "completed",
       response: finalResponse,
     });
-    // The durable result is authoritative. Settlement and queued-drain failures
-    // must not turn this completed task into a second failed completion.
-    await childSession
-      .settleIngress("completed", { result: finalResponse })
-      .catch((error) => {
-        logError("Failed to settle completed subagent ingress", {
-          taskId: task.taskId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+    // The durable result is authoritative. A queued-drain failure must not
+    // turn this completed task into a second failed completion.
     await this.drainChildConversation(
       childSession,
       task,
@@ -633,6 +628,35 @@ export class SubagentCoordinator {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+  }
+
+  /**
+   * Records a child run's outcome on its envelope and polling row in one
+   * mutation, once. A child that owns no envelope, or whose settle fails,
+   * still records the row.
+   */
+  private async recordOutcome(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+    outcome: AsyncAgentOutcome,
+  ): Promise<void> {
+    if (this.recorded.has(task.eventId)) return;
+    const { status, ...settlement } = outcomeSettlement(outcome);
+    const settled = await childSession
+      .settleIngress(status, {
+        ...settlement,
+        asyncResult: { eventIds: [task.eventId], outcome: outcome },
+      })
+      .catch((error: unknown): boolean => {
+        logError("Failed to settle subagent ingress", {
+          taskId: task.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        return false;
+      });
+    if (!settled) await recordAsyncAgentResult(task.eventId, outcome);
+    this.recorded.add(task.eventId);
   }
 
   /**
@@ -804,9 +828,12 @@ export class SubagentCoordinator {
   private async completeTask(completion: SubagentCompletion): Promise<void> {
     const shouldInjectToParent = this.pending.has(completion.taskId);
 
-    if (completion.status === "failed") {
-      await markAsyncAgentResultFailed({
-        eventId: completion.eventId,
+    if (
+      completion.status === "failed" &&
+      !this.recorded.has(completion.eventId)
+    ) {
+      await recordAsyncAgentResult(completion.eventId, {
+        status: "failed",
         error: completion.error ?? "Subagent task failed",
       }).catch((error) => {
         logError("Failed to mark subagent task failed", {

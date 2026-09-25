@@ -24,11 +24,14 @@ import {
   type ConversationDispatchTarget,
   type IngressCandidate,
 } from "../src/harness/ingress.ts";
+import * as harness from "../src/harness/harness.ts";
+import type { AgentReplyHooks } from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
 import type {
   ChannelInboundEvent,
   DirectInboundEvent,
 } from "../src/harness/integrations.ts";
+import type { PendingQuestionSummary } from "../src/harness/questions.ts";
 import { Session } from "../src/harness/session.ts";
 import { getStorage } from "../src/shared/storage.ts";
 
@@ -245,13 +248,269 @@ describe("async turn without model input", (): void => {
       (): null => null,
     );
 
+    // The cron run records the run's own outcome, not the write that failed.
     expect(failRun).toHaveBeenCalledWith(
       "acct_1",
       "cron_1",
       "run_1",
-      "convex down",
+      "Request did not produce pending model input",
     );
   });
+});
+
+describe("async turn that throws after it settles", (): void => {
+  afterEach((): void => {
+    mock.restore();
+  });
+
+  it("records pending questions whose write the loop swallowed", async (): Promise<void> => {
+    const question: PendingQuestionSummary = {
+      statusId: "status-1",
+      questions: [],
+      answerBy: "2026-09-25T00:00:00.000Z",
+    };
+    const settle = stubTurn(
+      [],
+      async (reply): Promise<PendingQuestionSummary[]> => {
+        // The harness catches a callback's throw and only marks the step failed.
+        await reply.onQuestionsPending?.([question]).catch((): void => {});
+
+        return [question];
+      },
+    );
+    settle.mockRejectedValueOnce(new Error("settle failed"));
+    const takeNext = spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: completedEvent(),
+    }).catch((): void => {});
+
+    expect(
+      settle.mock.calls.map(([options]) => options.asyncResult?.outcome.status),
+    ).toEqual(["awaiting_input", "awaiting_input"]);
+    expect(takeNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps pending questions when a kept final text follows them", async (): Promise<void> => {
+    const question: PendingQuestionSummary = {
+      statusId: "status-1",
+      questions: [],
+      answerBy: "2026-09-25T00:00:00.000Z",
+    };
+    // An earlier pass's final text is replayed after a later pass asks.
+    const settle = stubTurn(
+      [],
+      async (reply): Promise<PendingQuestionSummary[]> => {
+        await reply.onFinalText("answer");
+        await reply.onQuestionsPending?.([question]);
+
+        return [question];
+      },
+    );
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    const completeRun = spyOn(
+      getStorage().crons,
+      "completeRun",
+    ).mockResolvedValue();
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: {
+        ...completedEvent(),
+        cronRun: { cronId: "cron_1", runId: "run_1" },
+      },
+    });
+
+    expect(
+      settle.mock.calls.map(([options]) => options.asyncResult?.outcome.status),
+    ).toEqual(["awaiting_input"]);
+    expect(completeRun).not.toHaveBeenCalled();
+  });
+
+  it("retries the pending questions when their settle fails before a kept final text", async (): Promise<void> => {
+    const question: PendingQuestionSummary = {
+      statusId: "status-1",
+      questions: [],
+      answerBy: "2026-09-25T00:00:00.000Z",
+    };
+    const settle = stubTurn(
+      [],
+      async (reply): Promise<PendingQuestionSummary[]> => {
+        await reply.onFinalText("answer");
+        await reply.onQuestionsPending?.([question]).catch((): void => {});
+
+        return [question];
+      },
+    );
+    settle.mockRejectedValueOnce(new Error("settle failed"));
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: completedEvent(),
+    });
+
+    expect(
+      settle.mock.calls.map(([options]) => options.asyncResult?.outcome.status),
+    ).toEqual(["awaiting_input", "awaiting_input"]);
+  });
+
+  it("records the answer on the polling rows when the settle loses the lease", async (): Promise<void> => {
+    const writes: Array<{ name: string; status?: unknown }> = [];
+    stubCompletedTurn(writes).mockRejectedValue(
+      new Error("Stale conversation owner generation"),
+    );
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: completedEvent(),
+    }).catch((): void => {});
+
+    expect(
+      writes.filter((write) => write.name === "updateAsyncAgentResult"),
+    ).toEqual([{ name: "updateAsyncAgentResult", status: "completed" }]);
+  });
+
+  it("pushes the channel reply before it settles the cron run", async (): Promise<void> => {
+    stubCompletedTurn([]);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(getStorage().crons, "completeRun").mockRejectedValue(
+      new Error("cron write failed"),
+    );
+    const replyOwnerCheck = spyOn(
+      Session.prototype,
+      "assertCurrentOwner",
+    ).mockResolvedValue();
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: {
+        ...completedEvent(),
+        cronRun: { cronId: "cron_1", runId: "run_1" },
+        replyTarget: { channelName: "slack", source: { channelId: "C1" } },
+      },
+    }).catch((): void => {});
+
+    expect(replyOwnerCheck).toHaveBeenCalled();
+  });
+
+  it("retries a failed cron settle with the recorded outcome", async (): Promise<void> => {
+    stubCompletedTurn([]);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    const completeRun = spyOn(getStorage().crons, "completeRun")
+      .mockRejectedValueOnce(new Error("cron write failed"))
+      .mockResolvedValue();
+    const failRun = spyOn(getStorage().crons, "failRun").mockResolvedValue();
+
+    const error = await handler({
+      kind: "direct-api-async-worker",
+      event: {
+        ...completedEvent(),
+        cronRun: { cronId: "cron_1", runId: "run_1" },
+      },
+    }).catch((err: unknown): unknown => err);
+
+    expect(error).toEqual(new Error("cron write failed"));
+    expect(completeRun).toHaveBeenCalledTimes(2);
+    expect(failRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps the completed result when the next dispatch throws", async (): Promise<void> => {
+    const writes: Array<{ name: string; status?: unknown }> = [];
+    const settle = stubCompletedTurn(writes);
+    spyOn(ingress, "takeNextIngress").mockRejectedValue(
+      new Error("takeNext failed"),
+    );
+
+    const error = await handler({
+      kind: "direct-api-async-worker",
+      event: completedEvent(),
+    }).catch((err: unknown): unknown => err);
+
+    expect(error).toEqual(new Error("takeNext failed"));
+    expect(settle.mock.calls.map(([options]) => options.asyncResult)).toEqual([
+      {
+        eventIds: ["event-1"],
+        outcome: { status: "completed", response: "answer" },
+      },
+    ]);
+    expect(
+      writes.filter((write) => write.name === "updateAsyncAgentResult"),
+    ).toEqual([]);
+  });
+
+  /** An async event whose run ends with the final text "answer". */
+  function completedEvent(): DirectInboundEvent {
+    return {
+      ...candidate(),
+      publicEventId: "event-1",
+      publicConversationKey: "conversation-1",
+      events: [],
+      agentConfig: {},
+      ownerGeneration: 1,
+    };
+  }
+
+  /** Stubs a turn that ends with the final text "answer"; returns the settle spy. */
+  function stubCompletedTurn(
+    writes: Array<{ name: string; status?: unknown }>,
+  ): ReturnType<typeof spyOn<typeof ingress, "settleIngress">> {
+    return stubTurn(
+      writes,
+      async (reply): Promise<PendingQuestionSummary[]> => {
+        await reply.onFinalText("answer");
+
+        return [];
+      },
+    );
+  }
+
+  /**
+   * Stubs one model turn that `end` finishes through the loop's reply
+   * callbacks, returning the questions it leaves open; returns the settle spy.
+   */
+  function stubTurn(
+    writes: Array<{ name: string; status?: unknown }>,
+    end: (reply: AgentReplyHooks) => Promise<PendingQuestionSummary[]>,
+  ): ReturnType<typeof spyOn<typeof ingress, "settleIngress">> {
+    spyOn(runtime, "mutate").mockImplementation((async (
+      name: string,
+      args: Record<string, unknown>,
+    ) => {
+      writes.push({ name: name, status: args.status });
+
+      return null;
+    }) as never);
+    spyOn(runtime, "query").mockResolvedValue(null as never);
+    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
+    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    });
+    spyOn(harness, "runAgentLoop").mockImplementation((async (
+      _session: unknown,
+      _turn: unknown,
+      _config: unknown,
+      reply: AgentReplyHooks,
+    ) => {
+      const questions = await end(reply);
+
+      return {
+        traceId: (): undefined => undefined,
+        consumeStream: async (): Promise<void> => {},
+        questionSummaries: (): PendingQuestionSummary[] => questions,
+        didFail: (): boolean => false,
+        failureText: (): null => null,
+      };
+    }) as never);
+
+    return settle;
+  }
 });
 
 describe("channel senders", (): void => {

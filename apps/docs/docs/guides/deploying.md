@@ -18,7 +18,7 @@ Preview first with `broods diff`. It compares your code with the stage, includin
 
 ### Removing resources
 
-When the stage holds resources your code no longer declares, `broods dev` lists them and asks before deleting. A no is remembered, so it does not ask again for the same resources. `broods deploy` never deletes unless you pass `--prune`. A prune fails if a policy it would remove is still used by an agent or channel record.
+When the stage holds resources your code no longer declares, `broods dev` lists them and asks before deleting. A no is remembered, so it does not ask again for the same resources. `broods deploy` never deletes unless you pass `--prune`. A prune fails if a policy it would remove is still used by an agent or channel record. It only removes skills, hooks and MCP servers this stage created, and only once the deploy is accepted.
 
 ## Stages
 

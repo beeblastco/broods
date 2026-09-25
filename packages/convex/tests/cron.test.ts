@@ -39,6 +39,70 @@ describe("list", () => {
   });
 });
 
+describe("run history", () => {
+  test("a settled run keeps its first outcome, and a drained run settles as a no-op", async () => {
+    const tt = t();
+    const { accountId, agentId } = await seed(tt);
+    const [cron] = await tt.query(internal.agent.crons.list, {
+      accountId: accountId,
+      agentId: agentId,
+    });
+    const cronId = cron!._id;
+    const runId = await tt.mutation(internal.agent.crons.createRun, {
+      accountId: accountId,
+      cronId: cronId,
+      eventId: "event-1",
+      conversationKey: "api:cron",
+    });
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+    await tt.mutation(internal.agent.crons.failRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      error: "late throw",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+      result: "done",
+    });
+
+    await tt.run((ctx) => ctx.db.delete(runId));
+    await expect(
+      tt.mutation(internal.agent.crons.failRun, {
+        accountId: accountId,
+        cronId: cronId,
+        runId: runId,
+        error: "after the drain",
+      }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("agent delete", () => {
+  test("deleting an agent takes its crons and leaves the others", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, agentId } = await seed(tt);
+
+    await tt.mutation(internal.agent.agents.remove, {
+      accountId: accountId,
+      agentId: agentId,
+    });
+
+    expect(
+      (await tt.query(internal.agent.crons.list, { accountId: accountId })).map(
+        (cron): string => cron.name,
+      ),
+    ).toEqual(["theirs"]);
+  });
+});
+
 describe("translateScheduleExpression", () => {
   test("maps rate(...) to an interval", () => {
     expect(translateScheduleExpression("rate(2 hours)", undefined)).toEqual({

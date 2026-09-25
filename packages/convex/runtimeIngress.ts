@@ -13,7 +13,12 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { isPlainObject } from "./model/objects";
-import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
+import {
+  asyncAgentOutcomeValidator,
+  conversationEventArgs,
+  conversationEventsFromArgs,
+  writeAsyncAgentResult,
+} from "./runtime";
 import { ingressModeValidator, ingressStatusValidator } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 
@@ -612,8 +617,8 @@ export const maintain = internalMutation({
       const coordinator = await getCoordinator(ctx, row.conversationKey);
       if (
         row.status === "processing" &&
-        coordinator?.leaseExpiresAt &&
-        coordinator.leaseExpiresAt > now &&
+        coordinator &&
+        hasActiveOwner(coordinator, now) &&
         row.ownerGeneration === coordinator.ownerGeneration
       ) {
         // The owner is alive. Move the row off the head of the due range, or
@@ -640,8 +645,7 @@ export const maintain = internalMutation({
       } else if (
         coordinator?.ownerEventId &&
         row.ownerGeneration === coordinator.ownerGeneration &&
-        coordinator.leaseExpiresAt !== undefined &&
-        coordinator.leaseExpiresAt <= now
+        !hasActiveOwner(coordinator, now)
       ) {
         await ctx.db.patch(coordinator._id, {
           ownerEventId: undefined,
@@ -808,7 +812,12 @@ export const renewOwner = internalMutation({
   },
 });
 
-/** Settles every envelope whose work was applied to the current owner event. */
+/**
+ * Settles every envelope whose work was applied to the current owner event.
+ * An async run passes its polling rows as `asyncResult`; they are written in
+ * the same transaction, and only by the settle that finishes the owner's own
+ * envelope, so they can never disagree with it.
+ */
 export const settle = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -817,12 +826,24 @@ export const settle = internalMutation({
     status: v.union(v.literal("completed"), v.literal("failed")),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
+    asyncResult: v.optional(
+      v.object({
+        eventIds: v.array(v.string()),
+        outcome: asyncAgentOutcomeValidator,
+      }),
+    ),
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const coordinator = await requireOwner(ctx, args);
+    const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
+    if (args.asyncResult && settled.ownerFinished) {
+      for (const eventId of args.asyncResult.eventIds) {
+        await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
+      }
+    }
 
-    return settleAppliedEnvelopes(ctx, coordinator, args);
+    return settled.count;
   },
 });
 
@@ -1166,8 +1187,7 @@ async function expireStaleOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
 ): Promise<void> {
-  if (!coordinator.ownerEventId || !coordinator.leaseExpiresAt) return;
-  if (coordinator.leaseExpiresAt >= now) return;
+  if (!coordinator.ownerEventId || hasActiveOwner(coordinator, now)) return;
   const envelope = await ctx.db
     .query("runtimeIngressEnvelopes")
     .withIndex("by_eventId", (q) => q.eq("eventId", coordinator.ownerEventId!))
@@ -1198,11 +1218,17 @@ async function getCoordinator(
     .unique();
 }
 
-/** Returns whether the coordinator currently has an unexpired owner. */
+/**
+ * Whether the coordinator has an owner whose lease has not ended. A lease that
+ * ends this millisecond is still live; the fence and every expiry agree on it.
+ */
 function hasActiveOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
-): boolean {
+): coordinator is Doc<"runtimeConversationCoordinators"> & {
+  ownerEventId: string;
+  leaseExpiresAt: number;
+} {
   return Boolean(
     coordinator.ownerEventId &&
     coordinator.leaseExpiresAt &&
@@ -1440,8 +1466,7 @@ async function requireOwner(
     !coordinator ||
     coordinator.ownerEventId !== options.ownerEventId ||
     coordinator.ownerGeneration !== options.ownerGeneration ||
-    !coordinator.leaseExpiresAt ||
-    coordinator.leaseExpiresAt < now
+    !hasActiveOwner(coordinator, now)
   ) {
     throw new Error("Stale conversation owner generation");
   }
@@ -1449,7 +1474,12 @@ async function requireOwner(
   return coordinator;
 }
 
-/** Marks the owner event and every envelope applied to it terminal; used by `settle` and `takeNext`. */
+/**
+ * Marks the owner event and every envelope applied to it terminal; used by
+ * `settle` and `takeNext`.
+ * @returns how many envelopes it covered, and whether the owner's own envelope
+ * finished in this call
+ */
 async function settleAppliedEnvelopes(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1461,7 +1491,7 @@ async function settleAppliedEnvelopes(
     result?: unknown;
     error?: string;
   },
-): Promise<number> {
+): Promise<{ count: number; ownerFinished: boolean }> {
   const now = Date.now();
   // A failed settle that was preceded by /stop for this generation is a
   // deliberate stop, not a fault, so mark it and pollers can tell them apart.
@@ -1491,10 +1521,12 @@ async function settleAppliedEnvelopes(
     .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
     .unique();
   if (own?.conversationKey === args.conversationKey) ids.add(own._id);
+  let ownerFinished = false;
   for (const id of ids) {
     const row = await ctx.db.get(id);
-    if (!row || ["completed", "failed", "expired"].includes(row.status))
-      continue;
+    // Only running rows settle: a finished run stays finished, and a queued row
+    // never ran, so it waits for its own owner or expiry.
+    if (row?.status !== "processing") continue;
     await ctx.db.patch(id, {
       ...RELEASED_PAYLOAD,
       status: args.status,
@@ -1503,7 +1535,8 @@ async function settleAppliedEnvelopes(
       ...(args.result !== undefined ? { result: args.result } : {}),
       ...(args.error !== undefined ? { error: args.error } : {}),
     });
+    if (id === own?._id) ownerFinished = true;
   }
 
-  return ids.size;
+  return { count: ids.size, ownerFinished: ownerFinished };
 }

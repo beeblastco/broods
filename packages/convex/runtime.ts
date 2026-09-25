@@ -58,6 +58,15 @@ export const conversationEventArgs = {
   events: v.optional(v.array(v.object({ cursor: v.string(), event: v.any() }))),
 };
 
+/** How an async run ended, or what it waits on, as its polling row records it. */
+export const asyncAgentOutcomeValidator = v.object({
+  status: runtimeAsyncAgentResultsFields.status,
+  response: v.optional(v.any()),
+  error: v.optional(v.string()),
+  approvals: v.optional(v.array(v.any())),
+  questions: v.optional(v.array(v.any())),
+});
+
 const asyncAgentDoc = v.object({
   ...runtimeAsyncAgentResultsFields,
   _id: v.id("runtimeAsyncAgentResults"),
@@ -417,38 +426,50 @@ export const getAsyncAgentResult = internalQuery({
 });
 
 /**
+ * Records an async run's outcome on its polling row. Used by subagents and by
+ * async runs without a live ingress owner; `runtimeIngress.settle` writes the
+ * same row in the envelope's transaction.
  * @returns null after the result is updated
  */
 export const updateAsyncAgentResult = internalMutation({
-  args: {
-    eventId: v.string(),
-    status: runtimeAsyncAgentResultsFields.status,
-    response: v.optional(v.any()),
-    error: v.optional(v.string()),
-    approvals: v.optional(v.array(v.any())),
-    questions: v.optional(v.array(v.any())),
-  },
+  args: { eventId: v.string(), ...asyncAgentOutcomeValidator.fields },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .unique();
-    if (!row) throw new Error("Async agent result not found");
-    await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, {
-      status: args.status,
-      response: args.response,
-      error: args.error,
-      approvals: args.approvals,
-      questions: args.questions,
-      updatedAt: new Date().toISOString(),
-      expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
-    });
+    if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
+      throw new Error("Async agent result not found");
+    }
 
     return null;
   },
 });
+
+/**
+ * Patches the polling row for `eventId` with a run's outcome.
+ * @returns false when the row no longer exists
+ */
+export async function writeAsyncAgentResult(
+  ctx: MutationCtx,
+  eventId: string,
+  outcome: Infer<typeof asyncAgentOutcomeValidator>,
+): Promise<boolean> {
+  const row = await ctx.db
+    .query("runtimeAsyncAgentResults")
+    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+    .unique();
+  if (!row) return false;
+  await requireActiveAccount(ctx, row.accountId);
+  await ctx.db.patch(row._id, {
+    status: outcome.status,
+    response: outcome.response,
+    error: outcome.error,
+    approvals: outcome.approvals,
+    questions: outcome.questions,
+    updatedAt: new Date().toISOString(),
+    expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
+  });
+
+  return true;
+}
 
 /**
  * Creates an async tool row and registers it in its fan-in group atomically.
@@ -672,7 +693,6 @@ export const updateAsyncToolResult = internalMutation({
     status: runtimeAsyncToolResultsFields.status,
     response: v.optional(v.any()),
     error: v.optional(v.string()),
-    observed: v.optional(v.boolean()),
     onlyWhenProcessing: v.optional(v.boolean()),
   },
   returns: v.union(asyncToolDoc, v.null()),
@@ -696,26 +716,40 @@ export const updateAsyncToolResult = internalMutation({
             response: undefined,
             error: REPLACED_SANDBOX_ERROR,
           }
-        : {
-            status: args.status,
-            response:
-              args.observed !== undefined && args.response === undefined
-                ? row.response
-                : args.response,
-            error:
-              args.observed !== undefined && args.error === undefined
-                ? row.error
-                : args.error,
-          };
+        : { status: args.status, response: args.response, error: args.error };
     const patch = {
       ...outcome,
-      observed: args.observed ?? row.observed,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     };
     await ctx.db.patch(row._id, patch);
 
     return hideCompletionTokenHash({ ...row, ...patch });
+  },
+});
+
+/**
+ * Marks a finished async tool row observed, so its result is not delivered
+ * again. A row still running is left alone.
+ * @returns null after the row is marked or skipped
+ */
+export const observeAsyncToolResult = internalMutation({
+  args: { resultId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
+      .unique();
+    if (!row || row.status === "processing") return null;
+    await requireActiveAccount(ctx, row.accountId);
+    await ctx.db.patch(row._id, {
+      observed: true,
+      updatedAt: new Date().toISOString(),
+      expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
+    });
+
+    return null;
   },
 });
 

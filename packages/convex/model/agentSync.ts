@@ -11,6 +11,7 @@
  * ACCOUNT_CONFIG_ENCRYPTION_SECRET to match broods's runtime secret.
  */
 
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import {
@@ -31,6 +32,7 @@ import { accountIdForProject } from "./auditEvents";
 import { applyTidyLayout } from "./canvasLayout";
 import { refreshAccountChannelEndpoints } from "./channelEndpoints";
 import { redactConfigSecrets } from "./configValues";
+import { deleteCron } from "./cronSchedules";
 import { loadMcpServersByNode } from "./mcp";
 import { stableJson } from "./objects";
 
@@ -153,6 +155,29 @@ export async function backSyncCanvasFromAgentRow(
   await syncApiAgentCanvasWiring(ctx, {
     projectId: project._id,
     stageId: stage._id,
+  });
+}
+
+/**
+ * Deletes an `agents` row with everything keyed by it: its crons and their
+ * schedules now, its conversations and run state in background batches. Every
+ * path that deletes an agent (dashboard, config API, CLI, stage) comes here.
+ */
+export async function deleteAgentRow(
+  ctx: MutationCtx,
+  agent: Doc<"agents">,
+): Promise<void> {
+  const crons = await ctx.db
+    .query("crons")
+    .withIndex("by_accountId_and_agentId", (q) =>
+      q.eq("accountId", agent.accountId).eq("agentId", agent._id),
+    )
+    .collect();
+  for (const cron of crons) await deleteCron(ctx, cron);
+  await ctx.db.delete(agent._id);
+  await ctx.scheduler.runAfter(0, internal.runtime.deleteAgentRuntimeData, {
+    accountId: agent.accountId,
+    agentId: agent._id,
   });
 }
 

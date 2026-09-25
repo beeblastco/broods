@@ -7,6 +7,20 @@ import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
+/**
+ * Keys the local and remote configs never agree on: artifact bytes, which the
+ * server snapshot drops, and the upload handle a large MCP bundle is swapped
+ * for after the diff, which only the remote has. Each artifact's sha256 stays,
+ * so a content change still shows as an update.
+ */
+const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
+  "bundle",
+  "bundleStorageId",
+  "contentBase64",
+]);
+/** Resource kinds whose config carries artifact bytes the server keeps apart. */
+const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
+
 export interface SyncClientOptions {
   /**
    * Base URL serving the /v1/account/* control-plane routes: the Convex
@@ -681,12 +695,9 @@ function snapshotResource(
   resource: { kind: string; config: unknown } & Record<string, unknown>,
 ): unknown {
   const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (resource.kind !== "skill" && resource.kind !== "hook") return normalized;
+  if (!ARTIFACT_KINDS.has(resource.kind)) return normalized;
 
-  return {
-    ...normalized,
-    config: stripArtifactContent(normalized.config),
-  };
+  return { ...normalized, config: stripArtifactContent(normalized.config) };
 }
 
 function sortValue(value: unknown): unknown {
@@ -711,7 +722,7 @@ function stripArtifactContent(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).flatMap(([key, entry]) => {
-        if (key === "contentBase64" || key === "bundle") return [];
+        if (ARTIFACT_KEYS.has(key)) return [];
 
         return [[key, stripArtifactContent(entry)]];
       }),

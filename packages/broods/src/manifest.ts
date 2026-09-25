@@ -1715,6 +1715,8 @@ async function normalizeMcpConfig(
   return {
     ...(rewriteValues(rest) as Record<string, unknown>),
     bundle: bundle,
+    // The server hashes an inline bundle itself; the diff compares this.
+    sha256: sha256Hex(bundle),
   };
 }
 
