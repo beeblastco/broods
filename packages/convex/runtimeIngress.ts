@@ -1502,7 +1502,7 @@ async function settleAppliedEnvelopes(
   // Page by sequence so more than one drain batch of contributors still
   // settles; a fixed take() would leave the tail stuck in processing.
   let afterSequence = -1;
-  while (true) {
+  for (;;) {
     const rows = await ctx.db
       .query("runtimeIngressEnvelopes")
       .withIndex("by_conversationKey_and_appliedToEventId_and_sequence", (q) =>

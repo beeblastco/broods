@@ -273,7 +273,7 @@ export async function readCapped(
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;

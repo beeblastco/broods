@@ -860,7 +860,7 @@ async function runPoolRunner(
         }) + "\n",
       );
       const collected: Array<{ t: string; [key: string]: unknown }> = [];
-      while (true) {
+      for (;;) {
         const frame = await next();
         collected.push(frame);
         if (frame.t === "final" || frame.t === "error" || frame.t === "end")

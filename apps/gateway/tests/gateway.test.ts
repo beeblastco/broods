@@ -666,7 +666,8 @@ test("closes a zero-frame attach after durable completion and emits one terminal
   let statusReads = 0;
   const connection = zeroBufferConnection(async () => ({
     [Symbol.asyncIterator]: async function* () {
-      while (!consumerClosed) {
+      for (;;) {
+        if (consumerClosed) break;
         await Bun.sleep(10);
       }
     },
@@ -753,7 +754,8 @@ test("does not duplicate a streamed error when durable failure arrives without d
         ),
         ack: () => {},
       };
-      while (!consumerClosed) {
+      for (;;) {
+        if (consumerClosed) break;
         await Bun.sleep(10);
       }
     },
@@ -821,7 +823,8 @@ test("closes a zero-frame queued execute consumer after durable completion", asy
   let consumerClosed = false;
   const connection = zeroBufferConnection(async () => ({
     [Symbol.asyncIterator]: async function* () {
-      while (!consumerClosed) {
+      for (;;) {
+        if (consumerClosed) break;
         await Bun.sleep(10);
       }
     },
