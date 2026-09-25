@@ -1,3 +1,5 @@
+/** GitHub action requests use a fresh signing key and mocked API responses. */
+
 import {
   afterEach,
   beforeEach,
@@ -6,26 +8,17 @@ import {
   it,
   setSystemTime,
 } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import type { GitHubSource } from "../src/shared/github-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
 
-const TEST_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
-MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAMzqaeVzkNVUJzir
-DBrjhLD4tODAd7jL+H7ySrNqxRd8yvvpnd66syaFtM8oaXnSjpK9QhyUXSy5aSLp
-t+Oc49hp7VQcECLK38G8JintCevS66JREtqXfd7lTLigDXYvfd445FhN9QUi87VM
-h1NJRyID8Pq8ncZvocw9FAlHaK9TAgMBAAECgYBxFYBBPwiTofBPJp30jNCidW4k
-hjLLycymCgJNh0OjVZwTb3ZO/0t0m98PX6btstQ5iLZeXUYaM2wg90gjFWbq/3au
-Yena/lXbzNOV2+kgzHqpvnLEKerhLqdYomL7/bGVLOtzE3Gb6AMOn4UclRJ9o53D
-bW7ryJPsYC0A66BdkQJBAO3/V+1sdAOj5TdYswk6CHeol7jqs64EndMqwbMCCqP7
-2Q/8j/ki7RVfFkDIKpsX1mn60KlMOcD+q1qhYHmHG5kCQQDcanb4zrK0kcicG88a
-Was24iNhttawZrVZVh2BI5UpEPW0UI/yUIYNWOPp1ime2kmKduHrCmsdC9Z0rrCH
-fFXLAkA6PQKiKajV/zQm8ACXoGjUByBhcqVXTu/j7ZGKoVRDPmymWdJNT7ueQC9s
-2M58N0ATnPmUg/+Z93es7NJzypj5AkEAjoiaXtLrZTFQ1QJ2rseFnHwn/SxLMM96
-Pkcd1UC5WFELUos2SrAfv8nXuIMxbvQh0lSGS4P1OFdLWzEMHtEceQJAOnlnP5oP
-ovgrNGj9AGwL11bU+ZWdQbqcnG2cgbsZUZZzceuMbUE9luwFI2t0+M1pK+qYwy9Q
-MZJDcwOX3RDeTA==
------END PRIVATE KEY-----`;
+// Only the mocked GitHub API sees tokens signed by this per-process key.
+const TEST_PRIVATE_KEY = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+}).privateKey;
 
 describe("github outbound actions", () => {
   const originalFetch = globalThis.fetch;
