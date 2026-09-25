@@ -2,7 +2,8 @@
 
 /**
  * The active stage: the ?stage= search param when it names one of the
- * project's stages, else the project's default stage. The default is derived,
+ * project's stages, else the project's default stage, and null until the
+ * project's stages load. The default is derived,
  * never written to the URL on load, so a bare project URL stays bare and no
  * history write can discard a navigation the user started meanwhile.
  */
@@ -26,11 +27,11 @@ export function useStage(): {
     projectId ? { projectId: projectId } : "skip",
   ) as Doc<"stages">[] | undefined;
 
-  const stageParam = searchParams.get("stage") as Id<"stages"> | null;
-  const stageId =
-    stages?.length && !stages.some((stage) => stage._id === stageParam)
-      ? defaultStage(stages)._id
-      : stageParam;
+  const stageParam = searchParams.get("stage");
+  const stageId = stages?.length
+    ? (stages.find((stage) => stage._id === stageParam) ?? defaultStage(stages))
+        ._id
+    : null;
 
   const setStageId = useCallback(
     (id: Id<"stages"> | null) => {
