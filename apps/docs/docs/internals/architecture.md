@@ -184,14 +184,15 @@ sequenceDiagram
   H->>X: crons.getById
   alt missing or paused
     H-->>D: skipped
+  else refused by the plan
+    H->>X: markFailed
   else active
-    H->>X: markStarted
+    H->>X: createRun, the cron's last run
     H->>H: startScheduledAgentRun, mode reject
     alt worker started
-      H->>X: markCompleted
       Note over H,X: the run settles later through completeRun or failRun
     else start failed, such as a busy conversation
-      H->>X: markFailed
+      H->>X: failRun
     end
     opt one-time at(...) job
       H->>X: removeOneShotCron, on settle or at once if the start failed
@@ -201,7 +202,7 @@ sequenceDiagram
 
 1. A schedule in the Convex crons component fires `packages/convex/agent/crons.ts` `dispatch`.
 2. The action posts `{ kind: "cron", accountId, cronId, scheduledTime }` to core's in-cluster address (`BROODS_ACCOUNT_MANAGE_URL`) at `/v1/cron-runs` with the service token. The gateway answers `404` on that path.
-3. `handleScheduledCron` in `handler.ts` loads the job, skips it if paused, marks it started, and starts the run. A conversation key that names a live channel session resumes it and replies there.
+3. `handleScheduledCron` in `handler.ts` loads the job, skips it if paused, opens a run row and starts the run. The job's `lastStatus` follows its latest run row, so an older run that settles late cannot overwrite a newer one. A conversation key that names a live channel session resumes it and replies there.
 4. A one-time `at(...)` job is deleted when its run settles, or at once when the run fails to start.
 
 ### Config-plane call
