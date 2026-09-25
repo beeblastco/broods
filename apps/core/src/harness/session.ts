@@ -1704,12 +1704,8 @@ function projectEntriesToMessages(
         ];
       case "tool":
         return [event.message];
-      default: {
-        const unexpected: never = event.message;
-        throw new Error(
-          `Unsupported conversation message: ${typeof unexpected}`,
-        );
-      }
+      default:
+        throw new Error("Unsupported conversation message role");
     }
   });
 
