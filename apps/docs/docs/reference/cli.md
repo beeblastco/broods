@@ -153,7 +153,7 @@ On every sync `dev`:
 
 - pushes each `env("NAME")` value from `.env.local` that the stage does not already hold, like `env sync`
 - asks before deleting remote resources you removed from code
-- sends the stage revision it read, so a sync from another session in between refuses the write instead of overwriting it; `dev` then reads the stage again, reprints the diff and retries, up to three times, and asks again before any delete
+- sends the stage revision it read, so a sync from another session in between refuses the write instead of overwriting it; `dev` then reads the stage again, reprints the diff and tries again, three attempts in all, and asks again before any delete
 - regenerates `broods/_generated/`
 - prints each channel's webhook URL
 

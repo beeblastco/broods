@@ -1807,12 +1807,13 @@ async function syncDevOnce(
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
-  // Push creates/updates (and canvas wiring) immediately, undeleted.
+  // Push creates/updates (and canvas wiring) immediately, undeleted. A stage
+  // that does not exist yet is revision 0, so two first syncs still conflict.
   let result = await client.putManifest(
     manifest,
     false,
     false,
-    remote?.revision,
+    remote === null ? 0 : remote.revision,
   );
   await writeGeneratedFiles(
     manifest,
