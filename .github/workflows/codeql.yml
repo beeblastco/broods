@@ -19,6 +19,9 @@ on:
   schedule:
     - cron: "35 17 * * 2"
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})

@@ -24,6 +24,9 @@ concurrency:
   group: opa-policy-check-${{ github.ref_name }}
   cancel-in-progress: true
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   policy:
     runs-on: ubuntu-24.04

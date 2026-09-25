@@ -27,6 +27,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   validate:
     # main trusts PR CI; everything else (dev, manual dispatch) re-validates.
