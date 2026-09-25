@@ -25,6 +25,7 @@ import {
 } from "../model/auditEvents";
 import {
   accountFromSecretHash,
+  claimManifestRevision,
   assertEnvRefsResolved,
   assertSupportedWorkspaceSandboxMounts,
   authIdForAccount,
@@ -32,6 +33,7 @@ import {
   ensureStage,
   envName,
   isExternalResourceKind,
+  manifestRevision,
   resourceName,
   snapshotExternalConfig,
   type ExternalResourceKind,
@@ -354,23 +356,36 @@ export const ensureScopeBySecretHash = internalMutation({
     secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
+    revision: v.optional(v.number()),
   },
   returns: v.object({
     projectId: v.id("projects"),
     stageId: v.id("stages"),
+    revision: v.number(),
   }),
   handler: async (
     ctx,
     args,
-  ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> }> => {
+  ): Promise<{
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    revision: number;
+  }> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
+    // The PUT's first write, so a sync refused here writes nothing.
+    const revision = await claimManifestRevision(
+      ctx,
+      stageDoc._id,
+      args.revision,
+    );
 
     return {
       projectId: projectDoc._id,
       stageId: stageDoc._id,
+      revision: revision,
     };
   },
 });
@@ -446,7 +461,7 @@ export const getManifestBySecretHash = internalQuery({
   },
   returns: v.union(
     v.null(),
-    v.object({ manifest: v.any(), ids: idsValidator }),
+    v.object({ manifest: v.any(), ids: idsValidator, revision: v.number() }),
   ),
   handler: async (ctx, args) => {
     const { secretHash, project, stage } = args;
@@ -476,6 +491,7 @@ export const getManifestBySecretHash = internalQuery({
         resources: resources,
       },
       ids: ids,
+      revision: await manifestRevision(ctx, stageDoc._id),
     };
   },
 });

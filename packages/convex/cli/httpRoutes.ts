@@ -507,6 +507,7 @@ async function handleManifestSync(
     manifest?: unknown;
     prune?: boolean;
     rotateRuntimeKey?: boolean;
+    revision?: unknown;
   };
   const manifest = body.manifest;
   if (!manifest || typeof manifest !== "object") {
@@ -514,6 +515,12 @@ async function handleManifestSync(
   }
   if (!manifestMatchesRoute(manifest, route)) {
     return jsonError(400, "Manifest project/stage must match the request path");
+  }
+  if (
+    body.revision !== undefined &&
+    (typeof body.revision !== "number" || !Number.isInteger(body.revision))
+  ) {
+    return jsonError(400, "revision must be an integer");
   }
   const prune = body.prune === true;
   const originalManifest = manifest as CliManifest;
@@ -523,6 +530,7 @@ async function handleManifestSync(
       secretHash: secretHash,
       project: route.project,
       stage: route.stage,
+      revision: body.revision,
     },
   );
   // Skills and hooks are account-wide, so the org secret and a login token
@@ -653,6 +661,8 @@ async function handleManifestSync(
     }),
     warnings: { ...result.warnings, reservedResources: reservedResources },
     deployment: deployment,
+    // This sync's own revision: a later sync may already have claimed the next.
+    revision: scope.revision,
   });
 }
 

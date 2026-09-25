@@ -153,6 +153,7 @@ On every sync `dev`:
 
 - pushes each `env("NAME")` value from `.env.local` that the stage does not already hold, like `env sync`
 - asks before deleting remote resources you removed from code
+- sends the stage revision it read, so a sync from another session in between refuses the write instead of overwriting it; `dev` then reads the stage again, reprints the diff and retries, up to three times, and asks again before any delete
 - regenerates `broods/_generated/`
 - prints each channel's webhook URL
 
@@ -185,7 +186,7 @@ broods deploy [--prune] [--rotate-key] [--stage <name>]
 | `--prune`      | Delete remote resources the project no longer declares                           |
 | `--rotate-key` | Mint a fresh runtime key and write it to `.env.local`. The old key stops working |
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a rejected deploy removes nothing. A removed agent takes its cron jobs with it.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a rejected deploy removes nothing. A removed agent takes its cron jobs with it. `deploy` sends no stage revision, so it always applies, whatever another session synced.
 
 ## env
 
