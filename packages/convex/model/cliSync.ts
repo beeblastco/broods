@@ -388,6 +388,19 @@ export function resourceName(value: string): string {
   return trimmed;
 }
 
+/**
+ * Stand-in ids, shaped like native Convex ids, for the named resources a sync
+ * would create, so its id-keyed rules can run before any row exists.
+ */
+export function placeholderIds(names: string[]): Record<string, string> {
+  return Object.fromEntries(
+    names.map((name, index): [string, string] => [
+      name,
+      `placeholder${String(index).padStart(12, "0")}`,
+    ]),
+  );
+}
+
 export function rewriteEnvRefs(
   value: unknown,
   envNames: Set<string>,

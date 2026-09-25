@@ -50,6 +50,7 @@ import {
   resourcesForStage,
 } from "../model/cliSyncManifest";
 import {
+  assertManifestResources,
   deleteAgentResource,
   deleteSandboxResource,
   deleteWorkspaceResource,
@@ -882,6 +883,39 @@ export const setEnvBySecretHash = internalMutation({
       name: envName(name),
       value: value,
     });
+
+    return null;
+  },
+});
+
+/**
+ * Runs the rules `syncManifestBySecretHash` applies to a manifest, before the
+ * PUT uploads any of its skills, hooks or MCP servers. Their refs carry
+ * placeholder ids, since those rows may not exist yet.
+ */
+export const validateManifestForStage = internalQuery({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+    manifest: manifestValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const envValues = await loadEnvironmentVariableValues(
+      ctx,
+      args.projectId,
+      args.stageId,
+    );
+    const externalIds = await externalIdsForStage(
+      ctx,
+      args.projectId,
+      args.stageId,
+    );
+    assertManifestResources(
+      args.manifest.resources,
+      envValues,
+      externalIds.mcp,
+    );
 
     return null;
   },

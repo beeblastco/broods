@@ -75,15 +75,18 @@ def syncMcp (recs : List Record) (stage : Nat) (desired : List Nat) (prune : Boo
       row.stage != stage || desired.contains row.name || !ownedMcp recs stage row)
   else upserted
 
-/-- `handleManifestSync`: every external upsert, the main manifest sync, then
-`pruneExternalResources` with the records read at that point. A declared resource or a
-manifest that fails validation throws before any prune (`valid = false`); the upserts
-that landed before the throw are at most all of them. -/
+/-- `handleManifestSync`: `prepareExternalResources` and `validateManifest` run the
+manifest's rules on every declared resource first (`valid`), then every external upsert,
+the main manifest sync, and `pruneExternalResources` with the records read at that
+point. A manifest the rules refuse throws before the first write. Checks against live
+rows stay in the main sync and are not modelled here. -/
 def syncExternal (recs : List Record) (stage : Nat) (desired : List Key)
     (desiredMcp : List Nat) (prune valid : Bool) (fresh : Nat) (rows : List Row)
     (mcp : List McpRow) : List Row × List McpRow :=
-  let p := prune && valid
-  (syncAccount recs stage desired p fresh rows, syncMcp recs stage desiredMcp p fresh mcp)
+  if valid then
+    (syncAccount recs stage desired prune fresh rows,
+      syncMcp recs stage desiredMcp prune fresh mcp)
+  else (rows, mcp)
 
 /-! ## Properties -/
 
@@ -183,19 +186,12 @@ theorem mcp_prune_empty {recs : List Record} {stage fresh : Nat} {rows : List Mc
     Bool.or_eq_true, bne_iff_ne, Bool.not_eq_true'] at h
   exact h.2
 
-/-- A sync that fails validation removes nothing, whatever it prunes. -/
+/-- A sync that fails validation writes nothing: no upsert, no prune. -/
 theorem aborted_keeps {recs : List Record} {stage : Nat} {desired : List Key}
     {desiredMcp : List Nat} {prune : Bool} {fresh : Nat} {rows : List Row}
     {mcp : List McpRow} :
-    (∀ row ∈ rows,
-      row ∈ (syncExternal recs stage desired desiredMcp prune false fresh rows mcp).1) ∧
-      ∀ row ∈ mcp,
-        row ∈ (syncExternal recs stage desired desiredMcp prune false fresh rows mcp).2 := by
-  constructor
-  · intro row hr
-    simp [syncExternal, syncAccount, hr]
-  · intro row hr
-    simp [syncExternal, syncMcp, hr]
+    syncExternal recs stage desired desiredMcp prune false fresh rows mcp = (rows, mcp) :=
+  rfl
 
 /-! ## Findings, fixed, as executable witnesses -/
 
