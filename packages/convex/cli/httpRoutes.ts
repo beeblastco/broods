@@ -21,7 +21,7 @@ import {
   normalizeAccountHookUpload,
   type RequiredAccountHookUpload,
 } from "../model/accountHooks";
-import { normalizeMcpInput, type McpInput } from "../model/mcp";
+import { assertMcpRow, normalizeMcpInput, type McpInput } from "../model/mcp";
 import { normalizeCreateCronInput } from "../model/cronRules";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
@@ -537,8 +537,8 @@ async function handleManifestSync(
     )
       ? (await externalOwnership(ctx, accountId, scope.stageId)).foreign
       : new Set<string>();
-  // Every rule runs before the first write, so a manifest the sync refuses
-  // leaves the stage's skills, hooks and MCP servers as they were.
+  // The manifest's rules run before the first write, so a manifest they
+  // refuse leaves the stage's skills, hooks and MCP servers as they were.
   const external = await prepareExternalResources(
     ctx,
     originalManifest,
@@ -811,6 +811,26 @@ function stringField(value: unknown, label: string): string {
   return value;
 }
 
+/** One CLI skill file, decoded the way the workspace mirror stores it. */
+function skillNodeFile(
+  entry: unknown,
+  skillName: string,
+): { path: string; mimeType: string; bytes: ArrayBuffer } {
+  const file = asRecord(entry, `skill:${skillName}.files[]`);
+  const path = stringField(file.path, `skill:${skillName}.files[].path`);
+  const contentBase64 = stringField(
+    file.contentBase64,
+    `skill:${skillName}.files[].contentBase64`,
+  );
+
+  return {
+    path: path,
+    mimeType:
+      typeof file.contentType === "string" ? file.contentType : "text/plain",
+    bytes: base64ArrayBuffer(contentBase64),
+  };
+}
+
 async function syncCrons(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -956,6 +976,7 @@ async function prepareExternalResources(
       const files = asRecord(resource.config, `skill:${resource.name}`).files;
       if (!Array.isArray(files))
         throw new ClientError(`skill:${resource.name}.files must be an array`);
+      for (const entry of files) skillNodeFile(entry, resource.name);
 
       return { name: resource.name, files: files };
     });
@@ -1005,6 +1026,7 @@ async function prepareExternalResources(
       },
       { requireConnection: true },
     );
+    assertMcpRow({ ...input, transport: input.transport ?? "http" });
     mcp.push({ name: resource.name, input: input });
   }
 
@@ -1108,18 +1130,7 @@ async function syncSkillNodeFiles(
     if (!Array.isArray(files)) continue;
     const storedFiles = [];
     for (const entry of files) {
-      const file = asRecord(entry, `skill:${resource.name}.files[]`);
-      const path = stringField(
-        file.path,
-        `skill:${resource.name}.files[].path`,
-      );
-      const contentBase64 = stringField(
-        file.contentBase64,
-        `skill:${resource.name}.files[].contentBase64`,
-      );
-      const mimeType =
-        typeof file.contentType === "string" ? file.contentType : "text/plain";
-      const bytes = base64ArrayBuffer(contentBase64);
+      const { path, mimeType, bytes } = skillNodeFile(entry, resource.name);
       const storageId = await ctx.storage.store(
         new Blob([bytes], { type: mimeType }),
       );
@@ -1211,10 +1222,8 @@ async function validateManifest(
       mcp: placeholderIds(names("mcp")),
     }),
   });
-  for (const { job } of desiredCrons(
-    manifest,
-    placeholderIds(names("agent")),
-  )) {
+  const agentNames = names("agent").map((name) => resourceName(name));
+  for (const { job } of desiredCrons(manifest, placeholderIds(agentNames))) {
     normalizeCreateCronInput(job);
   }
 }

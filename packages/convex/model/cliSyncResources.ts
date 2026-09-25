@@ -37,6 +37,7 @@ import {
   rewriteResourceRefs,
   type CliResource,
 } from "./cliSync";
+import { normalizeChannelRecordResource } from "./cliSyncChannels";
 import { isPlainObject, stableJson } from "./objects";
 import {
   assertPolicyUnreferenced,
@@ -259,8 +260,9 @@ export async function sandboxConfigByName(
 
 /**
  * The rules the sync passes below apply to a manifest's resources, run without
- * writing so a manifest can be refused before anything of it is stored. Rows
- * the sync would create get placeholder ids.
+ * writing so a manifest they refuse is refused before anything of it is stored.
+ * Rows the sync would create get placeholder ids. Checks against live rows
+ * (name and place conflicts, policy references on prune) stay in the sync.
  */
 export function assertManifestResources(
   resources: CliResource[],
@@ -275,6 +277,11 @@ export function assertManifestResources(
     policies: placeholderIds(namesOf(resources, "policy")),
     mcp: mcpIds,
   };
+  const channelIds = {
+    agentIds: placeholderIds(namesOf(resources, "agent")),
+    workspaceIds: ids.workspaces,
+    policyIds: ids.policies,
+  };
   for (const resource of resources) {
     resourceName(resource.name);
     if (resource.kind === "workspace") {
@@ -285,6 +292,8 @@ export function assertManifestResources(
     } else if (resource.kind === "agent") {
       const config = rewriteEnvRefs(asObject(resource.config), new Set());
       fromNestedAgentConfig(rewriteResourceRefs(config, ids));
+    } else if (resource.kind === "channelRecord") {
+      normalizeChannelRecordResource(resource, channelIds);
     }
   }
 }
@@ -861,13 +870,14 @@ function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
  * non-declared string, e.g. a literal agent id, untouched) and re-pushes the
  * encrypted config so the runtime can dispatch the named subagents.
  */
+/** The names the sync keys a kind's ids by. */
 function namesOf(
   resources: CliResource[],
   kind: CliResource["kind"],
 ): string[] {
   return resources
     .filter((entry) => entry.kind === kind)
-    .map((entry) => entry.name);
+    .map((entry) => resourceName(entry.name));
 }
 
 async function resolveSubagentReferences(

@@ -889,8 +889,8 @@ export const setEnvBySecretHash = internalMutation({
 });
 
 /**
- * Refuses a manifest `syncManifestBySecretHash` would refuse, before the PUT
- * uploads any of its skills, hooks or MCP servers. Their refs carry
+ * Runs the rules `syncManifestBySecretHash` applies to a manifest, before the
+ * PUT uploads any of its skills, hooks or MCP servers. Their refs carry
  * placeholder ids, since those rows may not exist yet.
  */
 export const validateManifestForStage = internalQuery({

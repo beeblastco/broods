@@ -122,16 +122,8 @@ export async function syncChannelRecordResources(
     .collect();
 
   for (const resource of records) {
-    const name = resourceName(resource.name);
-    const input = resolveChannelRecordRefs(resource.config, options);
-    const platform = requireChannelRecordString(input.platform, "platform");
-    const externalId = requireChannelRecordString(
-      input.externalId,
-      "externalId",
-    );
-    // Same validation the CRUD route runs: a malformed manifest record must fail
-    // the deploy, not reach the webhook resolver at runtime.
-    const config = normalizeChannelRecordConfig(input.config);
+    const { name, platform, externalId, workspaceRef, config } =
+      normalizeChannelRecordResource(resource, options);
     await assertChannelRecordPlaceIsFree(ctx, {
       accountId: options.accountId,
       stageId: options.stageId,
@@ -147,8 +139,8 @@ export async function syncChannelRecordResources(
       stageId: options.stageId,
       platform: platform,
       externalId: externalId,
-      ...(typeof input.workspaceRef === "string"
-        ? { workspaceRef: input.workspaceRef }
+      ...(typeof workspaceRef === "string"
+        ? { workspaceRef: workspaceRef }
         : { workspaceRef: undefined }),
       name: name,
       description: resource.description,
@@ -171,6 +163,38 @@ export async function syncChannelRecordResources(
   }
 
   return ids;
+}
+
+/**
+ * A manifest channel record with its names resolved to ids and its config
+ * checked, without reading the database. The sync stores it; the manifest
+ * pre-check runs it with placeholder ids.
+ */
+export function normalizeChannelRecordResource(
+  resource: CliResource,
+  ids: {
+    agentIds: Record<string, string>;
+    workspaceIds: Record<string, string>;
+    policyIds: Record<string, string>;
+  },
+): {
+  name: string;
+  platform: string;
+  externalId: string;
+  workspaceRef: unknown;
+  config: ReturnType<typeof normalizeChannelRecordConfig>;
+} {
+  const input = resolveChannelRecordRefs(resource.config, ids);
+
+  return {
+    name: resourceName(resource.name),
+    platform: requireChannelRecordString(input.platform, "platform"),
+    externalId: requireChannelRecordString(input.externalId, "externalId"),
+    workspaceRef: input.workspaceRef,
+    // Same validation the CRUD route runs: a malformed manifest record must
+    // fail the deploy, not reach the webhook resolver at runtime.
+    config: normalizeChannelRecordConfig(input.config),
+  };
 }
 
 async function assertChannelRecordPlaceIsFree(

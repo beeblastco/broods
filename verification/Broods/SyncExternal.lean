@@ -75,10 +75,11 @@ def syncMcp (recs : List Record) (stage : Nat) (desired : List Nat) (prune : Boo
       row.stage != stage || desired.contains row.name || !ownedMcp recs stage row)
   else upserted
 
-/-- `handleManifestSync`: `prepareExternalResources` and `validateManifest` check every
-declared resource and the manifest first (`valid`), then every external upsert, the
-main manifest sync, and `pruneExternalResources` with the records read at that point.
-A manifest that fails validation throws before the first write. -/
+/-- `handleManifestSync`: `prepareExternalResources` and `validateManifest` run the
+manifest's rules on every declared resource first (`valid`), then every external upsert,
+the main manifest sync, and `pruneExternalResources` with the records read at that
+point. A manifest the rules refuse throws before the first write. Checks against live
+rows stay in the main sync and are not modelled here. -/
 def syncExternal (recs : List Record) (stage : Nat) (desired : List Key)
     (desiredMcp : List Nat) (prune valid : Bool) (fresh : Nat) (rows : List Row)
     (mcp : List McpRow) : List Row × List McpRow :=

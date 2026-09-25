@@ -120,6 +120,33 @@ describe("cli prune of external resources", () => {
     expect(await activeNames(tt)).toEqual(before);
   });
 
+  test("a cron naming an agent declared with padded whitespace still syncs", async () => {
+    const tt = t();
+    await seedAccount(tt);
+
+    const response = await pruneAll(tt, [
+      {
+        kind: "agent",
+        name: " reporter ",
+        config: {
+          model: { provider: "custom", modelId: "Qwen3.6-27B" },
+          agent: { system: "Write the report." },
+        },
+      },
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ]);
+
+    expect(response.status).toBe(200);
+  });
+
   test("a cron naming an unknown agent is refused before anything syncs", async () => {
     const tt = t();
     await seedAccount(tt);
@@ -133,11 +160,16 @@ describe("cli prune of external resources", () => {
       {
         kind: "cron",
         name: "nightly",
-        config: { agentId: "missing", scheduleExpression: "rate(1 day)" },
+        config: {
+          agentId: "missing",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
       },
     ]);
 
     expect(response.status).toBe(400);
+    expect(await response.text()).toContain("unknown deployed agent: missing");
     expect(await activeNames(tt)).toEqual({ hooks: [], mcp: [], recorded: [] });
   });
 
