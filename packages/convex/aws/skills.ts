@@ -51,18 +51,28 @@ export const createSkill = internalAction({
   },
   returns: storedSkill,
   handler: async (_ctx, args): Promise<StoredSkill> => {
-    const files = await resolveSkillBundleFiles(args.input);
-    const { metadata } = validateSkillBundle(files);
-    if (
-      args.expectedName !== undefined &&
-      metadata.name !== args.expectedName
-    ) {
-      throw new ClientError(
-        "Skill name in SKILL.md must match the requested skill name",
+    const files = await validatedSkillFiles(args.input, args.expectedName);
+
+    return await createOrReplaceSkill(args.accountId, files);
+  },
+});
+
+/**
+ * Checks CLI skill bundles the way `createSkill` does, without storing them,
+ * so a manifest sync can refuse a bad one before it uploads anything.
+ */
+export const validateSkills = internalAction({
+  args: { skills: v.array(v.object({ name: v.string(), files: v.any() })) },
+  returns: v.null(),
+  handler: async (_ctx, args): Promise<null> => {
+    for (const skill of args.skills) {
+      await validatedSkillFiles(
+        { source: "files", files: skill.files },
+        skill.name,
       );
     }
 
-    return await createOrReplaceSkill(args.accountId, files);
+    return null;
   },
 });
 
@@ -168,4 +178,20 @@ async function resolveSkillBundleFiles(
     default:
       throw new ClientError("source must be one of: json, files, github");
   }
+}
+
+/** Resolves a bundle and applies `createSkill`'s rules, name match included. */
+async function validatedSkillFiles(
+  input: unknown,
+  expectedName: string | undefined,
+): Promise<SkillBundleFile[]> {
+  const files = await resolveSkillBundleFiles(input);
+  const { metadata } = validateSkillBundle(files);
+  if (expectedName !== undefined && metadata.name !== expectedName) {
+    throw new ClientError(
+      "Skill name in SKILL.md must match the requested skill name",
+    );
+  }
+
+  return files;
 }

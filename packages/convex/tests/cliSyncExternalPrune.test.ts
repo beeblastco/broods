@@ -98,6 +98,49 @@ describe("cli prune of external resources", () => {
     expect(await activeNames(tt)).toEqual(before);
   });
 
+  test("a manifest the sync rejects uploads no MCP server first", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    const before = await activeNames(tt);
+
+    const response = await pruneAll(tt, [
+      {
+        kind: "mcp",
+        name: "search",
+        config: { transport: "http", url: "https://mcp.example.com/mcp" },
+      },
+      {
+        kind: "agent",
+        name: "support",
+        config: { instructions: { __beeblastEnv: true, name: "UNSET_VALUE" } },
+      },
+    ]);
+
+    expect(response.status).toBe(400);
+    expect(await activeNames(tt)).toEqual(before);
+  });
+
+  test("a cron naming an unknown agent is refused before anything syncs", async () => {
+    const tt = t();
+    await seedAccount(tt);
+
+    const response = await pruneAll(tt, [
+      {
+        kind: "mcp",
+        name: "search",
+        config: { transport: "http", url: "https://mcp.example.com/mcp" },
+      },
+      {
+        kind: "cron",
+        name: "nightly",
+        config: { agentId: "missing", scheduleExpression: "rate(1 day)" },
+      },
+    ]);
+
+    expect(response.status).toBe(400);
+    expect(await activeNames(tt)).toEqual({ hooks: [], mcp: [], recorded: [] });
+  });
+
   test("removes this stage's skills and their files, keeps another stage's", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);

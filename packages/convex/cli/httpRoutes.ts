@@ -12,12 +12,17 @@ import type { CliManifest, GeneratedIds } from "./types";
 import { terminateReservedInstances } from "../config/routes/shared";
 import {
   isExternalResourceKind,
+  placeholderIds,
   resourceName,
   type ExternalResourceKind,
 } from "../model/cliSync";
 import { reservedBy } from "../model/cliSyncResources";
-import { normalizeAccountHookUpload } from "../model/accountHooks";
-import { normalizeMcpInput } from "../model/mcp";
+import {
+  normalizeAccountHookUpload,
+  type RequiredAccountHookUpload,
+} from "../model/accountHooks";
+import { normalizeMcpInput, type McpInput } from "../model/mcp";
+import { normalizeCreateCronInput } from "../model/cronRules";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
@@ -83,6 +88,13 @@ type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
  * is what keeps a stage-scoped deploy key from replacing them.
  */
 type ForeignExternalResources = ReadonlySet<string>;
+
+/** A manifest's skills, hooks and MCP servers, checked before any is stored. */
+type PreparedExternal = {
+  skills: Array<{ name: string; files: unknown[] }>;
+  hooks: Array<{ name: string; upload: RequiredAccountHookUpload }>;
+  mcp: Array<{ name: string; input: McpInput }>;
+};
 
 /**
  * Who manages the account's external resources. `owned` maps, per kind, each
@@ -525,12 +537,19 @@ async function handleManifestSync(
     )
       ? (await externalOwnership(ctx, accountId, scope.stageId)).foreign
       : new Set<string>();
+  // Every rule runs before the first write, so a manifest the sync refuses
+  // leaves the stage's skills, hooks and MCP servers as they were.
+  const external = await prepareExternalResources(
+    ctx,
+    originalManifest,
+    foreign,
+  );
+  await validateManifest(ctx, scope, originalManifest);
   const externalIds = await syncExternalResources(
     ctx,
     accountId,
     scope,
-    originalManifest,
-    foreign,
+    external,
   );
   const recordExternal = (pruneRecords: boolean): Promise<null> =>
     ctx.runMutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
@@ -858,12 +877,11 @@ async function syncExternalResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   scope: ProjectStageScope,
-  manifest: CliManifest,
-  foreign: ForeignExternalResources,
+  external: PreparedExternal,
 ): Promise<ExternalIds> {
-  const skills = await syncSkillResources(ctx, accountId, manifest, foreign);
-  const hooks = await syncHookResources(ctx, accountId, manifest, foreign);
-  const mcp = await syncMcpResources(ctx, accountId, scope, manifest);
+  const skills = await syncSkillResources(ctx, accountId, external.skills);
+  const hooks = await syncHookResources(ctx, accountId, external.hooks);
+  const mcp = await syncMcpResources(ctx, accountId, scope, external.mcp);
 
   return { skills: skills, hooks: hooks, mcp: mcp };
 }
@@ -871,10 +889,8 @@ async function syncExternalResources(
 async function syncHookResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  manifest: CliManifest,
-  foreign: ForeignExternalResources,
+  desired: PreparedExternal["hooks"],
 ): Promise<Record<string, string>> {
-  const desired = manifest.resources.filter((entry) => entry.kind === "hook");
   if (desired.length === 0) return {};
   const existingHooks = await ctx.runQuery(internal.account.hooks.list, {
     accountId: accountId,
@@ -882,7 +898,74 @@ async function syncHookResources(
   const existing = new Map(existingHooks.map((hook) => [hook.name, hook]));
   const ids: Record<string, string> = {};
 
-  for (const resource of desired) {
+  for (const { name, upload } of desired) {
+    const current = existing.get(name);
+    const bundleStorageKey =
+      current?.sha256 === upload.sha256
+        ? current.bundleStorageKey
+        : await putHookBundle(ctx, {
+            accountId: accountId,
+            sha256: upload.sha256,
+            bundle: upload.bundle,
+          });
+    if (current) {
+      await ctx.runMutation(internal.account.hooks.update, {
+        accountId: accountId,
+        hookId: current._id,
+        name: upload.name,
+        ...(upload.description !== undefined
+          ? { description: upload.description }
+          : {}),
+        events: upload.events,
+        bundleStorageKey: bundleStorageKey,
+        sha256: upload.sha256,
+      });
+      ids[name] = current._id;
+    } else {
+      const hookId = await ctx.runMutation(internal.account.hooks.create, {
+        accountId: accountId,
+        name: upload.name,
+        ...(upload.description !== undefined
+          ? { description: upload.description }
+          : {}),
+        events: upload.events,
+        bundleStorageKey: bundleStorageKey,
+        sha256: upload.sha256,
+      });
+      ids[name] = hookId;
+    }
+  }
+
+  return ids;
+}
+
+/**
+ * Checks and normalizes the manifest's skills, hooks and MCP servers, all of
+ * them before the first upload, so one bad entry cannot leave the others
+ * written.
+ */
+async function prepareExternalResources(
+  ctx: ActionCtx,
+  manifest: CliManifest,
+  foreign: ForeignExternalResources,
+): Promise<PreparedExternal> {
+  const skills = manifest.resources
+    .filter((entry) => entry.kind === "skill")
+    .map((resource) => {
+      assertNotForeign(foreign, "skill", resource.name);
+      const files = asRecord(resource.config, `skill:${resource.name}`).files;
+      if (!Array.isArray(files))
+        throw new ClientError(`skill:${resource.name}.files must be an array`);
+
+      return { name: resource.name, files: files };
+    });
+  if (skills.length > 0) {
+    await ctx.runAction(internal.aws.skills.validateSkills, { skills: skills });
+  }
+  const hooks: PreparedExternal["hooks"] = [];
+  for (const resource of manifest.resources.filter(
+    (entry) => entry.kind === "hook",
+  )) {
     assertNotForeign(foreign, "hook", resource.name);
     const config = asRecord(resource.config, `hook:${resource.name}`);
     const events = config.events;
@@ -905,44 +988,27 @@ async function syncHookResources(
       },
       { requireBundle: true },
     );
-    const current = existing.get(resource.name);
-    const bundleStorageKey =
-      current?.sha256 === upload.sha256
-        ? current.bundleStorageKey
-        : await putHookBundle(ctx, {
-            accountId: accountId,
-            sha256: upload.sha256,
-            bundle: upload.bundle,
-          });
-    if (current) {
-      await ctx.runMutation(internal.account.hooks.update, {
-        accountId: accountId,
-        hookId: current._id,
-        name: upload.name,
-        ...(upload.description !== undefined
-          ? { description: upload.description }
+    hooks.push({ name: resource.name, upload: upload });
+  }
+  const mcp: PreparedExternal["mcp"] = [];
+  for (const resource of manifest.resources.filter(
+    (entry) => entry.kind === "mcp",
+  )) {
+    const config = asRecord(resource.config, `mcp:${resource.name}`);
+    const input = await normalizeMcpInput(
+      {
+        name: resource.name,
+        ...(resource.description !== undefined
+          ? { description: resource.description }
           : {}),
-        events: upload.events,
-        bundleStorageKey: bundleStorageKey,
-        sha256: upload.sha256,
-      });
-      ids[resource.name] = current._id;
-    } else {
-      const hookId = await ctx.runMutation(internal.account.hooks.create, {
-        accountId: accountId,
-        name: upload.name,
-        ...(upload.description !== undefined
-          ? { description: upload.description }
-          : {}),
-        events: upload.events,
-        bundleStorageKey: bundleStorageKey,
-        sha256: upload.sha256,
-      });
-      ids[resource.name] = hookId;
-    }
+        ...config,
+      },
+      { requireConnection: true },
+    );
+    mcp.push({ name: resource.name, input: input });
   }
 
-  return ids;
+  return { skills: skills, hooks: hooks, mcp: mcp };
 }
 
 /**
@@ -954,9 +1020,8 @@ async function syncMcpResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   scope: ProjectStageScope,
-  manifest: CliManifest,
+  desired: PreparedExternal["mcp"],
 ): Promise<Record<string, string>> {
-  const desired = manifest.resources.filter((entry) => entry.kind === "mcp");
   if (desired.length === 0) return {};
   const existingServers = await ctx.runQuery(
     internal.account.mcp.listForStage,
@@ -969,19 +1034,8 @@ async function syncMcpResources(
   );
   const ids: Record<string, string> = {};
 
-  for (const resource of desired) {
-    const config = asRecord(resource.config, `mcp:${resource.name}`);
-    const input = await normalizeMcpInput(
-      {
-        name: resource.name,
-        ...(resource.description !== undefined
-          ? { description: resource.description }
-          : {}),
-        ...config,
-      },
-      { requireConnection: true },
-    );
-    const current = existing.get(resource.name);
+  for (const { name, input } of desired) {
+    const current = existing.get(name);
     const bundleStorageKey = await storeMcpBundle(
       ctx,
       accountId,
@@ -1019,7 +1073,7 @@ async function syncMcpResources(
           ...patch,
         });
       }
-      ids[resource.name] = current._id;
+      ids[name] = current._id;
     } else {
       const serverId = await ctx.runMutation(internal.account.mcp.create, {
         accountId: accountId,
@@ -1027,7 +1081,7 @@ async function syncMcpResources(
         stageId: scope.stageId,
         ...patch,
       });
-      ids[resource.name] = serverId;
+      ids[name] = serverId;
     }
   }
 
@@ -1092,24 +1146,16 @@ async function syncSkillNodeFiles(
 async function syncSkillResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  manifest: CliManifest,
-  foreign: ForeignExternalResources,
+  desired: PreparedExternal["skills"],
 ): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
-  for (const resource of manifest.resources.filter(
-    (entry) => entry.kind === "skill",
-  )) {
-    assertNotForeign(foreign, "skill", resource.name);
-    const config = asRecord(resource.config, `skill:${resource.name}`);
-    const files = config.files;
-    if (!Array.isArray(files))
-      throw new ClientError(`skill:${resource.name}.files must be an array`);
+  for (const { name, files } of desired) {
     const skill = await ctx.runAction(internal.aws.skills.createSkill, {
       accountId: accountId,
-      expectedName: resource.name,
+      expectedName: name,
       input: { source: "files", files: files },
     });
-    ids[resource.name] = skill.path;
+    ids[name] = skill.path;
   }
 
   return ids;
@@ -1141,4 +1187,34 @@ async function terminateDoomedInstances(
   await terminateReservedInstances(ctx, auth.accountId, (instance): boolean =>
     holders.some((holder): boolean => reservedBy(instance, holder)),
   );
+}
+
+/**
+ * Runs the manifest sync's and the cron sync's rules without writing. Rows the
+ * sync would create get placeholder ids.
+ */
+async function validateManifest(
+  ctx: ActionCtx,
+  scope: ProjectStageScope,
+  manifest: CliManifest,
+): Promise<void> {
+  const names = (kind: CliManifest["resources"][number]["kind"]): string[] =>
+    manifest.resources
+      .filter((entry) => entry.kind === kind)
+      .map((entry) => entry.name);
+  await ctx.runQuery(internal.cli.sync.validateManifestForStage, {
+    projectId: scope.projectId,
+    stageId: scope.stageId,
+    manifest: rewriteExternalResourceRefs(manifest, {
+      skills: placeholderIds(names("skill")),
+      hooks: placeholderIds(names("hook")),
+      mcp: placeholderIds(names("mcp")),
+    }),
+  });
+  for (const { job } of desiredCrons(
+    manifest,
+    placeholderIds(names("agent")),
+  )) {
+    normalizeCreateCronInput(job);
+  }
 }
