@@ -7,7 +7,7 @@ import {
   mock,
   spyOn,
 } from "bun:test";
-import { readFileSync } from "node:fs";
+import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 import * as actualAi from "ai";
@@ -2672,11 +2672,13 @@ describe("runAgentLoop", () => {
       systemContextSnapshot: { cursor: null, messages: [] },
     } as never;
 
+    const bedrockApiKey = crypto.randomUUID();
+    const gatewayApiKey = crypto.randomUUID();
     const bedrockStream = await runAgentLoop(baseSession, turn, {
       provider: {
         bedrock: {
           region: "us-east-1",
-          apiKey: "bedrock-key",
+          apiKey: bedrockApiKey,
         },
       },
       model: {
@@ -2688,7 +2690,7 @@ describe("runAgentLoop", () => {
 
     expect(createBedrockMock).toHaveBeenCalledWith({
       region: "us-east-1",
-      apiKey: "bedrock-key",
+      apiKey: bedrockApiKey,
       fetch: expect.any(Function),
     });
     expect(bedrockModelMock).toHaveBeenCalledWith("amazon.nova-lite-v1:0");
@@ -2698,7 +2700,7 @@ describe("runAgentLoop", () => {
     const gatewayStream = await runAgentLoop(baseSession, turn, {
       provider: {
         vercel: {
-          apiKey: "gateway-key",
+          apiKey: gatewayApiKey,
         },
       },
       model: {
@@ -2714,7 +2716,7 @@ describe("runAgentLoop", () => {
     await gatewayStream.consumeStream();
 
     expect(createGatewayMock).toHaveBeenCalledWith({
-      apiKey: "gateway-key",
+      apiKey: gatewayApiKey,
       fetch: expect.any(Function),
     });
     expect(gatewayModelMock).toHaveBeenCalledWith("openai/gpt-5.4");
@@ -3070,19 +3072,10 @@ describe("tool.call span duration", () => {
 // The lifecycle webhook opens a pinned socket, so the test resolves the hook's
 // name to the loopback address its own TLS server listens on. Only loopback is
 // exempted; every other address still meets the real denylist.
-const HOOK_TLS_CERT = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-cert.pem", import.meta.url),
-  "utf8",
-);
-const HOOK_TLS_KEY = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-key.pem", import.meta.url),
-  "utf8",
-);
-
 function hookTransport(): PinnedFetchTransport {
   return {
     allowAddresses: ["127.0.0.1"],
-    ca: HOOK_TLS_CERT,
+    ca: TLS_CERT,
     lookup: async (): Promise<{ address: string; family: number }[]> => [
       { address: "127.0.0.1", family: 4 },
     ],
@@ -3100,7 +3093,7 @@ async function startHookServer(
   delivered: HookDelivery[],
 ): Promise<{ port: number; server: Server }> {
   const server = createHttpsServer(
-    { cert: HOOK_TLS_CERT, key: HOOK_TLS_KEY },
+    { cert: TLS_CERT, key: TLS_KEY },
     (request, response) => {
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));

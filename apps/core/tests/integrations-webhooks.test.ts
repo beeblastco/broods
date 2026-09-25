@@ -1,3 +1,5 @@
+/** Channel routing fixtures use credentials generated for this test process. */
+
 import { afterEach, describe, expect, it } from "bun:test";
 import {
   createIncomingEventRouter as createCoreIncomingEventRouter,
@@ -11,17 +13,19 @@ import {
 } from "../src/shared/otel.ts";
 import { coreRequest } from "./helpers/http.ts";
 
+const TELEGRAM_WEBHOOK_SECRET = crypto.randomUUID();
+
 const TEST_ACCOUNT = {
   accountId: "acct_test",
   username: "test-account",
   description: "Test account",
-  secretHash: "hash",
+  secretHash: crypto.randomUUID(),
   status: "active" as const,
   config: {
     channels: {
       telegram: {
         botToken: "bot-token",
-        webhookSecret: "telegram-secret",
+        webhookSecret: TELEGRAM_WEBHOOK_SECRET,
         allowedChannelIds: ["123"],
       },
     },
@@ -215,7 +219,7 @@ describe("account webhook ingress", () => {
         channels: {
           telegram: {
             botToken: "bot-token",
-            webhookSecret: "telegram-secret",
+            webhookSecret: TELEGRAM_WEBHOOK_SECRET,
             allowedChannelIds: ["123"],
           },
         },
@@ -635,7 +639,7 @@ function createZaloEvent(
 function createTelegramEvent(
   body: unknown = telegramUpdate(),
   headers: Record<string, string> = {
-    "x-telegram-bot-api-secret-token": "telegram-secret",
+    "x-telegram-bot-api-secret-token": TELEGRAM_WEBHOOK_SECRET,
   },
   rawPath = "/v1/webhooks/acct_test/telegram",
   rawQueryString = "",

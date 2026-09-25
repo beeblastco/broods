@@ -51,7 +51,10 @@ const ENV_FIXTURE: Readonly<Record<string, string>> = {
   TOOL_BUNDLES_BUCKET_NAME: "broods-prod-tool-bundles",
   TOOLS_JSON: JSON.stringify({
     slack: { botToken: "xoxb-fixture-1029384756-abcdefghij" },
-    github: { appId: "884412", privateKey: "-----BEGIN RSA PRIVATE KEY-----" },
+    github: {
+      appId: "884412",
+      privateKey: "test-only-private-key-placeholder",
+    },
     linear: { apiKey: "lin_api_fixture_5a6b7c8d9e0f" },
   }),
   WORKSPACE_BUCKET_NAME: "broods-prod-workspaces",
