@@ -175,8 +175,8 @@ interface CronStore {
     cronId: string,
     patch: UpdateCronInput,
   ): Promise<CronRecord | null>;
-  markStarted(accountId: string, cronId: string): Promise<void>;
-  markCompleted(accountId: string, cronId: string): Promise<void>;
+  // Records a fire that failed before it had a run row; a run's own settle
+  // records the rest.
   markFailed(accountId: string, cronId: string, error: string): Promise<void>;
   createRun(
     input: Omit<CronRunRecord, "runId" | "status" | "startedAt">,

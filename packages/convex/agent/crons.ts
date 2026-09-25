@@ -49,12 +49,6 @@ const cronDoc = v.object({
   _creationTime: v.number(),
 });
 
-const cronLastStatusValidator = v.union(
-  v.literal("started"),
-  v.literal("completed"),
-  v.literal("failed"),
-);
-
 const cronRunDoc = v.object({
   ...cronRunsFields,
   _id: v.id("cronRuns"),
@@ -118,7 +112,10 @@ export const create = internalMutation({
   },
 });
 
-/** Creates a cron job run history row when a schedule fires. */
+/**
+ * Creates a cron job run history row when a schedule fires, and makes it the
+ * run the cron's last status follows.
+ */
 export const createRun = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -135,11 +132,21 @@ export const createRun = internalMutation({
       );
     }
 
-    return await ctx.db.insert("cronRuns", {
+    const startedAt = Date.now();
+    const runId = await ctx.db.insert("cronRuns", {
       ...args,
       status: "started",
-      startedAt: Date.now(),
+      startedAt: startedAt,
     });
+    await ctx.db.patch(cron._id, {
+      lastRunId: runId,
+      lastStatus: "started",
+      lastError: undefined,
+      lastInvokedAt: startedAt,
+      updatedAt: startedAt,
+    });
+
+    return runId;
   },
 });
 
@@ -380,22 +387,17 @@ export const pruneExpiredRuns = internalMutation({
 });
 
 /**
- * Records the result of an invocation. Status transitions:
- * undefined -> started -> completed | failed.
+ * Records a fire that failed before it had a run row, such as a plan refusal.
+ * It detaches the last run, so an older run settling later leaves it alone.
  */
-export const recordInvocation = internalMutation({
+export const recordFailedFire = internalMutation({
   args: {
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
-    lastStatus: cronLastStatusValidator,
-    lastError: v.optional(v.string()),
-    lastInvokedAt: v.optional(v.number()),
+    error: v.string(),
   },
   returns: v.null(),
-  handler: async (
-    ctx,
-    { accountId, cronId, lastStatus, lastError, lastInvokedAt },
-  ): Promise<null> => {
+  handler: async (ctx, { accountId, cronId, error }): Promise<null> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) {
       throw new ClientError(
@@ -403,11 +405,13 @@ export const recordInvocation = internalMutation({
       );
     }
 
+    const now = Date.now();
     await ctx.db.patch(cronId, {
-      lastStatus: lastStatus,
-      lastError: lastError,
-      lastInvokedAt: lastInvokedAt ?? Date.now(),
-      updatedAt: Date.now(),
+      lastRunId: undefined,
+      lastStatus: "failed",
+      lastError: error,
+      lastInvokedAt: now,
+      updatedAt: now,
     });
 
     return null;
@@ -579,9 +583,10 @@ async function getOwnedByString(
 }
 
 /**
- * Records a run's outcome once, for `completeRun` and `failRun`. A run already
- * settled, or drained with its one-time cron, is left alone; a run of another
- * account or cron is refused.
+ * Records a run's outcome once, for `completeRun` and `failRun`, and on the
+ * cron while it is still the cron's last run. A run already settled, or
+ * drained with its one-time cron, is left alone; a run of another account or
+ * cron is refused.
  */
 async function settleRun(
   ctx: MutationCtx,
@@ -602,7 +607,16 @@ async function settleRun(
     );
   }
   if (run.status !== "started") return null;
-  await ctx.db.patch(ids.runId, { ...outcome, completedAt: Date.now() });
+  const now = Date.now();
+  await ctx.db.patch(ids.runId, { ...outcome, completedAt: now });
+  const cron = await ctx.db.get(ids.cronId);
+  if (cron?.lastRunId === ids.runId) {
+    await ctx.db.patch(ids.cronId, {
+      lastStatus: outcome.status,
+      lastError: outcome.status === "failed" ? outcome.error : undefined,
+      updatedAt: now,
+    });
+  }
 
   return null;
 }

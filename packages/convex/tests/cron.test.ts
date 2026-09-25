@@ -83,6 +83,53 @@ describe("run history", () => {
       }),
     ).resolves.toBeNull();
   });
+
+  test("an older run settling late leaves the newer run's status on the cron", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const older = await startRun(tt, accountId, cronId, "event-a");
+    const newer = await startRun(tt, accountId, cronId, "event-b");
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: newer,
+      result: "done",
+    });
+    await tt.mutation(internal.agent.crons.failRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: older,
+      error: "already processing another turn",
+    });
+
+    const cron = await tt.run((ctx) => ctx.db.get(cronId));
+    expect(cron).toMatchObject({ lastRunId: newer, lastStatus: "completed" });
+    expect(cron?.lastError).toBeUndefined();
+  });
+
+  test("a run settling after a refused fire leaves the refusal on the cron", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await startRun(tt, accountId, cronId, "event-a");
+
+    await tt.mutation(internal.agent.crons.recordFailedFire, {
+      accountId: accountId,
+      cronId: cronId,
+      error: "monthly compute allowance used",
+    });
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+      lastStatus: "failed",
+      lastError: "monthly compute allowance used",
+    });
+  });
 });
 
 describe("agent delete", () => {
@@ -412,6 +459,19 @@ describe("CLI cron delete", () => {
   });
 });
 
+/** Seeds an account and returns its agent's cron. */
+async function firstCron(
+  tt: T,
+): Promise<{ accountId: Id<"accounts">; cronId: Id<"crons"> }> {
+  const { accountId, agentId } = await seed(tt);
+  const [cron] = await tt.query(internal.agent.crons.list, {
+    accountId: accountId,
+    agentId: agentId,
+  });
+
+  return { accountId: accountId, cronId: cron!._id };
+}
+
 async function seed(
   tt: T,
 ): Promise<{ accountId: Id<"accounts">; agentId: Id<"agents"> }> {
@@ -454,5 +514,19 @@ async function seed(
     }
 
     return { accountId: accountId, agentId: agentId };
+  });
+}
+
+async function startRun(
+  tt: T,
+  accountId: Id<"accounts">,
+  cronId: Id<"crons">,
+  eventId: string,
+): Promise<Id<"cronRuns">> {
+  return await tt.mutation(internal.agent.crons.createRun, {
+    accountId: accountId,
+    cronId: cronId,
+    eventId: eventId,
+    conversationKey: "api:cron",
   });
 }
