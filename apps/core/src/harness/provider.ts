@@ -66,6 +66,9 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 const DEFAULT_MODEL_MAX_RETRIES = 5;
 
 // The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s".
+// Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
+const MAX_RETRY_HEADER_MS = 59_999;
+
 const RATE_LIMIT_WAIT_PATTERN = /try again in (\d+(?:\.\d+)?)\s*(ms|s)\b/i;
 
 /**
@@ -627,12 +630,16 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
     return response;
   }
   const body = await response.text();
-  const match = RATE_LIMIT_WAIT_PATTERN.exec(body);
+  const [, amount, unit] = RATE_LIMIT_WAIT_PATTERN.exec(body) ?? [];
   const headers = new Headers(response.headers);
-  if (match) {
-    const waitMs =
-      Number(match[1]) * (match[2]!.toLowerCase() === "s" ? 1000 : 1);
-    headers.set("retry-after-ms", String(Math.ceil(waitMs)));
+  if (amount !== undefined && unit !== undefined) {
+    const waitMs = Number(amount) * (unit.toLowerCase() === "s" ? 1000 : 1);
+    // The SDK ignores a retry header of 60s or more, so a longer wait is
+    // spread over the retries at the longest delay it honours.
+    headers.set(
+      "retry-after-ms",
+      String(Math.min(Math.ceil(waitMs), MAX_RETRY_HEADER_MS)),
+    );
   }
 
   return new Response(body, {
