@@ -249,20 +249,32 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Waits for one of this turn's subagents to settle, up to `timeoutMs` or the
-   * parent's wait budget. get_subagent_status uses it, so a status check spends
-   * one model step per change instead of one per instant "processing".
+   * Waits until one of this turn's subagents records its outcome or settles, up
+   * to `timeoutMs` or the parent's wait budget. get_subagent_status uses it, so a
+   * status check spends one model step per change instead of one per instant
+   * "processing". It returns before the child's queued follow-ups drain.
    */
   async waitForSettled(taskId: string, timeoutMs: number): Promise<void> {
     const pending = this.pending.get(taskId);
     if (!pending) {
       return;
     }
-    const budgetMs = Math.max(
-      Math.min(timeoutMs, this.waitUntilMs - Date.now()),
-      0,
-    );
-    await Promise.race([pending, sleep(budgetMs)]);
+    const eventId = this.pendingMetadata.get(taskId)?.eventId;
+    const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
+    const settled = pending.then((): boolean => true);
+    while (
+      Date.now() < deadline &&
+      !(eventId !== undefined && this.recorded.has(eventId))
+    ) {
+      const done = await Promise.race([
+        settled,
+        this.nextStateChange().then((): boolean => false),
+        sleep(deadline - Date.now()).then((): boolean => false),
+      ]);
+      if (done) {
+        return;
+      }
+    }
   }
 
   /**
@@ -697,6 +709,7 @@ export class SubagentCoordinator {
       });
     if (!settled) await recordAsyncAgentResult(task.eventId, outcome);
     this.recorded.add(task.eventId);
+    this.notifyCompletion();
   }
 
   /**
