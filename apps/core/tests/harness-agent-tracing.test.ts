@@ -11,6 +11,8 @@ mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
       },
     },
   }),
+  harnessReservationKey: (options: { conversationKey: string }): string =>
+    options.conversationKey,
   openAiSdkHarnessSession: async () => ({ destroy: async () => {} }),
   parkAiSdkHarnessSession: async () => {},
 }));
@@ -32,6 +34,7 @@ it("hands a harness agent the same step and tool hooks as streamText", async () 
         environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         applySteeringIngress: async () => null,
+        loadHarnessSession: async () => null,
         loadHarnessSkills: async () => [],
         renewConversationLease: async () => ({ renewed: true }),
         loadRefreshedSystemPromptParts: async () => ({
