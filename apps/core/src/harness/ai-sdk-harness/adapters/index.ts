@@ -65,6 +65,16 @@ const HARNESS_SESSION_PARKING: Record<
   pi: "stop",
 };
 
+// Every adapter but Pi starts a bridge that binds one fixed port per machine, so
+// two of its conversations cannot run on one machine at once.
+const HARNESS_SHARES_SANDBOX: Record<AiSdkHarnessType, boolean> = {
+  "claude-code": false,
+  codex: false,
+  deepagents: false,
+  opencode: false,
+  pi: true,
+};
+
 export function createAiSdkHarnessAdapter(
   type: AiSdkHarnessType,
   settings?: AiSdkHarnessSettings,
@@ -122,4 +132,8 @@ export function harnessSessionParking(
   type: AiSdkHarnessType,
 ): AiSdkHarnessSessionParking {
   return HARNESS_SESSION_PARKING[type];
+}
+
+export function harnessSharesSandbox(type: AiSdkHarnessType): boolean {
+  return HARNESS_SHARES_SANDBOX[type];
 }
