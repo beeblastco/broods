@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const GALLERY_URL = `${process.env.E2E_BASE_URL ?? "http://localhost:3000"}/ui-gallery?tab=credential-copy`;
+const GALLERY_URL = "/ui-gallery?tab=credential-copy";
 
 test("copies a masked credential only after an active click succeeds", async ({
   page,

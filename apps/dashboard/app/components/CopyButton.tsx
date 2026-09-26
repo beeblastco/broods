@@ -83,7 +83,7 @@ export function useCopied(value: string): {
   copied: boolean;
   copy: () => void;
 } {
-  const [copied, setCopied] = useState(false);
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
@@ -94,20 +94,20 @@ export function useCopied(value: string): {
       !navigator.userActivation?.isActive ||
       !navigator.clipboard
     ) {
-      setCopied(false);
+      setCopiedValue(null);
       return;
     }
     // Credential export is intentional on Copy. Never copy in the background,
     // read the user's clipboard, or clear a later clipboard entry with a timer.
     void navigator.clipboard.writeText(value).then(
       () => {
-        setCopied(true);
+        setCopiedValue(value);
         clearTimeout(timer.current);
-        timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+        timer.current = setTimeout(() => setCopiedValue(null), COPIED_MS);
       },
-      () => setCopied(false),
+      () => setCopiedValue(null),
     );
   }
 
-  return { copied: copied, copy: copy };
+  return { copied: copiedValue === value, copy: copy };
 }
