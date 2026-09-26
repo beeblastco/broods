@@ -137,6 +137,32 @@ it("waits for a running subagent before answering its status", async () => {
   expect(delivered).toEqual([childEventId]);
 });
 
+it("does not wait on a task paired with the wrong agent", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  runtime.query = mock(async () => ({
+    accountId: ACCOUNT_ID,
+    eventId: scopedDirectEventId(ACCOUNT_ID, "other-agent", taskId),
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "wait"),
+    status: "processing",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  })) as never;
+  const waitForSettled = mock(async (): Promise<void> => {});
+  const { default: getStatus } =
+    await import("../src/harness/tools/get-subagent-status.tool.ts");
+  const tools = getStatus({
+    accountId: ACCOUNT_ID,
+    eventId: PARENT_EVENT_ID,
+    watch: { waitForSettled: waitForSettled, markDelivered: (): void => {} },
+  });
+
+  await expect(
+    execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
+  ).rejects.toThrow("no subagent task found");
+  expect(waitForSettled).not.toHaveBeenCalled();
+});
+
 it("preserves a completed subagent response as structured output", async () => {
   const taskId = createSubagentTaskId(PARENT_EVENT_ID);
   const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
