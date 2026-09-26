@@ -54,6 +54,15 @@ export const stagesFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * A stage's manifest revision, bumped by every manifest sync. Its own row, so a
+ * sync never invalidates subscriptions on `stages`.
+ */
+export const stageSyncsFields = {
+  stageId: v.id("stages"),
+  revision: v.number(),
+};
+
 /** Minimal agent config fields; extra UI settings are stored as optional fields. */
 export const agentConfigsFields = {
   authId: v.string(),
@@ -880,6 +889,8 @@ export const runtimeHarnessSessionsFields = {
   ),
   sessionId: v.string(),
   resumeState: v.any(),
+  /** Reservation the session's sandbox runs on. Unset rows predate it and ran on the conversation key. */
+  reservationKey: v.optional(v.string()),
   updatedAt: v.number(),
 };
 /** Context-only webhook event dedupe claims. */
@@ -1071,6 +1082,8 @@ export const sandboxReservationsFields = {
   reservationKey: v.string(),
   externalId: v.string(),
   expiresAt: v.number(),
+  /** Idle window this reservation was claimed with; unset means the 7-day default. */
+  ttlSeconds: v.optional(v.number()),
 };
 
 /**
@@ -1096,6 +1109,10 @@ export const cronsFields = {
     v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
   ),
   lastError: v.optional(v.string()),
+  // The run `lastStatus` mirrors: only that run's settle may change it.
+  // `lastInvokedAt` is that fire's scheduled time, so an older fire never
+  // takes the status back.
+  lastRunId: v.optional(v.id("cronRuns")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -1284,6 +1301,7 @@ export default defineSchema({
     "slug",
   ]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
+  stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
   agentConfigs: defineTable(agentConfigsFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_agentId", ["agentId"]),

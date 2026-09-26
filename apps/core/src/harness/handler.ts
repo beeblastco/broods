@@ -18,6 +18,7 @@ import {
   isOneTimeSchedule,
   withScheduledRunContext,
   type CronRecord,
+  type CronRunRecord,
 } from "../shared/domain/cron.ts";
 import {
   booleanEnv,
@@ -474,19 +475,17 @@ async function handleScheduledCron(
 
     return null;
   }
+  const firedAt = scheduledFireTime(event.scheduledTime);
   const { refusal } = await admitRun(job.accountId);
   if (refusal) {
     // A refused fire is spent like a failed one, one-shot included.
-    await crons.markFailed(job.accountId, job.cronId, refusal.message);
+    await crons.markFailed(job.accountId, job.cronId, refusal.message, firedAt);
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
 
     return refusal;
   }
-
-  await crons.markStarted(job.accountId, job.cronId);
-  const firedAt = scheduledFireTime(event.scheduledTime);
 
   try {
     const result = await startScheduledAgentRun(job, firedAt);
@@ -497,7 +496,6 @@ async function handleScheduledCron(
       eventId: result.eventId,
       conversationKey: result.conversationKey,
     });
-    await crons.markCompleted(job.accountId, job.cronId);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logError("Cron agent run failed", {
@@ -506,7 +504,6 @@ async function handleScheduledCron(
       agentId: job.agentId,
       error: error,
     });
-    await crons.markFailed(job.accountId, job.cronId, error);
     // The schedule is spent whether or not the run started, so retire the job
     // here too. The settle path never reached it.
     if (isOneTimeSchedule(job.scheduleExpression)) {
@@ -2450,13 +2447,18 @@ async function startScheduledAgentRun(
   job: CronRecord,
   firedAt: Date,
 ): Promise<{ eventId: string; conversationKey: string }> {
-  const event = await createCronDirectEvent(job, firedAt);
-  const run = await getStorage().crons.createRun({
-    accountId: job.accountId,
-    cronId: job.cronId,
-    eventId: event.publicEventId,
-    conversationKey: event.publicConversationKey,
-  });
+  const { event, run } = await openCronRun(job, firedAt).catch(
+    async (err: unknown): Promise<never> => {
+      // With no run row to settle, the failure lands on the cron itself.
+      await getStorage().crons.markFailed(
+        job.accountId,
+        job.cronId,
+        err instanceof Error ? err.message : String(err),
+        firedAt,
+      );
+      throw err;
+    },
+  );
   event.cronRun = {
     cronId: job.cronId,
     runId: run.runId,
@@ -2518,6 +2520,25 @@ async function removeOneShotCron(
         error: err instanceof Error ? err.message : String(err),
       });
     });
+}
+
+/** Builds a fire's event and its run row, the row the cron's status follows. */
+async function openCronRun(
+  job: CronRecord,
+  firedAt: Date,
+): Promise<{ event: DirectInboundEvent; run: CronRunRecord }> {
+  const event = await createCronDirectEvent(job, firedAt);
+  const run = await getStorage().crons.createRun(
+    {
+      accountId: job.accountId,
+      cronId: job.cronId,
+      eventId: event.publicEventId,
+      conversationKey: event.publicConversationKey,
+    },
+    firedAt,
+  );
+
+  return { event: event, run: run };
 }
 
 async function createCronDirectEvent(

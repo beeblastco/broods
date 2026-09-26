@@ -11,12 +11,16 @@
 import { ConvexError, type Value } from "convex/values";
 import { jsonError } from "./httpJson";
 
-/** HTTP status for each code. Codes match `model/apiError` for that status. */
+/**
+ * HTTP status for each code. Codes match `model/apiError` for that status, but
+ * for `manifest_conflict`, which the CLI branches on to re-read and retry.
+ */
 export const CLIENT_ERROR_STATUS = {
   invalid_request: 400,
   unauthorized: 401,
   not_found: 404,
   conflict: 409,
+  manifest_conflict: 409,
 } as const;
 
 export type ClientErrorCode = keyof typeof CLIENT_ERROR_STATUS;
@@ -60,7 +64,11 @@ export function clientErrorData(error: unknown): ClientErrorData | null {
 export function clientErrorResponse(error: unknown): Response | null {
   const data = clientErrorData(error);
 
-  return data ? jsonError(CLIENT_ERROR_STATUS[data.code], data.message) : null;
+  return data
+    ? jsonError(CLIENT_ERROR_STATUS[data.code], data.message, {
+        code: data.code,
+      })
+    : null;
 }
 
 function isClientErrorCode(code: Value | undefined): code is ClientErrorCode {

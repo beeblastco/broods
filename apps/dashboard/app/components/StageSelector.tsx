@@ -126,22 +126,6 @@ export function StageSelector(): React.JSX.Element | null {
     }
   }, [projectId, stages, developmentStage, ensureDefault]);
 
-  // Auto-select the default stage when stages load or selection becomes invalid
-  useEffect(() => {
-    if (!stages || stages.length === 0) return;
-    const currentValid = stages.some((e: Doc<"stages">) => e._id === stageId);
-    if (!currentValid) {
-      const defaultStage =
-        stages.find(
-          (e: Doc<"stages">) => e.kind === "development" && e.isDefault,
-        ) ??
-        stages.find((e: Doc<"stages">) => e.kind === "development") ??
-        stages.find((e: Doc<"stages">) => e.isDefault) ??
-        stages[0];
-      setStageId(defaultStage._id);
-    }
-  }, [stages, stageId, setStageId]);
-
   if (!projectId) {
     return null;
   }

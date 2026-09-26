@@ -2,9 +2,7 @@
 
 import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
-import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { DangerPanel } from "./components/DangerPanel";
@@ -35,7 +33,7 @@ export default function SettingsPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;
-  const { stageId } = useStage();
+  const { stageId: activeStageId } = useStage();
 
   // Carries the current params (e.g. ?stage=) so the link survives a share or a
   // middle-click into a new browser tab.
@@ -45,16 +43,6 @@ export default function SettingsPage(): React.JSX.Element {
 
     return `/${projectId}/settings?${next.toString()}`;
   };
-
-  const stages = useQuery(api.stage.list, {
-    projectId: projectId,
-  }) as Doc<"stages">[] | undefined;
-  const activeStage =
-    stages?.find((stage) => stage._id === stageId) ??
-    stages?.find((stage) => stage.isDefault) ??
-    stages?.[0] ??
-    null;
-  const activeStageId = activeStage?._id ?? null;
 
   const activeTab = (searchParams.get("tab") as SettingsTab) || "general";
   const tab = TABS.find((t) => t.id === activeTab);

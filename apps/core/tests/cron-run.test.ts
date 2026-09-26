@@ -60,7 +60,6 @@ beforeEach(() => {
       getById: async function (): Promise<CronRecord> {
         return cron();
       },
-      markStarted: async function (): Promise<void> {},
       markFailed: async function (): Promise<void> {},
       createRun: async function (): Promise<CronRunRecord> {
         return {

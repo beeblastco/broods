@@ -163,6 +163,32 @@ export async function authIdForAccount(
   return org?.ownerAuthId ?? null;
 }
 
+/**
+ * Claims the stage's next manifest revision for a sync. A sync that sends the
+ * revision it read is refused when another sync claimed one since; one that
+ * sends none (`broods deploy`, an older CLI) always claims.
+ * @returns the revision this sync writes
+ */
+export async function claimManifestRevision(
+  ctx: MutationCtx,
+  stageId: Id<"stages">,
+  expected: number | undefined,
+): Promise<number> {
+  const row = await stageSyncRow(ctx, stageId);
+  const current = row?.revision ?? 0;
+  if (expected !== undefined && expected !== current) {
+    throw new ClientError(
+      `Stage changed since your last sync (revision ${current}, you sent ${expected}). Re-sync to see the new diff.`,
+      "manifest_conflict",
+    );
+  }
+  const next = current + 1;
+  if (row) await ctx.db.patch(row._id, { revision: next });
+  else await ctx.db.insert("stageSyncs", { stageId: stageId, revision: next });
+
+  return next;
+}
+
 export async function decryptSandboxConfig(
   sandbox: Doc<"sandboxConfigs">,
   secret: string | undefined,
@@ -339,6 +365,14 @@ export function isExternalResourceKind(
   return (EXTERNAL_RESOURCE_KINDS as readonly string[]).includes(kind);
 }
 
+/** The stage's manifest revision: 0 until its first sync. */
+export async function manifestRevision(
+  ctx: QueryCtx | MutationCtx,
+  stageId: Id<"stages">,
+): Promise<number> {
+  return (await stageSyncRow(ctx, stageId))?.revision ?? 0;
+}
+
 export function plainRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -386,6 +420,19 @@ export function resourceName(value: string): string {
   if (!trimmed) throw new ClientError("Resource name is required");
 
   return trimmed;
+}
+
+/**
+ * Stand-in ids, shaped like native Convex ids, for the named resources a sync
+ * would create, so its id-keyed rules can run before any row exists.
+ */
+export function placeholderIds(names: string[]): Record<string, string> {
+  return Object.fromEntries(
+    names.map((name, index): [string, string] => [
+      name,
+      `placeholder${String(index).padStart(12, "0")}`,
+    ]),
+  );
 }
 
 export function rewriteEnvRefs(
@@ -602,6 +649,16 @@ function sandboxProvider(sandbox: CliResource): string {
   const provider = plainRecord(sandbox.config).provider;
 
   return typeof provider === "string" ? provider : "sandbox";
+}
+
+async function stageSyncRow(
+  ctx: QueryCtx | MutationCtx,
+  stageId: Id<"stages">,
+): Promise<Doc<"stageSyncs"> | null> {
+  return await ctx.db
+    .query("stageSyncs")
+    .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
+    .unique();
 }
 
 function supportsS3WorkspaceMount(sandbox: CliResource): boolean {

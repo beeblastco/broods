@@ -42,7 +42,7 @@ export function ProjectSelector(): React.JSX.Element {
 
     const warmTopProjects = (): void => {
       for (const project of projects.slice(0, 3)) {
-        prefetchProject(project._id);
+        if (project._id !== params.projectId) prefetchProject(project._id);
       }
     };
 
@@ -57,7 +57,7 @@ export function ProjectSelector(): React.JSX.Element {
     const timeoutId = window.setTimeout(warmTopProjects, 120);
 
     return () => window.clearTimeout(timeoutId);
-  }, [projects, prefetchProject]);
+  }, [projects, prefetchProject, params.projectId]);
 
   // The header divider next to this is always painted, so rendering nothing
   // here collapses the row and shifts it back once the query lands.

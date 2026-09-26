@@ -79,7 +79,7 @@ describe("stage runtime key wire", () => {
     vi.unstubAllEnvs();
   });
 
-  test("ensureScopeBySecretHash resolves the project and stage ids", async () => {
+  test("ensureScopeBySecretHash resolves the project and stage ids and claims a revision", async () => {
     const t = runtimeKeyTest();
     const seeded = await seed(t);
 
@@ -92,6 +92,7 @@ describe("stage runtime key wire", () => {
     expect(scope).toEqual({
       projectId: seeded.projectId,
       stageId: seeded.stageId,
+      revision: 1,
     });
   });
 

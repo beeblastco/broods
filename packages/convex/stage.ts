@@ -330,6 +330,12 @@ export async function deleteStageContents(
   for (const deployment of stageDeployments)
     await ctx.db.delete(deployment._id);
 
+  const syncs = await ctx.db
+    .query("stageSyncs")
+    .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
+    .collect();
+  for (const sync of syncs) await ctx.db.delete(sync._id);
+
   const layouts = await ctx.db
     .query("canvasLayouts")
     .withIndex("by_projectId_and_stageId", (q) =>

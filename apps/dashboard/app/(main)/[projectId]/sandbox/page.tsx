@@ -32,16 +32,10 @@ const VIEWS: Array<{ id: SandboxView; label: string }> = [
 export default function SandboxPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
-  const { stageId } = useStage();
+  const { stageId: activeStageId } = useStage();
   const stages = useQuery(api.stage.list, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
-  const activeStage =
-    stages?.find((stage) => stage._id === stageId) ??
-    stages?.find((stage) => stage.isDefault) ??
-    stages?.[0] ??
-    null;
-  const activeStageId = activeStage?._id ?? null;
   const instances = useQuery(
     api.sandbox.instances.listForActiveOrg,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
