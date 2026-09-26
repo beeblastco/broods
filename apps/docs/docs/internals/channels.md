@@ -208,6 +208,7 @@ Adapters do not implement these; the shared pipeline does:
 - Typing and reaction are fire-and-forget. A failed typing or reaction call never fails the turn.
 - Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` (`handler.ts`).
 - A failed turn replies with `formatChannelErrorText()`, a `⚠️` line with the error simplified, so a quota error reads "Usage limit reached..." and a 429 reads "The model is busy right now...". Policy refusals use the same format.
+- `sendChannelFailure()` adds the way to retry: a Retry button on channels that implement `sendReplyButtons` (Telegram today, where a tap arrives as the message "Retry"), and `Reply "retry" to try again.` on the rest. A retry is a normal message, and the failed run's finished subagent and async tool results are already in history.
 - Deferred replies. A turn that finishes in the background pushes its result back through `sendChannelReply()`, which rebuilds the adapter from the agent config and the stored `source`, and runs the `onMessageSending` hook first. See [architecture](architecture.md).
 - Trace links are omitted unless the connection sets `trace: "enabled"`.
 - When a policy denies `agent.invoke`, core posts the refusal in-channel and the turn never starts.

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import type { ChannelActions, ChannelRequest } from "../src/shared/channels.ts";
+import {
+  sendChannelFailure,
+  type ChannelActions,
+  type ChannelRequest,
+} from "../src/shared/channels.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
 const STATUS_ID = "async_tool_2f1c9a9e-8d2f-4a7b-9c3d-0e1f2a3b4c5d";
@@ -148,6 +152,68 @@ describe("telegram ask_questions", () => {
     expect(parsed?.kind).toBe("ignore");
     expect(calls.map((call) => call.url.split("/").at(-1))).toEqual([
       "answerCallbackQuery",
+    ]);
+  });
+});
+
+describe("telegram retry after a failed run", () => {
+  it("posts the error with a Retry button", async () => {
+    const calls = await withTelegramApi(() =>
+      sendChannelFailure(adapter.actions(SOURCE), "⚠️ The model is busy."),
+    );
+
+    expect(calls[0]!.body).toMatchObject({
+      chat_id: 123,
+      text: "⚠️ The model is busy.",
+      reply_markup: {
+        inline_keyboard: [[{ text: "Retry", callback_data: "r:Retry" }]],
+      },
+    });
+  });
+
+  it("turns a Retry tap into the person sending Retry", async () => {
+    let parsed: Awaited<ReturnType<typeof adapter.parse>> | undefined;
+    await withTelegramApi(async (): Promise<void> => {
+      parsed = await adapter.parse(
+        telegramRequest({
+          update_id: 44,
+          callback_query: {
+            id: "cb-3",
+            chat_instance: "ci",
+            data: "r:Retry",
+            from: { id: 999, is_bot: false, first_name: "Ann" },
+            message: {
+              message_id: 11,
+              date: 0,
+              chat: { id: 123, type: "private" },
+              from: { id: 1, is_bot: true, first_name: "bot" },
+              text: "⚠️ The model is busy.",
+            },
+          },
+        }),
+      );
+    });
+
+    expect(parsed?.kind).toBe("message");
+    if (parsed?.kind !== "message") throw new Error("expected a message");
+    expect(parsed.message.content).toBe("Retry");
+    expect(parsed.message.answer).toBeUndefined();
+    expect(parsed.message.conversationKey).toBe("tg:123");
+  });
+
+  it("spells the retry out on a channel without buttons", async () => {
+    const sent: string[] = [];
+    await sendChannelFailure(
+      {
+        sendText: async (text: string): Promise<void> => {
+          sent.push(text);
+        },
+      } as ChannelActions,
+      "⚠️ The model is busy.",
+    );
+
+    expect(sent).toEqual([
+      '⚠️ The model is busy.\nReply "retry" to try again.',
     ]);
   });
 });
