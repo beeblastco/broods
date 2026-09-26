@@ -4,6 +4,7 @@ import {
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
 } from "../src/harness/ai-sdk-harness/index.ts";
+import { SandboxGoneError } from "../src/harness/sandbox/utils.ts";
 
 const CHECKPOINT = {
   type: "resume-session",
@@ -33,6 +34,30 @@ describe("openAiSdkHarnessSession", () => {
       resumeFrom: CHECKPOINT,
       abortSignal: abortController.signal,
     });
+  });
+
+  it("starts fresh when the stored session's machine was released", async () => {
+    const createSession = mock(async (options: { resumeFrom?: unknown }) => {
+      if (options.resumeFrom) {
+        throw new SandboxGoneError("no reserved workdir sandbox");
+      }
+
+      return { sessionId: "fresh" };
+    });
+
+    const session = await openAiSdkHarnessSession({
+      abortSignal: new AbortController().signal,
+      agent: { createSession: createSession } as never,
+      stored: {
+        harnessType: "codex",
+        sessionId: "native-session",
+        resumeState: CHECKPOINT,
+      },
+      type: "codex",
+    });
+
+    expect(session).toEqual({ sessionId: "fresh" } as never);
+    expect(createSession).toHaveBeenCalledTimes(2);
   });
 
   it("refuses to bind a conversation to another adapter", async () => {

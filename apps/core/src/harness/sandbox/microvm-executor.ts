@@ -77,6 +77,7 @@ import {
   configString,
   mergeSandboxEnv,
   SandboxCapacityError,
+  SandboxGoneError,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -269,7 +270,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
     );
     if (!microvmId) {
-      throw new Error("no reserved MicroVM for this Harness session");
+      throw new SandboxGoneError(
+        "no reserved MicroVM for this Harness session",
+      );
     }
     const reservation = await this.#reconnect(microvmId);
     await this.#runLifecycle(

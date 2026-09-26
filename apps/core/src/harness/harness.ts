@@ -1973,7 +1973,7 @@ export async function runAgentLoop(
           .map((message) => message.content)
           .join("\n\n"),
         metadata: sandboxMetadata,
-        onUsage: (reported) => {
+        onUsage: (reported): void => {
           usage = reported;
         },
         reservationKey: reservationKey,
@@ -2016,6 +2016,12 @@ export async function runAgentLoop(
           ),
         }),
       );
+      // The trace carries the environment the model actually received.
+      rootRunningAttributes = {
+        ...rootRunningAttributes,
+        "agent.environment": traceAttribute(harnessEnvironment),
+      };
+      otelRootSpan.setAttributes(rootRunningAttributes);
     }
     stream = harnessRuntime
       ? await harnessRuntime.agent.stream({

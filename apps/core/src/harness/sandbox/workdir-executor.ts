@@ -158,7 +158,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
     );
     if (!externalId) {
-      throw new Error("no reserved workdir sandbox for this Harness session");
+      throw new SandboxGoneError(
+        "no reserved workdir sandbox for this Harness session",
+      );
     }
     const sandbox = await this.#reconnect(externalId);
     await this.#runLifecycle(sandbox, this.#workDir(request.reservationKey));

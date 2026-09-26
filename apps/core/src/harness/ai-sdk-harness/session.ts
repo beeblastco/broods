@@ -7,7 +7,9 @@ import type {
   HarnessAgentResumeSessionState,
   HarnessAgentSession,
 } from "@ai-sdk/harness/agent";
+import { isSandboxGoneError } from "../sandbox/utils.ts";
 import type { Session, StoredHarnessSession } from "../session.ts";
+import { logWarn } from "../../shared/log.ts";
 import {
   harnessSessionParking,
   harnessSharesSandbox,
@@ -69,15 +71,33 @@ export async function openAiSdkHarnessSession(
     );
   }
 
-  return options.agent.createSession({
-    sessionId: stored?.sessionId ?? crypto.randomUUID(),
-    ...(stored
-      ? {
-          resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
-        }
-      : {}),
-    abortSignal: options.abortSignal,
-  });
+  if (!stored) {
+    return options.agent.createSession({
+      sessionId: crypto.randomUUID(),
+      abortSignal: options.abortSignal,
+    });
+  }
+  try {
+    return await options.agent.createSession({
+      sessionId: stored.sessionId,
+      resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
+      abortSignal: options.abortSignal,
+    });
+  } catch (error) {
+    // The machine idled past its reservation window and was released. The
+    // conversation continues on a fresh machine and native session; only the
+    // harness-side context of earlier turns is lost.
+    if (!isSandboxGoneError(error)) throw error;
+    logWarn("Harness machine was released; starting a fresh session", {
+      sessionId: stored.sessionId,
+      reservationKey: stored.reservationKey,
+    });
+
+    return options.agent.createSession({
+      sessionId: crypto.randomUUID(),
+      abortSignal: options.abortSignal,
+    });
+  }
 }
 
 export async function parkAiSdkHarnessSession(
