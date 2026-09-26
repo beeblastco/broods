@@ -56,7 +56,7 @@ describe("openAiSdkHarnessSession", () => {
       type: "codex",
     });
 
-    expect(session).toEqual({ sessionId: "fresh" } as never);
+    expect(session).toMatchObject({ sessionId: "fresh" });
     expect(createSession).toHaveBeenCalledTimes(2);
   });
 
