@@ -112,6 +112,23 @@ describe("foldSteps", () => {
     expect(rest).toEqual({ type: "span", span: other });
   });
 
+  test("does not fold steps whose tool calls carry no tool name", () => {
+    const steps = [0, 1].map((number) =>
+      step("run", number, number * 1_000, number * 1_000 + 100),
+    );
+    const children = new Map(
+      steps.map((s): [string, ObservabilitySpanRow[]] => [
+        s.spanId,
+        [{ ...toolOf(s, "unnamed"), attributes: {} }],
+      ]),
+    );
+
+    expect(foldSteps(steps, children).map((item) => item.type)).toEqual([
+      "span",
+      "span",
+    ]);
+  });
+
   test("leaves a lone step, mixed tools and interleaved spans unfolded", () => {
     const first = step("run", 0, 1_000, 1_100);
     const mixed = step("run", 1, 2_000, 2_100);

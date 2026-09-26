@@ -1292,7 +1292,7 @@ function groupTone(group: SpanGroup): StatusTone {
     : STATUS_TONE[group.status];
 }
 
-/** The one tool every tool call of a model step went to, or null. */
+/** The one named tool every tool call of a model step went to, or null. */
 function soleToolName(
   span: ObservabilitySpanRow,
   childrenByParent: Map<string, ObservabilitySpanRow[]>,
@@ -1301,10 +1301,11 @@ function soleToolName(
   const names = new Set(
     (childrenByParent.get(span.spanId) ?? [])
       .filter((child) => child.kind === "tool.call")
-      .map((child) => spanLabel(child)),
+      .map((child) => child.attributes?.["tool.name"]),
   );
+  const [name] = names;
 
-  return names.size === 1 ? [...names][0] : null;
+  return names.size === 1 && typeof name === "string" ? name : null;
 }
 
 /** The folded row for steps that all called `tool`, spanning first start to last end. */
