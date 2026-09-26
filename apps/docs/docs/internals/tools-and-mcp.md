@@ -8,7 +8,7 @@ This page covers how core builds an agent's tool set for a run, how async tools 
 
 1. Sandbox tools from the agent's `sandboxes` and `workspaces`. `bash` when there is any sandbox or sandbox-backed workspace. `computer` for every machine sandbox. `read` and `glob` for every workspace, through the mount when it has a sandbox and through S3 or a read-only mount when it does not. `write`, `edit` and `grep` only when a workspace has a sandbox. `memory_save` when a sandbox-backed workspace keeps the memory harness on.
 2. Channel tools (`send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update`) on channel turns, each gated on the adapter's capabilities, and `send-message` when the agent has channels and the request can dispatch to another session. See [channels](channels.md).
-3. `run_subagent` when `config.subagent.enabled` and the request has a dispatcher, plus `get_subagent_status`, `update_subagent` and `stop_subagent` in persistent mode.
+3. `run_subagent` when `config.subagent.enabled` and the request has a dispatcher, plus `get_subagent_status`, `update_subagent` and `stop_subagent` in persistent mode. A persistent child run gets `ask_parent` instead.
 4. `load_skill` when `config.skills.enabled` and `allowed` has paths.
 5. `schedule`, `list_schedules`, `update_schedule` and `cancel_schedule` when `config.scheduler.enabled`, except on a cron-fired run.
 6. Every `config.tools` key, resolved against the configured provider's `tools` namespace. A key that is not a provider tool name throws `config.tools.<name> is not a supported tool`. `enabled: false` skips it. Keys other than `enabled`, `needsApproval` and `async` pass through as the tool's arguments.

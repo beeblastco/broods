@@ -1,5 +1,7 @@
 import { afterEach, expect, it, mock, spyOn } from "bun:test";
+import type { UserModelMessage } from "ai";
 import type { Session } from "../src/harness/session.ts";
+import type { SubagentWatch } from "../src/harness/tools/utils.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   createSubagentTaskId,
@@ -119,14 +121,14 @@ it("waits for a running subagent before answering its status", async () => {
   const tools = getStatus({
     accountId: ACCOUNT_ID,
     eventId: PARENT_EVENT_ID,
-    watch: {
+    watch: watchWith({
       waitForSettled: async (id: string, timeoutMs: number): Promise<void> => {
         waits.push({ taskId: id, timeoutMs: timeoutMs });
       },
       markDelivered: (id: string): void => {
         delivered.push(id);
       },
-    },
+    }),
   });
 
   await expect(
@@ -153,7 +155,7 @@ it("does not wait on a task paired with the wrong agent", async () => {
   const tools = getStatus({
     accountId: ACCOUNT_ID,
     eventId: PARENT_EVENT_ID,
-    watch: { waitForSettled: waitForSettled, markDelivered: (): void => {} },
+    watch: watchWith({ waitForSettled: waitForSettled }),
   });
 
   await expect(
@@ -384,6 +386,61 @@ it("rejects a durable record with a mismatched account", async () => {
   ).rejects.toThrow(`Error: no subagent task found for ${taskId}`);
 });
 
+it("answers a child's open question with a steer instead of queuing it", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  spyOn(runtime, "query").mockResolvedValue({
+    accountId: ACCOUNT_ID,
+    eventId: scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId),
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "ask"),
+    status: "processing",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  });
+  const mutate = spyOn(runtime, "mutate");
+  const answers: Array<{ taskId: string; answer: string }> = [];
+  const { default: update } =
+    await import("../src/harness/tools/update-subagent.tool.ts");
+  const tools = update({
+    accountId: ACCOUNT_ID,
+    agentConfig: {},
+    eventId: PARENT_EVENT_ID,
+    session: {} as Session,
+    watch: watchWith({
+      answerQuestion: (id: string, answer: string): boolean => {
+        answers.push({ taskId: id, answer: answer });
+
+        return true;
+      },
+    }),
+  });
+
+  await expect(
+    execute(tools.update_subagent, {
+      taskId: taskId,
+      agentId: AGENT_ID,
+      mode: "steer",
+      message: " use the staging key ",
+    }),
+  ).resolves.toEqual({ status: "answered" });
+  expect(answers).toEqual([{ taskId: taskId, answer: "use the staging key" }]);
+  expect(mutate).not.toHaveBeenCalled();
+});
+
+it("returns the parent's answer to ask_parent, or a note when none comes", async () => {
+  const { default: askParent } =
+    await import("../src/harness/tools/ask-parent.tool.ts");
+  const answered = askParent(async (question) => `yes to: ${question}`);
+  const unanswered = askParent(async () => null);
+
+  await expect(
+    execute(answered.ask_parent, { question: "Use staging?" }),
+  ).resolves.toEqual({ answer: "yes to: Use staging?" });
+  await expect(
+    execute(unanswered.ask_parent, { question: "Use staging?" }),
+  ).resolves.toMatchObject({ answer: null });
+});
+
 async function subagentTools(
   parentEventId: string,
   dispatchAppliedIngress = mock(
@@ -420,4 +477,14 @@ function execute(tool: unknown, input: unknown): Promise<unknown> {
   return (
     tool as { execute: (input: unknown, options: unknown) => Promise<unknown> }
   ).execute(input, { messages: [] });
+}
+
+function watchWith(overrides: Partial<SubagentWatch>): SubagentWatch {
+  return {
+    waitForSettled: async (): Promise<void> => {},
+    markDelivered: (): void => {},
+    answerQuestion: (): boolean => false,
+    takeParentMessages: async (): Promise<UserModelMessage[]> => [],
+    ...overrides,
+  };
 }

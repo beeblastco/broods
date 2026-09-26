@@ -488,6 +488,63 @@ describe("SubagentCoordinator", () => {
     expect(messageText(messages[0])).toContain("follow-up result");
   });
 
+  it("wakes the parent with a child's question and routes the answer back", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: "agent_research",
+      conversationKey: "child",
+    });
+
+    const answer = coordinator.askParent("subagent_1", "Which account?");
+    await expect(coordinator.waitForIdle()).resolves.toBe("question");
+    const [question] = await coordinator.takeParentMessages();
+    expect(messageText(question)).toContain("Which account?");
+    expect(messageText(question)).toContain("taskId: subagent_1");
+    expect(persistModelMessages).toHaveBeenCalledTimes(1);
+
+    expect(coordinator.answerQuestion("subagent_1", "BeeBlast")).toBe(true);
+    await expect(answer).resolves.toBe("BeeBlast");
+    expect(coordinator.answerQuestion("subagent_1", "again")).toBe(false);
+  });
+
+  it("gives a child no answer once the parent's wait budget is spent", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 20,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: "agent_research",
+      conversationKey: "child",
+    });
+
+    await expect(
+      coordinator.askParent("subagent_1", "Which account?"),
+    ).resolves.toBeNull();
+    await expect(coordinator.askParent("unknown", "Hi?")).resolves.toBeNull();
+  });
+
   it("stops waiting once the outcome is recorded, before follow-ups drain", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(

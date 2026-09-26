@@ -68,6 +68,8 @@ import {
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+// How long a child's ask_parent waits for the parent's answer.
+const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 
 interface SubagentCompletion {
   taskId: string;
@@ -134,6 +136,13 @@ export class SubagentCoordinator {
   private readonly recorded = new Set<string>();
   // Result rows the model already read through get_subagent_status.
   private readonly delivered = new Set<string>();
+  // Questions children asked, queued for the parent's next step.
+  private readonly questions: UserModelMessage[] = [];
+  // A child blocked in ask_parent, by taskId, resolved by the parent's answer.
+  private readonly openQuestions = new Map<
+    string,
+    (answer: string | null) => void
+  >();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -229,8 +238,12 @@ export class SubagentCoordinator {
     options: {
       onHeartbeat?: (pendingCount: number) => void;
     } = {},
-  ): Promise<"idle" | "timeout"> {
-    while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
+  ): Promise<"idle" | "question" | "timeout"> {
+    while (
+      this.pending.size > 0 &&
+      this.questions.length === 0 &&
+      Date.now() < this.waitUntilMs
+    ) {
       const heartbeatAt = Math.min(
         Date.now() + HEARTBEAT_INTERVAL_MS,
         this.waitUntilMs,
@@ -244,6 +257,8 @@ export class SubagentCoordinator {
         options.onHeartbeat?.(this.pending.size);
       }
     }
+
+    if (this.questions.length > 0) return "question";
 
     return this.pending.size === 0 ? "idle" : "timeout";
   }
@@ -264,6 +279,7 @@ export class SubagentCoordinator {
     const settled = pending.then((): boolean => true);
     while (
       Date.now() < deadline &&
+      this.questions.length === 0 &&
       !(eventId !== undefined && this.recorded.has(eventId))
     ) {
       const done = await Promise.race([
@@ -293,16 +309,63 @@ export class SubagentCoordinator {
   }
 
   async drainCompletionsToParent(): Promise<number> {
-    if (this.completions.length === 0) {
-      return 0;
+    return (await this.takeParentMessages()).length;
+  }
+
+  /**
+   * Moves queued results and questions into the parent conversation and returns
+   * them. The parent's step boundary calls it, so they reach the model mid-pass.
+   */
+  async takeParentMessages(): Promise<UserModelMessage[]> {
+    const messages = [
+      ...this.completions.splice(0).map(completionToParentMessage),
+      ...this.questions.splice(0),
+    ];
+    if (messages.length > 0) {
+      await this.parentSession.persistModelMessages(messages);
     }
 
-    const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(
-      completions.map(completionToParentMessage),
-    );
+    return messages;
+  }
 
-    return completions.length;
+  /**
+   * A child's ask_parent: queues the question for the parent and waits for the
+   * answer, which update_subagent delivers. Null when the parent does not answer
+   * in time or the child already has a question open.
+   */
+  async askParent(taskId: string, question: string): Promise<string | null> {
+    const metadata = this.pendingMetadata.get(taskId);
+    if (!metadata || this.openQuestions.has(taskId)) {
+      return null;
+    }
+    const answer = new Promise<string | null>((resolve) => {
+      this.openQuestions.set(taskId, resolve);
+    });
+    this.questions.push(questionToParentMessage(metadata, question));
+    this.notifyCompletion();
+    const budgetMs = Math.max(
+      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
+      0,
+    );
+    const result = await Promise.race([
+      answer,
+      sleep(budgetMs).then((): null => null),
+    ]);
+    this.openQuestions.delete(taskId);
+
+    return result;
+  }
+
+  /** Hands the parent's message to a child blocked in ask_parent; false when none is. */
+  answerQuestion(taskId: string, answer: string): boolean {
+    const resolve = this.openQuestions.get(taskId);
+    if (!resolve) {
+      return false;
+    }
+    this.openQuestions.delete(taskId);
+    resolve(answer);
+
+    return true;
   }
 
   async drainCompletionsAndTimeoutsToParent(): Promise<number> {
@@ -332,6 +395,10 @@ export class SubagentCoordinator {
 
     this.pending.clear();
     this.pendingMetadata.clear();
+    // The parent stops waiting, so no answer is coming.
+    for (const resolve of this.openQuestions.values()) resolve(null);
+    this.openQuestions.clear();
+    this.questions.length = 0;
     const batch = [...completions, ...timeouts];
     await this.parentSession.persistModelMessages(
       batch.map(completionToParentMessage),
@@ -590,7 +657,15 @@ export class SubagentCoordinator {
             approvalRequested = true;
           },
         },
-        subagentParent ? { subagentParent: subagentParent } : {},
+        {
+          ...(subagentParent ? { subagentParent: subagentParent } : {}),
+          ...(task.persistent
+            ? {
+                askParent: (question: string): Promise<string | null> =>
+                  this.askParent(task.taskId, question),
+              }
+            : {}),
+        },
       );
 
       if (publisher) {
@@ -1071,6 +1146,30 @@ function bestEffortSubagentPublisher(
         });
       });
     },
+  };
+}
+
+function questionToParentMessage(
+  task: Omit<
+    SubagentCompletion,
+    "status" | "response" | "error" | "visibleResult"
+  >,
+  question: string,
+): UserModelMessage {
+  const metadata = [
+    `taskId: ${task.taskId}`,
+    `agentId: ${task.agentId}`,
+    `conversationKey: ${task.conversationKey}`,
+  ].join("\n");
+
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `Subagent question for the parent. The subagent is paused until you answer with update_subagent (mode "steer") using this taskId and agentId.\n${metadata}\n\nQuestion:\n${question}`,
+      },
+    ],
   };
 }
 

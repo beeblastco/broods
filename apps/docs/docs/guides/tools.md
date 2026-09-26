@@ -158,13 +158,13 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 
 ## Other built-in tools
 
-| Tool                                                                      | Enabled by                          | Guide                                         |
-| ------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
-| `load_skill`                                                              | `skills`                            | [Skills](skills.md)                           |
-| `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent`                          | [Subagents](subagents.md)                     |
-| `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`        | `scheduler`                         | [Scheduling](scheduling.md)                   |
-| `memory_save`                                                             | a workspace with a sandbox          | [Memory and sessions](memory-and-sessions.md) |
-| `send-message`, `send-images`, `send-files`, `send-update`, ...           | channel turns                       | [Channels](../channels/index.md)              |
-| `computer`                                                                | a machine sandbox with `--computer` | [Machine](sandboxes/machine.md)               |
+| Tool                                                                                                              | Enabled by                          | Guide                                         |
+| ----------------------------------------------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
+| `load_skill`                                                                                                      | `skills`                            | [Skills](skills.md)                           |
+| `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent`, and `ask_parent` on a persistent child | `subagent`                          | [Subagents](subagents.md)                     |
+| `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`                                                | `scheduler`                         | [Scheduling](scheduling.md)                   |
+| `memory_save`                                                                                                     | a workspace with a sandbox          | [Memory and sessions](memory-and-sessions.md) |
+| `send-message`, `send-images`, `send-files`, `send-update`, ...                                                   | channel turns                       | [Channels](../channels/index.md)              |
+| `computer`                                                                                                        | a machine sandbox with `--computer` | [Machine](sandboxes/machine.md)               |
 
 Withhold any tool in one channel with `denyTools` on its [channel record](../channels/channel-records.md), or everywhere with a [policy](policies.md).

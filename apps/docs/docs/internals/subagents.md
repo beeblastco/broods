@@ -6,7 +6,9 @@ This page covers how subagent runs execute inside core. It explains dispatch, th
 
 `run_subagent` returns task ids at once and starts the children concurrently. Children are promises inside the same request or worker, not separate processes. The parent's model stream keeps going after the tool result, so the parent can answer, call other tools or finish its pass.
 
-A child result that arrives while the parent model is streaming is queued in memory by the `SubagentCoordinator`. It is not injected into the live model call, because AI SDK model context cannot change mid-generation. When the parent stream ends, `runParentContinuationLoop()` waits for every outstanding child from the current batch, injects the queued results together as parent `user` events, and runs one more parent model pass.
+A child result or question that arrives while the parent model is streaming is queued in memory by the `SubagentCoordinator`. AI SDK model context cannot change mid-generation, so the parent's `prepareStep` takes the queue (`takeParentMessages`) at its next step boundary and adds it as parent `user` events, the same way steering joins a run. What arrives after the pass is handled when the parent stream ends: `runParentContinuationLoop()` waits for every outstanding child from the current batch, injects the queued results together, and runs one more parent model pass.
+
+A child's `ask_parent` (persistent mode) queues its question and blocks the tool call on `SubagentCoordinator.askParent`, for up to 5 minutes and never past the parent's wait budget. A queued question ends `waitForIdle` early with `question`, so a parent between passes runs one pass to answer it while the other children keep running. `update_subagent` in `steer` mode on a child with an open question resolves it through `answerQuestion` and returns `answered` instead of queuing a steer. When the wait budget runs out, open questions resolve with no answer.
 
 The handoff between parent passes:
 
