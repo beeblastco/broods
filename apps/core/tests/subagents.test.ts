@@ -41,6 +41,7 @@ interface StreamTextStandInOptions {
 interface CoordinatorInternals {
   completions: TestCompletion[];
   pending: Map<string, Promise<void>>;
+  recorded: Set<string>;
   pendingMetadata: Map<
     string,
     Omit<TestCompletion, "status" | "response" | "error">
@@ -427,6 +428,31 @@ describe("SubagentCoordinator", () => {
     await expect(
       coordinator.waitForSettled("unknown", 5_000),
     ).resolves.toBeUndefined();
+  });
+
+  it("stops waiting once the outcome is recorded, before follow-ups drain", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: "agent_1",
+      conversationKey: "child",
+    });
+
+    setTimeout(() => {
+      internals.recorded.add("event_1");
+      internals.notifyCompletion();
+    }, 5);
+    const startedAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
   });
 
   it("emits heartbeats while waiting and batches completed results with timeout notices", async () => {
