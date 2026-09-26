@@ -288,28 +288,36 @@ export class SubagentCoordinator {
     if (!pending || abortSignal?.aborted) {
       return;
     }
+    let onAbort: (() => void) | undefined;
     const aborted = new Promise<boolean>((resolve): void => {
-      abortSignal?.addEventListener("abort", (): void => resolve(true), {
-        once: true,
-      });
+      onAbort = (): void => resolve(true);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
     });
     const eventId = this.pendingMetadata.get(taskId)?.eventId;
     const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
     const settled = pending.then((): boolean => true);
-    while (
-      Date.now() < deadline &&
-      this.questions.length === 0 &&
-      !(eventId !== undefined && this.recorded.has(eventId))
-    ) {
-      const done = await Promise.race([
-        settled,
-        aborted,
-        this.nextStateChange().then((): boolean => false),
-        sleep(deadline - Date.now()).then((): boolean => false),
-      ]);
-      if (done) {
-        return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<boolean>((resolve): void => {
+      timer = setTimeout((): void => resolve(true), deadline - Date.now());
+    });
+    try {
+      while (
+        this.questions.length === 0 &&
+        !(eventId !== undefined && this.recorded.has(eventId))
+      ) {
+        const done = await Promise.race([
+          settled,
+          aborted,
+          timedOut,
+          this.nextStateChange().then((): boolean => false),
+        ]);
+        if (done) {
+          return;
+        }
       }
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
     }
   }
 
