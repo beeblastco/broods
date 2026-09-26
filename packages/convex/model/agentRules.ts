@@ -120,10 +120,12 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 // Tool names the harness registers itself (sandbox, skills, subagents, async
 // status). config.tools cannot claim them for a provider-defined tool.
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
+  "ask_parent",
   "async_status",
   "bash",
   "cancel_schedule",
   "edit",
+  "get_subagent_status",
   "glob",
   "grep",
   "list_schedules",
@@ -132,7 +134,9 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "read",
   "run_subagent",
   "schedule",
+  "stop_subagent",
   "update_schedule",
+  "update_subagent",
   "write",
 ]);
 const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;

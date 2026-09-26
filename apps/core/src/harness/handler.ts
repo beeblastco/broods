@@ -1681,8 +1681,11 @@ async function runChannelTurns(
               onErrorText: async (error, traceId) => {
                 await session.assertCurrentOwner();
                 terminal = "failed";
-                await sendChannelFailure(
-                  event.channel,
+                // The failure goes through the same outbound hook as a reply,
+                // so it can be rewritten or dropped too.
+                const text = await applyMessageSendingHook(
+                  hooks,
+                  event.channelName,
                   formatChannelFinalText(
                     formatChannelErrorText(error),
                     traceId,
@@ -1691,6 +1694,9 @@ async function runChannelTurns(
                     activeConfig,
                   ),
                 );
+                if (text !== null) {
+                  await sendChannelFailure(event.channel, text);
+                }
               },
               onApprovalRequired: async (approvals) => {
                 approvalRequired = true;
@@ -2979,6 +2985,14 @@ async function runParentContinuationLoop(options: {
     traceId = stream.traceId();
 
     await options.consumeStream(stream);
+    // Only a clean pass leads to another pass that can answer a subagent.
+    if (
+      approvals.length > 0 ||
+      stream.questionSummaries().length > 0 ||
+      stream.didFail()
+    ) {
+      options.subagentCoordinator.closeQuestions();
+    }
     if (approvals.length > 0) {
       return {
         didFail: false,

@@ -13,7 +13,10 @@ interface AskParentInput {
 type AskParentOutput = { answer: string } | { answer: null; note: string };
 
 export default function askParentTool(
-  askParent: (question: string) => Promise<string | null>,
+  askParent: (
+    question: string,
+    abortSignal?: AbortSignal,
+  ) => Promise<string | null>,
 ): ToolSet {
   return {
     ask_parent: tool({
@@ -38,12 +41,7 @@ export default function askParentTool(
         if (!question) {
           return toolError("Error: ask_parent requires a non-empty question");
         }
-        const stopped = new Promise<null>((resolve) => {
-          abortSignal?.addEventListener("abort", () => resolve(null), {
-            once: true,
-          });
-        });
-        const answer = await Promise.race([askParent(question), stopped]);
+        const answer = await askParent(question, abortSignal);
 
         return answer === null
           ? {
