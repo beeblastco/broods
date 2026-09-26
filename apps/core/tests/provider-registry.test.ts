@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { generateText } from "ai";
 import {
   modelProviderFactories,
   modelSettingsFromModelConfig,
@@ -91,6 +92,74 @@ describe("modelSettingsFromModelConfig", () => {
           temperature: 0.2,
         },
       }),
-    ).toEqual({ temperature: 0.2 });
+    ).toEqual({ maxRetries: 5, temperature: 0.2 });
+  });
+
+  it("keeps the agent's own retry count", () => {
+    expect(
+      modelSettingsFromModelConfig({
+        model: { provider: "openai", modelId: "gpt-5", maxRetries: 1 },
+      }),
+    ).toEqual({ maxRetries: 1 });
+  });
+});
+
+describe("rate-limited model calls", () => {
+  it("waits as long as a 429 body asks before retrying", async () => {
+    const calls: number[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> => {
+        calls.push(Date.now());
+        if (calls.length === 1) {
+          return Response.json(
+            {
+              error: {
+                message:
+                  "Rate limit reached on tokens per min (TPM). Please try again in 300ms.",
+                type: "tokens",
+                code: "rate_limit_exceeded",
+              },
+            },
+            { status: 429 },
+          );
+        }
+
+        return Response.json({
+          id: "chatcmpl-1",
+          object: "chat.completion",
+          created: 0,
+          model: "gpt-test",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        });
+      },
+      { preconnect: realFetch.preconnect },
+    );
+    try {
+      const config = {
+        model: { provider: "deepseek" as const, modelId: "deepseek-chat" },
+        provider: { deepseek: { apiKey: "sk-test" } },
+      };
+      const { model } = resolveConfiguredModel(config);
+      const result = await generateText({
+        model: model,
+        prompt: "hi",
+        ...modelSettingsFromModelConfig(config),
+      });
+
+      expect(result.text).toBe("ok");
+      expect(calls).toHaveLength(2);
+      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(290);
+      expect(calls[1]! - calls[0]!).toBeLessThan(1_500);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
