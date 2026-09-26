@@ -109,7 +109,10 @@ export interface ToolContext {
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
   // Set on a persistent subagent's run: asks the parent and waits for its answer.
-  askParent?: (question: string) => Promise<string | null>;
+  askParent?: (
+    question: string,
+    abortSignal?: AbortSignal,
+  ) => Promise<string | null>;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;

@@ -483,6 +483,7 @@ function watchWith(overrides: Partial<SubagentWatch>): SubagentWatch {
   return {
     waitForSettled: async (): Promise<void> => {},
     markDelivered: (): void => {},
+    confirmDelivered: (): void => {},
     answerQuestion: (): boolean => false,
     takeParentMessages: async (): Promise<UserModelMessage[]> => [],
     ...overrides,

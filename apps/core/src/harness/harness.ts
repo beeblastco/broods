@@ -221,7 +221,10 @@ export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
   // Present on a persistent subagent's run; backs its ask_parent tool.
-  askParent?: (question: string) => Promise<string | null>;
+  askParent?: (
+    question: string,
+    abortSignal?: AbortSignal,
+  ) => Promise<string | null>;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; links its trace to the parent's.
@@ -1155,6 +1158,7 @@ export async function runAgentLoop(
       }
       if (persisted.status === "rejected") throw persisted.reason;
       persistedResponseCount = responseMessages.length;
+      options.subagentWatch?.confirmDelivered();
       const steering = await session.applySteeringIngress();
       let stepMessages = messages;
       if (steering) {
@@ -1777,6 +1781,7 @@ export async function runAgentLoop(
             : unpersisted,
         );
         persistedResponseCount = responseMessages.length;
+        options.subagentWatch?.confirmDelivered();
 
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
