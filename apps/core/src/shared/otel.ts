@@ -56,10 +56,10 @@ export function getObservabilityContext(): ObservabilityContext | null {
   return cell ? cell.current : _obsCtxGlobal;
 }
 
-// Runs fn with a fresh, request-private observability cell. Nested scopes
-// (subagents, save/restore call sites) share the cell, which is correct because
-// it is the same logical request. Concurrent requests each get their own cell.
-// `inherited` seeds the cell for work that outlives the request that started it.
+// Runs fn with a fresh, request-private observability cell. Save/restore call
+// sites inside one request share the cell. Concurrent requests, and subagents
+// that outlive their parent's pass, each get their own. `inherited` seeds the
+// cell for work that outlives the request that started it.
 export function runWithObservabilityScope<T>(
   fn: () => T,
   inherited: ObservabilityContext | null = null,

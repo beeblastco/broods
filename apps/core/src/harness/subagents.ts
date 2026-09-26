@@ -16,7 +16,10 @@ import {
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
-import { getObservabilityContext } from "../shared/otel.ts";
+import {
+  getObservabilityContext,
+  runWithObservabilityScope,
+} from "../shared/otel.ts";
 import {
   createRunId,
   createSubagentTaskId,
@@ -163,11 +166,8 @@ export class SubagentCoordinator {
     parentMessages: ModelMessage[],
     parentEphemeralSystem: SystemModelMessage[] = [],
   ): Promise<RunSubagentDispatchResult> => {
-    // Capture the parent's trace/task id now, while the parent's observability
-    // context is still active (this runs synchronously inside the parent's
-    // run_subagent tool call). Each child is its own top-level trace that links
-    // back to the parent. Read here, not in the detached child, because concurrent
-    // children overwrite the module-global observability context.
+    // Capture the parent's trace/task id now, inside the parent's run_subagent
+    // tool call. Each child is its own top-level trace that links back to it.
     const parentObs = getObservabilityContext();
     const subagentParent: SubagentParentContext | undefined = parentObs?.traceId
       ? {
@@ -399,7 +399,13 @@ export class SubagentCoordinator {
     const trackedPublisher = publisher
       ? bestEffortSubagentPublisher(publisher, streamState, task.taskId)
       : undefined;
-    const promise = this.runTask(task, subagentParent, trackedPublisher)
+    // The child gets its own observability cell, seeded from the parent's. On
+    // the shared cell the parent's pass ending blanked the child's scope, so its
+    // steps never reached the dashboard, and each child relabeled the parent.
+    const promise = runWithObservabilityScope(
+      () => this.runTask(task, subagentParent, trackedPublisher),
+      getObservabilityContext(),
+    )
       .then(async () => {
         await trackedPublisher?.publish({ type: "done" });
       })
