@@ -80,3 +80,25 @@ test("refuses credential copying without transient user activation", async ({
     page.getByRole("button", { name: "Copied", exact: true }),
   ).toHaveCount(0);
 });
+
+test("supports trusted clicks when the activation API is unavailable", async ({
+  page,
+}) => {
+  await page.addInitScript((): void => {
+    Object.defineProperty(navigator, "userActivation", { value: undefined });
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (value: string): Promise<void> => {
+          document.documentElement.dataset.clipboardValue = value;
+        },
+      },
+    });
+  });
+  await page.goto(GALLERY_URL);
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
+  await page.getByRole("button", { name: "Copy", exact: true }).first().click();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-clipboard-value",
+    "clipboard fixture",
+  );
+});

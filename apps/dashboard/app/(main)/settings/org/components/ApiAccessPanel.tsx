@@ -277,7 +277,7 @@ function NewSecretDialog({
   onClose: () => void;
 }): React.JSX.Element {
   const [open, setOpen] = useState(true);
-  const { copy } = useCopied(secret);
+  const { copied, failed, copy } = useCopied(secret);
 
   return (
     <Dialog
@@ -298,11 +298,16 @@ function NewSecretDialog({
         </DialogHeader>
         <div className="grid gap-3 py-2">
           <Input readOnly value={secret} className="font-mono text-xs" />
+          {failed ? (
+            <p role="alert" className="text-sm text-destructive">
+              Copy failed. Try again or select and copy the token manually.
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" className="cursor-pointer" onClick={copy}>
             <Copy className="size-4 mr-1" />
-            Copy
+            {copied ? "Copied" : "Copy"}
           </Button>
           <Button
             className="cursor-pointer"
