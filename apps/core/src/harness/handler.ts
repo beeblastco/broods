@@ -3010,7 +3010,10 @@ async function runParentContinuationLoop(options: {
       await waitAndDrainAsyncWork(
         options.subagentCoordinator,
         options.asyncToolCoordinator,
-        { onHeartbeat: options.onHeartbeat },
+        {
+          onHeartbeat: (pendingCount: number): void =>
+            options.onHeartbeat?.(pendingCount),
+        },
       ).catch((error: unknown) =>
         logError("Failed run could not keep its async results", {
           eventId: options.session.eventId,
