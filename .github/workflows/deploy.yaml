@@ -16,6 +16,7 @@ on:
       - "apps/dashboard/**"
       - ".github/workflows/deploy-docs.yaml"
       - "**/*.md"
+  # checkov:skip=CKV_GHA_7:The stage selects the deployment target; source is pinned to the triggering ref and stage is passed through an environment variable.
   workflow_dispatch:
     inputs:
       stage:
