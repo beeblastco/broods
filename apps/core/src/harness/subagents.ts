@@ -278,11 +278,20 @@ export class SubagentCoordinator {
    * status check spends one model step per change instead of one per instant
    * "processing". It returns before the child's queued follow-ups drain.
    */
-  async waitForSettled(taskId: string, timeoutMs: number): Promise<void> {
+  async waitForSettled(
+    taskId: string,
+    timeoutMs: number,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
     const pending = this.pending.get(taskId);
-    if (!pending) {
+    if (!pending || abortSignal?.aborted) {
       return;
     }
+    const aborted = new Promise<boolean>((resolve): void => {
+      abortSignal?.addEventListener("abort", (): void => resolve(true), {
+        once: true,
+      });
+    });
     const eventId = this.pendingMetadata.get(taskId)?.eventId;
     const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
     const settled = pending.then((): boolean => true);
@@ -293,6 +302,7 @@ export class SubagentCoordinator {
     ) {
       const done = await Promise.race([
         settled,
+        aborted,
         this.nextStateChange().then((): boolean => false),
         sleep(deadline - Date.now()).then((): boolean => false),
       ]);
@@ -319,8 +329,11 @@ export class SubagentCoordinator {
   confirmDelivered(): void {
     for (const eventId of this.readUnsaved) {
       this.delivered.add(eventId);
+      // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
-        (completion) => completion.eventId === eventId,
+        (completion): boolean =>
+          completion.eventId === eventId &&
+          completion.visibleResult === undefined,
       );
       if (index !== -1) {
         this.completions.splice(index, 1);
@@ -1091,7 +1104,11 @@ export class SubagentCoordinator {
         inject = false;
       }
     }
-    if (inject && !this.delivered.has(completion.eventId)) {
+    if (
+      inject &&
+      (completion.visibleResult !== undefined ||
+        !this.delivered.has(completion.eventId))
+    ) {
       this.completions.push(completion);
     }
     this.notifyCompletion();
