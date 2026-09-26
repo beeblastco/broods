@@ -5,6 +5,7 @@ import {
   DetailPayload,
   type DetailRow,
 } from "@/app/components/DetailSections";
+import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -470,6 +471,10 @@ export function TracingPanel({
     visibleGroups.find((group) => spanKey(group.root) === selectedTaskKey) ??
     visibleGroups[0] ??
     null;
+  // The span open in the side panel, resolved against the selected task so
+  // it tracks live updates and closes when its task leaves the view.
+  const selectedSpan =
+    selectedGroup?.spans.find((span) => spanKey(span) === selectedKey) ?? null;
 
   // Reset paging when the filters change so "Load more" starts from the top.
   // Render-time adjustment, not an effect.
@@ -720,60 +725,93 @@ export function TracingPanel({
         </p>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card md:flex-row">
-        <div
-          data-scroll-pane
-          className="max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-80 md:border-r md:border-b-0"
-        >
-          {visibleGroups.map((group) => (
-            <TaskListRow
-              key={spanKey(group.root)}
-              group={group}
-              isSelected={group === selectedGroup}
-              onSelect={() => setSelectedTaskKey(spanKey(group.root))}
-            />
-          ))}
-          {groups.length === 0 && (
-            <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-              {entries.length === 0
-                ? emptyStreamMessage(history, error, "traces", "7 days")
-                : "No tasks match the current filters."}
-            </p>
-          )}
-          {remaining > 0 && (
-            <div className="p-2 text-center">
-              <button
-                type="button"
-                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-              >
-                Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
-                {remaining.toLocaleString()} older task
-                {remaining === 1 ? "" : "s"}
-              </button>
-            </div>
-          )}
-        </div>
+      <DetailSplit
+        detail={
+          selectedSpan &&
+          selectedGroup && (
+            <DetailPanel
+              title={spanLabel(selectedSpan)}
+              meta={
+                <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
+                  <span>{kindTheme(selectedSpan.kind).word}</span>
+                  <StatusDot
+                    tone={
+                      isStale(selectedSpan, isTaskRunning(selectedGroup.root))
+                        ? "ended"
+                        : STATUS_TONE[selectedSpan.status]
+                    }
+                    label={selectedSpan.status}
+                  />
+                  <span className="font-mono">
+                    {spanMetaLine(selectedSpan)}
+                  </span>
+                </div>
+              }
+              onClose={() => setSelectedKey(null)}
+            >
+              <SpanDetails span={selectedSpan} />
+            </DetailPanel>
+          )
+        }
+      >
+        <div className="flex h-full min-h-0 flex-col md:flex-row">
+          <div
+            data-scroll-pane
+            className="max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-80 md:border-r md:border-b-0"
+          >
+            {visibleGroups.map((group) => (
+              <TaskListRow
+                key={spanKey(group.root)}
+                group={group}
+                isSelected={group === selectedGroup}
+                onSelect={() => setSelectedTaskKey(spanKey(group.root))}
+              />
+            ))}
+            {groups.length === 0 && (
+              <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+                {entries.length === 0
+                  ? emptyStreamMessage(history, error, "traces", "7 days")
+                  : "No tasks match the current filters."}
+              </p>
+            )}
+            {remaining > 0 && (
+              <div className="p-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+                  className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+                >
+                  Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
+                  {remaining.toLocaleString()} older task
+                  {remaining === 1 ? "" : "s"}
+                </button>
+              </div>
+            )}
+          </div>
 
-        <div data-scroll-pane className="min-h-0 min-w-0 flex-1 overflow-auto">
-          {selectedGroup && (
-            <TaskWaterfall
-              attempt={continueAttempts.get(selectedGroup.root.traceId)}
-              onContinue={() => void continueTask(selectedGroup.root)}
-              view={{
-                expanded: expanded,
-                focusTraceId: focusTraceId,
-                group: selectedGroup,
-                onFocusTrace: focusTrace,
-                onSelect: (key) =>
-                  setSelectedKey((current) => (current === key ? null : key)),
-                selectedKey: selectedKey,
-                toggle: toggle,
-              }}
-            />
-          )}
+          <div
+            data-scroll-pane
+            className="min-h-0 min-w-0 flex-1 overflow-auto"
+          >
+            {selectedGroup && (
+              <TaskWaterfall
+                attempt={continueAttempts.get(selectedGroup.root.traceId)}
+                onContinue={() => void continueTask(selectedGroup.root)}
+                view={{
+                  expanded: expanded,
+                  focusTraceId: focusTraceId,
+                  group: selectedGroup,
+                  onFocusTrace: focusTrace,
+                  onSelect: (key) =>
+                    setSelectedKey((current) => (current === key ? null : key)),
+                  selectedKey: selectedKey,
+                  toggle: toggle,
+                }}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      </DetailSplit>
     </div>
   );
 }
@@ -1927,11 +1965,7 @@ function renderSpanRows(
       hasChildren={!isTaskRow && children.length > 0}
       onToggle={() => view.toggle(key)}
       isSelected={isSelected}
-      onClick={() => {
-        // Opening a row's detail also opens its steps; closing leaves them.
-        if (!isSelected && !isExpanded && children.length > 0) view.toggle(key);
-        view.onSelect(key);
-      }}
+      onClick={() => view.onSelect(key)}
       group={view.group}
       taskRunning={rootLive}
       highlighted={isRoot && span.traceId === view.focusTraceId}
@@ -1939,24 +1973,6 @@ function renderSpanRows(
       onFocusTrace={view.onFocusTrace}
     />,
   ];
-  if (isSelected) {
-    rows.push(
-      <tr key={`detail:${key}`} className="border-b border-border/40">
-        <td
-          colSpan={5}
-          className={cn(
-            "bg-muted/20 px-3 py-3",
-            subagent && "border-l-2 border-l-span-subtask/70",
-          )}
-        >
-          <p className="mb-2 font-mono text-muted-foreground">
-            {spanMetaLine(span)}
-          </p>
-          <SpanDetails span={span} />
-        </td>
-      </tr>,
-    );
-  }
   if (!isExpanded) return rows;
   for (const item of foldSteps(children, view.group.childrenByParent)) {
     rows.push(
