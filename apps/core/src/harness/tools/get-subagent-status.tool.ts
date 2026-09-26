@@ -18,13 +18,17 @@ import {
 // How long a check on a running subagent waits for it to finish.
 const STATUS_WAIT_MS = 60_000;
 
+interface GetSubagentStatusContext extends SubagentToolContext {
+  watch?: SubagentWatch;
+}
+
 type SubagentStatusOutput = Pick<
   AsyncAgentResultRecord,
   "status" | "response" | "error"
 >;
 
 export default function getSubagentStatusTool(
-  context: SubagentToolContext & { watch?: SubagentWatch },
+  context: GetSubagentStatusContext,
 ): ToolSet {
   return {
     get_subagent_status: tool({
@@ -36,13 +40,20 @@ export default function getSubagentStatusTool(
         required: ["taskId", "agentId"],
         additionalProperties: false,
       }),
-      execute: async function (input): Promise<SubagentStatusOutput> {
+      execute: async function (
+        input,
+        { abortSignal },
+      ): Promise<SubagentStatusOutput> {
         let record = await getOwnedSubagent(context, input);
         if (!record) {
           return toolError(subagentNotFound(input.taskId));
         }
         if (record.status === "processing" && context.watch) {
-          await context.watch.waitForSettled(input.taskId, STATUS_WAIT_MS);
+          await context.watch.waitForSettled(
+            input.taskId,
+            STATUS_WAIT_MS,
+            abortSignal,
+          );
           record = (await getOwnedSubagent(context, input)) ?? record;
         }
 
