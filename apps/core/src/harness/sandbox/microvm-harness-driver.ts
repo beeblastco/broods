@@ -23,6 +23,7 @@ import {
   readFileChunk,
   readHarnessStream,
 } from "./harness-shell-process.ts";
+import { type SandboxUsage, reportSandboxUsage } from "./live-status.ts";
 import type { MicrovmHarnessReservation } from "./microvm-executor.ts";
 import { MicrovmWebSocketProxy } from "./microvm-websocket-proxy.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
@@ -40,7 +41,11 @@ export interface MicrovmHarnessDriverOptions {
   defaultWorkingDirectory?: string;
   /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
+  /** Receives the guest's CPU, memory and disk once the machine is acquired. */
+  onUsage?: (usage: SandboxUsage) => void;
   ports?: ReadonlyArray<number>;
+  /** Other conversations use this machine too, so a session ending leaves it running. */
+  shared?: boolean;
 }
 
 interface MicrovmHarnessExecutor {
@@ -48,6 +53,7 @@ interface MicrovmHarnessExecutor {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<MicrovmHarnessReservation>;
   resumeHarnessReservation(request: {
     reservationKey: string;
@@ -114,15 +120,23 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
         reservationKey: this.#options.reservationKey,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
+        ...(this.#options.shared ? { shared: true } : {}),
       });
+      options.abortSignal?.throwIfAborted();
+      const session = this.#session(reservation);
+      await reportSandboxUsage(
+        session,
+        this.#options.onUsage,
+        options.abortSignal,
+      );
       options.abortSignal?.throwIfAborted();
 
       return {
-        session: this.#session(reservation),
+        session: session,
         isFirstCreate: reservation.isFirstCreate,
       };
     } catch (error) {
-      if (reservation?.isFirstCreate) {
+      if (reservation?.isFirstCreate && this.#options.shared !== true) {
         await this.#executor
           .release?.({ reservationKey: this.#options.reservationKey })
           .catch(() => {});
@@ -141,8 +155,15 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
       ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
     });
     options.abortSignal?.throwIfAborted();
+    const session = this.#session(reservation);
+    await reportSandboxUsage(
+      session,
+      this.#options.onUsage,
+      options.abortSignal,
+    );
+    options.abortSignal?.throwIfAborted();
 
-    return this.#session(reservation);
+    return session;
   }
 
   #assertBootstrapIdentity(identity: string | undefined): void {
@@ -166,6 +187,7 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
         this.#options.defaultWorkingDirectory ?? DEFAULT_WORKING_DIRECTORY,
       env: stringRecord(this.#options.config.envVars),
       ports: this.#options.ports ?? [],
+      shared: this.#options.shared === true,
     });
   }
 }
@@ -177,12 +199,14 @@ interface MicrovmHarnessSessionOptions {
   defaultWorkingDirectory: string;
   env: Record<string, string>;
   ports: ReadonlyArray<number>;
+  shared: boolean;
 }
 
 class MicrovmHarnessSession implements BroodsSandboxDriverSession {
   readonly #executor: MicrovmHarnessExecutor;
   readonly #reservation: Omit<MicrovmHarnessReservation, "isFirstCreate">;
   readonly #reservationKey: string;
+  readonly #shared: boolean;
   readonly #defaultWorkingDirectory: string;
   readonly #env: Record<string, string>;
   readonly #proxy: MicrovmWebSocketProxy;
@@ -196,6 +220,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     this.#executor = options.executor;
     this.#reservation = options.reservation;
     this.#reservationKey = options.reservationKey;
+    this.#shared = options.shared;
     this.#defaultWorkingDirectory = options.defaultWorkingDirectory;
     this.#env = options.env;
     this.id = options.reservation.microvmId;
@@ -308,8 +333,11 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     return this.#proxy.getPortUrl(options.port);
   }
 
+  // A shared machine idles down on its own; suspending it here would pull it
+  // out from under the other conversations still running on it.
   async stop(): Promise<void> {
     await this.#proxy.close();
+    if (this.#shared) return;
     if (!this.#executor.suspend) {
       throw new Error("MicroVM Harness reservation cannot be suspended");
     }
@@ -318,6 +346,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
 
   async destroy(): Promise<void> {
     await this.#proxy.close();
+    if (this.#shared) return;
     if (!this.#executor.release) {
       throw new Error("MicroVM Harness reservation cannot be released");
     }
