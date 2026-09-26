@@ -83,6 +83,7 @@ export async function releaseExpiredSandboxes(
         key,
         reservation.externalId,
         accountId,
+        reservation.ttlSeconds,
       ).catch(() => false);
       continue;
     }
