@@ -42,6 +42,10 @@ export default function getSubagentStatusTool(
         if (!record) {
           return toolError(subagentNotFound(input.taskId));
         }
+        // The model now holds the outcome, so it is not injected a second time.
+        if (record.status === "completed" || record.status === "failed") {
+          context.watch?.markDelivered(input.taskId);
+        }
 
         return {
           status: record.status,

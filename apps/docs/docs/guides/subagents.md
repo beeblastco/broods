@@ -40,11 +40,11 @@ Children cannot start their own subagents.
 
 In persistent mode the parent also gets:
 
-| Tool                  | Does                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| `get_subagent_status` | Reads a running child's status                                                              |
-| `update_subagent`     | `steer` changes the running child's direction, `continue` queues a follow-up turn           |
-| `stop_subagent`       | Stops the child at its next step. A stopped child's partial work is not sent to the parent. |
+| Tool                  | Does                                                                                                                                          |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_subagent_status` | Reads a child's status. On a child this turn started, it first waits up to 60s for it to finish. A result read this way is not injected again |
+| `update_subagent`     | `steer` changes the running child's direction, `continue` queues a follow-up turn                                                             |
+| `stop_subagent`       | Stops the child at its next step. A stopped child's partial work is not sent to the parent.                                                   |
 
 A parent can only control children it started. From outside, a persistent child is an ordinary conversation. Stop or steer it through the normal run endpoints with its `conversationKey`.
 

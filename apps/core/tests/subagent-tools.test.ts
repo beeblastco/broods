@@ -113,6 +113,7 @@ it("waits for a running subagent before answering its status", async () => {
     expiresAt: Date.now() + 1_000,
   })) as never;
   const waits: Array<{ taskId: string; timeoutMs: number }> = [];
+  const delivered: string[] = [];
   const { default: getStatus } =
     await import("../src/harness/tools/get-subagent-status.tool.ts");
   const tools = getStatus({
@@ -123,6 +124,9 @@ it("waits for a running subagent before answering its status", async () => {
         waits.push({ taskId: id, timeoutMs: timeoutMs });
         status = "completed";
       },
+      markDelivered: (id: string): void => {
+        delivered.push(id);
+      },
     },
   });
 
@@ -130,6 +134,7 @@ it("waits for a running subagent before answering its status", async () => {
     execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
   ).resolves.toEqual({ status: "completed", response: "done" });
   expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
+  expect(delivered).toEqual([taskId]);
 });
 
 it("preserves a completed subagent response as structured output", async () => {

@@ -263,6 +263,19 @@ export class SubagentCoordinator {
     await Promise.race([pending, sleep(budgetMs)]);
   }
 
+  /**
+   * Drops a finished subagent's pending injection once get_subagent_status has
+   * shown the model its outcome, so the same result never starts another pass.
+   */
+  markDelivered(taskId: string): void {
+    const index = this.completions.findIndex(
+      (completion) => completion.taskId === taskId,
+    );
+    if (index !== -1) {
+      this.completions.splice(index, 1);
+    }
+  }
+
   async drainCompletionsToParent(): Promise<number> {
     if (this.completions.length === 0) {
       return 0;
