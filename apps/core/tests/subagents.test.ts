@@ -399,6 +399,34 @@ describe("SubagentCoordinator", () => {
     expect(messageText(messages[1])).toContain("second result");
   });
 
+  it("keeps queued results when writing them to the parent fails", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push(completion("subagent_1", "finished"));
+
+    await expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
+      "convex down",
+    );
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(messageText(persistModelMessages.mock.calls[1]?.[0]?.[0])).toContain(
+      "finished",
+    );
+  });
+
   it("emits heartbeats while waiting and batches completed results with timeout notices", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
