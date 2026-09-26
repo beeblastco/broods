@@ -19,6 +19,7 @@ interface TestCompletion {
   status: "completed" | "failed";
   response?: unknown;
   error?: string;
+  visibleResult?: unknown;
 }
 
 // The two streamText callbacks the ephemeral test drives.
@@ -456,6 +457,36 @@ describe("SubagentCoordinator", () => {
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messages).toHaveLength(1);
     expect(messageText(messages[0])).toContain("second result");
+  });
+
+  it("still injects a finish hook's rewrite of a result the model read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push({
+      ...completion("subagent_1", "raw result"),
+      visibleResult: "hook summary",
+    });
+
+    coordinator.markDelivered(completion("subagent_1", "").eventId);
+    coordinator.confirmDelivered();
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(messageText(persistModelMessages.mock.calls[0]?.[0]?.[0])).toContain(
+      "hook summary",
+    );
   });
 
   it("still injects a read result whose tool result was never saved", async () => {

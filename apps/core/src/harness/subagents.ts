@@ -298,8 +298,11 @@ export class SubagentCoordinator {
   confirmDelivered(): void {
     for (const eventId of this.readUnsaved) {
       this.delivered.add(eventId);
+      // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
-        (completion) => completion.eventId === eventId,
+        (completion): boolean =>
+          completion.eventId === eventId &&
+          completion.visibleResult === undefined,
       );
       if (index !== -1) {
         this.completions.splice(index, 1);
@@ -969,7 +972,11 @@ export class SubagentCoordinator {
         inject = false;
       }
     }
-    if (inject && !this.delivered.has(completion.eventId)) {
+    if (
+      inject &&
+      (completion.visibleResult !== undefined ||
+        !this.delivered.has(completion.eventId))
+    ) {
       this.completions.push(completion);
     }
     this.notifyCompletion();
