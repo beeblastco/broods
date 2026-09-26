@@ -44,7 +44,7 @@ export default function getSubagentStatusTool(
         }
         // The model now holds the outcome, so it is not injected a second time.
         if (record.status === "completed" || record.status === "failed") {
-          context.watch?.markDelivered(input.taskId);
+          context.watch?.markDelivered(record.eventId);
         }
 
         return {

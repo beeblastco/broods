@@ -156,8 +156,12 @@ describe("rate-limited model calls", () => {
 
       expect(result.text).toBe("ok");
       expect(calls).toHaveLength(2);
-      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(290);
-      expect(calls[1]! - calls[0]!).toBeLessThan(1_500);
+      const [first, second] = calls;
+      if (first === undefined || second === undefined) {
+        throw new Error("expected two model calls");
+      }
+      expect(second - first).toBeGreaterThanOrEqual(290);
+      expect(second - first).toBeLessThan(1_500);
     } finally {
       globalThis.fetch = realFetch;
     }

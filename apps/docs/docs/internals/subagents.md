@@ -60,7 +60,7 @@ Reasoning parts are stripped from inherited parent context before the child sees
 
 In `persistent` mode each child is admitted through the same conversation coordinator as a top-level run, under a generated key of the form `subagent-persistent-{uuid}`. That is what makes a child stoppable and steerable. There is no subagent-specific control API. Stop, steer and follow-up requests go to the child's `conversationKey` through the normal ingress endpoints, and the model-facing `get_subagent_status`, `update_subagent` and `stop_subagent` tools use the same path.
 
-`get_subagent_status` on a child the current turn started waits on `SubagentCoordinator.waitForSettled` (60s, capped by the parent's wait budget) instead of answering at once, so polling costs one model step per change. Once it has returned a `completed` or `failed` outcome, `markDelivered` drops that completion from the queue, and the drain after the pass skips it instead of starting another pass for a result the model already has.
+`get_subagent_status` on a child the current turn started waits on `SubagentCoordinator.waitForSettled` (60s, capped by the parent's wait budget) instead of answering at once, so polling costs one model step per change. Once it has returned a `completed` or `failed` outcome, `markDelivered` records the result row's event id: a queued completion for it is dropped and a later one is never queued, so the drain after the pass skips it instead of starting another pass for a result the model already has.
 
 The lifecycle of one persistent child task, as `SubagentCoordinator` in `src/harness/subagents.ts` drives it:
 

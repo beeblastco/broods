@@ -171,6 +171,22 @@ describe("telegram retry after a failed run", () => {
     });
   });
 
+  it("chunks a long error and puts Retry on the last chunk", async () => {
+    const calls = await withTelegramApi(() =>
+      sendChannelFailure(adapter.actions(SOURCE), `⚠️ ${"x ".repeat(3_000)}`),
+    );
+
+    expect(calls.length).toBeGreaterThan(1);
+    const last = calls.at(-1)!.body as {
+      text: string;
+      reply_markup?: unknown;
+    };
+    expect(last.text.length).toBeLessThanOrEqual(4_096);
+    expect(last.reply_markup).toEqual({
+      inline_keyboard: [[{ text: "Retry", callback_data: "r:Retry" }]],
+    });
+  });
+
   it("turns a Retry tap into the person sending Retry", async () => {
     let parsed: Awaited<ReturnType<typeof adapter.parse>> | undefined;
     await withTelegramApi(async (): Promise<void> => {
