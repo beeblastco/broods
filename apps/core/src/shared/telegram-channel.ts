@@ -12,6 +12,7 @@ import {
   type Message,
   type StreamChunk,
 } from "chat";
+import { telegramWebhook, parseChannelWebhook } from "./channel-webhook.ts";
 import { timingSafeStringEqual } from "./auth.ts";
 import type {
   ChannelActions,
@@ -166,7 +167,10 @@ export function createTelegramChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const update: TelegramUpdate = JSON.parse(req.body);
+      const update = parseChannelWebhook(req.body, telegramWebhook);
+      if (!update) {
+        return { kind: "ignore", reason: "invalid_payload" };
+      }
       if (update.callback_query) {
         return parseQuestionClick(update.callback_query, update.update_id);
       }

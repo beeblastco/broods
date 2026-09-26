@@ -14,6 +14,7 @@
 
 import { createHash } from "node:crypto";
 import type { Attachment } from "chat";
+import { matrixWebhook, parseChannelWebhook } from "./channel-webhook.ts";
 import { timingSafeStringEqual } from "./auth.ts";
 import {
   channelAttachmentBytes,
@@ -225,7 +226,10 @@ export function createMatrixChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const payload = JSON.parse(req.body) as MatrixForwardedEvent;
+      const payload = parseChannelWebhook(req.body, matrixWebhook);
+      if (!payload) {
+        return { kind: "ignore", reason: "invalid_payload" };
+      }
       if (
         payload.type !== "MATRIX_ROOM_EVENT" ||
         payload.event?.type !== "m.room.message"

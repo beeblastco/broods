@@ -5,6 +5,7 @@
 
 import { GitHubAdapter, type GitHubThreadId } from "@chat-adapter/github";
 import { ConsoleLogger, fromFullStream } from "chat";
+import { githubWebhook, parseChannelWebhook } from "./channel-webhook.ts";
 import { createSign } from "node:crypto";
 import type {
   ChannelActions,
@@ -136,7 +137,10 @@ export function createGitHubChannel(
     parse: function (req): ChannelParseResult | Promise<ChannelParseResult> {
       const event = req.headers["x-github-event"];
       const deliveryId = req.headers["x-github-delivery"];
-      const payload = JSON.parse(req.body) as GitHubWebhookPayload;
+      const payload = parseChannelWebhook(req.body, githubWebhook);
+      if (!payload) {
+        return { kind: "ignore", reason: "invalid_payload" };
+      }
 
       if (event === "ping") {
         return {
