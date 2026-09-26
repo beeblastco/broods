@@ -363,6 +363,9 @@ export const applySteering = internalMutation({
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
+    // A harness turn takes a steer only as text: claim the plain-text prefix
+    // and leave the rest queued for the next turn.
+    textOnly: v.optional(v.boolean()),
   },
   returns: v.union(appliedEnvelopeValidator, v.null()),
   handler: async (
@@ -390,9 +393,14 @@ export const applySteering = internalMutation({
           .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
           .unique()
       : null;
-    const selected = steering
+    const prefix = steering
       ? contiguousModePrefix(active, owner?.delivery)
       : [];
+    const firstNotText = args.textOnly
+      ? prefix.findIndex((row) => !row.events.every(isPlainUserText))
+      : -1;
+    const selected =
+      firstNotText === -1 ? prefix : prefix.slice(0, firstNotText);
     if (selected.length === 0) {
       if (
         queue.queuedCount !== coordinator.queuedCount ||
@@ -1106,6 +1114,35 @@ function ingressStatusResult(
  * The leading run of rows that share the first row's requestedMode and the
  * sender's userId, so one turn never runs two people's messages.
  */
+/**
+ * Whether a stored ingress event is a user message made only of text. Events
+ * are stored as `v.any()`, so this reads the model message shape at run time.
+ */
+function isPlainUserText(event: unknown): boolean {
+  if (
+    typeof event !== "object" ||
+    event === null ||
+    !("role" in event) ||
+    event.role !== "user" ||
+    !("content" in event)
+  ) {
+    return false;
+  }
+  const content = event.content;
+
+  return (
+    typeof content === "string" ||
+    (Array.isArray(content) &&
+      content.every(
+        (part: unknown): boolean =>
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          part.type === "text",
+      ))
+  );
+}
+
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
   sender: DeliverySender = rows[0]?.delivery,

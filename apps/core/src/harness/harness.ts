@@ -2064,12 +2064,10 @@ export async function runAgentLoop(
           onStepStart: harnessSteersMidTurn(agentConfig.harness!.type)
             ? async (event) => {
                 await streamOptions.onStepStart?.(event);
+                // A claimed steer that could not be saved fails the run, so its
+                // envelope settles failed instead of completed and unseen.
                 await steerHarnessTurn(session, activeHarnessSession!).catch(
-                  (error: unknown) =>
-                    logError("Failed to steer HarnessAgent turn", {
-                      eventId: session.eventId,
-                      error: errorMessage(error),
-                    }),
+                  (error: unknown): void => runAbort.abort(error),
                 );
               }
             : streamOptions.onStepStart,
@@ -2341,7 +2339,9 @@ async function steerHarnessTurn(
   session: Session,
   harnessSession: HarnessAgentSession,
 ): Promise<void> {
-  const steering = await session.applySteeringIngress();
+  // Only plain-text steers can be handed over; the rest stay queued for the
+  // next turn, which takes them whole.
+  const steering = await session.applySteeringIngress({ textOnly: true });
   if (!steering) {
     return;
   }
@@ -2356,7 +2356,22 @@ async function steerHarnessTurn(
   if (!text) {
     return;
   }
-  await harnessSession.experimental_steerTurn(text);
+  // The turn can end between the claim and the hand-over. The steer is
+  // already in the conversation then, so this is logged, not failed.
+  const handedOver = await harnessSession
+    .experimental_steerTurn(text)
+    .then((): boolean => true)
+    .catch((error: unknown): boolean => {
+      logError("Failed to steer HarnessAgent turn", {
+        eventId: session.eventId,
+        error: errorMessage(error),
+      });
+
+      return false;
+    });
+  if (!handedOver) {
+    return;
+  }
   logInfo("Steering ingress applied during HarnessAgent turn", {
     eventId: session.eventId,
     conversationKey: session.conversationKey,

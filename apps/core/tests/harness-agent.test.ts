@@ -1,12 +1,20 @@
 import { beforeEach, expect, it, mock } from "bun:test";
 
-const streamCalls: Record<string, unknown>[] = [];
+// The part of the harness stream options these tests read.
+interface HarnessStreamCall {
+  abortSignal?: AbortSignal;
+  onEnd?: unknown;
+  onStepStart?: (event: { stepNumber: number }) => Promise<void>;
+  [hook: string]: unknown;
+}
+
+const streamCalls: HarnessStreamCall[] = [];
 const steeredTexts: string[] = [];
 
 mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   createConfiguredHarnessAgent: () => ({
     agent: {
-      stream: async (options: Record<string, unknown>): Promise<never> => {
+      stream: async (options: HarnessStreamCall): Promise<never> => {
         streamCalls.push(options);
         throw new Error("stop after the stream call");
       },
@@ -60,11 +68,9 @@ it("steers a running harness turn at its next step", async () => {
   await runHarnessTurn("claude-code", applySteeringIngress, appended);
 
   queued = true;
-  const onStepStart = streamCalls[0]?.onStepStart as (
-    event: unknown,
-  ) => Promise<void>;
-  await onStepStart({ stepNumber: 1, messages: [] });
+  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
 
+  expect(applySteeringIngress).toHaveBeenLastCalledWith({ textOnly: true });
   expect(steeredTexts).toEqual(["focus on the tests"]);
   expect(appended).toEqual([[{ role: "user", content: "focus on the tests" }]]);
 });
@@ -74,12 +80,34 @@ it("leaves steering queued for the next turn on an adapter that cannot take it",
   await runHarnessTurn("codex", applySteeringIngress);
   const callsBeforeTurn = applySteeringIngress.mock.calls.length;
 
-  const onStepStart = streamCalls[0]?.onStepStart as (
-    event: unknown,
-  ) => Promise<void>;
-  await onStepStart({ stepNumber: 1, messages: [] });
+  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
 
   expect(applySteeringIngress).toHaveBeenCalledTimes(callsBeforeTurn);
+  expect(steeredTexts).toEqual([]);
+});
+
+it("fails the run when a claimed steer cannot be saved", async () => {
+  let queued = false;
+  await runHarnessTurn(
+    "claude-code",
+    async () =>
+      queued
+        ? {
+            events: [{ role: "user", content: "focus" }],
+            contributingEventIds: ["steer-1"],
+            appliedMode: "steer",
+          }
+        : null,
+    [],
+    async (): Promise<never> => {
+      throw new Error("convex down");
+    },
+  );
+
+  queued = true;
+  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
+
+  expect(streamCalls[0]?.abortSignal?.aborted).toBe(true);
   expect(steeredTexts).toEqual([]);
 });
 
@@ -87,6 +115,13 @@ async function runHarnessTurn(
   type: "claude-code" | "codex",
   applySteeringIngress: () => Promise<unknown>,
   appended: unknown[] = [],
+  appendIngressEvents: (events: unknown) => Promise<[]> = async (
+    events,
+  ): Promise<[]> => {
+    appended.push(events);
+
+    return [];
+  },
 ): Promise<void> {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   const { runAgentLoop } = await import("../src/harness/harness.ts");
@@ -104,11 +139,7 @@ async function runHarnessTurn(
         environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         applySteeringIngress: applySteeringIngress,
-        appendIngressEvents: async (events: unknown): Promise<[]> => {
-          appended.push(events);
-
-          return [];
-        },
+        appendIngressEvents: appendIngressEvents,
         loadHarnessSession: async () => null,
         loadHarnessSkills: async () => [],
         renewConversationLease: async () => ({ renewed: true }),
