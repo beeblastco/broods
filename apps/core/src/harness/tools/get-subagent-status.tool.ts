@@ -45,6 +45,10 @@ export default function getSubagentStatusTool(
           await context.watch.waitForSettled(input.taskId, STATUS_WAIT_MS);
           record = (await getOwnedSubagent(context, input)) ?? record;
         }
+        // The model now holds the outcome, so it is not injected a second time.
+        if (record.status === "completed" || record.status === "failed") {
+          context.watch?.markDelivered(record.eventId);
+        }
 
         return {
           status: record.status,

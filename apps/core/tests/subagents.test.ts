@@ -430,6 +430,64 @@ describe("SubagentCoordinator", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("does not inject a result the model already read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push(completion("subagent_1", "first result"));
+    internals.completions.push(completion("subagent_2", "second result"));
+
+    coordinator.markDelivered(completion("subagent_1", "").eventId);
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messageText(messages[0])).toContain("second result");
+  });
+
+  it("skips a read result that finishes queueing after the read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      { subagent: { enabled: true } },
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    const read = completion("subagent_1", "first result");
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+
+    coordinator.markDelivered(read.eventId);
+    await internals.completeTask(read);
+    await internals.completeTask({
+      ...completion("subagent_1", "follow-up result"),
+      eventId: "event_subagent_1_followup",
+    });
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
+    expect(messageText(messages[0])).toContain("follow-up result");
+  });
+
   it("stops waiting once the outcome is recorded, before follow-ups drain", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(

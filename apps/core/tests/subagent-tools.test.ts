@@ -113,6 +113,7 @@ it("waits for a running subagent before answering its status", async () => {
     .mockResolvedValueOnce({ ...row, status: "processing" })
     .mockResolvedValueOnce({ ...row, status: "completed", response: "done" });
   const waits: Array<{ taskId: string; timeoutMs: number }> = [];
+  const delivered: string[] = [];
   const { default: getStatus } =
     await import("../src/harness/tools/get-subagent-status.tool.ts");
   const tools = getStatus({
@@ -122,6 +123,9 @@ it("waits for a running subagent before answering its status", async () => {
       waitForSettled: async (id: string, timeoutMs: number): Promise<void> => {
         waits.push({ taskId: id, timeoutMs: timeoutMs });
       },
+      markDelivered: (id: string): void => {
+        delivered.push(id);
+      },
     },
   });
 
@@ -129,6 +133,7 @@ it("waits for a running subagent before answering its status", async () => {
     execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
   ).resolves.toEqual({ status: "completed", response: "done" });
   expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
+  expect(delivered).toEqual([childEventId]);
 });
 
 it("does not wait on a task paired with the wrong agent", async () => {
@@ -148,7 +153,7 @@ it("does not wait on a task paired with the wrong agent", async () => {
   const tools = getStatus({
     accountId: ACCOUNT_ID,
     eventId: PARENT_EVENT_ID,
-    watch: { waitForSettled: waitForSettled },
+    watch: { waitForSettled: waitForSettled, markDelivered: (): void => {} },
   });
 
   await expect(
