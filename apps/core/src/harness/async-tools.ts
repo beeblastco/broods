@@ -94,7 +94,7 @@ export class AsyncToolCoordinator {
 
   async waitForIdle(
     options: {
-      onHeartbeat?: (pendingCount: number) => void;
+      onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
   ): Promise<"idle" | "timeout"> {
     while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
@@ -110,7 +110,8 @@ export class AsyncToolCoordinator {
       ]);
 
       if (this.pending.size > 0) {
-        options.onHeartbeat?.(this.pending.size);
+        // Awaited, so a heartbeat that finds the run lost ends the wait.
+        await options.onHeartbeat?.(this.pending.size);
       }
     }
 
