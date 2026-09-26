@@ -65,6 +65,16 @@ const HARNESS_SESSION_PARKING: Record<
   pi: "stop",
 };
 
+// Adapters whose running turn takes another user message (the prompt control's
+// submitUserMessage). The rest read steering only when the next turn starts.
+const HARNESS_MID_TURN_STEERING: Record<AiSdkHarnessType, boolean> = {
+  "claude-code": true,
+  codex: false,
+  deepagents: false,
+  opencode: true,
+  pi: true,
+};
+
 export function createAiSdkHarnessAdapter(
   type: AiSdkHarnessType,
   settings?: AiSdkHarnessSettings,
@@ -116,6 +126,10 @@ export function createConfiguredAiSdkHarnessAdapter(
 
 export function harnessAdapterVersion(type: AiSdkHarnessType): string {
   return HARNESS_VERSIONS[type];
+}
+
+export function harnessSteersMidTurn(type: AiSdkHarnessType): boolean {
+  return HARNESS_MID_TURN_STEERING[type];
 }
 
 export function harnessSessionParking(

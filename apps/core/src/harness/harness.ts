@@ -77,6 +77,7 @@ import {
 } from "./hook-dispatcher.ts";
 import {
   createConfiguredHarnessAgent,
+  harnessSteersMidTurn,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
 } from "./ai-sdk-harness/index.ts";
@@ -1964,7 +1965,20 @@ export async function runAgentLoop(
           // The same step and tool hooks as streamText, so a harness run
           // traces every step. onEnd stays out: finalizeHarnessStream calls it
           // after the native session is parked.
-          onStepStart: streamOptions.onStepStart,
+          // Steering that arrives mid-turn joins the running turn at the next
+          // step, where the adapter can take it.
+          onStepStart: harnessSteersMidTurn(agentConfig.harness!.type)
+            ? async (event) => {
+                await streamOptions.onStepStart?.(event);
+                await steerHarnessTurn(session, activeHarnessSession!).catch(
+                  (error: unknown) =>
+                    logError("Failed to steer HarnessAgent turn", {
+                      eventId: session.eventId,
+                      error: errorMessage(error),
+                    }),
+                );
+              }
+            : streamOptions.onStepStart,
           onStepEnd: streamOptions.onStepEnd,
           onToolExecutionStart: streamOptions.onToolExecutionStart,
           onToolExecutionEnd: streamOptions.onToolExecutionEnd,
@@ -2220,6 +2234,38 @@ async function applyHarnessSteeringBeforeTurn(
     eventId: session.eventId,
     conversationKey: session.conversationKey,
     steeringEventCount: steeringEventCount,
+  });
+}
+
+/**
+ * Hands steering that arrived during a HarnessAgent turn to the running turn,
+ * which takes it at its next safe input boundary. Only for adapters that
+ * accept mid-turn messages; the rest get it before their next turn.
+ */
+async function steerHarnessTurn(
+  session: Session,
+  harnessSession: HarnessAgentSession,
+): Promise<void> {
+  const steering = await session.applySteeringIngress();
+  if (!steering) {
+    return;
+  }
+  const events = steering.events as ConversationIngressEvent[];
+  await session.appendIngressEvents(events);
+  const text = events
+    .flatMap((event) =>
+      event.role === "user" ? [extractText(event.content).trim()] : [],
+    )
+    .filter(Boolean)
+    .join("\n\n");
+  if (!text) {
+    return;
+  }
+  await harnessSession.experimental_steerTurn(text);
+  logInfo("Steering ingress applied during HarnessAgent turn", {
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+    steeringEventCount: steering.contributingEventIds.length,
   });
 }
 
