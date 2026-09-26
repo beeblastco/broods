@@ -56,4 +56,6 @@ COPY --from=builder --chown=1001:1001 /app/apps/dashboard/.next/static ./apps/da
 COPY --from=builder --chown=1001:1001 /app/apps/dashboard/public ./apps/dashboard/public
 USER 1001
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD wget -q -T 4 -O /dev/null "http://127.0.0.1:${PORT:-3000}/healthz" || exit 1
 CMD ["bun", "apps/dashboard/server.js"]

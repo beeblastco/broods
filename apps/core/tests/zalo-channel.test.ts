@@ -165,16 +165,11 @@ describe("zalo channel adapter", () => {
     const richLink = await adapter.parse(
       createZaloRequest(validUpdate({ text: { url: "https://example.com" } })),
     );
-    expectIgnoreReason(richLink, "missing_text");
-    if (richLink.kind !== "ignore") {
-      throw new Error("Expected malformed Zalo rich-link text to be ignored");
-    }
-    expect(richLink.reason).toContain('"textType":"object"');
-    expect(richLink.reason).toContain('"textFields":["url"]');
-    expectIgnoreReason(
-      await adapter.parse(createZaloRequest({ event_name: 42 })),
-      "unsupported_event:missing",
-    );
+    expect(richLink).toEqual({ kind: "ignore", reason: "invalid_payload" });
+    expect(await adapter.parse(createZaloRequest({ event_name: 42 }))).toEqual({
+      kind: "ignore",
+      reason: "invalid_payload",
+    });
     expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ isBot: true }))),
       "bot_message",
