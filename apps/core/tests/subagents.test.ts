@@ -399,6 +399,36 @@ describe("SubagentCoordinator", () => {
     expect(messageText(messages[1])).toContain("second result");
   });
 
+  it("waits for one pending subagent, bounded by the timeout", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    let settle!: () => void;
+    internals.pending.set(
+      "subagent_1",
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    internals.pending.set("subagent_2", new Promise<void>(() => {}));
+
+    setTimeout(() => settle(), 5);
+    const settledAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000);
+    expect(Date.now() - settledAt).toBeLessThan(1_000);
+
+    const timedAt = Date.now();
+    await coordinator.waitForSettled("subagent_2", 20);
+    expect(Date.now() - timedAt).toBeLessThan(500);
+    await expect(
+      coordinator.waitForSettled("unknown", 5_000),
+    ).resolves.toBeUndefined();
+  });
+
   it("emits heartbeats while waiting and batches completed results with timeout notices", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(

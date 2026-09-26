@@ -98,6 +98,40 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
   expect(mutations[2]?.args.expectedOwnerTaskId).toBe(taskId);
 });
 
+it("waits for a running subagent before answering its status", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
+  let status = "processing";
+  runtime.query = mock(async () => ({
+    accountId: ACCOUNT_ID,
+    eventId: childEventId,
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "wait"),
+    status: status,
+    response: status === "completed" ? "done" : undefined,
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  })) as never;
+  const waits: Array<{ taskId: string; timeoutMs: number }> = [];
+  const { default: getStatus } =
+    await import("../src/harness/tools/get-subagent-status.tool.ts");
+  const tools = getStatus({
+    accountId: ACCOUNT_ID,
+    eventId: PARENT_EVENT_ID,
+    watch: {
+      waitForSettled: async (id: string, timeoutMs: number): Promise<void> => {
+        waits.push({ taskId: id, timeoutMs: timeoutMs });
+        status = "completed";
+      },
+    },
+  });
+
+  await expect(
+    execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
+  ).resolves.toEqual({ status: "completed", response: "done" });
+  expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
+});
+
 it("preserves a completed subagent response as structured output", async () => {
   const taskId = createSubagentTaskId(PARENT_EVENT_ID);
   const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);

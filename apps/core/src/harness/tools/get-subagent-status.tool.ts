@@ -12,7 +12,11 @@ import {
   toolError,
   type SubagentToolContext,
   type SubagentToolInput,
+  type SubagentWatch,
 } from "./utils.ts";
+
+// How long a check on a running subagent waits for it to finish.
+const STATUS_WAIT_MS = 60_000;
 
 type SubagentStatusOutput = Pick<
   AsyncAgentResultRecord,
@@ -20,12 +24,12 @@ type SubagentStatusOutput = Pick<
 >;
 
 export default function getSubagentStatusTool(
-  context: SubagentToolContext,
+  context: SubagentToolContext & { watch?: SubagentWatch },
 ): ToolSet {
   return {
     get_subagent_status: tool({
       description:
-        "Check the current status of a persistent subagent previously started by this run. Use the taskId and agentId returned by run_subagent.",
+        "Check a persistent subagent previously started by this run, using the taskId and agentId from run_subagent. A running subagent is waited on for up to 60 seconds first. You rarely need this: results are added to this conversation when the subagent finishes, so you can simply end your turn.",
       inputSchema: jsonSchema<SubagentToolInput>({
         type: "object",
         properties: SUBAGENT_TOOL_PROPERTIES,
@@ -33,6 +37,7 @@ export default function getSubagentStatusTool(
         additionalProperties: false,
       }),
       execute: async function (input): Promise<SubagentStatusOutput> {
+        await context.watch?.waitForSettled(input.taskId, STATUS_WAIT_MS);
         const record = await getOwnedSubagent(context, input);
         if (!record) {
           return toolError(subagentNotFound(input.taskId));

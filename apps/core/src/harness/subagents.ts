@@ -246,6 +246,23 @@ export class SubagentCoordinator {
     return this.pending.size === 0 ? "idle" : "timeout";
   }
 
+  /**
+   * Waits for one of this turn's subagents to settle, up to `timeoutMs` or the
+   * parent's wait budget. get_subagent_status uses it, so a status check spends
+   * one model step per change instead of one per instant "processing".
+   */
+  async waitForSettled(taskId: string, timeoutMs: number): Promise<void> {
+    const pending = this.pending.get(taskId);
+    if (!pending) {
+      return;
+    }
+    const budgetMs = Math.max(
+      Math.min(timeoutMs, this.waitUntilMs - Date.now()),
+      0,
+    );
+    await Promise.race([pending, sleep(budgetMs)]);
+  }
+
   async drainCompletionsToParent(): Promise<number> {
     if (this.completions.length === 0) {
       return 0;

@@ -35,6 +35,11 @@ export interface SubagentToolContext {
   eventId: string;
 }
 
+/** This turn's live subagents, as get_subagent_status sees them. */
+export interface SubagentWatch {
+  waitForSettled(taskId: string, timeoutMs: number): Promise<void>;
+}
+
 export interface SubagentToolInput {
   taskId: string;
   agentId: string;
