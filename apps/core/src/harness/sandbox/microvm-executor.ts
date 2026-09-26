@@ -77,6 +77,7 @@ import {
   configString,
   mergeSandboxEnv,
   SandboxCapacityError,
+  SandboxGoneError,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -219,10 +220,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     this.#client = client;
   }
 
+  // A `shared` machine is kept when its first setup fails: another conversation
+  // may already hold it, and the unset onCreate marker makes the next acquire retry.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<MicrovmHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -243,7 +247,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
       return reservation;
     } catch (error) {
-      if (reservation.isFirstCreate) {
+      if (reservation.isFirstCreate && request.shared !== true) {
         await this.release(request).catch(() => {});
       }
       throw error;
@@ -266,7 +270,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
     );
     if (!microvmId) {
-      throw new Error("no reserved MicroVM for this Harness session");
+      throw new SandboxGoneError(
+        "no reserved MicroVM for this Harness session",
+      );
     }
     const reservation = await this.#reconnect(microvmId);
     await this.#runLifecycle(
@@ -279,6 +285,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       reservation.microvmId,
       this.#config.controlPlane?.accountId,
+      this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
     // row; recoverable on the next call, so it never holds up the session.
@@ -665,6 +672,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           existing,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
         void upsertSandboxInstance(
           this.#config.controlPlane,
@@ -700,6 +708,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           created.microvmId,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
         void upsertSandboxInstance(
