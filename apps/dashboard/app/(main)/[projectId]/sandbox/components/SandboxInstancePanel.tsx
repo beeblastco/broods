@@ -197,7 +197,7 @@ export function SandboxInstancePanel({
       }
       meta={
         <div className="mt-0.5 text-2xs text-muted-foreground">
-          {formatProvider(instance.provider)} sandbox instance
+          {formatProvider(instance.provider)} instance
         </div>
       }
       onClose={onClose}

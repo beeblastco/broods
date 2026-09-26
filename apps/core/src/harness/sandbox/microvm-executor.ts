@@ -279,6 +279,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       reservation.microvmId,
       this.#config.controlPlane?.accountId,
+      this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
     // row; recoverable on the next call, so it never holds up the session.
@@ -665,6 +666,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           existing,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
         void upsertSandboxInstance(
           this.#config.controlPlane,
@@ -700,6 +702,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           created.microvmId,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
         void upsertSandboxInstance(

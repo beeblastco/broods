@@ -13,7 +13,7 @@ import type { FunctionReturnType } from "convex/server";
 const HEARTBEAT_GRACE_MS = 150_000;
 
 /** What a machine sandbox is called wherever a provider name is shown. */
-export const MACHINE_LABEL = "your computer";
+export const MACHINE_LABEL = "broods machine";
 
 export const MACHINE_STATE_LABEL: Record<MachineState, string> = {
   connected: "Connected",

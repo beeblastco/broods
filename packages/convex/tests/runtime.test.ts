@@ -539,6 +539,26 @@ describe("runtime persistence", () => {
     ).toBeNull();
   });
 
+  test("a shorter reservation window lapses on its own deadline", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const reservation = {
+      provider: "sandbox" as const,
+      reservationKey: `acct:${accountId}:conversation:one`,
+      externalId: "sandbox-1",
+      accountId: accountId,
+      ttlSeconds: 60,
+    };
+    await t.mutation(internal.runtime.claimSandboxReservation, reservation);
+    const row = await t.run((ctx) =>
+      ctx.db.query("sandboxReservations").first(),
+    );
+    const now = Math.floor(Date.now() / 1000);
+
+    expect(row?.expiresAt).toBeGreaterThanOrEqual(now + 59);
+    expect(row?.expiresAt).toBeLessThanOrEqual(now + 61);
+  });
+
   test("fails a detached job whose sandbox the reservation stopped naming", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

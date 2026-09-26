@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import {
+  harnessReservationKey,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
 } from "../src/harness/ai-sdk-harness/index.ts";
@@ -14,19 +15,16 @@ const CHECKPOINT = {
 describe("openAiSdkHarnessSession", () => {
   it("resumes the native session from the Broods checkpoint", async () => {
     const createSession = mock(async () => ({ sessionId: "native-session" }));
-    const broodsSession = {
-      loadHarnessSession: async () => ({
-        harnessType: "codex",
-        sessionId: "native-session",
-        resumeState: CHECKPOINT,
-      }),
-    };
     const abortController = new AbortController();
 
     await openAiSdkHarnessSession({
       abortSignal: abortController.signal,
       agent: { createSession: createSession } as never,
-      broodsSession: broodsSession as never,
+      stored: {
+        harnessType: "codex",
+        sessionId: "native-session",
+        resumeState: CHECKPOINT,
+      },
       type: "codex",
     });
 
@@ -39,25 +37,68 @@ describe("openAiSdkHarnessSession", () => {
 
   it("refuses to bind a conversation to another adapter", async () => {
     const createSession = mock(async () => ({ sessionId: "unused" }));
-    const broodsSession = {
-      loadHarnessSession: async () => ({
-        harnessType: "pi",
-        sessionId: "native-session",
-        resumeState: {},
-      }),
-    };
-
     await expect(
       openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,
-        broodsSession: broodsSession as never,
+        stored: {
+          harnessType: "pi",
+          sessionId: "native-session",
+          resumeState: {},
+        },
         type: "codex",
       }),
     ).rejects.toThrow(
       "Conversation is already bound to the pi harness; clear it before switching to codex",
     );
     expect(createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("harnessReservationKey", () => {
+  const base = {
+    agentReservationKey: "agent-machine",
+    conversationKey: "conversation",
+    isolated: false,
+    stored: null,
+  };
+
+  it("shares the agent's machine for a new Pi conversation", () => {
+    expect(harnessReservationKey({ ...base, type: "pi" })).toBe(
+      "agent-machine",
+    );
+  });
+
+  it("gives an isolated task its own machine", () => {
+    expect(harnessReservationKey({ ...base, isolated: true, type: "pi" })).toBe(
+      "conversation",
+    );
+  });
+
+  it("keeps bridge adapters on one machine per conversation", () => {
+    expect(harnessReservationKey({ ...base, type: "codex" })).toBe(
+      "conversation",
+    );
+  });
+
+  it("resumes on the machine the conversation started on", () => {
+    const stored = {
+      harnessType: "pi" as const,
+      sessionId: "s",
+      resumeState: {},
+    };
+
+    expect(
+      harnessReservationKey({
+        ...base,
+        stored: { ...stored, reservationKey: "agent-machine" },
+        isolated: true,
+        type: "pi",
+      }),
+    ).toBe("agent-machine");
+    expect(harnessReservationKey({ ...base, stored: stored, type: "pi" })).toBe(
+      "conversation",
+    );
   });
 });
 
@@ -78,6 +119,7 @@ describe("parkAiSdkHarnessSession", () => {
         detach: detach,
         stop: stop,
       } as never,
+      reservationKey: "acct:a:agent:b:sandbox",
       successful: true,
       type: "deepagents",
     });
@@ -88,6 +130,7 @@ describe("parkAiSdkHarnessSession", () => {
       harnessType: "deepagents",
       sessionId: "native-session",
       resumeState: CHECKPOINT,
+      reservationKey: "acct:a:agent:b:sandbox",
     });
   });
 
@@ -105,6 +148,7 @@ describe("parkAiSdkHarnessSession", () => {
         detach: detach,
         stop: stop,
       } as never,
+      reservationKey: "acct:a:agent:b:sandbox",
       successful: true,
       type: "codex",
     });
@@ -127,6 +171,7 @@ describe("parkAiSdkHarnessSession", () => {
         detach: detach,
         stop: stop,
       } as never,
+      reservationKey: "acct:a:agent:b:sandbox",
       successful: false,
       type: "deepagents",
     });

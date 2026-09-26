@@ -26,11 +26,13 @@ export function getSandboxReservationRecord(
 // derived from it. Callers pass accountId from the sandbox control plane. When
 // it is absent (synthetic/stateless config) the reservation write is skipped so
 // the run degrades to non-persistent instead of failing the tool call.
+// `ttlSeconds` shortens the idle window the sweeper waits before releasing it.
 export function claimSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
   externalId: string,
   accountId: string | undefined,
+  ttlSeconds?: number,
 ): Promise<boolean> {
   if (!accountId) return Promise.resolve(false);
 
@@ -39,6 +41,7 @@ export function claimSandboxInstance(
     reservationKey: reservationKey,
     externalId: externalId,
     accountId: accountId,
+    ttlSeconds: ttlSeconds,
   });
 }
 // Drops the reservation row while it still names `expectedExternalId`; with
@@ -68,6 +71,7 @@ export async function saveSandboxInstance(
   reservationKey: string,
   externalId: string,
   accountId: string | undefined,
+  ttlSeconds?: number,
 ): Promise<void> {
   if (!accountId) return;
 
@@ -76,5 +80,6 @@ export async function saveSandboxInstance(
     reservationKey: reservationKey,
     externalId: externalId,
     accountId: accountId,
+    ttlSeconds: ttlSeconds,
   });
 }

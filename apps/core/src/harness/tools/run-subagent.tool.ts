@@ -13,7 +13,7 @@ import {
 } from "ai";
 
 const MAX_SUBAGENT_TASKS = 10;
-const TASK_KEYS = new Set(["agentId", "prompt", "conversationKey"]);
+const TASK_KEYS = new Set(["agentId", "prompt", "conversationKey", "isolated"]);
 type RunSubagentMode = "ephemeral" | "persistent";
 
 interface RunSubagentInput {
@@ -24,6 +24,8 @@ export interface RunSubagentTaskInput {
   agentId?: string;
   prompt: string;
   conversationKey?: string;
+  /** Run a harness subagent on a machine of its own instead of its agent's shared one. */
+  isolated?: boolean;
 }
 
 export type RunSubagentTaskDispatch = {
@@ -59,6 +61,11 @@ export function buildRunSubagentInputSchema(
     prompt: {
       type: "string",
       description: "The task prompt for the subagent.",
+    },
+    isolated: {
+      type: "boolean",
+      description:
+        "Give a coding subagent a machine of its own for this new conversation instead of the machine its other conversations share. Only when the work needs it: untrusted code or secrets that must not reach other tasks, installs or services that would clash, or tests that other work in parallel could contaminate. Ignored when resuming.",
     },
   };
 
@@ -202,10 +209,14 @@ function normalizeTask(
           `tasks[${index}].conversationKey`,
         )
       : undefined;
+  if (task.isolated !== undefined && typeof task.isolated !== "boolean") {
+    throw new Error(`tasks[${index}].isolated must be a boolean`);
+  }
 
   return {
     ...(agentId ? { agentId: agentId } : {}),
     prompt: prompt,
     ...(conversationKey ? { conversationKey: conversationKey } : {}),
+    ...(task.isolated === true ? { isolated: true } : {}),
   };
 }

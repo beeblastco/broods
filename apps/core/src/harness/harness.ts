@@ -77,9 +77,18 @@ import {
 } from "./hook-dispatcher.ts";
 import {
   createConfiguredHarnessAgent,
+  harnessReservationKey,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
 } from "./ai-sdk-harness/index.ts";
+import {
+  agentSandboxStatus,
+  formatSandboxStatus,
+  occupySandbox,
+  sandboxNeighbours,
+  type SandboxUsage,
+} from "./sandbox/live-status.ts";
+import { configString } from "./sandbox/utils.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import {
@@ -130,6 +139,9 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "send-sticker",
 ]);
 const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
+// A machine only one conversation uses is released after a day idle instead of
+// the default week, so abandoned subagent tasks stop holding machines.
+const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
 /** Thrown when an owner is stopped; callers match on it to skip result delivery. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
@@ -210,6 +222,10 @@ export interface AgentLoopOptions {
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; links its trace to the parent's.
   subagentParent?: SubagentParentContext;
+  // The subagent task asked for a harness machine of its own instead of the
+  // agent's shared one. Read on the conversation's first turn only; later turns
+  // resume on whatever machine that turn stored.
+  isolatedSandbox?: boolean;
   // In-process work the handler still waits on once this pass ends, so its
   // trace closes as waiting rather than ok.
   pendingWork?: () => TaskWaitingOn | undefined;
@@ -390,6 +406,9 @@ export async function runAgentLoop(
     ...(session.agentId ? { agentId: session.agentId } : {}),
     conversationKey: session.conversationKey,
   };
+  // Registers this run on the machine it works on so a neighbour's environment
+  // counts it; released when usage finalizes.
+  let releaseSandboxOccupancy: (() => void) | undefined;
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
@@ -423,7 +442,24 @@ export async function runAgentLoop(
     return `${serialized.slice(0, MAX_TRACE_ATTRIBUTE_CHARS)}...[truncated]`;
   };
 
-  const environment = session.environmentText();
+  // A bash-only agent's machine status is read here; a harness run reads its own
+  // once the session holds the machine, below.
+  const agentMachine =
+    agentConfig.harness === undefined && resolvedWorkspaces.length === 0
+      ? await agentSandboxStatus(sandboxes[0], session.eventId)
+      : undefined;
+  const agentMachineKey = configString(
+    sandboxes[0]?.sandbox.options?.reservationKey,
+  );
+  if (agentMachine && agentMachineKey) {
+    releaseSandboxOccupancy = occupySandbox(agentMachineKey, session.eventId, {
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+    });
+  }
+  const environment = session.environmentText(
+    agentMachine ? formatSandboxStatus(agentMachine) : [],
+  );
   // Labels the run in Tracing and its row in the usage tab.
   const taskInput = traceAttribute(latestUserText(turnContext.messages)).slice(
     0,
@@ -818,6 +854,7 @@ export async function runAgentLoop(
   ): Promise<void> => {
     if (usageFinalized) return;
     usageFinalized = true;
+    releaseSandboxOccupancy?.();
     const taskTokens = usageTokenTotals(usage);
     const waitingOn = await openWorkAfterRun(status);
     const rootStatus = rootSpanStatus(status, waitingOn);
@@ -1896,6 +1933,8 @@ export async function runAgentLoop(
     | undefined;
   let stream: ReturnType<typeof streamText>;
   const usesAiSdkHarness = agentConfig.harness !== undefined;
+  let harnessReservation: string | undefined;
+  let harnessEnvironment: string | undefined;
   try {
     if (usesAiSdkHarness) {
       if (policyToolApproval) {
@@ -1904,42 +1943,86 @@ export async function runAgentLoop(
         );
       }
       await applyHarnessSteeringBeforeTurn(session, turnContext);
-    }
-    harnessRuntime = usesAiSdkHarness
-      ? createConfiguredHarnessAgent({
-          agentConfig: agentConfig,
-          compute: requireHarnessSandbox(sandboxes[0]?.sandbox),
-          id: session.agentId,
-          instructions: turnContext.system
-            .map((message) => message.content)
-            .join("\n\n"),
-          metadata: sandboxMetadata,
-          reservationKey: session.conversationKey,
-          skills: await session.loadHarnessSkills(),
-          toolApproval:
-            configuredApprovals.size > 0
-              ? Object.fromEntries(
-                  [...configuredApprovals.keys()].map((name) => [
-                    name,
-                    "user-approval" as const,
-                  ]),
-                )
-              : undefined,
-          tools: tools,
-        })
-      : undefined;
-    if (harnessRuntime) {
+      const harnessType = agentConfig.harness!.type;
+      const stored = await session.loadHarnessSession();
+      const reservationKey = harnessReservationKey({
+        agentReservationKey: agentMachineKey,
+        conversationKey: session.conversationKey,
+        isolated: options.isolatedSandbox === true,
+        stored: stored,
+        type: harnessType,
+      });
+      harnessReservation = reservationKey;
+      const shared = reservationKey !== session.conversationKey;
+      const compute = requireHarnessSandbox(sandboxes[0]?.sandbox);
+      let usage: SandboxUsage | undefined;
+      harnessRuntime = createConfiguredHarnessAgent({
+        agentConfig: agentConfig,
+        compute:
+          shared || !compute.controlPlane
+            ? compute
+            : {
+                ...compute,
+                controlPlane: {
+                  ...compute.controlPlane,
+                  releaseAfterIdleSeconds: ISOLATED_SANDBOX_RELEASE_SECONDS,
+                },
+              },
+        id: session.agentId,
+        instructions: turnContext.system
+          .map((message) => message.content)
+          .join("\n\n"),
+        metadata: sandboxMetadata,
+        onUsage: (reported) => {
+          usage = reported;
+        },
+        reservationKey: reservationKey,
+        shared: shared,
+        skills: await session.loadHarnessSkills(),
+        toolApproval:
+          configuredApprovals.size > 0
+            ? Object.fromEntries(
+                [...configuredApprovals.keys()].map((name) => [
+                  name,
+                  "user-approval" as const,
+                ]),
+              )
+            : undefined,
+        tools: tools,
+      });
+      releaseSandboxOccupancy = occupySandbox(
+        harnessRuntime.reservationKey,
+        session.eventId,
+        { agentId: session.agentId, conversationKey: session.conversationKey },
+      );
       activeHarnessSession = await openAiSdkHarnessSession({
         abortSignal: runAbort.signal,
         agent: harnessRuntime.agent,
-        broodsSession: session,
-        type: agentConfig.harness!.type,
+        stored: stored,
+        type: harnessType,
       });
       stopHarnessLeaseMonitor = startHarnessLeaseMonitor(session, runAbort);
+      harnessEnvironment = session.environmentText(
+        formatSandboxStatus({
+          name: sandboxes[0]!.name,
+          provider: compute.provider,
+          specs: compute.controlPlane?.specs,
+          state: "running",
+          shared: shared,
+          usage: usage,
+          neighbours: sandboxNeighbours(
+            harnessRuntime.reservationKey,
+            session.eventId,
+          ),
+        }),
+      );
     }
     stream = harnessRuntime
       ? await harnessRuntime.agent.stream({
-          messages: harnessPromptMessages(turnContext.messages, environment),
+          messages: harnessPromptMessages(
+            turnContext.messages,
+            harnessEnvironment ?? environment,
+          ),
           session: activeHarnessSession!,
           abortSignal: runAbort.signal,
         })
@@ -1980,6 +2063,7 @@ export async function runAgentLoop(
       await parkAiSdkHarnessSession({
         broodsSession: session,
         nativeSession: activeHarnessSession,
+        reservationKey: harnessReservation ?? session.conversationKey,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });

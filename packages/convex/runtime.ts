@@ -264,6 +264,7 @@ export const getHarnessSession = internalQuery({
       ),
       sessionId: v.string(),
       resumeState: v.any(),
+      reservationKey: v.optional(v.string()),
     }),
     v.null(),
   ),
@@ -287,6 +288,7 @@ export const getHarnessSession = internalQuery({
       harnessType: row.harnessType,
       sessionId: row.sessionId,
       resumeState: row.resumeState,
+      reservationKey: row.reservationKey,
     };
   },
 });
@@ -303,6 +305,7 @@ export const saveHarnessSession = internalMutation({
     ),
     sessionId: v.string(),
     resumeState: v.any(),
+    reservationKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -331,6 +334,7 @@ export const saveHarnessSession = internalMutation({
       harnessType: args.harnessType,
       sessionId: args.sessionId,
       resumeState: args.resumeState,
+      reservationKey: args.reservationKey,
       updatedAt: Date.now(),
     };
     if (existing) {
@@ -922,6 +926,7 @@ export const claimSandboxReservation = internalMutation({
     reservationKey: v.string(),
     externalId: v.string(),
     accountId: v.id("accounts"),
+    ttlSeconds: v.optional(v.number()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -940,9 +945,11 @@ export const claimSandboxReservation = internalMutation({
       return false;
     }
     await ctx.db.insert("sandboxReservations", {
-      ...args,
-      expiresAt:
-        Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
+      accountId: args.accountId,
+      provider: args.provider,
+      reservationKey: args.reservationKey,
+      externalId: args.externalId,
+      expiresAt: reservationExpiresAt(args.ttlSeconds),
     });
 
     return true;
@@ -961,6 +968,7 @@ export const saveSandboxReservation = internalMutation({
     reservationKey: v.string(),
     externalId: v.string(),
     accountId: v.id("accounts"),
+    ttlSeconds: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -981,8 +989,7 @@ export const saveSandboxReservation = internalMutation({
       return null;
     }
     await ctx.db.patch(row._id, {
-      expiresAt:
-        Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
+      expiresAt: reservationExpiresAt(args.ttlSeconds),
     });
 
     return null;
@@ -1377,6 +1384,19 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   const { completionTokenHash: _hidden, ...publicRow } = row;
 
   return publicRow;
+}
+
+/**
+ * The idle deadline a claim or refresh writes. Core passes a shorter window for a
+ * sandbox only one conversation uses; it never extends past the default.
+ */
+function reservationExpiresAt(ttlSeconds: number | undefined): number {
+  const ttl = Math.min(
+    Math.max(ttlSeconds ?? SANDBOX_RESERVATION_TTL_SECONDS, 60),
+    SANDBOX_RESERVATION_TTL_SECONDS,
+  );
+
+  return Math.floor(Date.now() / 1000) + ttl;
 }
 
 /**

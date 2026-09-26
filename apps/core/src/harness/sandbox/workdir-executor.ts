@@ -164,6 +164,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       externalId,
       this.#config.controlPlane?.accountId,
+      this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
     // row; recoverable on the next call, so it never holds up the session.
@@ -668,6 +669,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           externalId,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
         void upsertSandboxInstance(
           this.#config.controlPlane,
@@ -699,6 +701,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           created.id,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
         await upsertSandboxInstance(

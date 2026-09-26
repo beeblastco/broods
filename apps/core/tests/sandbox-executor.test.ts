@@ -750,6 +750,7 @@ describe("createSandboxExecutor", () => {
       "acct:agent:harness",
       "microvm-1",
       undefined,
+      undefined,
     );
 
     microvmExecPayload = {

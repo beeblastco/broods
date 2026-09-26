@@ -889,6 +889,8 @@ export const runtimeHarnessSessionsFields = {
   ),
   sessionId: v.string(),
   resumeState: v.any(),
+  /** Reservation the session's sandbox runs on. Unset rows predate it and ran on the conversation key. */
+  reservationKey: v.optional(v.string()),
   updatedAt: v.number(),
 };
 /** Context-only webhook event dedupe claims. */
