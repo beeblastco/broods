@@ -16,6 +16,7 @@ import type {
   AgentHarnessDebugConfig,
 } from "../../shared/domain/agent-config.ts";
 import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
+import type { SandboxUsage } from "../sandbox/live-status.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import {
@@ -54,8 +55,10 @@ interface HarnessAgentCommonOptions {
    * dropped the per-adapter `model` setting, so it rides on the agent instead.
    */
   model?: string;
+  onUsage?: (usage: SandboxUsage) => void;
   permissionMode?: HarnessAgentPermissionMode;
   reservationKey: string;
+  shared?: boolean;
   skills?: ReadonlyArray<HarnessAgentSkill>;
   toolApproval?: HarnessAgentToolApprovalConfiguration;
   tools?: ToolSet;
@@ -103,7 +106,11 @@ export interface ConfiguredHarnessAgentOptions {
   instructions: string;
   /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
+  /** Receives the machine's CPU, memory and disk once it is acquired. */
+  onUsage?: (usage: SandboxUsage) => void;
   reservationKey: string;
+  /** Other conversations reserve the same machine, so a session ending leaves it running. */
+  shared?: boolean;
   skills?: ReadonlyArray<HarnessAgentSkill>;
   toolApproval?: HarnessAgentToolApprovalConfiguration;
   tools: ToolSet;
@@ -126,8 +133,10 @@ export function createConfiguredHarnessAgent(
     instructions: options.instructions,
     metadata: options.metadata,
     model: model,
+    onUsage: options.onUsage,
     permissionMode: harness.permissionMode,
     reservationKey: options.reservationKey,
+    shared: options.shared,
     skills: options.skills,
     toolApproval: options.toolApproval,
     tools: options.tools,
@@ -224,7 +233,9 @@ function createHarnessRuntime(
     bridgePort: options.bridgePort,
     compute: options.compute,
     metadata: options.metadata,
+    onUsage: options.onUsage,
     reservationKey: options.reservationKey,
+    shared: options.shared,
     type: options.type,
   });
   const agent = createHarnessAgent(options, provisioned.sandbox);

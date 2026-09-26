@@ -1014,6 +1014,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       "tool:acct_1",
       "sbx_new",
       undefined,
+      undefined,
     );
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
 
