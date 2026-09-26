@@ -37,10 +37,13 @@ export default function getSubagentStatusTool(
         additionalProperties: false,
       }),
       execute: async function (input): Promise<SubagentStatusOutput> {
-        await context.watch?.waitForSettled(input.taskId, STATUS_WAIT_MS);
-        const record = await getOwnedSubagent(context, input);
+        let record = await getOwnedSubagent(context, input);
         if (!record) {
           return toolError(subagentNotFound(input.taskId));
+        }
+        if (record.status === "processing" && context.watch) {
+          await context.watch.waitForSettled(input.taskId, STATUS_WAIT_MS);
+          record = (await getOwnedSubagent(context, input)) ?? record;
         }
 
         return {
