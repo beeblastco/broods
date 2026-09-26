@@ -183,6 +183,49 @@ describe("SubagentCoordinator", () => {
     expect(publisher.timeline).toEqual([]);
   });
 
+  it("keeps a child's observability scope when the parent's pass clears its own", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const otel = await import("../src/shared/otel.ts");
+    const scope = {
+      accountId: "account_1",
+      project: "demo",
+      stage: "development",
+      endpointId: "endpoint_1",
+      agentId: "agent_parent",
+      conversationKey: "tg:42",
+      traceId: "trace_parent",
+      otelContext: {} as never,
+      secretValues: [],
+    };
+    let parentCleared!: () => void;
+    const cleared = new Promise<void>((resolve) => {
+      parentCleared = resolve;
+    });
+    const seen: (string | undefined)[] = [];
+
+    await otel.runWithObservabilityScope(async () => {
+      const coordinator = new SubagentCoordinator(
+        parentSession(),
+        { subagent: { enabled: true } },
+        Date.now() + 1_000,
+      );
+      const internals = coordinator as unknown as CoordinatorInternals;
+      internals.runTask = mock(async () => {
+        otel.setObservabilityContext({ ...scope, traceId: "trace_child" });
+        await cleared;
+        seen.push(otel.getObservabilityContext()?.traceId);
+      });
+
+      internals.startTask(resolvedTask());
+      expect(otel.getObservabilityContext()?.traceId).toBe("trace_parent");
+      otel.setObservabilityContext(null);
+      parentCleared();
+      await coordinator.waitForIdle();
+    }, scope);
+
+    expect(seen).toEqual(["trace_child"]);
+  });
+
   it("publishes enabled child parts, terminal marker, and flushes after settlement", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const publisher = recordingPublisher();
