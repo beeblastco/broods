@@ -1111,10 +1111,6 @@ function ingressStatusResult(
 }
 
 /**
- * The leading run of rows that share the first row's requestedMode and the
- * sender's userId, so one turn never runs two people's messages.
- */
-/**
  * Whether a stored ingress event is a user message made only of text. Events
  * are stored as `v.any()`, so this reads the model message shape at run time.
  */
@@ -1143,6 +1139,10 @@ function isPlainUserText(event: unknown): boolean {
   );
 }
 
+/**
+ * The leading run of rows that share the first row's requestedMode and the
+ * sender's userId, so one turn never runs two people's messages.
+ */
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
   sender: DeliverySender = rows[0]?.delivery,

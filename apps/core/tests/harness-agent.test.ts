@@ -10,6 +10,7 @@ interface HarnessStreamCall {
 
 const streamCalls: HarnessStreamCall[] = [];
 const steeredTexts: string[] = [];
+let steerFailure: Error | null = null;
 
 mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   createConfiguredHarnessAgent: () => ({
@@ -26,6 +27,7 @@ mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   openAiSdkHarnessSession: async () => ({
     destroy: async (): Promise<void> => {},
     experimental_steerTurn: async (text: string): Promise<void> => {
+      if (steerFailure) throw steerFailure;
       steeredTexts.push(text);
     },
   }),
@@ -35,6 +37,7 @@ mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
 beforeEach((): void => {
   streamCalls.length = 0;
   steeredTexts.length = 0;
+  steerFailure = null;
 });
 
 it("hands a harness agent the same step and tool hooks as streamText", async () => {
@@ -108,7 +111,31 @@ it("fails the run when a claimed steer cannot be saved", async () => {
   await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
 
   expect(streamCalls[0]?.abortSignal?.aborted).toBe(true);
-  expect(steeredTexts).toEqual([]);
+  expect(steeredTexts).toEqual(["focus"]);
+});
+
+it("fails the run instead of saving a steer the turn did not take", async () => {
+  let queued = false;
+  const appended: unknown[] = [];
+  await runHarnessTurn(
+    "claude-code",
+    async () =>
+      queued
+        ? {
+            events: [{ role: "user", content: "focus" }],
+            contributingEventIds: ["steer-1"],
+            appliedMode: "steer",
+          }
+        : null,
+    appended,
+  );
+
+  queued = true;
+  steerFailure = new Error("no running turn to steer");
+  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
+
+  expect(streamCalls[0]?.abortSignal?.aborted).toBe(true);
+  expect(appended).toEqual([]);
 });
 
 async function runHarnessTurn(
