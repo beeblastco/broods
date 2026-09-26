@@ -16,6 +16,7 @@ on:
       - "apps/dashboard/**"
       - ".github/workflows/deploy-docs.yaml"
       - "**/*.md"
+  # checkov:skip=CKV_GHA_7:The stage selects the deployment target; source is pinned to the triggering ref and stage is passed through an environment variable.
   workflow_dispatch:
     inputs:
       stage:
@@ -135,6 +136,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # Stage names become SST state keys and lines in GITHUB_ENV.
+          if [[ -n "${INPUT_STAGE:-}" && ! "$INPUT_STAGE" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            echo "Invalid SST stage name." >&2
+            exit 1
+          fi
+          case "${INPUT_STAGE:-}" in
+            production|production-eu-west-1|production-us-east-1|production-ap-southeast-1) ;;
+            production*) echo "Unsupported production stage." >&2; exit 1 ;;
+          esac
 
           sandbox_ready_for_region() {
             case "$1" in

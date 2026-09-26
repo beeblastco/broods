@@ -19,6 +19,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/build-matrix-forwarder.yaml"
+  # checkov:skip=CKV_GHA_7:The boolean rollout input controls deployment only; the image is always built from github.sha.
   workflow_dispatch:
     inputs:
       rollout:
