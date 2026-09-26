@@ -3002,15 +3002,19 @@ async function runParentContinuationLoop(options: {
       };
     }
     if (stream.didFail()) {
-      // Subagents dispatched by an earlier step may still be running. Returning
-      // now leaves them spinning "running" forever in the dashboard: the running
-      // span is durable, the terminal one never gets flushed. Bounded by the same
-      // deadline budget as the success path.
-      if (options.subagentCoordinator.pendingCount > 0) {
-        await options.subagentCoordinator.waitForIdle({
-          onHeartbeat: options.onHeartbeat,
-        });
-      }
+      // Subagents and async tools from earlier steps may still be running or
+      // already done. Wait for them and write their results into the history,
+      // so the next turn ("try again") sees them instead of redoing the work.
+      await waitAndDrainAsyncWork(
+        options.subagentCoordinator,
+        options.asyncToolCoordinator,
+        { onHeartbeat: options.onHeartbeat },
+      ).catch((error: unknown) =>
+        logError("Failed run could not keep its async results", {
+          eventId: options.session.eventId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
 
       return {
         didFail: true,
