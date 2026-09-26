@@ -136,6 +136,8 @@ export class SubagentCoordinator {
   private readonly recorded = new Set<string>();
   // Result rows the model already read through get_subagent_status.
   private readonly delivered = new Set<string>();
+  // Read, but that tool result is not saved to the parent yet.
+  private readonly readUnsaved = new Set<string>();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -281,17 +283,29 @@ export class SubagentCoordinator {
 
   /**
    * Records that get_subagent_status showed the model this run's outcome, by
-   * the result row's event id, so the same result never starts another pass.
-   * It drops a queued injection now and skips one that is enqueued later.
+   * the result row's event id. It counts once `confirmDelivered` runs after
+   * that tool result is saved, so a failed save still gets the injection.
    */
   markDelivered(eventId: string): void {
-    this.delivered.add(eventId);
-    const index = this.completions.findIndex(
-      (completion) => completion.eventId === eventId,
-    );
-    if (index !== -1) {
-      this.completions.splice(index, 1);
+    this.readUnsaved.add(eventId);
+  }
+
+  /**
+   * Called once the parent's step output is saved. Each result read by then
+   * never starts another pass: a queued injection is dropped now and one that
+   * is enqueued later is skipped.
+   */
+  confirmDelivered(): void {
+    for (const eventId of this.readUnsaved) {
+      this.delivered.add(eventId);
+      const index = this.completions.findIndex(
+        (completion) => completion.eventId === eventId,
+      );
+      if (index !== -1) {
+        this.completions.splice(index, 1);
+      }
     }
+    this.readUnsaved.clear();
   }
 
   async drainCompletionsToParent(): Promise<number> {
@@ -300,9 +314,13 @@ export class SubagentCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(
-      completions.map(completionToParentMessage),
-    );
+    // A failed write puts them back, so a later drain can still deliver them.
+    await this.parentSession
+      .persistModelMessages(completions.map(completionToParentMessage))
+      .catch((error: unknown): never => {
+        this.completions.unshift(...completions);
+        throw error;
+      });
 
     return completions.length;
   }

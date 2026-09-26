@@ -126,6 +126,7 @@ it("waits for a running subagent before answering its status", async () => {
       markDelivered: (id: string): void => {
         delivered.push(id);
       },
+      confirmDelivered: (): void => {},
     },
   });
 
@@ -153,7 +154,11 @@ it("does not wait on a task paired with the wrong agent", async () => {
   const tools = getStatus({
     accountId: ACCOUNT_ID,
     eventId: PARENT_EVENT_ID,
-    watch: { waitForSettled: waitForSettled, markDelivered: (): void => {} },
+    watch: {
+      waitForSettled: waitForSettled,
+      markDelivered: (): void => {},
+      confirmDelivered: (): void => {},
+    },
   });
 
   await expect(
