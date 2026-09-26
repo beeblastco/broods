@@ -2918,7 +2918,7 @@ async function runParentContinuationLoop(options: {
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-  onHeartbeat?(pendingCount: number): void;
+  onHeartbeat?(pendingCount: number): void | Promise<void>;
 }): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
   let finalResponse: JSONValue | undefined;
@@ -3011,7 +3011,7 @@ async function runParentContinuationLoop(options: {
         options.subagentCoordinator,
         options.asyncToolCoordinator,
         {
-          onHeartbeat: (pendingCount: number): void =>
+          onHeartbeat: (pendingCount: number): void | Promise<void> =>
             options.onHeartbeat?.(pendingCount),
         },
       ).catch((error: unknown) =>
@@ -3081,7 +3081,7 @@ async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
   asyncToolCoordinator: AsyncToolCoordinator,
   options: {
-    onHeartbeat?: (pendingCount: number) => void;
+    onHeartbeat?: (pendingCount: number) => void | Promise<void>;
   } = {},
 ): Promise<number> {
   if (
