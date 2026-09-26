@@ -3095,20 +3095,26 @@ async function waitAndDrainAsyncWork(
     return subagentCount + asyncToolCount;
   }
 
-  const [subagentStatus, asyncToolStatus] = await Promise.all([
-    subagentCoordinator.waitForIdle({
-      onHeartbeat: () =>
-        options.onHeartbeat?.(
-          subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
-        ),
-    }),
-    asyncToolCoordinator.waitForIdle({
-      onHeartbeat: () =>
-        options.onHeartbeat?.(
-          subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
-        ),
-    }),
-  ]);
+  const onHeartbeat = (): void =>
+    options.onHeartbeat?.(
+      subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
+    );
+  // A subagent's question wakes the parent before the rest finish, so its
+  // answer can unblock the child. The async tools keep running meanwhile.
+  const subagentStatus = await subagentCoordinator.waitForIdle({
+    onHeartbeat: onHeartbeat,
+  });
+  if (subagentStatus === "question") {
+    const [subagentCount, asyncToolCount] = await Promise.all([
+      subagentCoordinator.drainCompletionsToParent(),
+      asyncToolCoordinator.drainCompletionsToParent(),
+    ]);
+
+    return subagentCount + asyncToolCount;
+  }
+  const asyncToolStatus = await asyncToolCoordinator.waitForIdle({
+    onHeartbeat: onHeartbeat,
+  });
 
   if (subagentStatus === "idle" && asyncToolStatus === "idle") {
     const [subagentCount, asyncToolCount] = await Promise.all([

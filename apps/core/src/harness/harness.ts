@@ -208,6 +208,8 @@ export interface AgentLoopOptions {
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
+  // Present on a persistent subagent's run; backs its ask_parent tool.
+  askParent?: (question: string) => Promise<string | null>;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; links its trace to the parent's.
@@ -620,6 +622,7 @@ export async function runAgentLoop(
         ...(options.subagentWatch
           ? { subagentWatch: options.subagentWatch }
           : {}),
+        ...(options.askParent ? { askParent: options.askParent } : {}),
         ...(options.dispatchSubagents
           ? {
               dispatchSubagents: (tasks, messages) =>
@@ -1142,6 +1145,17 @@ export async function runAgentLoop(
           appliedMode: steering.appliedMode,
         });
       }
+      // Subagent results and questions that arrived during this pass join it
+      // here, so the model sees them now instead of in a later pass.
+      const parentMessages =
+        (await options.subagentWatch?.takeParentMessages()) ?? [];
+      if (parentMessages.length > 0) {
+        stepMessages = [...stepMessages, ...parentMessages];
+        logInfo("Subagent messages applied at AI SDK step boundary", {
+          eventId: session.eventId,
+          messageCount: parentMessages.length,
+        });
+      }
       // `systemContextSnapshot` is the persisted system-message snapshot from
       // session.ts. Refresh it before each step so dynamic system context added
       // during a tool loop is included without replaying the full conversation.
@@ -1157,7 +1171,7 @@ export async function runAgentLoop(
 
       return {
         instructions: refreshed.system,
-        ...(steering ? { messages: stepMessages } : {}),
+        ...(stepMessages !== messages ? { messages: stepMessages } : {}),
       };
     },
     onChunk: ({ chunk }) => {

@@ -713,6 +713,65 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
   });
 
+  it("adds subagent results and questions at the next step boundary", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const question = {
+      role: "user" as const,
+      content: [{ type: "text" as const, text: "Subagent question" }],
+    };
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "acct:test:agent:test:api:conversation",
+        eventId: "owner",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: () => [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async () => [],
+        renewConversationLease: async () => "renewed",
+        applySteeringIngress: async () => null,
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "original" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+      {
+        onFinalText: async () => {},
+        onErrorText: async () => {},
+      },
+      {
+        subagentWatch: {
+          waitForSettled: async () => {},
+          markDelivered: () => {},
+          answerQuestion: () => false,
+          takeParentMessages: async () => [question],
+        },
+      },
+    );
+
+    const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
+    const prepared = await prepareStep!({
+      responseMessages: [],
+      messages: [{ role: "user", content: "original" }],
+    });
+    expect(prepared.messages).toEqual([
+      { role: "user", content: "original" },
+      question,
+    ]);
+    await stream.consumeStream();
+  });
+
   it("stops before the next model call when the owner requests a boundary stop, even if the same step's persist fails", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");

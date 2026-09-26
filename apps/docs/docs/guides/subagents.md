@@ -34,7 +34,7 @@ export const lead = defineAgent({
 
 ## How the model uses it
 
-One `run_subagent` call starts up to 10 tasks. Each task has a `prompt`, and optionally the `agentId` of an allowed agent and a `conversationKey` to resume an earlier child. The call returns at once with a `taskId`, `runId` and `conversationKey` per task. Results are injected into the parent automatically when they finish, as one batch.
+One `run_subagent` call starts up to 10 tasks. Each task has a `prompt`, and optionally the `agentId` of an allowed agent and a `conversationKey` to resume an earlier child. The call returns at once with a `taskId`, `runId` and `conversationKey` per task. Results are injected into the parent automatically when they finish: at the parent's next step if it is still working, or as one batch after its pass.
 
 Children cannot start their own subagents.
 
@@ -43,8 +43,10 @@ In persistent mode the parent also gets:
 | Tool                  | Does                                                                                                                                          |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `get_subagent_status` | Reads a child's status. On a child this turn started, it first waits up to 60s for it to finish. A result read this way is not injected again |
-| `update_subagent`     | `steer` changes the running child's direction, `continue` queues a follow-up turn                                                             |
+| `update_subagent`     | `steer` changes the running child's direction, or answers its open `ask_parent` question. `continue` queues a follow-up turn                  |
 | `stop_subagent`       | Stops the child at its next step. A stopped child's partial work is not sent to the parent.                                                   |
+
+A persistent child gets `ask_parent`: it asks the parent one question and waits up to 5 minutes for the answer. The question reaches the parent at its next step, or wakes it if it is waiting on children. The parent answers with `update_subagent` in `steer` mode. With no answer in time, the child is told to continue on its best judgment.
 
 A parent can only control children it started. From outside, a persistent child is an ordinary conversation. Stop or steer it through the normal run endpoints with its `conversationKey`.
 
