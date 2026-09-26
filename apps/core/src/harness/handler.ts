@@ -1681,8 +1681,11 @@ async function runChannelTurns(
               onErrorText: async (error, traceId) => {
                 await session.assertCurrentOwner();
                 terminal = "failed";
-                await sendChannelFailure(
-                  event.channel,
+                // The failure goes through the same outbound hook as a reply,
+                // so it can be rewritten or dropped too.
+                const text = await applyMessageSendingHook(
+                  hooks,
+                  event.channelName,
                   formatChannelFinalText(
                     formatChannelErrorText(error),
                     traceId,
@@ -1691,6 +1694,9 @@ async function runChannelTurns(
                     activeConfig,
                   ),
                 );
+                if (text !== null) {
+                  await sendChannelFailure(event.channel, text);
+                }
               },
               onApprovalRequired: async (approvals) => {
                 approvalRequired = true;
