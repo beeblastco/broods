@@ -9,6 +9,9 @@ import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 /** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
 
+// What a Retry tap or typed reply sends after a failed run.
+const RETRY_REPLY = "Retry";
+
 export type ChannelIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist?: false });
@@ -23,9 +26,6 @@ export type ChannelIngressEvent =
 export type ChannelFile = Attachment & { type: "file"; url: string };
 
 export type ChannelImage = Attachment & { type: "image"; url: string };
-
-// What a Retry tap or typed reply sends after a failed run.
-const RETRY_REPLY = "Retry";
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
@@ -283,7 +283,6 @@ export async function sendChannelFailure(
 ): Promise<void> {
   if (channel.sendReplyButtons) {
     await channel.sendReplyButtons(text, [RETRY_REPLY]);
-
     return;
   }
   await channel.sendText(
