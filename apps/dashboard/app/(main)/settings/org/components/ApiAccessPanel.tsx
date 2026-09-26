@@ -5,6 +5,7 @@
  * its hash is stored, so it can never be read back.
  */
 
+import { useCopied } from "@/app/components/CopyButton";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -41,7 +42,8 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  const accountCopy = useCopied(account?.accountId ?? "");
+  const secretCopy = useCopied(revealedSecret ?? "");
 
   const harnessUrl =
     process.env.NEXT_PUBLIC_BROODS_HARNESS_URL ?? "(not configured)";
@@ -73,12 +75,6 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
     } finally {
       setPending(false);
     }
-  }
-
-  function copy(text: string, label: string): void {
-    navigator.clipboard.writeText(text);
-    setCopied(label);
-    setTimeout(() => setCopied(null), 1500);
   }
 
   if (account === undefined) {
@@ -150,10 +146,10 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
               variant="outline"
               size="sm"
               className="cursor-pointer"
-              onClick={() => copy(account.accountId, "accountId")}
+              onClick={accountCopy.copy}
             >
               <Copy className="size-3.5 mr-1" />
-              {copied === "accountId" ? "Copied" : "Copy"}
+              {accountCopy.copied ? "Copied" : "Copy"}
             </Button>
           </div>
         </div>
@@ -194,10 +190,10 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
                 variant="outline"
                 size="sm"
                 className="cursor-pointer"
-                onClick={() => copy(revealedSecret, "secret")}
+                onClick={secretCopy.copy}
               >
                 <Copy className="size-3.5 mr-1" />
-                {copied === "secret" ? "Copied" : "Copy"}
+                {secretCopy.copied ? "Copied" : "Copy"}
               </Button>
             )}
           </div>
@@ -281,6 +277,7 @@ function NewSecretDialog({
   onClose: () => void;
 }): React.JSX.Element {
   const [open, setOpen] = useState(true);
+  const { copied, failed, copy } = useCopied(secret);
 
   return (
     <Dialog
@@ -301,15 +298,16 @@ function NewSecretDialog({
         </DialogHeader>
         <div className="grid gap-3 py-2">
           <Input readOnly value={secret} className="font-mono text-xs" />
+          {failed ? (
+            <p role="alert" className="text-sm text-destructive">
+              Copy failed. Try again or select and copy the token manually.
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
-          <Button
-            variant="outline"
-            className="cursor-pointer"
-            onClick={() => navigator.clipboard.writeText(secret)}
-          >
+          <Button variant="outline" className="cursor-pointer" onClick={copy}>
             <Copy className="size-4 mr-1" />
-            Copy
+            {copied ? "Copied" : "Copy"}
           </Button>
           <Button
             className="cursor-pointer"

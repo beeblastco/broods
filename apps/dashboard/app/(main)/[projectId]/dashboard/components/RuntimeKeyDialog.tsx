@@ -1,5 +1,6 @@
 "use client";
 
+import { useCopied } from "@/app/components/CopyButton";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -117,18 +118,12 @@ export function RuntimeKeyView({
   onRotate?: () => Promise<void>;
 }): React.JSX.Element {
   const [showKey, setShowKey] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy: copyKey } = useCopied(apiKey);
   const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
   // The .env block mirrors the reveal toggle so the secret is never shown by
   // default, but Copy always yields the real line.
   const envDisplay = `BROODS_API_KEY="${showKey ? apiKey : maskedKey}"`;
   const envReal = `BROODS_API_KEY="${apiKey}"`;
-
-  function copyKey(): void {
-    navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
 
   return (
     <div className="grid gap-6">
@@ -235,13 +230,7 @@ function CodeBlock({
   lang: "ts" | "bash";
   copyText?: string;
 }): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
-
-  function copy(): void {
-    navigator.clipboard.writeText(copyText ?? code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
+  const { copied, copy } = useCopied(copyText ?? code);
 
   return (
     <div className="relative">
