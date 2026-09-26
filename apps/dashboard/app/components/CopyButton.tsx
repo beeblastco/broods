@@ -79,12 +79,26 @@ export function CopyRow({
 // succeeded (a denied clipboard rejects). One timer per control: a second
 // click restarts it, and unmount clears it so a closed panel does not set
 // state later.
-function useCopied(value: string): { copied: boolean; copy: () => void } {
+export function useCopied(value: string): {
+  copied: boolean;
+  copy: () => void;
+} {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
   function copy(): void {
+    if (
+      !window.isSecureContext ||
+      !document.hasFocus() ||
+      !navigator.userActivation?.isActive ||
+      !navigator.clipboard
+    ) {
+      setCopied(false);
+      return;
+    }
+    // Credential export is intentional on Copy. Never copy in the background,
+    // read the user's clipboard, or clear a later clipboard entry with a timer.
     void navigator.clipboard.writeText(value).then(
       () => {
         setCopied(true);
