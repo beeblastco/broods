@@ -274,6 +274,7 @@ const CAUSE_CHARS = 40;
 const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "tg:", label: "Telegram" },
   { prefix: "slack:", label: "Slack" },
+  { prefix: "slack-command:", label: "Slack" },
   { prefix: "discord:", label: "Discord" },
   { prefix: "matrix:", label: "Matrix" },
   { prefix: "gh:", label: "GitHub" },
@@ -292,6 +293,10 @@ const STATUS_ALIASES: Readonly<Record<string, SpanStatus>> = {
   waiting: "waiting",
   needs_input: "needs_input",
 };
+
+// The task list (w-80) plus the waterfall's min-w-xl, so dragging the detail
+// divider never pushes the waterfall's columns out of view.
+const TRACE_TABLE_MIN_WIDTH = 896;
 
 // One matcher per `field:value` search token. Values arrive lowercased.
 const QUERY_MATCHERS: Record<
@@ -692,7 +697,7 @@ export function TracingPanel({
       <ObservabilityToolbar
         search={filter}
         onSearchChange={setFilter}
-        searchPlaceholder="Search tasks, or status: channel: tool: error: trace:"
+        searchPlaceholder="Search tasks, or status: channel: agent: tool: error: trace: conv:"
         filterAriaLabel="Filter by status"
         filterValue={statusFilter}
         filterOptions={STATUS_FILTER_OPTIONS}
@@ -730,6 +735,7 @@ export function TracingPanel({
       )}
 
       <DetailSplit
+        tableMinWidth={TRACE_TABLE_MIN_WIDTH}
         detail={
           selectedSpan &&
           selectedGroup && (
@@ -1721,7 +1727,7 @@ function SpanRow({
       onClick={onClick}
       className={cn(
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
-        isSelected && "bg-accent/30",
+        isSelected && "bg-accent",
         !isRootSpanKind(span.kind) && "text-foreground/80",
         highlighted && "bg-info/10 ring-1 ring-inset ring-info/40",
       )}
@@ -1934,7 +1940,7 @@ function TaskListRow({
       aria-current={isSelected || undefined}
       className={cn(
         "block w-full cursor-pointer border-b border-border/40 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/20",
-        isSelected && "bg-accent/30",
+        isSelected && "bg-accent",
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
