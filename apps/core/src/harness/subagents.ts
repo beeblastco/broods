@@ -245,7 +245,7 @@ export class SubagentCoordinator {
 
   async waitForIdle(
     options: {
-      onHeartbeat?: (pendingCount: number) => void;
+      onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
   ): Promise<"idle" | "question" | "timeout"> {
     while (
@@ -263,7 +263,8 @@ export class SubagentCoordinator {
       ]);
 
       if (this.pending.size > 0) {
-        options.onHeartbeat?.(this.pending.size);
+        // Awaited, so a heartbeat that finds the run lost ends the wait.
+        await options.onHeartbeat?.(this.pending.size);
       }
     }
 
@@ -353,27 +354,30 @@ export class SubagentCoordinator {
   async takeParentMessages(): Promise<UserModelMessage[]> {
     const completions = this.completions.splice(0);
     const questions = this.questions.splice(0);
-    const messages = [
-      ...completions.map(completionToParentMessage),
-      ...questions.map((question) => question.message),
-    ];
-    if (messages.length > 0) {
-      // A failed write puts them back, so a later step or drain delivers them.
+    // One write each, so a failure puts back only what was not saved yet, and a
+    // later step or drain delivers it without repeating the rest.
+    for (const [index, completion] of completions.entries()) {
       await this.parentSession
-        .persistModelMessages(messages)
+        .persistModelMessages([completionToParentMessage(completion)])
         .catch((error: unknown): never => {
-          this.completions.unshift(...completions);
-          // A question whose child stopped waiting meanwhile stays dropped.
-          this.questions.unshift(
-            ...questions.filter((open): boolean =>
-              this.openQuestions.has(open.taskId),
-            ),
-          );
+          this.completions.unshift(...completions.slice(index));
+          this.restoreQuestions(questions);
+          throw error;
+        });
+    }
+    for (const [index, question] of questions.entries()) {
+      await this.parentSession
+        .persistModelMessages([question.message])
+        .catch((error: unknown): never => {
+          this.restoreQuestions(questions.slice(index));
           throw error;
         });
     }
 
-    return messages;
+    return [
+      ...completions.map(completionToParentMessage),
+      ...questions.map((question): UserModelMessage => question.message),
+    ];
   }
 
   /**
@@ -1177,6 +1181,17 @@ export class SubagentCoordinator {
     });
 
     return mutation?.visibleResult as JSONValue | undefined;
+  }
+
+  // Puts unsaved questions back; one whose child stopped waiting stays dropped.
+  private restoreQuestions(
+    questions: Array<{ taskId: string; message: UserModelMessage }>,
+  ): void {
+    this.questions.unshift(
+      ...questions.filter((open): boolean =>
+        this.openQuestions.has(open.taskId),
+      ),
+    );
   }
 
   private nextStateChange(): Promise<void> {
