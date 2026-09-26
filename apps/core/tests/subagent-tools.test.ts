@@ -134,7 +134,7 @@ it("waits for a running subagent before answering its status", async () => {
     execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
   ).resolves.toEqual({ status: "completed", response: "done" });
   expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
-  expect(delivered).toEqual([taskId]);
+  expect(delivered).toEqual([childEventId]);
 });
 
 it("preserves a completed subagent response as structured output", async () => {

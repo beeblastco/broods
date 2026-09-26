@@ -132,6 +132,8 @@ export class SubagentCoordinator {
   private readonly waiters = new Set<() => void>();
   // Child runs whose outcome is recorded; a later failure never overwrites it.
   private readonly recorded = new Set<string>();
+  // Result rows the model already read through get_subagent_status.
+  private readonly delivered = new Set<string>();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -264,12 +266,14 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Drops a finished subagent's pending injection once get_subagent_status has
-   * shown the model its outcome, so the same result never starts another pass.
+   * Records that get_subagent_status showed the model this run's outcome, by
+   * the result row's event id, so the same result never starts another pass.
+   * It drops a queued injection now and skips one that is enqueued later.
    */
-  markDelivered(taskId: string): void {
+  markDelivered(eventId: string): void {
+    this.delivered.add(eventId);
     const index = this.completions.findIndex(
-      (completion) => completion.taskId === taskId,
+      (completion) => completion.eventId === eventId,
     );
     if (index !== -1) {
       this.completions.splice(index, 1);
@@ -927,7 +931,7 @@ export class SubagentCoordinator {
         inject = false;
       }
     }
-    if (inject) {
+    if (inject && !this.delivered.has(completion.eventId)) {
       this.completions.push(completion);
     }
     this.notifyCompletion();
