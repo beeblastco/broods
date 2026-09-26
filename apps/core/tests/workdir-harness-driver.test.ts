@@ -90,6 +90,9 @@ describe("WorkdirHarnessDriver", () => {
 
     expect(executor.suspensions).toEqual([]);
     expect(executor.releases).toEqual([]);
+    expect(executor.acquisitions).toEqual([
+      { reservationKey: "acct:agent:harness", shared: true },
+    ]);
   });
 
   test("threads the invoking run's metadata into acquire and resume", async () => {

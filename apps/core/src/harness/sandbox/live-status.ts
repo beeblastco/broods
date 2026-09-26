@@ -15,8 +15,10 @@ import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 // A run that never settled (a crashed pod keeps nothing, but a leaked entry would
 // read as a neighbour forever) stops counting after this long.
 const OCCUPANT_STALE_MS = 6 * 60 * 60 * 1000;
-// Reading the provider state must not hold a turn up when the provider is slow.
+// Reading the provider state or probing the guest must not hold a turn up when
+// either is slow; past this the status goes without that part.
 const STATE_TIMEOUT_MS = 2_000;
+const USAGE_TIMEOUT_MS = 3_000;
 // One exec, one fixed key per line, so a missing tool only blanks its own field.
 const USAGE_PROBE = [
   'echo "cpus $(nproc 2>/dev/null)"',
@@ -167,15 +169,28 @@ export function parseSandboxUsage(stdout: string): SandboxUsage {
 
 /**
  * Runs the usage probe on a freshly acquired harness session and hands the
- * result over. Best effort: a failed probe only leaves the usage out.
+ * result over. Best effort and bounded: a failed, slow or cancelled probe only
+ * leaves the usage out, and the caller checks its own signal afterwards.
  */
 export async function reportSandboxUsage(
   session: BroodsSandboxDriverSession,
   onUsage: ((usage: SandboxUsage) => void) | undefined,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
-  if (!onUsage) return;
+  if (!onUsage || abortSignal?.aborted) return;
+  const deadline = AbortSignal.timeout(USAGE_TIMEOUT_MS);
+  const signal = abortSignal
+    ? AbortSignal.any([abortSignal, deadline])
+    : deadline;
   try {
-    const result = await session.runCommand({ command: USAGE_PROBE });
+    const result = await Promise.race([
+      session.runCommand({ command: USAGE_PROBE, abortSignal: signal }),
+      new Promise<never>((_, reject): void => {
+        signal.addEventListener("abort", (): void => reject(signal.reason), {
+          once: true,
+        });
+      }),
+    ]);
     if (result.exitCode === 0) onUsage(parseSandboxUsage(result.stdout));
   } catch {
     // The status block just goes without usage.
@@ -187,10 +202,17 @@ export function sandboxNeighbours(
   reservationKey: string,
   eventId: string,
 ): SandboxOccupant[] {
+  const holders = occupants.get(reservationKey);
+  if (!holders) return [];
+  // A run that never released is dropped here, so leaked entries cannot pile up.
   const staleBefore = Date.now() - OCCUPANT_STALE_MS;
+  for (const [id, one] of holders) {
+    if (one.since <= staleBefore) holders.delete(id);
+  }
+  if (holders.size === 0) occupants.delete(reservationKey);
 
-  return [...(occupants.get(reservationKey)?.entries() ?? [])]
-    .filter(([id, one]): boolean => id !== eventId && one.since > staleBefore)
+  return [...holders.entries()]
+    .filter(([id]): boolean => id !== eventId)
     .map(([, one]): SandboxOccupant => one)
     .sort((a, b): number => a.since - b.since);
 }

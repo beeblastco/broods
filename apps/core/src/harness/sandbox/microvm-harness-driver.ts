@@ -53,6 +53,7 @@ interface MicrovmHarnessExecutor {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<MicrovmHarnessReservation>;
   resumeHarnessReservation(request: {
     reservationKey: string;
@@ -119,17 +120,23 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
         reservationKey: this.#options.reservationKey,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
+        ...(this.#options.shared ? { shared: true } : {}),
       });
       options.abortSignal?.throwIfAborted();
       const session = this.#session(reservation);
-      await reportSandboxUsage(session, this.#options.onUsage);
+      await reportSandboxUsage(
+        session,
+        this.#options.onUsage,
+        options.abortSignal,
+      );
+      options.abortSignal?.throwIfAborted();
 
       return {
         session: session,
         isFirstCreate: reservation.isFirstCreate,
       };
     } catch (error) {
-      if (reservation?.isFirstCreate) {
+      if (reservation?.isFirstCreate && this.#options.shared !== true) {
         await this.#executor
           .release?.({ reservationKey: this.#options.reservationKey })
           .catch(() => {});
@@ -149,7 +156,12 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
     });
     options.abortSignal?.throwIfAborted();
     const session = this.#session(reservation);
-    await reportSandboxUsage(session, this.#options.onUsage);
+    await reportSandboxUsage(
+      session,
+      this.#options.onUsage,
+      options.abortSignal,
+    );
+    options.abortSignal?.throwIfAborted();
 
     return session;
   }

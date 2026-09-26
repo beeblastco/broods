@@ -219,10 +219,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     this.#client = client;
   }
 
+  // A `shared` machine is kept when its first setup fails: another conversation
+  // may already hold it, and the unset onCreate marker makes the next acquire retry.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<MicrovmHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -243,7 +246,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
       return reservation;
     } catch (error) {
-      if (reservation.isFirstCreate) {
+      if (reservation.isFirstCreate && request.shared !== true) {
         await this.release(request).catch(() => {});
       }
       throw error;

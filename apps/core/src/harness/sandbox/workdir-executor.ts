@@ -111,10 +111,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     this.#client = workdirClient(config);
   }
 
+  // A `shared` machine is kept when its first setup fails: another conversation
+  // may already hold it, and the unset onCreate marker makes the next acquire retry.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<WorkdirHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -129,7 +132,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         this.#workDir(request.reservationKey),
       );
     } catch (error) {
-      if (reservation.isFirstCreate) {
+      if (reservation.isFirstCreate && request.shared !== true) {
         await this.release(request).catch(() => {});
       }
       throw error;
