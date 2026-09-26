@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
-import { readFileSync } from "node:fs";
+import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
@@ -96,16 +96,6 @@ const ACCOUNT = "acct_1";
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
-);
-// A self-signed pair for `public.test`, minted for a hundred years so the TLS
-// test never starts flaking on expiry.
-const TLS_CERT = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-cert.pem", import.meta.url),
-  "utf8",
-);
-const TLS_KEY = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-key.pem", import.meta.url),
-  "utf8",
 );
 
 beforeEach(() => {

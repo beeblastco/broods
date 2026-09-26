@@ -5,7 +5,7 @@ import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
@@ -42,10 +42,7 @@ export default function DashboardPage(): React.JSX.Element {
     projects === undefined
       ? undefined
       : (projects.find((candidate) => candidate._id === projectId) ?? null);
-  const { stageId } = useStage();
-  const stages = useQuery(api.stage.list, {
-    projectId: projectId,
-  }) as Doc<"stages">[] | undefined;
+  const { stageId: activeStageId } = useStage();
   const activeTab = (searchParams.get("tab") as DashboardTab) || "monitoring";
 
   // Carries the current params (e.g. ?stage=) through, so a tab link stays
@@ -56,13 +53,6 @@ export default function DashboardPage(): React.JSX.Element {
 
     return `/${projectId}/dashboard?${next.toString()}`;
   };
-
-  const activeStage =
-    stages?.find((stage) => stage._id === stageId) ??
-    stages?.find((stage) => stage.isDefault) ??
-    stages?.[0] ??
-    null;
-  const activeStageId = activeStage?._id ?? null;
 
   // Source of projectSlug, stageSlug and endpointId: the observability WS and
   // the session-storage key lookup are both keyed on them.

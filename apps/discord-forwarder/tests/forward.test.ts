@@ -177,7 +177,8 @@ async function withoutWaiting(work: Promise<void>): Promise<void> {
   void work.finally((): void => {
     done = true;
   });
-  while (!done) {
+  for (;;) {
+    if (done) break;
     jest.advanceTimersByTime(5_000);
     await Promise.resolve();
   }

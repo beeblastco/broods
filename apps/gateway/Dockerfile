@@ -1,5 +1,6 @@
 # Build from the monorepo root: docker build -f apps/gateway/Dockerfile .
 # Pin the digest: the version tag is republished when the base image rebuilds.
+# checkov:skip=CKV_DOCKER_7:BUN_IMAGE defaults to a version and immutable digest; the scanner does not resolve ARG in FROM.
 ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app

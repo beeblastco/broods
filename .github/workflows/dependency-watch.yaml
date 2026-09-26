@@ -30,6 +30,9 @@ concurrency:
   group: dependency-watch
   cancel-in-progress: false
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   watch:
     runs-on: ubuntu-24.04

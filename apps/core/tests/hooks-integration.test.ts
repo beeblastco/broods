@@ -217,8 +217,8 @@ describe("channel.message.received rewrite reaches the session", () => {
 
       const channels = {
         telegram: {
-          botToken: "bot-token",
-          webhookSecret: "telegram-secret",
+          botToken: crypto.randomUUID(),
+          webhookSecret: crypto.randomUUID(),
           allowedChannelIds: ["123"],
         },
       };
@@ -241,7 +241,7 @@ describe("channel.message.received rewrite reaches the session", () => {
           accountLoader: async () => ({
             accountId: "acct_test",
             username: "test-account",
-            secretHash: "hash",
+            secretHash: crypto.randomUUID(),
             status: "active" as const,
             config: { channels: channels },
             createdAt: "2026-07-16T00:00:00.000Z",
@@ -260,7 +260,10 @@ describe("channel.message.received rewrite reaches the session", () => {
           coreRequest(
             "POST",
             "/v1/webhooks/acct_test/telegram",
-            { "x-telegram-bot-api-secret-token": "telegram-secret" },
+            {
+              "x-telegram-bot-api-secret-token":
+                channels.telegram.webhookSecret,
+            },
             {
               update_id: 7,
               message: {

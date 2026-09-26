@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { readFileSync } from "node:fs";
+import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import {
@@ -14,16 +14,6 @@ import {
   toLifecycleValue,
 } from "../src/harness/lifecycle.ts";
 import { fireWebhook } from "../src/shared/webhook.ts";
-
-// The same self-signed pair the attachment tests use, minted for `public.test`.
-const TLS_CERT = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-cert.pem", import.meta.url),
-  "utf8",
-);
-const TLS_KEY = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-key.pem", import.meta.url),
-  "utf8",
-);
 
 interface Delivery {
   body: string;

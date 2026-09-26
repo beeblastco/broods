@@ -148,10 +148,6 @@ test("every page renders cold within budget, and every header destination by nav
   const navPage = await navContext.newPage();
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
   await PROJECT_PAGES[0].ready(navPage).first().waitFor({ timeout: 30_000 });
-  // The canvas mounts before StageSelector writes the default `?stage=`, and
-  // that history.replaceState discards a navigation still in flight, so a
-  // click before it lands can be lost. The header only prefetches after it.
-  await navPage.waitForURL(/[?&]stage=/, { timeout: 30_000 });
   for (const dest of HEADER_NAV) {
     const start = await navPage.evaluate(() => performance.now());
     await navPage.getByRole("link", { name: dest.label, exact: true }).click();

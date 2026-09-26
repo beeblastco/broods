@@ -219,7 +219,7 @@ export async function promptSelect<T>(
       : `Choose 1-${options.length} [${fallback + 1}]: `;
   const rl = createInterface({ input: input, output: output });
   try {
-    while (true) {
+    for (;;) {
       const answer = (await rl.question(question)).trim();
       if (answer === "" && fallback !== undefined) return options[fallback]!;
       const index = Number(answer);

@@ -23,10 +23,13 @@ import {
 } from "./agentSync";
 import {
   asObject,
+  assertEnvRefsResolved,
   assertNoAccountScopedResourceConflict,
+  assertSupportedWorkspaceSandboxMounts,
   assertSupportedWorkspaceStorage,
   authIdForAccount,
   decryptSandboxConfig,
+  placeholderIds,
   renameComparableAgent,
   renameComparableResource,
   resourceName,
@@ -34,6 +37,7 @@ import {
   rewriteResourceRefs,
   type CliResource,
 } from "./cliSync";
+import { normalizeChannelRecordResource } from "./cliSyncChannels";
 import { isPlainObject, stableJson } from "./objects";
 import {
   assertPolicyUnreferenced,
@@ -252,6 +256,46 @@ export async function sandboxConfigByName(
       q.eq("stageId", stageId).eq("name", name),
     )
     .unique();
+}
+
+/**
+ * The rules the sync passes below apply to a manifest's resources, run without
+ * writing so a manifest they refuse is refused before anything of it is stored.
+ * Rows the sync would create get placeholder ids. Checks against live rows
+ * (name and place conflicts, policy references on prune) stay in the sync.
+ */
+export function assertManifestResources(
+  resources: CliResource[],
+  envValues: Record<string, string>,
+  mcpIds: Record<string, string>,
+): void {
+  assertSupportedWorkspaceSandboxMounts(resources);
+  assertEnvRefsResolved(resources, envValues);
+  const ids = {
+    workspaces: placeholderIds(namesOf(resources, "workspace")),
+    sandboxes: placeholderIds(namesOf(resources, "sandbox")),
+    policies: placeholderIds(namesOf(resources, "policy")),
+    mcp: mcpIds,
+  };
+  const channelIds = {
+    agentIds: placeholderIds(namesOf(resources, "agent")),
+    workspaceIds: ids.workspaces,
+    policyIds: ids.policies,
+  };
+  for (const resource of resources) {
+    resourceName(resource.name);
+    if (resource.kind === "workspace") {
+      assertSupportedWorkspaceStorage(resource);
+      normalizeWorkspaceConfig(resource.config);
+    } else if (resource.kind === "policy") {
+      normalizePolicyDocument(resource.config);
+    } else if (resource.kind === "agent") {
+      const config = rewriteEnvRefs(asObject(resource.config), new Set());
+      fromNestedAgentConfig(rewriteResourceRefs(config, ids));
+    } else if (resource.kind === "channelRecord") {
+      normalizeChannelRecordResource(resource, channelIds);
+    }
+  }
 }
 
 export async function syncAgentResources(
@@ -826,6 +870,16 @@ function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
  * non-declared string, e.g. a literal agent id, untouched) and re-pushes the
  * encrypted config so the runtime can dispatch the named subagents.
  */
+/** The names the sync keys a kind's ids by. */
+function namesOf(
+  resources: CliResource[],
+  kind: CliResource["kind"],
+): string[] {
+  return resources
+    .filter((entry) => entry.kind === kind)
+    .map((entry) => resourceName(entry.name));
+}
+
 async function resolveSubagentReferences(
   ctx: MutationCtx,
   accountId: Id<"accounts">,

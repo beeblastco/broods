@@ -41,6 +41,7 @@ import {
   type CliStage,
   diffManifests,
   BroodsSyncClient,
+  ManifestConflictError,
   type RemoteManifestResponse,
 } from "../sync.ts";
 import {
@@ -101,6 +102,8 @@ const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 // Re-mint a stage ticket this long before it expires, so a reconnect never
 // presents one the gateway is about to refuse.
 const STAGE_SESSION_REFRESH_MS = 60_000;
+// How often `broods dev` re-reads the stage when another session keeps syncing it.
+const DEV_SYNC_ATTEMPTS = 3;
 const DEFAULT_SERVICE_REGION = "eu-west-1";
 const SERVICE_REGIONS = [
   { region: "eu-west-1", label: "eu-west-1 (Ireland)" },
@@ -1692,7 +1695,7 @@ async function selectOnboardingProject(
     return promptText("Project name", suggested);
   }
 
-  while (true) {
+  for (;;) {
     const answer = await promptSelectOrText(
       "Select project",
       context.projects,
@@ -1755,33 +1758,63 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
  * processes via `BROODS_DECLINED_FILE`) so they are not re-prompted.
  */
 async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
-  const { manifest, config, resourceAliases, channels } = await compileProject({
+  const compiled = await compileProject({
     project: optionValue(args, "--project"),
     stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
-    optionValue(args, "--base-url") ?? config.baseUrl,
+    optionValue(args, "--base-url") ?? compiled.config.baseUrl,
   );
   const client = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
-  const remote = await client.getManifest(manifest.project, manifest.stage);
-  const diff = diffManifests(manifest, remote?.manifest ?? null);
-  printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
   // The sync rejects unresolved env refs, so push .env.local values up first:
   // that is what lets a local `.env.local` alone carry a dev stage.
   const pushed = await pushLocalEnvVars(
     client,
-    manifest,
-    await inspectEnvRefs(client, manifest),
+    compiled.manifest,
+    await inspectEnvRefs(client, compiled.manifest),
   );
   if (pushed.length > 0) printEnvSync(pushed);
 
-  // Push creates/updates (and canvas wiring) immediately, undeleted.
-  let result = await client.putManifest(manifest, false);
+  // Another session may sync the stage between this read and write. The server
+  // then refuses the stale write, so read the stage again and retry; a delete
+  // is asked again against the new diff.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await syncDevOnce(client, compiled);
+    } catch (error) {
+      if (
+        !(error instanceof ManifestConflictError) ||
+        attempt === DEV_SYNC_ATTEMPTS
+      )
+        throw error;
+      printWarning("Stage changed in another session. Re-reading...");
+    }
+  }
+}
+
+/** One read, diff and write of the dev stage, sent with the revision it read. */
+async function syncDevOnce(
+  client: BroodsSyncClient,
+  compiled: Awaited<ReturnType<typeof compileProject>>,
+): Promise<RemoteManifestResponse> {
+  const { manifest, resourceAliases, channels } = compiled;
+  const remote = await client.getManifest(manifest.project, manifest.stage);
+  const diff = diffManifests(manifest, remote?.manifest ?? null);
+  printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
+
+  // Push creates/updates (and canvas wiring) immediately, undeleted. A stage
+  // that does not exist yet is revision 0, so two first syncs still conflict.
+  let result = await client.putManifest(
+    manifest,
+    false,
+    false,
+    remote === null ? 0 : remote.revision,
+  );
   await writeGeneratedFiles(
     manifest,
     result.ids,
@@ -1807,7 +1840,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
         `Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
       )
     ) {
-      result = await client.putManifest(manifest, true);
+      result = await client.putManifest(manifest, true, false, result.revision);
       await writeGeneratedFiles(
         manifest,
         result.ids,

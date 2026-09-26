@@ -19,6 +19,9 @@ on:
       - ".github/workflows/publish-npm.yaml"
   workflow_dispatch:
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   # Not `validate`: that is the name of the required CI check on `dev`, and two
   # check runs sharing one name make the branch rule ambiguous about which of

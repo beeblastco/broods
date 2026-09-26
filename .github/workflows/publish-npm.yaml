@@ -15,6 +15,9 @@ concurrency:
   group: publish-npm-${{ github.ref_name }}
   cancel-in-progress: false
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   publish:
     # main-only; dispatching already requires write access, so manual re-runs
