@@ -6,7 +6,11 @@
 import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
 import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
-import { extractText, formatChannelErrorText } from "../shared/channels.ts";
+import {
+  extractText,
+  formatChannelErrorText,
+  sendChannelFailure,
+} from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { executeCommand, resolveChannelCommand } from "../shared/commands.ts";
 import {
@@ -1565,13 +1569,12 @@ export async function handleChannelRequest(
         (): Promise<void> =>
           runChannelTurns(event, session, ingested.turnEvents, context).catch(
             async (err: unknown): Promise<never> => {
-              await event.channel
-                .sendText(
-                  formatChannelErrorText(
-                    err instanceof Error ? err.message : String(err),
-                  ),
-                )
-                .catch((): void => {});
+              await sendChannelFailure(
+                event.channel,
+                formatChannelErrorText(
+                  err instanceof Error ? err.message : String(err),
+                ),
+              ).catch((): void => {});
               throw err;
             },
           ),
@@ -1678,7 +1681,8 @@ async function runChannelTurns(
               onErrorText: async (error, traceId) => {
                 await session.assertCurrentOwner();
                 terminal = "failed";
-                await event.channel.sendText(
+                await sendChannelFailure(
+                  event.channel,
                   formatChannelFinalText(
                     formatChannelErrorText(error),
                     traceId,

@@ -42,6 +42,8 @@ const TELEGRAM_REPLY_QUOTE_MAX = 500;
 // callback_data on an ask_questions button: statusId, question, option.
 // 53 bytes at most, under Telegram's 64-byte cap.
 const QUESTION_CALLBACK_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
+// callback_data on a reply button: the reply itself, sent as the person's message.
+const REPLY_CALLBACK_PATTERN = /^r:(.{1,60})$/s;
 
 export interface TelegramChannelOptions {
   botUsername?: string;
@@ -104,8 +106,11 @@ export function createTelegramChannel(
       });
     });
     const match = QUESTION_CALLBACK_PATTERN.exec(callback.data ?? "");
+    const content = match
+      ? "[button answer]"
+      : REPLY_CALLBACK_PATTERN.exec(callback.data ?? "")?.[1];
     const message = callback.message;
-    if (!match || !message) {
+    if (content === undefined || !message) {
       return { kind: "ignore", reason: "unknown callback" };
     }
     if (
@@ -131,14 +136,18 @@ export function createTelegramChannel(
         eventId: `${TELEGRAM_INTEGRATION_PREFIX}${updateId}`,
         conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
         channelName: "telegram",
-        content: "[button answer]",
+        content: content,
         identity: envelope.identity,
         source: { ...envelope.source },
-        answer: {
-          statusId: match[1]!,
-          questionIndex: Number(match[2]),
-          optionIndex: Number(match[3]),
-        },
+        ...(match
+          ? {
+              answer: {
+                statusId: match[1]!,
+                questionIndex: Number(match[2]),
+                optionIndex: Number(match[3]),
+              },
+            }
+          : {}),
       },
     };
   };
@@ -259,6 +268,35 @@ export function createTelegramChannel(
               ? { message_thread_id: source.messageThreadId }
               : {}),
             reply_markup: { inline_keyboard: questionKeyboard(prompt) },
+          });
+        },
+        sendReplyButtons: async function (text, replies): Promise<void> {
+          // Long text goes out in chunks like sendText; the buttons ride on the last.
+          const chunks = splitTelegramRawText(text);
+          const last = chunks.pop() ?? text;
+          const thread =
+            source.messageThreadId !== undefined
+              ? { message_thread_id: source.messageThreadId }
+              : {};
+          for (const chunk of chunks) {
+            await callTelegramBotApi(apiUrl, botToken, "sendMessage", {
+              chat_id: source.chatId,
+              text: chunk,
+              ...thread,
+            });
+          }
+          await callTelegramBotApi(apiUrl, botToken, "sendMessage", {
+            chat_id: source.chatId,
+            text: last,
+            ...thread,
+            reply_markup: {
+              inline_keyboard: [
+                replies.map((label) => ({
+                  text: label,
+                  callback_data: `r:${label}`,
+                })),
+              ],
+            },
           });
         },
         sendSticker: async function (sticker): Promise<void> {
