@@ -111,7 +111,10 @@ export function lifecycleScript(
   onResume?: string[],
 ): string | undefined {
   if (!onCreate?.length && !onResume?.length) return undefined;
-  const marker = `${workDir}/.fp-setup-done`;
+  const marker = shellQuote(`${workDir}/.fp-setup-done`);
+  // Runs sharing a machine can acquire it at once; the lock keeps onCreate to one
+  // of them, and a lock older than 10 minutes is taken as left by a killed run.
+  const lock = shellQuote(`${workDir}/.fp-setup-lock`);
 
   return [
     "set -e",
@@ -119,9 +122,20 @@ export function lifecycleScript(
     `cd ${shellQuote(workDir)}`,
     ...(onCreate?.length
       ? [
-          `if [ ! -f ${shellQuote(marker)} ]; then`,
+          `if [ ! -f ${marker} ]; then`,
+          "  __waited=0",
+          `  until mkdir ${lock} 2>/dev/null; do`,
+          '    if [ "$__waited" -ge 600 ]; then break; fi',
+          "    sleep 1",
+          "    __waited=$((__waited + 1))",
+          "  done",
+          `  trap 'rmdir ${lock} 2>/dev/null' EXIT`,
+          `  if [ ! -f ${marker} ]; then`,
           ...onCreate,
-          `  touch ${shellQuote(marker)}`,
+          `    touch ${marker}`,
+          "  fi",
+          `  rmdir ${lock} 2>/dev/null || true`,
+          "  trap - EXIT",
           "fi",
         ]
       : []),

@@ -97,6 +97,7 @@ const toolGroupDoc = v.object({
 const sandboxReservationSummary = v.object({
   ...reservedSandboxValidator.fields,
   accountId: v.id("accounts"),
+  ttlSeconds: v.optional(v.number()),
 });
 
 interface SandboxReservationPage {
@@ -833,6 +834,7 @@ export const listExpiredSandboxReservations = internalQuery({
       provider: row.provider,
       reservationKey: row.reservationKey,
       externalId: row.externalId,
+      ttlSeconds: row.ttlSeconds,
     }));
   },
 });
@@ -950,6 +952,7 @@ export const claimSandboxReservation = internalMutation({
       reservationKey: args.reservationKey,
       externalId: args.externalId,
       expiresAt: reservationExpiresAt(args.ttlSeconds),
+      ttlSeconds: args.ttlSeconds,
     });
 
     return true;
@@ -989,7 +992,7 @@ export const saveSandboxReservation = internalMutation({
       return null;
     }
     await ctx.db.patch(row._id, {
-      expiresAt: reservationExpiresAt(args.ttlSeconds),
+      expiresAt: reservationExpiresAt(args.ttlSeconds ?? row.ttlSeconds),
     });
 
     return null;
@@ -1015,8 +1018,6 @@ export const deferSandboxReservations = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    const expiresAt =
-      Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS;
     let deferred = 0;
     for (const reservation of args.reservations) {
       const row = await ctx.db
@@ -1028,7 +1029,9 @@ export const deferSandboxReservations = internalMutation({
         )
         .unique();
       if (!row || row.accountId !== args.accountId) continue;
-      await ctx.db.patch(row._id, { expiresAt: expiresAt });
+      await ctx.db.patch(row._id, {
+        expiresAt: reservationExpiresAt(row.ttlSeconds),
+      });
       deferred += 1;
     }
 

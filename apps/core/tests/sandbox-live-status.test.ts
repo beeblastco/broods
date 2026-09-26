@@ -76,18 +76,16 @@ describe("formatSandboxStatus", () => {
     ]);
   });
 
-  test("says a machine that is not reserved yet boots on first use", () => {
+  test("leaves the live line out when nothing was read from the machine", () => {
     expect(
       formatSandboxStatus({
         name: "box",
         provider: "lambda",
-        state: null,
         shared: true,
         neighbours: [],
       }),
     ).toEqual([
       "your machine: box (lambda), shared: other conversations of this agent run on it too, each in its own folder",
-      "machine now: not created yet, the first bash call boots it",
       "other runs on it now: none",
     ]);
   });

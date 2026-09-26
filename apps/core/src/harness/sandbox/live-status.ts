@@ -1,12 +1,11 @@
 /**
  * Live state of the machine a run works on, for the <environment> block: its size,
- * whether it is up, what the guest reports for CPU, memory and disk, and which other
+ * what the guest reports for CPU, memory and disk on a harness turn, and which other
  * runs hold it right now. Occupancy is in memory because core runs one replica. The
  * lines are built per run and ride after the cached prompt prefix, never in it.
  */
 
 import type { BroodsSandboxDriverSession } from "@broods/ai-sdk-sandbox";
-import { createSandboxExecutor } from "./index.ts";
 import type { SandboxInstanceInfo } from "./types.ts";
 import { configString } from "./utils.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
@@ -15,9 +14,8 @@ import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 // A run that never settled (a crashed pod keeps nothing, but a leaked entry would
 // read as a neighbour forever) stops counting after this long.
 const OCCUPANT_STALE_MS = 6 * 60 * 60 * 1000;
-// Reading the provider state or probing the guest must not hold a turn up when
-// either is slow; past this the status goes without that part.
-const STATE_TIMEOUT_MS = 2_000;
+// Probing the guest must not hold a turn up when it is slow; past this the status
+// goes without usage.
 const USAGE_TIMEOUT_MS = 3_000;
 // One exec, one fixed key per line, so a missing tool only blanks its own field.
 const USAGE_PROBE = [
@@ -48,8 +46,8 @@ export interface SandboxStatus {
   name: string;
   provider: string;
   specs?: SandboxSpecs;
-  /** `undefined` when the provider was not asked, `null` when nothing is reserved yet. */
-  state?: SandboxInstanceInfo["state"] | null;
+  /** Known only when the run holds the machine; the provider is never asked per turn. */
+  state?: SandboxInstanceInfo["state"];
   /** Whether other conversations may land on the same machine. */
   shared: boolean;
   usage?: SandboxUsage;
@@ -60,32 +58,23 @@ export interface SandboxStatus {
 const occupants = new Map<string, Map<string, SandboxOccupant>>();
 
 /**
- * Status of the persistent sandbox a bash-only run defaults to, read without
- * waking it. Undefined when that sandbox reserves nothing.
+ * Status of the persistent sandbox a bash-only run defaults to: its size and the
+ * runs on it, with no I/O so the turn never waits on the provider. Undefined when
+ * that sandbox reserves nothing.
  */
-export async function agentSandboxStatus(
+export function agentSandboxStatus(
   entry: ResolvedAgentSandbox | undefined,
   eventId: string,
-): Promise<SandboxStatus | undefined> {
+): SandboxStatus | undefined {
   const reservationKey = configString(entry?.sandbox.options?.reservationKey);
   if (!entry || entry.sandbox.persistent !== true || !reservationKey) {
     return undefined;
   }
-  const executor = createSandboxExecutor(entry.sandbox);
-  const info = executor.getInstanceInfo
-    ? await Promise.race([
-        executor.getInstanceInfo({ reservationKey: reservationKey }),
-        new Promise<undefined>((resolve): void => {
-          setTimeout(resolve, STATE_TIMEOUT_MS).unref();
-        }),
-      ]).catch((): undefined => undefined)
-    : undefined;
 
   return {
     name: entry.name,
     provider: entry.sandbox.provider,
     specs: entry.sandbox.controlPlane?.specs,
-    state: info === undefined ? undefined : (info?.state ?? null),
     shared: true,
     neighbours: sandboxNeighbours(reservationKey, eventId),
   };
@@ -219,11 +208,7 @@ export function sandboxNeighbours(
 
 function formatMachineNow(status: SandboxStatus): string {
   const usage = status.usage;
-  const state =
-    status.state === null
-      ? "not created yet, the first bash call boots it"
-      : (status.state ?? "running");
-  const parts = [state];
+  const parts: string[] = [status.state ?? "running"];
   if (usage?.load1 !== undefined) {
     parts.push(
       `load ${usage.load1} on ${usage.cpus ?? "?"} CPU${usage.cpus === 1 ? "" : "s"}`,

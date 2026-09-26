@@ -446,7 +446,7 @@ export async function runAgentLoop(
   // once the session holds the machine, below.
   const agentMachine =
     agentConfig.harness === undefined && resolvedWorkspaces.length === 0
-      ? await agentSandboxStatus(sandboxes[0], session.eventId)
+      ? agentSandboxStatus(sandboxes[0], session.eventId)
       : undefined;
   const agentMachineKey = configString(
     sandboxes[0]?.sandbox.options?.reservationKey,

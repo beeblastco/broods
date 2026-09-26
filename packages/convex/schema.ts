@@ -1082,6 +1082,8 @@ export const sandboxReservationsFields = {
   reservationKey: v.string(),
   externalId: v.string(),
   expiresAt: v.number(),
+  /** Idle window this reservation was claimed with; unset means the 7-day default. */
+  ttlSeconds: v.optional(v.number()),
 };
 
 /**

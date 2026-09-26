@@ -557,6 +557,21 @@ describe("runtime persistence", () => {
 
     expect(row?.expiresAt).toBeGreaterThanOrEqual(now + 59);
     expect(row?.expiresAt).toBeLessThanOrEqual(now + 61);
+
+    // A sweep that could not clear it defers it by its own window, not a week.
+    await t.mutation(internal.runtime.deferSandboxReservations, {
+      accountId: accountId,
+      reservations: [
+        { provider: "sandbox", reservationKey: reservation.reservationKey },
+      ],
+    });
+    const deferred = await t.run((ctx) =>
+      ctx.db.query("sandboxReservations").first(),
+    );
+
+    expect(deferred?.expiresAt).toBeLessThanOrEqual(
+      Math.floor(Date.now() / 1000) + 61,
+    );
   });
 
   test("fails a detached job whose sandbox the reservation stopped naming", async () => {
