@@ -41,6 +41,7 @@ interface StreamTextStandInOptions {
 interface CoordinatorInternals {
   completions: TestCompletion[];
   pending: Map<string, Promise<void>>;
+  recorded: Set<string>;
   pendingMetadata: Map<
     string,
     Omit<TestCompletion, "status" | "response" | "error">
@@ -397,6 +398,61 @@ describe("SubagentCoordinator", () => {
     expect(messages).toHaveLength(2);
     expect(messageText(messages[0])).toContain("first result");
     expect(messageText(messages[1])).toContain("second result");
+  });
+
+  it("waits for one pending subagent, bounded by the timeout", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    let settle!: () => void;
+    internals.pending.set(
+      "subagent_1",
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    internals.pending.set("subagent_2", new Promise<void>(() => {}));
+
+    setTimeout(() => settle(), 5);
+    const settledAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000);
+    expect(Date.now() - settledAt).toBeLessThan(1_000);
+
+    const timedAt = Date.now();
+    await coordinator.waitForSettled("subagent_2", 20);
+    expect(Date.now() - timedAt).toBeLessThan(500);
+    await expect(
+      coordinator.waitForSettled("unknown", 5_000),
+    ).resolves.toBeUndefined();
+  });
+
+  it("stops waiting once the outcome is recorded, before follow-ups drain", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: "agent_1",
+      conversationKey: "child",
+    });
+
+    setTimeout(() => {
+      internals.recorded.add("event_1");
+      internals.notifyCompletion();
+    }, 5);
+    const startedAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
   });
 
   it("emits heartbeats while waiting and batches completed results with timeout notices", async () => {

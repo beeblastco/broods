@@ -2961,6 +2961,7 @@ async function runParentContinuationLoop(options: {
       {
         dispatchAppliedIngress: dispatchAppliedIngress,
         dispatchSubagents: options.subagentCoordinator.dispatch,
+        subagentWatch: options.subagentCoordinator,
         dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
         dispatchSessionMessage: (
           input: SessionMessageInput,
