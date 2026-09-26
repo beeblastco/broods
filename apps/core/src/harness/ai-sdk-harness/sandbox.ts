@@ -3,6 +3,7 @@
  */
 
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
+import type { SandboxUsage } from "../sandbox/live-status.ts";
 import { createMicrovmHarnessDriver } from "../sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { createWorkdirHarnessDriver } from "../sandbox/workdir-harness-driver.ts";
@@ -32,7 +33,10 @@ export interface AiSdkHarnessSandboxOptions {
   compute: AiSdkHarnessCompute;
   /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
+  onUsage?: (usage: SandboxUsage) => void;
   reservationKey: string;
+  /** Other conversations reserve the same machine; see the drivers' `shared`. */
+  shared?: boolean;
   type: AiSdkHarnessType;
 }
 
@@ -92,7 +96,9 @@ function createMicrovmHarnessSandbox(
       reservationKey: reservationKey,
       config: compute,
       metadata: options.metadata,
+      onUsage: options.onUsage,
       ports: [bridgePort],
+      shared: options.shared,
     }),
     providerId: `broods-microvm-${options.type}`,
     bridgePorts: [bridgePort],
@@ -124,7 +130,9 @@ function createWorkdirHarnessSandbox(
       reservationKey: reservationKey,
       config: compute,
       metadata: options.metadata,
+      onUsage: options.onUsage,
       ports: [bridgePort],
+      shared: options.shared,
     }),
     providerId: `broods-workdir-${options.type}`,
     bridgePorts: [bridgePort],
