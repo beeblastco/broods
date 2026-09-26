@@ -390,14 +390,17 @@ describe("direct API ingress", () => {
         },
       }),
       {
-        authResolver: async (): Promise<AuthContext> => ({
-          kind: "deployment",
-          account: TEST_ACCOUNT,
-          endpointId: "env-endpoint",
-          projectSlug: "demo",
-          stageSlug: "development",
-          stageTicket: true,
-        }),
+        authResolver: async (headers): Promise<AuthContext | null> =>
+          headers.authorization === "Bearer fp_dts_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                stageSlug: "development",
+                stageTicket: true,
+              }
+            : null,
       },
     );
 
