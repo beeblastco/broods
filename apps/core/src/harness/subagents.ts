@@ -258,11 +258,20 @@ export class SubagentCoordinator {
    * status check spends one model step per change instead of one per instant
    * "processing". It returns before the child's queued follow-ups drain.
    */
-  async waitForSettled(taskId: string, timeoutMs: number): Promise<void> {
+  async waitForSettled(
+    taskId: string,
+    timeoutMs: number,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
     const pending = this.pending.get(taskId);
-    if (!pending) {
+    if (!pending || abortSignal?.aborted) {
       return;
     }
+    const aborted = new Promise<boolean>((resolve): void => {
+      abortSignal?.addEventListener("abort", (): void => resolve(true), {
+        once: true,
+      });
+    });
     const eventId = this.pendingMetadata.get(taskId)?.eventId;
     const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
     const settled = pending.then((): boolean => true);
@@ -272,6 +281,7 @@ export class SubagentCoordinator {
     ) {
       const done = await Promise.race([
         settled,
+        aborted,
         this.nextStateChange().then((): boolean => false),
         sleep(deadline - Date.now()).then((): boolean => false),
       ]);

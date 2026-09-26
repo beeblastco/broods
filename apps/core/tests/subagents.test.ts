@@ -430,6 +430,22 @@ describe("SubagentCoordinator", () => {
       coordinator.waitForSettled("unknown", 5_000),
     ).resolves.toBeUndefined();
   });
+  it("stops waiting on a subagent when the parent's run is aborted", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    const abort = new AbortController();
+
+    setTimeout(() => abort.abort(), 5);
+    const startedAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000, abort.signal);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
 
   it("does not inject a result the model already read", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
