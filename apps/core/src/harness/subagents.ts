@@ -314,9 +314,13 @@ export class SubagentCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(
-      completions.map(completionToParentMessage),
-    );
+    // A failed write puts them back, so a later drain can still deliver them.
+    await this.parentSession
+      .persistModelMessages(completions.map(completionToParentMessage))
+      .catch((error: unknown): never => {
+        this.completions.unshift(...completions);
+        throw error;
+      });
 
     return completions.length;
   }
