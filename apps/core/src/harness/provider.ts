@@ -61,6 +61,16 @@ import { unreadableMediaNote } from "../shared/media-types.ts";
 export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
   new Set(["azure", "openai"]);
 
+// Model retries when the agent sets none. The AI SDK's 2 retry for about 6s,
+// shorter than a tokens-per-minute window, so one 429 failed the whole run.
+const DEFAULT_MODEL_MAX_RETRIES = 5;
+
+// The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s".
+// Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
+const MAX_RETRY_HEADER_MS = 59_999;
+
+const RATE_LIMIT_WAIT_PATTERN = /try again in (\d+(?:\.\d+)?)\s*(ms|s)\b/i;
+
 /**
  * How inbound audio is read, per provider: the factory that ships speech-to-text
  * and the model to ask it for when the account names none. Providers absent
@@ -229,7 +239,7 @@ export function modelSettingsFromModelConfig(
     ...settings
   } = agentConfig.model ?? {};
 
-  return settings;
+  return { maxRetries: DEFAULT_MODEL_MAX_RETRIES, ...settings };
 }
 
 /**
@@ -607,6 +617,39 @@ function resolveOpenAICompatibleModel(
 }
 
 /**
+ * A 429 whose wait is only in its body gets it as `retry-after-ms`, the header
+ * the AI SDK's retry already honours. Without it the SDK retries on its own
+ * shorter backoff and burns the attempts before the window resets.
+ */
+async function withRateLimitRetryHeader(response: Response): Promise<Response> {
+  if (
+    response.status !== 429 ||
+    response.headers.has("retry-after-ms") ||
+    response.headers.has("retry-after")
+  ) {
+    return response;
+  }
+  const body = await response.text();
+  const [, amount, unit] = RATE_LIMIT_WAIT_PATTERN.exec(body) ?? [];
+  const headers = new Headers(response.headers);
+  if (amount !== undefined && unit !== undefined) {
+    const waitMs = Number(amount) * (unit.toLowerCase() === "s" ? 1000 : 1);
+    // The SDK ignores a retry header of 60s or more, so a longer wait is
+    // spread over the retries at the longest delay it honours.
+    headers.set(
+      "retry-after-ms",
+      String(Math.min(Math.ceil(waitMs), MAX_RETRY_HEADER_MS)),
+    );
+  }
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: headers,
+  });
+}
+
+/**
  * Every model request goes out with Bun's socket idle timeout off. Bun drops a
  * connection that stays silent for 300s, and a busy provider can hold a stream
  * that long, so a model call ends only on the provider's own error or the run's
@@ -622,10 +665,11 @@ function withModelFetch<T extends AgentProviderSettings>(
     init?: BunFetchRequestInit,
   ): Promise<Response> => {
     const unbounded = { ...init, timeout: false };
-
-    return guarded
+    const response = guarded
       ? publicHostFetch(input, unbounded)
       : fetch(input, unbounded);
+
+    return response.then(withRateLimitRetryHeader);
   };
 
   return { ...settings, fetch: modelFetch as typeof fetch };
