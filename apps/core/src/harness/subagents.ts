@@ -278,11 +278,20 @@ export class SubagentCoordinator {
    * status check spends one model step per change instead of one per instant
    * "processing". It returns before the child's queued follow-ups drain.
    */
-  async waitForSettled(taskId: string, timeoutMs: number): Promise<void> {
+  async waitForSettled(
+    taskId: string,
+    timeoutMs: number,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
     const pending = this.pending.get(taskId);
-    if (!pending) {
+    if (!pending || abortSignal?.aborted) {
       return;
     }
+    const aborted = new Promise<boolean>((resolve): void => {
+      abortSignal?.addEventListener("abort", (): void => resolve(true), {
+        once: true,
+      });
+    });
     const eventId = this.pendingMetadata.get(taskId)?.eventId;
     const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
     const settled = pending.then((): boolean => true);
@@ -293,6 +302,7 @@ export class SubagentCoordinator {
     ) {
       const done = await Promise.race([
         settled,
+        aborted,
         this.nextStateChange().then((): boolean => false),
         sleep(deadline - Date.now()).then((): boolean => false),
       ]);
@@ -319,8 +329,11 @@ export class SubagentCoordinator {
   confirmDelivered(): void {
     for (const eventId of this.readUnsaved) {
       this.delivered.add(eventId);
+      // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
-        (completion) => completion.eventId === eventId,
+        (completion): boolean =>
+          completion.eventId === eventId &&
+          completion.visibleResult === undefined,
       );
       if (index !== -1) {
         this.completions.splice(index, 1);
@@ -350,7 +363,12 @@ export class SubagentCoordinator {
         .persistModelMessages(messages)
         .catch((error: unknown): never => {
           this.completions.unshift(...completions);
-          this.questions.unshift(...questions);
+          // A question whose child stopped waiting meanwhile stays dropped.
+          this.questions.unshift(
+            ...questions.filter((open): boolean =>
+              this.openQuestions.has(open.taskId),
+            ),
+          );
           throw error;
         });
     }
@@ -370,28 +388,34 @@ export class SubagentCoordinator {
     abortSignal?: AbortSignal,
   ): Promise<string | null> {
     const metadata = this.pendingMetadata.get(taskId);
-    if (!metadata || this.questionsClosed || this.openQuestions.has(taskId)) {
+    if (
+      !metadata ||
+      this.questionsClosed ||
+      this.openQuestions.has(taskId) ||
+      abortSignal?.aborted
+    ) {
       return null;
     }
-    const answer = new Promise<string | null>((resolve) => {
+    const budgetMs = Math.max(
+      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
+      0,
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const answer = new Promise<string | null>((resolve): void => {
       this.openQuestions.set(taskId, resolve);
-      abortSignal?.addEventListener("abort", () => resolve(null), {
-        once: true,
-      });
+      timer = setTimeout((): void => resolve(null), budgetMs);
+      onAbort = (): void => resolve(null);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
     });
     this.questions.push({
       taskId: taskId,
       message: questionToParentMessage(metadata, question),
     });
     this.notifyCompletion();
-    const budgetMs = Math.max(
-      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
-      0,
-    );
-    const result = await Promise.race([
-      answer,
-      sleep(budgetMs).then((): null => null),
-    ]);
+    const result = await answer;
+    clearTimeout(timer);
+    if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
     // A question nobody answered in time is not left for the parent to answer.
     this.openQuestions.delete(taskId);
     const queued = this.questions.findIndex((open) => open.taskId === taskId);
@@ -1080,7 +1104,11 @@ export class SubagentCoordinator {
         inject = false;
       }
     }
-    if (inject && !this.delivered.has(completion.eventId)) {
+    if (
+      inject &&
+      (completion.visibleResult !== undefined ||
+        !this.delivered.has(completion.eventId))
+    ) {
       this.completions.push(completion);
     }
     this.notifyCompletion();

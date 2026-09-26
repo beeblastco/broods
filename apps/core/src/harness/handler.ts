@@ -74,6 +74,7 @@ import {
 import {
   readAgentFullStream,
   runAgentLoop,
+  USER_STOP_MESSAGE,
   type AgentLoopStream,
   type ToolApprovalSummary,
 } from "./harness.ts";
@@ -3020,7 +3021,8 @@ async function runParentContinuationLoop(options: {
         questions: questions,
       };
     }
-    if (stream.didFail()) {
+    // A stop means stop: nothing waits on the work it left running.
+    if (stream.didFail() && stream.failureText() !== USER_STOP_MESSAGE) {
       // Subagents and async tools from earlier steps may still be running or
       // already done. Wait for them and write their results into the history,
       // so the next turn ("try again") sees them instead of redoing the work.
@@ -3034,7 +3036,8 @@ async function runParentContinuationLoop(options: {
           error: error instanceof Error ? error.message : String(error),
         }),
       );
-
+    }
+    if (stream.didFail()) {
       return {
         didFail: true,
         failureText: stream.failureText(),
