@@ -65,10 +65,10 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 // shorter than a tokens-per-minute window, so one 429 failed the whole run.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
 
-// The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s".
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
 
+// The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s".
 const RATE_LIMIT_WAIT_PATTERN = /try again in (\d+(?:\.\d+)?)\s*(ms|s)\b/i;
 
 /**
