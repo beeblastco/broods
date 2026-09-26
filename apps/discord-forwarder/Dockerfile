@@ -38,4 +38,6 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ \
 COPY --from=builder --chown=1001:1001 /out/discord-forwarder ./discord-forwarder
 USER 1001
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["./discord-forwarder", "--healthcheck"]
 CMD ["./discord-forwarder"]

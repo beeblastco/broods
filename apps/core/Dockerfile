@@ -34,6 +34,9 @@ COPY apps/core ./apps/core
 RUN cd apps/core && bun run scripts/compaction-prompt.ts \
     && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server
 
+# Reuse the server's PORT parser in the image probe.
+RUN bun build apps/core/src/shared/env.ts --target=node --outfile /out/health-env.mjs
+
 FROM node:22-alpine AS isolate-deps
 WORKDIR /app/isolate-runner
 RUN apk add --no-cache build-base python3 \
@@ -52,6 +55,9 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ nodejs \
 COPY --from=builder --chown=1001:1001 /out/core-server ./core-server
 COPY --from=isolate-deps --chown=1001:1001 /app/isolate-runner/node_modules ./isolate-runner/node_modules
 COPY --chown=1001:1001 apps/core/src/harness/isolate/runner/ ./isolate-runner/
+COPY --from=builder --chown=1001:1001 /out/health-env.mjs ./health-env.mjs
 USER 1001
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["node", "--input-type=module", "-e", "import { positiveIntegerEnv } from './health-env.mjs'; fetch('http://127.0.0.1:' + positiveIntegerEnv('PORT', 3000) + '/healthz', { signal: AbortSignal.timeout(4000) }).then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1));"]
 CMD ["./core-server"]
