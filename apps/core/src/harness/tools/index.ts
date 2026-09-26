@@ -72,7 +72,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import type { SubagentWatch } from "./utils.ts";
+import type { AskParent, SubagentWatch } from "./utils.ts";
 import {
   cancelScheduleTool,
   listSchedulesTool,
@@ -109,10 +109,7 @@ export interface ToolContext {
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
   // Set on a persistent subagent's run: asks the parent and waits for its answer.
-  askParent?: (
-    question: string,
-    abortSignal?: AbortSignal,
-  ) => Promise<string | null>;
+  askParent?: AskParent;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;

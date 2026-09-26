@@ -350,7 +350,12 @@ export class SubagentCoordinator {
         .persistModelMessages(messages)
         .catch((error: unknown): never => {
           this.completions.unshift(...completions);
-          this.questions.unshift(...questions);
+          // A question whose child stopped waiting meanwhile stays dropped.
+          this.questions.unshift(
+            ...questions.filter((open): boolean =>
+              this.openQuestions.has(open.taskId),
+            ),
+          );
           throw error;
         });
     }
@@ -370,28 +375,34 @@ export class SubagentCoordinator {
     abortSignal?: AbortSignal,
   ): Promise<string | null> {
     const metadata = this.pendingMetadata.get(taskId);
-    if (!metadata || this.questionsClosed || this.openQuestions.has(taskId)) {
+    if (
+      !metadata ||
+      this.questionsClosed ||
+      this.openQuestions.has(taskId) ||
+      abortSignal?.aborted
+    ) {
       return null;
     }
-    const answer = new Promise<string | null>((resolve) => {
+    const budgetMs = Math.max(
+      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
+      0,
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const answer = new Promise<string | null>((resolve): void => {
       this.openQuestions.set(taskId, resolve);
-      abortSignal?.addEventListener("abort", () => resolve(null), {
-        once: true,
-      });
+      timer = setTimeout((): void => resolve(null), budgetMs);
+      onAbort = (): void => resolve(null);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
     });
     this.questions.push({
       taskId: taskId,
       message: questionToParentMessage(metadata, question),
     });
     this.notifyCompletion();
-    const budgetMs = Math.max(
-      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
-      0,
-    );
-    const result = await Promise.race([
-      answer,
-      sleep(budgetMs).then((): null => null),
-    ]);
+    const result = await answer;
+    clearTimeout(timer);
+    if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
     // A question nobody answered in time is not left for the parent to answer.
     this.openQuestions.delete(taskId);
     const queued = this.questions.findIndex((open) => open.taskId === taskId);

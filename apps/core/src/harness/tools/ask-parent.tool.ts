@@ -4,7 +4,7 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { toolError } from "./utils.ts";
+import { toolError, type AskParent } from "./utils.ts";
 
 interface AskParentInput {
   question: string;
@@ -12,12 +12,7 @@ interface AskParentInput {
 
 type AskParentOutput = { answer: string } | { answer: null; note: string };
 
-export default function askParentTool(
-  askParent: (
-    question: string,
-    abortSignal?: AbortSignal,
-  ) => Promise<string | null>,
-): ToolSet {
+export default function askParentTool(askParent: AskParent): ToolSet {
   return {
     ask_parent: tool({
       description:

@@ -124,7 +124,7 @@ import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
-import type { SubagentWatch } from "./tools/utils.ts";
+import type { AskParent, SubagentWatch } from "./tools/utils.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 const MAX_AGENT_ITERATIONS = 30;
@@ -221,10 +221,7 @@ export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
   // Present on a persistent subagent's run; backs its ask_parent tool.
-  askParent?: (
-    question: string,
-    abortSignal?: AbortSignal,
-  ) => Promise<string | null>;
+  askParent?: AskParent;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; links its trace to the parent's.
