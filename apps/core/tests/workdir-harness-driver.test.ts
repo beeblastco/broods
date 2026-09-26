@@ -73,6 +73,28 @@ describe("WorkdirHarnessDriver", () => {
     ]);
   });
 
+  test("leaves a shared machine running when one session ends", async () => {
+    const fake = fakeWorkdir();
+    const executor = fakeExecutor(fake.sandbox, false);
+    const driver = new WorkdirHarnessDriver(
+      { ...driverOptions(), shared: true },
+      executor.value as never,
+    );
+
+    const created = await driver.createSession({
+      sessionId: "session-1",
+      identity: "bootstrap-v1",
+    });
+    await created.session.stop();
+    await created.session.destroy?.();
+
+    expect(executor.suspensions).toEqual([]);
+    expect(executor.releases).toEqual([]);
+    expect(executor.acquisitions).toEqual([
+      { reservationKey: "acct:agent:harness", shared: true },
+    ]);
+  });
+
   test("threads the invoking run's metadata into acquire and resume", async () => {
     const fake = fakeWorkdir();
     const executor = fakeExecutor(fake.sandbox, true);

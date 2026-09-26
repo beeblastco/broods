@@ -175,6 +175,8 @@ export interface StoredHarnessSession {
   harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
   sessionId: string;
   resumeState: unknown;
+  /** The machine's base reservation key, before the adapter version is appended. */
+  reservationKey?: string;
 }
 
 /**
@@ -804,7 +806,8 @@ export class Session {
    * the history stay a cached prefix and only this block is new. Built from
    * what the run already holds: no extra storage read.
    */
-  environmentText(): string {
+  /** `machine` is the live status of the machine the run works on, when it has one. */
+  environmentText(machine: string[] = []): string {
     const workspaces = this.resolvedWorkspaces();
     const sandboxes = this.sandboxes();
     const canBash =
@@ -816,6 +819,7 @@ export class Session {
       bashTargets: canBash
         ? bashTargetLines({ workspaces: workspaces, sandboxes: sandboxes })
         : [],
+      machine: machine,
     });
   }
 
@@ -1450,11 +1454,12 @@ You have a persistent memory: markdown files in the workspace's memory/ folder, 
 </memory>`;
 }
 
-/** The <environment> block: the clock, where replies go, and where bash runs. */
+/** The <environment> block: the clock, where replies go, where bash runs, and that machine's live state. */
 function formatEnvironmentPrompt(environment: {
   now: Date;
   channel: string;
   bashTargets: string[];
+  machine: string[];
 }): string {
   const weekday = environment.now.toLocaleDateString("en-US", {
     weekday: "long",
@@ -1471,6 +1476,7 @@ function formatEnvironmentPrompt(environment: {
           ...environment.bashTargets,
         ]
       : []),
+    ...environment.machine,
     "</environment>",
   ].join("\n");
 }

@@ -57,6 +57,8 @@ export interface SandboxControlPlane {
   permissionMode?: SandboxPermissionMode;
   /** The account's own provider credentials pay for it, so the platform does not meter it. */
   ownCredentials?: true;
+  /** Idle seconds before the sweeper releases the reservation; unset keeps the 7-day default. */
+  releaseAfterIdleSeconds?: number;
 }
 
 /**

@@ -36,6 +36,8 @@ export const lead = defineAgent({
 
 One `run_subagent` call starts up to 10 tasks. Each task has a `prompt`, and optionally the `agentId` of an allowed agent and a `conversationKey` to resume an earlier child. The call returns at once with a `taskId`, `runId` and `conversationKey` per task. Results are injected into the parent automatically when they finish, as one batch.
 
+A child that runs a Pi `harness` shares one machine with every other conversation of that agent, each in its own work folder. Set `isolated: true` on a task to give a new conversation a machine of its own, for untrusted code, clashing installs or tests other work could contaminate. The machine a conversation starts on is the one it resumes on. An isolated machine is released after a day idle; the shared one after a week. Claude Code, Codex, Deep Agents and OpenCode always get one machine per conversation, because their bridge binds a fixed port.
+
 Children cannot start their own subagents.
 
 In persistent mode the parent also gets:

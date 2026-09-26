@@ -25,6 +25,7 @@ import {
   type HarnessShellExecutor,
   readHarnessStream,
 } from "./harness-shell-process.ts";
+import { type SandboxUsage, reportSandboxUsage } from "./live-status.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { configString, shellQuote, stringRecord } from "./utils.ts";
@@ -41,7 +42,11 @@ export interface WorkdirHarnessDriverOptions {
   defaultWorkingDirectory?: string;
   /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
+  /** Receives the guest's CPU, memory and disk once the machine is acquired. */
+  onUsage?: (usage: SandboxUsage) => void;
   ports?: ReadonlyArray<number>;
+  /** Other conversations use this machine too, so a session ending leaves it running. */
+  shared?: boolean;
 }
 
 interface WorkdirHarnessExecutor {
@@ -49,6 +54,7 @@ interface WorkdirHarnessExecutor {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<WorkdirHarnessReservation>;
   resumeHarnessReservation(request: {
     reservationKey: string;
@@ -107,15 +113,23 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
         reservationKey: this.#options.reservationKey,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
+        ...(this.#options.shared ? { shared: true } : {}),
       });
+      options.abortSignal?.throwIfAborted();
+      const session = this.#session(reservation.sandbox);
+      await reportSandboxUsage(
+        session,
+        this.#options.onUsage,
+        options.abortSignal,
+      );
       options.abortSignal?.throwIfAborted();
 
       return {
-        session: this.#session(reservation.sandbox),
+        session: session,
         isFirstCreate: reservation.isFirstCreate,
       };
     } catch (error) {
-      if (reservation?.isFirstCreate) {
+      if (reservation?.isFirstCreate && this.#options.shared !== true) {
         await this.#executor
           .release?.({ reservationKey: this.#options.reservationKey })
           .catch(() => {});
@@ -134,8 +148,15 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
       ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
     });
     options.abortSignal?.throwIfAborted();
+    const session = this.#session(sandbox);
+    await reportSandboxUsage(
+      session,
+      this.#options.onUsage,
+      options.abortSignal,
+    );
+    options.abortSignal?.throwIfAborted();
 
-    return this.#session(sandbox);
+    return session;
   }
 
   #assertBootstrapIdentity(identity: string | undefined): void {
@@ -159,6 +180,7 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
       env: stringRecord(this.#options.config.envVars),
       ports: this.#options.ports ?? [],
       previewKey: workdirPreviewKey(this.#options.config),
+      shared: this.#options.shared === true,
     });
   }
 }
@@ -172,12 +194,14 @@ interface WorkdirHarnessSessionOptions {
   env: Record<string, string>;
   ports: ReadonlyArray<number>;
   previewKey?: string;
+  shared: boolean;
 }
 
 class WorkdirHarnessSession implements BroodsSandboxDriverSession {
   readonly #sandbox: Sandbox;
   readonly #executor: WorkdirHarnessExecutor;
   readonly #reservationKey: string;
+  readonly #shared: boolean;
   readonly #defaultWorkingDirectory: string;
   readonly #env: Record<string, string>;
   readonly #previewKey: string | undefined;
@@ -191,6 +215,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     this.#sandbox = options.sandbox;
     this.#executor = options.executor;
     this.#reservationKey = options.reservationKey;
+    this.#shared = options.shared;
     this.#defaultWorkingDirectory = options.defaultWorkingDirectory;
     this.#env = options.env;
     this.#previewKey = options.previewKey;
@@ -306,7 +331,10 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     return exposed.toString();
   }
 
+  // A shared machine idles down on its own; suspending it here would pull it
+  // out from under the other conversations still running on it.
   async stop(): Promise<void> {
+    if (this.#shared) return;
     if (!this.#executor.suspend) {
       throw new Error("Workdir Harness reservation cannot be suspended");
     }
@@ -314,6 +342,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
   }
 
   async destroy(): Promise<void> {
+    if (this.#shared) return;
     if (!this.#executor.release) {
       throw new Error("Workdir Harness reservation cannot be released");
     }

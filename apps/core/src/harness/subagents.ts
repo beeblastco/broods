@@ -97,6 +97,8 @@ interface ResolvedSubagentTask {
   parentEphemeralSystem: SystemModelMessage[];
   persistent: boolean;
   resuming: boolean;
+  /** Harness children only: a machine of its own instead of the agent's shared one. */
+  isolatedSandbox: boolean;
 }
 
 interface SubagentStreamState {
@@ -338,6 +340,7 @@ export class SubagentCoordinator {
         parentEphemeralSystem: parentEphemeralSystem,
         persistent: persistent,
         resuming: resuming,
+        isolatedSandbox: task.isolated === true,
       };
     }
 
@@ -364,6 +367,7 @@ export class SubagentCoordinator {
       parentEphemeralSystem: parentEphemeralSystem,
       persistent: persistent,
       resuming: resuming,
+      isolatedSandbox: task.isolated === true,
     };
   }
 
@@ -538,7 +542,10 @@ export class SubagentCoordinator {
             approvalRequested = true;
           },
         },
-        subagentParent ? { subagentParent: subagentParent } : {},
+        {
+          ...(subagentParent ? { subagentParent: subagentParent } : {}),
+          isolatedSandbox: task.isolatedSandbox,
+        },
       );
 
       if (publisher) {

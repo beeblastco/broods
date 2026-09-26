@@ -206,6 +206,8 @@ export interface ReservedSandbox {
   provider: SandboxProvider;
   reservationKey: string;
   externalId: string;
+  /** The idle window it was claimed with, so a restore keeps it. */
+  ttlSeconds?: number;
 }
 
 /**
