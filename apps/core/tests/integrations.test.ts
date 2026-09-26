@@ -366,6 +366,52 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("lets a stage ticket continue a private agent's channel session", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_private",
+          eventId: "continue-1",
+          conversationKey: "acct:acct_test:agent:agent_private:tg:42",
+          continue: true,
+        },
+        { authorization: "Bearer fp_dts_test" },
+        {
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
+
+          return { statusCode: 202, body: "{}" };
+        },
+      }),
+      {
+        authResolver: async (headers): Promise<AuthContext | null> =>
+          headers.authorization === "Bearer fp_dts_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                stageSlug: "development",
+                stageTicket: true,
+              }
+            : null,
+      },
+    );
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents[0]).toMatchObject({
+      agentId: "agent_private",
+      continuation: true,
+      conversationKey: "acct:acct_test:agent:agent_private:tg:42",
+    });
+  });
+
   it("refuses a scoped continue key that is malformed or names another agent", async () => {
     const handlers = createHandlers({
       handleDirectRequest: async () => ({ statusCode: 202, body: "{}" }),
