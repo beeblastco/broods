@@ -889,6 +889,8 @@ export const runtimeHarnessSessionsFields = {
   ),
   sessionId: v.string(),
   resumeState: v.any(),
+  /** Reservation the session's sandbox runs on. Unset rows predate it and ran on the conversation key. */
+  reservationKey: v.optional(v.string()),
   updatedAt: v.number(),
 };
 /** Context-only webhook event dedupe claims. */
@@ -1080,6 +1082,8 @@ export const sandboxReservationsFields = {
   reservationKey: v.string(),
   externalId: v.string(),
   expiresAt: v.number(),
+  /** Idle window this reservation was claimed with; unset means the 7-day default. */
+  ttlSeconds: v.optional(v.number()),
 };
 
 /**
