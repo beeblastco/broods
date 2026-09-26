@@ -723,7 +723,7 @@ export function TracingPanel({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card md:flex-row">
         <div
           data-scroll-pane
-          className="max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-96 md:border-r md:border-b-0"
+          className="max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-80 md:border-r md:border-b-0"
         >
           {visibleGroups.map((group) => (
             <TaskListRow
@@ -1082,12 +1082,20 @@ export function parseTaskQuery(input: string): TaskQuery {
 /** Where a task came in, from its conversation key; a cron root is Cron. */
 export function taskChannel(root: ObservabilitySpanRow): string {
   if (root.kind === "cron") return "Cron";
-  const key = root.conversationKey ?? "";
+  const key = unscopedConversationKey(root.conversationKey ?? "");
 
   return (
     CHANNEL_PREFIXES.find(({ prefix }) => key.startsWith(prefix))?.label ??
     "API"
   );
+}
+
+/**
+ * The conversation key a person would recognise: core scopes stored keys as
+ * `acct:<account>:agent:<agent>:<key>`, so the tail is the channel's own key.
+ */
+function unscopedConversationKey(key: string): string {
+  return key.replace(/^acct:[^:]+:agent:[^:]+:/, "");
 }
 
 /** Whether any run of the task is that trace. */
@@ -1670,9 +1678,7 @@ function SpanRow({
         )}
         title={new Date(span.startTimeMs).toLocaleString()}
       >
-        {isTaskRow
-          ? formatDateTime(span.startTimeMs)
-          : formatTime(span.startTimeMs)}
+        {formatTime(span.startTimeMs)}
       </td>
       <td
         className="py-1.5 pr-3 pl-(--row-indent)"
@@ -1794,8 +1800,12 @@ function TaskWaterfall({
           {request}
         </span>
         {root.conversationKey && (
-          <Badge variant="outline" className="font-mono">
-            {root.conversationKey}
+          <Badge
+            variant="outline"
+            className="max-w-48 truncate font-mono"
+            title={root.conversationKey}
+          >
+            {unscopedConversationKey(root.conversationKey)}
           </Badge>
         )}
         <Badge variant="outline" className="font-mono" title={root.traceId}>
@@ -1810,13 +1820,13 @@ function TaskWaterfall({
           />
         )}
       </div>
-      <table className="w-full table-fixed text-xs">
+      <table className="w-full min-w-xl table-fixed text-xs">
         <colgroup>
-          <col className="w-33" />
+          <col className="w-22" />
           <col />
-          <col className="w-40" />
+          <col className="w-20" />
           <col className="w-19" />
-          <col className="w-[26%]" />
+          <col className="w-[22%]" />
         </colgroup>
         <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
           <tr className="text-left text-muted-foreground">

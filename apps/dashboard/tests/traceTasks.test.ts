@@ -182,6 +182,8 @@ describe("task list line", () => {
       taskChannel({ ...task, conversationKey: key });
 
     expect(channelOf("tg:1")).toBe("Telegram");
+    // Stored keys are scoped to the account and agent.
+    expect(channelOf("acct:a:agent:b:tg:7495331456")).toBe("Telegram");
     expect(channelOf("gh:owner/repo:pr:1")).toBe("GitHub");
     expect(channelOf("slack:T1:C1")).toBe("Slack");
     expect(channelOf("my-session")).toBe("API");
