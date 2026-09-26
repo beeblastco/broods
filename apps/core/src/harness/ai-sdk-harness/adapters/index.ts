@@ -65,6 +65,16 @@ const HARNESS_SESSION_PARKING: Record<
   pi: "stop",
 };
 
+// Every adapter but Pi starts a bridge that binds one fixed port per machine, so
+// two of its conversations cannot run on one machine at once.
+const HARNESS_SHARES_SANDBOX: Record<AiSdkHarnessType, boolean> = {
+  "claude-code": false,
+  codex: false,
+  deepagents: false,
+  opencode: false,
+  pi: true,
+};
+
 // Adapters whose running turn takes another user message (the prompt control's
 // submitUserMessage). The rest read steering only when the next turn starts.
 const HARNESS_MID_TURN_STEERING: Record<AiSdkHarnessType, boolean> = {
@@ -136,4 +146,8 @@ export function harnessSessionParking(
   type: AiSdkHarnessType,
 ): AiSdkHarnessSessionParking {
   return HARNESS_SESSION_PARKING[type];
+}
+
+export function harnessSharesSandbox(type: AiSdkHarnessType): boolean {
+  return HARNESS_SHARES_SANDBOX[type];
 }

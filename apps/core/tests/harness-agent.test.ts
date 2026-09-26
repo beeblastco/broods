@@ -12,6 +12,8 @@ mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
       },
     },
   }),
+  harnessReservationKey: (options: { conversationKey: string }): string =>
+    options.conversationKey,
   harnessSteersMidTurn: (type: string): boolean => type !== "codex",
   openAiSdkHarnessSession: async () => ({
     destroy: async (): Promise<void> => {},
@@ -107,6 +109,7 @@ async function runHarnessTurn(
 
           return [];
         },
+        loadHarnessSession: async () => null,
         loadHarnessSkills: async () => [],
         renewConversationLease: async () => ({ renewed: true }),
         loadRefreshedSystemPromptParts: async () => ({
