@@ -70,6 +70,7 @@ import {
 import {
   readAgentFullStream,
   runAgentLoop,
+  USER_STOP_MESSAGE,
   type AgentLoopStream,
   type ToolApprovalSummary,
 } from "./harness.ts";
@@ -2917,7 +2918,7 @@ async function runParentContinuationLoop(options: {
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-  onHeartbeat?(pendingCount: number): void;
+  onHeartbeat?(pendingCount: number): void | Promise<void>;
 }): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
   let finalResponse: JSONValue | undefined;
@@ -3001,17 +3002,26 @@ async function runParentContinuationLoop(options: {
         questions: questions,
       };
     }
+    // A stop means stop: nothing waits on the work it left running.
+    if (stream.didFail() && stream.failureText() !== USER_STOP_MESSAGE) {
+      // Subagents and async tools from earlier steps may still be running or
+      // already done. Wait for them and write their results into the history,
+      // so the next turn ("try again") sees them instead of redoing the work.
+      await waitAndDrainAsyncWork(
+        options.subagentCoordinator,
+        options.asyncToolCoordinator,
+        {
+          onHeartbeat: (pendingCount: number): void | Promise<void> =>
+            options.onHeartbeat?.(pendingCount),
+        },
+      ).catch((error: unknown) =>
+        logError("Failed run could not keep its async results", {
+          eventId: options.session.eventId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
     if (stream.didFail()) {
-      // Subagents dispatched by an earlier step may still be running. Returning
-      // now leaves them spinning "running" forever in the dashboard: the running
-      // span is durable, the terminal one never gets flushed. Bounded by the same
-      // deadline budget as the success path.
-      if (options.subagentCoordinator.pendingCount > 0) {
-        await options.subagentCoordinator.waitForIdle({
-          onHeartbeat: options.onHeartbeat,
-        });
-      }
-
       return {
         didFail: true,
         failureText: stream.failureText(),
@@ -3071,7 +3081,7 @@ async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
   asyncToolCoordinator: AsyncToolCoordinator,
   options: {
-    onHeartbeat?: (pendingCount: number) => void;
+    onHeartbeat?: (pendingCount: number) => void | Promise<void>;
   } = {},
 ): Promise<number> {
   if (

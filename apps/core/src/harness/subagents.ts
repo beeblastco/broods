@@ -227,7 +227,7 @@ export class SubagentCoordinator {
 
   async waitForIdle(
     options: {
-      onHeartbeat?: (pendingCount: number) => void;
+      onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
   ): Promise<"idle" | "timeout"> {
     while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
@@ -241,7 +241,8 @@ export class SubagentCoordinator {
       ]);
 
       if (this.pending.size > 0) {
-        options.onHeartbeat?.(this.pending.size);
+        // Awaited, so a heartbeat that finds the run lost ends the wait.
+        await options.onHeartbeat?.(this.pending.size);
       }
     }
 
@@ -254,9 +255,16 @@ export class SubagentCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(
-      completions.map(completionToParentMessage),
-    );
+    // One write each, so a failure puts back only the results not yet saved and
+    // a later drain delivers them without repeating the rest.
+    for (const [index, completion] of completions.entries()) {
+      await this.parentSession
+        .persistModelMessages([completionToParentMessage(completion)])
+        .catch((error: unknown): never => {
+          this.completions.unshift(...completions.slice(index));
+          throw error;
+        });
+    }
 
     return completions.length;
   }
