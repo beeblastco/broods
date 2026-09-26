@@ -102,3 +102,45 @@ test("supports trusted clicks when the activation API is unavailable", async ({
     "clipboard fixture",
   );
 });
+
+test("ignores a failed earlier write after a newer copy succeeds", async ({
+  page,
+}) => {
+  await page.addInitScript((): void => {
+    let writes = 0;
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: (): Promise<void> => {
+          writes += 1;
+          if (writes === 1) {
+            return new Promise((_resolve, reject): void => {
+              document.addEventListener(
+                "reject-old-copy",
+                (): void =>
+                  reject(new DOMException("Denied", "NotAllowedError")),
+                { once: true },
+              );
+            });
+          }
+          return Promise.resolve();
+        },
+      },
+    });
+  });
+  await page.goto(GALLERY_URL);
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
+  const button = page
+    .getByRole("button", { name: "Copy", exact: true })
+    .first();
+  await button.click();
+  await button.click();
+  await expect(
+    page.getByRole("button", { name: "Copied", exact: true }),
+  ).toBeVisible();
+  await page.evaluate((): void => {
+    document.dispatchEvent(new Event("reject-old-copy"));
+  });
+  await expect(
+    page.getByRole("button", { name: "Copied", exact: true }),
+  ).toBeVisible();
+});

@@ -92,10 +92,19 @@ export function useCopied(value: string): {
 } {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [failedValue, setFailedValue] = useState<string | null>(null);
+  const attempt = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(
+    () => () => {
+      attempt.current += 1;
+      clearTimeout(timer.current);
+    },
+    [value],
+  );
 
   function copy(event: MouseEvent<HTMLElement>): void {
+    const currentAttempt = ++attempt.current;
+    clearTimeout(timer.current);
     setFailedValue(null);
     if (
       !window.isSecureContext ||
@@ -113,11 +122,13 @@ export function useCopied(value: string): {
     // read the user's clipboard, or clear a later clipboard entry with a timer.
     void navigator.clipboard.writeText(value).then(
       () => {
+        if (currentAttempt !== attempt.current) return;
         setCopiedValue(value);
         clearTimeout(timer.current);
         timer.current = setTimeout(() => setCopiedValue(null), COPIED_MS);
       },
       () => {
+        if (currentAttempt !== attempt.current) return;
         setCopiedValue(null);
         setFailedValue(value);
       },
