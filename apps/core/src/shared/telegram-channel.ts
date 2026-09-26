@@ -106,9 +106,11 @@ export function createTelegramChannel(
       });
     });
     const match = QUESTION_CALLBACK_PATTERN.exec(callback.data ?? "");
-    const reply = REPLY_CALLBACK_PATTERN.exec(callback.data ?? "");
+    const content = match
+      ? "[button answer]"
+      : REPLY_CALLBACK_PATTERN.exec(callback.data ?? "")?.[1];
     const message = callback.message;
-    if ((!match && !reply) || !message) {
+    if (content === undefined || !message) {
       return { kind: "ignore", reason: "unknown callback" };
     }
     if (
@@ -134,7 +136,7 @@ export function createTelegramChannel(
         eventId: `${TELEGRAM_INTEGRATION_PREFIX}${updateId}`,
         conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
         channelName: "telegram",
-        content: match ? "[button answer]" : reply![1]!,
+        content: content,
         identity: envelope.identity,
         source: { ...envelope.source },
         ...(match
@@ -269,12 +271,24 @@ export function createTelegramChannel(
           });
         },
         sendReplyButtons: async function (text, replies): Promise<void> {
+          // Long text goes out in chunks like sendText; the buttons ride on the last.
+          const chunks = splitTelegramRawText(text);
+          const last = chunks.pop() ?? text;
+          const thread =
+            source.messageThreadId !== undefined
+              ? { message_thread_id: source.messageThreadId }
+              : {};
+          for (const chunk of chunks) {
+            await callTelegramBotApi(apiUrl, botToken, "sendMessage", {
+              chat_id: source.chatId,
+              text: chunk,
+              ...thread,
+            });
+          }
           await callTelegramBotApi(apiUrl, botToken, "sendMessage", {
             chat_id: source.chatId,
-            text: text,
-            ...(source.messageThreadId !== undefined
-              ? { message_thread_id: source.messageThreadId }
-              : {}),
+            text: last,
+            ...thread,
             reply_markup: {
               inline_keyboard: [
                 replies.map((label) => ({
