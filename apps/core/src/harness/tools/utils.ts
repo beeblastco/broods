@@ -39,6 +39,7 @@ export interface SubagentToolContext {
 export interface SubagentWatch {
   waitForSettled(taskId: string, timeoutMs: number): Promise<void>;
   markDelivered(eventId: string): void;
+  confirmDelivered(): void;
 }
 
 export interface SubagentToolInput {

@@ -1152,6 +1152,7 @@ export async function runAgentLoop(
       }
       if (persisted.status === "rejected") throw persisted.reason;
       persistedResponseCount = responseMessages.length;
+      options.subagentWatch?.confirmDelivered();
       const steering = await session.applySteeringIngress();
       let stepMessages = messages;
       if (steering) {
@@ -1763,6 +1764,7 @@ export async function runAgentLoop(
             : unpersisted,
         );
         persistedResponseCount = responseMessages.length;
+        options.subagentWatch?.confirmDelivered();
 
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
