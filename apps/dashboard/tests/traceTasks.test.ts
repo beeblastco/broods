@@ -112,6 +112,27 @@ describe("foldSteps", () => {
     expect(rest).toEqual({ type: "span", span: other });
   });
 
+  test("marks a fold failed when one of its tool calls failed", () => {
+    const steps = [0, 1].map((number) =>
+      step("run", number, number * 1_000, number * 1_000 + 100),
+    );
+    const children = new Map(
+      steps.map((s, index): [string, ObservabilitySpanRow[]] => [
+        s.spanId,
+        [
+          {
+            ...toolOf(s, "bash"),
+            status: index === 1 ? "error" : "ok",
+          },
+        ],
+      ]),
+    );
+
+    const [fold] = foldSteps(steps, children);
+    if (fold.type !== "fold") throw new Error("expected a fold");
+    expect(fold.fold.span.status).toBe("error");
+  });
+
   test("does not fold steps whose tool calls carry no tool name", () => {
     const steps = [0, 1].map((number) =>
       step("run", number, number * 1_000, number * 1_000 + 100),

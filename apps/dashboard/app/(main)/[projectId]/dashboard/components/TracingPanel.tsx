@@ -581,23 +581,27 @@ export function TracingPanel({
       ) {
         return;
       }
-      const index = selectedGroup ? visibleGroups.indexOf(selectedGroup) : -1;
+      const index = selectedGroup ? groups.indexOf(selectedGroup) : -1;
       const nextIndex = Math.min(
-        visibleGroups.length - 1,
+        groups.length - 1,
         Math.max(0, index + (event.key === "j" ? 1 : -1)),
       );
-      const next = visibleGroups[nextIndex];
+      const next = groups[nextIndex];
       if (!next) return;
       event.preventDefault();
+      // Stepping past the last listed task pages the next one in.
+      if (nextIndex >= visibleCount) setVisibleCount(nextIndex + 1);
       setSelectedTaskKey(spanKey(next.root));
-      document
-        .getElementById(`task-${next.root.traceId}`)
-        ?.scrollIntoView({ block: "nearest" });
+      requestAnimationFrame(() =>
+        document
+          .getElementById(`task-${next.root.traceId}`)
+          ?.scrollIntoView({ block: "nearest" }),
+      );
     }
     window.addEventListener("keydown", onKeyDown);
 
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [visibleGroups, selectedGroup]);
+  }, [groups, selectedGroup, visibleCount]);
 
   const toggle = (key: string): void => {
     setExpanded((current) => {
@@ -1106,9 +1110,9 @@ export function parseTaskQuery(input: string): TaskQuery {
     if (!token) continue;
     const colon = token.indexOf(":");
     const field = token.slice(0, colon);
-    if (colon > 0 && Object.hasOwn(QUERY_MATCHERS, field)) {
+    if (colon > 0 && isTaskQueryField(field)) {
       const value = token.slice(colon + 1);
-      if (value) fields.push({ field: field as TaskQueryField, value: value });
+      if (value) fields.push({ field: field, value: value });
       continue;
     }
     words.push(token);
@@ -1292,6 +1296,11 @@ function groupTone(group: SpanGroup): StatusTone {
     : STATUS_TONE[group.status];
 }
 
+/** Whether a search token's prefix names a field the search box understands. */
+function isTaskQueryField(field: string): field is TaskQueryField {
+  return Object.hasOwn(QUERY_MATCHERS, field);
+}
+
 /** The one named tool every tool call of a model step went to, or null. */
 function soleToolName(
   span: ObservabilitySpanRow,
@@ -1342,7 +1351,14 @@ function stepFold(
       spanId: `${first.spanId}:fold`,
       endTimeMs: endTimeMs,
       durationMs: steps.reduce((sum, step) => sum + step.durationMs, 0),
-      status: steps.some((step) => step.status === "error")
+      // A failed tool call leaves its step ok, so the fold looks at both.
+      status: steps.some(
+        (step) =>
+          step.status === "error" ||
+          (childrenByParent.get(step.spanId) ?? []).some(
+            (child) => child.status === "error",
+          ),
+      )
         ? "error"
         : steps.some((step) => step.status === "running")
           ? "running"
@@ -1776,7 +1792,15 @@ function SpanRow({
       </td>
       <td className="px-3 py-1.5">
         <TimelineBar
-          span={span}
+          span={
+            isTaskRow
+              ? {
+                  ...span,
+                  endTimeMs: span.startTimeMs + durationMs,
+                  durationMs: durationMs,
+                }
+              : span
+          }
           windowStart={group.windowStart}
           windowSpan={group.windowSpan}
           taskRunning={taskRunning}
