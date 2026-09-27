@@ -1287,7 +1287,7 @@ paths:
         - Direct API
       summary: Run an agent through its public endpoint
       description: |
-        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the stage runtime key rather than an account secret. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. The agent must have `publicAccess: true`.
+        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the stage runtime key rather than an account secret. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`fp_dts_...`) from a member of the stage's project may run any agent of the stage.
 
         A runtime key is safe to embed, so it carries three limits an account secret does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
 
@@ -3135,8 +3135,9 @@ components:
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
         config-plane route answers it with 401.
-        A stage session ticket (`fp_dts_...`) runs agents like the runtime key
-        and also opens the observability socket.
+        A stage session ticket (`fp_dts_...`) runs agents like the runtime key,
+        including agents without `publicAccess`, and also opens the
+        observability socket.
     AdminAuth:
       type: http
       scheme: bearer
