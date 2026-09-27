@@ -268,7 +268,12 @@ describe("channel.message.received rewrite reaches the session", () => {
                 date: 1713916800,
                 text: "hello",
                 chat: { id: 123, type: "private" },
-                from: { id: 456, is_bot: false, username: "alice" },
+                from: {
+                  id: 456,
+                  is_bot: false,
+                  first_name: "Alice",
+                  username: "alice",
+                },
               },
             },
           ),

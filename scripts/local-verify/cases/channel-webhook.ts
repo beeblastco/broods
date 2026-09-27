@@ -1,24 +1,56 @@
-import { assertStep, type VerifyContext } from "../harness.ts";
+import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
+import { assertStep, lastJsonLine, type VerifyContext } from "../harness.ts";
 
-/** Signed malformed Telegram webhooks are acknowledged without starting a run. */
+interface WebhookLog {
+  agentId: string;
+  kind: string;
+  message: string;
+}
+
+/** A real local stage acknowledges malformed Telegram deliveries without admission. */
 export async function channelWebhook(context: VerifyContext): Promise<void> {
   const secret = `webhook-${context.runId}`;
-  const account = await context.account.getAccount();
-  await context.account.createAgent({
-    name: `webhook-${context.runId}`,
-    config: {
-      ...context.model,
-      instructions: "Reply with OK.",
-      channels: {
-        telegram: {
-          id: "local-telegram",
-          botToken: "local-test-token",
-          webhookSecret: secret,
-        },
-      },
-    },
+  const accountSecret = await context.prepareProjectAccount();
+  const sync = new BroodsSyncClient({
+    baseUrl: context.gatewayUrl,
+    token: accountSecret,
   });
-  const url = context.account.webhookUrl(account.accountId, "telegram");
+  const result = await sync.putManifest(
+    {
+      version: 1,
+      project: `webhook-${context.runId}`,
+      stage: "development",
+      resources: [
+        {
+          kind: "agent",
+          name: "webhook",
+          config: {
+            ...context.model,
+            instructions: "Reply with OK.",
+            channels: {
+              telegram: {
+                id: "local-telegram",
+                botToken: "local-test-token",
+                webhookSecret: secret,
+              },
+            },
+          },
+        },
+      ],
+    },
+    false,
+  );
+  assertStep(
+    "webhook stage deployed locally",
+    Boolean(result.deployment),
+    "No stage deployment returned",
+  );
+  const url = context.client.stageWebhookUrl(
+    result.deployment!.accountId,
+    result.deployment!.endpointId,
+    "telegram",
+  );
+  const agentId = result.ids.agents.webhook;
   for (const body of [
     "{",
     "null",
@@ -37,6 +69,17 @@ export async function channelWebhook(context: VerifyContext): Promise<void> {
       "Telegram webhook safely acknowledges unusable input",
       response.status === 200,
       `${response.status}: ${await response.text()}`,
+    );
+    const parsed = lastJsonLine<WebhookLog>(
+      context.coreLogPath,
+      (record): boolean =>
+        record.agentId === agentId &&
+        record.message === "Channel webhook parsed",
+    );
+    assertStep(
+      "webhook is ignored before run admission",
+      parsed?.kind === "ignore",
+      JSON.stringify(parsed),
     );
   }
 }

@@ -104,3 +104,53 @@ it("preserves nested Telegram rich text and animated sticker flags", (): void =>
     update,
   );
 });
+
+it("accepts nullable GitHub assignees", (): void => {
+  expect(
+    parseChannelWebhook('{"action":"opened","assignee":null}', githubWebhook),
+  ).toEqual({ action: "opened", assignee: undefined });
+});
+
+it("accepts explicit false Telegram rich block flags", (): void => {
+  const update = {
+    update_id: 1,
+    message: {
+      message_id: 2,
+      date: 3,
+      chat: { id: 4, type: "private" },
+      rich_message: {
+        blocks: [
+          {
+            type: "list",
+            items: [
+              {
+                label: "task",
+                has_checkbox: true,
+                is_checked: false,
+                blocks: [],
+              },
+            ],
+          },
+          { type: "table", cells: [], is_bordered: false, is_striped: false },
+        ],
+      },
+    },
+  };
+  const parsed = parseChannelWebhook(JSON.stringify(update), telegramWebhook);
+
+  expect(parsed).not.toBeNull();
+  expect(parsed?.message?.rich_message?.blocks).toEqual([
+    {
+      type: "list",
+      items: [
+        {
+          label: "task",
+          has_checkbox: true,
+          is_checked: undefined,
+          blocks: [],
+        },
+      ],
+    },
+    { type: "table", cells: [], is_bordered: undefined, is_striped: undefined },
+  ]);
+});

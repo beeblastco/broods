@@ -50,6 +50,11 @@ const zaloUpdate = z.object({
     })
     .optional(),
 });
+// The SDK models optional false flags as absent.
+const telegramFlag = z
+  .boolean()
+  .optional()
+  .transform((flag): true | undefined => (flag ? true : undefined));
 const telegramUser = z.object({
   id: z.number(),
   first_name: z.string(),
@@ -244,8 +249,8 @@ const telegramRichBlock: z.ZodType<TelegramRichBlock> = z.lazy(
         items: z.array(
           z.object({
             blocks: z.array(telegramRichBlock),
-            has_checkbox: z.literal(true).optional(),
-            is_checked: z.literal(true).optional(),
+            has_checkbox: telegramFlag,
+            is_checked: telegramFlag,
             label: z.string(),
             type: z.enum(["a", "A", "i", "I", "1"]).optional(),
             value: z.number().optional(),
@@ -277,18 +282,18 @@ const telegramRichBlock: z.ZodType<TelegramRichBlock> = z.lazy(
               valign: z.enum(["top", "middle", "bottom"]),
               colspan: z.number().optional(),
               rowspan: z.number().optional(),
-              is_header: z.literal(true).optional(),
+              is_header: telegramFlag,
               text: telegramRichText.optional(),
             }),
           ),
         ),
-        is_bordered: z.literal(true).optional(),
-        is_striped: z.literal(true).optional(),
+        is_bordered: telegramFlag,
+        is_striped: telegramFlag,
       }),
       z.object({
         type: z.literal("details"),
         blocks: z.array(telegramRichBlock),
-        is_open: z.literal(true).optional(),
+        is_open: telegramFlag,
         summary: telegramRichText,
       }),
       z.object({
@@ -314,7 +319,7 @@ const telegramRichBlock: z.ZodType<TelegramRichBlock> = z.lazy(
           start_timestamp: true,
         }),
         caption: telegramRichCaption.optional(),
-        has_spoiler: z.literal(true).optional(),
+        has_spoiler: telegramFlag,
       }),
       z.object({
         type: z.literal("audio"),
@@ -325,13 +330,13 @@ const telegramRichBlock: z.ZodType<TelegramRichBlock> = z.lazy(
         type: z.literal("photo"),
         photo: z.array(telegramPhoto),
         caption: telegramRichCaption.optional(),
-        has_spoiler: z.literal(true).optional(),
+        has_spoiler: telegramFlag,
       }),
       z.object({
         type: z.literal("video"),
         video: telegramVideo,
         caption: telegramRichCaption.optional(),
-        has_spoiler: z.literal(true).optional(),
+        has_spoiler: telegramFlag,
       }),
       z.object({
         type: z.literal("voice_note"),
@@ -411,7 +416,12 @@ export const githubWebhook = z.object({
       user: githubUser.optional(),
     })
     .optional(),
-  assignee: githubUser.optional(),
+  assignee: githubUser
+    .nullish()
+    .transform(
+      (user): z.infer<typeof githubUser> | undefined => user ?? undefined,
+    )
+    .optional(),
   installation: z.object({ id: z.number().optional() }).optional(),
   sender: githubUser.optional(),
 });

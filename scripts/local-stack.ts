@@ -728,6 +728,48 @@ function verifyContext(
     coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
     gatewayUrl: gatewayUrl,
     measure: measure,
+    prepareProjectAccount: async (): Promise<string> => {
+      const secret = randomBytes(32).toString("hex");
+      runConvexCli(state, [
+        "run",
+        "account/accounts:create",
+        JSON.stringify({
+          orgId: `external:local-${runId}`,
+          username: `webhook-${runId}`,
+          secretHash: createHash("sha256").update(secret).digest("hex"),
+        }),
+      ]);
+      const account = new BroodsAccountClient({
+        accountSecret: secret,
+        baseUrl: gatewayUrl,
+      });
+      const { accountId } = await account.getAccount();
+      const email = `local-${runId}@example.invalid`;
+      runConvexCli(state, [
+        "run",
+        "auth:authKitEvent",
+        JSON.stringify({
+          event: "user.created",
+          data: {
+            id: `local-${runId}`,
+            email: email,
+            firstName: "Local",
+            lastName: "Verification",
+          },
+        }),
+      ]);
+      runConvexCli(state, [
+        "run",
+        "org/orgs:adoptExternalAccount",
+        JSON.stringify({
+          accountId: accountId,
+          ownerEmail: email,
+          orgName: `local-${runId}`,
+        }),
+      ]);
+
+      return secret;
+    },
     runId: runId,
   };
 }

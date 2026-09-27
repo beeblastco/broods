@@ -34,6 +34,7 @@ export interface VerifyContext {
   hasModelKey: boolean;
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
+  prepareProjectAccount: () => Promise<string>;
   runId: string;
 }
 

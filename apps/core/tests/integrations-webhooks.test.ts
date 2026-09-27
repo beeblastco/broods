@@ -655,7 +655,7 @@ function telegramUpdate(): {
     date: number;
     text: string;
     chat: { id: number; type: string };
-    from: { id: number; is_bot: boolean; username: string };
+    from: { id: number; is_bot: boolean; first_name: string; username: string };
   };
 } {
   return {
@@ -665,7 +665,7 @@ function telegramUpdate(): {
       date: 1713916800,
       text: "hello",
       chat: { id: 123, type: "private" },
-      from: { id: 456, is_bot: false, username: "alice" },
+      from: { id: 456, is_bot: false, first_name: "Alice", username: "alice" },
     },
   };
 }
