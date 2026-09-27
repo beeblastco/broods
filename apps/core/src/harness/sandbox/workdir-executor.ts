@@ -111,10 +111,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     this.#client = workdirClient(config);
   }
 
+  // A `shared` machine is kept when its first setup fails: another conversation
+  // may already hold it, and the unset onCreate marker makes the next acquire retry.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<WorkdirHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -129,7 +132,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         this.#workDir(request.reservationKey),
       );
     } catch (error) {
-      if (reservation.isFirstCreate) {
+      if (reservation.isFirstCreate && request.shared !== true) {
         await this.release(request).catch(() => {});
       }
       throw error;
@@ -155,7 +158,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
     );
     if (!externalId) {
-      throw new Error("no reserved workdir sandbox for this Harness session");
+      throw new SandboxGoneError(
+        "no reserved workdir sandbox for this Harness session",
+      );
     }
     const sandbox = await this.#reconnect(externalId);
     await this.#runLifecycle(sandbox, this.#workDir(request.reservationKey));
@@ -164,6 +169,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       externalId,
       this.#config.controlPlane?.accountId,
+      this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
     // row; recoverable on the next call, so it never holds up the session.
@@ -668,6 +674,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           externalId,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
         void upsertSandboxInstance(
           this.#config.controlPlane,
@@ -699,6 +706,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           created.id,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
         await upsertSandboxInstance(

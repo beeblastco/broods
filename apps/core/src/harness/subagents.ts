@@ -16,7 +16,10 @@ import {
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
-import { getObservabilityContext } from "../shared/otel.ts";
+import {
+  getObservabilityContext,
+  runWithObservabilityScope,
+} from "../shared/otel.ts";
 import {
   createRunId,
   createSubagentTaskId,
@@ -97,6 +100,8 @@ interface ResolvedSubagentTask {
   parentEphemeralSystem: SystemModelMessage[];
   persistent: boolean;
   resuming: boolean;
+  /** Harness children only: a machine of its own instead of the agent's shared one. */
+  isolatedSandbox: boolean;
 }
 
 interface SubagentStreamState {
@@ -163,11 +168,8 @@ export class SubagentCoordinator {
     parentMessages: ModelMessage[],
     parentEphemeralSystem: SystemModelMessage[] = [],
   ): Promise<RunSubagentDispatchResult> => {
-    // Capture the parent's trace/task id now, while the parent's observability
-    // context is still active (this runs synchronously inside the parent's
-    // run_subagent tool call). Each child is its own top-level trace that links
-    // back to the parent. Read here, not in the detached child, because concurrent
-    // children overwrite the module-global observability context.
+    // Capture the parent's trace/task id now, inside the parent's run_subagent
+    // tool call. Each child is its own top-level trace that links back to it.
     const parentObs = getObservabilityContext();
     const subagentParent: SubagentParentContext | undefined = parentObs?.traceId
       ? {
@@ -225,7 +227,7 @@ export class SubagentCoordinator {
 
   async waitForIdle(
     options: {
-      onHeartbeat?: (pendingCount: number) => void;
+      onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
   ): Promise<"idle" | "timeout"> {
     while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
@@ -239,7 +241,8 @@ export class SubagentCoordinator {
       ]);
 
       if (this.pending.size > 0) {
-        options.onHeartbeat?.(this.pending.size);
+        // Awaited, so a heartbeat that finds the run lost ends the wait.
+        await options.onHeartbeat?.(this.pending.size);
       }
     }
 
@@ -252,9 +255,16 @@ export class SubagentCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(
-      completions.map(completionToParentMessage),
-    );
+    // One write each, so a failure puts back only the results not yet saved and
+    // a later drain delivers them without repeating the rest.
+    for (const [index, completion] of completions.entries()) {
+      await this.parentSession
+        .persistModelMessages([completionToParentMessage(completion)])
+        .catch((error: unknown): never => {
+          this.completions.unshift(...completions.slice(index));
+          throw error;
+        });
+    }
 
     return completions.length;
   }
@@ -338,6 +348,7 @@ export class SubagentCoordinator {
         parentEphemeralSystem: parentEphemeralSystem,
         persistent: persistent,
         resuming: resuming,
+        isolatedSandbox: task.isolated === true,
       };
     }
 
@@ -364,6 +375,7 @@ export class SubagentCoordinator {
       parentEphemeralSystem: parentEphemeralSystem,
       persistent: persistent,
       resuming: resuming,
+      isolatedSandbox: task.isolated === true,
     };
   }
 
@@ -399,7 +411,13 @@ export class SubagentCoordinator {
     const trackedPublisher = publisher
       ? bestEffortSubagentPublisher(publisher, streamState, task.taskId)
       : undefined;
-    const promise = this.runTask(task, subagentParent, trackedPublisher)
+    // The child gets its own observability cell, seeded from the parent's. On
+    // the shared cell the parent's pass ending blanked the child's scope, so its
+    // steps never reached the dashboard, and each child relabeled the parent.
+    const promise = runWithObservabilityScope(
+      () => this.runTask(task, subagentParent, trackedPublisher),
+      getObservabilityContext(),
+    )
       .then(async () => {
         await trackedPublisher?.publish({ type: "done" });
       })
@@ -538,7 +556,10 @@ export class SubagentCoordinator {
             approvalRequested = true;
           },
         },
-        subagentParent ? { subagentParent: subagentParent } : {},
+        {
+          ...(subagentParent ? { subagentParent: subagentParent } : {}),
+          isolatedSandbox: task.isolatedSandbox,
+        },
       );
 
       if (publisher) {

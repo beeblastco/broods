@@ -12,7 +12,11 @@ export {
   type WorkdirHarnessAgentOptions,
 } from "./runtime.ts";
 export { harnessRuntimeVersion } from "./sandbox.ts";
-export { openAiSdkHarnessSession, parkAiSdkHarnessSession } from "./session.ts";
+export {
+  harnessReservationKey,
+  openAiSdkHarnessSession,
+  parkAiSdkHarnessSession,
+} from "./session.ts";
 export type {
   AiSdkHarnessSettings,
   AiSdkHarnessSessionParking,
