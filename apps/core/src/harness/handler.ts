@@ -6,7 +6,11 @@
 import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
 import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
-import { extractText, formatChannelErrorText } from "../shared/channels.ts";
+import {
+  extractText,
+  formatChannelErrorText,
+  sendChannelFailure,
+} from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { executeCommand, resolveChannelCommand } from "../shared/commands.ts";
 import {
@@ -70,6 +74,7 @@ import {
 import {
   readAgentFullStream,
   runAgentLoop,
+  USER_STOP_MESSAGE,
   type AgentLoopStream,
   type ToolApprovalSummary,
 } from "./harness.ts";
@@ -1565,13 +1570,12 @@ export async function handleChannelRequest(
         (): Promise<void> =>
           runChannelTurns(event, session, ingested.turnEvents, context).catch(
             async (err: unknown): Promise<never> => {
-              await event.channel
-                .sendText(
-                  formatChannelErrorText(
-                    err instanceof Error ? err.message : String(err),
-                  ),
-                )
-                .catch((): void => {});
+              await sendChannelFailure(
+                event.channel,
+                formatChannelErrorText(
+                  err instanceof Error ? err.message : String(err),
+                ),
+              ).catch((): void => {});
               throw err;
             },
           ),
@@ -1678,7 +1682,11 @@ async function runChannelTurns(
               onErrorText: async (error, traceId) => {
                 await session.assertCurrentOwner();
                 terminal = "failed";
-                await event.channel.sendText(
+                // The failure goes through the same outbound hook as a reply,
+                // so it can be rewritten or dropped too.
+                const text = await applyMessageSendingHook(
+                  hooks,
+                  event.channelName,
                   formatChannelFinalText(
                     formatChannelErrorText(error),
                     traceId,
@@ -1687,6 +1695,9 @@ async function runChannelTurns(
                     activeConfig,
                   ),
                 );
+                if (text !== null) {
+                  await sendChannelFailure(event.channel, text);
+                }
               },
               onApprovalRequired: async (approvals) => {
                 approvalRequired = true;
@@ -2917,7 +2928,7 @@ async function runParentContinuationLoop(options: {
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-  onHeartbeat?(pendingCount: number): void;
+  onHeartbeat?(pendingCount: number): void | Promise<void>;
 }): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
   let finalResponse: JSONValue | undefined;
@@ -3001,17 +3012,26 @@ async function runParentContinuationLoop(options: {
         questions: questions,
       };
     }
+    // A stop means stop: nothing waits on the work it left running.
+    if (stream.didFail() && stream.failureText() !== USER_STOP_MESSAGE) {
+      // Subagents and async tools from earlier steps may still be running or
+      // already done. Wait for them and write their results into the history,
+      // so the next turn ("try again") sees them instead of redoing the work.
+      await waitAndDrainAsyncWork(
+        options.subagentCoordinator,
+        options.asyncToolCoordinator,
+        {
+          onHeartbeat: (pendingCount: number): void | Promise<void> =>
+            options.onHeartbeat?.(pendingCount),
+        },
+      ).catch((error: unknown) =>
+        logError("Failed run could not keep its async results", {
+          eventId: options.session.eventId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
     if (stream.didFail()) {
-      // Subagents dispatched by an earlier step may still be running. Returning
-      // now leaves them spinning "running" forever in the dashboard: the running
-      // span is durable, the terminal one never gets flushed. Bounded by the same
-      // deadline budget as the success path.
-      if (options.subagentCoordinator.pendingCount > 0) {
-        await options.subagentCoordinator.waitForIdle({
-          onHeartbeat: options.onHeartbeat,
-        });
-      }
-
       return {
         didFail: true,
         failureText: stream.failureText(),
@@ -3071,7 +3091,7 @@ async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
   asyncToolCoordinator: AsyncToolCoordinator,
   options: {
-    onHeartbeat?: (pendingCount: number) => void;
+    onHeartbeat?: (pendingCount: number) => void | Promise<void>;
   } = {},
 ): Promise<number> {
   if (

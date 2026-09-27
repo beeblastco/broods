@@ -91,14 +91,15 @@ export const myAgent = defineAgent({
 
 ### model
 
-| Field                                                                                              | Description                                                                                                                    |
-| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`, `modelId`                                                                              | Which model to call                                                                                                            |
-| `temperature`, `topP`, `topK`, `maxOutputTokens`, `seed`, `stopSequences`, `maxRetries`, `timeout` | AI SDK call settings                                                                                                           |
-| `reasoning`                                                                                        | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                        |
-| `providerOptions`                                                                                  | Provider-specific options. They win over `reasoning` when both set thinking                                                    |
-| `output`                                                                                           | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description` |
-| `transcriptionModelId`                                                                             | Speech-to-text model for inbound audio, on the same provider                                                                   |
+| Field                                                                                | Description                                                                                                                               |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`, `modelId`                                                                | Which model to call                                                                                                                       |
+| `temperature`, `topP`, `topK`, `maxOutputTokens`, `seed`, `stopSequences`, `timeout` | AI SDK call settings                                                                                                                      |
+| `maxRetries`                                                                         | AI SDK retries, default `5`. A 429 waits as long as the provider asks, read from its headers or its error text, up to about 60s per retry |
+| `reasoning`                                                                          | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                                   |
+| `providerOptions`                                                                    | Provider-specific options. They win over `reasoning` when both set thinking                                                               |
+| `output`                                                                             | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description`            |
+| `transcriptionModelId`                                                               | Speech-to-text model for inbound audio, on the same provider                                                                              |
 
 The provider-specific thinking keys are OpenAI `providerOptions.openai.reasoningEffort`, Anthropic `providerOptions.anthropic.thinking`, Google `providerOptions.google.thinkingConfig`, MiniMax `providerOptions.anthropic.thinking`. When a model does not support a level, the run logs a `model.step.warnings` event.
 

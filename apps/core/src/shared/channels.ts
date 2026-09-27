@@ -9,6 +9,9 @@ import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 /** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
 
+// What a Retry tap or typed reply sends after a failed run.
+const RETRY_REPLY = "Retry";
+
 export type ChannelIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist?: false });
@@ -38,6 +41,9 @@ export interface ChannelActions {
   // Providers without one omit it and the numbered `text` goes out as plain
   // text, answered by a reply.
   sendQuestions?(prompt: ChannelQuestionPrompt): Promise<void>;
+  // Optional buttons under a message; a tap arrives as the person sending that
+  // reply. Providers without them omit it and the reply is spelled out instead.
+  sendReplyButtons?(text: string, replies: string[]): Promise<void>;
   // Optional provider-native sticker delivery. Providers decide whether the
   // value is a sticker id, file id, or public URL.
   sendSticker?(sticker: string): Promise<void>;
@@ -264,6 +270,24 @@ export function extractText(content: UserContent): string {
 
 export function formatChannelErrorText(error: string): string {
   return `⚠️ ${simplifyErrorText(error)}`;
+}
+
+/**
+ * Posts a failed run's error with a way to retry it: a Retry button where the
+ * provider has buttons, a line saying to reply "retry" everywhere else. Either
+ * way the retry is a normal message, so the next turn picks up the kept work.
+ */
+export async function sendChannelFailure(
+  channel: ChannelActions,
+  text: string,
+): Promise<void> {
+  if (channel.sendReplyButtons) {
+    await channel.sendReplyButtons(text, [RETRY_REPLY]);
+    return;
+  }
+  await channel.sendText(
+    `${text}\nReply "${RETRY_REPLY.toLowerCase()}" to try again.`,
+  );
 }
 
 /**
