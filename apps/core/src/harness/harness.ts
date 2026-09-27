@@ -2031,6 +2031,13 @@ export async function runAgentLoop(
           ),
           session: activeHarnessSession!,
           abortSignal: runAbort.signal,
+          // The same step and tool hooks as streamText, so a harness run
+          // traces every step. onEnd stays out: finalizeHarnessStream calls it
+          // after the native session is parked.
+          onStepStart: streamOptions.onStepStart,
+          onStepEnd: streamOptions.onStepEnd,
+          onToolExecutionStart: streamOptions.onToolExecutionStart,
+          onToolExecutionEnd: streamOptions.onToolExecutionEnd,
         })
       : streamText(streamOptions);
   } catch (error) {

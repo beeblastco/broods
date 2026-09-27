@@ -183,6 +183,49 @@ describe("SubagentCoordinator", () => {
     expect(publisher.timeline).toEqual([]);
   });
 
+  it("keeps a child's observability scope when the parent's pass clears its own", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const otel = await import("../src/shared/otel.ts");
+    const scope = {
+      accountId: "account_1",
+      project: "demo",
+      stage: "development",
+      endpointId: "endpoint_1",
+      agentId: "agent_parent",
+      conversationKey: "tg:42",
+      traceId: "trace_parent",
+      otelContext: {} as never,
+      secretValues: [],
+    };
+    let parentCleared!: () => void;
+    const cleared = new Promise<void>((resolve) => {
+      parentCleared = resolve;
+    });
+    const seen: (string | undefined)[] = [];
+
+    await otel.runWithObservabilityScope(async () => {
+      const coordinator = new SubagentCoordinator(
+        parentSession(),
+        { subagent: { enabled: true } },
+        Date.now() + 1_000,
+      );
+      const internals = coordinator as unknown as CoordinatorInternals;
+      internals.runTask = mock(async () => {
+        otel.setObservabilityContext({ ...scope, traceId: "trace_child" });
+        await cleared;
+        seen.push(otel.getObservabilityContext()?.traceId);
+      });
+
+      internals.startTask(resolvedTask());
+      expect(otel.getObservabilityContext()?.traceId).toBe("trace_parent");
+      otel.setObservabilityContext(null);
+      parentCleared();
+      await coordinator.waitForIdle();
+    }, scope);
+
+    expect(seen).toEqual(["trace_child"]);
+  });
+
   it("publishes enabled child parts, terminal marker, and flushes after settlement", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const publisher = recordingPublisher();
@@ -349,11 +392,90 @@ describe("SubagentCoordinator", () => {
     expect(coordinator.pendingCount).toBe(0);
 
     await expect(coordinator.drainCompletionsToParent()).resolves.toBe(2);
-    expect(persistModelMessages).toHaveBeenCalledTimes(1);
-    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
+    const messages = persistModelMessages.mock.calls.flatMap(
+      ([batch]): UserModelMessage[] => batch,
+    );
     expect(messages).toHaveLength(2);
     expect(messageText(messages[0])).toContain("first result");
     expect(messageText(messages[1])).toContain("second result");
+  });
+
+  it("keeps queued results when writing them to the parent fails", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push(completion("subagent_1", "finished"));
+
+    await expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
+      "convex down",
+    );
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(messageText(persistModelMessages.mock.calls[1]?.[0]?.[0])).toContain(
+      "finished",
+    );
+  });
+
+  it("puts back only the results a failed drain did not save", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    persistModelMessages
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error("convex down"));
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push(completion("subagent_1", "first"));
+    internals.completions.push(completion("subagent_2", "second"));
+
+    await expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
+      "convex down",
+    );
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(messageText(persistModelMessages.mock.calls[2]?.[0]?.[0])).toContain(
+      "second",
+    );
+  });
+
+  it("ends the wait when a heartbeat finds the run lost", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 10,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+
+    await expect(
+      coordinator.waitForIdle({
+        onHeartbeat: async (): Promise<void> => {
+          throw new Error("ownership lost");
+        },
+      }),
+    ).rejects.toThrow("ownership lost");
   });
 
   it("emits heartbeats while waiting and batches completed results with timeout notices", async () => {
