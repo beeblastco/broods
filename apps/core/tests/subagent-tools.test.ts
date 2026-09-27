@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock } from "bun:test";
+import { afterEach, expect, it, mock, spyOn } from "bun:test";
 import type { Session } from "../src/harness/session.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
@@ -96,6 +96,65 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
   expect(mutations[1]?.args.expectedOwnerTaskId).toBe(taskId);
   expect(mutations[2]?.args.conversationKey).toBe(conversationKey);
   expect(mutations[2]?.args.expectedOwnerTaskId).toBe(taskId);
+});
+
+it("waits for a running subagent before answering its status", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
+  const row = {
+    accountId: ACCOUNT_ID,
+    eventId: childEventId,
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "wait"),
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  };
+  spyOn(runtime, "query")
+    .mockResolvedValueOnce({ ...row, status: "processing" })
+    .mockResolvedValueOnce({ ...row, status: "completed", response: "done" });
+  const waits: Array<{ taskId: string; timeoutMs: number }> = [];
+  const { default: getStatus } =
+    await import("../src/harness/tools/get-subagent-status.tool.ts");
+  const tools = getStatus({
+    accountId: ACCOUNT_ID,
+    eventId: PARENT_EVENT_ID,
+    watch: {
+      waitForSettled: async (id: string, timeoutMs: number): Promise<void> => {
+        waits.push({ taskId: id, timeoutMs: timeoutMs });
+      },
+    },
+  });
+
+  await expect(
+    execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
+  ).resolves.toEqual({ status: "completed", response: "done" });
+  expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
+});
+
+it("does not wait on a task paired with the wrong agent", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  spyOn(runtime, "query").mockResolvedValue({
+    accountId: ACCOUNT_ID,
+    eventId: scopedDirectEventId(ACCOUNT_ID, "other-agent", taskId),
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "wait"),
+    status: "processing",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  });
+  const waitForSettled = mock(async (): Promise<void> => {});
+  const { default: getStatus } =
+    await import("../src/harness/tools/get-subagent-status.tool.ts");
+  const tools = getStatus({
+    accountId: ACCOUNT_ID,
+    eventId: PARENT_EVENT_ID,
+    watch: { waitForSettled: waitForSettled },
+  });
+
+  await expect(
+    execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
+  ).rejects.toThrow("no subagent task found");
+  expect(waitForSettled).not.toHaveBeenCalled();
 });
 
 it("preserves a completed subagent response as structured output", async () => {

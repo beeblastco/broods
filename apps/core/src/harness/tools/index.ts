@@ -71,6 +71,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import type { SubagentWatch } from "./utils.ts";
 import {
   cancelScheduleTool,
   listSchedulesTool,
@@ -105,6 +106,7 @@ export interface ToolContext {
   modelProvider: unknown;
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
+  subagentWatch?: SubagentWatch;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
@@ -292,6 +294,7 @@ export async function createTools(
         getSubagentStatusTool({
           accountId: context.accountId,
           eventId: context.session.eventId,
+          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         updateSubagentTool({
           accountId: context.accountId,

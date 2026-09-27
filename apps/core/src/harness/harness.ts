@@ -124,6 +124,7 @@ import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
+import type { SubagentWatch } from "./tools/utils.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 const MAX_AGENT_ITERATIONS = 30;
@@ -218,6 +219,7 @@ export interface SubagentParentContext {
 export interface AgentLoopOptions {
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSubagents?: RunSubagentDispatch;
+  subagentWatch?: SubagentWatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; links its trace to the parent's.
@@ -651,6 +653,9 @@ export async function runAgentLoop(
         // dispatcher into the tool registry for this one model run. Ephemeral
         // system messages are request-local, so pass the current turn copy into
         // child dispatch instead of expecting the coordinator to reload it.
+        ...(options.subagentWatch
+          ? { subagentWatch: options.subagentWatch }
+          : {}),
         ...(options.dispatchSubagents
           ? {
               dispatchSubagents: (tasks, messages) =>
