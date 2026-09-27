@@ -122,10 +122,10 @@ it("fails the run when a claimed steer cannot be saved", async () => {
   await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
 
   expect(streamCalls[0]?.abortSignal?.aborted).toBe(true);
-  expect(steeredTexts).toEqual(["focus"]);
+  expect(steeredTexts).toEqual([]);
 });
 
-it("fails the run instead of saving a steer the turn did not take", async () => {
+it("fails the run but keeps a steer the turn did not take", async () => {
   let queued = false;
   const appended: unknown[] = [];
   await runHarnessTurn(
@@ -146,7 +146,7 @@ it("fails the run instead of saving a steer the turn did not take", async () => 
   await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
 
   expect(streamCalls[0]?.abortSignal?.aborted).toBe(true);
-  expect(appended).toEqual([]);
+  expect(appended).toEqual([[{ role: "user", content: "focus" }]]);
 });
 
 async function runHarnessTurn(

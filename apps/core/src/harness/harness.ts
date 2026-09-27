@@ -2069,7 +2069,7 @@ export async function runAgentLoop(
             !MID_TURN_STEERING_UNSUPPORTED.has(agentConfig.harness!.type)
               ? async (event): Promise<void> => {
                   await streamOptions.onStepStart?.(event);
-                  // A claimed steer that was not handed over or saved fails
+                  // A claimed steer that was not saved or handed over fails
                   // the run, so its envelope settles failed, not seen.
                   await steerHarnessTurn(
                     session,
@@ -2338,11 +2338,11 @@ async function applyHarnessSteeringBeforeTurn(
 }
 
 /**
- * Hands steering that arrived during a HarnessAgent turn to the running turn,
- * which takes it at its next safe input boundary, then saves it. Only for
+ * Saves steering that arrived during a HarnessAgent turn, then hands it to the
+ * running turn, which takes it at its next safe input boundary. Only for
  * adapters that accept mid-turn messages; the rest get it before their next
- * turn. A hand-over that fails throws, so the run fails with the steer instead
- * of settling it as seen.
+ * turn. A hand-over that fails throws and fails the run; the steer is already
+ * in history, so a retry still reads it.
  */
 async function steerHarnessTurn(
   session: Session,
@@ -2362,6 +2362,7 @@ async function steerHarnessTurn(
     )
     .filter(Boolean)
     .join("\n\n");
+  await session.appendIngressEvents(events);
   if (text) {
     await harnessSession
       .experimental_steerTurn(text)
@@ -2374,7 +2375,6 @@ async function steerHarnessTurn(
         throw error;
       });
   }
-  await session.appendIngressEvents(events);
   logInfo("Steering ingress applied during HarnessAgent turn", {
     eventId: session.eventId,
     conversationKey: session.conversationKey,
