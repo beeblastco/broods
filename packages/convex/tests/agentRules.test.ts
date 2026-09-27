@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertAgentRuntimeRefs,
   defaultSandboxOf,
+  isProviderToolName,
   mergeAgentConfig,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
@@ -829,5 +830,20 @@ describe("config patch pre-validation", () => {
     ).toThrow(
       "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
     );
+  });
+});
+
+describe("isProviderToolName", () => {
+  it("keeps the subagent tool names for the harness", () => {
+    for (const name of [
+      "ask_parent",
+      "get_subagent_status",
+      "run_subagent",
+      "stop_subagent",
+      "update_subagent",
+    ]) {
+      expect(isProviderToolName(name)).toBe(false);
+    }
+    expect(isProviderToolName("web_search")).toBe(true);
   });
 });

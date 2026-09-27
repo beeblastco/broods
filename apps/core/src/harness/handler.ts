@@ -2986,6 +2986,14 @@ async function runParentContinuationLoop(options: {
     traceId = stream.traceId();
 
     await options.consumeStream(stream);
+    // Only a clean pass leads to another pass that can answer a subagent.
+    if (
+      approvals.length > 0 ||
+      stream.questionSummaries().length > 0 ||
+      stream.didFail()
+    ) {
+      options.subagentCoordinator.closeQuestions();
+    }
     if (approvals.length > 0) {
       return {
         didFail: false,
@@ -3107,20 +3115,26 @@ async function waitAndDrainAsyncWork(
     return subagentCount + asyncToolCount;
   }
 
-  const [subagentStatus, asyncToolStatus] = await Promise.all([
-    subagentCoordinator.waitForIdle({
-      onHeartbeat: () =>
-        options.onHeartbeat?.(
-          subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
-        ),
-    }),
-    asyncToolCoordinator.waitForIdle({
-      onHeartbeat: () =>
-        options.onHeartbeat?.(
-          subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
-        ),
-    }),
-  ]);
+  const onHeartbeat = (): void | Promise<void> =>
+    options.onHeartbeat?.(
+      subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
+    );
+  // A subagent's question wakes the parent before the rest finish, so its
+  // answer can unblock the child. The async tools keep running meanwhile.
+  const subagentStatus = await subagentCoordinator.waitForIdle({
+    onHeartbeat: onHeartbeat,
+  });
+  if (subagentStatus === "question") {
+    const [subagentCount, asyncToolCount] = await Promise.all([
+      subagentCoordinator.drainCompletionsToParent(),
+      asyncToolCoordinator.drainCompletionsToParent(),
+    ]);
+
+    return subagentCount + asyncToolCount;
+  }
+  const asyncToolStatus = await asyncToolCoordinator.waitForIdle({
+    onHeartbeat: onHeartbeat,
+  });
 
   if (subagentStatus === "idle" && asyncToolStatus === "idle") {
     const [subagentCount, asyncToolCount] = await Promise.all([
