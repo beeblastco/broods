@@ -2167,8 +2167,9 @@ function assertOneDirectPayloadShape(
 }
 
 /**
- * Throws unless the agent is public and in the credential's stage. True for
- * the embeddable runtime key, false for a member's ticket or no credential.
+ * Throws unless the agent is in the credential's stage, and public for the
+ * embeddable runtime key. True for that key, false for a member's ticket or
+ * no credential.
  */
 function admitStageCredential(
   auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
@@ -2180,6 +2181,9 @@ function admitStageCredential(
   if (!deploymentScopeMatches(auth, deployment)) {
     throw new DirectNotFoundError("Agent not found");
   }
+  // publicAccess opens an agent to the frontend key. A member's ticket
+  // already reads every trace in the stage, so it runs private agents too.
+  if (auth.stageTicket === true) return false;
   if (agent.config.publicAccess !== true) {
     throw new DirectForbiddenError(
       `Agent ${agent.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
@@ -2187,7 +2191,7 @@ function admitStageCredential(
     );
   }
 
-  return auth.stageTicket !== true;
+  return true;
 }
 
 /** The embeddable key picks neither prompt nor spend unless the agent opts in. */
