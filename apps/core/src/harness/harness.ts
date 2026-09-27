@@ -29,7 +29,10 @@ import {
   type ToolSet,
   type UserModelMessage,
 } from "ai";
-import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
+import {
+  HarnessCapabilityUnsupportedError,
+  type HarnessAgentSession,
+} from "@ai-sdk/harness/agent";
 import type {
   ObservabilitySpanRow,
   TaskWaitingOn,
@@ -78,8 +81,10 @@ import {
 import {
   createConfiguredHarnessAgent,
   harnessReservationKey,
+  harnessSteersMidTurn,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
+  type AiSdkHarnessType,
 } from "./ai-sdk-harness/index.ts";
 import {
   agentSandboxStatus,
@@ -145,6 +150,8 @@ const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
 const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
 /** Thrown when an owner is stopped; callers match on it to skip result delivery. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
+// Harness types whose runtime refused a mid-turn message in this process.
+const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
 // Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
 // I/O show in full on the dashboard (delivered full-fidelity over the live
 // JetStream path); still well under the NATS 1MB max-payload ceiling. Tempo may
@@ -2055,7 +2062,22 @@ export async function runAgentLoop(
           // The same step and tool hooks as streamText, so a harness run
           // traces every step. onEnd stays out: finalizeHarnessStream calls it
           // after the native session is parked.
-          onStepStart: streamOptions.onStepStart,
+          // Steering that arrives mid-turn joins the running turn at the next
+          // step, where the adapter can take it.
+          onStepStart:
+            harnessSteersMidTurn(agentConfig.harness!.type) &&
+            !MID_TURN_STEERING_UNSUPPORTED.has(agentConfig.harness!.type)
+              ? async (event): Promise<void> => {
+                  await streamOptions.onStepStart?.(event);
+                  // A claimed steer that was not saved or handed over fails
+                  // the run, so its envelope settles failed, not seen.
+                  await steerHarnessTurn(
+                    session,
+                    activeHarnessSession!,
+                    agentConfig.harness!.type,
+                  ).catch((error: unknown): void => runAbort.abort(error));
+                }
+              : streamOptions.onStepStart,
           onStepEnd: streamOptions.onStepEnd,
           onToolExecutionStart: streamOptions.onToolExecutionStart,
           onToolExecutionEnd: streamOptions.onToolExecutionEnd,
@@ -2312,6 +2334,51 @@ async function applyHarnessSteeringBeforeTurn(
     eventId: session.eventId,
     conversationKey: session.conversationKey,
     steeringEventCount: steeringEventCount,
+  });
+}
+
+/**
+ * Saves steering that arrived during a HarnessAgent turn, then hands it to the
+ * running turn, which takes it at its next safe input boundary. Only for
+ * adapters that accept mid-turn messages; the rest get it before their next
+ * turn. A hand-over that fails throws and fails the run; the steer is already
+ * in history, so a retry still reads it.
+ */
+async function steerHarnessTurn(
+  session: Session,
+  harnessSession: HarnessAgentSession,
+  type: AiSdkHarnessType,
+): Promise<void> {
+  // Only plain-text steers can be handed over; the rest stay queued for the
+  // next turn, which takes them whole.
+  const steering = await session.applySteeringIngress({ textOnly: true });
+  if (!steering) {
+    return;
+  }
+  const events = steering.events as ConversationIngressEvent[];
+  const text = events
+    .flatMap((event): string[] =>
+      event.role === "user" ? [extractText(event.content).trim()] : [],
+    )
+    .filter(Boolean)
+    .join("\n\n");
+  await session.appendIngressEvents(events);
+  if (text) {
+    await harnessSession
+      .experimental_steerTurn(text)
+      .catch((error: unknown): never => {
+        // This runtime cannot take one at all, so later turns in this process
+        // leave steers queued for the next turn instead.
+        if (error instanceof HarnessCapabilityUnsupportedError) {
+          MID_TURN_STEERING_UNSUPPORTED.add(type);
+        }
+        throw error;
+      });
+  }
+  logInfo("Steering ingress applied during HarnessAgent turn", {
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+    steeringEventCount: steering.contributingEventIds.length,
   });
 }
 
