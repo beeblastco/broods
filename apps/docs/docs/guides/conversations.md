@@ -82,7 +82,7 @@ const resumed = await client.continue(api.agents.support, {
 await resumed.wait();
 ```
 
-The dashboard Tracing tab has a Continue button on failed runs that does the same. With a runtime key, `continue` only works on conversations the direct API opened, not channel conversations.
+The dashboard Tracing tab has a Continue button on failed runs that does the same, on channel conversations too: the answer goes back to the chat. With a runtime key, `continue` only works on conversations the direct API opened, not channel conversations. In a chat, a failed turn ends with a Retry button, or asks you to reply "retry" where the channel has no buttons.
 
 ## Retries and idempotency
 
