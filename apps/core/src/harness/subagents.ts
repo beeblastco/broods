@@ -134,6 +134,10 @@ export class SubagentCoordinator {
   private readonly waiters = new Set<() => void>();
   // Child runs whose outcome is recorded; a later failure never overwrites it.
   private readonly recorded = new Set<string>();
+  // Result rows the model already read through get_subagent_status.
+  private readonly delivered = new Set<string>();
+  // Read, but that tool result is not saved to the parent yet.
+  private readonly readUnsaved = new Set<string>();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -286,6 +290,36 @@ export class SubagentCoordinator {
         return;
       }
     }
+  }
+
+  /**
+   * Records that get_subagent_status showed the model this run's outcome, by
+   * the result row's event id. It counts once `confirmDelivered` runs after
+   * that tool result is saved, so a failed save still gets the injection.
+   */
+  markDelivered(eventId: string): void {
+    this.readUnsaved.add(eventId);
+  }
+
+  /**
+   * Called once the parent's step output is saved. Each result read by then
+   * never starts another pass: a queued injection is dropped now and one that
+   * is enqueued later is skipped.
+   */
+  confirmDelivered(): void {
+    for (const eventId of this.readUnsaved) {
+      this.delivered.add(eventId);
+      // A finish hook's rewrite never reached the model through the tool.
+      const index = this.completions.findIndex(
+        (completion): boolean =>
+          completion.eventId === eventId &&
+          completion.visibleResult === undefined,
+      );
+      if (index !== -1) {
+        this.completions.splice(index, 1);
+      }
+    }
+    this.readUnsaved.clear();
   }
 
   async drainCompletionsToParent(): Promise<number> {
@@ -952,7 +986,11 @@ export class SubagentCoordinator {
         inject = false;
       }
     }
-    if (inject) {
+    if (
+      inject &&
+      (completion.visibleResult !== undefined ||
+        !this.delivered.has(completion.eventId))
+    ) {
       this.completions.push(completion);
     }
     this.notifyCompletion();

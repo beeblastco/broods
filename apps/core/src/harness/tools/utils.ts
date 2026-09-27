@@ -42,6 +42,8 @@ export interface SubagentWatch {
     timeoutMs: number,
     abortSignal?: AbortSignal,
   ): Promise<void>;
+  markDelivered(eventId: string): void;
+  confirmDelivered(): void;
 }
 
 export interface SubagentToolInput {
