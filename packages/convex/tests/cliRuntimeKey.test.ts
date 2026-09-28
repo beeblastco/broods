@@ -151,4 +151,49 @@ describe("stage runtime key wire", () => {
       stageSlug: "production",
     });
   });
+
+  test("a minted key records its creator, core touches lastUsedAt, rotate resets it", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = runtimeKeyTest();
+    await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("users", {
+        authId: AUTH_ID,
+        email: "owner@beeblast.co",
+        name: "Ada Owner",
+        plan: "free",
+      });
+    });
+    const args = {
+      secretHash: SECRET_HASH,
+      project: "demo-app",
+      stage: "production",
+      createdByAuthId: AUTH_ID,
+    };
+
+    const minted = await t.mutation(
+      internal.cli.sync.ensureRuntimeKeyBySecretHash,
+      args,
+    );
+    await t.mutation(internal.agent.deployments.touchLastUsed, {
+      apiKeyHash: await sha256Hex(minted!.apiKey),
+      usedAt: 1_000,
+    });
+    const used = await t.run(
+      async (ctx) => await ctx.db.query("agentDeployments").unique(),
+    );
+    await t.mutation(internal.cli.sync.ensureRuntimeKeyBySecretHash, {
+      ...args,
+      rotate: true,
+    });
+    const rotated = await t.run(
+      async (ctx) => await ctx.db.query("agentDeployments").unique(),
+    );
+
+    expect(used?.createdBy).toBe("Ada Owner");
+    expect(used?.createdAt).toBeTypeOf("number");
+    expect(used?.lastUsedAt).toBe(1_000);
+    expect(rotated?.createdBy).toBe("Ada Owner");
+    expect(rotated?.lastUsedAt).toBeUndefined();
+  });
 });

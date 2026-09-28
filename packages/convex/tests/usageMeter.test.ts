@@ -8,10 +8,20 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { EMPTY_USAGE, meterCostEur } from "../model/pricing";
+import {
+  FREE_MONTHLY_BUDGET_EUR,
+  PLAN_LIMITS,
+  PRO_MONTHLY_BUDGET_EUR,
+} from "../model/planLimits";
+import {
+  EMPTY_USAGE,
+  HOSTED_MCP_MEMORY_GB,
+  meterCostEur,
+} from "../model/pricing";
 import {
   budgetUsage,
-  SANDBOX_IDLE_BILL_MS,
+  burstUsage,
+  DEFAULT_SANDBOX_IDLE_MS,
   sandboxAccrual,
 } from "../model/usageMeter";
 import schema from "../schema";
@@ -19,6 +29,7 @@ import schema from "../schema";
 const modules = import.meta.glob("../**/*.ts");
 
 const HOUR_MS = 60 * 60 * 1000;
+const MONTH_SECONDS = 30 * 24 * 60 * 60;
 const NOW = Date.UTC(2026, 8, 23, 12);
 
 const meterTest = () => convexTest(schema, modules);
@@ -50,15 +61,70 @@ describe("sandboxAccrual", () => {
     expect(accrual.meteredUntil).toBe(NOW);
   });
 
-  test("stops billing an idle sandbox at its idle timeout", () => {
+  test("bills an idle MicroVM running until its idle timeout, then its stored snapshot", () => {
     const lastUsedAt = NOW - HOUR_MS;
     const accrual = sandboxAccrual(
       { ...microvm, lastUsedAt: lastUsedAt, meteredUntil: lastUsedAt },
       NOW,
     );
+    const storedSeconds = (HOUR_MS - DEFAULT_SANDBOX_IDLE_MS) / 1000;
 
-    expect(accrual.usage.sandboxVcpuSeconds).toBe(SANDBOX_IDLE_BILL_MS / 1000);
-    expect(accrual.meteredUntil).toBe(lastUsedAt + SANDBOX_IDLE_BILL_MS);
+    expect(accrual.usage.sandboxVcpuSeconds).toBe(
+      DEFAULT_SANDBOX_IDLE_MS / 1000,
+    );
+    expect(accrual.usage.sandboxSnapshotGbMonths).toBeCloseTo(
+      (storedSeconds * 2) / MONTH_SECONDS,
+      12,
+    );
+    expect(accrual.meteredUntil).toBe(NOW);
+  });
+
+  test("runs to the sandbox's own idle timeout, not the default", () => {
+    const lastUsedAt = NOW - HOUR_MS;
+    const accrual = sandboxAccrual(
+      {
+        ...microvm,
+        lastUsedAt: lastUsedAt,
+        meteredUntil: lastUsedAt,
+        idleTimeoutSeconds: 40 * 60,
+      },
+      NOW,
+    );
+
+    expect(accrual.usage.sandboxVcpuSeconds).toBe(40 * 60);
+  });
+
+  test("stops billing a MicroVM 8 hours after its last use", () => {
+    const accrual = sandboxAccrual(
+      {
+        ...microvm,
+        status: "suspended",
+        lastUsedAt: NOW - 20 * HOUR_MS,
+        meteredUntil: NOW - 13 * HOUR_MS,
+      },
+      NOW,
+    );
+
+    expect(accrual.usage).toEqual({
+      sandboxSnapshotGbMonths: (3600 * 2) / MONTH_SECONDS,
+    });
+    expect(accrual.meteredUntil).toBe(NOW - 12 * HOUR_MS);
+  });
+
+  test("bills a suspended MicroVM only for storing its snapshot", () => {
+    const accrual = sandboxAccrual(
+      {
+        ...microvm,
+        status: "suspended",
+        lastUsedAt: NOW - 2 * HOUR_MS,
+        meteredUntil: NOW - HOUR_MS,
+      },
+      NOW,
+    );
+
+    expect(accrual.usage).toEqual({
+      sandboxSnapshotGbMonths: (3600 * 2) / MONTH_SECONDS,
+    });
   });
 
   test("bills nothing the platform does not pay for", () => {
@@ -69,9 +135,9 @@ describe("sandboxAccrual", () => {
       specs: { vcpu: 2, memoryMb: 4096, storageGb: 16 },
     };
 
-    expect(sandboxAccrual({ ...base, status: "suspended" }, NOW).usage).toEqual(
-      {},
-    );
+    expect(
+      sandboxAccrual({ ...daytona, status: "suspended" }, NOW).usage,
+    ).toEqual({});
     expect(sandboxAccrual({ ...base, provider: "machine" }, NOW).usage).toEqual(
       {},
     );
@@ -93,6 +159,24 @@ test("an hour of the default MicroVM costs about €0.14", () => {
   });
 
   expect(cost).toBeCloseTo(0.1368, 4);
+});
+
+test("maxing every cap costs no more than the plan's budget", () => {
+  const capsCost = (plan: "free" | "pro"): number => {
+    const caps = PLAN_LIMITS[plan].caps;
+
+    return meterCostEur({
+      ...EMPTY_USAGE,
+      sandboxVcpuSeconds: caps.sandboxHours * 3600,
+      sandboxGbSeconds: caps.sandboxHours * 3600 * 2,
+      hostedMcpGbSeconds: caps.hostedMcpHours * 3600 * HOSTED_MCP_MEMORY_GB,
+      storageGbMonths: caps.storageGb,
+      egressGb: caps.egressGb,
+    });
+  };
+
+  expect(capsCost("free")).toBeLessThanOrEqual(FREE_MONTHLY_BUDGET_EUR);
+  expect(capsCost("pro")).toBeLessThanOrEqual(PRO_MONTHLY_BUDGET_EUR);
 });
 
 test("a sandbox's launch and running time land on its account's meter", async () => {
@@ -123,6 +207,60 @@ test("a sandbox's launch and running time land on its account's meter", async ()
     sandboxGbSeconds: 1200,
     sandboxSnapshotGb: 2,
   });
+});
+
+test("burst bills the growth of the guest's totals and nothing for a late report", () => {
+  const billed = { vcpuSeconds: 10, gbSeconds: 40 };
+
+  expect(burstUsage(billed, { vcpuSeconds: 12, gbSeconds: 50 })).toEqual({
+    usage: { sandboxVcpuSeconds: 2, sandboxGbSeconds: 10 },
+    billed: { vcpuSeconds: 12, gbSeconds: 50 },
+  });
+  expect(burstUsage(billed, { vcpuSeconds: 3, gbSeconds: 45 })).toEqual({
+    usage: { sandboxVcpuSeconds: 0, sandboxGbSeconds: 5 },
+    billed: { vcpuSeconds: 10, gbSeconds: 45 },
+  });
+});
+
+test("a MicroVM's burst lands on its account's meter once per report", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  await t.mutation(internal.sandbox.instances.upsert, {
+    accountId: accountId,
+    provider: "lambda",
+    reservationKey: "fs-abc",
+    externalId: "vm-1",
+    name: "default",
+    specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+  });
+  const before = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+
+  for (const [vcpuSeconds, gbSeconds] of [
+    [30, 60],
+    [30, 60],
+    [50, 100],
+    [40, 80],
+  ]) {
+    await t.mutation(internal.sandbox.instances.recordBurst, {
+      accountId: accountId,
+      externalId: "vm-1",
+      vcpuSeconds: vcpuSeconds,
+      gbSeconds: gbSeconds,
+    });
+  }
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  expect(
+    (meter?.sandboxVcpuSeconds ?? 0) - (before?.sandboxVcpuSeconds ?? 0),
+  ).toBe(50);
+  expect((meter?.sandboxGbSeconds ?? 0) - (before?.sandboxGbSeconds ?? 0)).toBe(
+    100,
+  );
 });
 
 test("a sandbox on the account's own credentials never reaches the meter", async () => {
@@ -241,17 +379,17 @@ describe("budget", () => {
       accountId: accountId,
     });
 
-    expect(budget).toMatchObject({ enforced: false, limitEur: 5 });
+    expect(budget).toMatchObject({ enforced: false, usedPercent: 0 });
   });
 
-  test("prices the month's meter against the plan and warns once at 80%", async () => {
+  test("measures the closest cap and warns once at 80%", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 50 },
+      usage: { egressGb: 12, storageGbMonths: 1 / 30 },
     });
 
     const budget = await t.query(internal.account.budget.get, {
@@ -267,7 +405,7 @@ describe("budget", () => {
     ];
 
     expect(budget).toMatchObject({ enforced: true, plan: "free" });
-    expect(budget?.usedEur).toBeCloseTo(4, 6);
+    expect(budget?.usedPercent).toBe(80);
     expect(claims).toEqual([true, false]);
   });
 
@@ -278,16 +416,16 @@ describe("budget", () => {
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 50, storageGbMonths: 50, ingressGb: 2 },
+      usage: { egressGb: 16.5, storageGbMonths: 0.5, ingressGb: 2 },
     });
 
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
 
     const amounts = {
       sandboxHours: 0,
-      hostedMcpCalls: 0,
-      storageGb: 1500,
-      egressGb: 50,
+      hostedMcpHours: 0,
+      storageGb: 15,
+      egressGb: 16.5,
       ingressGb: 2,
     };
     expect(usage).toEqual({
@@ -295,8 +433,14 @@ describe("budget", () => {
       plan: "free",
       month: "2026-09",
       months: ["2026-09"],
-      usedPercent: 101,
-      categories: { sandboxes: 0, hostedMcp: 0, storage: 21, egress: 80 },
+      usedPercent: 110,
+      caps: PLAN_LIMITS.free.caps,
+      shares: {
+        sandboxHours: 0,
+        hostedMcpHours: 0,
+        storageGb: 30,
+        egressGb: 110,
+      },
       level: "exhausted",
       totals: amounts,
       days: [{ day: "2026-09-23", ...amounts }],
@@ -351,7 +495,7 @@ describe("budget", () => {
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 100 },
+      usage: { egressGb: 24 },
       at: Date.UTC(2026, 7, 10),
     });
 
@@ -385,10 +529,8 @@ describe("budget", () => {
 
     expect(usage.usedPercent).toBeNull();
     expect(usage.level).toBe("ok");
-    expect(usage.categories.egress + usage.categories.storage).toBeCloseTo(
-      100,
-      0,
-    );
+    expect(usage.caps).toBeNull();
+    expect(usage.shares.egressGb + usage.shares.storageGb).toBeCloseTo(100, 0);
   });
 });
 

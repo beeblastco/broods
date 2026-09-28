@@ -34,6 +34,7 @@ import {
   UsageChart,
   type UsageChartSeries,
 } from "./UsageChart";
+import { AllowanceUsage } from "./AllowanceUsage";
 import { UsageTraceRail } from "./UsageTraceRail";
 
 type UsageStats = FunctionReturnType<typeof api.logs.fetchUsageStats>;
@@ -41,7 +42,11 @@ type Range = UsageStats["range"];
 type Bucket = UsageStats["buckets"][number];
 type CounterKey = Exclude<
   keyof Bucket,
-  "bucketStart" | "modelProvider" | "modelId"
+  | "bucketStart"
+  | "modelProvider"
+  | "modelId"
+  | "agentSandboxCpuUsec"
+  | "toolSandboxCpuUsec"
 >;
 /** One time bin summed over the models shown. */
 type Counters = Record<CounterKey, number> & { bucketStart: number };
@@ -64,8 +69,6 @@ interface LiveOverlay {
   // Running roots (tasks + subagent subtasks) and the model steps beneath them.
   invocations: number;
   modelCalls: number;
-  agentSandboxCpuUsec: number;
-  toolSandboxCpuUsec: number;
   // Each step priced at its root's model, so the cost grows with the tokens.
   estimatedCost: number;
 }
@@ -102,23 +105,6 @@ const COUNTER_KEYS: CounterKey[] = [
   "invocations",
   "modelCalls",
   "runtimeWallMs",
-  "agentSandboxCpuUsec",
-  "toolSandboxCpuUsec",
-];
-
-// Sandbox CPU split: the agent's own sandbox vs the MCP sandbox that runs
-// hosted MCP server bundles.
-const CPU_SERIES: UsageChartSeries[] = [
-  {
-    key: "agentSandboxCpuUsec",
-    label: "Agent sandbox",
-    color: "var(--color-usage-agent-sandbox)",
-  },
-  {
-    key: "toolSandboxCpuUsec",
-    label: "MCP sandbox",
-    color: "var(--color-usage-mcp-sandbox)",
-  },
 ];
 
 const MODEL_COLORS = [
@@ -137,8 +123,6 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   cachedInputTokens: 0,
   invocations: 0,
   modelCalls: 0,
-  agentSandboxCpuUsec: 0,
-  toolSandboxCpuUsec: 0,
   estimatedCost: 0,
 };
 
@@ -148,9 +132,10 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
 const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
 /**
- * The dashboard Usage tab: range and model filter, the numbers row, the token
- * chart that splits to list a clicked bin's traces, then a full-width sandbox
- * CPU chart. Everything below the toolbar follows the clicked bin.
+ * The dashboard Usage tab: the org's monthly allowance per resource, then the
+ * stage's tokens: range and model filter, the numbers row, and the token
+ * chart that splits to list a clicked bin's traces. Everything below the
+ * toolbar follows the clicked bin.
  */
 export function TokensUsagePanel({
   projectId,
@@ -235,10 +220,6 @@ export function TokensUsagePanel({
       }),
     [bins],
   );
-  const cpuRows = useMemo(
-    () => bins.map((b) => [b.agentSandboxCpuUsec, b.toolSandboxCpuUsec]),
-    [bins],
-  );
   const selectedIndex =
     selectedStart === null ? -1 : bucketStarts.indexOf(selectedStart);
   const selected = selectedIndex === -1 ? null : selectedIndex;
@@ -286,91 +267,77 @@ export function TokensUsagePanel({
   };
 
   return (
-    <div className="grid gap-4">
-      <UsageToolbar
-        range={range}
-        onRangeChange={(id) => {
-          setRange(id);
-          setSelectedStart(null);
-        }}
-        modelMenu={
-          <ModelMenu
-            modelColors={modelColors}
-            allShown={activeFilter === null}
-            isShown={isShown}
-            onToggle={toggleModel}
-            onShowAll={() => setModelFilter(null)}
-          />
-        }
-        // Only while that bin is still on the chart; the live window slides.
-        selectedStart={selected === null ? null : selectedStart}
-        binSeconds={binSeconds}
-        onClearSelection={() => setSelectedStart(null)}
-      />
-
-      <UsageStats
-        bins={bins}
-        binCosts={binCosts}
-        selected={selected}
-        scope={scope}
-        estimatedCost={estimatedCost}
-        unpriced={unpriced}
-        modelFilter={activeFilter}
-        modelsTotal={modelColors.size}
-      />
-
-      <div
-        className={cn(
-          "grid rounded-lg border border-border bg-card",
-          selected !== null && "lg:grid-cols-3",
-        )}
-      >
-        <div className={cn("p-3", selected !== null && "lg:col-span-2")}>
-          <UsageChart
-            kind="area"
-            height={250}
-            series={TOKEN_SERIES}
-            rows={tokenRows}
-            bucketStarts={bucketStarts}
-            binSeconds={binSeconds}
-            selected={selected}
-            onSelect={selectBin}
-            formatAxis={formatAxisNumber}
-            formatValue={formatNumber}
-          />
-          <Legend series={TOKEN_SERIES} />
-        </div>
-        {selected !== null && (
-          <UsageTraceRail
-            // A new bin starts with an empty search.
-            key={bucketStarts[selected]}
-            projectId={projectId}
-            stageId={stageId}
-            bin={{ startMs: bucketStarts[selected], binSeconds: binSeconds }}
-            binTokens={bins[selected].totalTokens}
-            models={activeFilter}
-            onClose={() => setSelectedStart(null)}
-          />
-        )}
-      </div>
-
-      <div className="rounded-lg border border-border bg-card p-3">
-        <h3 className="mb-2 text-xs font-medium">Sandbox CPU</h3>
-        <UsageChart
-          kind="bars"
-          height={150}
-          tickCount={3}
-          series={CPU_SERIES}
-          rows={cpuRows}
-          bucketStarts={bucketStarts}
+    <div className="grid gap-8">
+      <AllowanceUsage />
+      <section className="grid gap-4">
+        <h2 className="text-sm font-semibold text-foreground">Tokens</h2>
+        <UsageToolbar
+          range={range}
+          onRangeChange={(id) => {
+            setRange(id);
+            setSelectedStart(null);
+          }}
+          modelMenu={
+            <ModelMenu
+              modelColors={modelColors}
+              allShown={activeFilter === null}
+              isShown={isShown}
+              onToggle={toggleModel}
+              onShowAll={() => setModelFilter(null)}
+            />
+          }
+          // Only while that bin is still on the chart; the live window slides.
+          selectedStart={selected === null ? null : selectedStart}
           binSeconds={binSeconds}
-          selected={selected}
-          onSelect={selectBin}
-          formatAxis={formatCpuUsec}
-          formatValue={formatCpuUsec}
+          onClearSelection={() => setSelectedStart(null)}
         />
-        <Legend series={CPU_SERIES} />
-      </div>
+
+        <UsageStats
+          bins={bins}
+          binCosts={binCosts}
+          selected={selected}
+          scope={scope}
+          estimatedCost={estimatedCost}
+          unpriced={unpriced}
+          modelFilter={activeFilter}
+          modelsTotal={modelColors.size}
+        />
+
+        <div
+          className={cn(
+            "grid rounded-lg border border-border bg-card",
+            selected !== null && "lg:grid-cols-3",
+          )}
+        >
+          <div className={cn("p-3", selected !== null && "lg:col-span-2")}>
+            <UsageChart
+              kind="area"
+              height={250}
+              series={TOKEN_SERIES}
+              rows={tokenRows}
+              bucketStarts={bucketStarts}
+              binSeconds={binSeconds}
+              selected={selected}
+              onSelect={selectBin}
+              formatAxis={formatAxisNumber}
+              formatValue={formatNumber}
+            />
+            <Legend series={TOKEN_SERIES} />
+          </div>
+          {selected !== null && (
+            <UsageTraceRail
+              // A new bin starts with an empty search.
+              key={bucketStarts[selected]}
+              projectId={projectId}
+              stageId={stageId}
+              bin={{ startMs: bucketStarts[selected], binSeconds: binSeconds }}
+              binTokens={bins[selected].totalTokens}
+              models={activeFilter}
+              onClose={() => setSelectedStart(null)}
+            />
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -503,7 +470,7 @@ function Sparkline({
 }
 
 /**
- * The numbers row for the range or the clicked bin: five evenly spaced
+ * The numbers row for the range or the clicked bin: four evenly spaced
  * columns, each a large value over a trend line in the chart's colours and
  * one detail line. Laid out by its own width, not the window's; values count
  * to their new number here, so only this row repaints during the tween.
@@ -529,18 +496,11 @@ function UsageStats({
   modelsTotal: number;
 }): React.JSX.Element {
   const modelsShown = modelFilter?.length ?? modelsTotal;
-  const cpu = scope.agentSandboxCpuUsec + scope.toolSandboxCpuUsec;
   const target = useMemo(
     () => [
-      [
-        scope.totalTokens,
-        estimatedCost,
-        scope.invocations,
-        scope.modelCalls,
-        cpu,
-      ],
+      [scope.totalTokens, estimatedCost, scope.invocations, scope.modelCalls],
     ],
-    [scope, estimatedCost, cpu],
+    [scope, estimatedCost],
   );
   const values = useTween(target)[0];
   const perTask = (n: number): number =>
@@ -580,22 +540,15 @@ function UsageStats({
       trend: bins.map((b) => b.modelCalls),
       color: "var(--color-usage-model-calls)",
     },
-    {
-      label: "Sandbox CPU",
-      value: formatCpuUsec(values[4]),
-      detail: `${percent(scope.agentSandboxCpuUsec, cpu)} agent · ${percent(scope.toolSandboxCpuUsec, cpu)} MCP`,
-      trend: bins.map((b) => b.agentSandboxCpuUsec + b.toolSandboxCpuUsec),
-      color: "var(--color-usage-agent-sandbox)",
-    },
   ];
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-2 border-y border-border @2xl:grid-cols-3 @5xl:grid-cols-5">
+      <div className="grid grid-cols-2 border-y border-border @2xl:grid-cols-4">
         {columns.map((column) => (
           <div
             key={column.label}
-            className="grid min-w-0 gap-1 border-border px-4 py-3 @5xl:border-l @5xl:first:border-l-0"
+            className="grid min-w-0 gap-1 border-border px-4 py-3 @2xl:border-l @2xl:first:border-l-0"
           >
             <div className="text-xs text-muted-foreground">{column.label}</div>
             <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
@@ -690,8 +643,6 @@ function emptyCounters(bucketStart: number): Counters {
     invocations: 0,
     modelCalls: 0,
     runtimeWallMs: 0,
-    agentSandboxCpuUsec: 0,
-    toolSandboxCpuUsec: 0,
   };
 }
 
@@ -716,14 +667,6 @@ function fillBucketsAcrossRange(
   );
 
   return out;
-}
-
-/** Microseconds → compact duration (µs / ms / s). */
-function formatCpuUsec(usec: number): string {
-  if (usec >= 1_000_000) return `${(usec / 1_000_000).toFixed(2)}s`;
-  if (usec >= 1_000) return `${(usec / 1_000).toFixed(0)}ms`;
-
-  return `${Math.round(usec)}µs`;
 }
 
 /** Milliseconds → compact duration (ms / s). */
@@ -751,8 +694,7 @@ function formatUsd(value: number): string {
  * until it ends. Each model step is scoped to its own root span (a task, a cron
  * run, or a subagent subtask, which share the parent's traceId) so a finished
  * subtask stops counting the moment its usage row lands in Convex, with no double
- * counting. Sandbox CPU is read off the running roots, which the harness
- * re-publishes with live role-split CPU on each step.
+ * counting.
  */
 function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   const freshAfter = Date.now() - STALE_RUNNING_TASK_MS;
@@ -768,16 +710,6 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   );
   const totals = { ...EMPTY_LIVE_OVERLAY };
   totals.invocations = runningRoots.length;
-  for (const root of runningRoots) {
-    totals.agentSandboxCpuUsec += numericAttribute(
-      root,
-      "sandbox.cpu_usec.role.agent",
-    );
-    totals.toolSandboxCpuUsec += numericAttribute(
-      root,
-      "sandbox.cpu_usec.role.tool",
-    );
-  }
   for (const span of spans) {
     const root = span.parentSpanId
       ? runningRootsById.get(span.parentSpanId)
@@ -847,7 +779,7 @@ function sumCounters(bins: Counters[]): Counters {
 }
 
 /**
- * Fold in-progress tokens, task/model counts, and sandbox CPU into the most
+ * Fold in-progress tokens and task/model counts into the most
  * recent bin so the charts and tiles grow while a run is in flight. The SDK's
  * outputTokens already includes reasoning, so the total is input + output.
  */
@@ -864,8 +796,6 @@ function withLiveOverlay(bins: Counters[], live: LiveOverlay): Counters[] {
     totalTokens: last.totalTokens + live.inputTokens + live.outputTokens,
     invocations: last.invocations + live.invocations,
     modelCalls: last.modelCalls + live.modelCalls,
-    agentSandboxCpuUsec: last.agentSandboxCpuUsec + live.agentSandboxCpuUsec,
-    toolSandboxCpuUsec: last.toolSandboxCpuUsec + live.toolSandboxCpuUsec,
   };
 
   return next;
