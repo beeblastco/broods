@@ -52,7 +52,7 @@ const writeS3ObjectMock = mock(
 
 // A bring-your-own bucket is reached on a role core assumes; the session it
 // hands back is what the workspace write must carry.
-mock.module("@aws-sdk/client-sts", () => ({
+void mock.module("@aws-sdk/client-sts", () => ({
   STSClient: class {
     send = async (): Promise<{
       Credentials: {
