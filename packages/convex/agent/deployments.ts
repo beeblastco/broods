@@ -11,13 +11,14 @@
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
+  internalMutation,
   internalQuery,
   mutation,
   query,
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
-import { authKit } from "../auth";
+import { authKit, deriveName } from "../auth";
 import {
   decryptAgentConfigBlob,
   encryptAgentConfigBlob,
@@ -68,6 +69,16 @@ const ensureReturn = v.object({
   rawApiKey: v.string(),
 });
 
+/** The revealed runtime key plus who minted it and when it last authenticated a request. */
+const revealedKeyValidator = v.object({
+  apiKey: v.string(),
+  createdAt: v.optional(v.number()),
+  createdBy: v.optional(v.string()),
+  lastUsedAt: v.optional(v.number()),
+});
+
+export type RevealedKey = Infer<typeof revealedKeyValidator>;
+
 /** Public (hash-free) view of a stage deployment for the dashboard. */
 const stageDeploymentView = v.object({
   _id: v.id("agentDeployments"),
@@ -111,6 +122,7 @@ export const ensureForStage = mutation({
       stageId: stageId,
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
+      createdBy: deriveName(authUser),
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
       accountId: context.account._id,
@@ -298,14 +310,15 @@ export async function mintStageSessionTicket(
 
 /**
  * Org admin only: decrypts the stage's stored runtime key so it can be copied
- * without re-minting. Returns null when the stage has no deployment yet, and
- * for members, who stream logs/traces through `mintStageSession` instead.
- * Reactive by design, so a freshly generated key appears without a reload.
+ * without re-minting, with its created and last-used metadata. Returns null
+ * when the stage has no deployment yet, and for members, who stream
+ * logs/traces through `mintStageSession` instead. Reactive by design, so a
+ * freshly generated key appears without a reload.
  */
 export const revealKeyForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
-  returns: v.union(v.string(), v.null()),
-  handler: async (ctx, { projectId, stageId }): Promise<string | null> => {
+  returns: v.union(revealedKeyValidator, v.null()),
+  handler: async (ctx, { projectId, stageId }): Promise<RevealedKey | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -323,7 +336,32 @@ export const revealKeyForStage = query({
       .first();
     if (!deployment) return null;
 
-    return decryptApiKey(deployment);
+    return {
+      apiKey: await decryptApiKey(deployment),
+      createdAt: deployment.createdAt,
+      createdBy: deployment.createdBy,
+      lastUsedAt: deployment.lastUsedAt,
+    };
+  },
+});
+
+/**
+ * Core calls this in the background after a runtime key authenticates a
+ * request, throttled per key in process, so it is not a write per request.
+ */
+export const touchLastUsed = internalMutation({
+  args: { apiKeyHash: v.string(), usedAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { apiKeyHash, usedAt }): Promise<null> => {
+    const deployment = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_apiKeyHash", (q) => q.eq("apiKeyHash", apiKeyHash))
+      .unique();
+    if (deployment && (deployment.lastUsedAt ?? 0) < usedAt) {
+      await ctx.db.patch(deployment._id, { lastUsedAt: usedAt });
+    }
+
+    return null;
   },
 });
 
@@ -354,6 +392,7 @@ export const rotate = mutation({
       stageId: stageId,
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
+      createdBy: deriveName(authUser),
       rotate: true,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
@@ -383,6 +422,8 @@ export async function ensureStageDeployment(
     stageId: Id<"stages">;
     projectSlug: string;
     stageSlug: string;
+    /** Display name stamped on a newly minted or rotated key. */
+    createdBy?: string;
     rotate?: boolean;
   },
 ): Promise<EnsureResult> {
@@ -434,6 +475,9 @@ export async function ensureStageDeployment(
       ...encryptedKey,
       projectSlug: args.projectSlug,
       stageSlug: args.stageSlug,
+      createdAt: now,
+      createdBy: args.createdBy,
+      lastUsedAt: undefined,
       updatedAt: now,
     });
     await refreshAccountChannelEndpoints(ctx, args.accountId);
@@ -460,6 +504,8 @@ export async function ensureStageDeployment(
     apiKeyHash: apiKeyHash,
     keyHint: keyHint,
     ...encryptedKey,
+    createdAt: now,
+    createdBy: args.createdBy,
     updatedAt: now,
   });
   await refreshAccountChannelEndpoints(ctx, args.accountId);

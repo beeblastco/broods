@@ -97,7 +97,8 @@ export const { authKitEvent } = authKit.events({
   "session.revoked": async (): Promise<void> => {},
 });
 
-function deriveName(data: {
+/** Display name for a WorkOS user: first + last name, else the email. Also stamps who minted a runtime key. */
+export function deriveName(data: {
   firstName?: string | null;
   lastName?: string | null;
   email: string;

@@ -1717,7 +1717,7 @@ function projectEntriesToMessages(
       default: {
         const unexpected: never = event.message;
         throw new Error(
-          `Unsupported conversation message: ${typeof unexpected}`,
+          `Unsupported conversation message role: ${String((unexpected as { role?: unknown }).role)}`,
         );
       }
     }

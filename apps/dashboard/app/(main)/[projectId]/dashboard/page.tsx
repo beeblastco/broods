@@ -82,7 +82,7 @@ export default function DashboardPage(): React.JSX.Element {
   // Streaming runs on a short-lived stage session any member can mint; null
   // only when the stage has no deployment yet (the prompt then mints one).
   const stageSession = useStageSession(projectId, activeStageId);
-  // The permanent key is admin-only and shown solely in the copy dialog.
+  // The permanent key and its created/last-used metadata; admin-only.
   const revealedKey = useQuery(
     api.agent.deployments.revealKeyForStage,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
@@ -93,7 +93,7 @@ export default function DashboardPage(): React.JSX.Element {
       : undefined;
   // Ticket first: core refuses the permanent key a channel-session continue.
   const observabilityApiKey = stageSession ?? generatedKey;
-  const copyableKey = generatedKey ?? revealedKey;
+  const copyableKey = generatedKey ?? revealedKey?.apiKey;
   const currentKeyError =
     keyError && keyError.stageId === activeStageId ? keyError.msg : null;
 
@@ -226,7 +226,11 @@ export default function DashboardPage(): React.JSX.Element {
         return <BillingPanel projectId={projectId} />;
       case "api-key":
         return copyableKey ? (
-          <RuntimeKeyView apiKey={copyableKey} onRotate={rotateViewingKey} />
+          <RuntimeKeyView
+            apiKey={copyableKey}
+            revealed={revealedKey}
+            onRotate={rotateViewingKey}
+          />
         ) : observabilityApiKey ? (
           <p className="text-sm text-muted-foreground">
             Only an org admin can reveal the runtime key.
