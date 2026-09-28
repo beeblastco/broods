@@ -7,12 +7,25 @@
  * own deployment with `strategy: Recreate` rather than a job inside the gateway.
  */
 
+import { positiveIntegerEnv } from "../../core/src/shared/env.ts";
 import { forwarderConfigFromEnv } from "./config.ts";
 import { planeConnections, watchChannelConnections } from "./connections.ts";
 import { logInfo } from "./log.ts";
 import { Forwarder } from "./supervisor.ts";
 
 if (import.meta.main) {
+  if (process.argv.includes("--healthcheck")) {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${positiveIntegerEnv("PORT", 3000)}/healthz`,
+        { signal: AbortSignal.timeout(4000) },
+      );
+      process.exit(response.ok ? 0 : 1);
+    } catch {
+      process.exit(1);
+    }
+  }
+
   const config = forwarderConfigFromEnv();
   const forwarder = new Forwarder(config);
   let ready = false;
