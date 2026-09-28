@@ -438,7 +438,8 @@ async function followExecution(
       : null;
   let previous = seed ? statusFingerprint(seed) : "";
   try {
-    while (!signal.aborted && !sawDone && !terminal) {
+    for (;;) {
+      if (signal.aborted || sawDone || terminal) break;
       await Bun.sleep(STATUS_POLL_INTERVAL_MS);
       if (signal.aborted || sawDone) break;
       // Frames arriving prove the run is alive, so status is only asked for
