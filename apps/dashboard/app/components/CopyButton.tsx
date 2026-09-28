@@ -3,7 +3,13 @@
 import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
 import { Check, Copy } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 /** How long the check mark stays before the copy icon returns. */
 const COPIED_MS = 1500;
@@ -79,21 +85,59 @@ export function CopyRow({
 // succeeded (a denied clipboard rejects). One timer per control: a second
 // click restarts it, and unmount clears it so a closed panel does not set
 // state later.
-function useCopied(value: string): { copied: boolean; copy: () => void } {
-  const [copied, setCopied] = useState(false);
+export function useCopied(value: string): {
+  copied: boolean;
+  failed: boolean;
+  copy: (event: MouseEvent<HTMLElement>) => void;
+} {
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  const [failedValue, setFailedValue] = useState<string | null>(null);
+  const attempt = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(
+    () => () => {
+      attempt.current += 1;
+      clearTimeout(timer.current);
+    },
+    [value],
+  );
 
-  function copy(): void {
+  function copy(event: MouseEvent<HTMLElement>): void {
+    const currentAttempt = ++attempt.current;
+    clearTimeout(timer.current);
+    setFailedValue(null);
+    if (
+      !window.isSecureContext ||
+      !document.hasFocus() ||
+      !event.isTrusted ||
+      (navigator.userActivation !== undefined &&
+        !navigator.userActivation.isActive) ||
+      !navigator.clipboard
+    ) {
+      setCopiedValue(null);
+      setFailedValue(value);
+      return;
+    }
+    // Credential export is intentional on Copy. Never copy in the background,
+    // read the user's clipboard, or clear a later clipboard entry with a timer.
     void navigator.clipboard.writeText(value).then(
       () => {
-        setCopied(true);
+        if (currentAttempt !== attempt.current) return;
+        setCopiedValue(value);
         clearTimeout(timer.current);
-        timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+        timer.current = setTimeout(() => setCopiedValue(null), COPIED_MS);
       },
-      () => setCopied(false),
+      () => {
+        if (currentAttempt !== attempt.current) return;
+        setCopiedValue(null);
+        setFailedValue(value);
+      },
     );
   }
 
-  return { copied: copied, copy: copy };
+  return {
+    copied: copiedValue === value,
+    failed: failedValue === value,
+    copy: copy,
+  };
 }

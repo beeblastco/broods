@@ -1,5 +1,6 @@
 "use client";
 
+import { RuntimeKeyView } from "@/app/(main)/[projectId]/dashboard/components/RuntimeKeyDialog";
 import {
   CANVAS_EDGE_TYPES,
   CANVAS_NODE_TYPES,
@@ -294,6 +295,14 @@ export function UiGallery(): React.JSX.Element {
     () => false,
   );
   const dashboardTab = useSearchParams().get("tab");
+
+  if (dashboardTab === "credential-copy") {
+    return (
+      <main data-hydrated={hydrated ? "true" : undefined}>
+        <RuntimeKeyView apiKey="clipboard fixture" />
+      </main>
+    );
+  }
 
   // A trace link keeps the path and swaps ?tab=, so the dashboard stand-in
   // answers the same parameter the dashboard page does.
