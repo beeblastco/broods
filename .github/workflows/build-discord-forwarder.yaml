@@ -26,6 +26,9 @@ on:
 env:
   IMAGE_NAME: ghcr.io/beeblastco/broods-discord-forwarder
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   build:
     runs-on: ubuntu-24.04
