@@ -173,6 +173,12 @@ export const agentDeploymentsFields = {
   apiKeyCiphertext: v.string(),
   apiKeyIv: v.string(),
   apiKeyTag: v.string(),
+  /** When the current key was minted or last rotated. */
+  createdAt: v.optional(v.number()),
+  /** Display name of the user who minted or rotated the current key. */
+  createdBy: v.optional(v.string()),
+  /** Last runtime request the key authenticated, written by core at most every few minutes. */
+  lastUsedAt: v.optional(v.number()),
   updatedAt: v.number(),
 };
 
@@ -576,6 +582,15 @@ export const sandboxInstancesFields = {
   workspaceName: v.optional(v.string()),
   workspaceId: v.optional(v.string()),
   suspendedAt: v.optional(v.number()),
+  /** Idle seconds before the provider suspends it; billing runs until then. */
+  idleTimeoutSeconds: v.optional(v.number()),
+  /**
+   * The machine's burst totals (vCPU-s and GB-s above its baseline since boot)
+   * as last billed. The guest reports running totals, so the meter bills the growth.
+   */
+  burstBilled: v.optional(
+    v.object({ vcpuSeconds: v.number(), gbSeconds: v.number() }),
+  ),
   /** The account's own provider credentials pay for it, so it is never metered. */
   ownCredentials: v.optional(v.boolean()),
   /** Running time before this instant is already on the account's usage meter. */
@@ -1210,6 +1225,8 @@ export const usageQuantityFields = {
   sandboxGbSeconds: v.number(),
   /** Memory GB written and read back by sandbox launches and resumes. */
   sandboxSnapshotGb: v.number(),
+  /** Memory GB-months a suspended MicroVM's snapshot is stored for. */
+  sandboxSnapshotGbMonths: v.number(),
   hostedMcpGbSeconds: v.number(),
   hostedMcpRequests: v.number(),
   storageGbMonths: v.number(),
@@ -1231,6 +1248,8 @@ export const usageMetersFields = {
   ...usageQuantityFields,
   /** Absent on months metered before ingress was. */
   ingressGb: v.optional(v.number()),
+  /** Absent on months metered before suspended snapshots were. */
+  sandboxSnapshotGbMonths: v.optional(v.number()),
   /** GB stored at the month's latest snapshot, zero-byte ones included. */
   storageGb: v.optional(v.number()),
   /** When the 80% warning went out; at most once per month. */
@@ -1247,6 +1266,8 @@ export const usageDaysFields = {
   /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
+  /** Absent on days metered before suspended snapshots were. */
+  sandboxSnapshotGbMonths: v.optional(v.number()),
   /** GB stored at the day's latest snapshot; absent before one runs. */
   storageGb: v.optional(v.number()),
   updatedAt: v.number(),
@@ -1397,6 +1418,7 @@ export default defineSchema({
       "projectId",
       "stageId",
     ])
+    .index("by_externalId", ["externalId"])
     .index("by_lastUsedAt", ["lastUsedAt"])
     .index("by_reservationKey", ["reservationKey"])
     .index("by_sandboxConfigId", ["sandboxConfigId"]),

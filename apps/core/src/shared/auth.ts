@@ -1,6 +1,7 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (fp_sts_), and account-secret
+ * server-side actions), assume-role session (fp_sts_), stage runtime key
+ * (fp_agent_, whose lastUsedAt is written here, throttled), and account-secret
  * hash lookup. Persistence is reached via `getStorage().accounts.*` so the
  * auth path is identical through the Convex-backed account store.
  */
@@ -15,7 +16,14 @@ import {
 import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
+import { waitUntil } from "./in-flight.ts";
 import { getStorage } from "./storage.ts";
+
+const KEY_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+
+// Last lastUsedAt write per runtime key hash. Core runs single replica, so
+// this in-process map is the whole throttle.
+const keyLastUsedWrites = new Map<string, number>();
 
 export type AuthContext =
   | { kind: "admin" }
@@ -39,6 +47,29 @@ export type AuthContext =
       account: AccountRecord;
       role: RolePrincipal;
     };
+
+/**
+ * Whether a runtime key's lastUsedAt write is due, recording `now` when it
+ * is. `resolveBearerAuth` calls it so a key costs one Convex write per
+ * interval instead of one per request.
+ */
+export function claimLastUsedWrite(
+  writes: Map<string, number>,
+  apiKeyHash: string,
+  now: number,
+  intervalMs: number = KEY_LAST_USED_WRITE_INTERVAL_MS,
+): boolean {
+  const last = writes.get(apiKeyHash);
+  if (last !== undefined && now - last < intervalMs) return false;
+  // Expired entries would be claimed again anyway, so drop them to keep the
+  // map to keys used within the last interval.
+  for (const [hash, at] of writes) {
+    if (now - at >= intervalMs) writes.delete(hash);
+  }
+  writes.set(apiKeyHash, now);
+
+  return true;
+}
 
 export function extractBearerToken(
   authorization: string | undefined,
@@ -103,12 +134,16 @@ export async function resolveBearerAuth(
     return { kind: "account", account: account, viaServiceToken: true };
   }
 
-  const deployment = await getStorage().agentDeployments.getByApiKeyHash(
-    sha256Hex(token),
-  );
+  const apiKeyHash = sha256Hex(token);
+  const deployment =
+    await getStorage().agentDeployments.getByApiKeyHash(apiKeyHash);
   if (deployment) {
     const account = await getStorage().accounts.getById(deployment.accountId);
     if (!account || account.status !== "active") return null;
+    const now = Date.now();
+    if (claimLastUsedWrite(keyLastUsedWrites, apiKeyHash, now)) {
+      waitUntil(getStorage().agentDeployments.touchLastUsed(apiKeyHash, now));
+    }
 
     return {
       kind: "deployment",

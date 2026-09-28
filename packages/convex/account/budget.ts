@@ -1,8 +1,8 @@
 /**
- * The monthly compute budget, as core and the dashboard reach it: core reads
- * the budget at admission, records the usage only it sees (hosted-MCP invokes,
- * media egress, attachment ingress) and claims the 80% warning; the dashboard
- * reads amounts and percentages.
+ * The monthly resource caps, as core and the dashboard reach them: core reads
+ * the closest cap's share at admission, records the usage only it sees
+ * (hosted-MCP invokes, media egress, attachment ingress) and claims the 80%
+ * warning; the dashboard reads amounts, caps and percentages.
  * Sandbox time is metered by the sandbox mirror itself; storage by the daily
  * snapshot in `aws/storageMeter.ts`. Math lives in `model/usageMeter.ts`.
  */
@@ -32,15 +32,22 @@ const budgetStatusValidator = v.object({
   enforced: v.boolean(),
   plan: planValidator,
   month: v.string(),
-  usedEur: v.number(),
-  limitEur: v.number(),
+  usedPercent: v.number(),
   runsPerMinute: v.number(),
   warned: v.boolean(),
 });
 
+// Also the shape of each resource's share, keyed like its cap.
+const resourceCapsValidator = v.object({
+  sandboxHours: v.number(),
+  hostedMcpHours: v.number(),
+  storageGb: v.number(),
+  egressGb: v.number(),
+});
+
 const usageAmountsFields = {
   sandboxHours: v.number(),
-  hostedMcpCalls: v.number(),
+  hostedMcpHours: v.number(),
   storageGb: v.union(v.number(), v.null()),
   egressGb: v.number(),
   ingressGb: v.number(),
@@ -52,12 +59,8 @@ const budgetUsageValidator = v.object({
   month: v.string(),
   months: v.array(v.string()),
   usedPercent: v.union(v.number(), v.null()),
-  categories: v.object({
-    sandboxes: v.number(),
-    hostedMcp: v.number(),
-    storage: v.number(),
-    egress: v.number(),
-  }),
+  caps: v.union(resourceCapsValidator, v.null()),
+  shares: resourceCapsValidator,
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
   totals: v.object(usageAmountsFields),
   days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
@@ -91,10 +94,10 @@ export const get = internalQuery({
 });
 
 /**
- * Dashboard billing panel: the active org's usage for `month` ("YYYY-MM",
- * one of the returned `months`; anything else reads the current month) as
- * amounts, days and percentages. Euro figures
- * never leave the backend, so the plan budgets stay private.
+ * Dashboard allowance and billing plan: the active org's usage for `month`
+ * ("YYYY-MM", one of the returned `months`; anything else reads the current
+ * month) as amounts, days, caps and percentages. Euro figures never leave the
+ * backend, so the plan budgets stay private.
  */
 export const getForActiveOrg = query({
   args: { month: v.optional(v.string()) },
