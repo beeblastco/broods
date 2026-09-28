@@ -73,6 +73,12 @@ const SLACK_FILE_HOST_SUFFIXES = [
   ".slack-files.com",
 ];
 
+// Slack rejects a whole message whose button text runs past this.
+const SLACK_BUTTON_TEXT_LIMIT = 75;
+
+// Button value for a conversation with no thread (a DM, a slash command).
+const SLACK_NO_THREAD = "channel";
+
 // Slack signs a file URL and then redirects to its CDN; more hops than this is
 // a loop, not a download.
 const SLACK_FILE_MAX_REDIRECTS = 5;
@@ -330,7 +336,10 @@ export async function* toSlackStream(
           id: taskId("tool", id),
           title: `Using ${toolName}`,
           status: "complete",
-          output: truncateForSlackTask(formatToolOutput(event.output)),
+          output: truncateText(
+            formatToolOutput(event.output),
+            SLACK_TASK_TEXT_LIMIT,
+          ),
         };
         toolNamesById.delete(id);
         break;
@@ -347,7 +356,10 @@ export async function* toSlackStream(
           id: taskId("tool", id),
           title: `Using ${toolName}`,
           status: "error",
-          output: truncateForSlackTask(formatToolOutput(event.error)),
+          output: truncateText(
+            formatToolOutput(event.error),
+            SLACK_TASK_TEXT_LIMIT,
+          ),
         };
         toolNamesById.delete(id);
         break;
@@ -811,7 +823,7 @@ function createSlackActions(
     // channel top level resolves to the same conversation.
     sendQuestions: async function (prompt): Promise<void> {
       const single = prompt.questions.length === 1;
-      const thread = source.inThreadTs ?? source.messageTs;
+      const thread = source.inThreadTs ?? source.messageTs ?? SLACK_NO_THREAD;
       await postSlackCard(
         botToken,
         apiUrl,
@@ -828,10 +840,13 @@ function createSlackActions(
                       questionIndex,
                       optionIndex,
                     ),
-                    label: single
-                      ? option.label
-                      : `${question.header}: ${option.label}`,
-                    ...(thread ? { value: thread } : {}),
+                    label: truncateText(
+                      single
+                        ? option.label
+                        : `${question.header}: ${option.label}`,
+                      SLACK_BUTTON_TEXT_LIMIT,
+                    ),
+                    value: thread,
                   }),
                 ),
               ),
@@ -1257,13 +1272,16 @@ function parseQuestionClick(
       });
     });
   }
-  // A DM is one conversation; anywhere else it is the thread the button names.
-  const isDirect = channelId.startsWith("D");
-  const thread = action.value ?? payload.threadTs;
+  // A DM or a slash command is one conversation per channel; anywhere else it
+  // is the thread the button names.
+  const thread =
+    channelId.startsWith("D") || action.value === SLACK_NO_THREAD
+      ? undefined
+      : (action.value ?? payload.threadTs);
   const source: SlackSource = {
     teamId: teamId,
     channelId: channelId,
-    ...(isDirect ? {} : { threadTs: thread, inThreadTs: thread }),
+    ...(thread ? { threadTs: thread, inThreadTs: thread } : {}),
     userId: payload.userId,
   };
 
@@ -1272,15 +1290,15 @@ function parseQuestionClick(
     ack: { statusCode: 200 },
     message: {
       eventId: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:action:${payload.triggerId ?? payload.messageTs}`,
-      conversationKey: isDirect
-        ? `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`
-        : `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${thread}`,
+      conversationKey: thread
+        ? `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${thread}`
+        : `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
       channelName: "slack",
       content: "[button answer]",
       identity: {
         workspaceRef: teamId,
         channelId: channelId,
-        ...(thread && !isDirect ? { threadId: thread } : {}),
+        ...(thread ? { threadId: thread } : {}),
         userId: payload.userId,
         ...(payload.userName ? { userName: payload.userName } : {}),
       },
@@ -1382,10 +1400,10 @@ function toSlackSource(source: Record<string, unknown>): SlackSource {
   };
 }
 
-function truncateForSlackTask(value: string): string {
+function truncateText(value: string, limit: number): string {
   const normalized = value.trim();
 
-  return normalized.length <= SLACK_TASK_TEXT_LIMIT
+  return normalized.length <= limit
     ? normalized
-    : `${normalized.slice(0, SLACK_TASK_TEXT_LIMIT - 3)}...`;
+    : `${normalized.slice(0, limit - 3)}...`;
 }

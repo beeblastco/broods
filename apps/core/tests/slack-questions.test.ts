@@ -137,6 +137,28 @@ describe("slack ask_questions", () => {
     expect(parsed.message.conversationKey).toBe("slack:T1:D1");
   });
 
+  it("answers a click on a slash command's prompt on the channel conversation", async () => {
+    const parsed = await adapter.parse(
+      blockActionsRequest({
+        type: "block_actions",
+        team: { id: "T1" },
+        user: { id: "U1" },
+        channel: { id: "C1" },
+        container: { channel_id: "C1", message_ts: "1713916800.000009" },
+        actions: [
+          {
+            type: "button",
+            action_id: `q:${STATUS_ID}:0:0`,
+            value: "channel",
+          },
+        ],
+      }),
+    );
+
+    if (parsed.kind !== "message") throw new Error("expected a message");
+    expect(parsed.message.conversationKey).toBe("slack:T1:C1");
+  });
+
   it("drops an action that is not a question button", async () => {
     const parsed = await adapter.parse(
       blockActionsRequest({

@@ -860,7 +860,8 @@ export async function runAgentLoop(
         ? (row.input as PendingQuestionInput).questions
         : [],
     );
-    if (questionSummaries.length > 0 || questions.length > 0) {
+    // The rows, not questionSummaries: an answer can settle one before the run ends.
+    if (questions.length > 0) {
       return { waitingOn: "question", questions: questions };
     }
     const pending = options.pendingWork?.();
