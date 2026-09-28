@@ -58,6 +58,8 @@ export interface McpConnection {
   headers: Record<string, string>;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
+  /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
+  uncached?: boolean;
 }
 
 /** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
@@ -160,6 +162,15 @@ export async function listMcpTools(
   // Uncached: the daemon answers from the live server process.
   if (connection.record.transport === "machine") {
     return (await runMachineMcpList(connection.record)) as Tool[];
+  }
+  if (connection.uncached) {
+    const result = await withClient(
+      connection,
+      (client) => client.listTools(),
+      onCpuUsec,
+    );
+
+    return result.tools;
   }
   const key = cacheKeyFor(connection);
   const cached = toolListCache.get(key);
@@ -305,6 +316,7 @@ async function connectClient(
 
     return client;
   };
+  if (connection.uncached) return await makeClient(undefined);
   const cached = discoverCache.get(key);
   const fresh = cached !== undefined && cached.expiresAt > Date.now();
   if (cached && !fresh) discoverCache.delete(key);

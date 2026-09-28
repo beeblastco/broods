@@ -827,15 +827,12 @@ function isUnreachableError(err: unknown): boolean {
 
 /**
  * Narrows auth to an account principal for account endpoints, throwing for
- * role, admin, or a disallowed service token or deployment.
+ * role, deployment, admin, or a disallowed service token.
  */
 function requireAccountAuth(
   auth: AuthContext,
-  options: { allowServiceToken?: boolean; allowDeployment?: boolean } = {},
+  options: { allowServiceToken?: boolean } = {},
 ): Extract<AuthContext, { kind: "account" }>["account"] {
-  if (auth.kind === "deployment" && options.allowDeployment === true) {
-    return auth.account;
-  }
   if (auth.kind === "deployment" || auth.kind === "role") {
     throw new AccountEndpointUnauthorizedError();
   }

@@ -51,6 +51,7 @@ export async function handleMcpServiceRpc(
   }
 
   let record: McpRecord | null;
+  let uncached = false;
   if (typeof body.serverId === "string") {
     record = await getStorage().mcp.getById(accountId, body.serverId);
     if (!record || record.status !== "active") {
@@ -60,9 +61,13 @@ export async function handleMcpServiceRpc(
     const probe = parseProbe(body.probe);
     if (typeof probe === "string") return errorResponse(400, probe);
     record = probeRecord(accountId, probe);
+    uncached = true;
   }
 
-  const connection = mcpConnection(record, undefined);
+  const connection = {
+    ...mcpConnection(record, undefined),
+    uncached: uncached,
+  };
   if (method === "tools/list") {
     const tools = await listMcpTools(connection);
 
@@ -121,8 +126,8 @@ function parseProbe(value: unknown): McpProbe | string {
 }
 
 /**
- * A synthetic one-shot record for verification. The unique serverId gives each
- * probe its own client cache key, so it never reads a saved row's cached tools.
+ * A synthetic one-shot record for verification. Its connection is marked
+ * uncached, so a probe neither reads nor fills the MCP client caches.
  */
 function probeRecord(accountId: string, probe: McpProbe): McpRecord {
   const now = new Date().toISOString();

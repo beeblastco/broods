@@ -48,7 +48,7 @@ describe("createWorkdirHarnessAgent", () => {
             "acct:agent:conversation:" +
             ${JSON.stringify(type)} +
             ":" +
-            module.harnessRuntimeVersion(${JSON.stringify(type)}),
+            module.harnessAdapterVersion(${JSON.stringify(type)}),
           bridgePorts: runtime.sandbox.bridgePorts,
         }));
       `);
@@ -330,7 +330,7 @@ describe("createMicrovmHarnessAgent", () => {
             "acct:agent:conversation:" +
             ${JSON.stringify(type)} +
             ":" +
-            module.harnessRuntimeVersion(${JSON.stringify(type)}),
+            module.harnessAdapterVersion(${JSON.stringify(type)}),
           bridgePorts: runtime.sandbox.bridgePorts,
         }));
       `);

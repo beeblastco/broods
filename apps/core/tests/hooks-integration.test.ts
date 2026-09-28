@@ -26,6 +26,7 @@ const HOOK_BUNDLE = `export default {
   "subagent.task.finished": (ctx, event) => ({ visibleResult: "summary of " + event.taskId }),
   "channel.message.received": (ctx, event) =>
     event.text === "spam" ? { drop: true } : { text: event.text.toUpperCase() },
+  "channel.message.sending": (ctx) => ({ text: JSON.stringify(ctx.config) }),
 };`;
 
 const bundleSha = createHash("sha256")
@@ -59,6 +60,7 @@ describe("code hooks end-to-end (real isolate)", () => {
       const dispatcher = createHookDispatcher(
         "acct_test",
         indexFor(["agent.started", "tool.call.started"]),
+        {},
       );
 
       const mutation = await dispatcher.runMutation("agent.started", {
@@ -79,6 +81,7 @@ describe("code hooks end-to-end (real isolate)", () => {
     const dispatcher = createHookDispatcher(
       "acct_test",
       indexFor(["agent.started", "tool.call.started"]),
+      {},
     );
 
     let bashRan = false;
@@ -119,6 +122,7 @@ describe("code hooks end-to-end (real isolate)", () => {
     const dispatcher = createHookDispatcher(
       "acct_test",
       indexFor(["agent.started", "agent.finished"]),
+      {},
     );
 
     // First hook seeds ctx.state.calls; the second reads what it left behind.
@@ -143,6 +147,7 @@ describe("code hooks end-to-end (real isolate)", () => {
       const dispatcher = createHookDispatcher(
         "acct_test",
         indexFor(["agent.started", "agent.finished"]),
+        {},
       );
 
       // Parallel tool calls / subagent finishes can enter runMutation concurrently;
@@ -169,6 +174,7 @@ describe("code hooks end-to-end (real isolate)", () => {
       const dispatcher = createHookDispatcher(
         "acct_test",
         indexFor(["subagent.task.finished", "channel.message.received"]),
+        {},
       );
 
       expect(
@@ -189,6 +195,50 @@ describe("code hooks end-to-end (real isolate)", () => {
           text: "hi",
         }),
       ).toEqual({ text: "HI" });
+    },
+  );
+});
+
+describe("hook ctx.config", () => {
+  realRunnerIt(
+    "hands a hook the agent config with secrets removed",
+    async () => {
+      process.env.TOOL_BUNDLES_BUCKET_NAME = "test-bundles";
+      const { createAgentHookDispatcher } =
+        await import("../src/harness/hook-dispatcher.ts");
+      const { setStorageForTests, resetStorageForTests } =
+        await import("../src/shared/storage.ts");
+      const record = indexFor(["channel.message.sending"]).get(
+        "channel.message.sending",
+      )![0]!;
+      setStorageForTests({
+        accountHooks: { getById: async () => record },
+      } as unknown as Parameters<typeof setStorageForTests>[0]);
+      try {
+        const dispatcher = await createAgentHookDispatcher("acct_test", {
+          model: { provider: "openai", modelId: "gpt-5" },
+          provider: {
+            openai: {
+              apiKey: "sk-hook-test",
+              headers: { "X-Tenant": "tenant-42" },
+            },
+          },
+          hooks: { code: [{ hookId: record.hookId }] },
+        });
+        const mutation = await dispatcher.runMutation(
+          "channel.message.sending",
+          { channel: "telegram", text: "hi" },
+        );
+        const seen = JSON.parse(String(mutation?.text));
+
+        expect(seen.model).toEqual({ provider: "openai", modelId: "gpt-5" });
+        expect(seen.provider.openai).toEqual({
+          apiKey: "********",
+          headers: { "X-Tenant": "********" },
+        });
+      } finally {
+        resetStorageForTests();
+      }
     },
   );
 });

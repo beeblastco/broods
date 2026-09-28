@@ -481,7 +481,8 @@ export type AgentSkillsDefinitionConfig = Omit<
 
 export interface HookContext {
   fetch: typeof fetch;
-  config: Record<string, unknown>;
+  /** The agent config, read-only. Credential fields and header values are masked as `********`. */
+  config: Readonly<AgentConfig>;
   /**
    * Mutable per-request scratchpad shared across this agent request's hooks.
    * Seed it in an early hook (e.g. `onStart`) and read or modify it later.

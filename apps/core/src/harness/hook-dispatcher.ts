@@ -8,6 +8,10 @@
  * subagents.ts).
  */
 
+import {
+  REDACTED_SECRET_VALUE,
+  redactConfigSecrets,
+} from "@broods/convex/model/configValues";
 import type { JSONValue, ToolSet } from "ai";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
 import type {
@@ -79,16 +83,18 @@ export async function createAgentHookDispatcher(
     return NO_HOOKS;
   }
 
-  return createHookDispatcher(accountId, index);
+  return createHookDispatcher(accountId, index, hookVisibleConfig(agentConfig));
 }
 
 /**
  * Runs the indexed hooks for each fire-point, one at a time, sharing one run
- * state. Called by `createAgentHookDispatcher`, and directly by the hook tests.
+ * state and handing each the already redacted `config` as ctx.config. Called
+ * by `createAgentHookDispatcher`, and directly by the hook tests.
  */
 export function createHookDispatcher(
   accountId: string,
   index: Map<AgentHookEventName, AccountHookRecord[]>,
+  config: AgentConfig,
 ): HookDispatcher {
   // ctx.state: a mutable scratchpad shared by every hook in this run. Seeded
   // empty, threaded into each hook, and replaced with what the hook left behind
@@ -117,6 +123,7 @@ export function createHookDispatcher(
             record: record,
             event: event,
             payload: payload,
+            config: config,
             state: runState,
           });
           runState = state;
@@ -206,6 +213,21 @@ function buildEventIndex(
   return index;
 }
 
+/**
+ * The agent config a hook reads as ctx.config. `redactConfigSecrets` masks the
+ * credential fields (apiKey, tokens, secrets, private keys); provider and MCP
+ * header values are masked too, since any header can carry a credential.
+ */
+function hookVisibleConfig(agentConfig: AgentConfig): AgentConfig {
+  const redacted = redactConfigSecrets(agentConfig);
+
+  return {
+    ...redacted,
+    provider: redacted.provider && maskHeaderValues(redacted.provider),
+    mcp: redacted.mcp && maskHeaderValues(redacted.mcp),
+  };
+}
+
 /** Fetches the active account hook records an agent's config refers to, once per run. */
 async function loadAgentHooks(
   accountId: string,
@@ -221,4 +243,27 @@ async function loadAgentHooks(
     (record): record is AccountHookRecord =>
       record != null && record.status === "active",
   );
+}
+
+/** Replaces every header value of each entry with the redaction placeholder, keeping the names. */
+function maskHeaderValues<Entry extends { headers?: Record<string, string> }>(
+  entries: Partial<Record<string, Entry>>,
+): Record<string, Entry> {
+  const masked: Record<string, Entry> = {};
+  for (const [name, entry] of Object.entries(entries)) {
+    if (!entry) continue;
+    masked[name] = entry.headers
+      ? {
+          ...entry,
+          headers: Object.fromEntries(
+            Object.keys(entry.headers).map((header) => [
+              header,
+              REDACTED_SECRET_VALUE,
+            ]),
+          ),
+        }
+      : entry;
+  }
+
+  return masked;
 }

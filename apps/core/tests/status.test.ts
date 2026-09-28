@@ -7,7 +7,7 @@ import {
 import {
   createPendingAsyncToolResult,
   getAsyncToolResult,
-  sealDetachedAsyncToolGroup,
+  getDetachedAsyncToolGroup,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
 } from "../src/harness/async-tool-result.ts";
@@ -137,17 +137,16 @@ describe("async tool result persistence", () => {
       resultId: "result-1",
       status: "completed",
     } as never);
-    mutationMock.mockResolvedValueOnce({
+    queryMock.mockResolvedValueOnce({
       parentEventId: "event-1",
       resultIds: ["result-2", "result-1"],
       sealed: true,
     } as never);
     runtime.query = queryMock as never;
-    runtime.mutate = mutationMock as never;
     await expect(getAsyncToolResult("result-1")).resolves.toMatchObject({
       status: "completed",
     });
-    await expect(sealDetachedAsyncToolGroup("event-1")).resolves.toEqual({
+    await expect(getDetachedAsyncToolGroup("event-1")).resolves.toEqual({
       parentEventId: "event-1",
       resultIds: ["result-1", "result-2"],
       sealed: true,
