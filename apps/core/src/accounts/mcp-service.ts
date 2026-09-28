@@ -32,6 +32,11 @@ interface McpProbe {
   sha256?: string;
 }
 
+/**
+ * Runs tools/list or tools/call for the dashboard MCP explorer, against a saved
+ * server or an unsaved probe. Called from the account handler's
+ * /v1/mcp-service/rpc route.
+ */
 export async function handleMcpServiceRpc(
   accountId: string,
   request: CoreRequest,
@@ -79,6 +84,10 @@ export async function handleMcpServiceRpc(
   });
 }
 
+/**
+ * Validates the rpc body's probe object into an McpProbe, or returns the 400
+ * error message.
+ */
 function parseProbe(value: unknown): McpProbe | string {
   if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
   const { name, transport, url, headers, bundleStorageKey, sha256 } = value;

@@ -85,6 +85,7 @@ const HARNESS_MID_TURN_STEERING: Record<AiSdkHarnessType, boolean> = {
   pi: true,
 };
 
+/** Builds an adapter from raw harness settings; the Workdir and MicroVM agent factories use it, mostly in tests. */
 export function createAiSdkHarnessAdapter(
   type: AiSdkHarnessType,
   settings?: AiSdkHarnessSettings,
@@ -111,6 +112,7 @@ export function createAiSdkHarnessAdapter(
   return createPiAdapter(settings as PiHarnessSettings | undefined);
 }
 
+/** Picks and builds the adapter for an agent's `harness.type`; `createConfiguredHarnessAgent` calls it on every run. */
 export function createConfiguredAiSdkHarnessAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

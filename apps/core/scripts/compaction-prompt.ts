@@ -13,6 +13,10 @@ const COMPACTION_PROMPT_MODULE = new URL(
   GENERATED_DIR,
 );
 
+/**
+ * Writes COMPACTION.md into src/shared/.generated; run by scripts/build.ts and
+ * the package scripts, Dockerfile and CI.
+ */
 export async function syncCompactionPromptModule(): Promise<void> {
   const compactionPrompt = await readFile(COMPACTION_PROMPT_SOURCE, "utf8");
   const moduleSource = `/**

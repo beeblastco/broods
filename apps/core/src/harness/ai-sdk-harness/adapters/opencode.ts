@@ -19,6 +19,7 @@ import {
 
 export const OPENCODE_HARNESS_VERSION = VERSION;
 
+/** Builds the OpenCode adapter from an agent config; the adapter registry calls it for `harness.type` opencode. */
 export function createConfiguredOpenCodeAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

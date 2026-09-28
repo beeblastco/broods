@@ -61,6 +61,10 @@ export function harnessReservationKey(
   return options.agentReservationKey ?? options.conversationKey;
 }
 
+/**
+ * Starts the native session for a harness turn, resuming the stored one when it
+ * exists. Called by the run loop in `harness.ts`; a released machine starts fresh.
+ */
 export async function openAiSdkHarnessSession(
   options: OpenAiSdkHarnessSessionOptions,
 ): Promise<HarnessAgentSession> {
@@ -100,6 +104,10 @@ export async function openAiSdkHarnessSession(
   }
 }
 
+/**
+ * Detaches or stops the native session after a turn and saves its resume state on
+ * the Broods session. Called by the run loop in `harness.ts`; destroys it on failure.
+ */
 export async function parkAiSdkHarnessSession(
   options: ParkAiSdkHarnessSessionOptions,
 ): Promise<void> {

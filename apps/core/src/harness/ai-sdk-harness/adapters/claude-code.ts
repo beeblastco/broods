@@ -26,6 +26,7 @@ export function createClaudeCodeAdapter(
   return createClaudeCode(settings);
 }
 
+/** Builds the Claude Code adapter from an agent config; the adapter registry calls it for `harness.type` claude-code. */
 export function createConfiguredClaudeCodeAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

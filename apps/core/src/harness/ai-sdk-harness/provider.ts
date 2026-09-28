@@ -32,6 +32,7 @@ export function requireHarnessProviderName(
   return providerName;
 }
 
+/** Returns the chosen provider's settings with an API key, or throws; every configured adapter calls it before building auth. */
 export function requireHarnessProviderSettings(
   agentConfig: AgentConfig,
   providerName: HarnessProviderName,

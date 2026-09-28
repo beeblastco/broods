@@ -254,8 +254,10 @@ export interface AgentLoopOptions {
 // so a caller that drains the stream by hand can still settle the run.
 export type AgentLoopStream = ReturnType<typeof streamText> & {
   consumeStream(): Promise<void>;
-  // `drained` false means the caller stopped reading with the model still
-  // running, so the run is aborted before it is settled.
+  /**
+   * `drained` false means the caller stopped reading with the model still
+   * running, so the run is aborted before it is settled.
+   */
   ensureFinalized(drained: boolean): Promise<void>;
   didFail(): boolean;
   failureText(): string | null;
@@ -326,6 +328,7 @@ export async function runAgentLoop(
     string,
     { type: string; cpuUsec: number }
   >();
+  /** Passed to the tool registry as `onSandboxCpu`; folds each CPU sample into the usage buckets. */
   const recordSandboxCpu = (sample: SandboxCpuSample): void => {
     if (!(sample.cpuUsec > 0)) return;
     if (sample.role === "tool" && sample.toolCallId !== undefined) {
@@ -350,10 +353,12 @@ export async function runAgentLoop(
       });
     }
   };
-  // Accumulated sandbox CPU split by role (agent's own sandbox vs hosted MCP
-  // sandboxes), so the dashboard can stream the Compute chart live off the running
-  // root span instead of waiting for the finalize write. Empty until a sandbox
-  // exec reports CPU.
+  /**
+   * Accumulated sandbox CPU split by role (agent's own sandbox vs hosted MCP
+   * sandboxes), so the dashboard can stream the Compute chart live off the running
+   * root span instead of waiting for the finalize write. Empty until a sandbox
+   * exec reports CPU.
+   */
   const sandboxCpuRoleAttributes = (): Record<string, number> => {
     let agent = 0;
     let tool = 0;
@@ -433,6 +438,7 @@ export async function runAgentLoop(
     ]),
   });
 
+  /** Serializes any value for a span attribute, with run secrets redacted and long text truncated. */
   const traceAttribute = (value: unknown): string => {
     const safeValue = redact(
       value,
@@ -516,10 +522,12 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
-  // Emit a closed child phase span under the root task. Used for the timeline
-  // phases that wrap the model loop (cold start, context prepare, compaction) so
-  // a slow turn can be attributed to non-model work. Best-effort: telemetry must
-  // never break the run, and a noop tracer/unscoped run emits nothing.
+  /**
+   * Emit a closed child phase span under the root task. Used for the timeline
+   * phases that wrap the model loop (cold start, context prepare, compaction) so
+   * a slow turn can be attributed to non-model work. Best-effort: telemetry must
+   * never break the run, and a noop tracer/unscoped run emits nothing.
+   */
   const emitPhaseSpan = (
     phaseName: string,
     label: string,
@@ -735,6 +743,7 @@ export async function runAgentLoop(
   const stepSpans = new Map<number, TrackedSpan>();
   const toolSpans = new Map<string, TrackedSpan>();
   const toolStepNumbers = new Map<string, number | undefined>();
+  /** Opens a model.step or tool.call OTel span and keeps the ids its live NATS row reuses. */
   const startTrackedSpan = (
     name: "model.step" | "tool.call",
     startTimeMs: number,
@@ -793,8 +802,10 @@ export async function runAgentLoop(
   // The SDK retries a failed stream start inside the ttft window with nothing
   // recorded; attemptRecordingMiddleware fills this per doStream call.
   const stepAttempts = new Map<number, ModelAttempt[]>();
-  // ttft = retry_wait (failed attempts + backoff) + the final attempt's real
-  // server wait, so a retried 429 is distinguishable from queueing.
+  /**
+   * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
+   * server wait, so a retried 429 is distinguishable from queueing.
+   */
   const attemptAttributes = (
     stepNumber: number,
     stepStartMs: number,
@@ -837,10 +848,12 @@ export async function runAgentLoop(
   let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
-  // What a run that ended cleanly still waits on, the person first: an approval
-  // or an open question needs them, while subagents, async tools and background
-  // jobs settle by themselves. Empty when it failed or nothing is left open.
-  // `questions` is what the person was asked, for the trace's wait row.
+  /**
+   * What a run that ended cleanly still waits on, the person first: an approval
+   * or an open question needs them, while subagents, async tools and background
+   * jobs settle by themselves. Empty when it failed or nothing is left open.
+   * `questions` is what the person was asked, for the trace's wait row.
+   */
   const openWorkAfterRun = async (
     status: "completed" | "failed",
   ): Promise<{ waitingOn?: TaskWaitingOn; questions: ChannelQuestion[] }> => {
@@ -876,6 +889,10 @@ export async function runAgentLoop(
       questions: [],
     };
   };
+  /**
+   * Settles the run once: closes open spans and the root span, then writes task
+   * usage. Called from onEnd, the setup failure path and `ensureFinalized`.
+   */
   const finalizeUsage = async (
     status: "completed" | "failed",
     usage: LanguageModelUsage | undefined,
@@ -2128,6 +2145,10 @@ export async function runAgentLoop(
     throw terminalError;
   }
   let harnessStreamFinalized = false;
+  /**
+   * Parks the AI SDK Harness session once its stream ends, and fires onEnd or
+   * onError when the harness never did. A no-op for runs without a harness.
+   */
   const finalizeHarnessStream = async (
     streamError?: unknown,
   ): Promise<void> => {
@@ -2174,12 +2195,14 @@ export async function runAgentLoop(
     }
   };
 
-  // Guarantee finalizeUsage runs even when onEnd/onError never fire. The AI SDK
-  // skips onEnd when a run errors before any step completes (e.g. a usage-limit
-  // error on the first model call) and only onError fires, so a caller that
-  // drains the stream directly would never finalize and the task span would
-  // spin "running" forever. Idempotent via usageFinalized.
   const originalConsumeStream = stream.consumeStream.bind(stream);
+  /**
+   * Guarantee finalizeUsage runs even when onEnd/onError never fire. The AI SDK
+   * skips onEnd when a run errors before any step completes (e.g. a usage-limit
+   * error on the first model call) and only onError fires, so a caller that
+   * drains the stream directly would never finalize and the task span would
+   * spin "running" forever. Idempotent via usageFinalized.
+   */
   const ensureFinalized = async (drained: boolean): Promise<void> => {
     if (!drained && !finishObserved) {
       terminalError ??= new Error("Caller stopped reading the stream");
@@ -2213,9 +2236,11 @@ export async function runAgentLoop(
     );
   };
 
-  // Wrap consumeStream so finalizeUsage fires in a finally block even when
-  // streamText throws hard (e.g. network failure before any chunk arrives) and
-  // onEnd / onError never run.
+  /**
+   * Wrap consumeStream so finalizeUsage fires in a finally block even when
+   * streamText throws hard (e.g. network failure before any chunk arrives) and
+   * onEnd / onError never run.
+   */
   const wrappedConsumeStream = async (): Promise<void> => {
     try {
       await originalConsumeStream();
@@ -2256,12 +2281,14 @@ export function latestUserText(messages: ModelMessage[]): string {
   return message ? extractText(message.content).trim() : "";
 }
 
-// The system prompt is assembled per turn from the agent config plus every
-// injected block (memory index, workspace/memory/scheduler/skills/subagent
-// harness prompts, loaded skills, persisted system context, steering). Traces
-// carry the joined text the provider is actually instructed with, so a reader
-// can see the whole context a run had rather than only its chat messages. The
-// counts ride alongside because `serialize` truncates oversized payloads.
+/**
+ * The system prompt is assembled per turn from the agent config plus every
+ * injected block (memory index, workspace/memory/scheduler/skills/subagent
+ * harness prompts, loaded skills, persisted system context, steering). Traces
+ * carry the joined text the provider is actually instructed with, so a reader
+ * can see the whole context a run had rather than only its chat messages. The
+ * counts ride alongside because `serialize` truncates oversized payloads.
+ */
 export function systemTraceAttributes(
   system: SystemModelMessage[],
   serialize: (value: unknown) => string,
@@ -2292,6 +2319,7 @@ export function toolSpanDurationMs(
   return Math.max(0, handlerNowMs - startTimeMs);
 }
 
+/** The redacted, user-facing text for a run failure, used for replies, logs and lifecycle events. */
 function errorMessage(error: unknown): string {
   const rawMessage = toErrorMessage(error);
   // This text reaches the end user via reply.onErrorText, so it must pass the
@@ -2321,6 +2349,10 @@ function errorMessage(error: unknown): string {
   return message;
 }
 
+/**
+ * Drains queued steering into the turn context before a HarnessAgent turn
+ * starts, and rebuilds the system prompt when any arrived.
+ */
 async function applyHarnessSteeringBeforeTurn(
   session: Session,
   turnContext: TurnContextSnapshot,
@@ -2488,6 +2520,11 @@ function requireHarnessSandbox(
   return sandbox;
 }
 
+/**
+ * Renews the conversation lease every second during a HarnessAgent turn and
+ * aborts the run on a stop, a lost lease or repeated renewal failures.
+ * Returns the function that stops the monitor.
+ */
 function startHarnessLeaseMonitor(
   session: Session,
   abortController: AbortController,
@@ -2523,6 +2560,7 @@ function startHarnessLeaseMonitor(
   return () => clearInterval(timer);
 }
 
+/** One provider call warning as a single line, for the per-step warning log. */
 function formatCallWarning(warning: {
   type: string;
   feature?: string;
@@ -2548,9 +2586,6 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
 }
 
-// Best-effort and non-blocking: returns once the span's bytes reach the NATS
-// client. A caller needing delivery before the container freezes (the terminal
-// span) awaits this, then flushObservabilityNats(); others ignore it.
 /** The root's closing status: a clean run that left something open waits on it. */
 function rootSpanStatus(
   status: "completed" | "failed",
@@ -2564,6 +2599,10 @@ function rootSpanStatus(
     : "waiting";
 }
 
+/**
+ * Publishes a span row to the dashboard's live trace stream over NATS. Best-effort:
+ * the terminal span awaits it before the flush, other callers ignore it.
+ */
 function publishSpan(row: ObservabilitySpanRow): Promise<void> {
   const connPromise = getSharedNatsConn();
   if (!connPromise) return Promise.resolve();
@@ -2606,9 +2645,11 @@ function toolOutputErrorText(output: unknown): string | undefined {
     : undefined;
 }
 
-// Fold an agent.started hook return into the turn context: `system` is appended
-// as a system message (also to ephemeralSystem so it survives prepareStep
-// refreshes), and `messages` replaces the conversation the model sees.
+/**
+ * Fold an agent.started hook return into the turn context: `system` is appended
+ * as a system message (also to ephemeralSystem so it survives prepareStep
+ * refreshes), and `messages` replaces the conversation the model sees.
+ */
 function applyAgentStartedMutation(
   turnContext: TurnContextSnapshot,
   mutation: Record<string, unknown> | undefined,
@@ -2650,9 +2691,11 @@ function isModelMessageShape(entry: unknown): boolean {
   );
 }
 
-// Fold an agent.finished hook's { output } into the final response. On the
-// streaming (SSE) path the tokens are already sent, so this changes the
-// delivered/stored final result, not the already-streamed text.
+/**
+ * Fold an agent.finished hook's { output } into the final response. On the
+ * streaming (SSE) path the tokens are already sent, so this changes the
+ * delivered/stored final result, not the already-streamed text.
+ */
 async function foldAgentFinished(
   hooks: HookDispatcher,
   response: JSONValue,
@@ -2671,6 +2714,7 @@ async function foldAgentFinished(
     : response;
 }
 
+/** Every tool approval request across a finished run's steps, read by onEnd. */
 function extractApprovalRequests(
   steps: Array<StepResult<ToolSet>>,
 ): ApprovalRequestOutput[] {
@@ -2696,6 +2740,7 @@ function summarizeApprovalRequest(
   };
 }
 
+/** Merges an update into a tool call's summary, keyed by call id, as the loop's tool hooks fire. */
 function recordToolCallSummary(
   summaries: Map<string, ToolCallSummary>,
   toolCall: unknown,
@@ -2714,6 +2759,7 @@ function recordToolCallSummary(
   });
 }
 
+/** The id and name of an SDK tool call, or null when it has neither, for `recordToolCallSummary`. */
 function toolCallIdentity(
   toolCall: unknown,
 ): Pick<ToolCallSummary, "toolCallId" | "toolName"> | null {
@@ -2735,6 +2781,7 @@ function toolCallIdentity(
   };
 }
 
+/** Tool names, per-tool counts and step-ordered calls for the finish and failure logs and events. */
 function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>): {
   toolsUsed: string[];
   toolUsage: Record<string, number>;

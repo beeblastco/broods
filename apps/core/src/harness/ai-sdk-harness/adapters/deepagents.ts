@@ -20,6 +20,7 @@ import {
 
 export const DEEPAGENTS_HARNESS_VERSION = VERSION;
 
+/** Builds the Deep Agents adapter from an agent config; the adapter registry calls it for `harness.type` deepagents. */
 export function createConfiguredDeepAgentsAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

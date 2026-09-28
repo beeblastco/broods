@@ -146,6 +146,10 @@ export async function handler(request: CoreRequest): Promise<Response> {
   return runWithObservabilityScope(() => handleAccountRequest(request));
 }
 
+/**
+ * Routes one account-manage request (health, self or admin account delete,
+ * mcp-service rpc, sandbox verbs, account create) behind bearer auth.
+ */
 async function handleAccountRequest(request: CoreRequest): Promise<Response> {
   const method = request.method;
   const rawPath = normalizePath(request.path);
@@ -311,6 +315,10 @@ async function handleSandboxLifecycleRoute(
   );
 }
 
+/**
+ * Loads the sandbox config, checks reservation ownership and budget, then
+ * dispatches the lifecycle action to its handler below.
+ */
 async function handleSandboxLifecycle(
   method: string,
   accountId: string,
@@ -410,6 +418,10 @@ async function auditedSandboxCall<T>(
   }
 }
 
+/**
+ * The `exec` verb: runs code on the reserved instance with bounded timeout and
+ * output, for the dashboard sandbox console.
+ */
 async function execSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -470,6 +482,10 @@ async function execSandbox(
   });
 }
 
+/**
+ * The `terminal` verb: resumes the instance if needed and seals a terminal
+ * ticket the gateway opens as a PTY or MicroVM shell WebSocket.
+ */
 async function openSandboxTerminal(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -549,6 +565,10 @@ async function openSandboxTerminal(
   });
 }
 
+/**
+ * The `refresh` verb: reads the provider's instance state into the Convex
+ * mirror, dropping the row when the instance is gone.
+ */
 async function refreshSandboxStatus(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -589,6 +609,10 @@ async function refreshSandboxStatus(
   return jsonResponse(200, { status: status, externalId: info.externalId });
 }
 
+/**
+ * The `snapshot` verb: snapshots the instance and saves it as a named account
+ * sandbox snapshot.
+ */
 async function snapshotSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -625,6 +649,10 @@ async function snapshotSandbox(
   });
 }
 
+/**
+ * The `suspend` and `resume` verbs: calls the provider and records the new
+ * instance status.
+ */
 async function suspendOrResumeSandbox(
   context: SandboxLifecycleContext,
   action: "suspend" | "resume",
@@ -649,6 +677,10 @@ async function suspendOrResumeSandbox(
   return jsonResponse(200, { status: status });
 }
 
+/**
+ * The `terminate` verb: releases the instance and removes its reservation and
+ * registry rows.
+ */
 async function terminateSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -682,6 +714,10 @@ async function unsupportedSandboxAction(
   return errorResponse(409, message);
 }
 
+/**
+ * Disables the account, sweeps all its data and storage, then removes it.
+ * Serves both DELETE /v1/account and admin DELETE /v1/accounts/{id}.
+ */
 async function deleteAccountResponse(
   account: Extract<AuthContext, { kind: "account" }>["account"],
 ): Promise<Response> {
@@ -733,6 +769,10 @@ async function deleteAccountResponse(
   });
 }
 
+/**
+ * Parses an optional exec limit from the request body, falling back to the
+ * default when missing or outside 1..max.
+ */
 function boundedInteger(
   value: unknown,
   defaultValue: number,
@@ -749,6 +789,10 @@ function boundedInteger(
   return parsed;
 }
 
+/**
+ * Maps an error thrown in handleAccountRequest to its response: 401
+ * unauthorized, 502 unreachable provider, else 400.
+ */
 function errorResponseForError(err: unknown): Response {
   if (err instanceof AccountEndpointUnauthorizedError) {
     return errorResponse(401, err.message);
@@ -776,6 +820,10 @@ function isUnreachableError(err: unknown): boolean {
   );
 }
 
+/**
+ * Narrows auth to an account principal for account endpoints, throwing for
+ * role, admin, or a disallowed service token or deployment.
+ */
 function requireAccountAuth(
   auth: AuthContext,
   options: { allowServiceToken?: boolean; allowDeployment?: boolean } = {},
@@ -796,6 +844,10 @@ function requireAccountAuth(
   return auth.account;
 }
 
+/**
+ * Normalizes the request body's `actor` into the SandboxAuditActor recorded on
+ * each sandbox audit event.
+ */
 function sandboxAuditActor(value: unknown): SandboxAuditActor {
   if (!isPlainObject(value)) {
     return { source: "unknown" };
