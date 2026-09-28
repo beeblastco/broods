@@ -21,6 +21,7 @@ import {
   channelAttachmentBytes,
   channelAttachmentName,
   isAllowedId,
+  parseChannelWebhookBody,
 } from "./channels.ts";
 import { logDebug, logInfo, logWarn } from "./log.ts";
 import { contentTypeForPath } from "./media-types.ts";
@@ -430,7 +431,14 @@ function parsePancakeWebhook(
   allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
 ): ChannelParseResult {
-  const payload = JSON.parse(req.body) as PancakeWebhookPayload;
+  const body = parseChannelWebhookBody<PancakeWebhookPayload>(
+    "pancake",
+    req.body,
+  );
+  if (body.kind === "ignore") {
+    return body;
+  }
+  const payload = body.payload;
   logDebug("Pancake webhook received", {
     configuredPageId: pageId,
     payloadPageId: payload.page_id,
