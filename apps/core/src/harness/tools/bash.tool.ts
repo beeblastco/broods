@@ -24,7 +24,6 @@ import type {
 import { shellQuote } from "../sandbox/utils.ts";
 import {
   bashSandboxTarget,
-  bashTargetLines,
   disallowedRuntimeCommand,
   formatRunText,
   isAgentOwnSandbox,
@@ -80,25 +79,21 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           if (onSandbox !== undefined && selected === undefined) {
             return toolError("Error: sandbox must be the name of a sandbox");
           }
-          // Silently preferring one would let the policy layer be told a workspace
-          // that the run never touches, so an incoherent selection is refused.
-          if (workspace !== undefined && selected !== undefined) {
-            return toolError(
-              [
-                "Error: pass either workspace or sandbox, not both. They select different places to run. Pick one of:",
-                ...bashTargetLines(context),
-              ].join("\n"),
-            );
-          }
           // Resolved before the workspace fallback so a name that picks nothing
           // selectable is refused instead of quietly landing in the default workspace.
           const picked = resolveAgentSandbox(context, selected);
-          const ws = targetsAgentSandbox(context, {
+          // Same rule as the approval gate and policy input: a named sandbox wins.
+          const onAgentSandbox = targetsAgentSandbox(context, {
             workspace: workspace,
             sandbox: selected,
-          })
+          });
+          const ws = onAgentSandbox
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
+          const ignoredWorkspace =
+            onAgentSandbox && workspace !== undefined
+              ? `Note: ran on sandbox ${picked?.name} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
+              : "";
           // A read-only workspace must not fall through to the default sandbox: the
           // approval gate skipped it expecting this refusal.
           const sandbox = ws ? ws.sandbox : picked?.sandbox;
@@ -136,12 +131,13 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           });
 
           return toolText(
-            formatRunText(
-              await runSandbox(sandbox, ws?.namespace, effective, {
-                onSandboxCpu: context.onSandboxCpu,
-                metadata: sandboxRunMetadata(context, ws),
-              }),
-            ),
+            ignoredWorkspace +
+              formatRunText(
+                await runSandbox(sandbox, ws?.namespace, effective, {
+                  onSandboxCpu: context.onSandboxCpu,
+                  metadata: sandboxRunMetadata(context, ws),
+                }),
+              ),
           );
         } catch (cause) {
           return toolError(
@@ -190,7 +186,7 @@ function description(context: SandboxToolContext): string {
 Usage notes:
 - ${runtimes}
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
 - ${state}${sandboxesNote(context)}`;
   }
 
@@ -200,7 +196,7 @@ Usage notes:
 - The selected workspace's sandbox may restrict runtimes; commands using disallowed runtimes are rejected before execution.
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
 - DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
@@ -451,15 +447,13 @@ function sandboxParamSchema(
   if (choices.length === 0) {
     return undefined;
   }
-  const mutuallyExclusive =
-    context.workspaces.length > 0
-      ? " Mutually exclusive with `workspace`."
-      : "";
+  const ignoresWorkspace =
+    context.workspaces.length > 0 ? " When set, `workspace` is ignored." : "";
 
   return {
     type: "string",
     enum: choices.map((choice): string => choice.name),
-    description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${mutuallyExclusive}`,
+    description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${ignoresWorkspace}`,
   };
 }
 
