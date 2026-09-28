@@ -21,6 +21,7 @@ on:
     branches:
       - dev
       - main
+  # checkov:skip=CKV_GHA_7:The manual URL selects the dashboard to test; this workflow does not produce build artifacts.
   workflow_dispatch:
     inputs:
       base_url:
@@ -57,6 +58,24 @@ jobs:
       E2E_PASSWORD: ${{ secrets.DASHBOARD_E2E_PASSWORD }}
       E2E_PROJECT_ID: ${{ vars.DASHBOARD_E2E_PROJECT_ID }}
     steps:
+      - name: Validate the probe destination
+        env:
+          DEFAULT_PROBE_ORIGIN: ${{ github.ref_name == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app' }}
+          # Administrators can approve preview origins in this environment.
+          EXTRA_PROBE_ORIGINS: ${{ vars.DASHBOARD_E2E_ALLOWED_ORIGINS }}
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from urllib.parse import urlsplit
+
+          target = urlsplit(os.environ["E2E_BASE_URL"])
+          allowed = {os.environ["DEFAULT_PROBE_ORIGIN"], *os.environ.get("EXTRA_PROBE_ORIGINS", "").split()}
+          origin = f"{target.scheme}://{target.netloc}"
+          if target.scheme != "https" or target.username or target.password or origin not in allowed:
+              raise SystemExit("Probe destination must be an approved HTTPS origin. Configure DASHBOARD_E2E_ALLOWED_ORIGINS for previews.")
+          PYTHON
+
       - name: Require the probe account
         # A silent skip would look like a passing suite, so missing setup fails.
         shell: bash
