@@ -45,6 +45,10 @@ const HOSTED_MCP_HOUR_EUR =
   3600 * HOSTED_MCP_MEMORY_GB * UNIT_RATES_EUR.hostedMcpGbSeconds;
 
 const MONTH_SECONDS = DAYS_PER_MONTH * 24 * 60 * 60;
+// A MicroVM lives at most 8 hours (core `MAX_MICROVM_DURATION_SECONDS`), so one
+// used at `lastUsedAt` is gone 8 hours later even if its row still says
+// running or suspended.
+const MICROVM_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
 
 // How many months back the billing tab's month picker reaches.
 const MONTHS_SHOWN = 12;
@@ -291,7 +295,8 @@ export function meterMonth(now: number): string {
  * Sandbox time not billed yet, up to `now`. A sandbox is billed running from
  * where billing last stopped (or its last use) until its provider suspends it,
  * its own idle timeout past the last use. From then on a suspended MicroVM is
- * billed for storing its memory snapshot until it resumes or is released.
+ * billed for storing its memory snapshot until it resumes or is released, and
+ * never past the 8 hours a MicroVM can live after its last use.
  * Nothing is billed when the platform does not pay: a sandbox on the account's
  * own provider credentials, or a machine (the user's own computer).
  */
@@ -317,15 +322,21 @@ export function sandboxAccrual(
     return { usage: {}, meteredUntil: start };
   }
   const size = billedSize(instance);
+  const lambda = instance.provider === "lambda";
+  // Past this the machine is gone, running or stored.
+  const aliveUntil = Math.min(
+    now,
+    lambda ? instance.lastUsedAt + MICROVM_MAX_LIFETIME_MS : now,
+  );
   const runningUntil = BILLED_STATUSES.has(instance.status)
     ? Math.max(
         start,
-        Math.min(now, instance.lastUsedAt + sandboxIdleMs(instance)),
+        Math.min(aliveUntil, instance.lastUsedAt + sandboxIdleMs(instance)),
       )
     : start;
   const runSeconds = (runningUntil - start) / 1000;
-  const storedSeconds =
-    instance.provider === "lambda" ? Math.max(0, now - runningUntil) / 1000 : 0;
+  const storedUntil = Math.max(runningUntil, aliveUntil);
+  const storedSeconds = lambda ? (storedUntil - runningUntil) / 1000 : 0;
   const usage: Partial<UsageQuantities> = {};
   if (runSeconds > 0) {
     usage.sandboxVcpuSeconds = runSeconds * size.vcpu;
@@ -338,7 +349,7 @@ export function sandboxAccrual(
 
   return {
     usage: usage,
-    meteredUntil: storedSeconds > 0 ? now : runningUntil,
+    meteredUntil: storedSeconds > 0 ? storedUntil : runningUntil,
   };
 }
 

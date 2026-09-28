@@ -94,6 +94,23 @@ describe("sandboxAccrual", () => {
     expect(accrual.usage.sandboxVcpuSeconds).toBe(40 * 60);
   });
 
+  test("stops billing a MicroVM 8 hours after its last use", () => {
+    const accrual = sandboxAccrual(
+      {
+        ...microvm,
+        status: "suspended",
+        lastUsedAt: NOW - 20 * HOUR_MS,
+        meteredUntil: NOW - 13 * HOUR_MS,
+      },
+      NOW,
+    );
+
+    expect(accrual.usage).toEqual({
+      sandboxSnapshotGbMonths: (3600 * 2) / MONTH_SECONDS,
+    });
+    expect(accrual.meteredUntil).toBe(NOW - 12 * HOUR_MS);
+  });
+
   test("bills a suspended MicroVM only for storing its snapshot", () => {
     const accrual = sandboxAccrual(
       {

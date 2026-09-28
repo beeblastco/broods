@@ -139,7 +139,7 @@ export function RuntimeKeyDialog({
           <DialogDescription>{DESCRIPTION}</DialogDescription>
         </DialogHeader>
 
-        <RuntimeKeyFields apiKey={apiKey} />
+        <RuntimeKeyFields key={apiKey} apiKey={apiKey} />
       </DialogContent>
     </Dialog>
   );
@@ -161,7 +161,12 @@ export function RuntimeKeyView({
         <CardDescription>{DESCRIPTION}</CardDescription>
       </CardHeader>
       <CardContent>
-        <RuntimeKeyFields apiKey={apiKey} meta={meta} onRotate={onRotate} />
+        <RuntimeKeyFields
+          key={apiKey}
+          apiKey={apiKey}
+          meta={meta}
+          onRotate={onRotate}
+        />
       </CardContent>
     </Card>
   );
