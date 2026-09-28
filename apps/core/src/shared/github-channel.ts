@@ -13,7 +13,7 @@ import type {
   ChannelIngressEvent,
   ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { GITHUB_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -136,7 +136,14 @@ export function createGitHubChannel(
     parse: function (req): ChannelParseResult | Promise<ChannelParseResult> {
       const event = req.headers["x-github-event"];
       const deliveryId = req.headers["x-github-delivery"];
-      const payload = JSON.parse(req.body) as GitHubWebhookPayload;
+      const body = parseChannelWebhookBody<GitHubWebhookPayload>(
+        "github",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const payload = body.payload;
 
       if (event === "ping") {
         return {

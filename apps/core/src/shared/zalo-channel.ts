@@ -7,7 +7,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -166,7 +166,14 @@ export function createZaloChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const update = unwrapZaloUpdate(JSON.parse(req.body) as unknown);
+      const body = parseChannelWebhookBody<ZaloWebhookEnvelope>(
+        "zalo",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const update = unwrapZaloUpdate(body.payload);
       const eventName =
         typeof update.event_name === "string"
           ? update.event_name.slice(0, 128)

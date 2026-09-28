@@ -24,6 +24,7 @@ import type {
 } from "./channels.ts";
 import {
   isAllowedId,
+  parseChannelWebhookBody,
   parseQuestionButtonId,
   questionButtonId,
 } from "./channels.ts";
@@ -168,7 +169,14 @@ export function createTelegramChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const update: TelegramUpdate = JSON.parse(req.body);
+      const body = parseChannelWebhookBody<TelegramUpdate>(
+        "telegram",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const update = body.payload;
       if (update.callback_query) {
         return parseQuestionClick(update.callback_query, update.update_id);
       }

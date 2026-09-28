@@ -13,7 +13,7 @@ import {
   type ChannelImage,
   type ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
@@ -228,7 +228,14 @@ export function createDiscordChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const payload = JSON.parse(req.body) as DiscordInteractionPayload;
+      const body = parseChannelWebhookBody<DiscordInteractionPayload>(
+        "discord",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const payload = body.payload;
       const gatewayEvent = parseForwardedGatewayEvent(
         discord,
         payload as DiscordForwardedEventPayload,

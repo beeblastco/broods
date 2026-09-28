@@ -19,6 +19,7 @@ import {
   channelAttachmentBytes,
   channelAttachmentName,
   isAllowedId,
+  parseChannelWebhookBody,
   type ChannelActions,
   type ChannelAdapter,
   type ChannelFile,
@@ -225,7 +226,14 @@ export function createMatrixChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const payload = JSON.parse(req.body) as MatrixForwardedEvent;
+      const body = parseChannelWebhookBody<MatrixForwardedEvent>(
+        "matrix",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const payload = body.payload;
       if (
         payload.type !== "MATRIX_ROOM_EVENT" ||
         payload.event?.type !== "m.room.message"

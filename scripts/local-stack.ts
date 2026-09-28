@@ -274,7 +274,9 @@ async function up(fresh: boolean, perfMode: boolean): Promise<void> {
   printPerfBreakdown(perf, totalMs);
   console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
   console.log(`  gateway   ${gatewayUrl}`);
-  console.log(`  admin     Bearer ${state.secrets.adminAccount}`);
+  console.log(
+    `  admin     read secrets.adminAccount in ${join(instanceDir(state.instanceId), "state.json")}`,
+  );
   console.log(`  logs      ${join(instanceDir(state.instanceId), "logs")}`);
   console.log(
     `  perf      ${join(instanceDir(state.instanceId), "perf.jsonl")}`,
@@ -698,11 +700,11 @@ async function createAccount(
     },
     body: JSON.stringify({ username: username }),
   });
-  const body = (await response.json()) as { secret?: string };
+  const body = (await response.json()) as { error?: string; secret?: string };
   assertStep(
     "create account (core, admin bearer)",
     response.status === 201 && typeof body.secret === "string",
-    `status ${response.status}: ${JSON.stringify(body)}`,
+    `status ${response.status}: ${body.error ?? "no account secret in response"}`,
   );
 
   return body.secret;
