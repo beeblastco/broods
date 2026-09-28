@@ -651,7 +651,14 @@ export async function workspaceMediaBytes(
     : await readS3Bytes(target.bucket, key);
 }
 
+// Bash tool result text: stdout then stderr, with a trailing `[exit code N]`
+// (or `[timed out]`) when the run failed so a silent failure never reads as success.
 export function formatRunText(result: SandboxRunResult): string {
+  const output = `${result.stdout}${result.stderr}`;
+  const failed = !result.ok || (result.exitCode ?? 0) !== 0;
+  if (!failed) {
+    return output;
+  }
   if (!result.ok) {
     const error =
       `${result.stderr}${result.stdout}`.trim() || "sandbox command failed";
@@ -659,8 +666,14 @@ export function formatRunText(result: SandboxRunResult): string {
       throw new Error(error);
     }
   }
+  const status = result.timedOut
+    ? "timed out"
+    : result.exitCode === null
+      ? "command failed"
+      : `exit code ${result.exitCode}`;
+  const separator = output === "" || output.endsWith("\n") ? "" : "\n";
 
-  return `${result.stdout}${result.stderr}`;
+  return `${output}${separator}[${status}]`;
 }
 
 export function runtimeDescription(

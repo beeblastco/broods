@@ -408,6 +408,39 @@ describe("sandbox tool set", () => {
     });
   });
 
+  it.each([
+    [{ exit_code: 1, stdout: "", stderr: "" }, "[exit code 1]"],
+    [
+      { exit_code: 2, stdout: "", stderr: "ls: nope" },
+      "ls: nope\n[exit code 2]",
+    ],
+    [
+      { exit_code: 124, timed_out: true, stdout: "partial\n", stderr: "" },
+      "partial\n[timed out]",
+    ],
+  ])("bash reports a failed run %#", async (response, expected) => {
+    microvmFetchMock.mockImplementationOnce(microvmFetchResponse);
+    microvmFetchMock.mockImplementationOnce(
+      async (_url: string, init: { body: string }) => {
+        const payload = JSON.parse(init.body);
+
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            runtime: payload.runtime,
+            timed_out: false,
+            duration_ms: 8,
+            ...response,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
+    const bash = await tool("bash", workspaceCtx());
+
+    expect(await bash.execute({ command: "test -f missing" })).toBe(expected);
+  });
+
   it("bash pty:true attaches the command to a real guest pseudo-terminal", async () => {
     const bash = await tool("bash", workspaceCtx());
     await bash.execute({ command: "echo hi", pty: true });
