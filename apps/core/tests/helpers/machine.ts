@@ -164,6 +164,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
               stageSlug: "development",
             }
           : null,
+      touchLastUsed: async (): Promise<void> => {},
     },
     machineConnections: {
       connected: async (connection: MachineConnectionRecord): Promise<void> => {
