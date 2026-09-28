@@ -75,7 +75,10 @@ export class FrameQueue {
   }
 }
 
-/** Parses one NDJSON line into a frame; null for blank or non-protocol lines, which callers skip. */
+/**
+ * Parses one NDJSON line into a frame; null for blank, non-JSON or unknown-`t`
+ * lines, which callers skip. Only `t` is checked; the other fields are trusted.
+ */
 export function parseRunnerFrame(line: string): RunnerFrame | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
