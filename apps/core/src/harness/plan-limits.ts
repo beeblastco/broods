@@ -1,5 +1,5 @@
 /**
- * Plan enforcement in core: the monthly compute budget and burst protection.
+ * Plan enforcement in core: the monthly resource caps and burst protection.
  * Every new run (API, channel message, cron fire) asks `admitRun` before it
  * touches a model or a sandbox; every sandbox launch asks
  * `assertSandboxBudget`. Usage only core sees (hosted-MCP invokes, media
@@ -40,7 +40,7 @@ export interface Admission {
   warning: string | null;
 }
 
-/** A sandbox launch refused because the budget is used up. */
+/** A sandbox launch refused because a monthly cap is used up. */
 export class BudgetExhaustedError extends Error {}
 
 /** One account's fixed one-minute window of admitted runs. */
@@ -70,7 +70,7 @@ export async function admitRun(
 ): Promise<Admission> {
   const status = await budgetFor(accountId);
   if (!status?.enforced) return { refusal: null, warning: null };
-  if (status.usedEur >= status.limitEur) {
+  if (status.usedPercent >= 100) {
     return { refusal: budgetRefusal(status), warning: null };
   }
   const now = Date.now();
@@ -101,7 +101,7 @@ export async function admitRun(
 /** Throws `BudgetExhaustedError` when the account may not start compute. */
 export async function assertSandboxBudget(accountId: string): Promise<void> {
   const status = await budgetFor(accountId);
-  if (status?.enforced && status.usedEur >= status.limitEur) {
+  if (status?.enforced && status.usedPercent >= 100) {
     throw new BudgetExhaustedError(budgetRefusal(status).message);
   }
 }
@@ -166,7 +166,7 @@ async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
 function budgetRefusal(status: BudgetStatus): PlanRefusal {
   return {
     kind: "budget",
-    message: `This account has used its monthly compute allowance for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
+    message: `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
   };
 }
 
@@ -174,7 +174,7 @@ async function claimWarning(
   accountId: string,
   status: BudgetStatus,
 ): Promise<string | null> {
-  if (status.warned || status.usedEur < status.limitEur * BUDGET_WARNING_RATIO)
+  if (status.warned || status.usedPercent < BUDGET_WARNING_RATIO * 100)
     return null;
   // Whoever loses the race sees `warned` on its next read.
   status.warned = true;
@@ -191,7 +191,7 @@ async function claimWarning(
     });
   if (!claimed) return null;
 
-  return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of its monthly compute allowance on the ${status.plan} plan. Runs stop when it is used up.`;
+  return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }
 
 function currentWindow(accountId: string, now: number): AccountWindow {
