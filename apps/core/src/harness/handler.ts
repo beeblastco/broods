@@ -628,6 +628,10 @@ async function continueAfterAsyncToolSettlement(
     agentId: scope.agentId,
     runId: createRunId(),
     agentConfig: target.agentConfig,
+    // Without the deployment scope the resumed run never reaches Tracing.
+    endpointId: target.endpointId,
+    projectSlug: target.projectSlug,
+    stageSlug: target.stageSlug,
     eventId: asyncToolContinuationEventId(settled.parentEventId),
     ...(settled.delivery?.kind === "async"
       ? { asyncResultEventId: settled.parentEventId }
