@@ -28,6 +28,9 @@ on:
         required: false
         type: string
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   dispatch-main:
     if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}

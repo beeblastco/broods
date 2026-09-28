@@ -405,7 +405,7 @@ class IsolateWorker {
     };
     try {
       this.child.stdin.write(body);
-      while (true) {
+      for (;;) {
         if (frames.length) {
           yield frames.shift()!;
           continue;
@@ -459,7 +459,7 @@ export function shutdownIsolatePool(): void {
 }
 
 async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
-  while (true) {
+  for (;;) {
     dropDeadWorkers();
     // Tenant affinity first: that worker already holds a warm isolate for this
     // account, which is the whole point of keeping the process around.
