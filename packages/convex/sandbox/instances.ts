@@ -12,7 +12,8 @@
  *
  * Every write here also bills the running time since the last one onto the
  * account's usage meter (`model/usageMeter.ts`); `accrueRecent` does the same
- * hourly for sandboxes nothing wrote to.
+ * hourly for sandboxes nothing wrote to. `recordBurst` bills what a MicroVM
+ * used above its baseline, from the totals its guest reports.
  */
 
 import { v } from "convex/values";
@@ -26,16 +27,20 @@ import {
 } from "../_generated/server";
 import {
   addUsage,
-  SANDBOX_IDLE_BILL_MS,
+  burstUsage,
   sandboxAccrual,
+  sandboxIdleMs,
   sandboxLaunchUsage,
 } from "../model/usageMeter";
 import { getActiveAccountForUser } from "../org/orgs";
+import { SANDBOX_RESERVATION_TTL_SECONDS } from "../runtime";
 import { sandboxInstancesFields } from "../schema";
 import { recordRuntimeAction } from "./auditEvents";
 
-// Covers two missed hourly accruals before a sandbox's unbilled time is lost.
-const ACCRUE_LOOKBACK_MS = 2 * 60 * 60 * 1000;
+// Every sandbox the sweeper has not released yet, suspended ones included
+// since their snapshot is still stored, plus two missed hourly accruals.
+const ACCRUE_LOOKBACK_MS =
+  SANDBOX_RESERVATION_TTL_SECONDS * 1000 + 2 * 60 * 60 * 1000;
 // Each instance also reads and writes its account's meter row; 100 keeps a
 // page far under Convex's per-transaction read limits.
 const ACCRUE_PAGE_SIZE = 100;
@@ -160,6 +165,40 @@ export const remove = internalMutation({
 });
 
 /**
+ * Bill a machine's burst. Core forwards the running totals of vCPU and memory
+ * above the baseline its guest reports, after an exec that grew them, and the
+ * meter gets the growth since the last report. No-op for an unknown machine or
+ * another account's; a machine on the account's own credentials is tracked
+ * but never billed.
+ */
+export const recordBurst = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    externalId: v.string(),
+    vcpuSeconds: v.number(),
+    gbSeconds: v.number(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_externalId", (q) => q.eq("externalId", args.externalId))
+      .first();
+    if (!instance || instance.accountId !== args.accountId) return false;
+    const burst = burstUsage(instance.burstBilled, {
+      vcpuSeconds: args.vcpuSeconds,
+      gbSeconds: args.gbSeconds,
+    });
+    if (instance.ownCredentials !== true) {
+      await addUsage(ctx, instance.accountId, burst.usage, Date.now());
+    }
+    await ctx.db.patch(instance._id, { burstBilled: burst.billed });
+
+    return true;
+  },
+});
+
+/**
  * Records a lifecycle transition (suspend/resume) for an instance, stamping the
  * matching timestamp. No-op when the key is unknown or belongs to another
  * account. Called by broods after the provider lifecycle call succeeds.
@@ -228,6 +267,7 @@ export const setStatus = internalMutation({
  * @param snapshotId the snapshot/image the instance launched from, when pinned.
  * @param logStream the provider-side guest log stream, known only at launch.
  * @param ephemeral marks a per-call instance the dashboard must not try to control.
+ * @param idleTimeoutSeconds how long it idles before the provider suspends it.
  */
 export const upsert = internalMutation({
   args: {
@@ -254,6 +294,7 @@ export const upsert = internalMutation({
     logStream: sandboxInstancesFields.logStream,
     ephemeral: sandboxInstancesFields.ephemeral,
     ownCredentials: sandboxInstancesFields.ownCredentials,
+    idleTimeoutSeconds: sandboxInstancesFields.idleTimeoutSeconds,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -278,7 +319,7 @@ export const upsert = internalMutation({
       if (
         replaced ||
         existing.status === "suspended" ||
-        now > existing.lastUsedAt + SANDBOX_IDLE_BILL_MS
+        now > existing.lastUsedAt + sandboxIdleMs(existing)
       ) {
         await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
       }
@@ -291,6 +332,8 @@ export const upsert = internalMutation({
         ...(replaced || !existing.createdByTaskId
           ? { createdByTaskId: args.createdByTaskId }
           : {}),
+        // A new machine's burst totals start again at zero.
+        ...(replaced ? { burstBilled: undefined } : {}),
       };
       await ctx.db.patch(existing._id, patch);
       const action = replaced
@@ -345,7 +388,7 @@ export const accrueRecent = internalMutation({
     const page = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_lastUsedAt", (q) =>
-        q.gte("lastUsedAt", now - SANDBOX_IDLE_BILL_MS - ACCRUE_LOOKBACK_MS),
+        q.gte("lastUsedAt", now - ACCRUE_LOOKBACK_MS),
       )
       .paginate({ numItems: ACCRUE_PAGE_SIZE, cursor: args.cursor ?? null });
     for (const instance of page.page) {
@@ -401,6 +444,7 @@ function upsertRefreshFields(
         | "logStream"
         | "ephemeral"
         | "ownCredentials"
+        | "idleTimeoutSeconds"
       >
     >,
   now: number,
@@ -426,6 +470,7 @@ function upsertRefreshFields(
       | "logStream"
       | "ephemeral"
       | "ownCredentials"
+      | "idleTimeoutSeconds"
       | "errorMessage"
     >
   > {
@@ -456,5 +501,8 @@ function upsertRefreshFields(
     // Unset rather than kept: a config moved back to platform credentials is
     // metered again from its next write.
     ownCredentials: args.ownCredentials === true ? true : undefined,
+    ...(args.idleTimeoutSeconds !== undefined
+      ? { idleTimeoutSeconds: args.idleTimeoutSeconds }
+      : {}),
   };
 }

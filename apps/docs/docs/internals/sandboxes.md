@@ -58,7 +58,7 @@ A reserved VM's endpoint is cached for 3 minutes, so a repeat call skips the res
 
 `RunMicrovm` gets `maximumDurationInSeconds` of the call timeout plus 60 s for an ephemeral VM, and `min(lifecycle.maxLifetimeSeconds, 28800)` for a persistent one. A persistent VM also gets an `idlePolicy`, with `maxIdleDurationSeconds` from `lifecycle.idleTimeoutSeconds`, `suspendedDurationSeconds` from `maxLifetimeSeconds` or 7 days, and auto-resume on.
 
-The exec response is `{ ok, runtime, exit_code, timed_out, duration_ms, stdout, stderr }`.
+The exec response is `{ ok, runtime, exit_code, timed_out, duration_ms, stdout, stderr, cpu_usec, burst }`. `burst` is the VM's vCPU-seconds and GiB-seconds above its baseline since boot, which the image samples once a second from `/proc/stat` and `/proc/meminfo`. Core forwards it to `sandbox.instances.recordBurst` whenever it grows, and the meter bills the growth at the baseline rates, since Lambda bills burst for the active time above the baseline.
 
 ### Lifecycle hooks
 

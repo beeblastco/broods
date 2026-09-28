@@ -27,9 +27,11 @@ import {
 } from "@aws-sdk/client-lambda-microvms";
 import { createHmac } from "node:crypto";
 import {
+  recordSandboxBurst,
   removeSandboxInstance,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
@@ -149,6 +151,19 @@ const mountCredentialRefreshes = new Map<string, { expiresAt: number }>();
 // because an executor is constructed per request, and dropped again on terminate.
 const authTokens = new Map<string, { token: string; expiresAt: number }>();
 
+// Burst totals each MicroVM last reported, so an exec that did not grow them
+// costs no Convex write. Module scope and capped like the token cache.
+const burstReported = new Map<
+  string,
+  { vcpuSeconds: number; gbSeconds: number; expiresAt: number }
+>();
+// Growth below this is left for a later report; the totals only grow.
+const BURST_REPORT_MIN_GROWTH = 0.01;
+const BURST_REPORT_TTL_MS = 24 * 60 * 60 * 1000;
+// Each MicroVM's dashboard-row writes (upsert, burst, remove) in the order they
+// were queued, so a burst write never beats the row it bills or its removal.
+const mirrorWrites = new Map<string, Promise<void>>();
+
 // Reserved endpoints, keyed by reservation key. Same module-scope reasoning as the
 // token cache: an executor is constructed per request, so an instance field never hits.
 const reservedEndpoints = new Map<
@@ -185,6 +200,8 @@ interface SandboxResponse {
   stderr: string;
   truncated?: boolean;
   cpu_usec?: number;
+  /** The VM's vCPU-s and GB-s above its baseline since boot. */
+  burst?: { vcpu_seconds: number; gb_seconds: number };
 }
 
 export interface MicrovmHarnessReservation {
@@ -192,10 +209,6 @@ export interface MicrovmHarnessReservation {
   readonly endpoint: string;
   // True only when this call created the VM, so the caller owns its teardown.
   readonly isFirstCreate: boolean;
-}
-
-interface AcquiredMicrovm extends MicrovmHarnessReservation {
-  readonly ephemeralMirror?: Promise<void>;
 }
 
 // A reservation whose VM cannot be reconnected because it reached a terminal state.
@@ -356,8 +369,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       const response = await this.#execReserved(cached, request, payload);
       if (response) return sandboxResult(request, response, startedAt);
     }
-    const { microvmId, endpoint, ephemeralMirror, isFirstCreate } =
-      await this.#acquire(request);
+    const { microvmId, endpoint, isFirstCreate } = await this.#acquire(request);
 
     try {
       if (persistent) {
@@ -390,9 +402,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       // fire the terminate and drop the VM's dashboard row without awaiting either.
       if (!persistent) {
         void this.#terminate(microvmId);
-        // Preserve upsert → remove ordering without putting either Convex write on
-        // the tool-call clock; otherwise a slow upsert can recreate a deleted row.
-        void ephemeralMirror?.then(() => this.#unmirror(microvmId));
+        // Queued after the upsert and burst writes, off the tool-call clock;
+        // otherwise a slow upsert can recreate a deleted row.
+        void queueMirrorWrite(microvmId, () => this.#unmirror(microvmId));
       }
     }
   }
@@ -638,25 +650,28 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { microvmId: cached.microvmId, endpoint: cached.endpoint };
   }
 
-  async #acquire(request: SandboxRunRequest): Promise<AcquiredMicrovm> {
+  async #acquire(
+    request: SandboxRunRequest,
+  ): Promise<MicrovmHarnessReservation> {
     if (!this.#persistent(request)) {
       const created = await this.#runMicrovm(request);
       // An ephemeral VM is still real, chargeable compute for the length of the call,
       // so it shows in the dashboard too, keyed by microvmId (it has no reservation)
       // and dropped again by run()'s teardown.
-      const ephemeralMirror = upsertSandboxInstance(
-        this.#config.controlPlane,
-        PROVIDER,
-        created.microvmId,
-        created.microvmId,
-        request.metadata,
-        { ephemeral: true, logStream: created.logStream },
+      void queueMirrorWrite(created.microvmId, () =>
+        upsertSandboxInstance(
+          this.#config.controlPlane,
+          PROVIDER,
+          created.microvmId,
+          created.microvmId,
+          request.metadata,
+          { ephemeral: true, logStream: created.logStream },
+        ),
       );
 
       return {
         microvmId: created.microvmId,
         endpoint: created.endpoint,
-        ephemeralMirror: ephemeralMirror,
         isFirstCreate: true,
       };
     }
@@ -711,13 +726,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
-        void upsertSandboxInstance(
-          this.#config.controlPlane,
-          PROVIDER,
-          key,
-          created.microvmId,
-          request.metadata,
-          { logStream: created.logStream },
+        void queueMirrorWrite(created.microvmId, () =>
+          upsertSandboxInstance(
+            this.#config.controlPlane,
+            PROVIDER,
+            key,
+            created.microvmId,
+            request.metadata,
+            { logStream: created.logStream },
+          ),
         );
 
         return { ...this.#cacheTarget(key, created), isFirstCreate: true };
@@ -1061,7 +1078,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     let wait = WARMUP_RETRY_MIN_DELAY_MS;
     for (;;) {
       const warming = await this.#postExec(url, token, payload);
-      if (!warming.retry) return warming.response;
+      if (!warming.retry) {
+        this.#reportBurst(microvmId, warming.response.burst);
+
+        return warming.response;
+      }
       if (Date.now() >= deadline) {
         throw new MicrovmNotReadyError(
           `MicroVM ${microvmId} did not become ready within ${budgetMs}ms (last status ${warming.status})`,
@@ -1070,6 +1091,43 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       await delay(wait);
       wait = Math.min(wait * 2, WARMUP_RETRY_MAX_DELAY_MS);
     }
+  }
+
+  // Forward the guest's burst totals in the background once they grow past the
+  // last billed report. Convex bills only growth, so a repeat is harmless, and a
+  // report is cached only once it billed a row, so a failed write or one that
+  // beat the row is sent again on the next exec. Lower totals are a fresh VM.
+  #reportBurst(microvmId: string, burst: SandboxResponse["burst"]): void {
+    const accountId = this.#config.controlPlane?.accountId;
+    if (!burst || !accountId) return;
+    const totals = {
+      vcpuSeconds: burst.vcpu_seconds,
+      gbSeconds: burst.gb_seconds,
+    };
+    const last = burstReported.get(microvmId);
+    const since =
+      last &&
+      totals.vcpuSeconds >= last.vcpuSeconds &&
+      totals.gbSeconds >= last.gbSeconds
+        ? last
+        : { vcpuSeconds: 0, gbSeconds: 0 };
+    if (
+      totals.vcpuSeconds - since.vcpuSeconds < BURST_REPORT_MIN_GROWTH &&
+      totals.gbSeconds - since.gbSeconds < BURST_REPORT_MIN_GROWTH
+    ) {
+      return;
+    }
+    waitUntil(
+      queueMirrorWrite(microvmId, async () => {
+        if (!(await recordSandboxBurst(accountId, microvmId, totals))) return;
+        const now = Date.now();
+        evictToCap(burstReported, now);
+        burstReported.set(microvmId, {
+          ...totals,
+          expiresAt: now + BURST_REPORT_TTL_MS,
+        });
+      }),
+    );
   }
 
   async #postExec(
@@ -1490,6 +1548,26 @@ function microvmImageScope(arn: string): string | undefined {
 
 function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
+}
+
+// Run `write` after every earlier write queued for this MicroVM. A failed write
+// never blocks the ones behind it.
+function queueMirrorWrite(
+  microvmId: string,
+  write: () => Promise<unknown>,
+): Promise<void> {
+  const queued = (mirrorWrites.get(microvmId) ?? Promise.resolve())
+    .then(write)
+    .then(
+      () => {},
+      () => {},
+    );
+  mirrorWrites.set(microvmId, queued);
+  void queued.then(() => {
+    if (mirrorWrites.get(microvmId) === queued) mirrorWrites.delete(microvmId);
+  });
+
+  return queued;
 }
 
 function sandboxResult(

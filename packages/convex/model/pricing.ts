@@ -32,6 +32,9 @@ export const UNIT_RATES_EUR: UsageQuantities = {
   // Same source, snapshot write $0.0040636422/GB + read $0.0016403088/GB:
   // one suspend and one resume.
   sandboxSnapshotGb: 0.005,
+  // AWS Lambda MicroVMs snapshot storage, $0.08/GB-month (us-east-1 Arm, the
+  // only published example), billed while a MicroVM is suspended.
+  sandboxSnapshotGbMonths: 0.075,
   // AWS Lambda eu-west-1, Arm $0.0000133334/GB-s, published 2026-09-19. The
   // free tier is shared across the AWS organization, so it is ignored.
   hostedMcpGbSeconds: 0.000012,
@@ -67,6 +70,7 @@ export const EMPTY_USAGE: UsageQuantities = {
   sandboxVcpuSeconds: 0,
   sandboxGbSeconds: 0,
   sandboxSnapshotGb: 0,
+  sandboxSnapshotGbMonths: 0,
   hostedMcpGbSeconds: 0,
   hostedMcpRequests: 0,
   storageGbMonths: 0,
@@ -82,6 +86,7 @@ export const USAGE_CATEGORY: Record<keyof UsageQuantities, UsageCategory> = {
   sandboxVcpuSeconds: "sandboxes",
   sandboxGbSeconds: "sandboxes",
   sandboxSnapshotGb: "sandboxes",
+  sandboxSnapshotGbMonths: "sandboxes",
   hostedMcpGbSeconds: "hostedMcp",
   hostedMcpRequests: "hostedMcp",
   storageGbMonths: "storage",

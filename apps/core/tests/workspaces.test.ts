@@ -272,6 +272,7 @@ describe("resolveAgentRuntime", () => {
             specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
             snapshotId: "img_primary",
             permissionMode: "ask",
+            idleTimeoutSeconds: 900,
           },
         },
       },
