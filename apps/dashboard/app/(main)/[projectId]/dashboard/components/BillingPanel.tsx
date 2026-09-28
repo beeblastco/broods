@@ -4,13 +4,11 @@ import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/app/components/ui/select";
-import { Skeleton } from "@/app/components/ui/skeleton";
+  billingReset,
+  type BudgetUsage,
+  formatDay,
+  formatPercent,
+} from "@/app/lib/allowance";
 import { toErrorMessage } from "@/app/lib/errors";
 import type { PlanTier } from "@/app/lib/pricing";
 import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
@@ -18,104 +16,13 @@ import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { ArrowUpRight, CreditCard } from "lucide-react";
-import { useMemo, useState } from "react";
-import { UsageChart } from "./UsageChart";
-
-const DAY_SECONDS = 24 * 60 * 60;
-
-// Display units for each amount unit, largest first, with how many make one
-// of the amount's own unit. formatAmount picks the largest that reads >= 1.
-const DISPLAY_UNITS: Record<
-  UsageRow["unit"],
-  Array<{ label: string; perUnit: number }>
-> = {
-  count: [{ label: "", perUnit: 1 }],
-  hours: [
-    { label: " h", perUnit: 1 },
-    { label: " min", perUnit: 60 },
-    { label: " s", perUnit: 3600 },
-  ],
-  gb: [
-    { label: " GB", perUnit: 1 },
-    { label: " MB", perUnit: 1000 },
-    { label: " KB", perUnit: 1_000_000 },
-  ],
-};
-
-// Rows of the usage table, grouped like Convex's usage page. `share` is the
-// budget group the row counts toward; ingress is free, so it has none.
-const USAGE_GROUPS: Array<{ label: string; rows: UsageRow[] }> = [
-  {
-    label: "Compute",
-    rows: [
-      {
-        key: "sandboxHours",
-        label: "Sandbox time",
-        unit: "hours",
-        share: "sandboxes",
-        color: "var(--color-usage-agent-sandbox)",
-      },
-      {
-        key: "hostedMcpCalls",
-        label: "Hosted MCP calls",
-        unit: "count",
-        share: "hostedMcp",
-        color: "var(--color-usage-mcp-sandbox)",
-      },
-    ],
-  },
-  {
-    label: "Storage",
-    rows: [
-      {
-        key: "storageGb",
-        label: "Workspaces and files",
-        unit: "gb",
-        share: "storage",
-        color: "var(--color-usage-storage)",
-      },
-    ],
-  },
-  {
-    label: "Network",
-    rows: [
-      {
-        key: "egressGb",
-        label: "Egress",
-        unit: "gb",
-        share: "egress",
-        color: "var(--color-usage-egress)",
-      },
-      {
-        key: "ingressGb",
-        label: "Ingress",
-        unit: "gb",
-        share: null,
-        color: "var(--color-usage-ingress)",
-      },
-    ],
-  },
-];
-
-const USAGE_ROWS = USAGE_GROUPS.flatMap((group) => group.rows);
+import { ArrowRight, ArrowUpRight, CreditCard } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useState } from "react";
 
 // Stripe states where a payment is owed and the portal can fix it.
 const PAYMENT_DUE_STATUSES = new Set(["past_due", "unpaid", "incomplete"]);
-
-type BudgetUsage = NonNullable<
-  FunctionReturnType<typeof api.account.budget.getForActiveOrg>
->;
-type UsageAmounts = BudgetUsage["totals"];
-
-interface UsageRow {
-  key: keyof UsageAmounts;
-  label: string;
-  unit: "hours" | "count" | "gb";
-  share: keyof BudgetUsage["categories"] | null;
-  color: string;
-}
 
 interface Notice {
   tone: "warning" | "destructive" | "info";
@@ -129,10 +36,9 @@ interface Props {
 }
 
 /**
- * Billing tab: the plan with its one action, a single notice when something
- * needs attention, then a month's usage in real units with each resource's
- * share of the allowance and a daily chart. Euro budgets never reach the
- * browser; the backend sends amounts and percentages.
+ * Billing tab: the plan with its one action and one bar for the closest cap,
+ * then a single notice when something needs attention. The per-resource
+ * allowance lives on the Usage tab, which the bar links to.
  */
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -197,37 +103,40 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   return (
     <div className="grid gap-8">
       <Section title="Plan">
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-3">
-          <PlanSummary
-            budget={budget}
-            plan={plan}
-            status={status}
-            periodEnd={billingInfo?.currentPeriodEnd}
-            cancelAtPeriodEnd={billingInfo?.cancelAtPeriodEnd === true}
-          />
-          {hasSubscription && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="cursor-pointer"
-              onClick={handlePortal}
-              disabled={portalLoading}
-            >
-              <CreditCard className="size-3.5" />
-              {portalLoading ? "Loading…" : "Manage subscription"}
-            </Button>
-          )}
-          {canUpgrade && (
-            <Button
-              size="sm"
-              className="cursor-pointer"
-              onClick={handleUpgrade}
-              disabled={checkoutLoading}
-            >
-              <ArrowUpRight className="size-3.5" />
-              {checkoutLoading ? "Loading…" : "Upgrade to Pro"}
-            </Button>
-          )}
+        <div className="grid gap-4 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <PlanSummary
+              budget={budget}
+              plan={plan}
+              status={status}
+              periodEnd={billingInfo?.currentPeriodEnd}
+              cancelAtPeriodEnd={billingInfo?.cancelAtPeriodEnd === true}
+            />
+            {hasSubscription && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="cursor-pointer"
+                onClick={handlePortal}
+                disabled={portalLoading}
+              >
+                <CreditCard className="size-3.5" />
+                {portalLoading ? "Loading…" : "Manage subscription"}
+              </Button>
+            )}
+            {canUpgrade && (
+              <Button
+                size="sm"
+                className="cursor-pointer"
+                onClick={handleUpgrade}
+                disabled={checkoutLoading}
+              >
+                <ArrowUpRight className="size-3.5" />
+                {checkoutLoading ? "Loading…" : "Upgrade to Pro"}
+              </Button>
+            )}
+          </div>
+          <AllowanceBar budget={budget} projectId={projectId} />
         </div>
         {actionError && (
           <p className="text-sm text-destructive">{actionError}</p>
@@ -241,93 +150,50 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
           onAction={notice.action === "upgrade" ? handleUpgrade : handlePortal}
         />
       )}
-
-      <MonthUsage />
     </div>
   );
 }
 
-// One resource's usage per day of the month, picked with the toggle above it.
-function DailyUsage({
+// The closest cap's share as one bar, linking to the full allowance. Nothing
+// while it loads or on an install with no caps.
+function AllowanceBar({
   budget,
+  projectId,
 }: {
   budget: BudgetUsage | null | undefined;
+  projectId: Id<"projects">;
 }): React.JSX.Element | null {
-  const [row, setRow] = useState<UsageRow>(USAGE_ROWS[0]);
-  // UsageChart eases to each new rows array, so only rebuild on real change.
-  const daily = useMemo(
-    () => (budget ? dailySeries(budget, row.key) : null),
-    [budget, row.key],
-  );
-  if (!budget || !daily) return null;
-  // One unit for the whole axis, picked from the tallest day.
-  const axisMax = Math.max(0, ...daily.rows.map(([value]) => value ?? 0));
+  const searchParams = useSearchParams();
+  if (budget?.usedPercent == null) return null;
+  const used = budget.usedPercent;
 
   return (
-    <Section title="Daily usage">
-      <div className="flex w-fit flex-wrap items-center gap-1 rounded-md border border-border bg-card p-1">
-        {USAGE_ROWS.map((option) => (
-          <Button
-            key={option.key}
-            size="xs"
-            variant="nav"
-            className="cursor-pointer"
-            aria-pressed={row.key === option.key}
-            data-active={row.key === option.key}
-            onClick={() => setRow(option)}
-          >
-            {option.label}
-          </Button>
-        ))}
+    <div className="flex items-center gap-3">
+      <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn(
+            "h-full w-(--bar-width) rounded-full",
+            budget.level === "ok" && "bg-foreground",
+            budget.level === "warning" && "bg-warning",
+            budget.level === "exhausted" && "bg-destructive",
+          )}
+          style={{ "--bar-width": `${Math.min(used, 100)}%` }}
+        />
       </div>
-      <div className="rounded-lg border border-border bg-card p-3">
-        {budget.days.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No daily usage recorded for this month.
-          </p>
-        ) : (
-          <UsageChart
-            kind="bars"
-            height={160}
-            series={[{ key: row.key, label: row.label, color: row.color }]}
-            rows={daily.rows}
-            bucketStarts={daily.bucketStarts}
-            binSeconds={DAY_SECONDS}
-            selected={null}
-            formatAxis={(value) => formatAmount(value, row.unit, axisMax)}
-            formatValue={(value) => formatAmount(value, row.unit)}
-          />
-        )}
-      </div>
-    </Section>
-  );
-}
-
-// The usage table and daily chart for the picked month. Holds the last month
-// while another loads, so both stay mounted and ease to it instead of
-// dropping to a skeleton first.
-function MonthUsage(): React.JSX.Element {
-  const [month, setMonth] = useState<string | undefined>(undefined);
-  const usage = useQuery(api.account.budget.getForActiveOrg, { month: month });
-  const [held, setHeld] = useState<BudgetUsage | null | undefined>(undefined);
-  if (usage !== undefined && usage !== held) setHeld(usage);
-  const shown = usage ?? held;
-
-  // The current month leads `months` and is the plan's own query: leave
-  // `month` unset to share it.
-  function handleMonthChange(value: string): void {
-    setMonth(value === shown?.months[0] ? undefined : value);
-  }
-
-  return (
-    <>
-      <UsageSummary
-        budget={shown}
-        month={month}
-        onMonthChange={handleMonthChange}
-      />
-      <DailyUsage budget={shown} />
-    </>
+      <span className="text-xs text-muted-foreground tabular-nums">
+        {formatPercent(used)} used
+      </span>
+      <Button
+        nativeButton={false}
+        render={<Link href={usageHref(projectId, searchParams)} />}
+        size="xs"
+        variant="ghost"
+        className="cursor-pointer"
+      >
+        View usage
+        <ArrowRight data-icon="inline-end" />
+      </Button>
+    </div>
   );
 }
 
@@ -418,216 +284,6 @@ function PlanSummary({
   );
 }
 
-// The month's allowance used, a month picker, and one row per resource.
-// `month` is the picked one, shown while it loads; unset is the current month.
-function UsageSummary({
-  budget,
-  month,
-  onMonthChange,
-}: {
-  budget: BudgetUsage | null | undefined;
-  month: string | undefined;
-  onMonthChange: (month: string) => void;
-}): React.JSX.Element {
-  return (
-    <Section title="Usage">
-      {budget === undefined ? (
-        <Skeleton className="h-72 rounded-lg" />
-      ) : budget === null ? (
-        <p className="text-sm text-muted-foreground">
-          No account in this organization yet.
-        </p>
-      ) : (
-        <>
-          <div className="flex items-center justify-between gap-4">
-            <span
-              className={cn(
-                "text-sm tabular-nums",
-                budget.level === "warning" && "text-warning",
-                budget.level === "exhausted" && "text-destructive",
-                budget.level === "ok" && "text-foreground",
-              )}
-            >
-              {budget.usedPercent === null
-                ? "No limit"
-                : `${formatPercent(budget.usedPercent)} of monthly allowance`}
-            </span>
-            <Select
-              items={budget.months.map((option) => ({
-                label: monthLabel(option),
-                value: option,
-              }))}
-              value={month ?? budget.month}
-              onValueChange={(value) => {
-                if (value) onMonthChange(value);
-              }}
-            >
-              <SelectTrigger size="sm" className="cursor-pointer">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {budget.months.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {monthLabel(option)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {budget.usedPercent !== null && (
-            <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full w-(--bar-width) bg-foreground"
-                style={{
-                  "--bar-width": `${Math.min(budget.usedPercent, 100)}%`,
-                }}
-              />
-            </div>
-          )}
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
-            <div className="grid grid-cols-6 items-center gap-4 border-b border-border px-4 py-2 text-xs text-muted-foreground">
-              <span className="col-span-2">Resource</span>
-              <span className="text-right">Used</span>
-              <span className="col-span-2">
-                {budget.enforced ? "Share of allowance" : "Share of usage"}
-              </span>
-            </div>
-            {USAGE_GROUPS.map((group) => (
-              <div key={group.label}>
-                <div className="border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
-                  {group.label}
-                </div>
-                {group.rows.map((row) => (
-                  <UsageTableRow key={row.key} budget={budget} row={row} />
-                ))}
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </Section>
-  );
-}
-
-function UsageTableRow({
-  budget,
-  row,
-}: {
-  budget: BudgetUsage;
-  row: UsageRow;
-}): React.JSX.Element {
-  const amount = budget.totals[row.key];
-  const share = row.share === null ? null : budget.categories[row.share];
-
-  return (
-    <div className="grid grid-cols-6 items-center gap-4 border-b border-border px-4 py-2.5 last:border-b-0">
-      <span className="col-span-2 text-sm text-foreground">{row.label}</span>
-      <span className="text-right text-sm tabular-nums text-foreground">
-        {formatAmount(amount, row.unit)}
-      </span>
-      {share === null ? (
-        <span className="col-span-3 text-xs text-muted-foreground">Free</span>
-      ) : (
-        <>
-          {amount === null ? (
-            <span className="col-span-2" />
-          ) : (
-            <div className="col-span-2 flex h-1.5 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full w-(--bar-width) bg-foreground"
-                style={{ "--bar-width": `${Math.min(share, 100)}%` }}
-              />
-            </div>
-          )}
-          <span className="text-right text-sm tabular-nums text-muted-foreground">
-            {amount === null ? "–" : formatPercent(share)}
-          </span>
-        </>
-      )}
-    </div>
-  );
-}
-
-// Calendar month "YYYY-MM" as the UTC day it resets on.
-function billingReset(month: string): string {
-  const [year, monthNumber] = month.split("-").map(Number);
-
-  return formatDay(Date.UTC(year, monthNumber, 1));
-}
-
-// One resource over every day of the month, zero where nothing was used.
-// A day after today, and a storage day without a snapshot, has no value yet:
-// it is null and its bar a gap, so it never reads as 0.
-function dailySeries(
-  budget: BudgetUsage,
-  key: UsageRow["key"],
-): { bucketStarts: number[]; rows: Array<Array<number | null>> } {
-  const [year, monthNumber] = budget.month.split("-").map(Number);
-  const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-  const byDay = new Map(budget.days.map((day) => [day.day, day]));
-  const bucketStarts = Array.from({ length: dayCount }, (_, index) =>
-    Date.UTC(year, monthNumber - 1, index + 1),
-  );
-  const now = Date.now();
-  const rows = bucketStarts.map((start): [number | null] => {
-    const day = byDay.get(new Date(start).toISOString().slice(0, 10));
-    if (!day) return [key === "storageGb" || start > now ? null : 0];
-
-    return [day[key]];
-  });
-
-  return { bucketStarts: bucketStarts, rows: rows };
-}
-
-// An amount in the largest display unit where `scaleBy` reads >= 1: the value
-// itself in the table, the series max on a chart axis so ticks share a unit.
-// A nonzero amount too small to show reads "<0.01"; null reads "–".
-function formatAmount(
-  value: number | null,
-  unit: UsageRow["unit"],
-  scaleBy: number | null = value,
-): string {
-  if (value === null) return "–";
-  const units = DISPLAY_UNITS[unit];
-  const shown =
-    units.find(({ perUnit }) => (scaleBy ?? 0) * perUnit >= 1) ??
-    units[scaleBy ? units.length - 1 : 0];
-  const scaled = value * shown.perUnit;
-  if (scaled > 0 && scaled < 0.01) return `<0.01${shown.label}`;
-
-  return `${formatDecimal(scaled)}${shown.label}`;
-}
-
-function formatDay(epochMs: number): string {
-  return new Date(epochMs).toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-function formatDecimal(value: number): string {
-  return value.toLocaleString([], {
-    maximumFractionDigits: value < 10 ? 2 : 1,
-  });
-}
-
-function formatPercent(percent: number): string {
-  if (percent > 0 && percent < 1) return "<1%";
-
-  return `${Math.round(percent)}%`;
-}
-
-function monthLabel(month: string): string {
-  const [year, monthNumber] = month.split("-").map(Number);
-
-  return new Date(Date.UTC(year, monthNumber - 1, 1)).toLocaleDateString([], {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
 // The one notice worth showing, most urgent first.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
@@ -689,4 +345,15 @@ function planDetail(
   }
 
   return budget ? `Resets ${billingReset(budget.month)}` : null;
+}
+
+// The Usage tab, keeping the other params (the stage) the page carries.
+function usageHref(
+  projectId: Id<"projects">,
+  searchParams: URLSearchParams,
+): string {
+  const next = new URLSearchParams(searchParams);
+  next.set("tab", "usage");
+
+  return `/${projectId}/dashboard?${next.toString()}`;
 }

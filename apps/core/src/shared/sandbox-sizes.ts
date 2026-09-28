@@ -59,6 +59,8 @@ export interface SandboxControlPlane {
   ownCredentials?: true;
   /** Idle seconds before the sweeper releases the reservation; unset keeps the 7-day default. */
   releaseAfterIdleSeconds?: number;
+  /** Idle seconds before the provider suspends it, which is how long it is billed idle. */
+  idleTimeoutSeconds?: number;
 }
 
 /**
