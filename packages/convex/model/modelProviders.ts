@@ -48,7 +48,7 @@ export const MODEL_PROVIDERS = {
   minimax: { label: "MiniMax", modelPlaceholder: "MiniMax-M2.7" },
   mistral: { label: "Mistral", modelPlaceholder: "mistral-large-latest" },
   openai: { label: "OpenAI", modelPlaceholder: "gpt-4.1-mini" },
-  perplexity: { label: "Perplexity", modelPlaceholder: "sonar-pro" },
+  perplexity: { label: "Perplexity", modelPlaceholder: "low" },
   togetherai: {
     label: "Together.ai",
     modelPlaceholder: "deepseek-ai/DeepSeek-V3",
