@@ -858,9 +858,15 @@ export async function runAgentLoop(
       (row): ChannelQuestion[] =>
         openQuestion(row, session.conversationKey)?.pending.questions ?? [],
     );
-    // The rows, not questionSummaries: an answer can settle one before the run ends.
-    if (questions.length > 0) {
-      return { waitingOn: "question", questions: questions };
+    // The rows, not questionSummaries: an answer can settle one before the run
+    // ends. A blocking question whose row could not be read still counts.
+    const unread = questionSummaries
+      .filter(
+        (summary) => rows[detachedResultIds.indexOf(summary.statusId)] === null,
+      )
+      .flatMap((summary) => summary.questions);
+    if (questions.length > 0 || unread.length > 0) {
+      return { waitingOn: "question", questions: [...questions, ...unread] };
     }
     const pending = options.pendingWork?.();
     if (pending) return { waitingOn: pending, questions: [] };
