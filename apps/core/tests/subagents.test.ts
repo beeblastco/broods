@@ -19,6 +19,7 @@ interface TestCompletion {
   status: "completed" | "failed";
   response?: unknown;
   error?: string;
+  visibleResult?: unknown;
 }
 
 // The two streamText callbacks the ephemeral test drives.
@@ -41,6 +42,7 @@ interface StreamTextStandInOptions {
 interface CoordinatorInternals {
   completions: TestCompletion[];
   pending: Map<string, Promise<void>>;
+  recorded: Set<string>;
   pendingMetadata: Map<
     string,
     Omit<TestCompletion, "status" | "response" | "error">
@@ -398,6 +400,279 @@ describe("SubagentCoordinator", () => {
     expect(messages).toHaveLength(2);
     expect(messageText(messages[0])).toContain("first result");
     expect(messageText(messages[1])).toContain("second result");
+  });
+
+  it("waits for one pending subagent, bounded by the timeout", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    let settle!: () => void;
+    internals.pending.set(
+      "subagent_1",
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    internals.pending.set("subagent_2", new Promise<void>(() => {}));
+
+    setTimeout(() => settle(), 5);
+    const settledAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000);
+    expect(Date.now() - settledAt).toBeLessThan(1_000);
+
+    const timedAt = Date.now();
+    await coordinator.waitForSettled("subagent_2", 20);
+    expect(Date.now() - timedAt).toBeLessThan(500);
+    await expect(
+      coordinator.waitForSettled("unknown", 5_000),
+    ).resolves.toBeUndefined();
+  });
+  it("stops waiting on a subagent when the parent's run is aborted", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    const abort = new AbortController();
+
+    setTimeout(() => abort.abort(), 5);
+    const startedAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000, abort.signal);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("does not inject a result the model already read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push(completion("subagent_1", "first result"));
+    internals.completions.push(completion("subagent_2", "second result"));
+
+    coordinator.markDelivered(completion("subagent_1", "").eventId);
+    coordinator.confirmDelivered();
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messageText(messages[0])).toContain("second result");
+  });
+
+  it("still injects a finish hook's rewrite of a result the model read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push({
+      ...completion("subagent_1", "raw result"),
+      visibleResult: "hook summary",
+    });
+
+    coordinator.markDelivered(completion("subagent_1", "").eventId);
+    coordinator.confirmDelivered();
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(messageText(persistModelMessages.mock.calls[0]?.[0]?.[0])).toContain(
+      "hook summary",
+    );
+  });
+
+  it("still injects a read result whose tool result was never saved", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push(completion("subagent_1", "first result"));
+
+    coordinator.markDelivered(completion("subagent_1", "").eventId);
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+  });
+
+  it("skips a read result that finishes queueing after the read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      { subagent: { enabled: true } },
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    const read = completion("subagent_1", "first result");
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+
+    coordinator.markDelivered(read.eventId);
+    coordinator.confirmDelivered();
+    await internals.completeTask(read);
+    await internals.completeTask({
+      ...completion("subagent_1", "follow-up result"),
+      eventId: "event_subagent_1_followup",
+    });
+
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
+    expect(messageText(messages[0])).toContain("follow-up result");
+  });
+
+  it("wakes the parent with a child's question and routes the answer back", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: "agent_research",
+      conversationKey: "child",
+    });
+
+    const answer = coordinator.askParent("subagent_1", "Which account?");
+    await expect(coordinator.waitForIdle()).resolves.toBe("question");
+    const [question] = await coordinator.takeParentMessages();
+    expect(messageText(question)).toContain("Which account?");
+    expect(messageText(question)).toContain("taskId: subagent_1");
+    expect(persistModelMessages).toHaveBeenCalledTimes(1);
+
+    expect(coordinator.answerQuestion("subagent_1", "BeeBlast")).toBe(true);
+    await expect(answer).resolves.toBe("BeeBlast");
+    expect(coordinator.answerQuestion("subagent_1", "again")).toBe(false);
+  });
+
+  it("drops a question once its child stops or the parent can no longer answer", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    for (const taskId of ["subagent_1", "subagent_2"]) {
+      internals.pendingMetadata.set(taskId, {
+        taskId: taskId,
+        eventId: `event_${taskId}`,
+        agentId: "agent_research",
+        conversationKey: "child",
+      });
+    }
+
+    const stop = new AbortController();
+    const stopped = coordinator.askParent("subagent_1", "Which?", stop.signal);
+    stop.abort();
+    await expect(stopped).resolves.toBeNull();
+    expect(coordinator.answerQuestion("subagent_1", "late")).toBe(false);
+
+    const open = coordinator.askParent("subagent_2", "Which?");
+    coordinator.closeQuestions();
+    await expect(open).resolves.toBeNull();
+    await expect(coordinator.takeParentMessages()).resolves.toEqual([]);
+    await expect(
+      coordinator.askParent("subagent_2", "Again?"),
+    ).resolves.toBeNull();
+  });
+
+  it("gives a child no answer once the parent's wait budget is spent", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 20,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: "agent_research",
+      conversationKey: "child",
+    });
+
+    await expect(
+      coordinator.askParent("subagent_1", "Which account?"),
+    ).resolves.toBeNull();
+    await expect(coordinator.askParent("unknown", "Hi?")).resolves.toBeNull();
+  });
+
+  it("stops waiting once the outcome is recorded, before follow-ups drain", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 10_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: "agent_1",
+      conversationKey: "child",
+    });
+
+    setTimeout(() => {
+      internals.recorded.add("event_1");
+      internals.notifyCompletion();
+    }, 5);
+    const startedAt = Date.now();
+    await coordinator.waitForSettled("subagent_1", 5_000);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
   });
 
   it("keeps queued results when writing them to the parent fails", async () => {
