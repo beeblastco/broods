@@ -44,7 +44,7 @@ A Slack app puts your agent in channels, private groups and DMs.
    ```
 
 4. Run `broods dev` or `broods deploy` and copy the printed webhook URL.
-5. In the Slack app settings, point Event Subscriptions and the slash commands `/new`, `/clear`, `/compact` and `/help` at that URL. Subscribe the bot to these events:
+5. In the Slack app settings, point Event Subscriptions, Interactivity and the slash commands `/new`, `/clear`, `/compact` and `/help` at that URL. Interactivity carries `ask_questions` button clicks. Subscribe the bot to these events:
    - `app_mention`
    - `message.channels`
    - `message.groups`
@@ -79,6 +79,6 @@ Channel and group messages get a threaded reply. DMs and App Home messages share
 - Replies stream live when the event has thread and user context. Otherwise the agent sends one final reply.
 - Event replies stay in the current thread. Slash command replies use the command's response URL.
 - The agent can send image blocks, uploaded files, and custom emoji or URL stickers.
-- `ask_questions` renders as numbered text. Reply with an option number, its label, or free text when allowed.
+- `ask_questions` renders as numbered text with one button per option. Click a button, or reply with an option number, its label, or free text when allowed.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.
