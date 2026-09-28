@@ -148,6 +148,7 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 | Where       | The question appears as                  | The user answers by                                                                            |
 | ----------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Telegram    | inline buttons                           | tapping a button                                                                               |
+| Slack       | numbered text with buttons               | clicking a button, or replying like any other chat                                             |
 | Other chats | numbered text                            | replying with the number, the label, or free text. The reply answers the oldest open question. |
 | Any client  | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
 | WebSocket   | a `question-request` frame               | an `execute` frame carrying `answers`                                                          |

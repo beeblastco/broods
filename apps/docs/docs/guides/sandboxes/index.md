@@ -130,7 +130,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-The model reaches a later sandbox by passing its name to `bash`, here `sandbox: "offline"`. The file tools never run there, and no workspace is mounted, so nothing written there reaches durable storage. A `machine` sandbox anywhere in the list also gives the agent a `computer` tool. Each sandbox may appear once, and only the first may also back a workspace.
+The model reaches a later sandbox by passing its name to `bash`, here `sandbox: "offline"`. The file tools never run there, and no workspace is mounted, so nothing written there reaches durable storage. A named sandbox wins over a `workspace` passed in the same call. A `machine` sandbox anywhere in the list also gives the agent a `computer` tool. Each sandbox may appear once, and only the first may also back a workspace.
 
 ## What the model sees
 
