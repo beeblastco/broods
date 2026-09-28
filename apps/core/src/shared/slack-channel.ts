@@ -76,7 +76,7 @@ const SLACK_FILE_HOST_SUFFIXES = [
 // Slack rejects a whole message whose button text runs past this.
 const SLACK_BUTTON_TEXT_LIMIT = 75;
 
-// Button value for a conversation with no thread (a DM, a slash command).
+// Button value for a prompt posted with no thread, such as a slash command's.
 const SLACK_NO_THREAD = "channel";
 
 // Slack signs a file URL and then redirects to its CDN; more hops than this is

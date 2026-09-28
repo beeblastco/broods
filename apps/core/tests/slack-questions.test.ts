@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { ChannelRequest } from "../src/shared/channels.ts";
 import { createSlackChannel } from "../src/shared/slack-channel.ts";
@@ -9,7 +9,7 @@ const THREAD_TS = "1713916800.000001";
 
 interface SlackCall {
   url: string;
-  body: Record<string, unknown>;
+  body: unknown;
 }
 
 const adapter = createSlackChannel(
@@ -59,12 +59,22 @@ describe("slack ask_questions", () => {
       channel: "C1",
       thread_ts: THREAD_TS,
     });
-    const blocks = calls[0]!.body.blocks as Array<Record<string, unknown>>;
-    expect(blocks.find((block) => block.type === "actions")).toMatchObject({
-      elements: [
-        { action_id: `q:${STATUS_ID}:0:0`, value: THREAD_TS },
-        { action_id: `q:${STATUS_ID}:0:1`, value: THREAD_TS },
-      ],
+    expect(calls[0]!.body).toMatchObject({
+      blocks: expect.arrayContaining([
+        expect.objectContaining({
+          type: "actions",
+          elements: [
+            expect.objectContaining({
+              action_id: `q:${STATUS_ID}:0:0`,
+              value: THREAD_TS,
+            }),
+            expect.objectContaining({
+              action_id: `q:${STATUS_ID}:0:1`,
+              value: THREAD_TS,
+            }),
+          ],
+        }),
+      ]),
     });
   });
 
@@ -118,7 +128,7 @@ describe("slack ask_questions", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe("https://hooks.slack.com/actions/T1/1/abc");
     expect(calls[0]!.body).toMatchObject({ replace_original: true });
-    expect(JSON.stringify(calls[0]!.body.blocks)).toContain("*prod*");
+    expect(JSON.stringify(calls[0]!.body)).toContain("*prod*");
   });
 
   it("answers a click in a DM on the DM's conversation", async () => {
@@ -196,40 +206,40 @@ function blockActionsRequest(payload: Record<string, unknown>): ChannelRequest {
 
 // Web API calls are form encoded with JSON-encoded blocks; response_url
 // calls are JSON.
-function slackBody(raw: string): Record<string, unknown> {
-  if (raw.startsWith("{")) return JSON.parse(raw) as Record<string, unknown>;
+function slackBody(raw: string): unknown {
+  if (raw.startsWith("{")) return JSON.parse(raw);
   const params = Object.fromEntries(new URLSearchParams(raw));
+  const blocks: unknown = params.blocks ? JSON.parse(params.blocks) : undefined;
 
-  return {
-    ...params,
-    ...(params.blocks ? { blocks: JSON.parse(params.blocks) as unknown } : {}),
-  };
+  return { ...params, ...(blocks ? { blocks: blocks } : {}) };
 }
 
 // Captures every Slack call made while `run` executes, including the
 // fire-and-forget answer update, which a timer tick lets land.
 async function withSlackApi(run: () => Promise<void>): Promise<SlackCall[]> {
   const calls: SlackCall[] = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (
-    input: Parameters<typeof fetch>[0],
-    init?: Parameters<typeof fetch>[1],
+  const respond = async (
+    input: string | Request | URL,
+    init?: RequestInit,
   ): Promise<Response> => {
     calls.push({
       url: input instanceof Request ? input.url : String(input),
-      body: slackBody(String(init?.body)),
+      body: slackBody(typeof init?.body === "string" ? init.body : ""),
     });
 
     return new Response(JSON.stringify({ ok: true, ts: "1.2" }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
-  }) as typeof globalThis.fetch;
+  };
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(respond, { preconnect: (): void => {} }),
+  );
   try {
     await run();
     await new Promise((resolve) => setTimeout(resolve, 0));
   } finally {
-    globalThis.fetch = originalFetch;
+    fetchSpy.mockRestore();
   }
 
   return calls;

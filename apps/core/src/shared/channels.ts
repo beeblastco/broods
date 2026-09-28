@@ -310,10 +310,6 @@ export function isAllowedId(
   return allowed.has(id);
 }
 
-/**
- * No list stays null, which the reach gate reads as open. An empty `Set` means
- * the opposite, so the distinction cannot be dropped at the call site.
- */
 /** The click a button id stands for; undefined when it is not a question button. */
 export function parseQuestionButtonId(
   id: string | undefined,
@@ -337,6 +333,10 @@ export function questionButtonId(
   return `q:${statusId}:${questionIndex}:${optionIndex}`;
 }
 
+/**
+ * No list stays null, which the reach gate reads as open. An empty `Set` means
+ * the opposite, so the distinction cannot be dropped at the call site.
+ */
 export function reachSet(ids: string[] | undefined): Set<string> | null {
   return ids ? new Set(ids) : null;
 }

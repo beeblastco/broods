@@ -122,9 +122,8 @@ import {
 } from "./session.ts";
 import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
 import {
-  ASK_QUESTIONS_TOOL_NAME,
   formatQuestionsText,
-  type PendingQuestionInput,
+  openQuestion,
   type PendingQuestionSummary,
 } from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
@@ -855,10 +854,9 @@ export async function runAgentLoop(
       ),
     );
     const open = rows.filter((row) => row?.status === "processing");
-    const questions = open.flatMap((row): ChannelQuestion[] =>
-      row?.toolName === ASK_QUESTIONS_TOOL_NAME
-        ? (row.input as PendingQuestionInput).questions
-        : [],
+    const questions = open.flatMap(
+      (row): ChannelQuestion[] =>
+        openQuestion(row, session.conversationKey)?.pending.questions ?? [],
     );
     // The rows, not questionSummaries: an answer can settle one before the run ends.
     if (questions.length > 0) {
