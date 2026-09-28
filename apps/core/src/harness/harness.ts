@@ -37,7 +37,7 @@ import type {
   ObservabilitySpanRow,
   TaskWaitingOn,
 } from "../../../../packages/broods/src/observability-contracts.ts";
-import { extractText } from "../shared/channels.ts";
+import { extractText, type ChannelQuestion } from "../shared/channels.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import {
   AGENT_MAX_TURN_UNLIMITED,
@@ -123,6 +123,8 @@ import {
 import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
 import {
   ASK_QUESTIONS_TOOL_NAME,
+  formatQuestionsText,
+  type PendingQuestionInput,
   type PendingQuestionSummary,
 } from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
@@ -838,26 +840,36 @@ export async function runAgentLoop(
   let terminalError: Error | undefined;
   // What a run that ended cleanly still waits on, the person first: an approval
   // or an open question needs them, while subagents, async tools and background
-  // jobs settle by themselves. Undefined when it failed or nothing is left open.
+  // jobs settle by themselves. Empty when it failed or nothing is left open.
+  // `questions` is what the person was asked, for the trace's wait row.
   const openWorkAfterRun = async (
     status: "completed" | "failed",
-  ): Promise<TaskWaitingOn | undefined> => {
-    if (status === "failed") return undefined;
-    if (approvalSummaries.length > 0) return "approval";
-    if (questionSummaries.length > 0) return "question";
+  ): Promise<{ waitingOn?: TaskWaitingOn; questions: ChannelQuestion[] }> => {
+    if (status === "failed") return { questions: [] };
+    if (approvalSummaries.length > 0) {
+      return { waitingOn: "approval", questions: [] };
+    }
     const rows = await Promise.all(
       detachedResultIds.map((resultId) =>
         getAsyncToolResult(resultId).catch(() => null),
       ),
     );
     const open = rows.filter((row) => row?.status === "processing");
-    if (open.some((row) => row?.toolName === ASK_QUESTIONS_TOOL_NAME)) {
-      return "question";
+    const questions = open.flatMap((row): ChannelQuestion[] =>
+      row?.toolName === ASK_QUESTIONS_TOOL_NAME
+        ? (row.input as PendingQuestionInput).questions
+        : [],
+    );
+    if (questionSummaries.length > 0 || questions.length > 0) {
+      return { waitingOn: "question", questions: questions };
     }
     const pending = options.pendingWork?.();
-    if (pending) return pending;
+    if (pending) return { waitingOn: pending, questions: [] };
 
-    return open.length > 0 ? "tool" : undefined;
+    return {
+      ...(open.length > 0 ? { waitingOn: "tool" } : {}),
+      questions: [],
+    };
   };
   const finalizeUsage = async (
     status: "completed" | "failed",
@@ -871,7 +883,8 @@ export async function runAgentLoop(
     usageFinalized = true;
     releaseSandboxOccupancy?.();
     const taskTokens = usageTokenTotals(usage);
-    const waitingOn = await openWorkAfterRun(status);
+    const { waitingOn, questions: openQuestions } =
+      await openWorkAfterRun(status);
     const rootStatus = rootSpanStatus(status, waitingOn);
 
     const context = getObservabilityContext();
@@ -958,6 +971,13 @@ export async function runAgentLoop(
         ...(waitingOn
           ? { "task.state": rootStatus, "task.waiting_on": waitingOn }
           : { "task.state": status }),
+        ...(openQuestions.length > 0
+          ? {
+              "task.questions": traceAttribute(
+                formatQuestionsText(openQuestions),
+              ),
+            }
+          : {}),
         "agent.step_count": stepCount,
         "agent.tool_call_count": toolCallCount,
         "agent.model_provider": configuredModel.providerName,

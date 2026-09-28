@@ -16,6 +16,7 @@ describe("groupSpans", () => {
     const asked = root("asked", 1_000, 5_000, "needs_input", {
       "task.id": TASK_ID,
       "task.waiting_on": "question",
+      "task.questions": "Which stage?\n1. dev\n2. prod",
     });
     const resumed = root("resumed", 45_000, 49_000, "ok", {
       "task.id": `${TASK_ID}:async-question:async_tool_1:async-tools`,
@@ -39,7 +40,10 @@ describe("groupSpans", () => {
       status: "needs_input",
       startTimeMs: 5_000,
       endTimeMs: 45_000,
-      attributes: { "phase.name": "needs input · question" },
+      attributes: {
+        "phase.name": "needs input · question",
+        "task.questions": "Which stage?\n1. dev\n2. prod",
+      },
     });
   });
 

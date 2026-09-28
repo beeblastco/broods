@@ -16,12 +16,16 @@ import {
   uploadSlackFiles,
   type SlackFileUpload,
 } from "@chat-adapter/slack/api";
+import { answeredSlackInputBlocks } from "@chat-adapter/slack/blocks";
 import {
   parseSlackWebhookBody,
   verifySlackSignature,
+  type SlackBlockActionsPayload,
   type SlackSlashCommandPayload,
 } from "@chat-adapter/slack/webhook";
 import {
+  Actions,
+  Button,
   Card,
   CardText,
   ConsoleLogger,
@@ -34,11 +38,13 @@ import {
 import {
   channelAttachmentBytes,
   channelAttachmentName,
+  isAllowedId,
+  parseQuestionButtonId,
+  questionButtonId,
   type ChannelActions,
   type ChannelAdapter,
   type ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
 import {
@@ -437,6 +443,10 @@ export function createSlackChannel(
         return parseSlashCommand(payload, allowedChannelIds, allowedUserIds);
       }
 
+      if (payload.kind === "block_actions") {
+        return parseQuestionClick(payload, allowedChannelIds, allowedUserIds);
+      }
+
       if (
         (req.headers["content-type"] ?? "").includes(
           "application/x-www-form-urlencoded",
@@ -790,6 +800,41 @@ function createSlackActions(
                 url: image.url,
                 alt: image.name ?? caption ?? "Image",
               }),
+            ),
+          ],
+        }),
+      );
+    },
+
+    // One row of buttons per question under the numbered text. Each button
+    // carries the conversation's thread, so a click in a thread or at the
+    // channel top level resolves to the same conversation.
+    sendQuestions: async function (prompt): Promise<void> {
+      const single = prompt.questions.length === 1;
+      const thread = source.inThreadTs ?? source.messageTs;
+      await postSlackCard(
+        botToken,
+        apiUrl,
+        source,
+        Card({
+          children: [
+            CardText(prompt.text),
+            ...prompt.questions.map((question, questionIndex) =>
+              Actions(
+                question.options.map((option, optionIndex) =>
+                  Button({
+                    id: questionButtonId(
+                      prompt.statusId,
+                      questionIndex,
+                      optionIndex,
+                    ),
+                    label: single
+                      ? option.label
+                      : `${question.header}: ${option.label}`,
+                    ...(thread ? { value: thread } : {}),
+                  }),
+                ),
+              ),
             ),
           ],
         }),
@@ -1176,6 +1221,73 @@ function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
   }
 
   return false;
+}
+
+// A click on an ask_questions button. The buttons are swapped for the choice
+// here, best effort, so the thread shows the answer and keeps no second chance.
+function parseQuestionClick(
+  payload: SlackBlockActionsPayload,
+  allowedChannelIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
+): ChannelParseResult {
+  const action = payload.actions[0];
+  const answer = parseQuestionButtonId(action?.actionId);
+  const { channelId, teamId } = payload;
+  if (!action || !answer || !channelId || !teamId) {
+    return { kind: "ignore", reason: "unsupported_slack_action" };
+  }
+  if (
+    !isAllowedId(allowedChannelIds, channelId) ||
+    !isAllowedId(allowedUserIds, payload.userId)
+  ) {
+    return { kind: "ignore", reason: "not allowed" };
+  }
+  if (payload.responseUrl) {
+    void sendSlackResponseUrl(payload.responseUrl, {
+      replaceOriginal: true,
+      text: action.label ?? "Answered",
+      blocks: answeredSlackInputBlocks({
+        answer: action.label ?? "Answered",
+        promptBlock: payload.messagePromptBlock,
+        userId: payload.userId,
+      }),
+    }).catch((err: unknown): void => {
+      logWarn("Slack question answer update failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+  // A DM is one conversation; anywhere else it is the thread the button names.
+  const isDirect = channelId.startsWith("D");
+  const thread = action.value ?? payload.threadTs;
+  const source: SlackSource = {
+    teamId: teamId,
+    channelId: channelId,
+    ...(isDirect ? {} : { threadTs: thread, inThreadTs: thread }),
+    userId: payload.userId,
+  };
+
+  return {
+    kind: "message",
+    ack: { statusCode: 200 },
+    message: {
+      eventId: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:action:${payload.triggerId ?? payload.messageTs}`,
+      conversationKey: isDirect
+        ? `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`
+        : `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${thread}`,
+      channelName: "slack",
+      content: "[button answer]",
+      identity: {
+        workspaceRef: teamId,
+        channelId: channelId,
+        ...(thread && !isDirect ? { threadId: thread } : {}),
+        userId: payload.userId,
+        ...(payload.userName ? { userName: payload.userName } : {}),
+      },
+      source: { ...source },
+      answer: answer,
+    },
+  };
 }
 
 function parseSlashCommand(
