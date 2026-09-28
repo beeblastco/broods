@@ -34,6 +34,8 @@ on:
     paths: *mirrored
   workflow_dispatch:
 
+permissions: {}
+
 concurrency:
   group: lean-verification-${{ github.ref_name }}
   cancel-in-progress: true
