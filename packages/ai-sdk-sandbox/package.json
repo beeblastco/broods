@@ -32,8 +32,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ai-sdk/harness": "1.0.117",
-    "@ai-sdk/provider-utils": "5.0.45"
+    "@ai-sdk/harness": "1.0.130",
+    "@ai-sdk/provider-utils": "5.0.50"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
