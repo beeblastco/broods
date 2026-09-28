@@ -232,7 +232,7 @@ describe("ingestInboundAttachments", () => {
             region: "eu-west-1",
             auth: { type: "assumeRole", roleArn: "arn:aws:iam::2:role/byo" },
           },
-        } as WorkspaceConfig,
+        },
       },
     });
 
