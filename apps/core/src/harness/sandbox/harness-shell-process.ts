@@ -157,7 +157,7 @@ export class HarnessShellProcess {
   }
 
   async #waitForExit(): Promise<{ exitCode: number }> {
-    while (true) {
+    for (;;) {
       const status = await this.#status();
       if (status.state !== "running") {
         const result = {
@@ -231,7 +231,7 @@ export async function readHarnessStream(
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
-    while (true) {
+    for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
       chunks.push(value);
@@ -268,7 +268,8 @@ function processFileStream(
       void (async () => {
         let offset = 0;
         try {
-          while (!cancelled) {
+          for (;;) {
+            if (cancelled) break;
             const chunk =
               (await readFileChunk(executor, path, offset))?.bytes ??
               new Uint8Array();
@@ -278,7 +279,7 @@ function processFileStream(
             }
             const current = await status();
             if (current.state !== "running") {
-              while (true) {
+              for (;;) {
                 const finalChunk =
                   (await readFileChunk(executor, path, offset))?.bytes ??
                   new Uint8Array();
