@@ -1271,6 +1271,12 @@ describe("write/edit approval policy", () => {
       "ran on sandbox own-sandbox with no workspace mounted; workspace notes was ignored",
     );
     expect(lastSandboxExec().payload.namespace).toBeUndefined();
+
+    // With no workspace at all the run lands on the default, and the note names it.
+    const stateless = await tool("bash", statelessCtx());
+    await expect(
+      stateless.execute({ command: "echo hi", workspace: "notes" }),
+    ).resolves.toContain("ran on sandbox own-sandbox");
   });
 
   it("the standalone sandbox target follows the agent sandbox's own mode", async () => {

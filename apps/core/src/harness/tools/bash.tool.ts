@@ -92,7 +92,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             : resolveWorkspace(context.workspaces, workspace);
           const ignoredWorkspace =
             onAgentSandbox && workspace !== undefined
-              ? `Note: ran on sandbox ${selected} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
+              ? `Note: ran on sandbox ${picked?.name} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
               : "";
           // A read-only workspace must not fall through to the default sandbox: the
           // approval gate skipped it expecting this refusal.
