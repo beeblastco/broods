@@ -1,7 +1,7 @@
 /**
  * Inbound channel media, the mirror of the outbound `send-files` / `send-images` path.
  *
- * Each attachment is read once and written twice. The model is handed a sealed,
+ * With a workspace, each attachment is read once and written twice. The model is handed a sealed,
  * non-expiring media ticket into the attachment store, a managed-bucket prefix
  * no sandbox mounts, so replayed turns keep working even after the agent tidies
  * its files. The agent's own copy goes under `media/` in its default workspace,
@@ -139,8 +139,8 @@ export interface InboundMediaContext {
 }
 
 /**
- * One attachment paired with the part it produced. A null part means nothing
- * about it reached the model, which the note has to say.
+ * One attachment paired with the part it produced. A null part means the model
+ * gets no prompt part for it, so the note has to describe it.
  */
 interface IngestedAttachment {
   stored: StoredAttachment;
@@ -178,7 +178,7 @@ interface MediaReference {
 interface StoredAttachment {
   name: string;
   mediaType: string;
-  /** The bytes themselves, kept only when no durable link exists to hand over. */
+  /** The bytes themselves, kept when there is no sealed link (no workspace or no public base URL). */
   data?: Buffer;
   /** Set once the bytes are in the workspace. */
   path?: string;

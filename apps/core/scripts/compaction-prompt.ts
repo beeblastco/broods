@@ -1,7 +1,7 @@
 /**
  * Build helper that syncs the embedded compaction prompt module with
  * COMPACTION.md; src/harness/compaction.ts imports the generated module.
- * There is no default system prompt; agents define their own.
+ * Agents have no default system prompt; this one is only for the compaction model.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
