@@ -30,6 +30,8 @@ interface DetailSplitProps {
   children: ReactNode;
   /** The detail column's content, or nothing while no row is selected. */
   detail: ReactNode;
+  /** The table panel's narrowest width, for tables wider than the default. */
+  tableMinWidth?: number;
 }
 
 /** The detail column's header with a close button, then a scrollable body. */
@@ -63,11 +65,12 @@ export function DetailPanel({
 export function DetailSplit({
   children,
   detail,
+  tableMinWidth = TABLE_MIN_WIDTH,
 }: DetailSplitProps): React.JSX.Element {
   return (
     <ResizablePanelGroup className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
       <ResizablePanel
-        minSize={TABLE_MIN_WIDTH}
+        minSize={tableMinWidth}
         className="min-h-0 min-w-0 overflow-auto"
       >
         {children}
