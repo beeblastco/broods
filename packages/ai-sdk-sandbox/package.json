@@ -15,7 +15,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE.md"
   ],
   "type": "module",
   "main": "./dist/index.js",
