@@ -192,16 +192,16 @@ test("a sandbox's launch and running time land on its account's meter", async ()
   });
 });
 
-test("burst bills the growth of the guest's totals, from zero on a fresh machine", () => {
+test("burst bills the growth of the guest's totals and nothing for a late report", () => {
   const billed = { vcpuSeconds: 10, gbSeconds: 40 };
 
   expect(burstUsage(billed, { vcpuSeconds: 12, gbSeconds: 50 })).toEqual({
-    sandboxVcpuSeconds: 2,
-    sandboxGbSeconds: 10,
+    usage: { sandboxVcpuSeconds: 2, sandboxGbSeconds: 10 },
+    billed: { vcpuSeconds: 12, gbSeconds: 50 },
   });
-  expect(burstUsage(billed, { vcpuSeconds: 3, gbSeconds: 5 })).toEqual({
-    sandboxVcpuSeconds: 3,
-    sandboxGbSeconds: 5,
+  expect(burstUsage(billed, { vcpuSeconds: 3, gbSeconds: 45 })).toEqual({
+    usage: { sandboxVcpuSeconds: 0, sandboxGbSeconds: 5 },
+    billed: { vcpuSeconds: 10, gbSeconds: 45 },
   });
 });
 
@@ -225,6 +225,7 @@ test("a MicroVM's burst lands on its account's meter once per report", async () 
     [30, 60],
     [30, 60],
     [50, 100],
+    [40, 80],
   ]) {
     await t.mutation(internal.sandbox.instances.recordBurst, {
       accountId: accountId,

@@ -93,7 +93,7 @@ export function AllowanceUsage(): React.JSX.Element {
   const usage = useQuery(api.account.budget.getForActiveOrg, { month: month });
   const [held, setHeld] = useState<BudgetUsage | null | undefined>(undefined);
   if (usage !== undefined && usage !== held) setHeld(usage);
-  const budget = usage ?? held;
+  const budget = usage === undefined ? held : usage;
 
   // The current month leads `months` and is Billing's own query: leave
   // `month` unset to share it.

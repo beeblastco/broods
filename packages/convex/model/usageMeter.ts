@@ -344,23 +344,26 @@ export function sandboxAccrual(
 
 /**
  * The burst a machine used since it was last billed, from the running totals
- * its guest reports. Burst is billed at the same rates as the baseline. Totals
- * below the billed ones mean a fresh machine whose totals started again at zero.
+ * its guest reports, and the totals billed after it. Burst is billed at the
+ * same rates as the baseline. A report at or below the billed totals is a
+ * repeat or arrived late, so it bills nothing; a replaced machine starts from
+ * zero because `upsert` clears its billed totals.
  */
 export function burstUsage(
   billed: BurstTotals | undefined,
   reported: BurstTotals,
-): Partial<UsageQuantities> {
-  const since =
-    billed &&
-    reported.vcpuSeconds >= billed.vcpuSeconds &&
-    reported.gbSeconds >= billed.gbSeconds
-      ? billed
-      : { vcpuSeconds: 0, gbSeconds: 0 };
+): { usage: Partial<UsageQuantities>; billed: BurstTotals } {
+  const since = billed ?? { vcpuSeconds: 0, gbSeconds: 0 };
 
   return {
-    sandboxVcpuSeconds: reported.vcpuSeconds - since.vcpuSeconds,
-    sandboxGbSeconds: reported.gbSeconds - since.gbSeconds,
+    usage: {
+      sandboxVcpuSeconds: Math.max(0, reported.vcpuSeconds - since.vcpuSeconds),
+      sandboxGbSeconds: Math.max(0, reported.gbSeconds - since.gbSeconds),
+    },
+    billed: {
+      vcpuSeconds: Math.max(reported.vcpuSeconds, since.vcpuSeconds),
+      gbSeconds: Math.max(reported.gbSeconds, since.gbSeconds),
+    },
   };
 }
 

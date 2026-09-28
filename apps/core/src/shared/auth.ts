@@ -61,6 +61,11 @@ export function claimLastUsedWrite(
 ): boolean {
   const last = writes.get(apiKeyHash);
   if (last !== undefined && now - last < intervalMs) return false;
+  // Expired entries would be claimed again anyway, so drop them to keep the
+  // map to keys used within the last interval.
+  for (const [hash, at] of writes) {
+    if (now - at >= intervalMs) writes.delete(hash);
+  }
   writes.set(apiKeyHash, now);
 
   return true;

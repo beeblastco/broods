@@ -166,7 +166,7 @@ async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
 function budgetRefusal(status: BudgetStatus): PlanRefusal {
   return {
     kind: "budget",
-    message: `This account has used its monthly compute allowance for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
+    message: `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
   };
 }
 
@@ -191,7 +191,7 @@ async function claimWarning(
     });
   if (!claimed) return null;
 
-  return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of its monthly compute allowance on the ${status.plan} plan. Runs stop when it is used up.`;
+  return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }
 
 function currentWindow(accountId: string, now: number): AccountWindow {

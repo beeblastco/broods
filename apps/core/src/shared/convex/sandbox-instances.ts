@@ -139,25 +139,31 @@ export async function sandboxInstanceIsControllable(
 
 /**
  * Bills a MicroVM's burst from the running totals its guest reports: vCPU-s and
- * GB-s above the baseline since boot. The meter bills the growth, so a failed
- * write is caught up by the next report.
+ * GB-s above the baseline since boot. The meter bills only the growth, so a
+ * repeat is harmless. False when nothing was billed because the write failed or
+ * the VM has no row yet, so the caller sends the totals again.
  */
 export async function recordSandboxBurst(
   accountId: string,
   externalId: string,
   totals: { vcpuSeconds: number; gbSeconds: number },
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await getConvexClient().mutation(internal.sandbox.instances.recordBurst, {
-      accountId: accountId as any,
-      externalId: externalId,
-      vcpuSeconds: totals.vcpuSeconds,
-      gbSeconds: totals.gbSeconds,
-    });
+    return await getConvexClient().mutation(
+      internal.sandbox.instances.recordBurst,
+      {
+        accountId: accountId as any,
+        externalId: externalId,
+        vcpuSeconds: totals.vcpuSeconds,
+        gbSeconds: totals.gbSeconds,
+      },
+    );
   } catch (err) {
     logError("Sandbox burst mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
     });
+
+    return false;
   }
 }
 

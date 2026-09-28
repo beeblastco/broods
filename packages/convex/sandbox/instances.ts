@@ -178,28 +178,23 @@ export const recordBurst = internalMutation({
     vcpuSeconds: v.number(),
     gbSeconds: v.number(),
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
     const instance = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_externalId", (q) => q.eq("externalId", args.externalId))
       .first();
-    if (!instance || instance.accountId !== args.accountId) return null;
-    const reported = {
+    if (!instance || instance.accountId !== args.accountId) return false;
+    const burst = burstUsage(instance.burstBilled, {
       vcpuSeconds: args.vcpuSeconds,
       gbSeconds: args.gbSeconds,
-    };
+    });
     if (instance.ownCredentials !== true) {
-      await addUsage(
-        ctx,
-        instance.accountId,
-        burstUsage(instance.burstBilled, reported),
-        Date.now(),
-      );
+      await addUsage(ctx, instance.accountId, burst.usage, Date.now());
     }
-    await ctx.db.patch(instance._id, { burstBilled: reported });
+    await ctx.db.patch(instance._id, { burstBilled: burst.billed });
 
-    return null;
+    return true;
   },
 });
 

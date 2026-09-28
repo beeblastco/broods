@@ -130,7 +130,7 @@ const recordSandboxBurstMock = mock(
     _accountId: string,
     _externalId: string,
     _totals: { vcpuSeconds: number; gbSeconds: number },
-  ) => {},
+  ) => true,
 );
 const upsertSandboxInstanceMock = mock(async () => {
   if (!waitForSandboxInstanceUpsert) return;
