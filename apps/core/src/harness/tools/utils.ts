@@ -5,7 +5,7 @@
 
 import type { JSONValue } from "@ai-sdk/provider";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
-import type { JSONSchema7, UserContent } from "ai";
+import type { JSONSchema7, UserContent, UserModelMessage } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import {
   parseAccountAgentScopedKey,
@@ -33,6 +33,25 @@ export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 export interface SubagentToolContext {
   accountId: string;
   eventId: string;
+}
+
+/** A persistent subagent's question to its parent; null when no answer comes. */
+export type AskParent = (
+  question: string,
+  abortSignal?: AbortSignal,
+) => Promise<string | null>;
+
+/** This turn's live subagents, as the parent's loop and subagent tools see them. */
+export interface SubagentWatch {
+  waitForSettled(
+    taskId: string,
+    timeoutMs: number,
+    abortSignal?: AbortSignal,
+  ): Promise<void>;
+  markDelivered(eventId: string): void;
+  answerQuestion(taskId: string, answer: string): boolean;
+  takeParentMessages(): Promise<UserModelMessage[]>;
+  confirmDelivered(): void;
 }
 
 export interface SubagentToolInput {

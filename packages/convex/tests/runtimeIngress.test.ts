@@ -576,6 +576,61 @@ describe("runtime ingress", () => {
     }
   });
 
+  test("claims only the plain-text steer prefix when asked", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "steer-text",
+        mode: "steer",
+      }),
+    );
+    await t.mutation(internal.runtimeIngress.accept, {
+      ...admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "steer-image",
+        mode: "steer",
+      }),
+      events: [
+        {
+          role: "user",
+          content: [{ type: "image", image: "https://example.com/a.png" }],
+        },
+      ],
+    });
+    const fence = {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      leaseTtlMs: 60_000,
+      textOnly: true,
+    };
+
+    const applied = await t.mutation(
+      internal.runtimeIngress.applySteering,
+      fence,
+    );
+    expect(applied?.contributingEventIds).toEqual(["steer-text"]);
+    // The image stays queued for the next turn instead of being claimed.
+    expect(
+      await t.mutation(internal.runtimeIngress.applySteering, fence),
+    ).toBeNull();
+  });
+
   test("applies only the contiguous FIFO steer prefix", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
