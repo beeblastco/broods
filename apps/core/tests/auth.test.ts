@@ -14,6 +14,7 @@ import {
   type Storage,
 } from "../src/shared/storage.ts";
 import {
+  claimLastUsedWrite,
   extractBearerToken,
   isServiceToken,
   resolveBearerAuth,
@@ -81,6 +82,7 @@ beforeEach(() => {
               stageSlug: "development",
             }
           : null,
+      touchLastUsed: async () => {},
     },
     roleSessions: {
       resolveByTokenHash: async (tokenHash: string) =>
@@ -91,6 +93,17 @@ beforeEach(() => {
 
 afterEach(() => {
   resetStorageForTests();
+});
+
+describe("claimLastUsedWrite", () => {
+  it("allows one write per key per interval", () => {
+    const writes = new Map<string, number>();
+
+    expect(claimLastUsedWrite(writes, "a", 0, 1_000)).toBe(true);
+    expect(claimLastUsedWrite(writes, "a", 999, 1_000)).toBe(false);
+    expect(claimLastUsedWrite(writes, "b", 999, 1_000)).toBe(true);
+    expect(claimLastUsedWrite(writes, "a", 1_000, 1_000)).toBe(true);
+  });
 });
 
 describe("extractBearerToken", () => {

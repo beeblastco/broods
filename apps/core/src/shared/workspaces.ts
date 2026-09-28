@@ -22,6 +22,7 @@ import type {
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
+import { resolveSandboxLifecycle } from "./sandbox.ts";
 import {
   resolveSandboxSpecs,
   type SandboxControlPlane,
@@ -442,7 +443,7 @@ function reservedAgentSandbox(
 /**
  * Build the control-plane identity for a sandbox config so a reserved instance can
  * mirror itself into the Convex `sandboxInstances` registry (account, config row,
- * display name, size specs).
+ * display name, size specs, and the idle timeout the meter bills it up to).
  */
 function sandboxControlPlane(
   accountId: string,
@@ -465,5 +466,7 @@ function sandboxControlPlane(
       ? { permissionMode: record.config.permissionMode }
       : {}),
     ...(runsOnOwnCredentials(record.config) ? { ownCredentials: true } : {}),
+    idleTimeoutSeconds: resolveSandboxLifecycle(record.config.lifecycle)
+      .idleTimeoutSeconds,
   };
 }
