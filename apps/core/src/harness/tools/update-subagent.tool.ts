@@ -31,6 +31,7 @@ import {
   VIRTUAL_AGENT_PREFIX,
   type SubagentToolContext,
   type SubagentToolInput,
+  type SubagentWatch,
 } from "./utils.ts";
 
 interface UpdateSubagentInput extends SubagentToolInput {
@@ -39,6 +40,7 @@ interface UpdateSubagentInput extends SubagentToolInput {
 }
 
 type UpdateSubagentOutput =
+  | { status: "answered" }
   | { status: "not_running" }
   | { status: "queued"; mode: UpdateSubagentInput["mode"] };
 
@@ -46,6 +48,7 @@ interface UpdateSubagentContext extends SubagentToolContext {
   agentConfig: AgentConfig;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   session: Session;
+  watch?: SubagentWatch;
 }
 
 export default function updateSubagentTool(
@@ -54,7 +57,7 @@ export default function updateSubagentTool(
   return {
     update_subagent: tool({
       description:
-        'Update a running persistent subagent previously started by this run. Use mode "steer" to change its direction at the next model boundary, or "continue" to queue a follow-up turn after its current work. Completed results are injected automatically, so a late update returns not_running without restarting the child.',
+        'Update a running persistent subagent previously started by this run. Use mode "steer" to change its direction at the next model boundary, or "continue" to queue a follow-up turn after its current work. A steer to a subagent waiting on its ask_parent question answers it at once. Completed results are injected automatically, so a late update returns not_running without restarting the child.',
       inputSchema: jsonSchema<UpdateSubagentInput>({
         type: "object",
         properties: {
@@ -80,6 +83,13 @@ export default function updateSubagentTool(
         const message = input.message.trim();
         if (!message) {
           return toolError("Error: update requires a non-empty message");
+        }
+
+        if (
+          input.mode === "steer" &&
+          context.watch?.answerQuestion(input.taskId, message)
+        ) {
+          return { status: "answered" };
         }
 
         const requestedMode: IngressMode =

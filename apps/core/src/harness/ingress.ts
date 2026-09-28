@@ -283,6 +283,7 @@ export function applySteering(options: {
   conversationKey: string;
   ownerEventId: string;
   ownerGeneration: number;
+  textOnly?: boolean;
 }): Promise<AppliedIngress | null> {
   return runtime.mutate("applyIngressSteering", {
     ...options,

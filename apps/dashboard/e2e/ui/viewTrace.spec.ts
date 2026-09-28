@@ -26,7 +26,7 @@ test("View trace opens Tracing on the task without sliding the page", async ({
 
   await expect(page).toHaveURL(/tab=tracing/);
   await expect(page.locator(`#task-${traceId(TARGET_TASK)}`)).toBeInViewport();
-  // Only the table's own panel may scroll to the task. Anything else holding
+  // Only the list's own pane may scroll to the task. Anything else holding
   // a scroll offset is the page sliding, with empty space left below it.
   expect(await shiftedOutsidePanels(page)).toEqual([]);
 });
@@ -69,14 +69,14 @@ function logEntries(): ObservabilityLogEntry[] {
   });
 }
 
-/** Every element outside a resizable panel that holds a scroll offset. */
+/** Every element outside a scroll pane that holds a scroll offset. */
 async function shiftedOutsidePanels(page: Page): Promise<string[]> {
   return await page.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>("*")]
       .filter(
         (element) =>
           element.scrollTop > 0 &&
-          !element.closest('[data-slot="resizable-panel"]'),
+          !element.closest('[data-slot="resizable-panel"], [data-scroll-pane]'),
       )
       .map(
         (element) =>
