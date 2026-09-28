@@ -146,6 +146,8 @@ stateDiagram-v2
 
 Steering enters at one point, the AI SDK `prepareStep` hook. After `onStepEnd` has seen every tool result of the current step, and before the next model call, the coordinator takes the steer prefix, appends it to history, refreshes the next step's messages and system context, and records the active event id as `appliedToEventId`.
 
+A `config.harness` run has no `prepareStep`. Its queued steers are applied before the turn starts, and on adapters whose running turn accepts another user message (Claude Code, OpenCode, Pi) at each harness step start too: `applySteering` with `textOnly` claims the leading steers made only of user text, and their text goes to the running turn with `experimental_steerTurn`, where the runtime takes it at its next safe input point. A steer with an image, a file or a system message stays queued for the next turn, which takes it whole. The steer is saved before the hand-over, so a claimed steer that is not saved or handed over fails the run but a retry still reads it. A runtime that refuses mid-turn messages gets its steers at the next turn for the rest of that core process. Codex and DeepAgents cannot take one mid-turn, so there the steer waits for the next turn.
+
 Nothing enters mid-stream or between tool calls of one parallel batch. When the run has finished, hit its step limit, entered an approval or terminal path, or has no next model call for any other reason, the steer stays queued. After the owner settles, `takeNext` promotes it, merged with any contiguous steers from the same sender behind it, as one `followup` application under the next generation.
 
 ```mermaid

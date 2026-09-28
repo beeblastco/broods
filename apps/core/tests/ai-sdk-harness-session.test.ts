@@ -3,7 +3,7 @@ import {
   harnessReservationKey,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
-} from "../src/harness/ai-sdk-harness/index.ts";
+} from "../src/harness/ai-sdk-harness/session.ts";
 import { SandboxGoneError } from "../src/harness/sandbox/utils.ts";
 
 const CHECKPOINT = {
