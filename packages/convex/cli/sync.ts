@@ -269,6 +269,8 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
     project: v.string(),
     stage: v.string(),
     rotate: v.optional(v.boolean()),
+    /** WorkOS id of the CLI-login user, so a key it mints shows who made it. */
+    createdByAuthId: v.optional(v.string()),
     auditSync: v.optional(
       v.object({
         resourceCount: v.number(),
@@ -305,6 +307,13 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
     );
     if (!resolved) return null;
     const { projectDoc, stageDoc } = resolved;
+    const createdByAuthId = args.createdByAuthId;
+    const creator = createdByAuthId
+      ? await ctx.db
+          .query("users")
+          .withIndex("by_authId", (q) => q.eq("authId", createdByAuthId))
+          .unique()
+      : null;
     const result = await ensureStageDeployment(ctx, {
       authId: projectDoc.authId,
       accountId: account._id,
@@ -312,6 +321,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       stageId: stageDoc._id,
       projectSlug: projectDoc.slug ?? resourceName(args.project),
       stageSlug: stageDoc.name.toLowerCase(),
+      createdBy: creator?.name,
       rotate: args.rotate === true,
     });
     if (args.auditSync) {

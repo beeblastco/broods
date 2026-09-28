@@ -61,6 +61,7 @@ export async function upsertSandboxInstance(
       egress: controlPlane.egress,
       permissionMode: controlPlane.permissionMode,
       ownCredentials: controlPlane.ownCredentials,
+      idleTimeoutSeconds: controlPlane.idleTimeoutSeconds,
       lastUsedTraceId: meta.traceId,
       createdByTraceId: meta.traceId,
       lastUsedTaskId: meta.taskId,
@@ -134,6 +135,36 @@ export async function sandboxInstanceIsControllable(
   );
 
   return controllable === true;
+}
+
+/**
+ * Bills a MicroVM's burst from the running totals its guest reports: vCPU-s and
+ * GB-s above the baseline since boot. The meter bills only the growth, so a
+ * repeat is harmless. False when nothing was billed because the write failed or
+ * the VM has no row yet, so the caller sends the totals again.
+ */
+export async function recordSandboxBurst(
+  accountId: string,
+  externalId: string,
+  totals: { vcpuSeconds: number; gbSeconds: number },
+): Promise<boolean> {
+  try {
+    return await getConvexClient().mutation(
+      internal.sandbox.instances.recordBurst,
+      {
+        accountId: accountId,
+        externalId: externalId,
+        vcpuSeconds: totals.vcpuSeconds,
+        gbSeconds: totals.gbSeconds,
+      },
+    );
+  } catch (err) {
+    logError("Sandbox burst mirror failed (convex)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return false;
+  }
 }
 
 /**

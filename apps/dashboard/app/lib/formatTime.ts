@@ -22,6 +22,13 @@ const DATE_TIME_MILLIS = new Intl.DateTimeFormat([], {
 
 const TIME = new Intl.DateTimeFormat([], CLOCK);
 
+const DATE = new Intl.DateTimeFormat([], { month: "short", day: "numeric" });
+
+/** `Sep 2` in the viewer's zone, for when a record was created. */
+export function formatDate(ms: number): string {
+  return DATE.format(ms);
+}
+
 /** `Sep 14, 16:44:07` in the viewer's zone, so a row is locatable across days. */
 export function formatDateTime(ms: number): string {
   return DATE_TIME.format(ms);

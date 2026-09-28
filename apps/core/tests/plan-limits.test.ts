@@ -45,8 +45,7 @@ beforeEach(() => {
     enforced: true,
     plan: "free",
     month: "2026-09",
-    usedEur: 1,
-    limitEur: 5,
+    usedPercent: 20,
     runsPerMinute: 600,
     warned: false,
   };
@@ -107,12 +106,12 @@ afterEach(() => {
 
 describe("admitRun", () => {
   it("refuses every run once the month's budget is used", async () => {
-    budget.usedEur = 5;
+    budget.usedPercent = 100;
 
     const { refusal } = await admitRun(ACCOUNT_ID);
 
     expect(refusal?.kind).toBe("budget");
-    expect(refusal?.message).toContain("monthly compute allowance for 2026-09");
+    expect(refusal?.message).toContain("monthly resource caps for 2026-09");
   });
 
   it("refuses a burst past the plan's runs per minute", async () => {
@@ -126,25 +125,25 @@ describe("admitRun", () => {
 
   it("limits nothing on a self-hosted install", async () => {
     budget.enforced = false;
-    budget.usedEur = 50;
+    budget.usedPercent = 1000;
     await admitMany(budget.runsPerMinute + 1);
 
     expect((await admitRun(ACCOUNT_ID)).refusal).toBeNull();
   });
 
   it("warns a channel once when the budget passes 80%", async () => {
-    budget.usedEur = 4;
+    budget.usedPercent = 80;
 
     const first = await admitRun(ACCOUNT_ID, { claimWarning: true });
     const second = await admitRun(ACCOUNT_ID, { claimWarning: true });
 
-    expect(first.warning).toContain("80% of its monthly compute allowance");
+    expect(first.warning).toContain("80% of one of its monthly resource caps");
     expect(second.warning).toBeNull();
     expect(warningClaims).toBe(1);
   });
 
   it("admits the run when claiming the notice fails", async () => {
-    budget.usedEur = 4;
+    budget.usedPercent = 80;
     setStorageForTests({
       budgets: {
         get: async (): Promise<BudgetStatus> => ({ ...budget }),
@@ -200,7 +199,7 @@ describe("refusal over HTTP", () => {
   });
 
   it("skips a cron fire with the reason once the budget is used", async () => {
-    budget.usedEur = 5;
+    budget.usedPercent = 100;
 
     const response = await handler({
       method: "POST",
@@ -219,13 +218,13 @@ describe("refusal over HTTP", () => {
 
     expect(response.status).toBe(402);
     expect(cronFailures).toHaveLength(1);
-    expect(cronFailures[0]).toContain("compute allowance");
+    expect(cronFailures[0]).toContain("monthly resource caps");
   });
 });
 
 describe("sandbox start", () => {
   it("refuses to launch compute once the budget is used", async () => {
-    budget.usedEur = 5;
+    budget.usedPercent = 100;
     const executor = createSandboxExecutor({
       provider: "sandbox",
       options: { workdirUrl: "https://workdir.example.com", apiKey: "key" },

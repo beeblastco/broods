@@ -66,6 +66,7 @@ function deploymentStorage(): Storage {
           stageSlug: "development",
         };
       },
+      touchLastUsed: async function () {},
     },
   } as unknown as Storage;
 }
