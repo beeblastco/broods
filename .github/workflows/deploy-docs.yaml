@@ -12,6 +12,9 @@ concurrency:
   group: deploy-docs-${{ github.ref_name }}
   cancel-in-progress: true
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   deploy:
     runs-on: ubuntu-24.04
