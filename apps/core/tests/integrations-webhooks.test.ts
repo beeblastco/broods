@@ -13,6 +13,7 @@ import {
 } from "../src/shared/otel.ts";
 import { coreRequest } from "./helpers/http.ts";
 
+const TELEGRAM_BOT_TOKEN = crypto.randomUUID();
 const TELEGRAM_WEBHOOK_SECRET = crypto.randomUUID();
 
 const TEST_ACCOUNT = {
@@ -24,7 +25,7 @@ const TEST_ACCOUNT = {
   config: {
     channels: {
       telegram: {
-        botToken: "bot-token",
+        botToken: TELEGRAM_BOT_TOKEN,
         webhookSecret: TELEGRAM_WEBHOOK_SECRET,
         allowedChannelIds: ["123"],
       },
@@ -218,7 +219,7 @@ describe("account webhook ingress", () => {
       agentConfig: {
         channels: {
           telegram: {
-            botToken: "bot-token",
+            botToken: TELEGRAM_BOT_TOKEN,
             webhookSecret: TELEGRAM_WEBHOOK_SECRET,
             allowedChannelIds: ["123"],
           },
