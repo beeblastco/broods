@@ -22,7 +22,11 @@ import type {
   ChannelParseResult,
   ChannelQuestionPrompt,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import {
+  isAllowedId,
+  parseQuestionButtonId,
+  questionButtonId,
+} from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -39,9 +43,6 @@ const TELEGRAM_MEDIA_GROUP_MAX = 10;
 const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
 // A quote is context for the turn, not the turn itself; Telegram allows 4096.
 const TELEGRAM_REPLY_QUOTE_MAX = 500;
-// callback_data on an ask_questions button: statusId, question, option.
-// 53 bytes at most, under Telegram's 64-byte cap.
-const QUESTION_CALLBACK_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
 // callback_data on a reply button: the reply itself, sent as the person's message.
 const REPLY_CALLBACK_PATTERN = /^r:(.{1,60})$/s;
 
@@ -105,8 +106,8 @@ export function createTelegramChannel(
         error: err instanceof Error ? err.message : String(err),
       });
     });
-    const match = QUESTION_CALLBACK_PATTERN.exec(callback.data ?? "");
-    const content = match
+    const answer = parseQuestionButtonId(callback.data);
+    const content = answer
       ? "[button answer]"
       : REPLY_CALLBACK_PATTERN.exec(callback.data ?? "")?.[1];
     const message = callback.message;
@@ -139,15 +140,7 @@ export function createTelegramChannel(
         content: content,
         identity: envelope.identity,
         source: { ...envelope.source },
-        ...(match
-          ? {
-              answer: {
-                statusId: match[1]!,
-                questionIndex: Number(match[2]),
-                optionIndex: Number(match[3]),
-              },
-            }
-          : {}),
+        ...(answer ? { answer: answer } : {}),
       },
     };
   };
@@ -422,7 +415,11 @@ function questionKeyboard(
       question.options.map((option, optionIndex) => [
         {
           text: single ? option.label : `${question.header}: ${option.label}`,
-          callback_data: `q:${prompt.statusId}:${questionIndex}:${optionIndex}`,
+          callback_data: questionButtonId(
+            prompt.statusId,
+            questionIndex,
+            optionIndex,
+          ),
         },
       ]),
   );

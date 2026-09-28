@@ -138,6 +138,8 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
   { key: "model.tool_calls", label: "Tool calls" },
   { key: "tool.input", label: "Tool input" },
   { key: "tool.output", label: "Tool output" },
+  // What a run waiting on the person asked them, on its wait row.
+  { key: "task.questions", label: "Questions" },
 ];
 
 // Context prepare loads, each timed on its own. They overlap, so they do not
@@ -1267,6 +1269,7 @@ function waitSpan(
   parentSpanId: string,
 ): ObservabilitySpanRow {
   const waitingOn = run.attributes?.["task.waiting_on"];
+  const questions = run.attributes?.["task.questions"];
   const endTimeMs = next ? next.startTimeMs : Date.now();
 
   return {
@@ -1290,6 +1293,7 @@ function waitSpan(
       ...(typeof waitingOn === "string"
         ? { "task.waiting_on": waitingOn }
         : {}),
+      ...(typeof questions === "string" ? { "task.questions": questions } : {}),
       ...(next ? {} : { "wait.open": true }),
     },
   };
