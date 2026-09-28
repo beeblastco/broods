@@ -7,11 +7,13 @@
 
 import { requireEnv } from "../shared/env.ts";
 
-// One NDJSON frame per stdout line: chunk = streamed output, final = a
-// non-streaming result, end = closed stream, error = run failure. cpuUsec is
-// stamped by a runner that can measure itself. `id` names one request of a
-// multi-request run: a final or error carrying it settles that request only,
-// `end` closes the run, and an error without an id fails the whole run.
+/**
+ * One NDJSON frame per stdout line: chunk = streamed output, final = a
+ * non-streaming result, end = closed stream, error = run failure. cpuUsec is
+ * stamped by a runner that can measure itself. `id` names one request of a
+ * multi-request run: a final or error carrying it settles that request only,
+ * `end` closes the run, and an error without an id fails the whole run.
+ */
 export type RunnerFrame =
   | { t: "chunk"; output: unknown }
   | { t: "final"; id?: string; result: unknown; cpuUsec?: number }
@@ -21,14 +23,18 @@ export type RunnerFrame =
   // logger; only the isolate tier produces these today.
   | { t: "log"; level: string; message: string };
 
-// Push/pull buffer that parses incoming NDJSON text into frames as whole lines
-// arrive, letting a consumer await the next frame until the stream closes.
+/**
+ * Push/pull buffer that parses incoming NDJSON text into frames as whole lines
+ * arrive. The isolate executor and the hosted-MCP client push runner output in
+ * and drain it with `frames()`.
+ */
 export class FrameQueue {
   #buffer = "";
   #frames: RunnerFrame[] = [];
   #waiters: Array<() => void> = [];
   #closed = false;
 
+  /** Appends raw stdout text and queues every complete line as a frame. */
   push(text: string): void {
     this.#buffer += text;
     let newline: number;
@@ -41,6 +47,7 @@ export class FrameQueue {
     this.#wake();
   }
 
+  /** Parses any trailing partial line and ends the stream for `frames()`. */
   close(): void {
     const frame = parseRunnerFrame(this.#buffer);
     this.#buffer = "";
@@ -49,6 +56,7 @@ export class FrameQueue {
     this.#wake();
   }
 
+  /** Yields frames as they arrive until the queue is closed and drained. */
   async *frames(): AsyncGenerator<RunnerFrame, void, void> {
     while (true) {
       while (this.#frames.length > 0) {
@@ -59,6 +67,7 @@ export class FrameQueue {
     }
   }
 
+  /** Resolves every consumer waiting for the next frame. */
   #wake(): void {
     const waiters = this.#waiters;
     this.#waiters = [];
@@ -67,8 +76,8 @@ export class FrameQueue {
 }
 
 /**
- * Parse one NDJSON line into a frame; null for blank or non-protocol lines so a
- * caller can tell "no frames" from a real error.
+ * Parses one NDJSON line into a frame; null for blank, non-JSON or unknown-`t`
+ * lines, which callers skip. Only `t` is checked; the other fields are trusted.
  */
 export function parseRunnerFrame(line: string): RunnerFrame | null {
   const trimmed = line.trim();
@@ -92,6 +101,7 @@ export function parseRunnerFrame(line: string): RunnerFrame | null {
   }
 }
 
+/** The ToolBundles bucket that hook and hosted-MCP bundles are read from. */
 export function toolBundlesBucket(): string {
   return requireEnv("TOOL_BUNDLES_BUCKET_NAME");
 }

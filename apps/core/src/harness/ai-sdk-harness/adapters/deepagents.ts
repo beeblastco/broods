@@ -40,6 +40,7 @@ export function createConfiguredDeepAgentsAdapter(
   });
 }
 
+/** Builds the Deep Agents adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createDeepAgentsAdapter(
   settings?: DeepAgentsHarnessSettings,
 ): HarnessAgentAdapter {

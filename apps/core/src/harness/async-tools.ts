@@ -57,6 +57,7 @@ export interface AsyncToolPendingResult {
 
 type ToolEntry = ToolSet[string];
 
+/** Runs `async: true` tools in the background for one turn and feeds their results back; the handler builds one per run. */
 export class AsyncToolCoordinator {
   private readonly completions: AsyncToolCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
@@ -72,6 +73,7 @@ export class AsyncToolCoordinator {
       DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
   ) {}
 
+  /** Wraps the tools named in `asyncToolNames` so they return a statusId and run in the background. */
   dispatch: RunAsyncToolDispatch = (
     tools: ToolSet,
     asyncToolNames: AsyncToolNames,
@@ -88,6 +90,7 @@ export class AsyncToolCoordinator {
     );
   };
 
+  /** Calls still running; the handler checks it before waiting. */
   get pendingCount(): number {
     return this.pending.size;
   }
@@ -306,12 +309,14 @@ export class AsyncToolCoordinator {
     });
   }
 
+  /** Resolves on the next completion or settle; `waitForIdle` races it against the heartbeat. */
   private nextStateChange(): Promise<void> {
     return new Promise((resolve) => {
       this.waiters.add(resolve);
     });
   }
 
+  /** Wakes every `nextStateChange` waiter. */
   private notifyCompletion(): void {
     for (const waiter of this.waiters) {
       waiter();
@@ -410,6 +415,7 @@ function canonicalizeAsyncToolOutput(output: unknown): unknown {
   };
 }
 
+/** Renders a tool input as text for the injected parent message. */
 function formatUnknown(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -421,6 +427,7 @@ function formatUnknown(value: unknown): string {
   }
 }
 
+/** Loose object guard for the tool output canonicalizers. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }

@@ -20,6 +20,7 @@ import {
 
 export const CLAUDE_CODE_HARNESS_VERSION = VERSION;
 
+/** Builds the Claude Code adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createClaudeCodeAdapter(
   settings?: ClaudeCodeHarnessSettings,
 ): HarnessAgentAdapter {

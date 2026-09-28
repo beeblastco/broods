@@ -4,7 +4,8 @@
  * event→records index, then runs the matching hooks at each fire-point and
  * merges their sanitized mutations. Per-event isolate execution + the
  * field-scoped mutation boundary live in hook-runner.ts; the fold into harness
- * state lives at the call sites (harness.ts / integrations.ts / subagents.ts).
+ * state lives at the call sites (harness.ts / handler.ts / integrations.ts /
+ * subagents.ts).
  */
 
 import type { JSONValue, ToolSet } from "ai";
@@ -21,7 +22,9 @@ import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import { wrapToolExecute } from "./tool-execute.ts";
 
+/** One run's code hooks, asked at each fire-point. */
 export interface HookDispatcher {
+  /** Lets a call site skip building a payload when no hook listens for the event. */
   hasHooksFor(event: AgentHookEventName): boolean;
   /** Runs every hook registered for the event and returns the merged, field-scoped mutation. */
   runMutation(
@@ -30,6 +33,7 @@ export interface HookDispatcher {
   ): Promise<Record<string, unknown> | undefined>;
 }
 
+/** Returned when the agent has no active code hooks, so call sites never null-check. */
 const NO_HOOKS: HookDispatcher = {
   hasHooksFor: (): boolean => false,
   runMutation: async function (): Promise<Record<string, unknown> | undefined> {

@@ -55,6 +55,7 @@ export function createAiSdkHarnessSandbox(
       });
 }
 
+/** Same as `harnessAdapterVersion`, exported from the harness entrypoint; only tests call it. */
 export function harnessRuntimeVersion(type: AiSdkHarnessType): string {
   return harnessAdapterVersion(type);
 }
@@ -149,6 +150,7 @@ function createWorkdirHarnessSandbox(
   };
 }
 
+/** Suffixes the reservation key with harness type and version, so an adapter bump reserves a fresh machine. */
 function versionScopedReservationKey(
   reservationKey: string,
   type: AiSdkHarnessType,
