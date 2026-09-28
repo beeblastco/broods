@@ -186,7 +186,7 @@ function description(context: SandboxToolContext): string {
 Usage notes:
 - ${runtimes}
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
 - ${state}${sandboxesNote(context)}`;
   }
 
@@ -196,7 +196,7 @@ Usage notes:
 - The selected workspace's sandbox may restrict runtimes; commands using disallowed runtimes are rejected before execution.
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
 - DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
