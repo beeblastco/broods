@@ -1476,7 +1476,7 @@ function formatEnvironmentPrompt(environment: {
     `replies go to: ${environment.channel}`,
     ...(environment.bashTargets.length > 0
       ? [
-          "bash runs in exactly one place: pass workspace or sandbox, never both, or neither for the default.",
+          "bash runs in exactly one place: pass workspace or sandbox, or neither for the default. A sandbox wins over a workspace.",
           ...environment.bashTargets,
         ]
       : []),
@@ -1714,6 +1714,12 @@ function projectEntriesToMessages(
         ];
       case "tool":
         return [event.message];
+      default: {
+        const unexpected: never = event.message;
+        throw new Error(
+          `Unsupported conversation message: ${typeof unexpected}`,
+        );
+      }
     }
   });
 
