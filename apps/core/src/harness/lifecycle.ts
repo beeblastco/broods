@@ -13,8 +13,10 @@ import { logError } from "../shared/log.ts";
 import { fireWebhook } from "../shared/webhook.ts";
 import type { Session } from "./session.ts";
 
+/** Event-specific fields of a lifecycle event, also the payload handed to code hooks. */
 export type AgentLifecycleEventPayload = Record<string, JSONValue | undefined>;
 
+/** The JSON body posted to a lifecycle webhook. */
 export interface AgentLifecycleEvent {
   type: AgentLifecycleEventName;
   timestamp: string;
@@ -25,6 +27,7 @@ export interface AgentLifecycleEvent {
   payload: AgentLifecycleEventPayload;
 }
 
+/** What the harness and subagent coordinator call to announce a lifecycle event. */
 export interface AgentLifecycleEmitter {
   emit(
     type: AgentLifecycleEventName,
@@ -33,7 +36,8 @@ export interface AgentLifecycleEmitter {
 }
 
 /**
- * Built once per run by the harness. `emit` posts a signed event to every
+ * Built once per run by the harness, and by the subagent coordinator for its
+ * parent session. `emit` posts a signed event to every
  * enabled lifecycle webhook subscribed to that type; delivery failures are logged.
  */
 export function createAgentLifecycleEmitter(

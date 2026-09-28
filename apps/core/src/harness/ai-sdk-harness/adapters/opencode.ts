@@ -52,6 +52,7 @@ export function createConfiguredOpenCodeAdapter(
   });
 }
 
+/** Builds the OpenCode adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createOpenCodeAdapter(
   settings?: OpenCodeHarnessSettings,
 ): HarnessAgentAdapter {

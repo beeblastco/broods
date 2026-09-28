@@ -1,6 +1,6 @@
 /**
  * Account deletion cleanup across Convex runtime state and the account's S3
- * prefixes (workspaces, attachment store, skills, tool/hook bundles). CRUD for
+ * prefixes (workspaces, attachment store, skills, hook and MCP bundles). CRUD for
  * these resources lives in the Convex config plane; only the deletion sweep
  * belongs here.
  */
@@ -41,8 +41,8 @@ interface SandboxReservationPage {
 }
 
 /**
- * Inbound chat media kept for the account's conversations, outside every
- * workspace mount. The conversations go with the Convex cascade; this is the bytes.
+ * Deletes the account's inbound chat media, kept outside every workspace mount.
+ * The conversations go with the Convex cascade; this is the bytes.
  */
 export async function deleteAccountAttachments(
   accountId: string,
@@ -54,8 +54,8 @@ export async function deleteAccountAttachments(
 }
 
 /**
- * Bundle metadata lives in Convex; only the executable module bytes are stored
- * under these account-prefixed S3 keys.
+ * Deletes the account's hook and hosted MCP bundle bytes from S3; their
+ * metadata lives in Convex.
  */
 export async function deleteAccountBundles(accountId: string): Promise<number> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
@@ -112,6 +112,7 @@ export async function deleteAccountRuntimeData(
   };
 }
 
+/** Deletes the account's skill files from the skills bucket. */
 export async function deleteAccountSkills(accountId: string): Promise<number> {
   return deleteS3Prefix(skillsBucketName(), `${accountId}/`);
 }

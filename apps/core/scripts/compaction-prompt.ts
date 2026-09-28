@@ -1,7 +1,7 @@
 /**
- * CI helper to sync the embedded compaction prompt module with COMPACTION.md.
- * The harness compaction mechanism (src/harness/compaction.ts) embeds this at
- * build time. There is no default system prompt; agents define their own.
+ * Build helper that syncs the embedded compaction prompt module with
+ * COMPACTION.md; src/harness/compaction.ts imports the generated module.
+ * There is no default system prompt; agents define their own.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";

@@ -1,6 +1,7 @@
 /**
- * Agent-side harness core.
- * Keep turn context assembly, model invocation, and tools orchestration here.
+ * The model/tool loop for one agent run: streamText or an AI SDK Harness turn,
+ * its tracing, usage and lifecycle events. The handler assembles the turn
+ * context before it; session.ts loads and saves conversation state.
  */
 
 import {
@@ -133,6 +134,7 @@ import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import type { AskParent, SubagentWatch } from "./tools/utils.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
+/** Default step cap when the agent config sets no `agent.maxTurn`. */
 const MAX_AGENT_ITERATIONS = 30;
 // Tools whose successful call already delivered the run's output to a channel
 // or another session. Some models (gemini flash) legitimately stop with no
@@ -149,15 +151,13 @@ const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
 // A machine only one conversation uses is released after a day idle instead of
 // the default week, so abandoned subagent tasks stop holding machines.
 const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
-/** Thrown when an owner is stopped; callers match on it to skip result delivery. */
+/** Failure text of a stopped run; handler and subagents match on it to treat a stop as intended, not a failure. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // Harness types whose runtime refused a mid-turn message in this process.
 const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
-// Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
-// I/O show in full on the dashboard (delivered full-fidelity over the live
-// JetStream path); still well under the NATS 1MB max-payload ceiling. Tempo may
-// truncate further on its side, but that only affects history older than the
-// JetStream replay window.
+// Per-attribute cap on serialized trace payloads. Generous so reasoning and
+// tool I/O show in full on the dashboard, still well under the NATS 1MB
+// max-payload ceiling.
 const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
 // Tracing labels a run with its request. The whole text is already in
 // model.input, so this only has to fill one row.
@@ -179,6 +179,7 @@ const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
   "file",
 ]);
 
+/** An open model.step or tool.call span plus the ids its live NATS rows reuse. */
 type TrackedSpan = {
   otelSpan: Span;
   otelContext: OtelContext;
@@ -192,6 +193,7 @@ type TrackedSpan = {
 
 type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
 type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
+/** One tool call as the finish and failure logs and lifecycle events report it. */
 type ToolCallSummary = {
   toolCallId: string;
   toolName: string;
@@ -200,12 +202,14 @@ type ToolCallSummary = {
   success?: boolean;
 };
 
+/** A tool call waiting on a person's approval, handed to `onApprovalRequired`. */
 export type ToolApprovalSummary = Pick<ApprovalRequestOutput, "approvalId"> & {
   toolCallId: ApprovalToolCall["toolCallId"];
   toolName: ApprovalToolCall["toolName"];
   input: ApprovalToolCall["input"];
 };
 
+/** How the caller delivers a run's outcome: final text, error, pending approvals or questions. */
 export interface AgentReplyHooks {
   onFinalText(response: JSONValue): Promise<void>;
   onErrorText(error: string): Promise<void>;
@@ -297,6 +301,10 @@ export async function* readAgentFullStream(
   }
 }
 
+/**
+ * Runs one model pass for a turn and returns its stream; the handler and
+ * subagents read it through `readAgentFullStream`.
+ */
 export async function runAgentLoop(
   session: Session,
   turnContext: TurnContextSnapshot,
@@ -320,7 +328,8 @@ export async function runAgentLoop(
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
   // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
-  // sandboxUsage row at finalize. CPU only arrives for sandbox/lambda execs.
+  // sandboxUsage row at finalize. CPU only arrives from sandbox execs and
+  // hosted MCP calls.
   const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
   // Per-call compute, so the tool.call span can report what that one call cost.
   // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
@@ -354,10 +363,8 @@ export async function runAgentLoop(
     }
   };
   /**
-   * Accumulated sandbox CPU split by role (agent's own sandbox vs hosted MCP
-   * sandboxes), so the dashboard can stream the Compute chart live off the running
-   * root span instead of waiting for the finalize write. Empty until a sandbox
-   * exec reports CPU.
+   * Sandbox CPU so far split by role (agent's own sandbox vs hosted MCP), for
+   * the live root span re-published after each step. Empty until CPU arrives.
    */
   const sandboxCpuRoleAttributes = (): Record<string, number> => {
     let agent = 0;
@@ -373,12 +380,9 @@ export async function runAgentLoop(
     };
   };
 
-  // Start the durable root span (agent.task) up front so the same trace id is
-  // stamped on every log line and NATS span row AND exported to Tempo. That shared
-  // id links logs<->traces in Grafana. When OTel is not initialised the tracer is a
-  // noop and its context is all-zero, so fall back to freshly minted ids for the
-  // live/NATS path. project/stage come from the auth scope on the session's
-  // endpointId; empty for non-deployment (channel/cron).
+  // Start the root span up front so one trace id is on every log line, NATS
+  // span row and Tempo span. A noop tracer (OTel not initialised) has all-zero
+  // ids, so the live NATS path falls back to freshly minted ones.
   const runStartedAt = Date.now();
   const observabilityScope = {
     accountId: session.accountId ?? "",
@@ -523,10 +527,8 @@ export async function runAgentLoop(
   });
 
   /**
-   * Emit a closed child phase span under the root task. Used for the timeline
-   * phases that wrap the model loop (cold start, context prepare, compaction) so
-   * a slow turn can be attributed to non-model work. Best-effort: telemetry must
-   * never break the run, and a noop tracer/unscoped run emits nothing.
+   * Emits a closed phase span under the root for non-model work (cold start,
+   * context prepare, compaction), so a slow turn can be attributed. Best-effort.
    */
   const emitPhaseSpan = (
     phaseName: string,
@@ -689,8 +691,8 @@ export async function runAgentLoop(
       agentConfig,
     )),
   } satisfies ToolSet;
-  // Wrap tool execution so tool.call.started hooks can deny/edit args and
-  // tool.result hooks can transform output (no-op when no such hooks exist).
+  // Hooks let tool.call.started deny or edit args and tool.result transform
+  // output; the owner fence rechecks conversation ownership before each call.
   const tools = wrapToolsWithOwnerFence(
     wrapToolsWithHooks(builtTools, hooks),
     session,
@@ -780,16 +782,9 @@ export async function runAgentLoop(
 
   // Per-step timing state, read when each step's span closes.
   const stepStartedAt = new Map<number, number>();
-  // Time-to-first-token per step. onChunk has no step number, so the first chunk
-  // after each step start is attributed to the active step. A step decomposes into
-  // three non-overlapping segments that sum to its duration:
-  //   ttft      = step start      -> first model chunk   (queue/prefill wait)
-  //   streaming = first model chunk -> last model chunk   (pure token generation)
-  //   tool wait = last model chunk  -> step finish         (tool execution; shown
-  //               as the child tool.call spans, so streaming must NOT include it)
-  // The last model chunk is the last generation delta (text / reasoning / tool-input
-  // / tool-call); the post-execution `tool-result` chunk is deliberately excluded so
-  // a slow tool never inflates the streaming number and misleads optimization.
+  // First and last generated chunk per step, attributed to the active step since
+  // onChunk has no step number. They split a step into ttft, streaming and tool
+  // wait; tool results are not generation, so a slow tool never inflates streaming.
   const firstChunkAt = new Map<number, number>();
   const lastModelChunkAt = new Map<number, number>();
   // Per-part streaming windows (first/last delta per kind) so the dashboard can show
@@ -1262,12 +1257,7 @@ export async function runAgentLoop(
       };
     },
     onChunk: ({ chunk }) => {
-      // First generated chunk of the active step marks the model's time-to-first-token.
-      // Synchronous and cheap; onChunk pauses the stream until it returns.
-      // v7 routes EVERY stream part through onChunk, including boundary and
-      // lifecycle parts (start-step, finish-step, finish, …) and post-execution
-      // tool results, so gate on generated-content parts only; anything else
-      // would skew the time-to-first/last-token windows.
+      // Kept synchronous and cheap: onChunk pauses the stream until it returns.
       if (!MODEL_CONTENT_CHUNK_TYPES.has(chunk.type)) return;
       const step = activeStepNumber;
       if (step === undefined) return;
@@ -1634,7 +1624,7 @@ export async function runAgentLoop(
         },
       );
 
-      // Publish the model.step span (tree: agent.task -> model.step -> tool.call).
+      // Publish the model.step span (tree: root -> model.step -> tool.call).
       // Tool spans reference this stepSpanId as their parent; without it they
       // would be orphaned in the trace view.
       const tracked = stepSpans.get(stepNumber);
@@ -2197,11 +2187,9 @@ export async function runAgentLoop(
 
   const originalConsumeStream = stream.consumeStream.bind(stream);
   /**
-   * Guarantee finalizeUsage runs even when onEnd/onError never fire. The AI SDK
-   * skips onEnd when a run errors before any step completes (e.g. a usage-limit
-   * error on the first model call) and only onError fires, so a caller that
-   * drains the stream directly would never finalize and the task span would
-   * spin "running" forever. Idempotent via usageFinalized.
+   * Settles the run when onEnd never did (the SDK skips it when the run errors
+   * early), aborting it first if the caller stopped reading. Called by
+   * `readAgentFullStream` and the wrapped consumeStream; idempotent.
    */
   const ensureFinalized = async (drained: boolean): Promise<void> => {
     if (!drained && !finishObserved) {
@@ -2282,12 +2270,8 @@ export function latestUserText(messages: ModelMessage[]): string {
 }
 
 /**
- * The system prompt is assembled per turn from the agent config plus every
- * injected block (memory index, workspace/memory/scheduler/skills/subagent
- * harness prompts, loaded skills, persisted system context, steering). Traces
- * carry the joined text the provider is actually instructed with, so a reader
- * can see the whole context a run had rather than only its chat messages. The
- * counts ride alongside because `serialize` truncates oversized payloads.
+ * The joined system prompt the provider received, for the root and step spans.
+ * The counts ride alongside because `serialize` truncates oversized payloads.
  */
 export function systemTraceAttributes(
   system: SystemModelMessage[],
@@ -2508,6 +2492,7 @@ function harnessPromptMessages(
   );
 }
 
+/** The agent's first sandbox, which a harness run needs to run on. */
 function requireHarnessSandbox(
   sandbox: SandboxExecutorConfig | undefined,
 ): SandboxExecutorConfig {
@@ -2574,12 +2559,14 @@ function formatCallWarning(warning: {
   return [warning.type, subject, detail].filter(Boolean).join(": ");
 }
 
+/** A duration for log messages. */
 function formatDuration(durationMs: number | undefined): string {
   return typeof durationMs === "number"
     ? `${durationMs}ms`
     : "unknown duration";
 }
 
+/** Token usage as one phrase for the step and invocation log messages. */
 function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
 
@@ -2633,6 +2620,7 @@ function publishSpan(row: ObservabilitySpanRow): Promise<void> {
     });
 }
 
+/** The text of an `error-text` tool output, so onToolExecutionEnd marks that call failed. */
 function toolOutputErrorText(output: unknown): string | undefined {
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return undefined;
@@ -2682,6 +2670,7 @@ function applyAgentStartedMutation(
   }
 }
 
+/** Loose check that a hook's messages override entry looks like a model message. */
 function isModelMessageShape(entry: unknown): boolean {
   return (
     isPlainObject(entry) &&
@@ -2729,6 +2718,7 @@ function extractApprovalRequests(
   );
 }
 
+/** The approval summary onEnd hands to hooks and `onApprovalRequired`. */
 function summarizeApprovalRequest(
   request: ApprovalRequestOutput,
 ): ToolApprovalSummary {
@@ -2759,7 +2749,7 @@ function recordToolCallSummary(
   });
 }
 
-/** The id and name of an SDK tool call, or null when it has neither, for `recordToolCallSummary`. */
+/** The id and name of an SDK tool call, or null when either is missing, for `recordToolCallSummary`. */
 function toolCallIdentity(
   toolCall: unknown,
 ): Pick<ToolCallSummary, "toolCallId" | "toolName"> | null {
@@ -2808,6 +2798,10 @@ function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>): {
   };
 }
 
+/**
+ * Puts the tool call before each approval request that lacks one, so the
+ * persisted history can resume the call once it is approved.
+ */
 function withApprovalToolCalls(
   messages: ModelMessage[],
   approvalRequests: ApprovalRequestOutput[],
@@ -2851,6 +2845,7 @@ function withApprovalToolCalls(
   });
 }
 
+/** An approval request's tool call as a message part, for `withApprovalToolCalls`. */
 function toToolCallPart(toolCall: ApprovalToolCall): ToolCallPart {
   return {
     type: "tool-call",
@@ -2860,6 +2855,7 @@ function toToolCallPart(toolCall: ApprovalToolCall): ToolCallPart {
   };
 }
 
+/** The `errorDetails` of a failure log: name, message, status fields and a short stack. */
 function serializeError(error: unknown): Record<string, unknown> {
   if (!error || typeof error !== "object") {
     return { message: String(error) };

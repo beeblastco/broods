@@ -47,6 +47,7 @@ export type AiSdkHarnessSettings =
   | PiHarnessSettings;
 export type AiSdkHarnessSessionParking = "detach" | "stop";
 
+// Adapter package versions; they scope sandbox reservation keys per version.
 const HARNESS_VERSIONS: Record<AiSdkHarnessType, string> = {
   "claude-code": CLAUDE_CODE_HARNESS_VERSION,
   codex: CODEX_HARNESS_VERSION,
@@ -54,6 +55,8 @@ const HARNESS_VERSIONS: Record<AiSdkHarnessType, string> = {
   opencode: OPENCODE_HARNESS_VERSION,
   pi: PI_HARNESS_VERSION,
 };
+// How a successful turn parks the native session: detach keeps the bridge alive,
+// stop shuts it down. Both return the resume state the next turn starts from.
 const HARNESS_SESSION_PARKING: Record<
   AiSdkHarnessType,
   AiSdkHarnessSessionParking
@@ -136,20 +139,24 @@ export function createConfiguredAiSdkHarnessAdapter(
   return createConfiguredPiAdapter(agentConfig);
 }
 
+/** The adapter package version; the sandbox layer scopes reservation keys with it. */
 export function harnessAdapterVersion(type: AiSdkHarnessType): string {
   return HARNESS_VERSIONS[type];
 }
 
+/** Whether the running turn takes steering messages; the run loop in `harness.ts` checks it. */
 export function harnessSteersMidTurn(type: AiSdkHarnessType): boolean {
   return HARNESS_MID_TURN_STEERING[type];
 }
 
+/** Whether a successful turn detaches or stops the native session; `parkAiSdkHarnessSession` reads it. */
 export function harnessSessionParking(
   type: AiSdkHarnessType,
 ): AiSdkHarnessSessionParking {
   return HARNESS_SESSION_PARKING[type];
 }
 
+/** Whether conversations can share one machine; `harnessReservationKey` reads it. */
 export function harnessSharesSandbox(type: AiSdkHarnessType): boolean {
   return HARNESS_SHARES_SANDBOX[type];
 }

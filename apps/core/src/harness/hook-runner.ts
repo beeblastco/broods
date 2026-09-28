@@ -3,8 +3,8 @@
  * Loads an uploaded accountHooks bundle, runs the handler for a fired event in
  * the V8 isolate pool, and returns the validated, field-scoped mutation the
  * caller folds into harness state. Hooks are non-fatal: a throw or timeout logs
- * and yields no mutation, so the agent run is never broken. Fire-point wiring
- * lives in harness.ts / integrations.ts; this file owns only "run one hook,
+ * and yields no mutation, so the agent run is never broken. Dispatch across
+ * hooks lives in hook-dispatcher.ts; this file owns only "run one hook,
  * sanitize its return".
  */
 
@@ -62,6 +62,7 @@ export interface CodeHookOutcome {
   state: Record<string, unknown>;
 }
 
+/** Whether a hook's return is folded back at this event, rather than ignored. */
 export function isHookMutableEvent(
   event: AgentHookEventName,
 ): event is HookMutableEvent {
@@ -160,8 +161,8 @@ async function runForResult(
   accountId: string,
   payload: Record<string, unknown>,
 ): Promise<unknown> {
-  // A hook returns a single value; the isolate yields chunks only for the async
-  // -iterable tool path, so the last yielded value is the handler's return.
+  // A hook returns a single value; the isolate yields chunks only for the
+  // async-iterable tool path, so the last yielded value is the handler's return.
   let result: unknown;
   for await (const value of streamIsolatePayload(accountId, payload)) {
     result = value;
@@ -170,6 +171,7 @@ async function runForResult(
   return result;
 }
 
+/** JSON.stringify that returns undefined instead of throwing on cycles or BigInt. */
 function safeStringify(value: unknown): string | undefined {
   try {
     return JSON.stringify(value);

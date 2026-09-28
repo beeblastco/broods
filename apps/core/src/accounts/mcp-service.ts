@@ -33,8 +33,8 @@ interface McpProbe {
 }
 
 /**
- * Runs tools/list or tools/call for the dashboard MCP explorer, against a saved
- * server or an unsaved probe. Called from the account handler's
+ * Runs tools/list or tools/call against a saved server (dashboard MCP explorer)
+ * or an unsaved probe (save-time check). Called from the account handler's
  * /v1/mcp-service/rpc route.
  */
 export async function handleMcpServiceRpc(
@@ -121,8 +121,8 @@ function parseProbe(value: unknown): McpProbe | string {
 }
 
 /**
- * A synthetic one-shot record for verification. The unique serverId/updatedAt
- * pair keeps probe results out of the per-row era and listing caches' way.
+ * A synthetic one-shot record for verification. The unique serverId gives each
+ * probe its own client cache key, so it never reads a saved row's cached tools.
  */
 function probeRecord(accountId: string, probe: McpProbe): McpRecord {
   const now = new Date().toISOString();

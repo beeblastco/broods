@@ -12,6 +12,7 @@ type HarnessProviderName = NonNullable<
   NonNullable<AgentConfig["model"]>["provider"]
 >;
 
+/** Returns `config.model.modelId` or throws; `createConfiguredHarnessAgent` passes it to the agent. */
 export function requireHarnessModelId(agentConfig: AgentConfig): string {
   const modelId = agentConfig.model?.modelId;
   if (!modelId) {
@@ -21,6 +22,7 @@ export function requireHarnessModelId(agentConfig: AgentConfig): string {
   return modelId;
 }
 
+/** Returns `config.model.provider` or throws; every configured adapter calls it first. */
 export function requireHarnessProviderName(
   agentConfig: AgentConfig,
 ): HarnessProviderName {
@@ -53,10 +55,9 @@ export function requireHarnessProviderSettings(
 }
 
 /**
- * Anthropic credentials for the `auth` option. Since `@ai-sdk/harness` 1.0.92
- * that option is either a mode string or an isolated environment that replaces
- * the host process env for credential discovery; every adapter here supplies
- * the environment so nothing leaks in from the core container.
+ * Anthropic credentials for the `auth` option. Every adapter here passes an
+ * isolated env, which replaces the host env for credential discovery, so
+ * nothing leaks in from the core container.
  */
 export function resolveAnthropicAuthEnv(
   provider: AgentProviderSettings,
@@ -69,6 +70,7 @@ export function resolveAnthropicAuthEnv(
   };
 }
 
+/** Picks Anthropic or Vercel AI Gateway credentials; the Claude Code and Deep Agents adapters use it. */
 export function resolveAnthropicOrVercelAuthEnv(
   providerName: "anthropic" | "vercel",
   provider: AgentProviderSettings,
@@ -94,6 +96,7 @@ export function resolveGatewayAuthEnv(
   };
 }
 
+/** The provider's base URL under either config spelling, used by every auth env builder. */
 export function resolveHarnessProviderBaseUrl(
   provider: AgentProviderSettings,
 ): string | undefined {

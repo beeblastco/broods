@@ -43,10 +43,9 @@ export interface ParkAiSdkHarnessSessionOptions {
 }
 
 /**
- * The reservation a harness conversation runs on. A stored session keeps the one
- * it started on (rows from before this was stored ran on the conversation key). A
- * new one shares the agent's machine, each session in its own work folder, unless
- * the task asked to be isolated or the adapter's bridge needs the machine to itself.
+ * The reservation a harness conversation runs on; the run loop in `harness.ts` calls it.
+ * A stored session keeps its own (older rows fall back to the conversation key). A new
+ * one shares the agent's machine unless the task is isolated or the adapter can't share.
  */
 export function harnessReservationKey(
   options: HarnessReservationOptions,
