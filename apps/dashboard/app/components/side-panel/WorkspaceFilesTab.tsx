@@ -876,7 +876,7 @@ async function readAllEntries(
   reader: FileSystemDirectoryReader,
 ): Promise<FileSystemEntry[]> {
   const all: FileSystemEntry[] = [];
-  while (true) {
+  for (;;) {
     const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
       reader.readEntries(resolve, reject);
     });

@@ -1695,7 +1695,7 @@ async function selectOnboardingProject(
     return promptText("Project name", suggested);
   }
 
-  while (true) {
+  for (;;) {
     const answer = await promptSelectOrText(
       "Select project",
       context.projects,
