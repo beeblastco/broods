@@ -5,6 +5,14 @@
  * `satisfies` there fails the build if the two ever drift.
  */
 
+/**
+ * Provider settings that name an endpoint the factory will call, like
+ * `baseURL`, OpenRouter's `baseUrl` or its `decisionsBaseURL`. Convex holds
+ * each to a public https URL and core sends that provider's requests through
+ * its private-address guard.
+ */
+export const PROVIDER_ENDPOINT_SETTING = /url$/i;
+
 /** Display metadata for the dashboard's provider pickers. */
 export interface ModelProviderMeta {
   label: string;

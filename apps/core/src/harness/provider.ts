@@ -51,7 +51,10 @@ import {
 import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
 import { createWorkersAI } from "workers-ai-provider";
 import { publicHostFetch } from "../shared/http.ts";
-import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+import {
+  PROVIDER_ENDPOINT_SETTING,
+  type AccountModelProviderName,
+} from "@broods/convex/model/modelProviders";
 import type {
   AgentConfig,
   AgentModelOutputConfig,
@@ -675,13 +678,15 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
  * Every model request goes out with Bun's socket idle timeout off. Bun drops a
  * connection that stays silent for 300s, and a busy provider can hold a stream
  * that long, so a model call ends only on the provider's own error or the run's
- * abort signal. A tenant-supplied endpoint also gets the resolve-then-connect
- * `fetch`.
+ * abort signal. A provider with any tenant-supplied endpoint also gets the
+ * resolve-then-connect `fetch`.
  */
 function withModelFetch<T extends AgentProviderSettings>(
   settings: T,
 ): T & { fetch: typeof fetch } {
-  const guarded = Boolean(settings.baseURL || settings.base_url);
+  const guarded = Object.entries(settings).some(
+    ([key, value]) => PROVIDER_ENDPOINT_SETTING.test(key) && Boolean(value),
+  );
   const modelFetch = (
     input: string | URL | Request,
     init?: BunFetchRequestInit,

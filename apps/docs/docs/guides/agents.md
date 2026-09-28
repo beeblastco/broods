@@ -43,7 +43,7 @@ The full field list is in [Configuration](../reference/configuration.md).
 | Hugging Face          | `huggingface` | OpenAI-compatible | `custom`     |
 | LLM Gateway           | `llmgateway`  |                   |              |
 
-Each provider needs an `apiKey`. Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work. `cloudflare` takes `accountId`. `ollama` goes to Ollama Cloud unless `baseURL` points at a public Ollama host.
+Each provider needs an `apiKey`. Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. Any setting whose name ends in `url`, like `baseURL` or OpenRouter's `baseUrl`, must be a public https URL. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work. `cloudflare` takes `accountId`. `ollama` goes to Ollama Cloud unless `baseURL` points at a public Ollama host.
 
 For a self-hosted or third-party OpenAI-compatible endpoint, use `custom`:
 

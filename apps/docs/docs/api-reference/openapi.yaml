@@ -4591,7 +4591,8 @@ components:
       description: >-
         Settings for one provider. Only the fields broods reads itself are
         listed; any other setting the provider's AI SDK factory supports is
-        forwarded as-is.
+        forwarded as-is. Any setting whose name ends in `url` must be a public
+        https URL.
       additionalProperties: true
       properties:
         apiKey:

@@ -81,6 +81,23 @@ describe("model provider registry", () => {
     }
   });
 
+  it("guards an endpoint under a name broods does not know", async () => {
+    const { model } = resolveConfiguredModel({
+      model: { provider: "openrouter", modelId: "openai/gpt-5" },
+      provider: {
+        openrouter: { apiKey: "sk-test", baseUrl: "https://10.0.0.8/api/v1" },
+      },
+    });
+
+    const error = await generateText({
+      model: model,
+      prompt: "hi",
+      maxRetries: 0,
+    }).catch((caught: unknown) => caught);
+
+    expect(String(error)).toMatch(/private address/);
+  });
+
   it("passes provider-owned settings through validation untouched", () => {
     const config = normalizeAgentConfig({
       model: { provider: "vertex", modelId: "gemini-2.5-flash" },

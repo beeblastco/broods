@@ -14,6 +14,7 @@ import {
 } from "./accountHooks";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
+  PROVIDER_ENDPOINT_SETTING,
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "./modelProviders";
@@ -692,6 +693,14 @@ function normalizeProviderSettings(
     // shadowing later `baseURL` updates.
     config.baseURL = baseURL;
     delete config.base_url;
+  }
+  for (const [key, endpoint] of Object.entries(config)) {
+    if (!PROVIDER_ENDPOINT_SETTING.test(key)) continue;
+    const label = `config.provider.${providerName}.${key}`;
+    assertOptionalString(endpoint, label);
+    if (typeof endpoint === "string" && endpoint.trim()) {
+      assertPublicHttpsUrl(endpoint.trim(), label);
+    }
   }
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
     throw new ClientError(
