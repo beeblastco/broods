@@ -63,12 +63,14 @@ tags:
       via assume-role for a short-lived `fp_sts_...` session token.
 
 paths:
+  # checkov:skip=CKV_OPENAPI_21:The gateway caps request body bytes, which bounds request arrays. List responses return every record the caller owns.
   /healthz:
     get:
       tags:
         - Direct API
       summary: Health probe
       description: Unauthenticated liveness probe. The gateway answers it itself, so it says nothing about core.
+      # checkov:skip=CKV_OPENAPI_5:Liveness probes run without credentials. The gateway answers it and returns no data.
       security: []
       responses:
         "200":
@@ -2144,6 +2146,7 @@ paths:
         unauthenticated by design, because the token is the whole credential.
         Treat the link as a secret. Unknown, expired and revoked tokens all
         answer 404, so the route gives nothing away to anyone probing for files.
+      # checkov:skip=CKV_OPENAPI_5:The download token in the path is the credential, so the route has no auth header.
       security: []
       parameters:
         - { name: token, in: path, required: true, schema: { type: string } }
