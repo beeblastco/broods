@@ -45,8 +45,7 @@ beforeEach(() => {
     enforced: true,
     plan: "free",
     month: "2026-09",
-    usedEur: 1,
-    limitEur: 5,
+    usedPercent: 20,
     runsPerMinute: 600,
     warned: false,
   };
@@ -107,7 +106,7 @@ afterEach(() => {
 
 describe("admitRun", () => {
   it("refuses every run once the month's budget is used", async () => {
-    budget.usedEur = 5;
+    budget.usedPercent = 100;
 
     const { refusal } = await admitRun(ACCOUNT_ID);
 
@@ -126,14 +125,14 @@ describe("admitRun", () => {
 
   it("limits nothing on a self-hosted install", async () => {
     budget.enforced = false;
-    budget.usedEur = 50;
+    budget.usedPercent = 1000;
     await admitMany(budget.runsPerMinute + 1);
 
     expect((await admitRun(ACCOUNT_ID)).refusal).toBeNull();
   });
 
   it("warns a channel once when the budget passes 80%", async () => {
-    budget.usedEur = 4;
+    budget.usedPercent = 80;
 
     const first = await admitRun(ACCOUNT_ID, { claimWarning: true });
     const second = await admitRun(ACCOUNT_ID, { claimWarning: true });
@@ -144,7 +143,7 @@ describe("admitRun", () => {
   });
 
   it("admits the run when claiming the notice fails", async () => {
-    budget.usedEur = 4;
+    budget.usedPercent = 80;
     setStorageForTests({
       budgets: {
         get: async (): Promise<BudgetStatus> => ({ ...budget }),
@@ -200,7 +199,7 @@ describe("refusal over HTTP", () => {
   });
 
   it("skips a cron fire with the reason once the budget is used", async () => {
-    budget.usedEur = 5;
+    budget.usedPercent = 100;
 
     const response = await handler({
       method: "POST",
@@ -225,7 +224,7 @@ describe("refusal over HTTP", () => {
 
 describe("sandbox start", () => {
   it("refuses to launch compute once the budget is used", async () => {
-    budget.usedEur = 5;
+    budget.usedPercent = 100;
     const executor = createSandboxExecutor({
       provider: "sandbox",
       options: { workdirUrl: "https://workdir.example.com", apiKey: "key" },

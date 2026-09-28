@@ -318,6 +318,7 @@ export async function handleRuntimeKeyRoute(
       secretHash: auth.secretHash,
       project: route.project,
       stage: route.stage,
+      createdByAuthId: "cliAuthId" in auth ? auth.cliAuthId : undefined,
     },
   );
 
@@ -638,6 +639,7 @@ async function handleManifestSync(
       project: route.project,
       stage: route.stage,
       rotate: body.rotateRuntimeKey === true,
+      createdByAuthId: "cliAuthId" in auth ? auth.cliAuthId : undefined,
       auditSync: {
         resourceCount: originalManifest.resources.length,
         prune: prune,

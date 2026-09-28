@@ -275,6 +275,12 @@ const agentDeployments: Storage["agentDeployments"] = {
 
     return doc;
   },
+  touchLastUsed: async function (apiKeyHash, usedAt) {
+    await getConvexClient().mutation(internal.agent.deployments.touchLastUsed, {
+      apiKeyHash: apiKeyHash,
+      usedAt: usedAt,
+    });
+  },
   getByAgentId: async function (accountId, agentId) {
     const doc = (await getConvexClient().query(
       internal.agent.deployments.getByAgentId,

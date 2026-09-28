@@ -152,6 +152,8 @@ interface ChannelRecordStore {
  */
 interface AgentDeploymentStore {
   getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentScope | null>;
+  /** Stamp the key's lastUsedAt for the dashboard. Callers throttle it. */
+  touchLastUsed(apiKeyHash: string, usedAt: number): Promise<void>;
   /** Resolve the stage deployment containing one linked runtime agent. */
   getByAgentId?(
     accountId: string,

@@ -201,7 +201,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "402":
-          description: The account has used its monthly compute budget (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces budgets.
+          description: The account has reached one of its monthly resource caps (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces caps.
           content:
             application/json:
               schema:
@@ -437,7 +437,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "402":
-          description: The account has used its monthly compute budget (`budget_exhausted`), as for `POST /v1/runs`
+          description: The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`
           content:
             application/json:
               schema:
@@ -523,7 +523,7 @@ paths:
             enum: [telegram, github, slack, discord, matrix, pancake, zalo]
       responses:
         "200":
-          description: Provider-specific acknowledgement. A message refused by the account's plan (budget used, or a burst past runs per minute) is still acknowledged so the provider does not redeliver it; the agent says why in the channel instead of running.
+          description: Provider-specific acknowledgement. A message refused by the account's plan (a monthly cap reached, or a burst past runs per minute) is still acknowledged so the provider does not redeliver it; the agent says why in the channel instead of running.
         "401":
           description: Provider authentication failed
         "404":
@@ -1700,7 +1700,7 @@ paths:
         "200": { description: Running }
         "402":
           {
-            description: "The account has used its monthly compute budget (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+            description: "The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
           }
         "403":
           {
@@ -1812,7 +1812,7 @@ paths:
                   websocketPath: { type: string }
         "402":
           {
-            description: "The account has used its monthly compute budget (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+            description: "The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
           }
         "403":
           {

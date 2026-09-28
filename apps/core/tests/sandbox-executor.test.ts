@@ -125,6 +125,13 @@ const deleteSandboxInstanceMock = mock(
 let resolveSandboxInstanceUpsert: (() => void) | undefined;
 let waitForSandboxInstanceUpsert = false;
 const removeSandboxInstanceMock = mock(async () => {});
+const recordSandboxBurstMock = mock(
+  async (
+    _accountId: string,
+    _externalId: string,
+    _totals: { vcpuSeconds: number; gbSeconds: number },
+  ) => {},
+);
 const upsertSandboxInstanceMock = mock(async () => {
   if (!waitForSandboxInstanceUpsert) return;
   await new Promise<void>((resolve) => {
@@ -285,6 +292,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 }));
 
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  recordSandboxBurst: recordSandboxBurstMock,
   removeSandboxInstance: removeSandboxInstanceMock,
   upsertSandboxInstance: upsertSandboxInstanceMock,
 }));
@@ -526,6 +534,46 @@ describe("createSandboxExecutor", () => {
       bodies.filter((code) => code.includes("mountpoint -q ")),
     ).toHaveLength(4);
     expect(bodies.at(-1)).toBe("echo persisted");
+  });
+
+  it("reports a MicroVM's burst totals only when they grow", async () => {
+    const original = microvmExecPayload;
+    recordSandboxBurstMock.mockClear();
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      controlPlane: {
+        accountId: "account-burst",
+        name: "burst",
+        specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+      },
+    });
+    const run = async (vcpuSeconds: number): Promise<void> => {
+      microvmExecPayload = {
+        ...original,
+        burst: { vcpu_seconds: vcpuSeconds, gb_seconds: 0 },
+      } as typeof original;
+      await executor.run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
+    };
+
+    try {
+      await run(4);
+      await run(4);
+      await run(6);
+    } finally {
+      microvmExecPayload = original;
+    }
+
+    expect(recordSandboxBurstMock.mock.calls).toEqual([
+      ["account-burst", "microvm-1", { vcpuSeconds: 4, gbSeconds: 0 }],
+      ["account-burst", "microvm-1", { vcpuSeconds: 6, gbSeconds: 0 }],
+    ]);
   });
 
   it("removes an ephemeral mirror only after its non-blocking upsert settles", async () => {
@@ -2212,8 +2260,7 @@ describe("MicroVM capacity refusal", () => {
           enforced: true,
           plan: "free",
           month: "2026-09",
-          usedEur: 5,
-          limitEur: 5,
+          usedPercent: 100,
           runsPerMinute: 600,
           warned: true,
         }),

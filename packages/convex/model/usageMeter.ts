@@ -1,7 +1,7 @@
 /**
  * The per-account usage meter, by month and by day: adding usage to it,
- * pricing it against the plan's budget, and turning a sandbox's running time
- * into usage. The
+ * measuring it against the plan's per-resource caps, and turning a sandbox's
+ * running and suspended time into usage. The
  * callers are the sandbox mirror (`sandbox/instances.ts`), core's usage writes
  * and the storage snapshot (`account/budget.ts`).
  */
@@ -14,23 +14,37 @@ import {
   isManagedService,
   PLAN_LIMITS,
   type Plan,
+  type ResourceCaps,
 } from "./planLimits";
 import {
   DAYS_PER_MONTH,
   EMPTY_USAGE,
+  HOSTED_MCP_MEMORY_GB,
   meterCostByCategoryEur,
-  meterCostEur,
   MICROVM_BASELINE,
-  type UsageCategory,
+  UNIT_RATES_EUR,
   type UsageQuantities,
 } from "./pricing";
 
 /**
- * How long a sandbox is billed past its last use. Every provider suspends or
- * stops an idle sandbox after `lifecycle.idleTimeoutSeconds`, 15 minutes by
- * default (core `DEFAULT_IDLE_TIMEOUT_SECONDS`).
+ * How long a sandbox runs idle before its provider suspends or stops it, for
+ * a row that does not carry its own `lifecycle.idleTimeoutSeconds`: core's
+ * `DEFAULT_IDLE_TIMEOUT_SECONDS`. The provider bills it until then, so the
+ * meter does too.
  */
-export const SANDBOX_IDLE_BILL_MS = 15 * 60 * 1000;
+export const DEFAULT_SANDBOX_IDLE_MS = 15 * 60 * 1000;
+
+// EUR of one hour at each hour-capped resource's default size. A group's cost
+// divided by it is the hours the dashboard shows and the cap counts, so a
+// bigger sandbox, a resume or a stored snapshot all use hours up.
+const SANDBOX_HOUR_EUR =
+  3600 *
+  (MICROVM_BASELINE.vcpu * UNIT_RATES_EUR.sandboxVcpuSeconds +
+    MICROVM_BASELINE.memoryGb * UNIT_RATES_EUR.sandboxGbSeconds);
+const HOSTED_MCP_HOUR_EUR =
+  3600 * HOSTED_MCP_MEMORY_GB * UNIT_RATES_EUR.hostedMcpGbSeconds;
+
+const MONTH_SECONDS = DAYS_PER_MONTH * 24 * 60 * 60;
 
 // How many months back the billing tab's month picker reaches.
 const MONTHS_SHOWN = 12;
@@ -46,16 +60,16 @@ export interface BudgetStatus {
   enforced: boolean;
   plan: Plan;
   month: string;
-  usedEur: number;
-  limitEur: number;
+  /** The closest cap's share used, in percent. Runs stop at 100. */
+  usedPercent: number;
   runsPerMinute: number;
   /** The 80% warning already went out this month. */
   warned: boolean;
 }
 
 /**
- * What the dashboard shows of an account's month: amounts and percentages,
- * never euros, so the budget behind each plan stays private.
+ * What the dashboard shows of an account's month: amounts, caps and
+ * percentages, never euros, so the budget behind each plan stays private.
  */
 export interface BudgetUsage {
   /** False on a self-hosted install: nothing is limited. */
@@ -64,11 +78,13 @@ export interface BudgetUsage {
   month: string;
   /** Months with a meter, newest first, always led by the current one. */
   months: string[];
-  /** Share of the plan's budget used. Null when nothing is enforced. */
+  /** The closest cap's share used. Null when nothing is enforced. */
   usedPercent: number | null;
-  /** Each group's share of the budget, or of all usage when nothing is enforced. */
-  categories: Record<UsageCategory, number>;
-  /** "warning" from 80% of the budget, "exhausted" once runs stop at 100%. */
+  /** The plan's caps. Null when nothing is enforced. */
+  caps: ResourceCaps | null;
+  /** Each capped resource's share of its cap, or of all usage cost when nothing is enforced. */
+  shares: Record<keyof ResourceCaps, number>;
+  /** "warning" from 80% of the closest cap, "exhausted" once runs stop at 100%. */
   level: "ok" | "warning" | "exhausted";
   totals: UsageAmounts;
   /** Days of the month with usage or a storage snapshot, oldest first. */
@@ -77,14 +93,18 @@ export interface BudgetUsage {
 
 /** Usage in the units the billing tab shows. */
 export interface UsageAmounts {
-  /** vCPU hours; a MicroVM runs on one vCPU, so these are its hours. */
+  /** Hours at the default 1 vCPU / 2 GB size, resumes and suspended snapshots included. */
   sandboxHours: number;
-  hostedMcpCalls: number;
+  /** Invoke hours at the runner's memory size, requests included. */
+  hostedMcpHours: number;
   /** GB stored at the latest snapshot. Null when no snapshot measured this month or day. */
   storageGb: number | null;
   egressGb: number;
   ingressGb: number;
 }
+
+/** vCPU-seconds and GB-seconds a machine used above its baseline since it booted. */
+export type BurstTotals = NonNullable<Doc<"sandboxInstances">["burstBilled"]>;
 
 /** A sandbox instance's unbilled usage up to `now`, and where billing now stands. */
 export interface SandboxAccrual {
@@ -158,21 +178,21 @@ export async function budgetStatus(
   const plan = await accountPlan(ctx, accountId);
   const month = meterMonth(now);
   const meter = await readMeter(ctx, accountId, month);
+  const amounts = toAmounts(pickUsage(meter), meter?.storageGb ?? null);
 
   return {
     enforced: isManagedService(),
     plan: plan,
     month: month,
-    usedEur: meterCostEur(pickUsage(meter)),
-    limitEur: PLAN_LIMITS[plan].monthlyBudgetEur,
+    usedPercent: closestShare(capShares(amounts, PLAN_LIMITS[plan].caps)),
     runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
     warned: meter?.warnedAt !== undefined,
   };
 }
 
 /**
- * One month of the account's usage for the dashboard billing panel: amounts,
- * a daily series, and shares of the plan's budget. A requested month outside
+ * One month of the account's usage for the dashboard's allowance: amounts,
+ * a daily series, the plan's caps and each resource's share of its cap. A requested month outside
  * the picker's list falls back to the current one.
  */
 export async function budgetUsage(
@@ -199,11 +219,11 @@ export async function budgetUsage(
   // Every month in the list is one of `meters` or has no row yet.
   const meter = meters.find((row) => row.month === month) ?? null;
   const usage = pickUsage(meter);
-  const costs = meterCostByCategoryEur(usage);
-  const usedEur = meterCostEur(usage);
+  const totals = toAmounts(usage, meter?.storageGb ?? null);
   const enforced = isManagedService();
-  const limitEur = PLAN_LIMITS[plan].monthlyBudgetEur;
-  const base = enforced ? limitEur : usedEur;
+  const caps = PLAN_LIMITS[plan].caps;
+  const shares = enforced ? capShares(totals, caps) : costShares(usage);
+  const usedPercent = closestShare(shares);
   const dayRows = await ctx.db
     .query("usageDays")
     .withIndex("by_accountId_and_day", (q) =>
@@ -223,21 +243,17 @@ export async function budgetUsage(
     plan: plan,
     month: month,
     months: months,
-    usedPercent: enforced ? toPercent(usedEur, limitEur) : null,
-    categories: {
-      sandboxes: toPercent(costs.sandboxes, base),
-      hostedMcp: toPercent(costs.hostedMcp, base),
-      storage: toPercent(costs.storage, base),
-      egress: toPercent(costs.egress, base),
-    },
+    usedPercent: enforced ? usedPercent : null,
+    caps: enforced ? caps : null,
+    shares: shares,
     level: !enforced
       ? "ok"
-      : usedEur >= limitEur
+      : usedPercent >= 100
         ? "exhausted"
-        : usedEur >= limitEur * BUDGET_WARNING_RATIO
+        : usedPercent >= BUDGET_WARNING_RATIO * 100
           ? "warning"
           : "ok",
-    totals: toAmounts(usage, meter?.storageGb ?? null),
+    totals: totals,
     days: days,
   };
 }
@@ -252,7 +268,7 @@ export async function claimBudgetWarning(
   now: number,
 ): Promise<boolean> {
   const status = await budgetStatus(ctx, accountId, now);
-  if (status.warned || status.usedEur < status.limitEur * BUDGET_WARNING_RATIO)
+  if (status.warned || status.usedPercent < BUDGET_WARNING_RATIO * 100)
     return false;
   const meter = await readMeter(ctx, accountId, status.month);
   if (!meter) return false;
@@ -272,11 +288,12 @@ export function meterMonth(now: number): string {
 }
 
 /**
- * Running time a sandbox has not been billed for yet. Billing runs from where
- * it last stopped (or the last use) to now, but never past the last use plus
- * the idle timeout, since the provider stops an idle machine by then. Nothing
- * is billed when the platform does not pay: a sandbox on the account's own
- * provider credentials, or a machine (the user's own computer).
+ * Sandbox time not billed yet, up to `now`. A sandbox is billed running from
+ * where billing last stopped (or its last use) until its provider suspends it,
+ * its own idle timeout past the last use. From then on a suspended MicroVM is
+ * billed for storing its memory snapshot until it resumes or is released.
+ * Nothing is billed when the platform does not pay: a sandbox on the account's
+ * own provider credentials, or a machine (the user's own computer).
  */
 export function sandboxAccrual(
   instance: Pick<
@@ -287,29 +304,73 @@ export function sandboxAccrual(
     | "lastUsedAt"
     | "meteredUntil"
     | "ownCredentials"
+    | "idleTimeoutSeconds"
   >,
   now: number,
 ): SandboxAccrual {
   const start = instance.meteredUntil ?? instance.lastUsedAt;
-  const end = Math.min(now, instance.lastUsedAt + SANDBOX_IDLE_BILL_MS);
   if (
     instance.ownCredentials === true ||
     instance.provider === "machine" ||
-    !BILLED_STATUSES.has(instance.status) ||
-    end <= start
+    instance.status === "error"
   ) {
-    return { usage: {}, meteredUntil: Math.max(start, end) };
+    return { usage: {}, meteredUntil: start };
   }
-  const seconds = (end - start) / 1000;
   const size = billedSize(instance);
+  const runningUntil = BILLED_STATUSES.has(instance.status)
+    ? Math.max(
+        start,
+        Math.min(now, instance.lastUsedAt + sandboxIdleMs(instance)),
+      )
+    : start;
+  const runSeconds = (runningUntil - start) / 1000;
+  const storedSeconds =
+    instance.provider === "lambda" ? Math.max(0, now - runningUntil) / 1000 : 0;
+  const usage: Partial<UsageQuantities> = {};
+  if (runSeconds > 0) {
+    usage.sandboxVcpuSeconds = runSeconds * size.vcpu;
+    usage.sandboxGbSeconds = runSeconds * size.memoryGb;
+  }
+  if (storedSeconds > 0) {
+    usage.sandboxSnapshotGbMonths =
+      (storedSeconds * size.memoryGb) / MONTH_SECONDS;
+  }
 
   return {
-    usage: {
-      sandboxVcpuSeconds: seconds * size.vcpu,
-      sandboxGbSeconds: seconds * size.memoryGb,
-    },
-    meteredUntil: end,
+    usage: usage,
+    meteredUntil: storedSeconds > 0 ? now : runningUntil,
   };
+}
+
+/**
+ * The burst a machine used since it was last billed, from the running totals
+ * its guest reports. Burst is billed at the same rates as the baseline. Totals
+ * below the billed ones mean a fresh machine whose totals started again at zero.
+ */
+export function burstUsage(
+  billed: BurstTotals | undefined,
+  reported: BurstTotals,
+): Partial<UsageQuantities> {
+  const since =
+    billed &&
+    reported.vcpuSeconds >= billed.vcpuSeconds &&
+    reported.gbSeconds >= billed.gbSeconds
+      ? billed
+      : { vcpuSeconds: 0, gbSeconds: 0 };
+
+  return {
+    sandboxVcpuSeconds: reported.vcpuSeconds - since.vcpuSeconds,
+    sandboxGbSeconds: reported.gbSeconds - since.gbSeconds,
+  };
+}
+
+/** How long the sandbox idles before its provider suspends or stops it. */
+export function sandboxIdleMs(
+  instance: Pick<Doc<"sandboxInstances">, "idleTimeoutSeconds">,
+): number {
+  return instance.idleTimeoutSeconds === undefined
+    ? DEFAULT_SANDBOX_IDLE_MS
+    : instance.idleTimeoutSeconds * 1000;
 }
 
 /** Snapshot GB a MicroVM moves on one launch or resume; nothing for other providers. */
@@ -333,6 +394,40 @@ function billedSize(
   };
 }
 
+// Each capped resource's share of its cap.
+function capShares(
+  amounts: UsageAmounts,
+  caps: ResourceCaps,
+): Record<keyof ResourceCaps, number> {
+  return {
+    sandboxHours: toPercent(amounts.sandboxHours, caps.sandboxHours),
+    hostedMcpHours: toPercent(amounts.hostedMcpHours, caps.hostedMcpHours),
+    storageGb: toPercent(amounts.storageGb ?? 0, caps.storageGb),
+    egressGb: toPercent(amounts.egressGb, caps.egressGb),
+  };
+}
+
+// The share of the resource closest to its cap, which is what stops runs.
+function closestShare(shares: Record<keyof ResourceCaps, number>): number {
+  return Math.max(...Object.values(shares));
+}
+
+// Each resource's share of all usage cost, for an install with no caps.
+function costShares(
+  usage: UsageQuantities,
+): Record<keyof ResourceCaps, number> {
+  const costs = meterCostByCategoryEur(usage);
+  const total =
+    costs.sandboxes + costs.hostedMcp + costs.storage + costs.egress;
+
+  return {
+    sandboxHours: toPercent(costs.sandboxes, total),
+    hostedMcpHours: toPercent(costs.hostedMcp, total),
+    storageGb: toPercent(costs.storage, total),
+    egressGb: toPercent(costs.egress, total),
+  };
+}
+
 function pickUsage(
   row: Doc<"usageMeters"> | Doc<"usageDays"> | null,
 ): UsageQuantities {
@@ -342,6 +437,7 @@ function pickUsage(
     sandboxVcpuSeconds: row.sandboxVcpuSeconds,
     sandboxGbSeconds: row.sandboxGbSeconds,
     sandboxSnapshotGb: row.sandboxSnapshotGb,
+    sandboxSnapshotGbMonths: row.sandboxSnapshotGbMonths ?? 0,
     hostedMcpGbSeconds: row.hostedMcpGbSeconds,
     hostedMcpRequests: row.hostedMcpRequests,
     storageGbMonths: row.storageGbMonths,
@@ -354,9 +450,11 @@ function toAmounts(
   usage: UsageQuantities,
   storageGb: number | null,
 ): UsageAmounts {
+  const costs = meterCostByCategoryEur(usage);
+
   return {
-    sandboxHours: usage.sandboxVcpuSeconds / 3600,
-    hostedMcpCalls: usage.hostedMcpRequests,
+    sandboxHours: costs.sandboxes / SANDBOX_HOUR_EUR,
+    hostedMcpHours: costs.hostedMcp / HOSTED_MCP_HOUR_EUR,
     storageGb: storageGb,
     egressGb: usage.egressGb,
     ingressGb: usage.ingressGb,
