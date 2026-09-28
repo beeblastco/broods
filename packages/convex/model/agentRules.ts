@@ -694,8 +694,9 @@ function normalizeProviderSettings(
     config.baseURL = baseURL;
     delete config.base_url;
   }
+  // `baseURL` is the canonical base URL checked above.
   for (const [key, endpoint] of Object.entries(config)) {
-    if (!PROVIDER_ENDPOINT_SETTING.test(key)) continue;
+    if (key === "baseURL" || !PROVIDER_ENDPOINT_SETTING.test(key)) continue;
     const label = `config.provider.${providerName}.${key}`;
     assertOptionalString(endpoint, label);
     if (typeof endpoint === "string" && endpoint.trim()) {
