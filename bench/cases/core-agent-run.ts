@@ -240,7 +240,7 @@ function fakeStorage(): Storage {
       listForEndpoint: empty,
       removeAllForAccount: zero,
     },
-    agentDeployments: { getByApiKeyHash: none },
+    agentDeployments: { getByApiKeyHash: none, touchLastUsed: async () => {} },
     channelRecords: {
       getByExternalId: none,
       getById: none,
