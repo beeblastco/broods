@@ -10,16 +10,6 @@ targetRules = ["generic-api-key"]
 paths = ['''(^|/)bench/cases/''']
 
 [[allowlists]]
-description = "Self-signed TLS key the attachment tests serve from localhost"
-targetRules = ["private-key"]
-paths = ['''(^|/)apps/core/tests/helpers/fixtures/[^/]+\.pem$''']
-
-[[allowlists]]
-description = "Throwaway RSA key the GitHub Actions OIDC test signs with"
-targetRules = ["private-key"]
-paths = ['''(^|/)apps/core/tests/github-actions\.test\.ts$''']
-
-[[allowlists]]
 description = "WorkOS placeholder the dashboard e2e config falls back to"
 targetRules = ["stripe-access-token"]
 condition = "AND"

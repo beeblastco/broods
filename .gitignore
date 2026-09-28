@@ -5,7 +5,6 @@ dist/
 !.env.example
 secrets.env
 *.pem
-!apps/core/tests/helpers/fixtures/*.pem
 *.key
 *.p12
 *.pfx
