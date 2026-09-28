@@ -152,7 +152,7 @@ export async function recordSandboxBurst(
     return await getConvexClient().mutation(
       internal.sandbox.instances.recordBurst,
       {
-        accountId: accountId as any,
+        accountId: accountId,
         externalId: externalId,
         vcpuSeconds: totals.vcpuSeconds,
         gbSeconds: totals.gbSeconds,
