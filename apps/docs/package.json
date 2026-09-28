@@ -2,6 +2,7 @@
   "name": "@broods/docs",
   "private": true,
   "description": "Broods developer documentation site (Docusaurus).",
+  "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
     "start": "DOCUSAURUS_BROWSER=none NODE_OPTIONS=--openssl-legacy-provider docusaurus start",

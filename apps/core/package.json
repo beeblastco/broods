@@ -2,6 +2,7 @@
   "name": "@broods/core",
   "private": true,
   "description": "Multi-account AI agent harness. One Bun container on the Vercel AI SDK with Google, OpenAI, Bedrock, and Vercel providers, plus channel integrations for Telegram, Discord, Slack, GitHub, Pancake, and Zalo. AWS resources deployed with SST.",
+  "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
     "postinstall": "bun run scripts/compaction-prompt.ts && sst install",

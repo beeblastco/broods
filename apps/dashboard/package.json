@@ -4,6 +4,7 @@
   "private": true,
   "description": "Broods dashboard frontend.",
   "homepage": "https://github.com/beeblastco/broods",
+  "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
     "url": "https://github.com/beeblastco/broods.git"
