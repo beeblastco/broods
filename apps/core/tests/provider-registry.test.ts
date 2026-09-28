@@ -105,24 +105,41 @@ describe("modelSettingsFromModelConfig", () => {
 });
 
 describe("rate-limited model calls", () => {
-  it("waits as long as a 429 body asks before retrying", async () => {
+  it.each([
+    [
+      "OpenAI",
+      {
+        error: {
+          message:
+            "Rate limit reached on tokens per min (TPM). Please try again in 300ms.",
+          type: "tokens",
+          code: "rate_limit_exceeded",
+        },
+      },
+    ],
+    [
+      "Gemini",
+      {
+        error: {
+          code: 429,
+          status: "RESOURCE_EXHAUSTED",
+          details: [
+            {
+              "@type": "type.googleapis.com/google.rpc.RetryInfo",
+              retryDelay: "0.3s",
+            },
+          ],
+        },
+      },
+    ],
+  ])("waits as long as a %s 429 body asks before retrying", async (_, body) => {
     const calls: number[] = [];
     const realFetch = globalThis.fetch;
     globalThis.fetch = Object.assign(
       async (): Promise<Response> => {
         calls.push(Date.now());
         if (calls.length === 1) {
-          return Response.json(
-            {
-              error: {
-                message:
-                  "Rate limit reached on tokens per min (TPM). Please try again in 300ms.",
-                type: "tokens",
-                code: "rate_limit_exceeded",
-              },
-            },
-            { status: 429 },
-          );
+          return Response.json(body, { status: 429 });
         }
 
         return Response.json({
