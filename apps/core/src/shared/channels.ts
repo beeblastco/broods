@@ -2,8 +2,10 @@
 
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { Attachment, StreamOptions } from "chat";
+import { z } from "zod";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
+import { logWarn } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 
 /** Reach every room or sender, instead of only the listed ids. */
@@ -15,6 +17,10 @@ const RETRY_REPLY = "Retry";
 // The id an ask_questions button carries back: statusId, question, option.
 // 53 bytes at most, under Telegram's 64-byte callback_data cap.
 const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
+
+// Any JSON object. Fields stay as the provider sent them, nulls included; each
+// adapter reads what it needs through its own payload type.
+const WEBHOOK_BODY = z.looseObject({});
 
 export type ChannelIngressEvent =
   | UserModelMessage
@@ -184,6 +190,11 @@ export type ChannelParseResult =
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
 
+/** A verified webhook body, or the ignore an adapter returns when it is not a JSON object. */
+export type ChannelWebhookBody<T> =
+  | { kind: "payload"; payload: T }
+  | { kind: "ignore"; reason: "invalid_payload" };
+
 export interface ChannelAdapter {
   readonly name: string;
   canHandle(req: ChannelRequest): boolean;
@@ -308,6 +319,40 @@ export function isAllowedId(
   if (!id) return false;
 
   return allowed.has(id);
+}
+
+/**
+ * Adapters call this in `parse`, after `authenticate`, instead of a bare
+ * `JSON.parse`. A malformed or non-object body is logged without its content
+ * and comes back as an `invalid_payload` ignore the adapter returns as is.
+ */
+export function parseChannelWebhookBody<T extends object>(
+  channel: string,
+  body: string,
+): ChannelWebhookBody<T> {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    logWarn("Channel webhook body rejected", {
+      channel: channel,
+      reason: "malformed_json",
+    });
+
+    return { kind: "ignore", reason: "invalid_payload" };
+  }
+  const result = WEBHOOK_BODY.safeParse(json);
+  if (!result.success) {
+    logWarn("Channel webhook body rejected", {
+      channel: channel,
+      reason: result.error.issues[0]?.message ?? "not_an_object",
+    });
+
+    return { kind: "ignore", reason: "invalid_payload" };
+  }
+
+  // The one cast: the object is the provider payload the adapter's type describes.
+  return { kind: "payload", payload: result.data as T };
 }
 
 /** The click a button id stands for; undefined when it is not a question button. */

@@ -7,7 +7,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { pancakeWebhook, parseChannelWebhook } from "./channel-webhook.ts";
 import { timingSafeStringEqual } from "./auth.ts";
 import type { Attachment } from "chat";
 import type {
@@ -22,6 +21,7 @@ import {
   channelAttachmentBytes,
   channelAttachmentName,
   isAllowedId,
+  parseChannelWebhookBody,
 } from "./channels.ts";
 import { logDebug, logInfo, logWarn } from "./log.ts";
 import { contentTypeForPath } from "./media-types.ts";
@@ -40,6 +40,16 @@ interface PancakeApiResponse {
   message?: string;
 }
 
+interface PancakeConversation {
+  id?: string;
+  type?: string;
+  tags?: unknown[];
+  from?: {
+    id?: string;
+    name?: string;
+  };
+}
+
 /**
  * One item in a Pancake message's `attachments` array. A photo names its URL
  * directly; a video hides it one level down in `video_data`. Anything else,
@@ -54,6 +64,28 @@ interface PancakeAttachment {
   video_data?: { url?: string };
 }
 
+interface PancakeMessage {
+  id?: string;
+  conversation_id?: string;
+  page_id?: string;
+  message?: string;
+  original_message?: string;
+  attachments?: PancakeAttachment[];
+  type?: string;
+  inserted_at?: string;
+  from?: {
+    id?: string;
+    name?: string;
+    page_customer_id?: string;
+  };
+  is_hidden?: boolean;
+  is_removed?: boolean;
+}
+
+interface PancakePost {
+  id?: string;
+}
+
 export interface PancakeSource {
   pageId: string;
   conversationId: string;
@@ -64,6 +96,16 @@ export interface PancakeSource {
   fromName?: string;
   pageCustomerId?: string;
   tagIds?: string[];
+}
+
+interface PancakeWebhookPayload {
+  page_id?: string;
+  event_type?: string;
+  data?: {
+    conversation?: PancakeConversation;
+    message?: PancakeMessage;
+    post?: PancakePost | null;
+  };
 }
 
 export function createPancakeActions(
@@ -389,10 +431,14 @@ function parsePancakeWebhook(
   allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
 ): ChannelParseResult {
-  const payload = parseChannelWebhook(req.body, pancakeWebhook);
-  if (!payload) {
-    return { kind: "ignore", reason: "invalid_payload" };
+  const body = parseChannelWebhookBody<PancakeWebhookPayload>(
+    "pancake",
+    req.body,
+  );
+  if (body.kind === "ignore") {
+    return body;
   }
+  const payload = body.payload;
   logDebug("Pancake webhook received", {
     configuredPageId: pageId,
     payloadPageId: payload.page_id,

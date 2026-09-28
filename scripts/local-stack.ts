@@ -700,11 +700,11 @@ async function createAccount(
     },
     body: JSON.stringify({ username: username }),
   });
-  const body = (await response.json()) as { secret?: string };
+  const body = (await response.json()) as { error?: string; secret?: string };
   assertStep(
     "create account (core, admin bearer)",
     response.status === 201 && typeof body.secret === "string",
-    `status ${response.status}; expected a successful response with an account secret`,
+    `status ${response.status}: ${body.error ?? "no account secret in response"}`,
   );
 
   return body.secret;
@@ -730,48 +730,6 @@ function verifyContext(
     coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
     gatewayUrl: gatewayUrl,
     measure: measure,
-    prepareProjectAccount: async (): Promise<string> => {
-      const secret = randomBytes(32).toString("hex");
-      runConvexCli(state, [
-        "run",
-        "account/accounts:create",
-        JSON.stringify({
-          orgId: `external:local-${runId}`,
-          username: `webhook-${runId}`,
-          secretHash: createHash("sha256").update(secret).digest("hex"),
-        }),
-      ]);
-      const account = new BroodsAccountClient({
-        accountSecret: secret,
-        baseUrl: gatewayUrl,
-      });
-      const { accountId } = await account.getAccount();
-      const email = `local-${runId}@example.invalid`;
-      runConvexCli(state, [
-        "run",
-        "auth:authKitEvent",
-        JSON.stringify({
-          event: "user.created",
-          data: {
-            id: `local-${runId}`,
-            email: email,
-            firstName: "Local",
-            lastName: "Verification",
-          },
-        }),
-      ]);
-      runConvexCli(state, [
-        "run",
-        "org/orgs:adoptExternalAccount",
-        JSON.stringify({
-          accountId: accountId,
-          ownerEmail: email,
-          orgName: `local-${runId}`,
-        }),
-      ]);
-
-      return secret;
-    },
     runId: runId,
   };
 }

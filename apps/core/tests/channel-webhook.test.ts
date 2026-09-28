@@ -1,21 +1,30 @@
-/** Webhook boundaries reject malformed input before side effects or field access. */
+/** Channel adapters ignore webhook bodies that are not a JSON object and keep every real payload. */
 
-import type { TelegramUpdate } from "@chat-adapter/telegram";
 import { describe, expect, it } from "bun:test";
 import {
-  githubWebhook,
-  parseChannelWebhook,
-  telegramWebhook,
-} from "../src/shared/channel-webhook.ts";
+  parseChannelWebhookBody,
+  type ChannelAdapter,
+  type ChannelRequest,
+} from "../src/shared/channels.ts";
+import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
 import { createMatrixChannel } from "../src/shared/matrix-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
+import { createSlackChannel } from "../src/shared/slack-channel.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 import { createZaloChannel } from "../src/shared/zalo-channel.ts";
-import type { ChannelAdapter } from "../src/shared/channels.ts";
 
+const INVALID_PAYLOAD: { kind: "ignore"; reason: "invalid_payload" } = {
+  kind: "ignore",
+  reason: "invalid_payload",
+};
+
+const github = createGitHubChannel("secret", "app", "key", null, null);
+const pancake = createPancakeChannel("page-1", "token", "secret", null, null);
+const zalo = createZaloChannel("token", "secret");
 const adapters: ChannelAdapter[] = [
-  createGitHubChannel("secret", "app", "key", null, null),
+  createDiscordChannel("token", "a".repeat(64), null, null),
+  github,
   createMatrixChannel({
     accessToken: "secret",
     apiUrl: "https://matrix.test",
@@ -23,134 +32,128 @@ const adapters: ChannelAdapter[] = [
     allowedChannelIds: null,
     allowedUserIds: null,
   }),
-  createPancakeChannel("page", "token", "secret", null, null),
+  pancake,
+  createSlackChannel("token", "secret", null, null),
   createTelegramChannel("token", "secret", null, null, "👀"),
-  createZaloChannel("token", "secret"),
+  zalo,
 ];
-const invalidFields: Record<string, unknown> = {
-  github: { repository: { full_name: 42 } },
-  matrix: {
-    type: "MATRIX_ROOM_EVENT",
-    event: { type: "m.room.message", content: null },
-  },
-  pancake: { data: { message: { message: { text: "hi" } } } },
-  telegram: { update_id: 1, callback_query: { id: "click", from: null } },
-  zalo: { event_name: "message.text.received", message: { text: ["hi"] } },
-};
+
+describe("parseChannelWebhookBody", (): void => {
+  it("returns the object as sent, nulls and unknown keys included", (): void => {
+    expect(
+      parseChannelWebhookBody<{ a: null; extra: number }>(
+        "test",
+        '{"a":null,"extra":1}',
+      ),
+    ).toEqual({ kind: "payload", payload: { a: null, extra: 1 } });
+  });
+
+  it("ignores malformed JSON", (): void => {
+    expect(parseChannelWebhookBody("test", "{")).toEqual(INVALID_PAYLOAD);
+  });
+
+  it("ignores JSON that is not an object", (): void => {
+    for (const body of ["null", "[]", '"text"', "1", "true"]) {
+      expect(parseChannelWebhookBody("test", body)).toEqual(INVALID_PAYLOAD);
+    }
+  });
+});
 
 for (const adapter of adapters) {
-  describe(`${adapter.name} webhook input`, (): void => {
-    for (const body of ["{", "null", "[]", '"text"', "1", "true"]) {
-      it(`ignores invalid JSON object ${body}`, async (): Promise<void> => {
-        expect(
-          await adapter.parse({
-            method: "POST",
-            rawPath: "/webhook",
-            rawQueryString: "",
-            headers: {},
-            body: body,
-          }),
-        ).toEqual({ kind: "ignore", reason: "invalid_payload" });
-      });
-    }
-    it("rejects invalid nested fields", async (): Promise<void> => {
-      expect(
-        await adapter.parse({
-          method: "POST",
-          rawPath: "/webhook",
-          rawQueryString: "",
-          headers: {},
-          body: JSON.stringify(invalidFields[adapter.name]),
-        }),
-      ).toEqual({ kind: "ignore", reason: "invalid_payload" });
-    });
+  it(`${adapter.name} ignores a non-object body`, async (): Promise<void> => {
+    expect(await adapter.parse(request("[]"))).toEqual(INVALID_PAYLOAD);
   });
 }
 
-it("strips unrecognized and prototype keys before using GitHub fields", (): void => {
-  const parsed = parseChannelWebhook(
-    '{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}},"repository":{"name":"repo","__proto__":{"polluted":true}}}',
-    githubWebhook,
-  );
-
-  expect(parsed).toEqual({ repository: { name: "repo" } });
-  expect(Object.hasOwn(parsed!, "__proto__")).toBe(false);
-  expect(Object.hasOwn(parsed!, "constructor")).toBe(false);
-});
-
-it("preserves nested Telegram rich text and animated sticker flags", (): void => {
-  const sticker = { file_id: "sticker", is_animated: true, is_video: false };
-  const update: TelegramUpdate = {
-    update_id: 1,
-    message: {
-      message_id: 2,
-      date: 3,
-      chat: { id: 4, type: "private" },
-      rich_message: {
-        blocks: [
-          {
-            type: "blockquote",
-            blocks: [
-              { type: "paragraph", text: { type: "bold", text: "hello" } },
-            ],
-          },
-        ],
-      },
-      sticker: sticker,
-    },
-  };
-
-  expect(parseChannelWebhook(JSON.stringify(update), telegramWebhook)).toEqual(
-    update,
-  );
-});
-
-it("accepts nullable GitHub assignees", (): void => {
-  expect(
-    parseChannelWebhook('{"action":"opened","assignee":null}', githubWebhook),
-  ).toEqual({ action: "opened", assignee: undefined });
-});
-
-it("accepts explicit false Telegram rich block flags", (): void => {
-  const update = {
-    update_id: 1,
-    message: {
-      message_id: 2,
-      date: 3,
-      chat: { id: 4, type: "private" },
-      rich_message: {
-        blocks: [
-          {
-            type: "list",
-            items: [
-              {
-                label: "task",
-                has_checkbox: true,
-                is_checked: false,
-                blocks: [],
+describe("provider payloads with null fields", (): void => {
+  it("accepts a Pancake message with null fields", async (): Promise<void> => {
+    const parsed = await pancake.parse(
+      request(
+        JSON.stringify({
+          page_id: "page-1",
+          event_type: "messaging",
+          data: {
+            conversation: {
+              id: "conversation-1",
+              type: "INBOX",
+              tags: null,
+              from: { id: "customer-1", name: "Ada" },
+            },
+            message: {
+              id: "message-1",
+              conversation_id: "conversation-1",
+              message: null,
+              original_message: null,
+              type: "INBOX",
+              attachments: [
+                { id: 7, type: "photo", url: null },
+                { type: "photo", url: "https://pancake.test/a.jpg" },
+              ],
+              from: {
+                id: "customer-1",
+                name: "Ada",
+                page_customer_id: "page-customer-1",
               },
-            ],
+            },
           },
-          { type: "table", cells: [], is_bordered: false, is_striped: false },
-        ],
-      },
-    },
-  };
-  const parsed = parseChannelWebhook(JSON.stringify(update), telegramWebhook);
+        }),
+      ),
+    );
 
-  expect(parsed).not.toBeNull();
-  expect(parsed?.message?.rich_message?.blocks).toEqual([
-    {
-      type: "list",
-      items: [
-        {
-          label: "task",
-          has_checkbox: true,
-          is_checked: undefined,
-          blocks: [],
-        },
-      ],
-    },
-    { type: "table", cells: [], is_bordered: undefined, is_striped: undefined },
-  ]);
+    expect(parsed.kind).toBe("message");
+  });
+
+  it("accepts a Zalo photo with a null caption", async (): Promise<void> => {
+    const parsed = await zalo.parse(
+      request(
+        JSON.stringify({
+          event_name: "message.image.received",
+          message: {
+            message_id: "message-1",
+            photo: "https://zalo.test/photo.jpg",
+            caption: null,
+            chat: { id: "chat-1", chat_type: "PRIVATE" },
+            from: { id: "user-1", is_bot: false },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed.kind).toBe("message");
+  });
+
+  it("accepts a GitHub comment with a null user", async (): Promise<void> => {
+    const parsed = await github.parse(
+      request(
+        JSON.stringify({
+          action: "created",
+          repository: {
+            full_name: "owner/repo",
+            name: "repo",
+            owner: { login: "owner" },
+          },
+          issue: { number: 12 },
+          comment: { id: 55, body: "Looks good", user: null },
+          installation: { id: 99 },
+          sender: { login: "alice", type: "User" },
+        }),
+        { "x-github-event": "issue_comment", "x-github-delivery": "d-1" },
+      ),
+    );
+
+    expect(parsed.kind).toBe("message");
+  });
 });
+
+function request(
+  body: string,
+  headers: Record<string, string> = { "content-type": "application/json" },
+): ChannelRequest {
+  return {
+    method: "POST",
+    rawPath: "/webhook",
+    rawQueryString: "",
+    headers: headers,
+    body: body,
+  };
+}

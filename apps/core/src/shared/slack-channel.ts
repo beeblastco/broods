@@ -39,6 +39,7 @@ import {
   channelAttachmentBytes,
   channelAttachmentName,
   isAllowedId,
+  parseChannelWebhookBody,
   parseQuestionButtonId,
   questionButtonId,
   type ChannelActions,
@@ -573,7 +574,11 @@ async function parseEventCallback(
   allowedUserIds: Set<string> | null,
   resolveUserName: SlackUserNameResolver,
 ): Promise<ChannelParseResult> {
-  const payload = JSON.parse(body) as SlackEventEnvelope;
+  const parsed = parseChannelWebhookBody<SlackEventEnvelope>("slack", body);
+  if (parsed.kind === "ignore") {
+    return parsed;
+  }
+  const payload = parsed.payload;
 
   if (
     payload.type === "url_verification" &&

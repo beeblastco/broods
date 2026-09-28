@@ -1,14 +1,13 @@
 /** Zalo channel adapter, on the official Zalo Bot API. */
 
 import type { Attachment } from "chat";
-import { zaloWebhook, parseChannelWebhook } from "./channel-webhook.ts";
 import { timingSafeStringEqual } from "./auth.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -78,6 +77,11 @@ interface ZaloChannelOptions {
 interface ZaloUpdate {
   event_name?: string;
   message?: ZaloMessage;
+}
+
+interface ZaloWebhookEnvelope {
+  ok?: boolean;
+  result?: unknown;
 }
 
 export function createZaloActions(
@@ -162,10 +166,14 @@ export function createZaloChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const update = parseChannelWebhook(req.body, zaloWebhook);
-      if (!update) {
-        return { kind: "ignore", reason: "invalid_payload" };
+      const body = parseChannelWebhookBody<ZaloWebhookEnvelope>(
+        "zalo",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
       }
+      const update = unwrapZaloUpdate(body.payload);
       const eventName =
         typeof update.event_name === "string"
           ? update.event_name.slice(0, 128)
@@ -426,6 +434,21 @@ function toZaloSource(source: Record<string, unknown>): ZaloSource {
     eventName: source.eventName,
     date: typeof source.date === "number" ? source.date : undefined,
   };
+}
+
+function unwrapZaloUpdate(raw: unknown): ZaloUpdate {
+  if (raw && typeof raw === "object") {
+    const envelope = raw as ZaloWebhookEnvelope;
+    if (
+      envelope.ok === true &&
+      envelope.result &&
+      typeof envelope.result === "object"
+    ) {
+      return envelope.result as ZaloUpdate;
+    }
+  }
+
+  return (raw && typeof raw === "object" ? raw : {}) as ZaloUpdate;
 }
 
 function zaloHttpUrl(raw: unknown): string | null {

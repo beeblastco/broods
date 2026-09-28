@@ -14,12 +14,12 @@
 
 import { createHash } from "node:crypto";
 import type { Attachment } from "chat";
-import { matrixWebhook, parseChannelWebhook } from "./channel-webhook.ts";
 import { timingSafeStringEqual } from "./auth.ts";
 import {
   channelAttachmentBytes,
   channelAttachmentName,
   isAllowedId,
+  parseChannelWebhookBody,
   type ChannelActions,
   type ChannelAdapter,
   type ChannelFile,
@@ -226,10 +226,14 @@ export function createMatrixChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const payload = parseChannelWebhook(req.body, matrixWebhook);
-      if (!payload) {
-        return { kind: "ignore", reason: "invalid_payload" };
+      const body = parseChannelWebhookBody<MatrixForwardedEvent>(
+        "matrix",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
       }
+      const payload = body.payload;
       if (
         payload.type !== "MATRIX_ROOM_EVENT" ||
         payload.event?.type !== "m.room.message"
