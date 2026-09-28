@@ -16,17 +16,24 @@ test("copies a masked credential only after an active click succeeds", async ({
   });
   await page.goto(GALLERY_URL);
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
-  await expect(page.getByRole("textbox")).not.toHaveValue("clipboard fixture");
+  await expect(page.getByRole("textbox").last()).not.toHaveValue(
+    "clipboard fixture",
+  );
   await expect(page.locator("html")).not.toHaveAttribute(
     "data-clipboard-value",
   );
-  await page.getByRole("button", { name: "Copy", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Copy runtime key", exact: true })
+    .first()
+    .click();
   await expect(page.locator("html")).toHaveAttribute(
     "data-clipboard-value",
     "clipboard fixture",
   );
   await expect(
-    page.getByRole("button", { name: "Copied", exact: true }),
+    page
+      .getByRole("button", { name: "Copy runtime key", exact: true })
+      .locator("svg.lucide-check"),
   ).toBeVisible();
 });
 
@@ -48,9 +55,14 @@ test("does not report a denied clipboard write as successful", async ({
   });
   await page.goto(GALLERY_URL);
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
-  await page.getByRole("button", { name: "Copy", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Copy runtime key", exact: true })
+    .first()
+    .click();
   await expect(
-    page.getByRole("button", { name: "Copied", exact: true }),
+    page
+      .getByRole("button", { name: "Copy runtime key", exact: true })
+      .locator("svg.lucide-check"),
   ).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -72,12 +84,17 @@ test("refuses credential copying without transient user activation", async ({
   });
   await page.goto(GALLERY_URL);
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
-  await page.getByRole("button", { name: "Copy", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Copy runtime key", exact: true })
+    .first()
+    .click();
   await expect(page.locator("html")).not.toHaveAttribute(
     "data-clipboard-value",
   );
   await expect(
-    page.getByRole("button", { name: "Copied", exact: true }),
+    page
+      .getByRole("button", { name: "Copy runtime key", exact: true })
+      .locator("svg.lucide-check"),
   ).toHaveCount(0);
 });
 
@@ -96,7 +113,10 @@ test("supports trusted clicks when the activation API is unavailable", async ({
   });
   await page.goto(GALLERY_URL);
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
-  await page.getByRole("button", { name: "Copy", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Copy runtime key", exact: true })
+    .first()
+    .click();
   await expect(page.locator("html")).toHaveAttribute(
     "data-clipboard-value",
     "clipboard fixture",
@@ -130,17 +150,21 @@ test("ignores a failed earlier write after a newer copy succeeds", async ({
   await page.goto(GALLERY_URL);
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
   const button = page
-    .getByRole("button", { name: "Copy", exact: true })
+    .getByRole("button", { name: "Copy runtime key", exact: true })
     .first();
   await button.click();
   await button.click();
   await expect(
-    page.getByRole("button", { name: "Copied", exact: true }),
+    page
+      .getByRole("button", { name: "Copy runtime key", exact: true })
+      .locator("svg.lucide-check"),
   ).toBeVisible();
   await page.evaluate((): void => {
     document.dispatchEvent(new Event("reject-old-copy"));
   });
   await expect(
-    page.getByRole("button", { name: "Copied", exact: true }),
+    page
+      .getByRole("button", { name: "Copy runtime key", exact: true })
+      .locator("svg.lucide-check"),
   ).toBeVisible();
 });
