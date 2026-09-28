@@ -162,6 +162,7 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 | ------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
 | `load_skill`                                                              | `skills`                            | [Skills](skills.md)                           |
 | `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent`                          | [Subagents](subagents.md)                     |
+| `ask_parent`                                                              | the run being a persistent subagent | [Subagents](subagents.md)                     |
 | `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`        | `scheduler`                         | [Scheduling](scheduling.md)                   |
 | `memory_save`                                                             | a workspace with a sandbox          | [Memory and sessions](memory-and-sessions.md) |
 | `send-message`, `send-images`, `send-files`, `send-update`, ...           | channel turns                       | [Channels](../channels/index.md)              |
