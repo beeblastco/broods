@@ -41,7 +41,7 @@ export async function uniqueProjectSlug(
   const baseSlug = slugifyName(baseName);
   let suffix = 0;
 
-  while (true) {
+  for (;;) {
     const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
     if (!(await slugTaken(ctx, orgId, candidate))) return candidate;
     suffix += 1;
