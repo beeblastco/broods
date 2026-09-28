@@ -45,6 +45,7 @@ export function createConfiguredPiAdapter(
   });
 }
 
+/** Builds the Pi adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createPiAdapter(
   settings?: PiHarnessSettings,
 ): HarnessAgentAdapter {
@@ -52,9 +53,9 @@ export function createPiAdapter(
 }
 
 /**
- * Pi registers a provider per `<PREFIX>_API_KEY` / `<PREFIX>_BASE_URL` pair it
- * finds, so a custom endpoint reaches it as its own label rather than as an
- * OpenAI-compatible override.
+ * Auth env for every non-vercel Pi provider. Pi registers a provider per
+ * `<PREFIX>_API_KEY` / `<PREFIX>_BASE_URL` pair it finds, so a custom endpoint
+ * reaches it as its own label rather than as an OpenAI-compatible override.
  */
 function resolvePrefixedAuthEnv(
   providerName: string,

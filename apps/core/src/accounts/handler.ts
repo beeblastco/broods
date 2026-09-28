@@ -1,4 +1,8 @@
-/** Account management HTTP API. */
+/**
+ * Account management HTTP API: account create and delete, the mcp-service rpc
+ * and sandbox lifecycle verbs. Other account CRUD lives in the Convex config
+ * plane.
+ */
 
 import {
   roleDenial,
@@ -123,6 +127,7 @@ interface SandboxLifecycleContext {
   reservationKey: string;
 }
 
+/** Thrown by requireAccountAuth for a principal that gets a 401. */
 class AccountEndpointUnauthorizedError extends Error {
   constructor() {
     super("Unauthorized");
@@ -140,6 +145,7 @@ class SandboxProviderUnreachableError extends Error {
   }
 }
 
+/** Entry point for account-manage requests, called from src/server.ts. */
 export async function handler(request: CoreRequest): Promise<Response> {
   // Request-private observability scope so concurrent tenants in the shared
   // container process cannot clobber each other's log redaction/routing.
@@ -188,12 +194,8 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       return deleteAccountResponse(account);
     }
 
-    // Agent, skills, tools, hooks, workspace-file, cron, workspace, sandbox-config, and
-    // policy CRUD moved to the Convex config plane (configHttp.ts, epic
-    // #85 phase 9); the gateway routes those paths there. Runtime reads
-    // stay in src/shared/skills.ts, hosted MCP bundle loading,
-    // workspace mount/S3 read helpers, sandbox lifecycle verbs, and the
-    // harness cron-run leaf.
+    // Other account CRUD lives in the Convex config plane
+    // (packages/convex/config/http.ts); the gateway routes those paths there.
 
     const mcpServiceResponse = await handleMcpServiceRoute(
       auth,
@@ -704,6 +706,7 @@ async function terminateSandbox(
   return jsonResponse(200, { status: "terminated" });
 }
 
+/** Audits and answers 409 for a verb the provider does not support. */
 async function unsupportedSandboxAction(
   context: SandboxLifecycleContext,
   capability: string,
@@ -732,7 +735,7 @@ async function deleteAccountResponse(
   }
 
   // Cron rows and their registered schedules go with the Convex account
-  // cascade (deleteAccountContents). Nothing to sweep from core anymore.
+  // cascade (deleteAccountContentsBatch). Nothing to sweep from core.
   const [
     runtime,
     agentsDeleted,
@@ -807,10 +810,12 @@ function errorResponseForError(err: unknown): Response {
   );
 }
 
+/** An error's message, or the value as a string, for logs and audit rows. */
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** True when a fetch failed at the socket, before reaching the provider. */
 function isUnreachableError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -873,6 +878,7 @@ function sandboxAuditActor(value: unknown): SandboxAuditActor {
   };
 }
 
+/** The public account fields returned by POST /v1/accounts. */
 function toCreateAccountResponse(
   account: AccountRecord,
 ): Record<string, unknown> {

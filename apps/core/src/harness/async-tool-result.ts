@@ -44,6 +44,7 @@ export interface DetachedAsyncToolGroup {
   resultIds: string[];
   sealed: boolean;
 }
+/** Records the machine a background bash job launched on, so a replaced machine fails its settle. */
 export function bindAsyncToolResultSandbox(
   resultId: string,
   sandbox: ReservedSandbox,
@@ -90,6 +91,7 @@ export function createPendingAsyncToolResult(options: {
 }): Promise<boolean> {
   return runtime.mutate("createAsyncToolResult", options);
 }
+/** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
   resultId: string,
 ): Promise<AsyncToolResultRecord | null> {
@@ -112,6 +114,7 @@ export async function getDetachedAsyncToolGroup(
       }
     : null;
 }
+/** Lists every row of a parent event; the handler uses it to build a continuation run. */
 export function listAsyncToolResultsByParentEvent(
   parentEventId: string,
 ): Promise<AsyncToolResultRecord[]> {
@@ -119,6 +122,7 @@ export function listAsyncToolResultsByParentEvent(
     parentEventId: parentEventId,
   });
 }
+/** Settles a still-processing row as completed; the coordinator and `async_status` call it. */
 export async function markAsyncToolResultCompleted(options: {
   resultId: string;
   response?: JSONValue;
@@ -130,6 +134,7 @@ export async function markAsyncToolResultCompleted(options: {
     onlyWhenProcessing: true,
   });
 }
+/** Settles a still-processing row as failed; the coordinator, tools and questions call it. */
 export async function markAsyncToolResultFailed(options: {
   resultId: string;
   error: string;
@@ -141,6 +146,7 @@ export async function markAsyncToolResultFailed(options: {
     onlyWhenProcessing: true,
   });
 }
+/** Marks a finished row observed so it is not delivered again; `async_status` calls it. */
 export async function markAsyncToolResultObserved(
   resultId: string,
 ): Promise<void> {
@@ -164,11 +170,9 @@ export async function sealDetachedAsyncToolGroup(
     : null;
 }
 /**
- * The event a person started, for a run that continues it. A detached row keys
- * on `${eventId}:${tag}:${resultId}` and its continuation on
- * `${parentEventId}:async-tools`, so the root is everything before the first
- * `:async-` segment. Traces use it to group an answer's run with the run that
- * asked.
+ * The event a person started, for a run that continues it: everything before the
+ * first `:async-` segment of a detached or continuation event id. Traces use it to
+ * group an answer's run with the run that asked.
  */
 export function rootEventId(eventId: string): string {
   const index = eventId.indexOf(":async-");
@@ -191,6 +195,7 @@ export function settleAsyncToolResultFromCallback(options: {
       : { error: options.error ?? "Async tool call failed" }),
   });
 }
+/** Checks a callback's completion token against the row; the handler calls it before settling. */
 export function verifyAsyncToolCompletionToken(
   resultId: string,
   completionToken: string,

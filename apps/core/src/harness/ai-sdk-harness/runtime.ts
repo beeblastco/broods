@@ -150,6 +150,7 @@ export function createConfiguredHarnessAgent(
   });
 }
 
+/** Builds a harness agent on a MicroVM from raw adapter settings; only tests call it. */
 export function createMicrovmHarnessAgent(
   options: MicrovmHarnessAgentOptions,
 ): AiSdkHarnessRuntime {
@@ -159,6 +160,7 @@ export function createMicrovmHarnessAgent(
   });
 }
 
+/** Builds a harness agent on a Workdir sandbox from raw adapter settings; only tests call it. */
 export function createWorkdirHarnessAgent(
   options: WorkdirHarnessAgentOptions,
 ): AiSdkHarnessRuntime {
@@ -296,6 +298,7 @@ function resolveHarnessToolFiltering(
     : {};
 }
 
+/** Drops core tools whose names the adapter already ships as builtins, so `createHarnessAgent` registers each name once. */
 function withoutHarnessBuiltinTools(
   tools: ToolSet,
   harness: HarnessAgentAdapter,
