@@ -68,6 +68,8 @@ import {
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+// How long a child's ask_parent waits for the parent's answer.
+const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 
 interface SubagentCompletion {
   taskId: string;
@@ -134,6 +136,22 @@ export class SubagentCoordinator {
   private readonly waiters = new Set<() => void>();
   // Child runs whose outcome is recorded; a later failure never overwrites it.
   private readonly recorded = new Set<string>();
+  // Result rows the model already read through get_subagent_status.
+  private readonly delivered = new Set<string>();
+  // Questions children asked, queued for the parent's next step.
+  private readonly questions: Array<{
+    taskId: string;
+    message: UserModelMessage;
+  }> = [];
+  // Set once no parent pass can answer, so ask_parent returns at once.
+  private questionsClosed = false;
+  // A child blocked in ask_parent, by taskId, resolved by the parent's answer.
+  private readonly openQuestions = new Map<
+    string,
+    (answer: string | null) => void
+  >();
+  // Read, but that tool result is not saved to the parent yet.
+  private readonly readUnsaved = new Set<string>();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -229,8 +247,12 @@ export class SubagentCoordinator {
     options: {
       onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
-  ): Promise<"idle" | "timeout"> {
-    while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
+  ): Promise<"idle" | "question" | "timeout"> {
+    while (
+      this.pending.size > 0 &&
+      this.questions.length === 0 &&
+      Date.now() < this.waitUntilMs
+    ) {
       const heartbeatAt = Math.min(
         Date.now() + HEARTBEAT_INTERVAL_MS,
         this.waitUntilMs,
@@ -246,27 +268,197 @@ export class SubagentCoordinator {
       }
     }
 
+    if (this.questions.length > 0) return "question";
+
     return this.pending.size === 0 ? "idle" : "timeout";
   }
 
-  async drainCompletionsToParent(): Promise<number> {
-    if (this.completions.length === 0) {
-      return 0;
+  /**
+   * Waits until one of this turn's subagents records its outcome or settles, up
+   * to `timeoutMs` or the parent's wait budget. get_subagent_status uses it, so a
+   * status check spends one model step per change instead of one per instant
+   * "processing". It returns before the child's queued follow-ups drain.
+   */
+  async waitForSettled(
+    taskId: string,
+    timeoutMs: number,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
+    const pending = this.pending.get(taskId);
+    if (!pending || abortSignal?.aborted) {
+      return;
     }
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<boolean>((resolve): void => {
+      onAbort = (): void => resolve(true);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+    });
+    const eventId = this.pendingMetadata.get(taskId)?.eventId;
+    const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
+    const settled = pending.then((): boolean => true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<boolean>((resolve): void => {
+      timer = setTimeout((): void => resolve(true), deadline - Date.now());
+    });
+    try {
+      while (
+        this.questions.length === 0 &&
+        !(eventId !== undefined && this.recorded.has(eventId))
+      ) {
+        const done = await Promise.race([
+          settled,
+          aborted,
+          timedOut,
+          this.nextStateChange().then((): boolean => false),
+        ]);
+        if (done) {
+          return;
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
+    }
+  }
 
+  /**
+   * Records that get_subagent_status showed the model this run's outcome, by
+   * the result row's event id. It counts once `confirmDelivered` runs after
+   * that tool result is saved, so a failed save still gets the injection.
+   */
+  markDelivered(eventId: string): void {
+    this.readUnsaved.add(eventId);
+  }
+
+  /**
+   * Called once the parent's step output is saved. Each result read by then
+   * never starts another pass: a queued injection is dropped now and one that
+   * is enqueued later is skipped.
+   */
+  confirmDelivered(): void {
+    for (const eventId of this.readUnsaved) {
+      this.delivered.add(eventId);
+      // A finish hook's rewrite never reached the model through the tool.
+      const index = this.completions.findIndex(
+        (completion): boolean =>
+          completion.eventId === eventId &&
+          completion.visibleResult === undefined,
+      );
+      if (index !== -1) {
+        this.completions.splice(index, 1);
+      }
+    }
+    this.readUnsaved.clear();
+  }
+
+  async drainCompletionsToParent(): Promise<number> {
+    return (await this.takeParentMessages()).length;
+  }
+
+  /**
+   * Moves queued results and questions into the parent conversation and returns
+   * them. The parent's step boundary calls it, so they reach the model mid-pass.
+   */
+  async takeParentMessages(): Promise<UserModelMessage[]> {
     const completions = this.completions.splice(0);
-    // One write each, so a failure puts back only the results not yet saved and
-    // a later drain delivers them without repeating the rest.
+    const questions = this.questions.splice(0);
+    // One write each, so a failure puts back only what was not saved yet, and a
+    // later step or drain delivers it without repeating the rest.
     for (const [index, completion] of completions.entries()) {
       await this.parentSession
         .persistModelMessages([completionToParentMessage(completion)])
         .catch((error: unknown): never => {
           this.completions.unshift(...completions.slice(index));
+          this.restoreQuestions(questions);
+          throw error;
+        });
+    }
+    for (const [index, question] of questions.entries()) {
+      await this.parentSession
+        .persistModelMessages([question.message])
+        .catch((error: unknown): never => {
+          this.restoreQuestions(questions.slice(index));
           throw error;
         });
     }
 
-    return completions.length;
+    return [
+      ...completions.map(completionToParentMessage),
+      ...questions.map((question): UserModelMessage => question.message),
+    ];
+  }
+
+  /**
+   * A child's ask_parent: queues the question for the parent and waits for the
+   * answer, which update_subagent delivers. Null when the parent does not answer
+   * in time, the child stops, it already has a question open, or no parent pass
+   * is left to answer.
+   */
+  async askParent(
+    taskId: string,
+    question: string,
+    abortSignal?: AbortSignal,
+  ): Promise<string | null> {
+    const metadata = this.pendingMetadata.get(taskId);
+    if (
+      !metadata ||
+      this.questionsClosed ||
+      this.openQuestions.has(taskId) ||
+      abortSignal?.aborted
+    ) {
+      return null;
+    }
+    const budgetMs = Math.max(
+      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
+      0,
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const answer = new Promise<string | null>((resolve): void => {
+      this.openQuestions.set(taskId, resolve);
+      timer = setTimeout((): void => resolve(null), budgetMs);
+      onAbort = (): void => resolve(null);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+    });
+    this.questions.push({
+      taskId: taskId,
+      message: questionToParentMessage(metadata, question),
+    });
+    this.notifyCompletion();
+    const result = await answer;
+    clearTimeout(timer);
+    if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
+    // A question nobody answered in time is not left for the parent to answer.
+    this.openQuestions.delete(taskId);
+    const queued = this.questions.findIndex((open) => open.taskId === taskId);
+    if (queued !== -1) {
+      this.questions.splice(queued, 1);
+    }
+
+    return result;
+  }
+
+  /**
+   * For a parent that cannot run another pass: every open question resolves
+   * with no answer, and later ones return at once.
+   */
+  closeQuestions(): void {
+    this.questionsClosed = true;
+    this.questions.length = 0;
+    for (const resolve of this.openQuestions.values()) resolve(null);
+    this.openQuestions.clear();
+  }
+
+  /** Hands the parent's message to a child blocked in ask_parent; false when none is. */
+  answerQuestion(taskId: string, answer: string): boolean {
+    const resolve = this.openQuestions.get(taskId);
+    if (!resolve) {
+      return false;
+    }
+    this.openQuestions.delete(taskId);
+    resolve(answer);
+
+    return true;
   }
 
   async drainCompletionsAndTimeoutsToParent(): Promise<number> {
@@ -296,6 +488,8 @@ export class SubagentCoordinator {
 
     this.pending.clear();
     this.pendingMetadata.clear();
+    // The parent stops waiting, so no answer is coming.
+    this.closeQuestions();
     const batch = [...completions, ...timeouts];
     await this.parentSession.persistModelMessages(
       batch.map(completionToParentMessage),
@@ -559,6 +753,15 @@ export class SubagentCoordinator {
         {
           ...(subagentParent ? { subagentParent: subagentParent } : {}),
           isolatedSandbox: task.isolatedSandbox,
+          ...(task.persistent
+            ? {
+                askParent: (
+                  question: string,
+                  abortSignal?: AbortSignal,
+                ): Promise<string | null> =>
+                  this.askParent(task.taskId, question, abortSignal),
+              }
+            : {}),
         },
       );
 
@@ -678,6 +881,7 @@ export class SubagentCoordinator {
       });
     if (!settled) await recordAsyncAgentResult(task.eventId, outcome);
     this.recorded.add(task.eventId);
+    this.notifyCompletion();
   }
 
   /**
@@ -912,7 +1116,11 @@ export class SubagentCoordinator {
         inject = false;
       }
     }
-    if (inject) {
+    if (
+      inject &&
+      (completion.visibleResult !== undefined ||
+        !this.delivered.has(completion.eventId))
+    ) {
       this.completions.push(completion);
     }
     this.notifyCompletion();
@@ -983,6 +1191,17 @@ export class SubagentCoordinator {
     return mutation?.visibleResult as JSONValue | undefined;
   }
 
+  // Puts unsaved questions back; one whose child stopped waiting stays dropped.
+  private restoreQuestions(
+    questions: Array<{ taskId: string; message: UserModelMessage }>,
+  ): void {
+    this.questions.unshift(
+      ...questions.filter((open): boolean =>
+        this.openQuestions.has(open.taskId),
+      ),
+    );
+  }
+
   private nextStateChange(): Promise<void> {
     return new Promise((resolve) => {
       this.waiters.add(resolve);
@@ -1039,6 +1258,30 @@ function bestEffortSubagentPublisher(
         });
       });
     },
+  };
+}
+
+function questionToParentMessage(
+  task: Omit<
+    SubagentCompletion,
+    "status" | "response" | "error" | "visibleResult"
+  >,
+  question: string,
+): UserModelMessage {
+  const metadata = [
+    `taskId: ${task.taskId}`,
+    `agentId: ${task.agentId}`,
+    `conversationKey: ${task.conversationKey}`,
+  ].join("\n");
+
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `Subagent question for the parent. The subagent is paused until you answer with update_subagent (mode "steer") using this taskId and agentId.\n${metadata}\n\nQuestion:\n${question}`,
+      },
+    ],
   };
 }
 

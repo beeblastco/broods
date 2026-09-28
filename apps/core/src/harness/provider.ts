@@ -68,8 +68,10 @@ const DEFAULT_MODEL_MAX_RETRIES = 5;
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
 
-// The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s".
-const RATE_LIMIT_WAIT_PATTERN = /try again in (\d+(?:\.\d+)?)\s*(ms|s)\b/i;
+// The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s" or
+// Gemini's RetryInfo `"retryDelay": "35s"`.
+const RATE_LIMIT_WAIT_PATTERN =
+  /(?:try again in |"retryDelay":\s*")(\d+(?:\.\d+)?)\s*(ms|s)\b/i;
 
 /**
  * How inbound audio is read, per provider: the factory that ships speech-to-text

@@ -40,6 +40,7 @@ import {
   type McpConnection,
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
+import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
@@ -71,6 +72,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import type { AskParent, SubagentWatch } from "./utils.ts";
 import {
   cancelScheduleTool,
   listSchedulesTool,
@@ -105,6 +107,9 @@ export interface ToolContext {
   modelProvider: unknown;
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
+  subagentWatch?: SubagentWatch;
+  // Set on a persistent subagent's run: asks the parent and waits for its answer.
+  askParent?: AskParent;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
@@ -292,6 +297,7 @@ export async function createTools(
         getSubagentStatusTool({
           accountId: context.accountId,
           eventId: context.session.eventId,
+          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         updateSubagentTool({
           accountId: context.accountId,
@@ -299,6 +305,7 @@ export async function createTools(
           dispatchAppliedIngress: context.dispatchAppliedIngress,
           eventId: context.session.eventId,
           session: context.session,
+          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         stopSubagentTool({
           accountId: context.accountId,
@@ -306,6 +313,10 @@ export async function createTools(
         }),
       );
     }
+  }
+
+  if (context.askParent) {
+    Object.assign(tools, askParentTool(context.askParent));
   }
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
