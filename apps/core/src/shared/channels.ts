@@ -12,6 +12,10 @@ export const CHANNEL_REACH_WILDCARD = "*";
 // What a Retry tap or typed reply sends after a failed run.
 const RETRY_REPLY = "Retry";
 
+// The id an ask_questions button carries back: statusId, question, option.
+// 53 bytes at most, under Telegram's 64-byte callback_data cap.
+const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
+
 export type ChannelIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist?: false });
@@ -304,6 +308,29 @@ export function isAllowedId(
   if (!id) return false;
 
   return allowed.has(id);
+}
+
+/** The click a button id stands for; undefined when it is not a question button. */
+export function parseQuestionButtonId(
+  id: string | undefined,
+): ChannelQuestionAnswer | undefined {
+  const match = QUESTION_BUTTON_PATTERN.exec(id ?? "");
+  if (!match) return undefined;
+
+  return {
+    statusId: match[1]!,
+    questionIndex: Number(match[2]),
+    optionIndex: Number(match[3]),
+  };
+}
+
+/** The id a channel puts on one ask_questions option button. */
+export function questionButtonId(
+  statusId: string,
+  questionIndex: number,
+  optionIndex: number,
+): string {
+  return `q:${statusId}:${questionIndex}:${optionIndex}`;
 }
 
 /**
