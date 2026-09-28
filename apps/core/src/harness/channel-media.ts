@@ -918,9 +918,10 @@ function whereItLanded(
 
 /**
  * Straight to S3 rather than through the sandbox: a read-only workspace has no
- * sandbox to write through, and a picture does not deserve a VM boot. The mount
- * credentials already carry PutObject, which is what makes this the same write
- * the sandbox would have performed. The attachment store copy is written on the
+ * sandbox to write through, and a picture does not deserve a VM boot. The
+ * workspace copy goes out on the mount's own credentials (the assumed role for a
+ * bring-your-own bucket), which carry PutObject, so it is the same write the
+ * sandbox would have performed. The attachment store copy is written on the
  * harness's own role, in the managed bucket, whatever bucket the workspace uses.
  *
  * The link is what the model reads, so a deployment with no public base URL
@@ -941,6 +942,7 @@ async function writeMediaObject(
   await Promise.all([
     writeS3Object(target.bucket, `${target.prefix}${path}`, bytes, {
       contentType: mediaType,
+      access: target.access,
     }),
     writeS3Object(
       requireEnv("FILESYSTEM_BUCKET_NAME"),
