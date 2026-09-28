@@ -4,6 +4,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { createAlibaba } from "@ai-sdk/alibaba";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
@@ -17,7 +18,10 @@ import { createGateway } from "@ai-sdk/gateway";
 import { createGoogle } from "@ai-sdk/google";
 import { createGoogleVertex } from "@ai-sdk/google-vertex";
 import { createGroq } from "@ai-sdk/groq";
+import { createHuggingFace } from "@ai-sdk/huggingface";
+import { createMiniMax } from "@ai-sdk/minimax";
 import { createMistral } from "@ai-sdk/mistral";
+import { createMoonshotAI } from "@ai-sdk/moonshotai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createPerplexity } from "@ai-sdk/perplexity";
@@ -33,6 +37,9 @@ import {
 import { createTogetherAI } from "@ai-sdk/togetherai";
 import { createVercel } from "@ai-sdk/vercel";
 import { createXai } from "@ai-sdk/xai";
+import { createZai } from "@ai-sdk/zai";
+import { createLLMGateway } from "@llmgateway/ai-sdk-provider";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import {
   jsonSchema,
   Output,
@@ -41,7 +48,8 @@ import {
   type LanguageModelMiddleware,
   type TranscriptionModel,
 } from "ai";
-import { createMinimax } from "vercel-minimax-ai-provider";
+import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
+import { createWorkersAI } from "workers-ai-provider";
 import { publicHostFetch } from "../shared/http.ts";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type {
@@ -64,6 +72,9 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 // Model retries when the agent sets none. The AI SDK's 2 retry for about 6s,
 // shorter than a tokens-per-minute window, so one 429 failed the whole run.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
+
+// Ollama's own default is 127.0.0.1, which from core is the container itself.
+const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
@@ -139,11 +150,13 @@ export function modelProviderFactories(): Record<
   ModelProviderFactory
 > {
   return {
+    alibaba: createAlibaba,
     anthropic: createAnthropic,
     azure: createAzure,
     baseten: createBaseten,
     bedrock: createAmazonBedrock,
     cerebras: createCerebras,
+    cloudflare: createWorkersAI,
     cohere: createCohere,
     custom: createOpenAICompatible,
     deepinfra: createDeepInfra,
@@ -151,15 +164,22 @@ export function modelProviderFactories(): Record<
     fireworks: createFireworks,
     google: createGoogle,
     groq: createGroq,
-    minimax: createMinimax,
+    huggingface: createHuggingFace,
+    llmgateway: createLLMGateway,
+    minimax: createMiniMax,
     mistral: createMistral,
+    moonshotai: createMoonshotAI,
+    ollama: (settings: OllamaProviderSettings): ModelProviderInstance =>
+      createOllama({ baseURL: OLLAMA_CLOUD_BASE_URL, ...settings }),
     openai: createOpenAI,
+    openrouter: createOpenRouter,
     perplexity: createPerplexity,
     togetherai: createTogetherAI,
     v0: createVercel,
     vercel: createGateway,
     vertex: createGoogleVertex,
     xai: createXai,
+    zai: createZai,
   };
 }
 

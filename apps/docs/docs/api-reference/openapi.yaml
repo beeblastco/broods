@@ -4554,11 +4554,13 @@ components:
         redacted from reads.
       propertyNames:
         enum:
+          - alibaba
           - anthropic
           - azure
           - baseten
           - bedrock
           - cerebras
+          - cloudflare
           - cohere
           - custom
           - deepinfra
@@ -4566,15 +4568,21 @@ components:
           - fireworks
           - google
           - groq
+          - huggingface
+          - llmgateway
           - minimax
           - mistral
+          - moonshotai
+          - ollama
           - openai
+          - openrouter
           - perplexity
           - togetherai
           - v0
           - vercel
           - vertex
           - xai
+          - zai
       additionalProperties:
         $ref: "#/components/schemas/ProviderSettings"
 

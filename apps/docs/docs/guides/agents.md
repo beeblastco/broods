@@ -23,23 +23,27 @@ The full field list is in [Configuration](../reference/configuration.md).
 
 ## Model and provider
 
-`provider` holds credentials per provider. `model.provider` picks which one runs. Every Vercel AI SDK provider that ships language models works, plus any OpenAI-compatible endpoint:
+`provider` holds credentials per provider. `model.provider` picks which one runs. Every Vercel AI SDK provider that ships language models works, plus the OpenRouter, LLM Gateway, Ollama and Cloudflare Workers AI community providers and any OpenAI-compatible endpoint:
 
-| Provider             | Key         | Provider          | Key          |
-| -------------------- | ----------- | ----------------- | ------------ |
-| Anthropic            | `anthropic` | Groq              | `groq`       |
-| Azure OpenAI         | `azure`     | MiniMax           | `minimax`    |
-| Baseten              | `baseten`   | Mistral           | `mistral`    |
-| Amazon Bedrock       | `bedrock`   | OpenAI            | `openai`     |
-| Cerebras             | `cerebras`  | Perplexity        | `perplexity` |
-| Cohere               | `cohere`    | Together.ai       | `togetherai` |
-| DeepInfra            | `deepinfra` | Vercel AI Gateway | `vercel`     |
-| DeepSeek             | `deepseek`  | Vercel v0         | `v0`         |
-| Fireworks            | `fireworks` | xAI Grok          | `xai`        |
-| Google Generative AI | `google`    | OpenAI-compatible | `custom`     |
-| Google Vertex AI     | `vertex`    |                   |              |
+| Provider              | Key           | Provider          | Key          |
+| --------------------- | ------------- | ----------------- | ------------ |
+| Alibaba Qwen          | `alibaba`     | MiniMax           | `minimax`    |
+| Anthropic             | `anthropic`   | Mistral           | `mistral`    |
+| Azure OpenAI          | `azure`       | Moonshot AI Kimi  | `moonshotai` |
+| Baseten               | `baseten`     | Ollama            | `ollama`     |
+| Amazon Bedrock        | `bedrock`     | OpenAI            | `openai`     |
+| Cerebras              | `cerebras`    | OpenRouter        | `openrouter` |
+| Cloudflare Workers AI | `cloudflare`  | Perplexity        | `perplexity` |
+| Cohere                | `cohere`      | Together.ai       | `togetherai` |
+| DeepInfra             | `deepinfra`   | Vercel AI Gateway | `vercel`     |
+| DeepSeek              | `deepseek`    | Vercel v0         | `v0`         |
+| Fireworks             | `fireworks`   | Google Vertex AI  | `vertex`     |
+| Google Generative AI  | `google`      | xAI Grok          | `xai`        |
+| Groq                  | `groq`        | Z.ai GLM          | `zai`        |
+| Hugging Face          | `huggingface` | OpenAI-compatible | `custom`     |
+| LLM Gateway           | `llmgateway`  |                   |              |
 
-Each provider needs an `apiKey`. Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work.
+Each provider needs an `apiKey`. Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work. `cloudflare` takes `accountId`. `ollama` goes to Ollama Cloud unless `baseURL` points at a public Ollama host.
 
 For a self-hosted or third-party OpenAI-compatible endpoint, use `custom`:
 
