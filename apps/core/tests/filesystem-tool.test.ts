@@ -416,7 +416,7 @@ describe("sandbox tool set", () => {
     ],
     [
       { exit_code: 124, timed_out: true, stdout: "partial\n", stderr: "" },
-      "partial\n[timed out]",
+      "partial\n[timed out, exit code 124]",
     ],
   ])("bash reports a failed run %#", async (response, expected) => {
     microvmFetchMock.mockImplementationOnce(microvmFetchResponse);

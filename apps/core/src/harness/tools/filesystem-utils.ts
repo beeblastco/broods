@@ -652,7 +652,8 @@ export async function workspaceMediaBytes(
 }
 
 // Bash tool result text: stdout then stderr, with a trailing `[exit code N]`
-// (or `[timed out]`) when the run failed so a silent failure never reads as success.
+// (`[timed out, exit code N]` on a timeout) when the run failed so a silent
+// failure never reads as success.
 export function formatRunText(result: SandboxRunResult): string {
   const output = `${result.stdout}${result.stderr}`;
   const failed = !result.ok || (result.exitCode ?? 0) !== 0;
@@ -666,11 +667,11 @@ export function formatRunText(result: SandboxRunResult): string {
       throw new Error(error);
     }
   }
+  const code =
+    result.exitCode === null ? undefined : `exit code ${result.exitCode}`;
   const status = result.timedOut
-    ? "timed out"
-    : result.exitCode === null
-      ? "command failed"
-      : `exit code ${result.exitCode}`;
+    ? ["timed out", code].filter(Boolean).join(", ")
+    : (code ?? "command failed");
   const separator = output === "" || output.endsWith("\n") ? "" : "\n";
 
   return `${output}${separator}[${status}]`;
