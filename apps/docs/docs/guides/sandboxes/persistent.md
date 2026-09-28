@@ -50,6 +50,8 @@ Only the workspace mount outlives the reservation. When a reservation ends, loca
 
 Idle scale-down never pauses a machine while a background job runs.
 
+On the managed service, sandbox time counts from each use until `idleTimeoutSeconds` scales the machine down, because the provider bills that idle stretch too. A suspended `lambda` MicroVM keeps counting a little for its stored snapshot until it resumes or is released. A `lambda` MicroVM that bursts above its 1 vCPU / 2 GB baseline also counts the extra vCPU and memory while it is used, the way AWS bills it. A shorter idle timeout uses less of the plan's monthly sandbox time. The dashboard shows it under Usage, Allowance.
+
 ## Setup commands
 
 `onCreate` runs once, when the machine is first reserved. `onResume` runs when it is acquired again. Both need `persistent: true`.

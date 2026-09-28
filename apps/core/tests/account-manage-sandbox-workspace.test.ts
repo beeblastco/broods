@@ -108,7 +108,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 // account + config own a reserved instance under that key, off means no such row exists.
 let registryOwnsReservation = true;
 // This month's metered cost the fake budget store reports against a €5 budget.
-let budgetUsedEur = 0;
+let budgetUsedPercent = 0;
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
   setSandboxInstanceStatus: mock(async () => {}),
@@ -190,7 +190,7 @@ afterEach(() => {
   microvmSendMock.mockClear();
   microvmShellTokenError = null;
   registryOwnsReservation = true;
-  budgetUsedEur = 0;
+  budgetUsedPercent = 0;
   resetPlanLimitsForTests();
   setStorageForTests(null);
   resetStorageForTests();
@@ -417,7 +417,7 @@ describe("account-manage sandbox endpoints", () => {
     process.env.WORKDIR_URL = "https://workdir.example.com";
     process.env.WORKDIR_API_KEY = "tenant-key";
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    budgetUsedEur = 5;
+    budgetUsedPercent = 100;
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
     const created = await seedSandbox({
       provider: "sandbox",
@@ -449,7 +449,7 @@ describe("account-manage sandbox endpoints", () => {
   it("runs exec on the account's own workdir whatever the budget", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    budgetUsedEur = 5;
+    budgetUsedPercent = 100;
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
     const created = await seedSandbox({
       provider: "sandbox",
@@ -742,8 +742,7 @@ function createFakeStorage() {
           enforced: true,
           plan: "free",
           month: "2026-09",
-          usedEur: budgetUsedEur,
-          limitEur: 5,
+          usedPercent: budgetUsedPercent,
           runsPerMinute: 600,
           warned: false,
         };
