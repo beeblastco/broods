@@ -1258,19 +1258,19 @@ describe("write/edit approval policy", () => {
     expect(mounted.workspaceName).toBe("notes");
   });
 
-  it("bash refuses a selection that names both a workspace and the sandbox", async () => {
+  it("bash runs on the named sandbox when a workspace is named too", async () => {
     const bash = await tool("bash", borrowedSandboxCtx());
-    await expect(
-      bash.execute({
-        command: "echo hi",
-        workspace: "notes",
-        sandbox: "own-sandbox",
-      }),
-    ).rejects.toThrow(
-      // A lone workspace has no argument to name it; a second sandbox does.
-      /not both[\s\S]*- workspace notes, omit workspace \(default\)\n- sandbox=own-sandbox \(lambda/,
+    const result = await bash.execute({
+      command: "echo hi",
+      workspace: "notes",
+      sandbox: "own-sandbox",
+    });
+    // The approval gate and policy input already let the sandbox win, so the tool
+    // must too, and say so.
+    expect(result).toContain(
+      "ran on sandbox own-sandbox with no workspace mounted; workspace notes was ignored",
     );
-    expect(microvmFetchMock).not.toHaveBeenCalled();
+    expect(lastSandboxExec().payload.namespace).toBeUndefined();
   });
 
   it("the standalone sandbox target follows the agent sandbox's own mode", async () => {

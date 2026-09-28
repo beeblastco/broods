@@ -24,7 +24,6 @@ import type {
 import { shellQuote } from "../sandbox/utils.ts";
 import {
   bashSandboxTarget,
-  bashTargetLines,
   disallowedRuntimeCommand,
   formatRunText,
   isAgentOwnSandbox,
@@ -80,25 +79,21 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           if (onSandbox !== undefined && selected === undefined) {
             return toolError("Error: sandbox must be the name of a sandbox");
           }
-          // Silently preferring one would let the policy layer be told a workspace
-          // that the run never touches, so an incoherent selection is refused.
-          if (workspace !== undefined && selected !== undefined) {
-            return toolError(
-              [
-                "Error: pass either workspace or sandbox, not both. They select different places to run. Pick one of:",
-                ...bashTargetLines(context),
-              ].join("\n"),
-            );
-          }
           // Resolved before the workspace fallback so a name that picks nothing
           // selectable is refused instead of quietly landing in the default workspace.
           const picked = resolveAgentSandbox(context, selected);
-          const ws = targetsAgentSandbox(context, {
+          // Same rule as the approval gate and policy input: a named sandbox wins.
+          const onAgentSandbox = targetsAgentSandbox(context, {
             workspace: workspace,
             sandbox: selected,
-          })
+          });
+          const ws = onAgentSandbox
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
+          const ignoredWorkspace =
+            onAgentSandbox && workspace !== undefined
+              ? `Note: ran on sandbox ${selected} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
+              : "";
           // A read-only workspace must not fall through to the default sandbox: the
           // approval gate skipped it expecting this refusal.
           const sandbox = ws ? ws.sandbox : picked?.sandbox;
@@ -136,12 +131,13 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           });
 
           return toolText(
-            formatRunText(
-              await runSandbox(sandbox, ws?.namespace, effective, {
-                onSandboxCpu: context.onSandboxCpu,
-                metadata: sandboxRunMetadata(context, ws),
-              }),
-            ),
+            ignoredWorkspace +
+              formatRunText(
+                await runSandbox(sandbox, ws?.namespace, effective, {
+                  onSandboxCpu: context.onSandboxCpu,
+                  metadata: sandboxRunMetadata(context, ws),
+                }),
+              ),
           );
         } catch (cause) {
           return toolError(
@@ -451,15 +447,13 @@ function sandboxParamSchema(
   if (choices.length === 0) {
     return undefined;
   }
-  const mutuallyExclusive =
-    context.workspaces.length > 0
-      ? " Mutually exclusive with `workspace`."
-      : "";
+  const ignoresWorkspace =
+    context.workspaces.length > 0 ? " When set, `workspace` is ignored." : "";
 
   return {
     type: "string",
     enum: choices.map((choice): string => choice.name),
-    description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${mutuallyExclusive}`,
+    description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${ignoresWorkspace}`,
   };
 }
 

@@ -437,9 +437,9 @@ export function machineSandboxes(
 }
 
 /**
- * Where a bash call can run, one line each, for the agent's environment block
- * and for the error a call gets when it names two places. A machine says
- * whether its daemon is connected, since a call to an offline one only fails.
+ * Where a bash call can run, one line each, for the agent's environment block.
+ * A machine says whether its daemon is connected, since a call to an offline one
+ * only fails.
  */
 export function bashTargetLines(context: SandboxToolContext): string[] {
   // A lone workspace or sandbox has no argument to name it: bash leaves the
