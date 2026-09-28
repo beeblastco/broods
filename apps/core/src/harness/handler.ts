@@ -1271,7 +1271,7 @@ async function handleNatsWorkerRequest(
       close: () => publisher.close(),
     };
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      transferred = await settleFailedIngressAndDrain(
+      await settleFailedIngressAndDrain(
         session,
         "Request did not produce pending model input",
         () => dispatchNextIngress(session!, event),
