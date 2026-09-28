@@ -40,6 +40,7 @@ export interface AiSdkHarnessSandboxOptions {
   type: AiSdkHarnessType;
 }
 
+/** Reserves the persistent machine a harness agent runs on, MicroVM for `lambda` compute and Workdir otherwise; called by `createHarnessRuntime`. */
 export function createAiSdkHarnessSandbox(
   options: AiSdkHarnessSandboxOptions,
 ): AiSdkHarnessSandbox {
@@ -58,6 +59,7 @@ export function harnessRuntimeVersion(type: AiSdkHarnessType): string {
   return harnessAdapterVersion(type);
 }
 
+/** Narrows an agent's compute to a persistent sandbox or lambda machine, or throws; `createConfiguredHarnessAgent` checks it first. */
 export function requireAiSdkHarnessCompute(
   compute: SandboxExecutorConfig,
 ): AiSdkHarnessCompute {
@@ -73,6 +75,7 @@ export function requireAiSdkHarnessCompute(
   return compute as AiSdkHarnessCompute;
 }
 
+/** MicroVM branch of `createAiSdkHarnessSandbox`: makes sure /workspace and pnpm exist before the bridge starts. */
 function createMicrovmHarnessSandbox(
   options: AiSdkHarnessSandboxOptions & {
     compute: Extract<AiSdkHarnessCompute, { provider: "lambda" }>;
@@ -111,6 +114,7 @@ function createMicrovmHarnessSandbox(
   };
 }
 
+/** Workdir branch of `createAiSdkHarnessSandbox`: makes sure pnpm exists before the bridge starts. */
 function createWorkdirHarnessSandbox(
   options: AiSdkHarnessSandboxOptions & {
     compute: Extract<AiSdkHarnessCompute, { provider: "sandbox" }>;

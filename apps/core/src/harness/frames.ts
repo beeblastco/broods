@@ -66,8 +66,10 @@ export class FrameQueue {
   }
 }
 
-// Parse one NDJSON line into a frame; null for blank or non-protocol lines so a
-// caller can tell "no frames" from a real error.
+/**
+ * Parse one NDJSON line into a frame; null for blank or non-protocol lines so a
+ * caller can tell "no frames" from a real error.
+ */
 export function parseRunnerFrame(line: string): RunnerFrame | null {
   const trimmed = line.trim();
   if (!trimmed) return null;

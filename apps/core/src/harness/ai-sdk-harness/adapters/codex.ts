@@ -24,6 +24,7 @@ export function createCodexAdapter(
   return createCodex(settings);
 }
 
+/** Builds the Codex adapter from an agent config; the adapter registry calls it for `harness.type` codex. */
 export function createConfiguredCodexAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

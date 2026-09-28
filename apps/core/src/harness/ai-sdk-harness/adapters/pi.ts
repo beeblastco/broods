@@ -18,6 +18,7 @@ import {
 
 export const PI_HARNESS_VERSION = VERSION;
 
+/** Builds the Pi adapter from an agent config; the adapter registry falls back to it for `harness.type` pi. */
 export function createConfiguredPiAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

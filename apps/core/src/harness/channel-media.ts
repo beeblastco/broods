@@ -365,9 +365,11 @@ function assertWithinLimit(size: number, mediaType: string | null): void {
   }
 }
 
-// The line the agent reads: what arrived, where it landed, and what to do with
-// the parts the model cannot see for itself. The "read it yourself" wording is
-// deliberate. Told only that a file exists, models ask the sender to paste it.
+/**
+ * The line the agent reads: what arrived, where it landed, and what to do with
+ * the parts the model cannot see for itself. The "read it yourself" wording is
+ * deliberate. Told only that a file exists, models ask the sender to paste it.
+ */
 function attachmentNote(
   ingested: IngestedAttachment[],
   overflow: number,
@@ -396,9 +398,11 @@ function attachmentNote(
   ].join("\n");
 }
 
-// Audio the model cannot hear for itself, read into words. Skipped where the
-// provider takes the recording natively, since listening to it beats a
-// transcript of it.
+/**
+ * Audio the model cannot hear for itself, read into words. Skipped where the
+ * provider takes the recording natively, since listening to it beats a
+ * transcript of it.
+ */
 async function audioTranscript(
   bytes: Buffer,
   mediaType: string,
@@ -432,8 +436,10 @@ function cachedMedia(reference: string): Buffer | undefined {
   return bytes;
 }
 
-// Keeps bytes for the next turn that replays this message, evicting the least
-// recently used until the cache is back under its ceiling.
+/**
+ * Keeps bytes for the next turn that replays this message, evicting the least
+ * recently used until the cache is back under its ceiling.
+ */
 function cacheMedia(reference: string, bytes: Buffer): void {
   if (bytes.byteLength > MEDIA_CACHE_MAX_BYTES) {
     return;
@@ -490,10 +496,12 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-// The name of the workspace file a sealed link points at, when that file is
-// gone. The provider fetches the link itself, and its 404 fails the whole turn.
-// Attachment store links are trusted without a round trip: no sandbox mounts
-// that prefix. A storage error is not proof of a deletion, so the link stays.
+/**
+ * The name of the workspace file a sealed link points at, when that file is
+ * gone. The provider fetches the link itself, and its 404 fails the whole turn.
+ * Attachment store links are trusted without a round trip: no sandbox mounts
+ * that prefix. A storage error is not proof of a deletion, so the link stays.
+ */
 async function goneWorkspaceFile(
   part: UserContentPart,
 ): Promise<string | null> {
@@ -533,9 +541,11 @@ function limitForMediaType(mediaType: string | undefined): number {
     : MAX_ATTACHMENT_BYTES;
 }
 
-// A name to store the file under. Telegram photos and voice notes both arrive
-// nameless, and a file with no name lands extensionless, so every client, and
-// the media route, would treat it as a raw download.
+/**
+ * A name to store the file under. Telegram photos and voice notes both arrive
+ * nameless, and a file with no name lands extensionless, so every client, and
+ * the media route, would treat it as a raw download.
+ */
 function mediaFileName(
   attachment: Attachment,
   mediaType: string,
@@ -549,9 +559,11 @@ function mediaFileName(
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
 }
 
-// A workspace path an agent can read back, and a shell will not fight over.
-// The hash keeps two messages that both carry `image.jpg` apart without making
-// the name unreadable.
+/**
+ * A workspace path an agent can read back, and a shell will not fight over.
+ * The hash keeps two messages that both carry `image.jpg` apart without making
+ * the name unreadable.
+ */
 function mediaPath(name: string, eventId: string, index: number): string {
   const folder = createHash("sha256")
     .update(eventId)
@@ -578,10 +590,12 @@ function mediaReferenceOf(part: UserContentPart): MediaReference | null {
   return null;
 }
 
-// How to ask this channel for these bytes again. The chat SDK already names
-// what each provider needs in `fetchMetadata`, a Telegram file id or a Slack
-// private URL, so that map is carried verbatim rather than re-derived, and a
-// provider that names nothing but a URL falls back to it.
+/**
+ * How to ask this channel for these bytes again. The chat SDK already names
+ * what each provider needs in `fetchMetadata`, a Telegram file id or a Slack
+ * private URL, so that map is carried verbatim rather than re-derived, and a
+ * provider that names nothing but a URL falls back to it.
+ */
 function mediaReferenceUrl(
   attachment: Attachment,
   mediaType: string,
@@ -606,9 +620,11 @@ function mediaReferenceUrl(
   return url.toString();
 }
 
-// The part the model actually receives. Pictures go over as pictures; anything
-// else only when this provider reads it, because a part a provider refuses
-// fails the whole turn while a file it never saw costs one `read`.
+/**
+ * The part the model actually receives. Pictures go over as pictures; anything
+ * else only when this provider reads it, because a part a provider refuses
+ * fails the whole turn while a file it never saw costs one `read`.
+ */
 function nativePart(
   item: StoredAttachment,
   provider: AccountModelProviderName | undefined,
@@ -632,8 +648,10 @@ function nativePart(
   };
 }
 
-// The reference a stored part points at, or null for anything else: bytes, a
-// sealed workspace link, an ordinary URL the model provider reads for itself.
+/**
+ * The reference a stored part points at, or null for anything else: bytes, a
+ * sealed workspace link, an ordinary URL the model provider reads for itself.
+ */
 function parseMediaReference(value: unknown): MediaReference | null {
   if (
     typeof value !== "string" ||
@@ -661,10 +679,12 @@ function parseMediaReference(value: unknown): MediaReference | null {
   };
 }
 
-// One stored message with its references read back. A reference the channel
-// will not serve, or a workspace link whose file is gone, becomes text in the
-// same position, so the turn still says a file was there and the model stops
-// waiting to be shown it.
+/**
+ * One stored message with its references read back. A reference the channel
+ * will not serve, or a workspace link whose file is gone, becomes text in the
+ * same position, so the turn still says a file was there and the model stops
+ * waiting to be shown it.
+ */
 async function rehydrateMessage(
   message: ModelMessage,
   agentConfig: AgentConfig,
@@ -717,10 +737,12 @@ async function rehydrateMessage(
   return { ...message, content: content };
 }
 
-// The bytes behind one reference, read through the channel that delivered it so
-// the provider's own credentials are used. Null rather than a throw: this runs
-// while a turn is being assembled, and one unreadable picture must not take the
-// conversation with it.
+/**
+ * The bytes behind one reference, read through the channel that delivered it so
+ * the provider's own credentials are used. Null rather than a throw: this runs
+ * while a turn is being assembled, and one unreadable picture must not take the
+ * conversation with it.
+ */
 async function resolveMediaReference(
   reference: MediaReference,
   agentConfig: AgentConfig,
@@ -770,9 +792,11 @@ function sealedMediaLink(part: UserContentPart): string | null {
     : null;
 }
 
-// Read the bytes, put them in the workspace, and seal the link. Every failure
-// is caught and described rather than thrown: the caller's contract is that one
-// unreadable picture costs a line of text, not the message.
+/**
+ * Read the bytes, put them in the workspace, and seal the link. Every failure
+ * is caught and described rather than thrown: the caller's contract is that one
+ * unreadable picture costs a line of text, not the message.
+ */
 async function storeAttachment(
   attachment: Attachment,
   index: number,
@@ -854,7 +878,9 @@ async function storeAttachment(
   }
 }
 
-// What the audio said, or what to do about not knowing.
+/**
+ * What the audio said, or what to do about not knowing.
+ */
 function transcriptLine(item: StoredAttachment): string {
   const transcript = item.transcript;
   if (!transcript) {
@@ -869,7 +895,9 @@ function transcriptLine(item: StoredAttachment): string {
   return `\n  Not transcribed: ${transcript.reason}. ${transcriptAdvice(transcript.recovery, item.path)}`;
 }
 
-// Where the agent goes to open this attachment, or why it cannot.
+/**
+ * Where the agent goes to open this attachment, or why it cannot.
+ */
 function whereItLanded(
   item: StoredAttachment,
   part: UserContentPart | null,
@@ -888,15 +916,17 @@ function whereItLanded(
   return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
 }
 
-// Straight to S3 rather than through the sandbox: a read-only workspace has no
-// sandbox to write through, and a picture does not deserve a VM boot. The mount
-// credentials already carry PutObject, which is what makes this the same write
-// the sandbox would have performed. The attachment store copy is written on the
-// harness's own role, in the managed bucket, whatever bucket the workspace uses.
-//
-// The link is what the model reads, so a deployment with no public base URL
-// stores the files and returns nothing: the agent can still open its copy, and
-// no part is built around a URL that would resolve nowhere.
+/**
+ * Straight to S3 rather than through the sandbox: a read-only workspace has no
+ * sandbox to write through, and a picture does not deserve a VM boot. The mount
+ * credentials already carry PutObject, which is what makes this the same write
+ * the sandbox would have performed. The attachment store copy is written on the
+ * harness's own role, in the managed bucket, whatever bucket the workspace uses.
+ *
+ * The link is what the model reads, so a deployment with no public base URL
+ * stores the files and returns nothing: the agent can still open its copy, and
+ * no part is built around a URL that would resolve nowhere.
+ */
 async function writeMediaObject(
   workspace: ResolvedWorkspace,
   accountId: string,

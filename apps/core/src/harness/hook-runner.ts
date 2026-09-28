@@ -155,6 +155,7 @@ async function createHookRunnerPayload(
   };
 }
 
+/** Drains one isolate hook run for `runCodeHook` and keeps the last value it yielded. */
 async function runForResult(
   accountId: string,
   payload: Record<string, unknown>,

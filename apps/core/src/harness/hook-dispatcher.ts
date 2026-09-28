@@ -78,6 +78,10 @@ export async function createAgentHookDispatcher(
   return createHookDispatcher(accountId, index);
 }
 
+/**
+ * Runs the indexed hooks for each fire-point, one at a time, sharing one run
+ * state. Called by `createAgentHookDispatcher`, and directly by the hook tests.
+ */
 export function createHookDispatcher(
   accountId: string,
   index: Map<AgentHookEventName, AccountHookRecord[]>,
@@ -171,6 +175,7 @@ export function wrapToolsWithHooks(
   }));
 }
 
+/** Maps each event to the active hook records that fire on it, in config order. */
 function buildEventIndex(
   refs: AgentCodeHookConfig[],
   records: AccountHookRecord[],
@@ -197,6 +202,7 @@ function buildEventIndex(
   return index;
 }
 
+/** Fetches the active account hook records an agent's config refers to, once per run. */
 async function loadAgentHooks(
   accountId: string,
   refs: AgentCodeHookConfig[],

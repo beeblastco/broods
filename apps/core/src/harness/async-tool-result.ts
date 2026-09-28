@@ -77,6 +77,7 @@ export function createDetachedAsyncToolResult(options: {
     sealed: true,
   });
 }
+/** Inserts a `processing` row for an async tool call; `AsyncToolCoordinator` calls it before the tool starts in the background. */
 export function createPendingAsyncToolResult(options: {
   resultId: string;
   parentEventId: string;
@@ -94,6 +95,7 @@ export function getAsyncToolResult(
 ): Promise<AsyncToolResultRecord | null> {
   return runtime.query("getAsyncToolResult", { resultId: resultId });
 }
+/** Reads a parent event's dispatch group, ids sorted; the handler uses it to decide whether a settled result can resume the conversation. */
 export async function getDetachedAsyncToolGroup(
   parentEventId: string,
 ): Promise<DetachedAsyncToolGroup | null> {
@@ -144,6 +146,7 @@ export async function markAsyncToolResultObserved(
 ): Promise<void> {
   await runtime.mutate("observeAsyncToolResult", { resultId: resultId });
 }
+/** Marks a parent event's dispatch group sealed so no more rows join it; only tests call it today. */
 export async function sealDetachedAsyncToolGroup(
   parentEventId: string,
 ): Promise<DetachedAsyncToolGroup | null> {
@@ -172,6 +175,7 @@ export function rootEventId(eventId: string): string {
 
   return index === -1 ? eventId : eventId.slice(0, index);
 }
+/** Settles a still-processing row from outside the run, for background job callbacks and question answers. Null when already settled. */
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";
