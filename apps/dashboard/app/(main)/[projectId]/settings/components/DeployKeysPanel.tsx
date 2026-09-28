@@ -37,7 +37,7 @@ export function DeployKeysPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
-  const { copied, copy: copyToken } = useCopied(revealed ?? "");
+  const { copied, failed, copy: copyToken } = useCopied(revealed ?? "");
 
   const [deletingKey, setDeletingKey] = useState<DeployKey | null>(null);
   const [isDeletingKey, setIsDeletingKey] = useState(false);
@@ -118,6 +118,11 @@ export function DeployKeysPanel({
                 Done
               </Button>
             </div>
+            {failed ? (
+              <p role="alert" className="mt-1 text-xs text-destructive">
+                Copy failed. Try again or select and copy the token manually.
+              </p>
+            ) : null}
           </div>
         )}
 
