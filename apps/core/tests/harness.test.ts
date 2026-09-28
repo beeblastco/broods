@@ -7,8 +7,8 @@ import {
   mock,
   spyOn,
 } from "bun:test";
-import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import { createServer as createHttpsServer, type Server } from "node:https";
+import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";

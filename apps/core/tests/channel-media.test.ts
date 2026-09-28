@@ -5,10 +5,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
-import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
+import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";

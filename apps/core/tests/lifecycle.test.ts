@@ -6,8 +6,8 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import { createServer as createHttpsServer, type Server } from "node:https";
+import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import {
   createAgentLifecycleEmitter,
