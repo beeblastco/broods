@@ -425,13 +425,17 @@ export class Session {
   }
 
   /** Applies all queued steer envelopes to this active event. */
-  async applySteeringIngress(): Promise<AppliedIngress | null> {
+  /** @param options.textOnly claim only the steers made of plain user text */
+  async applySteeringIngress(
+    options: { textOnly?: boolean } = {},
+  ): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
 
     return applySteering({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
+      ...(options.textOnly ? { textOnly: true } : {}),
     });
   }
 

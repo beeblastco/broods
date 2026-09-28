@@ -110,6 +110,7 @@ classDiagram
   ChannelActions : +sendFiles?(files, caption)
   ChannelActions : +sendSticker?(sticker)
   ChannelActions : +sendQuestions?(prompt)
+  ChannelActions : +sendReplyButtons?(text, replies)
   ChannelActions : +stream?(textStream, options)
 
   class ChannelParseResult
@@ -177,7 +178,7 @@ classDiagram
 | `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                             |
 | `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                   |
 
-`ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
+`ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `sendReplyButtons`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
 
 | Tool             | Registers when                                                                                                                                    |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
