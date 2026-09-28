@@ -14,6 +14,7 @@ import {
 import { isPlainObject } from "./object.ts";
 
 const TICKET_ALGORITHM = "aes-256-gcm";
+const TICKET_AUTH_TAG_LENGTH = 16;
 const TICKET_VERSION = "st1";
 
 export const TERMINAL_TICKET_TTL_MS = 2 * 60 * 1000;
@@ -67,6 +68,7 @@ export function openTerminalTicket(
       TICKET_ALGORITHM,
       ticketKey(secret),
       ivBytes,
+      { authTagLength: TICKET_AUTH_TAG_LENGTH },
     );
     decipher.setAuthTag(tagBytes);
     const plaintext = Buffer.concat([
@@ -109,7 +111,9 @@ export function sealTerminalTicket(
   secret: string,
 ): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
+  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv, {
+    authTagLength: TICKET_AUTH_TAG_LENGTH,
+  });
   const ciphertext = Buffer.concat([
     cipher.update(JSON.stringify(ticket), "utf-8"),
     cipher.final(),

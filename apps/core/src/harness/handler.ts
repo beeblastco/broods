@@ -1618,7 +1618,7 @@ async function runChannelTurns(
   );
 
   try {
-    while (true) {
+    for (;;) {
       // A thrown turn must still settle its envelope terminally before the
       // queue drains on; otherwise accepted work is stranded in processing.
       try {
@@ -2948,7 +2948,7 @@ async function runParentContinuationLoop(options: {
     ));
   options.subagentCoordinator.attachHooks(hooks);
 
-  while (true) {
+  for (;;) {
     let approvals: ToolApprovalSummary[] = [];
     const stream = await runAgentLoop(
       options.session,
