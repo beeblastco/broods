@@ -1,5 +1,6 @@
 "use client";
 
+import { useCopied } from "@/app/components/CopyButton";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -36,7 +37,7 @@ export function DeployKeysPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy: copyToken } = useCopied(revealed ?? "");
 
   const [deletingKey, setDeletingKey] = useState<DeployKey | null>(null);
   const [isDeletingKey, setIsDeletingKey] = useState(false);
@@ -61,13 +62,6 @@ export function DeployKeysPanel({
     } finally {
       setBusy(false);
     }
-  }
-
-  function copyToken(): void {
-    if (!revealed) return;
-    navigator.clipboard.writeText(revealed);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
   }
 
   async function handleDeleteKey(): Promise<void> {

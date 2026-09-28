@@ -1,5 +1,6 @@
 "use client";
 
+import { CopyButton } from "@/app/components/CopyButton";
 import { ChannelsSection } from "@/app/components/side-panel/ChannelsSection";
 import {
   ExpandBlock,
@@ -44,15 +45,7 @@ import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
-import {
-  Check,
-  Copy,
-  Eye,
-  EyeOff,
-  KeyRound,
-  RefreshCw,
-  Wifi,
-} from "lucide-react";
+import { Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
 
 /**
@@ -164,7 +157,6 @@ export function DetailsTab({
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
   // Reveal a freshly generated/rotated key the moment it arrives (render-time
   // sync, not an effect); hide again once the plaintext is cleared.
   const [syncedApiKey, setSyncedApiKey] = useState(deploymentApiKey);
@@ -357,12 +349,6 @@ export function DetailsTab({
       setOutputSchemaError("Failed to read schema file.");
     };
     reader.readAsText(file);
-  }
-
-  function handleCopy(value: string, field: string): void {
-    navigator.clipboard.writeText(value);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
   }
 
   /** Auto-saves provider/model/base-URL settings; no-ops when required values are empty. */
@@ -680,19 +666,7 @@ export function DetailsTab({
                     <code className="flex-1 text-xs text-foreground break-all">
                       {endpointUrl}
                     </code>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted"
-                      className="shrink-0 cursor-pointer"
-                      onClick={() => handleCopy(endpointUrl, "url")}
-                    >
-                      {copiedField === "url" ? (
-                        <Check className="size-3" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </Button>
+                    <CopyButton value={endpointUrl} label="endpoint URL" />
                   </div>
                 </div>
 
@@ -705,19 +679,7 @@ export function DetailsTab({
                     <code className="flex-1 text-xs text-foreground break-all">
                       {websocketUrl}
                     </code>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted"
-                      className="shrink-0 cursor-pointer"
-                      onClick={() => handleCopy(websocketUrl, "websocket")}
-                    >
-                      {copiedField === "websocket" ? (
-                        <Check className="size-3" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </Button>
+                    <CopyButton value={websocketUrl} label="WebSocket URL" />
                   </div>
                 </div>
               </>
@@ -730,21 +692,10 @@ export function DetailsTab({
                   <code className="flex-1 text-xs text-foreground break-all">
                     {agentConfig.agentId}
                   </code>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    className="shrink-0 cursor-pointer"
-                    onClick={() =>
-                      handleCopy(agentConfig.agentId as string, "agentid")
-                    }
-                  >
-                    {copiedField === "agentid" ? (
-                      <Check className="size-3" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                  </Button>
+                  <CopyButton
+                    value={agentConfig.agentId as string}
+                    label="agent ID"
+                  />
                 </div>
                 <span className="text-2xs text-muted-foreground">
                   Pass this as <code>agentId</code> in the invoke payload.
@@ -790,19 +741,7 @@ export function DetailsTab({
                       <Eye className="size-3" />
                     )}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    className="shrink-0 cursor-pointer"
-                    onClick={() => handleCopy(deploymentApiKey, "apikey")}
-                  >
-                    {copiedField === "apikey" ? (
-                      <Check className="size-3" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                  </Button>
+                  <CopyButton value={deploymentApiKey} label="API key" />
                 </div>
               ) : (
                 <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
