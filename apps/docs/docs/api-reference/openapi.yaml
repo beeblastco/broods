@@ -63,7 +63,7 @@ tags:
       via assume-role for a short-lived `fp_sts_...` session token.
 
 paths:
-  # checkov:skip=CKV_OPENAPI_21:The gateway caps request body bytes, which bounds request arrays. List responses return every record the caller owns.
+  # checkov:skip=CKV_OPENAPI_21:Request arrays are bounded by the gateway body cap. Lists page with limit or cursor; with neither they return the whole collection, by design.
   /healthz:
     get:
       tags:
