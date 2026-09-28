@@ -25,11 +25,11 @@ import type {
 
 export const MACHINE_ACCOUNT_ID = "acct_machine";
 /** The account secret the daemon connects with in these tests. */
-export const MACHINE_ACCOUNT_SECRET = "account-secret";
+export const MACHINE_ACCOUNT_SECRET = crypto.randomUUID();
 /** The stage runtime key, which sits in frontends and must be refused. */
-export const MACHINE_EMBEDDABLE_KEY = "fp_agent_runtime-key";
+export const MACHINE_EMBEDDABLE_KEY = `fp_agent_${crypto.randomUUID()}`;
 /** A role session whose policy reads sandboxes and nothing more. */
-export const MACHINE_READ_ONLY_ROLE_TOKEN = "fp_sts_read-only";
+export const MACHINE_READ_ONLY_ROLE_TOKEN = `fp_sts_${crypto.randomUUID()}`;
 export const MACHINE_SANDBOX_ID = "sbx_machine";
 export const OTHER_MACHINE_SANDBOX_ID = "sbx_machine_other";
 
@@ -81,7 +81,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
   const account: AccountRecord = {
     accountId: MACHINE_ACCOUNT_ID,
     username: "machine",
-    secretHash: "hash",
+    secretHash: hashAccountSecret(MACHINE_ACCOUNT_SECRET),
     status: "active",
     createdAt: "2026-06-06T00:00:00.000Z",
     updatedAt: "2026-06-06T00:00:00.000Z",
