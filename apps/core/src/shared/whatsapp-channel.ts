@@ -252,7 +252,8 @@ export function createWhatsAppChannel(
 }
 
 // The first message Meta sent for this number, with the sender's contact. A
-// Meta app can hold several numbers, so a change for another one is not ours.
+// Meta app can hold several numbers, so a change for another one is not ours,
+// and a status-only change (a read receipt) carries no message to find.
 function findInboundMessage(
   payload: WhatsAppWebhookPayload,
   phoneNumberId: string,
@@ -260,20 +261,27 @@ function findInboundMessage(
   contact: WhatsAppRawMessage["contact"];
   message: WhatsAppInboundMessage;
 } | null {
-  const value = payload.entry
-    ?.flatMap((entry) => entry.changes ?? [])
-    .find(
+  const values = (payload.entry ?? [])
+    .flatMap((entry) => entry.changes ?? [])
+    .filter(
       (change) =>
         change.field === "messages" &&
-        change.value?.metadata?.phone_number_id === phoneNumberId,
-    )?.value;
+        change.value?.metadata?.phone_number_id === phoneNumberId &&
+        (change.value.messages?.length ?? 0) > 0,
+    )
+    .flatMap((change) => (change.value ? [change.value] : []));
+  const value = values[0];
   const message = value?.messages?.[0];
   if (!message) {
     return null;
   }
-  if ((value.messages?.length ?? 0) > 1) {
+  const count = values.reduce(
+    (total, candidate) => total + (candidate.messages?.length ?? 0),
+    0,
+  );
+  if (count > 1) {
     logWarn("WhatsApp webhook carried more than one message", {
-      count: value.messages?.length,
+      count: count,
     });
   }
 

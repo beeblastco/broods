@@ -261,10 +261,13 @@ function toTeamsSource(source: Record<string, unknown>): TeamsSource {
   };
 }
 
-// One validator per bot, oldest dropped past the cap.
+// One validator per bot, least recently used dropped past the cap.
 function tokenValidator(appId: string): JwtValidator {
   const cached = tokenValidators.get(appId);
   if (cached) {
+    tokenValidators.delete(appId);
+    tokenValidators.set(appId, cached);
+
     return cached;
   }
   const validator = new JwtValidator({

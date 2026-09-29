@@ -6,6 +6,7 @@ import { createSign, generateKeyPairSync } from "node:crypto";
 import type { ChannelRequest } from "../src/shared/channels.ts";
 import {
   createGoogleChatChannel,
+  type GoogleChatChannelOptions,
   parseServiceAccountKey,
 } from "../src/shared/gchat-channel.ts";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
@@ -41,6 +42,34 @@ describe("google chat channel adapter", () => {
       await adapter.authenticate(delivery(body, chatToken(OTHER_KEY))),
     ).toBe(false);
     expect(await adapter.authenticate(delivery(body, undefined))).toBe(false);
+  });
+
+  // Adapters are rebuilt per request; the certificates must outlive them.
+  it("fetches Google's certificates once across adapters for one app", async (): Promise<void> => {
+    let fetches = 0;
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> => {
+        fetches += 1;
+
+        return Response.json({ k1: TLS_CERT });
+      },
+      { preconnect: ORIGINAL_FETCH.preconnect },
+    );
+    const body = JSON.stringify(spaceEvent("@Agent hello", "hello"));
+    const options = { ...channelOptions(), googleChatProjectNumber: "999" };
+    const token = chatToken(TLS_KEY, "999");
+
+    expect(
+      await createGoogleChatChannel(options).authenticate(
+        delivery(body, token),
+      ),
+    ).toBe(true);
+    expect(
+      await createGoogleChatChannel(options).authenticate(
+        delivery(body, token),
+      ),
+    ).toBe(true);
+    expect(fetches).toBe(1);
   });
 
   it("turns a space mention into a turn in its thread, without the mention", async (): Promise<void> => {
@@ -120,21 +149,28 @@ describe("google chat channel adapter", () => {
 });
 
 function channel(): ReturnType<typeof createGoogleChatChannel> {
-  return createGoogleChatChannel({
+  return createGoogleChatChannel(channelOptions());
+}
+
+function channelOptions(): GoogleChatChannelOptions {
+  return {
     allowedChannelIds: null,
     allowedUserIds: null,
     credentials: parseServiceAccountKey(serviceAccountJson())!,
     googleChatProjectNumber: PROJECT_NUMBER,
-  });
+  };
 }
 
 // A token shaped like the ones Google Chat signs as its system account.
-function chatToken(privateKey: string): string {
+function chatToken(
+  privateKey: string,
+  audience: string = PROJECT_NUMBER,
+): string {
   const now = Math.floor(Date.now() / 1000);
   const encode = (value: object): string =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
   const unsigned = `${encode({ alg: "RS256", typ: "JWT", kid: "k1" })}.${encode(
-    { iss: CHAT_ISSUER, aud: PROJECT_NUMBER, iat: now, exp: now + 300 },
+    { iss: CHAT_ISSUER, aud: audience, iat: now, exp: now + 300 },
   )}`;
   const signature = createSign("RSA-SHA256")
     .update(unsigned)

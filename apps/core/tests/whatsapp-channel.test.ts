@@ -71,6 +71,18 @@ describe("whatsapp channel adapter", () => {
     });
   });
 
+  it("finds the message behind a status-only change for the same number", async (): Promise<void> => {
+    const payload = textWebhook("after the receipt");
+    const statusOnly = structuredClone(payload.entry[0]!);
+    statusOnly.changes[0]!.value.messages = [];
+    payload.entry.unshift(statusOnly);
+    const body = JSON.stringify(payload);
+    const parsed = await channel().parse(delivery(body, sign(body)));
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    expect(parsed.message.content).toBe("after the receipt");
+  });
+
   it("ignores deliveries for another number and senders outside the allow list", async (): Promise<void> => {
     const otherNumber = textWebhook("hi");
     otherNumber.entry[0]!.changes[0]!.value.metadata.phone_number_id =

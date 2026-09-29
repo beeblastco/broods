@@ -135,6 +135,19 @@ export function channelScopeKeyFromConversation(
 
     return parts.length >= 3 ? parts.slice(0, 2).join(":") : unscopedKey;
   }
+  // A Google Chat thread is `spaces/X/threads/Y` (or `spaces/X/messages/Y`)
+  // inside its space `spaces/X`.
+  if (unscopedKey.startsWith(GCHAT_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split("/");
+
+    return parts.length >= 3 ? parts.slice(0, 2).join("/") : unscopedKey;
+  }
+  // A Teams channel thread is `<channel>;messageid=<root>`.
+  if (unscopedKey.startsWith(TEAMS_INTEGRATION_PREFIX)) {
+    const boundary = unscopedKey.indexOf(";");
+
+    return boundary === -1 ? unscopedKey : unscopedKey.slice(0, boundary);
+  }
   if (unscopedKey.startsWith(GITHUB_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
 

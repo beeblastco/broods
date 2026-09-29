@@ -14,6 +14,7 @@ import {
   type ServiceAccountCredentials,
 } from "@chat-adapter/gchat";
 import { ConsoleLogger, type Message } from "chat";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type {
   ChannelActions,
@@ -31,6 +32,11 @@ const SERVICE_ACCOUNT_KEY = z.looseObject({
   client_email: z.string().min(1),
   private_key: z.string().min(1),
 });
+// The SDK adapter caches Google's signing certificates and the service
+// account's access token, so one is kept per app. Adapters are rebuilt per
+// request and would otherwise refetch both every time.
+const TRANSPORT_CACHE_MAX = 100;
+const transports = new Map<string, GoogleChatAdapter>();
 
 // A Chat app that is a Workspace add-on posts `chat.messagePayload`; one that
 // is not posts this older shape, with the same message inside.
@@ -64,21 +70,12 @@ export interface GoogleChatSource {
 
 /**
  * Builds the Google Chat adapter from one agent's `config.channels.gchat`.
- * `integrations.ts` calls it per request, so it holds no state of its own.
+ * `integrations.ts` calls it per request; only the SDK transport is reused.
  */
 export function createGoogleChatChannel(
   options: GoogleChatChannelOptions,
 ): ChannelAdapter {
-  const transport = new GoogleChatAdapter({
-    credentials: options.credentials,
-    disableSignatureVerification: false,
-    endpointUrl: options.endpointUrl,
-    googleChatProjectNumber: options.googleChatProjectNumber,
-    logger: new ConsoleLogger("error").child("gchat"),
-    userName: options.userName,
-    workspaceAddOnServiceAccountEmail:
-      options.workspaceAddOnServiceAccountEmail,
-  });
+  const transport = googleChatTransport(options);
 
   return {
     name: "gchat",
@@ -240,6 +237,51 @@ function googleChatIdentity(
       ? { userName: message.sender.displayName }
       : {}),
   };
+}
+
+// One SDK adapter per app configuration, least recently used dropped past the
+// cap. The key hashes every field the adapter is built from.
+function googleChatTransport(
+  options: GoogleChatChannelOptions,
+): GoogleChatAdapter {
+  const key = createHash("sha256")
+    .update(
+      JSON.stringify([
+        options.credentials.client_email,
+        options.credentials.private_key,
+        options.endpointUrl,
+        options.googleChatProjectNumber,
+        options.userName,
+        options.workspaceAddOnServiceAccountEmail,
+      ]),
+    )
+    .digest("hex");
+  const cached = transports.get(key);
+  if (cached) {
+    transports.delete(key);
+    transports.set(key, cached);
+
+    return cached;
+  }
+  const transport = new GoogleChatAdapter({
+    credentials: options.credentials,
+    disableSignatureVerification: false,
+    endpointUrl: options.endpointUrl,
+    googleChatProjectNumber: options.googleChatProjectNumber,
+    logger: new ConsoleLogger("error").child("gchat"),
+    userName: options.userName,
+    workspaceAddOnServiceAccountEmail:
+      options.workspaceAddOnServiceAccountEmail,
+  });
+  transports.set(key, transport);
+  if (transports.size > TRANSPORT_CACHE_MAX) {
+    const oldest = transports.keys().next().value;
+    if (oldest !== undefined) {
+      transports.delete(oldest);
+    }
+  }
+
+  return transport;
 }
 
 function toGoogleChatSource(source: Record<string, unknown>): GoogleChatSource {
