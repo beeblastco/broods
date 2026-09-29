@@ -387,6 +387,8 @@ A connection holds one app's credentials. A channel names one room on that conne
 | Teams       | `defineTeamsConnection`      | `defineTeamsChannel`      | `channelId`      |
 | Google Chat | `defineGoogleChatConnection` | `defineGoogleChatChannel` | `spaceName`      |
 | Twilio      | `defineTwilioConnection`     | `defineTwilioChannel`     | `from`           |
+| Instagram   | `defineInstagramConnection`  | `defineInstagramChannel`  | `igsid`          |
+| Messenger   | `defineMessengerConnection`  | `defineMessengerChannel`  | `psid`           |
 
 Every connection also takes `allowedChannelIds`, where `["*"]` answers everywhere, `allowedUserIds`, `partition` and `trace`. Channels take `agents`, `instructions`, `workspaces`, `policies`, `denyTools`, `partition`, `sandboxImages`, `tagRoles`, and `replyIn` on Slack. Provider fields are on each [channel page](../channels/index.md).
 

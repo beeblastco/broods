@@ -62,6 +62,7 @@ import {
   parseServiceAccountKey,
 } from "../shared/gchat-channel.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
+import { createInstagramChannel } from "../shared/instagram-channel.ts";
 import type { QuestionAnswer } from "../../../../packages/broods/src/websocket-contracts.ts";
 import {
   errorResponse,
@@ -107,6 +108,7 @@ import {
 } from "../shared/runtime-keys.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
+import { createMessengerChannel } from "../shared/messenger-channel.ts";
 import { createSlackChannel } from "../shared/slack-channel.ts";
 import type { AgentDeploymentScope } from "../shared/storage.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -1913,7 +1915,9 @@ function supportsInlineCommands(channelName: string): boolean {
   return (
     channelName === "discord" ||
     channelName === "gchat" ||
+    channelName === "instagram" ||
     channelName === "matrix" ||
+    channelName === "messenger" ||
     channelName === "slack" ||
     channelName === "teams" ||
     channelName === "telegram" ||
@@ -1950,6 +1954,8 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const twilioChannel = createTwilioChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
   const matrixChannel = createMatrixChannelFromConfig(config);
+  const instagramChannel = createInstagramChannelFromConfig(config);
+  const messengerChannel = createMessengerChannelFromConfig(config);
   const whatsAppChannel = createWhatsAppChannelFromConfig(config);
 
   return {
@@ -1965,6 +1971,8 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       twilioChannel,
       zaloChannel,
       matrixChannel,
+      instagramChannel,
+      messengerChannel,
       whatsAppChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
@@ -2917,6 +2925,50 @@ function createZaloChannelFromConfig(
   return createZaloChannel(channel.botToken, channel.webhookSecret, {
     allowedChannelIds: reachSet(channel.allowedChannelIds),
     allowedUserIds: reachSet(channel.allowedUserIds),
+  });
+}
+
+function createInstagramChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.instagram;
+  if (
+    !channel?.accessToken ||
+    !channel.accountId ||
+    !channel.appSecret ||
+    !channel.verifyToken
+  ) {
+    return null;
+  }
+
+  return createInstagramChannel({
+    accessToken: channel.accessToken,
+    accountId: channel.accountId,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
+  });
+}
+
+function createMessengerChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.messenger;
+  if (!channel?.appSecret || !channel.pageAccessToken || !channel.verifyToken) {
+    return null;
+  }
+
+  return createMessengerChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    pageAccessToken: channel.pageAccessToken,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
   });
 }
 

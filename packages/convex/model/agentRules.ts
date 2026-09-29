@@ -1035,6 +1035,8 @@ function normalizeChannelsConfig(
   normalizeTeamsConfig(channels.teams, options);
   normalizeTwilioConfig(channels.twilio);
   normalizeZaloConfig(channels.zalo);
+  normalizeInstagramConfig(channels.instagram, options);
+  normalizeMessengerConfig(channels.messenger, options);
   normalizeWhatsAppConfig(channels.whatsapp);
 }
 
@@ -1414,6 +1416,112 @@ function normalizeZaloConfig(value: unknown): void {
         "config.channels.zalo.webhookSecret must be 8 to 256 characters",
       );
   }
+}
+
+function normalizeInstagramConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.instagram must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.instagram");
+  assertOptionalString(
+    config.accessToken,
+    "config.channels.instagram.accessToken",
+  );
+  assertOptionalString(config.accountId, "config.channels.instagram.accountId");
+  // The account id is a path segment of every Graph call the SDK makes.
+  if (typeof config.accountId === "string" && !/^\d+$/.test(config.accountId))
+    throw new ClientError(
+      "config.channels.instagram.accountId must be the numeric Instagram account id",
+    );
+  normalizeGraphApiVersion(config, "config.channels.instagram");
+  assertOptionalString(config.appSecret, "config.channels.instagram.appSecret");
+  assertOptionalString(config.userName, "config.channels.instagram.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.instagram.verifyToken",
+  );
+  assertMetaCredentials(
+    config,
+    "config.channels.instagram",
+    ["accessToken", "accountId", "appSecret", "verifyToken"],
+    options,
+  );
+}
+
+function normalizeMessengerConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.messenger must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.messenger");
+  normalizeGraphApiVersion(config, "config.channels.messenger");
+  assertOptionalString(config.appSecret, "config.channels.messenger.appSecret");
+  assertOptionalString(
+    config.pageAccessToken,
+    "config.channels.messenger.pageAccessToken",
+  );
+  assertOptionalString(config.userName, "config.channels.messenger.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.messenger.verifyToken",
+  );
+  assertMetaCredentials(
+    config,
+    "config.channels.messenger",
+    ["appSecret", "pageAccessToken", "verifyToken"],
+    options,
+  );
+}
+
+/**
+ * Core builds a Messenger or Instagram adapter only when every one of these is
+ * set and non-empty, so a config that has some but not all would never answer.
+ * A patch may carry one alone, so the merged config checks it.
+ */
+function assertMetaCredentials(
+  config: Record<string, unknown>,
+  path: string,
+  fields: readonly string[],
+  options: AgentConfigCheckOptions,
+): void {
+  if (options.patch) return;
+  const present = fields.find((field) => config[field] !== undefined);
+  if (!present) return;
+  const empty = fields.find(
+    (field) =>
+      typeof config[field] === "string" && config[field].trim().length === 0,
+  );
+  if (empty)
+    throw new ClientError(`${path}.${empty} must be a non-empty string`);
+  const missing = fields.find((field) => config[field] === undefined);
+  if (missing) {
+    throw new ClientError(
+      `${path}.${missing} is required when ${path}.${present} is set`,
+    );
+  }
+}
+
+/**
+ * Messenger and Instagram put `apiVersion` into the path of every Graph call,
+ * so it may only be a version, never a path.
+ */
+function normalizeGraphApiVersion(
+  config: Record<string, unknown>,
+  name: string,
+): void {
+  assertOptionalString(config.apiVersion, `${name}.apiVersion`);
+  if (
+    typeof config.apiVersion === "string" &&
+    !/^v\d+\.\d+$/.test(config.apiVersion)
+  )
+    throw new ClientError(`${name}.apiVersion must look like "v21.0"`);
 }
 
 function normalizeChannelIdentityConfig(

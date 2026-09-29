@@ -4,7 +4,7 @@ title: Channels
 
 # Channels
 
-A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat or Twilio SMS. Messages that arrive there become agent turns, and the answer goes back to the same place.
+A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Messenger or Instagram. Messages that arrive there become agent turns, and the answer goes back to the same place.
 
 - A connection is one app install and holds its credentials, such as a Slack bot token.
 - A channel names one room the connection answers in, such as `#product-eng`.
@@ -46,20 +46,22 @@ An agent can hold several connections of different providers. One connection bel
 
 ## Supported channels
 
-| Provider                | Reaches                                | Required connection fields                                 | Commands |
-| ----------------------- | -------------------------------------- | ---------------------------------------------------------- | -------- |
-| [Telegram](telegram.md) | private chats, groups, forum topics    | `botToken`, `webhookSecret`                                | yes      |
-| [Slack](slack.md)       | channels, private groups, DMs          | `botToken`, `signingSecret`                                | yes      |
-| [Discord](discord.md)   | guild channels and threads             | `botToken`, `publicKey`                                    | yes      |
-| [GitHub](github.md)     | issues, pull requests, comment threads | `webhookSecret`, `appId`, `privateKey`                     | no       |
-| [Linear](linear.md)     | issue comments that mention the agent  | `apiKey`, `webhookSecret`, `userName`                      | no       |
-| [Matrix](matrix.md)     | rooms, including encrypted ones        | `apiUrl`, `botToken`                                       | yes      |
-| [Pancake](pancake.md)   | Pancake inbox messages and comments    | `pageId`, `pageAccessToken`, `webhookSecret`               | no       |
-| [Zalo](zalo.md)         | private chats and groups               | `botToken`, `webhookSecret`                                | yes      |
-| [WhatsApp](whatsapp.md) | customer chats with a business number  | `accessToken`, `appSecret`, `phoneNumberId`, `verifyToken` | yes      |
-| [Teams](teams.md)       | personal chats, group chats, channels  | `appId`, `appPassword`, `appTenantId`                      | yes      |
-| [Google Chat](gchat.md) | direct messages, @-mentions in spaces  | `credentials`, `googleChatProjectNumber` or `endpointUrl`  | yes      |
-| [Twilio SMS](twilio.md) | SMS and MMS to a Twilio number         | `accountSid`, `authToken`                                  | yes      |
+| Provider                  | Reaches                                | Required connection fields                                 | Commands |
+| ------------------------- | -------------------------------------- | ---------------------------------------------------------- | -------- |
+| [Telegram](telegram.md)   | private chats, groups, forum topics    | `botToken`, `webhookSecret`                                | yes      |
+| [Slack](slack.md)         | channels, private groups, DMs          | `botToken`, `signingSecret`                                | yes      |
+| [Discord](discord.md)     | guild channels and threads             | `botToken`, `publicKey`                                    | yes      |
+| [GitHub](github.md)       | issues, pull requests, comment threads | `webhookSecret`, `appId`, `privateKey`                     | no       |
+| [Linear](linear.md)       | issue comments that mention the agent  | `apiKey`, `webhookSecret`, `userName`                      | no       |
+| [Matrix](matrix.md)       | rooms, including encrypted ones        | `apiUrl`, `botToken`                                       | yes      |
+| [Pancake](pancake.md)     | Pancake inbox messages and comments    | `pageId`, `pageAccessToken`, `webhookSecret`               | no       |
+| [Zalo](zalo.md)           | private chats and groups               | `botToken`, `webhookSecret`                                | yes      |
+| [WhatsApp](whatsapp.md)   | customer chats with a business number  | `accessToken`, `appSecret`, `phoneNumberId`, `verifyToken` | yes      |
+| [Teams](teams.md)         | personal chats, group chats, channels  | `appId`, `appPassword`, `appTenantId`                      | yes      |
+| [Google Chat](gchat.md)   | direct messages, @-mentions in spaces  | `credentials`, `googleChatProjectNumber` or `endpointUrl`  | yes      |
+| [Twilio SMS](twilio.md)   | SMS and MMS to a Twilio number         | `accountSid`, `authToken`                                  | yes      |
+| [Instagram](instagram.md) | professional account DMs               | `accessToken`, `accountId`, `appSecret`, `verifyToken`     | yes      |
+| [Messenger](messenger.md) | Facebook Page DMs                      | `appSecret`, `pageAccessToken`, `verifyToken`              | yes      |
 
 Store every secret with `broods env set NAME` and reference it with `env("NAME")`. Never inline a token.
 
@@ -95,7 +97,7 @@ A connection that declares no channel and no `allowedChannelIds` fails `broods d
 
 ## Chat commands
 
-Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat and Twilio route these commands to Broods instead of the agent. GitHub, Linear and Pancake pass slash text to the agent as normal input.
+Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route these commands to Broods instead of the agent. GitHub, Linear and Pancake pass slash text to the agent as normal input.
 
 | Command                                   | Effect                                                                   |
 | ----------------------------------------- | ------------------------------------------------------------------------ |
@@ -126,20 +128,22 @@ Tools other than `send-update` appear only where the provider supports them. The
 
 `send-files` and the `file_paths` argument of `send-images` need an attached workspace. A file leaves as a durable `/v1/media/{ticket}` link, and a file in a bare sandbox has no such link. An agent with sandboxes but no workspaces gets no `send-files`, and its `send-images` takes `urls` only.
 
-| Channel     | Pictures             | Documents            | Batching                |
-| ----------- | -------------------- | -------------------- | ----------------------- |
-| Telegram    | provider fetches URL | provider fetches URL | albums of 2 to 10       |
-| Slack       | image blocks         | uploaded             | one message, one upload |
-| Discord     | uploaded             | uploaded             | one multipart message   |
-| Matrix      | uploaded             | uploaded             | one per message         |
-| Pancake     | uploaded             | uploaded             | one per message         |
-| Zalo        | provider fetches URL | sent as links        | one per message         |
-| WhatsApp    | uploaded or linked   | uploaded or linked   | one per message         |
-| Teams       | links in text        | links in text        | text only               |
-| Google Chat | links in text        | links in text        | text only               |
-| Twilio      | provider fetches URL | sent as links        | one per message         |
-| GitHub      | links in text        | links in text        | text only               |
-| Linear      | links in text        | links in text        | text only               |
+| Channel     | Pictures                          | Documents                         | Batching                |
+| ----------- | --------------------------------- | --------------------------------- | ----------------------- |
+| Telegram    | provider fetches URL              | provider fetches URL              | albums of 2 to 10       |
+| Slack       | image blocks                      | uploaded                          | one message, one upload |
+| Discord     | uploaded                          | uploaded                          | one multipart message   |
+| Matrix      | uploaded                          | uploaded                          | one per message         |
+| Pancake     | uploaded                          | uploaded                          | one per message         |
+| Zalo        | provider fetches URL              | sent as links                     | one per message         |
+| WhatsApp    | uploaded or linked                | uploaded or linked                | one per message         |
+| Teams       | links in text                     | links in text                     | text only               |
+| Google Chat | links in text                     | links in text                     | text only               |
+| Twilio      | provider fetches URL              | sent as links                     | one per message         |
+| Instagram   | uploaded, or provider fetches URL | uploaded, or provider fetches URL | one per message         |
+| Messenger   | sent as links                     | sent as links                     | text only               |
+| GitHub      | links in text                     | links in text                     | text only               |
+| Linear      | links in text                     | links in text                     | text only               |
 
 Where a provider has no document endpoint, `send-files` posts the links as text and tells the model so. If a provider rejects pictures, `send-images` falls back to sending them as documents or links. A caption rides the first message only.
 
@@ -158,6 +162,8 @@ Media sent to the agent is read while the turn runs.
 | WhatsApp    | pictures, documents, audio, voice notes, video, stickers                   |
 | Teams       | files and pictures                                                         |
 | Google Chat | attachments                                                                |
+| Instagram   | pictures, video, audio, files, story replies and mentions                  |
+| Messenger   | pictures, video, audio, files                                              |
 | Twilio      | MMS pictures, audio and video                                              |
 | GitHub      | none. A pasted image stays a markdown URL in the text                      |
 | Linear      | none. A pasted image stays a markdown URL in the text                      |
@@ -185,7 +191,7 @@ A failed transcription never drops the message. The note names the cause, such a
 
 ## Shared behavior
 
-- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub and Linear react with eyes. Zalo and Teams show typing only. WhatsApp shows typing and reacts only when the agent calls `send-reactions`. Pancake, Google Chat and Twilio do neither.
+- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub and Linear react with eyes. Zalo, Teams, Messenger and Instagram show typing only. WhatsApp shows typing and reacts only when the agent calls `send-reactions`. Pancake, Google Chat and Twilio do neither.
 - Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
 - Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.

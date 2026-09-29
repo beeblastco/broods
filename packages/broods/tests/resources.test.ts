@@ -657,6 +657,8 @@ import {
   defineTwilioConnection,
   defineWhatsAppConnection,
   defineZaloConnection,
+  defineInstagramConnection,
+  defineMessengerConnection,
   env,
 } from "${RESOURCES_MODULE}";
 
@@ -707,6 +709,20 @@ export const zalo = defineZaloConnection({
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),
   allowedUserIds: ["user-1"],
 });
+export const instagram = defineInstagramConnection({
+  accessToken: env("INSTAGRAM_ACCESS_TOKEN"),
+  accountId: "17841400000000000",
+  appSecret: env("INSTAGRAM_APP_SECRET"),
+  verifyToken: env("INSTAGRAM_VERIFY_TOKEN"),
+  allowedChannelIds: ["*"],
+});
+export const messenger = defineMessengerConnection({
+  apiVersion: "v21.0",
+  appSecret: env("FACEBOOK_APP_SECRET"),
+  pageAccessToken: env("FACEBOOK_PAGE_ACCESS_TOKEN"),
+  verifyToken: env("FACEBOOK_VERIFY_TOKEN"),
+  allowedChannelIds: ["*"],
+});
 export const linear = defineLinearConnection({
   apiKey: env("LINEAR_API_KEY"),
   webhookSecret: env("LINEAR_WEBHOOK_SECRET"),
@@ -756,6 +772,8 @@ export const support = defineAgent({
     twilio,
     zalo,
     whatsapp,
+    instagram,
+    messenger,
   ],
 });
 `,
@@ -803,6 +821,11 @@ export const support = defineAgent({
         allowedUserIds: ["+15551234567"],
       },
       zalo: { allowedUserIds: ["user-1"], allowedChannelIds: ["*"] },
+      instagram: {
+        accountId: "17841400000000000",
+        allowedChannelIds: ["*"],
+      },
+      messenger: { apiVersion: "v21.0", allowedChannelIds: ["*"] },
       gchat: {
         googleChatProjectNumber: "123456789012",
         allowedChannelIds: ["spaces/AAA"],
@@ -828,8 +851,10 @@ export const support = defineAgent({
     { alias: "discord", type: "discord", agentName: "support" },
     { alias: "gchat", type: "gchat", agentName: "support" },
     { alias: "github", type: "github", agentName: "support" },
+    { alias: "instagram", type: "instagram", agentName: "support" },
     { alias: "linear", type: "linear", agentName: "support" },
     { alias: "matrix", type: "matrix", agentName: "support" },
+    { alias: "messenger", type: "messenger", agentName: "support" },
     { alias: "pancake", type: "pancake", agentName: "support" },
     { alias: "slack", type: "slack", agentName: "support" },
     { alias: "teams", type: "teams", agentName: "support" },

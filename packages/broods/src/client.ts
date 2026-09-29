@@ -98,7 +98,9 @@ export interface ChannelReference {
     | "teams"
     | "twilio"
     | "zalo"
-    | "whatsapp";
+    | "whatsapp"
+    | "instagram"
+    | "messenger";
   readonly agentName: string;
   readonly agentId: string;
   readonly accountId: string;

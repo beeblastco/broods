@@ -510,7 +510,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook check or handshake
-      description: Without a query string, answers `{"status":"ok","method":"POST"}` so a provider console sees the URL live. With one, it is a subscription handshake and goes to the channel like a delivery. WhatsApp answers Meta's `hub.mode=subscribe` check with `hub.challenge` when `hub.verify_token` matches an agent's `verifyToken`. The stage URL behaves the same.
+      description: Without a query string, answers `{"status":"ok","method":"POST"}` so a provider console sees the URL live. With one, it is a subscription handshake and goes to the channel like a delivery. WhatsApp, Messenger and Instagram answer Meta's `hub.mode=subscribe` check with `hub.challenge` when `hub.verify_token` matches an agent's `verifyToken`. The stage URL behaves the same.
       parameters:
         - name: accountId
           in: path
@@ -531,7 +531,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -557,6 +557,8 @@ paths:
                 teams,
                 gchat,
                 twilio,
+                instagram,
+                messenger,
               ]
       responses:
         "200":
@@ -567,6 +569,35 @@ paths:
           description: Unknown account or channel, or no agent holds credentials for it
 
   /v1/webhooks/{accountId}/dev/{endpointId}/{channelName}:
+    get:
+      tags:
+        - Direct API
+      summary: Channel provider webhook check or handshake for one stage
+      description: The GET of the bare URL, pinned to the stage `endpointId` names. Without a query string it answers `{"status":"ok","method":"POST"}`; with one, only that stage's agents can answer the subscription handshake.
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: endpointId
+          in: path
+          required: true
+          description: The stage's endpoint id, stable across renames and runtime key rotation.
+          schema:
+            type: string
+        - name: channelName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The URL is live, or the provider's challenge echoed back as text/plain
+        "401":
+          description: No agent's verify token matched
+        "404":
+          description: A handshake for an unknown account, or for an endpointId no stage of this account is deployed at (`unknown_webhook_stage`)
     post:
       tags:
         - Direct API
@@ -603,6 +634,8 @@ paths:
                 teams,
                 gchat,
                 twilio,
+                instagram,
+                messenger,
               ]
       responses:
         "200":
@@ -4457,7 +4490,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -5479,6 +5512,110 @@ components:
               items:
                 type: string
               description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        instagram:
+          type: object
+          description: Instagram professional account DMs through the Instagram API with Instagram Login. Every delivery must carry a valid `X-Hub-Signature-256` made with `appSecret`. Meta's GET subscription handshake is answered when `hub.verify_token` equals `verifyToken`.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            accessToken:
+              type: string
+              description: Instagram user access token with instagram_business_manage_messages.
+            accountId:
+              type: string
+              pattern: "^[0-9]+$"
+              description: Numeric Instagram professional account id. Deliveries for the app's other accounts are ignored.
+            apiVersion:
+              type: string
+              pattern: "^v[0-9]+[.][0-9]+$"
+              description: Graph API version, e.g. v26.0. Defaults to the Chat SDK's.
+            appSecret:
+              type: string
+              description: Instagram app secret that signs each webhook delivery.
+            userName:
+              type: string
+              description: Name the Chat SDK uses for the account.
+            verifyToken:
+              type: string
+              description: Value you choose and enter in the Meta webhook settings.
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Instagram-scoped user ids (IGSIDs) this connection answers. Everyone when omitted or set to ["*"], nobody when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Instagram-scoped user ids (IGSIDs) allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        messenger:
+          type: object
+          description: Facebook Page DMs through the Messenger Platform Send API. Every delivery must carry a valid `X-Hub-Signature-256` made with `appSecret`. Meta's GET subscription handshake is answered when `hub.verify_token` equals `verifyToken`.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            apiVersion:
+              type: string
+              pattern: "^v[0-9]+[.][0-9]+$"
+              description: Graph API version, e.g. v21.0. Defaults to the Chat SDK's.
+            appSecret:
+              type: string
+              description: Meta app secret that signs each webhook delivery.
+            pageAccessToken:
+              type: string
+              description: Page access token for the Page the app is subscribed to.
+            userName:
+              type: string
+              description: Name the Chat SDK uses for the Page.
+            verifyToken:
+              type: string
+              description: Value you choose and enter in the Meta webhook settings.
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Page-scoped user ids (PSIDs) this connection answers. Everyone when omitted or set to ["*"], nobody when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Page-scoped user ids (PSIDs) allowed to trigger the agent. Everyone when omitted or set to ["*"].
             trace:
               type: string
               enum: [enabled, disabled]

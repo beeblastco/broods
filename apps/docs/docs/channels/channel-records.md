@@ -80,6 +80,8 @@ The room id field is named after the provider:
 | Google Chat | `spaceName`      |             |
 | Twilio      | `from`           |             |
 | Pancake     | `conversationId` |             |
+| Instagram   | `igsid`          |             |
+| Messenger   | `psid`           |             |
 
 Notes on the fields:
 

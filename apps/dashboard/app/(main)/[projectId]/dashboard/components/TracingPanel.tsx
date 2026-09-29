@@ -286,6 +286,8 @@ const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "teams:", label: "Teams" },
   { prefix: "twilio:", label: "Twilio" },
   { prefix: "zalo:", label: "Zalo" },
+  { prefix: "instagram:", label: "Instagram" },
+  { prefix: "messenger:", label: "Messenger" },
   { prefix: "whatsapp:", label: "WhatsApp" },
   { prefix: "cron:", label: "Cron" },
 ];

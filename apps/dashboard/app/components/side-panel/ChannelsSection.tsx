@@ -391,6 +391,86 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
+    kind: "instagram",
+    label: "Instagram",
+    fields: [
+      {
+        key: "accessToken",
+        label: "Access token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "accountId",
+        label: "Instagram account ID",
+        type: "text",
+        required: true,
+      },
+      { key: "appSecret", label: "App secret", type: "secret", required: true },
+      {
+        key: "verifyToken",
+        label: "Verify token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed chat IDs (IGSID)",
+        type: "stringList",
+        placeholder: "123456789, *",
+      },
+      {
+        key: "allowedUserIds",
+        label: "Allowed user IDs (IGSID)",
+        type: "stringList",
+        placeholder: "123456789, …",
+      },
+      {
+        key: "apiVersion",
+        label: "API version",
+        type: "text",
+        placeholder: "v26.0",
+      },
+    ],
+  },
+  {
+    kind: "messenger",
+    label: "Messenger",
+    fields: [
+      {
+        key: "pageAccessToken",
+        label: "Page access token",
+        type: "secret",
+        required: true,
+      },
+      { key: "appSecret", label: "App secret", type: "secret", required: true },
+      {
+        key: "verifyToken",
+        label: "Verify token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed chat IDs (PSID)",
+        type: "stringList",
+        placeholder: "123456789, *",
+      },
+      {
+        key: "allowedUserIds",
+        label: "Allowed user IDs (PSID)",
+        type: "stringList",
+        placeholder: "123456789, …",
+      },
+      {
+        key: "apiVersion",
+        label: "API version",
+        type: "text",
+        placeholder: "v21.0",
+      },
+    ],
+  },
+  {
     kind: "whatsapp",
     label: "WhatsApp",
     fields: [

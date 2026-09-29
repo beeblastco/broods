@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import {
   createIncomingEventRouter as createCoreIncomingEventRouter,
   type ChannelInboundEvent,
@@ -645,6 +646,75 @@ describe("account webhook ingress", () => {
     ]);
   });
 
+  it("hands each Page of a shared Meta app to the agent that owns it, once", async () => {
+    // One Meta app, one app secret, two Pages: both agents verify the POST and
+    // each learns its own Page from its token.
+    stubPageLookup({ "fb-token-a": "page-a", "fb-token-b": "page-b" });
+    const firstAgent = messengerAgent("agent_aaa", "fb-token-a");
+    const secondAgent = messengerAgent("agent_bbb", "fb-token-b");
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createMessengerEvent([
+        { pageId: "page-a", psid: "psid-1", mid: "mid.1" },
+        { pageId: "page-b", psid: "psid-2", mid: "mid.2" },
+        // No agent owns this Page: ignored, never a 401 Meta would count.
+        { pageId: "page-c", psid: "psid-3", mid: "mid.3" },
+      ]),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents
+        .map((event) => [event.agentId, event.eventId])
+        .sort(([left], [right]) => left!.localeCompare(right!)),
+    ).toEqual([
+      ["agent_aaa", "acct:acct_test:agent:agent_aaa:messenger:psid-1:mid.1"],
+      ["agent_bbb", "acct:acct_test:agent:agent_bbb:messenger:psid-2:mid.2"],
+    ]);
+  });
+
+  it("admits two messages to one Page as two runs", async () => {
+    stubPageLookup({ "fb-token-one": "page-one" });
+    const agent = messengerAgent("agent_test", "fb-token-one");
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => agent,
+      agentLister: async () => [agent],
+    });
+
+    const response = await routeIncomingEvent(
+      createMessengerEvent([
+        { pageId: "page-one", psid: "psid-1", mid: "mid.1" },
+        { pageId: "page-one", psid: "psid-2", mid: "mid.2" },
+      ]),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.conversationKey)).toEqual([
+      "acct:acct_test:agent:agent_test:messenger:page-one:psid-1",
+      "acct:acct_test:agent:agent_test:messenger:page-one:psid-2",
+    ]);
+  });
+
   it("still gives a delivery to one agent when two share a channel app", async () => {
     // Zalo, like Slack, carries no per-entry owner, so both answering would
     // mean two replies to one message. The lowest agentId takes it.
@@ -739,6 +809,46 @@ describe("account webhook ingress", () => {
     expect(responseJson(response)).toMatchObject({
       error: { message: "Unauthorized" },
     });
+  });
+
+  it("answers Meta's GET handshake through the Messenger credential holder", async () => {
+    const messengerAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          messenger: {
+            appSecret: "fb-app-secret",
+            pageAccessToken: "fb-page-token",
+            verifyToken: "fb-verify-token",
+          },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => messengerAgent,
+      agentLister: async () => [messengerAgent],
+    });
+    const get = (query: string): ReturnType<typeof coreRequest> =>
+      coreRequest("GET", `/v1/webhooks/acct_test/messenger${query}`);
+
+    const accepted = await routeIncomingEvent(
+      get(
+        "?hub.mode=subscribe&hub.verify_token=fb-verify-token&hub.challenge=77",
+      ),
+      createHandlers(),
+    );
+    const refused = await routeIncomingEvent(
+      get("?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=77"),
+      createHandlers(),
+    );
+    const live = await routeIncomingEvent(get(""), createHandlers());
+
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.body).toBe("77");
+    expect(refused.statusCode).toBe(401);
+    expect(live.statusCode).toBe(200);
+    expect(responseJson(live)).toEqual({ status: "ok", method: "POST" });
   });
 
   it("verifies Twilio's signature over the public webhook URL", async () => {
@@ -1024,6 +1134,37 @@ function createWhatsAppBatchEvent(
   );
 }
 
+// One signed Messenger delivery, one entry per message, all under one app.
+function createMessengerEvent(
+  messages: { pageId: string; psid: string; mid: string }[],
+): ReturnType<typeof coreRequest> {
+  const body = JSON.stringify({
+    object: "page",
+    entry: messages.map((message) => ({
+      id: message.pageId,
+      time: 1_760_000_000_000,
+      messaging: [
+        {
+          sender: { id: message.psid },
+          recipient: { id: message.pageId },
+          timestamp: 1_760_000_000_000,
+          message: { mid: message.mid, text: `hello from ${message.psid}` },
+        },
+      ],
+    })),
+  });
+  const signature = createHmac("sha256", "fb-app-secret")
+    .update(body)
+    .digest("hex");
+
+  return coreRequest(
+    "POST",
+    "/v1/webhooks/acct_test/messenger",
+    { "x-hub-signature-256": `sha256=${signature}` },
+    body,
+  );
+}
+
 function createZaloEvent(
   body: unknown = zaloUpdate(),
   headers: Record<string, string> = {
@@ -1051,6 +1192,24 @@ function createTelegramEvent(
     rawQueryString ? `${rawPath}?${rawQueryString}` : rawPath,
     headers,
     body,
+  );
+}
+
+// Graph answers `/me` with the Page each access token belongs to.
+function stubPageLookup(pages: Record<string, string>): void {
+  globalThis.fetch = Object.assign(
+    async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      const page = pages[url.searchParams.get("access_token") ?? ""];
+
+      return page
+        ? Response.json({ id: page })
+        : Response.json(
+            { error: { message: "unknown token" } },
+            { status: 400 },
+          );
+    },
+    { preconnect: ORIGINAL_FETCH.preconnect },
   );
 }
 
@@ -1103,6 +1262,22 @@ interface ResponseShape {
   headers?: Record<string, string>;
   body?: string;
   afterResponse?: Promise<void>;
+}
+
+function messengerAgent(agentId: string, pageAccessToken: string): AgentRecord {
+  return {
+    ...TEST_AGENT,
+    agentId: agentId,
+    config: {
+      channels: {
+        messenger: {
+          appSecret: "fb-app-secret",
+          pageAccessToken: pageAccessToken,
+          verifyToken: "fb-verify-token",
+        },
+      },
+    },
+  };
 }
 
 function responseJson(response: { body?: unknown }): Record<string, unknown> {

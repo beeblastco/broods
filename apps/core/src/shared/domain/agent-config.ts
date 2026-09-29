@@ -9,7 +9,9 @@
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
 import type { GoogleChatAdapterBaseConfig } from "@chat-adapter/gchat";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
+import type { InstagramAdapterConfig } from "@chat-adapter/instagram";
 import type { LinearAdapterAPIKeyConfig } from "@chat-adapter/linear";
+import type { MessengerAdapterConfig } from "@chat-adapter/messenger";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TeamsAdapterConfig } from "@chat-adapter/teams";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
@@ -349,6 +351,8 @@ export interface AgentChannelsConfig {
   twilio?: AgentTwilioChannelConfig;
   zalo?: AgentZaloChannelConfig;
   matrix?: AgentMatrixChannelConfig;
+  instagram?: AgentInstagramChannelConfig;
+  messenger?: AgentMessengerChannelConfig;
   whatsapp?: AgentWhatsAppChannelConfig;
   [key: string]: unknown;
 }
@@ -453,6 +457,17 @@ type ChannelCredentialDrift = AssertAllExact<
     Exactly<WhatsAppAdapterConfig["phoneNumberId"], string | undefined>,
     Exactly<WhatsAppAdapterConfig["userName"], string | undefined>,
     Exactly<WhatsAppAdapterConfig["verifyToken"], string | undefined>,
+    Exactly<InstagramAdapterConfig["accessToken"], string | undefined>,
+    Exactly<InstagramAdapterConfig["accountId"], string | undefined>,
+    Exactly<InstagramAdapterConfig["apiVersion"], string | undefined>,
+    Exactly<InstagramAdapterConfig["appSecret"], string | undefined>,
+    Exactly<InstagramAdapterConfig["userName"], string | undefined>,
+    Exactly<InstagramAdapterConfig["verifyToken"], string | undefined>,
+    Exactly<MessengerAdapterConfig["apiVersion"], string | undefined>,
+    Exactly<MessengerAdapterConfig["appSecret"], string | undefined>,
+    Exactly<MessengerAdapterConfig["pageAccessToken"], string | undefined>,
+    Exactly<MessengerAdapterConfig["userName"], string | undefined>,
+    Exactly<MessengerAdapterConfig["verifyToken"], string | undefined>,
   ]
 >;
 
@@ -588,6 +603,49 @@ export interface AgentZaloChannelConfig {
   id?: string;
   botToken?: string;
   webhookSecret?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * An Instagram professional account, reached through a Meta app with
+ * Instagram Login. `accountId` is the account the webhook entries name.
+ */
+export interface AgentInstagramChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  /** Instagram user access token with `instagram_business_manage_messages`. */
+  accessToken?: string;
+  /** Instagram professional account id. */
+  accountId?: string;
+  /** Graph API version, e.g. `v26.0`. Defaults to the SDK's. */
+  apiVersion?: string;
+  /** Meta app secret; signs every webhook POST. */
+  appSecret?: string;
+  userName?: string;
+  /** The verify token typed into the Meta webhook settings. */
+  verifyToken?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/** A Facebook Page the agent answers Messenger DMs for. */
+export interface AgentMessengerChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  /** Graph API version, e.g. `v21.0`. Defaults to the SDK's. */
+  apiVersion?: string;
+  /** Meta app secret; signs every webhook POST. */
+  appSecret?: string;
+  /** Page access token for the Page the app is subscribed to. */
+  pageAccessToken?: string;
+  userName?: string;
+  /** The verify token typed into the Meta webhook settings. */
+  verifyToken?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

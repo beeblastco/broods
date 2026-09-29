@@ -75,6 +75,8 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "channels/matrix", label: "Matrix" },
         { type: "doc", id: "channels/zalo", label: "Zalo" },
         { type: "doc", id: "channels/pancake", label: "Pancake" },
+        { type: "doc", id: "channels/instagram", label: "Instagram" },
+        { type: "doc", id: "channels/messenger", label: "Messenger" },
         { type: "doc", id: "channels/whatsapp", label: "WhatsApp" },
         { type: "doc", id: "channels/teams", label: "Microsoft Teams" },
         { type: "doc", id: "channels/gchat", label: "Google Chat" },
