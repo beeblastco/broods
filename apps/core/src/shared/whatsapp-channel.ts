@@ -21,6 +21,7 @@ import type {
   ChannelParseResult,
   ChannelRequest,
   InboundMessage,
+  ParsedChannelMessage,
 } from "./channels.ts";
 import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
@@ -33,6 +34,12 @@ const WHATSAPP_DEFAULT_USER_NAME = "whatsapp-bot";
 const MEDIA_LOOKUP = z.looseObject({ url: z.string() });
 
 type WhatsAppInboundMessage = WhatsAppRawMessage["message"];
+
+// One message from a delivery, with the contact Meta sent for its sender.
+interface WhatsAppInbound {
+  contact: WhatsAppRawMessage["contact"];
+  message: WhatsAppInboundMessage;
+}
 
 // The change notification Meta posts. Only a `messages` change for this
 // number carries something to answer; statuses ride the same field.
@@ -186,33 +193,20 @@ export function createWhatsAppChannel(
       if (body.kind === "ignore") {
         return body;
       }
-      const inbound = findInboundMessage(body.payload, options.phoneNumberId);
-      if (!inbound || inbound.message.type === "reaction") {
-        return { kind: "ignore", reason: "no message for this number" };
-      }
-      const { contact, message } = inbound;
-      if (
-        !isAllowedId(options.allowedChannelIds, message.from) ||
-        !isAllowedId(options.allowedUserIds, message.from)
-      ) {
-        logWarn("WhatsApp sender not in allow list", { userId: message.from });
-
-        return { kind: "ignore", reason: "not allowed" };
-      }
-      const parsed = transport.parseMessage({
-        contact: contact,
-        message: message,
-        phoneNumberId: options.phoneNumberId,
-      });
-      const text = replyText(message) ?? parsed.text;
-      if (!text && parsed.attachments.length === 0) {
-        return { kind: "ignore", reason: `unsupported_type:${message.type}` };
+      // Meta can batch several messages into one POST; each is its own turn.
+      const results = findInboundMessages(
+        body.payload,
+        options.phoneNumberId,
+      ).map((inbound) => parseInbound(inbound, transport, options));
+      const messages = results.filter((result) => result.kind === "message");
+      if (messages.length > 1) {
+        return { kind: "batch", results: messages };
       }
 
-      return {
-        kind: "message",
-        message: toInboundMessage(message, parsed, text),
-      };
+      return (
+        messages[0] ??
+        results[0] ?? { kind: "ignore", reason: "no message for this number" }
+      );
     },
 
     actions: function (msg): ChannelActions {
@@ -251,51 +245,67 @@ export function createWhatsAppChannel(
   };
 }
 
-// The first message Meta sent for this number, with the sender's contact. A
+// Every message Meta sent for this number, each with its sender's contact. A
 // Meta app can hold several numbers, so a change for another one is not ours,
 // and a status-only change (a read receipt) carries no message to find.
-function findInboundMessage(
+function findInboundMessages(
   payload: WhatsAppWebhookPayload,
   phoneNumberId: string,
-): {
-  contact: WhatsAppRawMessage["contact"];
-  message: WhatsAppInboundMessage;
-} | null {
-  const values = (payload.entry ?? [])
+): WhatsAppInbound[] {
+  return (payload.entry ?? [])
     .flatMap((entry) => entry.changes ?? [])
     .filter(
       (change) =>
         change.field === "messages" &&
-        change.value?.metadata?.phone_number_id === phoneNumberId &&
-        (change.value.messages?.length ?? 0) > 0,
+        change.value?.metadata?.phone_number_id === phoneNumberId,
     )
-    .flatMap((change) => (change.value ? [change.value] : []));
-  const value = values[0];
-  const message = value?.messages?.[0];
-  if (!message) {
-    return null;
-  }
-  const count = values.reduce(
-    (total, candidate) => total + (candidate.messages?.length ?? 0),
-    0,
-  );
-  if (count > 1) {
-    logWarn("WhatsApp webhook carried more than one message", {
-      count: count,
-    });
-  }
-
-  return {
-    contact: value.contacts?.find(
-      (candidate) => candidate.wa_id === message.from,
-    ),
-    message: message,
-  };
+    .flatMap((change) =>
+      (change.value?.messages ?? []).map((message) => ({
+        contact: change.value?.contacts?.find(
+          (candidate) => candidate.wa_id === message.from,
+        ),
+        message: message,
+      })),
+    );
 }
 
 // Meta sends the handshake as `hub.*` query parameters on a GET.
 function handshakeParams(req: ChannelRequest): URLSearchParams {
   return new URLSearchParams(req.rawQueryString);
+}
+
+// The turn one inbound message becomes, or why it is not one.
+function parseInbound(
+  inbound: WhatsAppInbound,
+  transport: BroodsWhatsAppAdapter,
+  options: WhatsAppChannelOptions,
+): ParsedChannelMessage | { kind: "ignore"; reason: string } {
+  const { contact, message } = inbound;
+  if (message.type === "reaction") {
+    return { kind: "ignore", reason: "no message for this number" };
+  }
+  if (
+    !isAllowedId(options.allowedChannelIds, message.from) ||
+    !isAllowedId(options.allowedUserIds, message.from)
+  ) {
+    logWarn("WhatsApp sender not in allow list", { userId: message.from });
+
+    return { kind: "ignore", reason: "not allowed" };
+  }
+  const parsed = transport.parseMessage({
+    contact: contact,
+    message: message,
+    phoneNumberId: options.phoneNumberId,
+  });
+  const text = replyText(message) ?? parsed.text;
+  if (!text && parsed.attachments.length === 0) {
+    return { kind: "ignore", reason: `unsupported_type:${message.type}` };
+  }
+
+  return {
+    kind: "message",
+    message: toInboundMessage(message, parsed, text),
+  };
 }
 
 // A tapped button or list row carries its label, which the SDK does not read

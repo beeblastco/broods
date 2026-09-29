@@ -1,6 +1,7 @@
 /** Channel routing fixtures use credentials generated for this test process. */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import { createHmac } from "node:crypto";
 import {
   createIncomingEventRouter as createCoreIncomingEventRouter,
   type ChannelInboundEvent,
@@ -70,6 +71,20 @@ const ZALO_AGENT = {
         botToken: "zalo-token",
         webhookSecret: "zalo-secret",
         allowedUserIds: ["user-1"],
+      },
+    },
+  },
+};
+
+const WHATSAPP_AGENT = {
+  ...TEST_AGENT,
+  config: {
+    channels: {
+      whatsapp: {
+        accessToken: "wa-token",
+        appSecret: "wa-app-secret",
+        phoneNumberId: "phone-1",
+        verifyToken: "wa-verify-token",
       },
     },
   },
@@ -548,6 +563,71 @@ describe("account webhook ingress", () => {
     expect(refused.statusCode).toBe(401);
   });
 
+  it("admits every message of one batched WhatsApp delivery as its own run", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => WHATSAPP_AGENT,
+      agentLister: async () => [WHATSAPP_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents.map((event) => [event.eventId, event.conversationKey]),
+    ).toEqual([
+      [
+        "acct:acct_test:agent:agent_test:whatsapp:wamid.1",
+        "acct:acct_test:agent:agent_test:whatsapp:phone-1:15551111111",
+      ],
+      [
+        "acct:acct_test:agent:agent_test:whatsapp:wamid.2",
+        "acct:acct_test:agent:agent_test:whatsapp:phone-1:15552222222",
+      ],
+    ]);
+  });
+
+  it("still admits the rest of a WhatsApp batch when one admission fails", async () => {
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> =>
+        Response.json({ messages: [{ id: "wamid.reply" }] }),
+      { preconnect: ORIGINAL_FETCH.preconnect },
+    );
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => WHATSAPP_AGENT,
+      agentLister: async () => [WHATSAPP_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          if (event.eventId.endsWith("wamid.1")) {
+            throw new Error("admission failed");
+          }
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.eventId)).toEqual([
+      "acct:acct_test:agent:agent_test:whatsapp:wamid.2",
+    ]);
+  });
+
   it("answers a GET no channel claims as live, query string or not", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
@@ -678,6 +758,44 @@ function createPancakeEvent(): ReturnType<typeof coreRequest> {
     },
     "/v1/webhooks/acct_test/pancake",
     "secret=pancake-secret",
+  );
+}
+
+// One signed Meta delivery carrying two customers' messages in two entries.
+function createWhatsAppBatchEvent(): ReturnType<typeof coreRequest> {
+  const change = (from: string, id: string, text: string): unknown => ({
+    field: "messages",
+    value: {
+      messaging_product: "whatsapp",
+      metadata: { phone_number_id: "phone-1" },
+      contacts: [{ profile: { name: from }, wa_id: from }],
+      messages: [
+        {
+          from: from,
+          id: id,
+          timestamp: "1713916800",
+          type: "text",
+          text: { body: text },
+        },
+      ],
+    },
+  });
+  const body = JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: [
+      { id: "waba-1", changes: [change("15551111111", "wamid.1", "first")] },
+      { id: "waba-1", changes: [change("15552222222", "wamid.2", "second")] },
+    ],
+  });
+  const signature = createHmac("sha256", "wa-app-secret")
+    .update(body)
+    .digest("hex");
+
+  return coreRequest(
+    "POST",
+    "/v1/webhooks/acct_test/whatsapp",
+    { "x-hub-signature-256": `sha256=${signature}` },
+    body,
   );
 }
 

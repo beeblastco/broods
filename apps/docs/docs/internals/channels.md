@@ -122,6 +122,9 @@ classDiagram
   ParsedChannelMessage : +ack? ChannelResponse
   class ParsedChannelContext["ParsedChannelContext, kind context"]
   ParsedChannelContext : +message InboundMessage
+  class ParsedChannelBatch["ParsedChannelBatch, kind batch"]
+  ParsedChannelBatch : +results ParsedChannelMessage or ParsedChannelContext[]
+  ParsedChannelBatch : +ack? ChannelResponse
   class ParsedChannelCleanup["ParsedChannelCleanup, kind cleanup"]
   ParsedChannelCleanup : +channelName string
   ParsedChannelCleanup : +conversationKey string
@@ -152,6 +155,7 @@ classDiagram
   ChannelAdapter ..> ChannelActions : actions
   ChannelParseResult <|-- ParsedChannelMessage
   ChannelParseResult <|-- ParsedChannelContext
+  ChannelParseResult <|-- ParsedChannelBatch
   ChannelParseResult <|-- ParsedChannelCleanup
   ChannelParseResult <|-- Ignore
   ChannelParseResult <|-- Respond
@@ -176,6 +180,7 @@ classDiagram
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `message`  | Continue into the agent loop after sending `ack` or a default `200`                                                                                                                                      |
 | `context`  | Store the message as conversation context without running the agent. Slack, Discord, Telegram and Matrix return it for messages that do not address the bot, so a later mention sees what the room said. |
+| `batch`    | Several `message` or `context` results from one delivery, each resolved and admitted on its own, in order, inside one ack budget. WhatsApp returns it when Meta batches messages into one POST.          |
 | `cleanup`  | Delete the conversation's partition folder (`cleanupChannelPartitions`). GitHub returns it when an issue or PR closes.                                                                                   |
 | `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                             |
 | `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                   |
