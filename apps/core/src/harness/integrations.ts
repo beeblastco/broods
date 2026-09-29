@@ -55,6 +55,10 @@ import {
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
 import { getHarnessPublicUrl, optionalEnv } from "../shared/env.ts";
+import {
+  createGoogleChatChannel,
+  parseServiceAccountKey,
+} from "../shared/gchat-channel.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
 import type { QuestionAnswer } from "../../../../packages/broods/src/websocket-contracts.ts";
 import {
@@ -103,11 +107,13 @@ import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
 import { createSlackChannel } from "../shared/slack-channel.ts";
 import type { AgentDeploymentScope } from "../shared/storage.ts";
 import { getStorage } from "../shared/storage.ts";
+import { createTeamsChannel } from "../shared/teams-channel.ts";
 import { createTelegramChannel } from "../shared/telegram-channel.ts";
 import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
+import { createWhatsAppChannel } from "../shared/whatsapp-channel.ts";
 import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
   applyMessageSendingHook,
@@ -556,15 +562,17 @@ async function handleHttpRequest(
     }
   }
 
-  // A provider console may GET a webhook URL to check it is live. Any other GET
-  // is a path core does not serve; `/healthz` is answered in server.ts.
-  if (method === "GET") {
+  // A provider console may GET a webhook URL to check it is live. A GET with a
+  // query string is a subscription handshake (Meta's `hub.challenge`) and goes
+  // to the channel like a delivery. Any other GET is a path core does not
+  // serve; `/healthz` is answered in server.ts.
+  if (method === "GET" && !(request.search && matchWebhookPath(request.path))) {
     return matchWebhookPath(request.path)
       ? jsonResponse(200, { status: "ok", method: "POST" })
       : notFoundResponse();
   }
 
-  if (method !== "POST") {
+  if (method !== "GET" && method !== "POST") {
     return methodNotAllowed(["GET", "POST"]);
   }
 
@@ -1804,9 +1812,12 @@ function resolveCommandToken(
 function supportsInlineCommands(channelName: string): boolean {
   return (
     channelName === "discord" ||
+    channelName === "gchat" ||
     channelName === "matrix" ||
     channelName === "slack" ||
+    channelName === "teams" ||
     channelName === "telegram" ||
+    channelName === "whatsapp" ||
     channelName === "zalo"
   );
 }
@@ -1828,22 +1839,28 @@ function directApiDisabledResponse(): Response {
 
 function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
+  const googleChatChannel = createGoogleChatChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
+  const teamsChannel = createTeamsChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
   const matrixChannel = createMatrixChannelFromConfig(config);
+  const whatsAppChannel = createWhatsAppChannelFromConfig(config);
 
   return {
     webhookChannels: [
       telegramChannel,
+      googleChatChannel,
       githubChannel,
       slackChannel,
       discordChannel,
       pancakeChannel,
+      teamsChannel,
       zaloChannel,
       matrixChannel,
+      whatsAppChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
@@ -2584,6 +2601,37 @@ function createTelegramChannelFromConfig(
   );
 }
 
+function createGoogleChatChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.gchat;
+  if (
+    !channel?.credentials ||
+    !(channel.endpointUrl || channel.googleChatProjectNumber)
+  ) {
+    return null;
+  }
+  const credentials = parseServiceAccountKey(channel.credentials);
+  if (!credentials) {
+    logWarn(
+      "config.channels.gchat.credentials is not a service-account key JSON",
+    );
+
+    return null;
+  }
+
+  return createGoogleChatChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    credentials: credentials,
+    endpointUrl: channel.endpointUrl,
+    googleChatProjectNumber: channel.googleChatProjectNumber,
+    userName: channel.userName,
+    workspaceAddOnServiceAccountEmail:
+      channel.workspaceAddOnServiceAccountEmail,
+  });
+}
+
 function createGitHubChannelFromConfig(
   config: AgentConfig,
 ): ChannelAdapter | null {
@@ -2667,6 +2715,30 @@ function createPancakeChannelFromConfig(
   );
 }
 
+function createTeamsChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.teams;
+  if (
+    !channel?.appId ||
+    !channel.appPassword ||
+    (channel.appType !== "MultiTenant" && !channel.appTenantId)
+  ) {
+    return null;
+  }
+
+  return createTeamsChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    appId: channel.appId,
+    appPassword: channel.appPassword,
+    appTenantId: channel.appTenantId,
+    appType: channel.appType,
+    userName: channel.userName,
+  });
+}
+
 function createMatrixChannelFromConfig(
   config: AgentConfig,
 ): ChannelAdapter | null {
@@ -2699,5 +2771,31 @@ function createZaloChannelFromConfig(
   return createZaloChannel(channel.botToken, channel.webhookSecret, {
     allowedChannelIds: reachSet(channel.allowedChannelIds),
     allowedUserIds: reachSet(channel.allowedUserIds),
+  });
+}
+
+function createWhatsAppChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.whatsapp;
+  if (
+    !channel?.accessToken ||
+    !channel.appSecret ||
+    !channel.phoneNumberId ||
+    !channel.verifyToken
+  ) {
+    return null;
+  }
+
+  return createWhatsAppChannel({
+    accessToken: channel.accessToken,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    phoneNumberId: channel.phoneNumberId,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
   });
 }

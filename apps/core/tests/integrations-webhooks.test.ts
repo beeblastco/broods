@@ -509,6 +509,45 @@ describe("account webhook ingress", () => {
     });
   });
 
+  it("answers Meta's GET handshake through the WhatsApp credential holder", async () => {
+    const whatsAppAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          whatsapp: {
+            accessToken: "wa-token",
+            appSecret: "wa-app-secret",
+            phoneNumberId: "phone-1",
+            verifyToken: "wa-verify-token",
+          },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => whatsAppAgent,
+      agentLister: async () => [whatsAppAgent],
+    });
+    const handshake = (token: string): ReturnType<typeof coreRequest> =>
+      coreRequest(
+        "GET",
+        `/v1/webhooks/acct_test/whatsapp?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=1158201444`,
+      );
+
+    const accepted = await routeIncomingEvent(
+      handshake("wa-verify-token"),
+      createHandlers(),
+    );
+    const refused = await routeIncomingEvent(
+      handshake("wrong"),
+      createHandlers(),
+    );
+
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.body).toBe("1158201444");
+    expect(refused.statusCode).toBe(401);
+  });
+
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,

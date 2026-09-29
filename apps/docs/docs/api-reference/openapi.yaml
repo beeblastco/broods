@@ -506,11 +506,11 @@ paths:
           description: File is larger than the 25 MB media limit
 
   /v1/webhooks/{accountId}/{channelName}:
-    post:
+    get:
       tags:
         - Direct API
-      summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, matrix, pancake, zalo). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      summary: Channel provider webhook check or handshake
+      description: Without a query string, answers `{"status":"ok","method":"POST"}` so a provider console sees the URL live. With one, it is a subscription handshake and goes to the channel like a delivery. WhatsApp answers Meta's `hub.mode=subscribe` check with `hub.challenge` when `hub.verify_token` matches an agent's `verifyToken`. The stage URL behaves the same.
       parameters:
         - name: accountId
           in: path
@@ -522,7 +522,40 @@ paths:
           required: true
           schema:
             type: string
-            enum: [telegram, github, slack, discord, matrix, pancake, zalo]
+      responses:
+        "200":
+          description: The URL is live, or the provider's challenge echoed back as text/plain
+        "401":
+          description: No agent's verify token matched
+    post:
+      tags:
+        - Direct API
+      summary: Channel provider webhook
+      description: Ingress for provider webhooks (telegram, github, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channelName
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              [
+                telegram,
+                github,
+                slack,
+                discord,
+                matrix,
+                pancake,
+                zalo,
+                whatsapp,
+                teams,
+                gchat,
+              ]
       responses:
         "200":
           description: Provider-specific acknowledgement. A message refused by the account's plan (a monthly cap reached, or a burst past runs per minute) is still acknowledged so the provider does not redeliver it; the agent says why in the channel instead of running.
@@ -554,7 +587,19 @@ paths:
           required: true
           schema:
             type: string
-            enum: [telegram, github, slack, discord, matrix, pancake, zalo]
+            enum:
+              [
+                telegram,
+                github,
+                slack,
+                discord,
+                matrix,
+                pancake,
+                zalo,
+                whatsapp,
+                teams,
+                gchat,
+              ]
       responses:
         "200":
           description: Provider-specific acknowledgement
@@ -4415,7 +4460,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, pancake, zalo.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, pancake, zalo, whatsapp, teams, gchat.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -5313,6 +5358,162 @@ components:
               minLength: 8
               maxLength: 256
               description: Zalo webhook secret token, sent as `X-Bot-Api-Secret-Token`.
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        whatsapp:
+          type: object
+          description: WhatsApp Business Cloud API number. Every delivery must carry a valid `X-Hub-Signature-256` made with `appSecret`. Meta's GET subscription handshake is answered when `hub.verify_token` equals `verifyToken`.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            accessToken:
+              type: string
+              description: System user access token with the whatsapp_business_messaging permission.
+            appSecret:
+              type: string
+              description: Meta app secret that signs each webhook delivery.
+            phoneNumberId:
+              type: string
+              description: Phone number id, not the number. Deliveries for the app's other numbers are ignored.
+            verifyToken:
+              type: string
+              description: Value you choose and enter in the Meta webhook settings.
+            apiUrl:
+              type: string
+              description: Graph API base URL. Public https only. Defaults to https://graph.facebook.com.
+            apiVersion:
+              type: string
+              pattern: "^v[0-9]+[.][0-9]+$"
+              description: Graph API version, e.g. v25.0.
+            userName:
+              type: string
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        teams:
+          type: object
+          description: Microsoft Teams bot on Azure Bot Service with a client secret. Every activity must carry a Bot Framework token for `appId` whose `serviceurl` claim matches the activity.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            appId:
+              type: string
+              description: Microsoft App ID of the bot.
+            appPassword:
+              type: string
+              description: Client secret of the bot's app registration.
+            appTenantId:
+              type: string
+              description: Directory (tenant) id. Required unless appType is MultiTenant.
+            appType:
+              type: string
+              enum: [SingleTenant, MultiTenant]
+              default: SingleTenant
+            apiUrl:
+              type: string
+              description: Bot Framework service URL. Public https only. Defaults to https://smba.trafficmanager.net/teams.
+            userName:
+              type: string
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        gchat:
+          type: object
+          description: Google Chat app on an HTTP endpoint, replying as a service account. Every event must carry a Google-signed token whose audience is `endpointUrl` or `googleChatProjectNumber`, and one of the two is required.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            credentials:
+              type: string
+              description: The service-account key JSON, as downloaded from Google Cloud.
+            endpointUrl:
+              type: string
+              description: The webhook URL, when the app's authentication audience is "HTTP endpoint URL". Public https only.
+            googleChatProjectNumber:
+              type: string
+              pattern: "^[0-9]+$"
+              description: Numeric project number, when the authentication audience is "Project number".
+            workspaceAddOnServiceAccountEmail:
+              type: string
+              description: The app's own service-{projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com identity, for an app built as a Workspace add-on.
+            userName:
+              type: string
             allowedChannelIds:
               type: array
               items:

@@ -462,6 +462,49 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
   });
 
+  it("holds WhatsApp, Teams and Google Chat to their verification settings", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          whatsapp: { id: "wa", apiUrl: "https://169.254.169.254" },
+        },
+      }),
+    ).toThrow("must not point to a private or internal address");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { whatsapp: { id: "wa", apiVersion: "../me" } },
+      }),
+    ).toThrow('config.channels.whatsapp.apiVersion must look like "v25.0"');
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { teams: { id: "teams", appId: "app", appPassword: "pw" } },
+      }),
+    ).toThrow(
+      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
+    );
+    expect(
+      normalizeAgentConfig({
+        channels: {
+          teams: { id: "teams", appId: "app", appType: "MultiTenant" },
+        },
+      }),
+    ).toMatchObject({ channels: { teams: { appType: "MultiTenant" } } });
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { gchat: { id: "gchat", credentials: "{}" } },
+      }),
+    ).toThrow(
+      "config.channels.gchat needs endpointUrl or googleChatProjectNumber to verify webhooks",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          gchat: { id: "gchat", endpointUrl: "http://example.com/hook" },
+        },
+      }),
+    ).toThrow("config.channels.gchat.endpointUrl must use https");
+  });
+
   it("validates harness configs", () => {
     const harness = {
       activeTools: ["shell", "read"],
