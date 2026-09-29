@@ -14,11 +14,14 @@ import type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentGoogleChatChannelConfig,
   AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
+  AgentTeamsChannelConfig,
   AgentTelegramChannelConfig,
+  AgentWhatsAppChannelConfig,
   AgentZaloChannelConfig,
   AgentProviderSettings,
   AgentWorkspaceRef,
@@ -37,12 +40,15 @@ import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channe
 // Per-channel inbound `source` shapes, inherited from the channel adapters so
 // the SDK hook typings cannot drift from what core actually emits.
 export type { TelegramSource } from "../../../apps/core/src/shared/telegram-channel.ts";
+export type { GoogleChatSource } from "../../../apps/core/src/shared/gchat-channel.ts";
 export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
 export type { LinearSource } from "../../../apps/core/src/shared/linear-channel.ts";
 export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
 export type { DiscordSource } from "../../../apps/core/src/shared/discord-channel.ts";
 export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
 export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
+export type { TeamsSource } from "../../../apps/core/src/shared/teams-channel.ts";
+export type { WhatsAppSource } from "../../../apps/core/src/shared/whatsapp-channel.ts";
 export type { ZaloSource } from "../../../apps/core/src/shared/zalo-channel.ts";
 
 export type Id<TableName extends string = string> = string & {
@@ -63,11 +69,14 @@ export type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentGoogleChatChannelConfig,
   AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
+  AgentTeamsChannelConfig,
   AgentTelegramChannelConfig,
+  AgentWhatsAppChannelConfig,
   AgentZaloChannelConfig,
   AgentProviderSettings,
   AgentWorkspaceRef,

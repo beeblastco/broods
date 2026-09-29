@@ -66,16 +66,19 @@ A record narrows and adds. It never grants something the agent lacks, so an agen
 
 The room id field is named after the provider:
 
-| Provider | Field            | Extra field |
-| -------- | ---------------- | ----------- |
-| Slack    | `channelId`      | `teamId`    |
-| Discord  | `channelId`      | `guildId`   |
-| Matrix   | `channelId`      |             |
-| GitHub   | `repo`           |             |
-| Linear   | `team`           |             |
-| Telegram | `chatId`         |             |
-| Zalo     | `chatId`         |             |
-| Pancake  | `conversationId` |             |
+| Provider    | Field            | Extra field |
+| ----------- | ---------------- | ----------- |
+| Slack       | `channelId`      | `teamId`    |
+| Discord     | `channelId`      | `guildId`   |
+| Matrix      | `channelId`      |             |
+| GitHub      | `repo`           |             |
+| Linear      | `team`           |             |
+| Telegram    | `chatId`         |             |
+| Zalo        | `chatId`         |             |
+| WhatsApp    | `waId`           |             |
+| Teams       | `channelId`      | `teamId`    |
+| Google Chat | `spaceName`      |             |
+| Pancake     | `conversationId` |             |
 
 Notes on the fields:
 
