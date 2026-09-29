@@ -664,30 +664,6 @@ export const getAsyncToolGroup = internalQuery({
 });
 
 /**
- * Seals a fan-in group after every sibling has been registered.
- * @returns the sealed group or null when it does not exist
- */
-export const sealAsyncToolGroup = internalMutation({
-  args: { parentEventId: v.string() },
-  returns: v.union(toolGroupDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"runtimeAsyncToolGroups"> | null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_parentEventId", (q) =>
-        q.eq("parentEventId", args.parentEventId),
-      )
-      .unique();
-    if (!row) {
-      return null;
-    }
-    await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, { sealed: true });
-
-    return { ...row, sealed: true };
-  },
-});
-
-/**
  * Settles or observes an async tool row with optional processing-only CAS
  * semantics.
  * @returns the updated public row, or null when the conditional update is rejected

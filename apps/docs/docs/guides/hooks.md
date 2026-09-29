@@ -77,7 +77,7 @@ A subagent run fires hooks too. A predefined subagent runs its own hooks. A virt
 ## Rules
 
 - Hooks run in an isolated V8 sandbox with only `ctx`, `event` and JavaScript built-ins. No imports, no `require`, no Node modules, no variables from the surrounding file. Uploads that use them are rejected.
-- `ctx.fetch` works but blocks private and metadata addresses. `ctx.config` is the agent config, read-only.
+- `ctx.fetch` works but blocks private and metadata addresses. `ctx.config` is a read-only summary of the agent: `model` (`provider`, `modelId`), `harness`, `maxTurn`, and the names in `tools`, `mcp`, `channels`, `skills`, `subagents` and `denyTools`. It never carries credentials, URLs or headers.
 - Hooks have a time limit. A hook that throws or times out is logged and skipped, and the run continues unchanged. A hook deny is therefore best effort. For a rule that must hold, use an enforced [policy](policies.md).
 - `onFinish` changes the stored and delivered answer, but tokens already streamed over SSE cannot be taken back.
 - A return may be at most 128 KB larger than the event it received.

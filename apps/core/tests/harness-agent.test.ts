@@ -1,4 +1,8 @@
 import { afterAll, beforeEach, expect, it, mock } from "bun:test";
+import {
+  harnessSteersMidTurn,
+  type AiSdkHarnessType,
+} from "../src/harness/ai-sdk-harness/adapters/index.ts";
 import * as harnessIndex from "../src/harness/ai-sdk-harness/index.ts";
 
 // The part of the harness stream options these tests read.
@@ -26,7 +30,7 @@ mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   }),
   harnessReservationKey: (options: { conversationKey: string }): string =>
     options.conversationKey,
-  harnessSteersMidTurn: (type: string): boolean => type !== "codex",
+  harnessSteersMidTurn: harnessSteersMidTurn,
   openAiSdkHarnessSession: async () => ({
     destroy: async (): Promise<void> => {},
     experimental_steerTurn: async (text: string): Promise<void> => {
@@ -66,32 +70,37 @@ it("hands a harness agent the same step and tool hooks as streamText", async () 
   expect(streamCalls[0]?.onEnd).toBeUndefined();
 });
 
-it("steers a running harness turn at its next step", async () => {
-  let queued = false;
-  const appended: unknown[] = [];
-  const applySteeringIngress = mock(async () => {
-    if (!queued) return null;
-    queued = false;
+it.each(["claude-code", "codex"] as const)(
+  "steers a running %s turn at its next step",
+  async (type) => {
+    let queued = false;
+    const appended: unknown[] = [];
+    const applySteeringIngress = mock(async () => {
+      if (!queued) return null;
+      queued = false;
 
-    return {
-      events: [{ role: "user", content: "focus on the tests" }],
-      contributingEventIds: ["steer-1"],
-      appliedMode: "steer",
-    };
-  });
-  await runHarnessTurn("claude-code", applySteeringIngress, appended);
+      return {
+        events: [{ role: "user", content: "focus on the tests" }],
+        contributingEventIds: ["steer-1"],
+        appliedMode: "steer",
+      };
+    });
+    await runHarnessTurn(type, applySteeringIngress, appended);
 
-  queued = true;
-  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
+    queued = true;
+    await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
 
-  expect(applySteeringIngress).toHaveBeenLastCalledWith({ textOnly: true });
-  expect(steeredTexts).toEqual(["focus on the tests"]);
-  expect(appended).toEqual([[{ role: "user", content: "focus on the tests" }]]);
-});
+    expect(applySteeringIngress).toHaveBeenLastCalledWith({ textOnly: true });
+    expect(steeredTexts).toEqual(["focus on the tests"]);
+    expect(appended).toEqual([
+      [{ role: "user", content: "focus on the tests" }],
+    ]);
+  },
+);
 
 it("leaves steering queued for the next turn on an adapter that cannot take it", async () => {
   const applySteeringIngress = mock(async () => null);
-  await runHarnessTurn("codex", applySteeringIngress);
+  await runHarnessTurn("deepagents", applySteeringIngress);
   const callsBeforeTurn = applySteeringIngress.mock.calls.length;
 
   await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
@@ -150,7 +159,7 @@ it("fails the run but keeps a steer the turn did not take", async () => {
 });
 
 async function runHarnessTurn(
-  type: "claude-code" | "codex",
+  type: AiSdkHarnessType,
   applySteeringIngress: () => Promise<unknown>,
   appended: unknown[] = [],
   appendIngressEvents: (events: unknown) => Promise<[]> = async (

@@ -28,6 +28,7 @@ describe("mcp-service rpc", () => {
       listTools: async function (connection) {
         expect(connection.record.name).toBe("draft");
         expect(connection.record.transport).toBe("http");
+        expect(connection.uncached).toBe(true);
 
         return [{ name: "query", inputSchema: { type: "object" } }] as never;
       },
