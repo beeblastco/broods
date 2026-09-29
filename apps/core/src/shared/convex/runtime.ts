@@ -8,7 +8,6 @@ const internal: any = require("@broods/convex/_generated/api").internal;
 // Convex module export as well as the exact function path sent to Convex.
 export const runtimeQueries = {
   getAsyncAgentResult: internal.runtime.getAsyncAgentResult,
-  getAsyncToolGroup: internal.runtime.getAsyncToolGroup,
   getAsyncToolResult: internal.runtime.getAsyncToolResult,
   getAsyncToolToken: internal.runtime.getAsyncToolToken,
   getConversationTarget: internal.runtimeIngress.getConversationTarget,
@@ -17,7 +16,6 @@ export const runtimeQueries = {
   getSandboxReservationRecord: internal.runtime.getSandboxReservationRecord,
   listAccountSandboxReservations:
     internal.runtime.listAccountSandboxReservations,
-  listAsyncToolResults: internal.runtime.listAsyncToolResults,
   listConversationEvents: internal.runtime.listConversationEvents,
   listExpiredSandboxReservations:
     internal.runtime.listExpiredSandboxReservations,
@@ -43,7 +41,6 @@ export const runtimeMutations = {
   releaseClaim: internal.runtime.releaseClaim,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   saveHarnessSession: internal.runtime.saveHarnessSession,
-  sealAsyncToolGroup: internal.runtime.sealAsyncToolGroup,
   updateAsyncAgentResult: internal.runtime.updateAsyncAgentResult,
   updateAsyncToolResult: internal.runtime.updateAsyncToolResult,
   acceptIngress: internal.runtimeIngress.accept,

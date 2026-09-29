@@ -28,7 +28,6 @@ export interface AccountCleanupSummary {
   processedEventsDeleted: number;
   asyncAgentResultDeleted: number;
   asyncToolResultDeleted: number;
-  asyncToolGroupDeleted: number;
   sandboxReservationDeleted: number;
   filesystemObjectsDeleted: number;
   reservedSandboxesReleased: number;
@@ -151,7 +150,6 @@ async function deleteConvexRuntimeRows(
     processedEventsDeleted: 0,
     asyncAgentResultDeleted: 0,
     asyncToolResultDeleted: 0,
-    asyncToolGroupDeleted: 0,
     sandboxReservationDeleted: 0,
   };
   for (
@@ -166,7 +164,6 @@ async function deleteConvexRuntimeRows(
     totals.processedEventsDeleted += batch.processedEventsDeleted;
     totals.asyncAgentResultDeleted += batch.asyncAgentResultDeleted;
     totals.asyncToolResultDeleted += batch.asyncToolResultDeleted;
-    totals.asyncToolGroupDeleted += batch.asyncToolGroupDeleted;
     totals.sandboxReservationDeleted += batch.sandboxReservationDeleted;
     if (batch.totalDeleted === 0) return totals;
   }

@@ -84,16 +84,6 @@ const asyncToolDoc = v.object({
   _creationTime: v.number(),
 });
 
-const toolGroupDoc = v.object({
-  accountId: v.id("accounts"),
-  parentEventId: v.string(),
-  resultIds: v.array(v.string()),
-  sealed: v.boolean(),
-  expiresAt: v.number(),
-  _id: v.id("runtimeAsyncToolGroups"),
-  _creationTime: v.number(),
-});
-
 const sandboxReservationSummary = v.object({
   ...reservedSandboxValidator.fields,
   accountId: v.id("accounts"),
@@ -477,7 +467,7 @@ export async function writeAsyncAgentResult(
 }
 
 /**
- * Creates an async tool row and registers it in its fan-in group atomically.
+ * Creates an async tool row.
  * @returns whether a new result row was created
  */
 export const createAsyncToolResult = internalMutation({
@@ -490,8 +480,6 @@ export const createAsyncToolResult = internalMutation({
     input: v.any(),
     delivery: v.optional(v.any()),
     completionToken: v.optional(v.string()),
-    // A group of exactly one row can be sealed on insert.
-    sealed: v.optional(v.boolean()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -503,19 +491,8 @@ export const createAsyncToolResult = internalMutation({
     if (existing) {
       return false;
     }
-    const group = args.delivery
-      ? await ctx.db
-          .query("runtimeAsyncToolGroups")
-          .withIndex("by_parentEventId", (q) =>
-            q.eq("parentEventId", args.parentEventId),
-          )
-          .unique()
-      : null;
-    if (group?.sealed) {
-      throw new Error("Cannot register an async tool result in a sealed group");
-    }
     const now = new Date().toISOString();
-    const { completionToken, sealed, ...persistedArgs } = args;
+    const { completionToken, ...persistedArgs } = args;
     await ctx.db.insert("runtimeAsyncToolResults", {
       accountId: accountId,
       ...persistedArgs,
@@ -527,22 +504,6 @@ export const createAsyncToolResult = internalMutation({
       updatedAt: now,
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
-    if (args.delivery) {
-      if (group && !group.resultIds.includes(args.resultId))
-        await ctx.db.patch(group._id, {
-          resultIds: [...group.resultIds, args.resultId],
-          ...(sealed ? { sealed: true } : {}),
-          expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
-        });
-      else if (!group)
-        await ctx.db.insert("runtimeAsyncToolGroups", {
-          accountId: accountId,
-          parentEventId: args.parentEventId,
-          resultIds: [args.resultId],
-          sealed: sealed === true,
-          expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
-        });
-    }
 
     return true;
   },
@@ -610,23 +571,6 @@ export const getAsyncToolToken = internalQuery({
 });
 
 /**
- * @returns the public sibling result documents
- */
-export const listAsyncToolResults = internalQuery({
-  args: { parentEventId: v.string() },
-  returns: v.array(asyncToolDoc),
-  handler: async (ctx, args) =>
-    (
-      await ctx.db
-        .query("runtimeAsyncToolResults")
-        .withIndex("by_parentEventId", (q) =>
-          q.eq("parentEventId", args.parentEventId),
-        )
-        .take(1000)
-    ).map(hideCompletionTokenHash),
-});
-
-/**
  * Lists the still-processing rows one tool left on a conversation, oldest
  * first. The ask_questions intake reads this to find the prompt a reply answers.
  * @returns the public result documents still waiting to settle
@@ -646,45 +590,6 @@ export const listPendingAsyncToolResults = internalQuery({
         )
         .take(100)
     ).map(hideCompletionTokenHash),
-});
-
-/**
- * @returns the fan-in group or null when it does not exist
- */
-export const getAsyncToolGroup = internalQuery({
-  args: { parentEventId: v.string() },
-  returns: v.union(toolGroupDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"runtimeAsyncToolGroups"> | null> =>
-    await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_parentEventId", (q) =>
-        q.eq("parentEventId", args.parentEventId),
-      )
-      .unique(),
-});
-
-/**
- * Seals a fan-in group after every sibling has been registered.
- * @returns the sealed group or null when it does not exist
- */
-export const sealAsyncToolGroup = internalMutation({
-  args: { parentEventId: v.string() },
-  returns: v.union(toolGroupDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"runtimeAsyncToolGroups"> | null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_parentEventId", (q) =>
-        q.eq("parentEventId", args.parentEventId),
-      )
-      .unique();
-    if (!row) {
-      return null;
-    }
-    await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, { sealed: true });
-
-    return { ...row, sealed: true };
-  },
 });
 
 /**
@@ -1091,7 +996,7 @@ export const deleteSandboxReservation = internalMutation({
  * Every table reached here is keyed by the account-and-agent scoped
  * conversation key, which lets each read be a prefix range over that key rather
  * than a scan of the account's rows. Tables with no conversation key
- * (`runtimeClaims`, async tool groups, sandbox reservations) stay with
+ * (`runtimeClaims`, sandbox reservations) stay with
  * `deleteAccountRuntimeData`: they carry no agent, so no prefix identifies them.
  *
  * Like the account purge, this accepts an agent that is already gone: the caller
@@ -1222,7 +1127,6 @@ export const deleteAccountRuntimeData = internalMutation({
     processedEventsDeleted: v.number(),
     asyncAgentResultDeleted: v.number(),
     asyncToolResultDeleted: v.number(),
-    asyncToolGroupDeleted: v.number(),
     harnessSessionDeleted: v.number(),
     sandboxReservationDeleted: v.number(),
     totalDeleted: v.number(),
@@ -1262,10 +1166,6 @@ export const deleteAccountRuntimeData = internalMutation({
       .query("runtimeAsyncToolResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .take(100);
-    const groupRows = await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-      .take(100);
     const reservationRows = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -1279,7 +1179,6 @@ export const deleteAccountRuntimeData = internalMutation({
       ...harnessSessionRows,
       ...agentRows,
       ...toolRows,
-      ...groupRows,
       ...reservationRows,
     ])
       await ctx.db.delete(row._id);
@@ -1293,7 +1192,6 @@ export const deleteAccountRuntimeData = internalMutation({
         applicationRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
-      asyncToolGroupDeleted: groupRows.length,
       harnessSessionDeleted: harnessSessionRows.length,
       sandboxReservationDeleted: reservationRows.length,
       totalDeleted:
@@ -1305,7 +1203,6 @@ export const deleteAccountRuntimeData = internalMutation({
         harnessSessionRows.length +
         agentRows.length +
         toolRows.length +
-        groupRows.length +
         reservationRows.length,
     };
   },
@@ -1335,16 +1232,10 @@ export const pruneExpired = internalMutation({
       .query("runtimeAsyncToolResults")
       .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
       .take(100);
-    const groups = await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
-      .take(100);
-    const rows = [...claims, ...agentResults, ...toolResults, ...groups];
+    const rows = [...claims, ...agentResults, ...toolResults];
     for (const row of rows) await ctx.db.delete(row._id);
     if (
-      [claims, agentResults, toolResults, groups].some(
-        (batch) => batch.length === 100,
-      )
+      [claims, agentResults, toolResults].some((batch) => batch.length === 100)
     ) {
       await ctx.scheduler.runAfter(0, internal.runtime.pruneExpired, {});
     }

@@ -227,7 +227,7 @@ The dashboard and the account API drive reserved sandboxes through `POST /v1/san
 
 `bash { background: true }` on a reserved sandbox launches a detached session and returns a `statusId`, the model-facing name for the internal `resultId`.
 
-- Launch mints the `resultId` and a per-job token, records the origin delivery, and writes a `runtimeAsyncToolResults` row in a sealed group.
+- Launch mints the `resultId` and a per-job token, records the origin delivery, and writes a `runtimeAsyncToolResults` row.
 - The job runs as a `setsid` session. `lambda`, workdir, Daytona and Vercel use the job-control scripts in `jobs.ts`, which keep `<id>.running` with the boot id, `.log`, `.exit` and `.pid` under `<workspace root>/.fp-jobs/<reservation key>` for status, log tail and stop. A sandbox runs at most 10 concurrent jobs, per `MAX_CONCURRENT_BACKGROUND_JOBS`.
 - Each job stamps the launching boot id. A job killed by a recreate or scale-to-zero reports `failed`, so a stale `.running` marker is never read as running forever. A MicroVM resume keeps the boot id, so a resumed job is still running.
 - On exit the job POSTs to `/v1/sandbox-jobs/:resultId/complete` with `x-job-token`, using the image's `python3`. The token rides the launch exec's environment as `__CB_TOKEN`, never the script text that shows in the process table. Unknown ids and bad tokens both return 404.
@@ -253,7 +253,7 @@ sequenceDiagram
   S->>Core: POST /v1/sandbox-jobs/:resultId/complete (x-job-token)
   Core->>CVX: verify token, settleAsyncToolResultFromCallback
   Core->>Core: continueAfterAsyncToolSettlement
-  Note over Core: each job is its own sealed group, skipped if async_status already observed it
+  Note over Core: each job resumes on its own, skipped if async_status already observed it
   Core->>CVX: admit continuation as a followup envelope
   Core->>O: run the turn, reply by channel, NATS or async status
 ```

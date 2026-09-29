@@ -629,7 +629,6 @@ function stubAccountDeletionDependencies(): void {
       processedEventsDeleted: 0,
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
-      asyncToolGroupDeleted: 0,
       sandboxReservationDeleted: 0,
       totalDeleted: 0,
     };
@@ -644,7 +643,6 @@ function successfulDeletionResponse() {
       processedEventsDeleted: 0,
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
-      asyncToolGroupDeleted: 0,
       sandboxReservationDeleted: 0,
       filesystemObjectsDeleted: 0,
       reservedSandboxesReleased: 0,
