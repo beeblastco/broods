@@ -385,6 +385,7 @@ A connection holds one app's credentials. A channel names one room on that conne
 | WhatsApp    | `defineWhatsAppConnection`   | `defineWhatsAppChannel`   | `waId`           |
 | Teams       | `defineTeamsConnection`      | `defineTeamsChannel`      | `channelId`      |
 | Google Chat | `defineGoogleChatConnection` | `defineGoogleChatChannel` | `spaceName`      |
+| Twilio      | `defineTwilioConnection`     | `defineTwilioChannel`     | `from`           |
 | Instagram   | `defineInstagramConnection`  | `defineInstagramChannel`  | `igsid`          |
 | Messenger   | `defineMessengerConnection`  | `defineMessengerChannel`  | `psid`           |
 

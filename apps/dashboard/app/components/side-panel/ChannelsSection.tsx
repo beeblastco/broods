@@ -304,6 +304,48 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
+    kind: "twilio",
+    label: "Twilio SMS",
+    fields: [
+      {
+        key: "accountSid",
+        label: "Account SID",
+        type: "text",
+        required: true,
+      },
+      {
+        key: "authToken",
+        label: "Auth token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "phoneNumber",
+        label: "Phone number",
+        type: "text",
+        placeholder: "+15551234567",
+      },
+      {
+        key: "messagingServiceSid",
+        label: "Messaging Service SID",
+        type: "text",
+        placeholder: "MG…",
+      },
+      {
+        key: "allowedUserIds",
+        label: "Allowed phone numbers",
+        type: "stringList",
+        placeholder: "+15551234567, *",
+      },
+      {
+        key: "webhookUrl",
+        label: "Signed webhook URL",
+        type: "text",
+        placeholder: "Only when Twilio calls a URL other than the broods one",
+      },
+    ],
+  },
+  {
     kind: "zalo",
     label: "Zalo",
     fields: [

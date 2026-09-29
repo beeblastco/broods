@@ -68,6 +68,7 @@
         "@chat-adapter/slack": "^4.38.1",
         "@chat-adapter/teams": "^4.38.1",
         "@chat-adapter/telegram": "^4.38.1",
+        "@chat-adapter/twilio": "^4.38.1",
         "@chat-adapter/whatsapp": "^4.38.1",
         "@convex-dev/stripe": "^0.1.6",
         "@convex-dev/workos-authkit": "^0.2.7",
@@ -769,6 +770,8 @@
     "@chat-adapter/teams": ["@chat-adapter/teams@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "@microsoft/teams.api": "^2.0.14", "@microsoft/teams.apps": "^2.0.14", "@microsoft/teams.cards": "^2.0.14", "@microsoft/teams.graph-endpoints": "^2.0.14", "chat": "4.38.1" } }, "sha512-z0ewZhSZ4kqLxzmtW+xlOQQlH5LVeGqUA1+Ep1Gyr/c0adVqouw0SoU2q4sW6xg34laTLyE3dFd6yyaTlWiWIg=="],
 
     "@chat-adapter/telegram": ["@chat-adapter/telegram@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-twFrW8s+2+93jBhKlLcuLudqD986jjJgLHjHGxHnRWqx20jKEx7BlGSgx/Y8jH1UAhOyPZGaJd6cYYoj07U4Lg=="],
+
+    "@chat-adapter/twilio": ["@chat-adapter/twilio@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-INk+eM9GQGj7Z6vwewMFljJ+ILOPC4gh2UJsyehNlLGyrPJlbu9yF5L8w6SehCbiTUnNZ0u77/TY/zgQYrua1Q=="],
 
     "@chat-adapter/whatsapp": ["@chat-adapter/whatsapp@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-ctYjkpFO0S9MIPwI00T9gB6hECx3aGdgHN87UI+2QR8oww3RkNYvrxf3EJ6owKafpnj1puE0NlRiLXLjvPKTew=="],
 

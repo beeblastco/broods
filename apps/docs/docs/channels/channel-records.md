@@ -77,6 +77,7 @@ The room id field is named after the provider:
 | WhatsApp    | `waId`           |             |
 | Teams       | `channelId`      | `teamId`    |
 | Google Chat | `spaceName`      |             |
+| Twilio      | `from`           |             |
 | Pancake     | `conversationId` |             |
 | Instagram   | `igsid`          |             |
 | Messenger   | `psid`           |             |

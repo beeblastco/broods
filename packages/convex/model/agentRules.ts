@@ -1032,6 +1032,7 @@ function normalizeChannelsConfig(
   normalizeMatrixConfig(channels.matrix, options);
   normalizePancakeConfig(channels.pancake);
   normalizeTeamsConfig(channels.teams, options);
+  normalizeTwilioConfig(channels.twilio);
   normalizeZaloConfig(channels.zalo);
   normalizeInstagramConfig(channels.instagram, options);
   normalizeMessengerConfig(channels.messenger, options);
@@ -1265,6 +1266,54 @@ function normalizeTeamsConfig(
       'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
     );
   }
+}
+
+/**
+ * Every URL Twilio is told to call, and the one it signs, is held to public
+ * https. A Messaging Service sid is the reply sender, so it must look like one
+ * or the adapter would send it as a phone number.
+ */
+function normalizeTwilioConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.twilio must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.twilio");
+  assertOptionalString(config.accountSid, "config.channels.twilio.accountSid");
+  assertOptionalString(config.authToken, "config.channels.twilio.authToken");
+  for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"] as const) {
+    assertOptionalString(config[key], `config.channels.twilio.${key}`);
+    if (typeof config[key] === "string") {
+      assertPublicHttpsUrl(config[key], `config.channels.twilio.${key}`);
+    }
+  }
+  assertOptionalString(
+    config.messagingServiceSid,
+    "config.channels.twilio.messagingServiceSid",
+  );
+  if (
+    typeof config.messagingServiceSid === "string" &&
+    !/^MG[0-9a-fA-F]{32}$/.test(config.messagingServiceSid)
+  ) {
+    throw new ClientError(
+      'config.channels.twilio.messagingServiceSid must be a Messaging Service sid ("MG" and 32 hex digits)',
+    );
+  }
+  assertOptionalString(
+    config.phoneNumber,
+    "config.channels.twilio.phoneNumber",
+  );
+  // Core compares it to the E.164 `To` Twilio posts, so any other spelling
+  // would ignore every message.
+  if (
+    typeof config.phoneNumber === "string" &&
+    !/^\+[1-9]\d{1,14}$/.test(config.phoneNumber)
+  ) {
+    throw new ClientError(
+      'config.channels.twilio.phoneNumber must be an E.164 number, e.g. "+15551234567"',
+    );
+  }
+  assertOptionalString(config.userName, "config.channels.twilio.userName");
 }
 
 /**

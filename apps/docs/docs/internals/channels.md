@@ -15,7 +15,7 @@ This page covers how core turns a provider webhook into an agent run and sends t
 | `src/harness/channel-media.ts`    | Inbound attachment download, storage and model hand-off                                             |
 | `src/shared/media-ticket.ts`      | Sealed `/v1/media/{ticket}` links                                                                   |
 
-Slack, Telegram, Discord, GitHub, WhatsApp, Teams and Google Chat build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`, `/whatsapp`, `/teams`, `/gchat`), used as transport only: verify, parse, post. Core never creates a `Chat` instance. Teams checks the inbound token with the Teams SDK JWT validator (`@microsoft/teams.apps`), accepting only Bot Framework connector tokens whose `serviceurl` claim matches the activity, and Google Chat verifies through the adapter's own `handleWebhook`, which with no `Chat` behind it does nothing after the check. Messenger and Instagram use `@chat-adapter/messenger` and `/instagram` the same way and share Meta webhook handling in `meta-channel.ts`: the GET `hub.challenge` handshake, the `X-Hub-Signature-256` check and the walk over a batched delivery. Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
+Slack, Telegram, Discord, GitHub, WhatsApp, Teams, Google Chat and Twilio build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`, `/whatsapp`, `/teams`, `/gchat`, `/twilio`), used as transport only: verify, parse, post. Core never creates a `Chat` instance. Teams checks the inbound token with the Teams SDK JWT validator (`@microsoft/teams.apps`), accepting only Bot Framework connector tokens whose `serviceurl` claim matches the activity, and Google Chat verifies through the adapter's own `handleWebhook`, which with no `Chat` behind it does nothing after the check. Twilio signs the public URL it called, so its adapter rebuilds that URL from `PUBLIC_BASE_URL` and the request path, or takes `webhookUrl` when the tenant set one. Messenger and Instagram use `@chat-adapter/messenger` and `/instagram` the same way and share Meta webhook handling in `meta-channel.ts`: the GET `hub.challenge` handshake, the `X-Hub-Signature-256` check and the walk over a batched delivery. Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
 
 Webhooks arrive at `/v1/webhooks/{accountId}/{channel}` for the production stage and `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage, so two stages sharing one bot never receive each other's traffic.
 
@@ -187,14 +187,14 @@ classDiagram
 
 `ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `sendReplyButtons`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
 
-| Tool             | Registers when                                                                                                                                                                                        |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                                                                     |
-| `send-update`    | always on a channel turn, since every provider can post text                                                                                                                                          |
-| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                                                                    |
-| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                                                                           |
-| `send-sticker`   | `sendSticker` exists                                                                                                                                                                                  |
-| `send-reactions` | `supportsReactions` is `true`. Telegram, Matrix and WhatsApp always, Slack, Discord and GitHub when the inbound message id is known, never Pancake, Zalo, Teams, Google Chat, Messenger or Instagram. |
+| Tool             | Registers when                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                                                                             |
+| `send-update`    | always on a channel turn, since every provider can post text                                                                                                                                                  |
+| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                                                                            |
+| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                                                                                   |
+| `send-sticker`   | `sendSticker` exists                                                                                                                                                                                          |
+| `send-reactions` | `supportsReactions` is `true`. Telegram, Matrix and WhatsApp always, Slack, Discord and GitHub when the inbound message id is known, never Pancake, Zalo, Teams, Google Chat, Twilio, Messenger or Instagram. |
 
 The normalized `InboundMessage`:
 
@@ -212,7 +212,7 @@ The normalized `InboundMessage`:
 
 Adapters do not implement these; the shared pipeline does:
 
-- Commands. Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Messenger and Instagram route `/command` input through `commands.ts` instead of the agent. GitHub and Pancake treat slash text as agent input.
+- Commands. Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route `/command` input through `commands.ts` instead of the agent. GitHub and Pancake treat slash text as agent input.
 - Typing and reaction are fire-and-forget. A failed typing or reaction call never fails the turn.
 - Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` (`handler.ts`).
 - A failed turn replies with `formatChannelErrorText()`, a `⚠️` line with the error simplified, so a quota error reads "Usage limit reached..." and a 429 reads "The model is busy right now...". Policy refusals use the same format.
@@ -223,9 +223,9 @@ Adapters do not implement these; the shared pipeline does:
 
 ## Reply streaming
 
-Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake, Zalo, WhatsApp, Teams, Google Chat, Messenger and Instagram have no `stream()` and send one final `sendText` reply.
+Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram have no `stream()` and send one final `sendText` reply.
 
-Slack, Telegram, Discord, GitHub, WhatsApp, Teams and Google Chat delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
+Slack, Telegram, Discord, GitHub, WhatsApp, Teams, Google Chat and Twilio delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
 
 ## Outbound files and images
 
@@ -242,6 +242,7 @@ The model only ever names workspace paths or public URLs. The adapter decides ho
 | WhatsApp    | uploads bytes, or links a URL     | uploads bytes, or links a URL     | one per message         |
 | Teams       | none                              | none                              | text links only         |
 | Google Chat | none                              | none                              | text links only         |
+| Twilio      | fetches the URL (MMS)             | none                              | one per message         |
 | Instagram   | uploads bytes, or fetches the URL | uploads bytes, or fetches the URL | one per message         |
 | Messenger   | none                              | none                              | text links only         |
 | GitHub      | none                              | none                              | text links only         |

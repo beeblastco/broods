@@ -3,6 +3,7 @@ import type { UserContent } from "ai";
 import type { ChannelImage } from "../src/shared/channels.ts";
 import {
   channelAttachmentBytes,
+  chunkChannelText,
   extractText,
   isAllowedId,
 } from "../src/shared/channels.ts";
@@ -39,6 +40,12 @@ describe("shared channel helpers", () => {
   it("drops an id the payload never carried, and an empty list reaches nowhere", () => {
     expect(isAllowedId(new Set(["C1"]), undefined)).toBe(false);
     expect(isAllowedId(new Set(), "C1")).toBe(false);
+  });
+});
+
+describe("chunkChannelText", () => {
+  it("keeps a surrogate pair whole even when it is wider than the limit", () => {
+    expect(chunkChannelText("😀a", 1)).toEqual(["😀", "a"]);
   });
 });
 

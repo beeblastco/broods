@@ -113,6 +113,7 @@ import type { AgentDeploymentScope } from "../shared/storage.ts";
 import { getStorage } from "../shared/storage.ts";
 import { createTeamsChannel } from "../shared/teams-channel.ts";
 import { createTelegramChannel } from "../shared/telegram-channel.ts";
+import { createTwilioChannel } from "../shared/twilio-channel.ts";
 import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
@@ -1919,6 +1920,7 @@ function supportsInlineCommands(channelName: string): boolean {
     channelName === "slack" ||
     channelName === "teams" ||
     channelName === "telegram" ||
+    channelName === "twilio" ||
     channelName === "whatsapp" ||
     channelName === "zalo"
   );
@@ -1947,6 +1949,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
   const teamsChannel = createTeamsChannelFromConfig(config);
+  const twilioChannel = createTwilioChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
   const matrixChannel = createMatrixChannelFromConfig(config);
   const instagramChannel = createInstagramChannelFromConfig(config);
@@ -1962,6 +1965,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       discordChannel,
       pancakeChannel,
       teamsChannel,
+      twilioChannel,
       zaloChannel,
       matrixChannel,
       instagramChannel,
@@ -2863,6 +2867,29 @@ function createMatrixChannelFromConfig(
     forwarderUrl: optionalEnv(MATRIX_FORWARDER_URL_ENV) ?? "",
     ...(channel.botName ? { botName: channel.botName } : {}),
     ...(channel.mentionText ? { mentionText: channel.mentionText } : {}),
+  });
+}
+
+function createTwilioChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.twilio;
+  if (!channel?.accountSid || !channel.authToken) {
+    return null;
+  }
+
+  return createTwilioChannel({
+    accountSid: channel.accountSid,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    authToken: channel.authToken,
+    messagingServiceSid: channel.messagingServiceSid,
+    phoneNumber: channel.phoneNumber,
+    publicBaseUrl: getHarnessPublicUrl(),
+    statusCallbackUrl: channel.statusCallbackUrl,
+    userName: channel.userName,
+    webhookUrl: channel.webhookUrl,
   });
 }
 

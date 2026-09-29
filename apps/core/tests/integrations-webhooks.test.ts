@@ -850,7 +850,148 @@ describe("account webhook ingress", () => {
     expect(live.statusCode).toBe(200);
     expect(responseJson(live)).toEqual({ status: "ok", method: "POST" });
   });
+
+  it("verifies Twilio's signature over the public webhook URL", async () => {
+    const originalBaseUrl = process.env.PUBLIC_BASE_URL;
+    process.env.PUBLIC_BASE_URL = "https://gateway.broods.test/";
+    const twilioAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          twilio: { accountSid: "AC1", authToken: "twilio-auth-token" },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => twilioAgent,
+      agentLister: async () => [twilioAgent],
+    });
+    const handledEvents: ChannelInboundEvent[] = [];
+    const form = new URLSearchParams({
+      Body: "hello",
+      From: "+15551234567",
+      MessageSid: "SM1",
+      NumMedia: "0",
+      To: "+15550001111",
+    });
+    const signature = twilioSignature(
+      "https://gateway.broods.test/v1/webhooks/acct_test/twilio",
+      form,
+    );
+    const send = (sig: string): ReturnType<typeof routeIncomingEvent> =>
+      routeIncomingEvent(
+        coreRequest(
+          "POST",
+          "/v1/webhooks/acct_test/twilio",
+          {
+            "content-type": "application/x-www-form-urlencoded",
+            "x-twilio-signature": sig,
+          },
+          form.toString(),
+        ),
+        createHandlers({
+          handleChannelRequest: async (event) => {
+            handledEvents.push(event);
+          },
+        }),
+      );
+
+    try {
+      const accepted = await send(signature);
+      await accepted.afterResponse;
+      const refused = await send("forged");
+
+      expect(accepted.statusCode).toBe(200);
+      expect(accepted.body).toBe("<Response></Response>");
+      expect(handledEvents).toHaveLength(1);
+      expect(refused.statusCode).toBe(401);
+    } finally {
+      if (originalBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+      else process.env.PUBLIC_BASE_URL = originalBaseUrl;
+    }
+  });
+
+  it("hands a Twilio message to the agent that owns the number texted", async () => {
+    const originalBaseUrl = process.env.PUBLIC_BASE_URL;
+    process.env.PUBLIC_BASE_URL = "https://gateway.broods.test";
+    // Two numbers on one Twilio account share its auth token, so both agents
+    // verify every delivery.
+    const numberAgent = (agentId: string, phoneNumber: string) => ({
+      ...TEST_AGENT,
+      agentId: agentId,
+      config: {
+        channels: {
+          twilio: {
+            accountSid: "AC1",
+            authToken: "twilio-auth-token",
+            phoneNumber: phoneNumber,
+          },
+        },
+      },
+    });
+    const agents = [
+      numberAgent("agent_a", "+15550000001"),
+      numberAgent("agent_b", "+15550000002"),
+    ];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async (_accountId, agentId) =>
+        agents.find((agent) => agent.agentId === agentId) ?? null,
+      agentLister: async () => agents,
+    });
+    const handledEvents: ChannelInboundEvent[] = [];
+    const form = new URLSearchParams({
+      Body: "hello b",
+      From: "+15551234567",
+      MessageSid: "SM2",
+      NumMedia: "0",
+      To: "+15550000002",
+    });
+
+    try {
+      const response = await routeIncomingEvent(
+        coreRequest(
+          "POST",
+          "/v1/webhooks/acct_test/twilio",
+          {
+            "content-type": "application/x-www-form-urlencoded",
+            "x-twilio-signature": twilioSignature(
+              "https://gateway.broods.test/v1/webhooks/acct_test/twilio",
+              form,
+            ),
+          },
+          form.toString(),
+        ),
+        createHandlers({
+          handleChannelRequest: async (event) => {
+            handledEvents.push(event);
+          },
+        }),
+      );
+      await response.afterResponse;
+
+      expect(response.statusCode).toBe(200);
+      expect(handledEvents.map((event) => event.agentId)).toEqual(["agent_b"]);
+    } finally {
+      if (originalBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+      else process.env.PUBLIC_BASE_URL = originalBaseUrl;
+    }
+  });
 });
+
+// Twilio's scheme: the URL, then every field name and value in name order,
+// HMAC-SHA1 with the auth token, base64.
+function twilioSignature(url: string, form: URLSearchParams): string {
+  return createHmac("sha1", "twilio-auth-token")
+    .update(
+      `${url}${[...form]
+        .sort(([left], [right]) => (left < right ? -1 : 1))
+        .map(([name, value]) => `${name}${value}`)
+        .join("")}`,
+    )
+    .digest("base64");
+}
 
 function createHandlers(
   overrides: Partial<{
