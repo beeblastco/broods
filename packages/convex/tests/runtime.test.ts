@@ -377,6 +377,8 @@ describe("runtime persistence", () => {
         input: { command: "true" },
         delivery: { kind: "async" },
         completionToken: "secret",
+        // A core pod from before #871 still sends this during rollout.
+        sealed: true,
       }),
     ).toBe(true);
     expect(
