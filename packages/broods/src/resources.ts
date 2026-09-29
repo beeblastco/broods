@@ -483,7 +483,7 @@ export type AgentSkillsDefinitionConfig = Omit<
 export interface HookContext {
   fetch: typeof fetch;
   /** The model and the names of the agent's tools, MCP servers, channels, skills and subagents. Never credentials. */
-  config: Readonly<HookAgentConfig>;
+  config: HookAgentConfig;
   /**
    * Mutable per-request scratchpad shared across this agent request's hooks.
    * Seed it in an early hook (e.g. `onStart`) and read or modify it later.

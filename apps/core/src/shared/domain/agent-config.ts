@@ -97,15 +97,18 @@ export interface AgentConfig {
  * agent can use. An allow-list, so no credential field can reach hook code.
  */
 export interface HookAgentConfig {
-  model: { provider?: AccountModelProviderName; modelId?: string };
-  harness?: AgentHarnessConfig["type"];
-  maxTurn?: number;
-  tools: string[];
-  mcp: string[];
-  channels: string[];
-  skills: string[];
-  subagents: string[];
-  denyTools: string[];
+  readonly model: {
+    readonly provider?: AccountModelProviderName;
+    readonly modelId?: string;
+  };
+  readonly harness?: AgentHarnessConfig["type"];
+  readonly maxTurn?: number;
+  readonly tools: readonly string[];
+  readonly mcp: readonly string[];
+  readonly channels: readonly string[];
+  readonly skills: readonly string[];
+  readonly subagents: readonly string[];
+  readonly denyTools: readonly string[];
 }
 
 export interface AgentBehaviorConfig {
