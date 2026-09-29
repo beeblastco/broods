@@ -152,6 +152,12 @@ export function channelScopeKeyFromConversation(
 
     return boundary === -1 ? unscopedKey : unscopedKey.slice(0, boundary);
   }
+  // A Linear thread is `linear:{issueId}:c:{rootCommentId}` on its issue.
+  if (unscopedKey.startsWith(LINEAR_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split(":");
+
+    return parts.length >= 4 ? parts.slice(0, 2).join(":") : unscopedKey;
+  }
   if (unscopedKey.startsWith(GITHUB_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
 

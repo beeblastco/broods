@@ -220,13 +220,13 @@ function formatIssueContext(issue: LinearIssueRef): string {
   ].join("\n");
 }
 
-// The mention gate in parse, the same plain match the GitHub channel uses.
+// The mention gate in parse. The name must end where the mention does, so
+// `@agentx` does not address `@agent`.
 function mentions(body: string, userName: string): boolean {
-  const name = userName.toLowerCase();
-  const text = body.toLowerCase();
+  const name = RegExp.escape(userName);
 
-  return (
-    text.includes(`@${name}`) || text.includes(`${LINEAR_PROFILE_PATH}${name}`)
+  return new RegExp(`(?:@|${LINEAR_PROFILE_PATH})${name}(?![\\w-])`, "i").test(
+    body,
   );
 }
 

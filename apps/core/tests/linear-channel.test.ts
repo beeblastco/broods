@@ -106,6 +106,24 @@ describe("linear channel adapter", () => {
     );
   });
 
+  it("reads a mention only when the name ends there", async (): Promise<void> => {
+    const kinds = await Promise.all(
+      [
+        "@acme-agentx hi",
+        "@acme-agent_2 hi",
+        "see https://linear.app/acme/profiles/acme-agent-bot",
+        "thanks @acme-agent.",
+        "ping [@acme-agent](https://linear.app/acme/profiles/acme-agent)",
+      ].map(async (text): Promise<string> => {
+        const body = JSON.stringify(commentWebhook(text));
+
+        return (await channel().parse(delivery(body, sign(body)))).kind;
+      }),
+    );
+
+    expect(kinds).toEqual(["ignore", "ignore", "ignore", "message", "message"]);
+  });
+
   it("ignores its own comment by viewer id even when the profile slug differs from userName", async (): Promise<void> => {
     const own = commentWebhook("@acme-agent done, see @acme-agent notes");
     own.data.user.id = "user-agent";
