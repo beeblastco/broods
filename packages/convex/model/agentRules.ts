@@ -1494,7 +1494,10 @@ function assertMetaCredentials(
   if (options.patch) return;
   const present = fields.find((field) => config[field] !== undefined);
   if (!present) return;
-  const empty = fields.find((field) => config[field] === "");
+  const empty = fields.find(
+    (field) =>
+      typeof config[field] === "string" && config[field].trim().length === 0,
+  );
   if (empty)
     throw new ClientError(`${path}.${empty} must be a non-empty string`);
   const missing = fields.find((field) => config[field] === undefined);

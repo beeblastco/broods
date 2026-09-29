@@ -616,7 +616,7 @@ describe("agent rules", () => {
         channels: {
           messenger: {
             id: "fb",
-            appSecret: "",
+            appSecret: "  ",
             pageAccessToken: "",
             verifyToken: "",
           },
