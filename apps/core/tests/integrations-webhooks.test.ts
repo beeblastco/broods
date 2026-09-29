@@ -548,6 +548,25 @@ describe("account webhook ingress", () => {
     expect(refused.statusCode).toBe(401);
   });
 
+  it("answers a GET no channel claims as live, query string or not", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => PANCAKE_AGENT,
+      agentLister: async () => [PANCAKE_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      coreRequest(
+        "GET",
+        "/v1/webhooks/acct_test/pancake?secret=pancake-secret",
+      ),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(responseJson(response)).toEqual({ status: "ok", method: "POST" });
+  });
+
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,

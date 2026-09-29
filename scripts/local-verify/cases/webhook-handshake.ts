@@ -2,10 +2,10 @@ import type { BroodsAccount } from "../../../packages/broods/src/account.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
 /**
- * A GET on a webhook URL is a liveness check without a query string and a
- * subscription handshake with one (Meta's `hub.challenge`). The handshake must
- * reach core's channel scan through the gateway, query intact, instead of
- * getting the liveness answer.
+ * A GET on a webhook URL is a liveness check, unless a channel claims it as a
+ * subscription handshake (Meta's `hub.challenge`). A GET with a query must
+ * reach core's channel scan through the gateway, query intact, and still get
+ * the liveness answer when no channel claims it.
  */
 export async function webhookHandshake(context: VerifyContext): Promise<void> {
   const account = await context.measure(
@@ -13,26 +13,36 @@ export async function webhookHandshake(context: VerifyContext): Promise<void> {
     (): Promise<BroodsAccount> => context.account.getAccount(),
   );
   const url = context.client.accountWebhookUrl(account.accountId, "whatsapp");
+  const handshakeQuery = `?hub.mode=subscribe&hub.verify_token=${context.runId}&hub.challenge=42`;
+  const get = (target: string): Promise<Response> =>
+    fetch(target, { signal: AbortSignal.timeout(10_000) });
 
-  const live = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  const live = await get(url);
   assertStep(
     "a bare GET on a webhook URL answers live",
     live.status === 200,
     `${live.status} ${await live.text()}`,
   );
 
-  const handshake = await context.measure(
+  // Only the scan loads the account, so a 404 for an unknown one proves the
+  // handshake got past the liveness answer.
+  const unknown = await context.measure(
     "whatsapp handshake",
     (): Promise<Response> =>
-      fetch(
-        `${url}?hub.mode=subscribe&hub.verify_token=${context.runId}&hub.challenge=42`,
-        { signal: AbortSignal.timeout(10_000) },
+      get(
+        `${context.client.accountWebhookUrl(`missing${context.runId}`, "whatsapp")}${handshakeQuery}`,
       ),
   );
-  const body = await handshake.text();
   assertStep(
-    "a handshake GET reaches the channel scan, which finds no WhatsApp agent",
-    handshake.status === 503 && body.includes("whatsapp"),
-    `${handshake.status} ${body.slice(0, 200)}`,
+    "a handshake GET reaches the channel scan",
+    unknown.status === 404,
+    `${unknown.status} ${(await unknown.text()).slice(0, 200)}`,
+  );
+
+  const unclaimed = await get(`${url}${handshakeQuery}`);
+  assertStep(
+    "a handshake no agent claims still answers live",
+    unclaimed.status === 200,
+    `${unclaimed.status} ${(await unclaimed.text()).slice(0, 200)}`,
   );
 }

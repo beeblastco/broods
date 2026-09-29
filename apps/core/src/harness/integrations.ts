@@ -563,9 +563,10 @@ async function handleHttpRequest(
   }
 
   // A provider console may GET a webhook URL to check it is live. A GET with a
-  // query string is a subscription handshake (Meta's `hub.challenge`) and goes
-  // to the channel like a delivery. Any other GET is a path core does not
-  // serve; `/healthz` is answered in server.ts.
+  // query string may be a subscription handshake (Meta's `hub.challenge`), so
+  // it goes to the channels like a delivery and is answered as live when none
+  // claims it. Any other GET is a path core does not serve; `/healthz` is
+  // answered in server.ts.
   if (method === "GET" && !(request.search && matchWebhookPath(request.path))) {
     return matchWebhookPath(request.path)
       ? jsonResponse(200, { status: "ok", method: "POST" })
@@ -683,6 +684,11 @@ async function handleHttpRequest(
     // Without an agent in the URL these three cases would all collapse into one
     // 404, so keep them apart: nothing configures the channel, something does
     // but no credentials verified, or the scan itself failed.
+    // A GET no channel claims is the liveness check, whatever its query string
+    // carries (Pancake's `?secret=`, a cache-buster).
+    if (holder.kind === "unconfigured" && method === "GET") {
+      return jsonResponse(200, { status: "ok", method: "POST" });
+    }
     if (holder.kind === "unconfigured") {
       logWarn("Webhook channel not configured by any agent", {
         accountId: account.accountId,

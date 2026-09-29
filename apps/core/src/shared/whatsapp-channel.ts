@@ -10,6 +10,8 @@ import {
   type WhatsAppRawMessage,
 } from "@chat-adapter/whatsapp";
 import { ConsoleLogger, type Message } from "chat";
+import { z } from "zod";
+import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import { timingSafeStringEqual } from "./auth.ts";
 import type {
   ChannelActions,
@@ -22,10 +24,13 @@ import type {
 } from "./channels.ts";
 import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { WHATSAPP_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const WHATSAPP_SIGNATURE_HEADER = "x-hub-signature-256";
 const WHATSAPP_DEFAULT_USER_NAME = "whatsapp-bot";
+// The part of Graph's media lookup the download needs.
+const MEDIA_LOOKUP = z.looseObject({ url: z.string() });
 
 type WhatsAppInboundMessage = WhatsAppRawMessage["message"];
 
@@ -65,8 +70,29 @@ export interface WhatsAppSource {
 }
 
 // The SDK keeps the signature check and its Graph API call protected, so this
-// subclass is an access shim and nothing else.
+// subclass is an access shim, plus the guarded media download.
 class BroodsWhatsAppAdapter extends WhatsAppAdapter {
+  // The download URL is whatever the media lookup answers, and a custom
+  // `apiUrl` is the tenant's own server, so both hops take the private-address
+  // guard and size cap every channel's media gets.
+  override async downloadMedia(mediaId: string): Promise<Buffer> {
+    const auth = { headers: { authorization: `Bearer ${this.accessToken}` } };
+    const lookup = await guardedFetch(`${this.graphApiUrl}/${mediaId}`, auth);
+    if (lookup.status < 200 || lookup.status >= 300) {
+      throw new Error(`WhatsApp media lookup answered ${lookup.status}`);
+    }
+    const media = MEDIA_LOOKUP.parse(JSON.parse(lookup.bodyText));
+    const download = await guardedFetch(media.url, auth, {
+      binary: true,
+      bodyLimitBytes: MAX_ATTACHMENT_BYTES,
+    });
+    if (download.status < 200 || download.status >= 300) {
+      throw new Error(`WhatsApp media download answered ${download.status}`);
+    }
+
+    return Buffer.from(download.bodyBytes);
+  }
+
   verifyWebhookSignature(body: string, signature: string | undefined): boolean {
     return this.verifySignature(body, signature ?? null);
   }

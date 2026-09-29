@@ -1,14 +1,15 @@
 /**
  * Microsoft Teams channel adapter, on the Bot Framework. The Chat SDK adapter
  * is the transport that reads the activity and posts the reply; the inbound
- * token is checked with the Teams SDK's own validator, the one its HTTP server
- * runs, since the Chat SDK only reaches it through a full `Chat` instance.
+ * token is checked with the Teams SDK's JWT validator, set up for Bot Framework
+ * connector tokens only, since the Chat SDK only reaches it through a full
+ * `Chat` instance.
  */
 
 import { TeamsAdapter } from "@chat-adapter/teams";
 // The validator is not re-exported from the package root.
-import { InboundActivityTokenValidator } from "@microsoft/teams.apps/dist/middleware/index.js";
-import { ConsoleLogger, type Message } from "chat";
+import { JwtValidator } from "@microsoft/teams.apps/dist/middleware/index.js";
+import { ConsoleLogger, type Attachment, type Message } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -20,10 +21,17 @@ import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TEAMS_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
+// Only the Bot Framework connector signs what a Teams bot receives. The SDK's
+// inbound validator also takes Entra tokens, which carry no serviceUrl and
+// which any tenant can mint for a multi-tenant app id.
+const BOT_FRAMEWORK_ISSUER = "https://api.botframework.com";
+const BOT_FRAMEWORK_KEYS_URL =
+  "https://login.botframework.com/v1/.well-known/keys";
+const BEARER_PREFIX = "Bearer ";
 // Validators cache Microsoft's signing keys, so one is kept per bot. Adapters
 // are rebuilt per request and would otherwise refetch the keys every time.
 const TOKEN_VALIDATOR_CACHE_MAX = 100;
-const tokenValidators = new Map<string, InboundActivityTokenValidator>();
+const tokenValidators = new Map<string, JwtValidator>();
 
 // The fields of a Bot Framework activity this adapter reads.
 interface TeamsActivity {
@@ -88,7 +96,7 @@ export function createTeamsChannel(
     name: "teams",
 
     rehydrateAttachment: function (attachment) {
-      return transport.rehydrateAttachment(attachment);
+      return withGuardedRead(transport.rehydrateAttachment(attachment));
     },
 
     canHandle: function (req) {
@@ -101,23 +109,24 @@ export function createTeamsChannel(
     authenticate: async function (req): Promise<boolean> {
       const header = req.headers.authorization;
       const body = parseChannelWebhookBody<TeamsActivity>("teams", req.body);
-      if (!header || body.kind === "ignore") {
+      if (
+        !header?.startsWith(BEARER_PREFIX) ||
+        body.kind === "ignore" ||
+        !body.payload.serviceUrl
+      ) {
         return false;
       }
-      try {
-        await tokenValidator(options.appId, tenantId).check(
-          header,
-          body.payload,
-        );
-
-        return true;
-      } catch (err) {
-        logWarn("Teams webhook token verification failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
+      const claims = await tokenValidator(options.appId).validateAccessToken(
+        header.slice(BEARER_PREFIX.length),
+        { validateServiceUrl: { expectedServiceUrl: body.payload.serviceUrl } },
+      );
+      if (!claims) {
+        logWarn("Teams webhook token verification failed");
 
         return false;
       }
+
+      return true;
     },
 
     parse: function (req): ChannelParseResult {
@@ -225,7 +234,7 @@ function toInboundMessage(
     channelName: "teams",
     content: parsed.text,
     ...(parsed.attachments.length > 0
-      ? { attachments: parsed.attachments }
+      ? { attachments: parsed.attachments.map(withGuardedRead) }
       : {}),
     identity: identity,
     source: { ...source },
@@ -252,18 +261,18 @@ function toTeamsSource(source: Record<string, unknown>): TeamsSource {
   };
 }
 
-// One validator per bot and tenant, oldest dropped past the cap.
-function tokenValidator(
-  appId: string,
-  tenantId: string | undefined,
-): InboundActivityTokenValidator {
-  const key = `${appId}:${tenantId ?? ""}`;
-  const cached = tokenValidators.get(key);
+// One validator per bot, oldest dropped past the cap.
+function tokenValidator(appId: string): JwtValidator {
+  const cached = tokenValidators.get(appId);
   if (cached) {
     return cached;
   }
-  const validator = new InboundActivityTokenValidator(appId, tenantId);
-  tokenValidators.set(key, validator);
+  const validator = new JwtValidator({
+    clientId: appId,
+    jwksUriOptions: { type: "uri", uri: BOT_FRAMEWORK_KEYS_URL },
+    validateIssuer: { allowedIssuer: BOT_FRAMEWORK_ISSUER },
+  });
+  tokenValidators.set(appId, validator);
   if (tokenValidators.size > TOKEN_VALIDATOR_CACHE_MAX) {
     const oldest = tokenValidators.keys().next().value;
     if (oldest !== undefined) {
@@ -272,6 +281,18 @@ function tokenValidator(
   }
 
   return validator;
+}
+
+// The SDK reads an attachment off the connector with the bot token, and any
+// other URL with a bare fetch. Dropping that reader sends the URL through
+// core's guarded read, which refuses private and metadata addresses.
+function withGuardedRead(attachment: Attachment): Attachment {
+  if (attachment.fetchMetadata?.auth === "bot") {
+    return attachment;
+  }
+  const { fetchData: _unguarded, ...guarded } = attachment;
+
+  return guarded;
 }
 
 // In a channel or group chat the message opens with `<at>Bot</at>`, which is

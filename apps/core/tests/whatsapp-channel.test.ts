@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
+import { readAttachmentBytes } from "../src/harness/channel-media.ts";
 import type { ChannelRequest } from "../src/shared/channels.ts";
 import { createWhatsAppChannel } from "../src/shared/whatsapp-channel.ts";
 
@@ -137,6 +138,45 @@ describe("whatsapp channel adapter", () => {
         },
       },
     ]);
+  });
+
+  it("downloads media through core's guarded fetch, whatever apiUrl answers", async (): Promise<void> => {
+    const reached: string[] = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request): Response => {
+        reached.push(new URL(request.url).pathname);
+
+        return Response.json({
+          url: `http://127.0.0.1:${server.port}/latest/meta-data`,
+        });
+      },
+    });
+    const webhook: {
+      entry: { changes: { value: { messages: object[] } }[] }[];
+    } = textWebhook("");
+    webhook.entry[0]!.changes[0]!.value.messages[0] = {
+      from: "15551234567",
+      id: "wamid.1",
+      timestamp: "1700000000",
+      type: "image",
+      image: { id: "media-1", mime_type: "image/jpeg" },
+    };
+    const body = JSON.stringify(webhook);
+    const parsed = await createWhatsAppChannel({
+      ...options(),
+      apiUrl: `http://127.0.0.1:${server.port}`,
+    }).parse(delivery(body, sign(body)));
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    const refusal = await readAttachmentBytes(
+      parsed.message.attachments![0]!,
+    ).catch((err: unknown): unknown => err);
+    void server.stop(true);
+
+    expect(String(refusal)).toContain("private or metadata address");
+    expect(reached).toEqual([]);
   });
 });
 
