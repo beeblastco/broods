@@ -5,6 +5,7 @@
 
 import type {
   AgentConfig,
+  HookAgentConfig,
   AgentCodeHookConfig,
   AgentHookEventName,
   AgentHooksConfig,
@@ -55,6 +56,7 @@ export type Doc<TableName extends string = string> = Record<string, unknown> & {
 
 export type {
   AgentConfig,
+  HookAgentConfig,
   AgentCodeHookConfig,
   AgentHookEventName,
   AgentHooksConfig,

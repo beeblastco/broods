@@ -152,23 +152,6 @@ export async function markAsyncToolResultObserved(
 ): Promise<void> {
   await runtime.mutate("observeAsyncToolResult", { resultId: resultId });
 }
-/** Marks a parent event's dispatch group sealed so no more rows join it; only tests call it today. */
-export async function sealDetachedAsyncToolGroup(
-  parentEventId: string,
-): Promise<DetachedAsyncToolGroup | null> {
-  const row = await runtime.mutate<DetachedAsyncToolGroup | null>(
-    "sealAsyncToolGroup",
-    { parentEventId: parentEventId },
-  );
-
-  return row
-    ? {
-        parentEventId: row.parentEventId,
-        resultIds: [...row.resultIds].sort(),
-        sealed: row.sealed,
-      }
-    : null;
-}
 /**
  * The event a person started, for a run that continues it: everything before the
  * first `:async-` segment of a detached or continuation event id. Traces use it to

@@ -55,11 +55,6 @@ export function createAiSdkHarnessSandbox(
       });
 }
 
-/** Same as `harnessAdapterVersion`, exported from the harness entrypoint; only tests call it. */
-export function harnessRuntimeVersion(type: AiSdkHarnessType): string {
-  return harnessAdapterVersion(type);
-}
-
 /** Narrows an agent's compute to a persistent sandbox or lambda machine, or throws; `createConfiguredHarnessAgent` checks it first. */
 export function requireAiSdkHarnessCompute(
   compute: SandboxExecutorConfig,

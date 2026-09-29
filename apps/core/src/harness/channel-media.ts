@@ -911,10 +911,11 @@ function whereItLanded(
 }
 
 /**
- * Writes the workspace copy and the attachment store copy straight to S3 on the
- * harness's own role, so no sandbox has to boot, then returns the sealed link.
- * Returns undefined with no public base URL: the files are stored, but a link
- * would resolve nowhere.
+ * Writes the workspace copy straight to S3 on the mount's credentials (the
+ * assumed role for a bring-your-own bucket) and the attachment store copy on
+ * the harness's own role, so no sandbox has to boot, then returns the sealed
+ * link. Returns undefined with no public base URL: the files are stored, but a
+ * link would resolve nowhere.
  */
 async function writeMediaObject(
   workspace: ResolvedWorkspace,
@@ -930,6 +931,7 @@ async function writeMediaObject(
   await Promise.all([
     writeS3Object(target.bucket, `${target.prefix}${path}`, bytes, {
       contentType: mediaType,
+      access: target.access,
     }),
     writeS3Object(
       requireEnv("FILESYSTEM_BUCKET_NAME"),
