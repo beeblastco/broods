@@ -148,7 +148,12 @@ describe("twilio channel adapter", () => {
     const [media] = parsed.message.attachments ?? [];
     if (!media?.fetchData) throw new Error("expected a media reader");
 
-    await expect(media.fetchData()).rejects.toThrow(/private or metadata/);
+    const refused = await media.fetchData().then(
+      (): string => "read",
+      (error: unknown): string => String(error),
+    );
+
+    expect(refused).toMatch(/private or metadata/);
   });
 
   it("sends the reply through the Messages API from the number texted", async (): Promise<void> => {
