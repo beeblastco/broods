@@ -119,7 +119,7 @@ describe("messenger channel adapter", () => {
         body: { recipient: { id: "psid-1" }, sender_action: "typing_on" },
       },
     ]);
-    expect(actions.sendImages).toBeUndefined();
+    expect("sendImages" in actions).toBe(false);
   });
 
   it("splits a reply past the Send API limit instead of truncating it", async (): Promise<void> => {
@@ -211,6 +211,29 @@ describe("instagram channel adapter", () => {
           messaging_type: "RESPONSE",
         },
       },
+    ]);
+  });
+
+  it("splits a long picture caption instead of truncating it", async (): Promise<void> => {
+    const calls = recordFetch({
+      message_id: "ig-reply",
+      recipient_id: "igsid-1",
+    });
+    const body = JSON.stringify(instagramWebhook("hello"));
+    const parsed = await instagram().parse(delivery(body, sign(body)));
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    await instagram()
+      .actions(parsed.message)
+      .sendImages?.(
+        [{ type: "image", url: "https://cdn.example.com/cat.png" }],
+        `${"é".repeat(400)} ${"ü".repeat(400)}`,
+      );
+
+    expect(calls.map((call) => call.body)).toMatchObject([
+      { message: { attachment: { type: "image" } } },
+      { message: { text: "é".repeat(400) } },
+      { message: { text: "ü".repeat(400) } },
     ]);
   });
 });

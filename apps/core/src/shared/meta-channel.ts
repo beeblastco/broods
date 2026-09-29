@@ -105,7 +105,7 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
   return {
     name: name,
 
-    canHandle: function (req) {
+    canHandle: function (req): boolean {
       if (req.method === "GET") {
         return handshakeParams(req).has("hub.mode");
       }
@@ -113,7 +113,7 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
       return SIGNATURE_HEADER in req.headers;
     },
 
-    authenticate: function (req) {
+    authenticate: function (req): boolean {
       if (req.method === "GET") {
         const params = handshakeParams(req);
         const token = params.get("hub.verify_token");
@@ -216,27 +216,32 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
     actions: function (msg): ChannelActions {
       const source = toMetaSource(name, msg.source);
 
+      const sendText = async function (text: string): Promise<void> {
+        for (const chunk of splitMetaText(text, options.textLimit)) {
+          await transport.postMessage(source.threadId, { markdown: chunk });
+        }
+      };
+
+      // One body for both: the SDK uploads bytes it can read and links the
+      // rest. The caption goes through sendText, since the SDK truncates it.
       const sendAttachments = async function (
         attachments: ChannelFile[] | ChannelImage[],
         caption?: string,
       ): Promise<void> {
         await transport.postMessage(source.threadId, {
-          markdown: caption ?? "",
+          markdown: "",
           attachments: attachments,
         });
+        if (caption) {
+          await sendText(caption);
+        }
       };
 
       return {
-        // One body for both: the SDK uploads bytes it can read and links the
-        // rest, then sends the caption.
         ...(options.postsAttachments
           ? { sendFiles: sendAttachments, sendImages: sendAttachments }
           : {}),
-        sendText: async function (text): Promise<void> {
-          for (const chunk of splitMetaText(text, options.textLimit)) {
-            await transport.postMessage(source.threadId, { markdown: chunk });
-          }
-        },
+        sendText: sendText,
         sendTyping: function (): Promise<void> {
           return transport.startTyping(source.threadId);
         },
