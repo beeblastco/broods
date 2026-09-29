@@ -104,10 +104,12 @@ import { createSlackChannel } from "../shared/slack-channel.ts";
 import type { AgentDeploymentScope } from "../shared/storage.ts";
 import { getStorage } from "../shared/storage.ts";
 import { createTelegramChannel } from "../shared/telegram-channel.ts";
+import { createTwilioChannel } from "../shared/twilio-channel.ts";
 import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
+import { createXChannel } from "../shared/x-channel.ts";
 import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
   applyMessageSendingHook,
@@ -556,15 +558,17 @@ async function handleHttpRequest(
     }
   }
 
-  // A provider console may GET a webhook URL to check it is live. Any other GET
-  // is a path core does not serve; `/healthz` is answered in server.ts.
-  if (method === "GET") {
+  // A provider console may GET a webhook URL to check it is live. A GET with a
+  // query string is a subscription handshake (Meta's `hub.challenge`) and goes
+  // to the channel like a delivery. Any other GET is a path core does not
+  // serve; `/healthz` is answered in server.ts.
+  if (method === "GET" && !(request.search && matchWebhookPath(request.path))) {
     return matchWebhookPath(request.path)
       ? jsonResponse(200, { status: "ok", method: "POST" })
       : notFoundResponse();
   }
 
-  if (method !== "POST") {
+  if (method !== "GET" && method !== "POST") {
     return methodNotAllowed(["GET", "POST"]);
   }
 
@@ -1807,6 +1811,8 @@ function supportsInlineCommands(channelName: string): boolean {
     channelName === "matrix" ||
     channelName === "slack" ||
     channelName === "telegram" ||
+    channelName === "twilio" ||
+    channelName === "x" ||
     channelName === "zalo"
   );
 }
@@ -1832,6 +1838,8 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
+  const twilioChannel = createTwilioChannelFromConfig(config);
+  const xChannel = createXChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
   const matrixChannel = createMatrixChannelFromConfig(config);
 
@@ -1842,6 +1850,8 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       slackChannel,
       discordChannel,
       pancakeChannel,
+      twilioChannel,
+      xChannel,
       zaloChannel,
       matrixChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
@@ -2685,6 +2695,46 @@ function createMatrixChannelFromConfig(
     forwarderUrl: optionalEnv(MATRIX_FORWARDER_URL_ENV) ?? "",
     ...(channel.botName ? { botName: channel.botName } : {}),
     ...(channel.mentionText ? { mentionText: channel.mentionText } : {}),
+  });
+}
+
+function createTwilioChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.twilio;
+  if (!channel?.accountSid || !channel.authToken) {
+    return null;
+  }
+
+  return createTwilioChannel({
+    accountSid: channel.accountSid,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    authToken: channel.authToken,
+    messagingServiceSid: channel.messagingServiceSid,
+    phoneNumber: channel.phoneNumber,
+    publicBaseUrl: getHarnessPublicUrl(),
+    statusCallbackUrl: channel.statusCallbackUrl,
+    userName: channel.userName,
+    webhookUrl: channel.webhookUrl,
+  });
+}
+
+function createXChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+  const channel = config.channels?.x;
+  if (!channel?.consumerSecret || !channel.userAccessToken || !channel.userId) {
+    return null;
+  }
+
+  return createXChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiBaseUrl: channel.apiBaseUrl,
+    consumerSecret: channel.consumerSecret,
+    userAccessToken: channel.userAccessToken,
+    userId: channel.userId,
+    userName: channel.userName,
   });
 }
 

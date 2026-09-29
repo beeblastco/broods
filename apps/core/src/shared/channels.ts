@@ -272,6 +272,36 @@ export function channelAttachmentName(
     : `file${attachment.type === "image" ? ".png" : ""}`;
 }
 
+/**
+ * Splits a reply into pieces a provider with a hard length cap accepts, never
+ * inside a surrogate pair. Zalo and Twilio send each piece as its own message.
+ */
+export function chunkChannelText(text: string, limit: number): string[] {
+  if (text.length === 0) {
+    return [""];
+  }
+
+  const chunks: string[] = [];
+  for (let offset = 0; offset < text.length;) {
+    let end = Math.min(offset + limit, text.length);
+    const previousCodeUnit = text.charCodeAt(end - 1);
+    const nextCodeUnit = text.charCodeAt(end);
+    if (
+      end < text.length &&
+      previousCodeUnit >= 0xd800 &&
+      previousCodeUnit <= 0xdbff &&
+      nextCodeUnit >= 0xdc00 &&
+      nextCodeUnit <= 0xdfff
+    ) {
+      end -= 1;
+    }
+    chunks.push(text.slice(offset, end));
+    offset = end;
+  }
+
+  return chunks;
+}
+
 export function extractText(content: UserContent): string {
   if (typeof content === "string") return content;
 

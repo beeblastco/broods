@@ -382,6 +382,8 @@ A connection holds one app's credentials. A channel names one room on that conne
 | Matrix   | `defineMatrixConnection`   | `defineMatrixChannel`   | `channelId`      |
 | Pancake  | `definePancakeConnection`  | `definePancakeChannel`  | `conversationId` |
 | Zalo     | `defineZaloConnection`     | `defineZaloChannel`     | `chatId`         |
+| Twilio   | `defineTwilioConnection`   | `defineTwilioChannel`   | `from`           |
+| X        | `defineXConnection`        | `defineXChannel`        | `userId`         |
 
 Every connection also takes `allowedChannelIds`, where `["*"]` answers everywhere, `allowedUserIds`, `partition` and `trace`. Channels take `agents`, `instructions`, `workspaces`, `policies`, `denyTools`, `partition`, `sandboxImages`, `tagRoles`, and `replyIn` on Slack. Provider fields are on each [channel page](../channels/index.md).
 

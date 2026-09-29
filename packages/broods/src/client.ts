@@ -93,6 +93,8 @@ export interface ChannelReference {
     | "discord"
     | "matrix"
     | "pancake"
+    | "twilio"
+    | "x"
     | "zalo";
   readonly agentName: string;
   readonly agentId: string;

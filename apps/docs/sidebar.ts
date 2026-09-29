@@ -74,6 +74,8 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "channels/matrix", label: "Matrix" },
         { type: "doc", id: "channels/zalo", label: "Zalo" },
         { type: "doc", id: "channels/pancake", label: "Pancake" },
+        { type: "doc", id: "channels/twilio", label: "Twilio SMS" },
+        { type: "doc", id: "channels/x", label: "X" },
       ],
     },
     {

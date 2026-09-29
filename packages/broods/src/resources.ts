@@ -11,6 +11,8 @@ import type {
   AgentMatrixChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
+  AgentTwilioChannelConfig,
+  AgentXChannelConfig,
   ChannelPartition,
   ChannelReplyIn,
   PolicyDocument,
@@ -24,6 +26,8 @@ import type {
   DiscordSource,
   MatrixSource,
   PancakeSource,
+  TwilioSource,
+  XSource,
   ZaloSource,
 } from "./contracts.ts";
 
@@ -207,6 +211,8 @@ export type ChannelType =
   | "discord"
   | "matrix"
   | "pancake"
+  | "twilio"
+  | "x"
   | "zalo";
 
 /**
@@ -320,6 +326,39 @@ export interface PancakeConnectionInput extends ConnectionIdentityInput {
   senderId?: string | EnvRef;
 }
 
+export type TwilioConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentTwilioChannelConfig,
+      | "accountSid"
+      | "apiUrl"
+      | "authToken"
+      | "messagingServiceSid"
+      | "phoneNumber"
+      | "statusCallbackUrl"
+      | "userName"
+      | "webhookUrl"
+    >,
+    "accountSid" | "authToken"
+  >
+> &
+  ConnectionIdentityInput;
+
+export type XConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentXChannelConfig,
+      | "apiBaseUrl"
+      | "consumerSecret"
+      | "userAccessToken"
+      | "userId"
+      | "userName"
+    >,
+    "consumerSecret" | "userAccessToken" | "userId"
+  >
+> &
+  ConnectionIdentityInput;
+
 export interface ZaloConnectionInput extends ConnectionIdentityInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
@@ -349,6 +388,11 @@ export type PancakeConnectionDefinition = ConnectionDefinition<
   "pancake",
   PancakeConnectionInput
 >;
+export type TwilioConnectionDefinition = ConnectionDefinition<
+  "twilio",
+  TwilioConnectionInput
+>;
+export type XConnectionDefinition = ConnectionDefinition<"x", XConnectionInput>;
 export type ZaloConnectionDefinition = ConnectionDefinition<
   "zalo",
   ZaloConnectionInput
@@ -360,6 +404,8 @@ export type AnyConnectionDefinition =
   | DiscordConnectionDefinition
   | MatrixConnectionDefinition
   | PancakeConnectionDefinition
+  | TwilioConnectionDefinition
+  | XConnectionDefinition
   | ZaloConnectionDefinition;
 
 /**
@@ -433,6 +479,18 @@ export type TelegramChannelInput = ChannelRulesInput & {
   connection: TelegramConnectionDefinition;
   /** Telegram chat id, e.g. "-1001234567". */
   chatId: string;
+};
+
+export type TwilioChannelInput = ChannelRulesInput & {
+  connection: TwilioConnectionDefinition;
+  /** Sender's number in E.164, e.g. "+15551234567", or several. */
+  from: string | readonly string[];
+};
+
+export type XChannelInput = ChannelRulesInput & {
+  connection: XConnectionDefinition;
+  /** Numeric X user id of the person sending the DM, or several. */
+  userId: string | readonly string[];
 };
 
 export type ZaloChannelInput = ChannelRulesInput & {
@@ -509,6 +567,8 @@ export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
+export type TwilioMessageSource = TwilioSource;
+export type XMessageSource = XSource;
 export type ZaloMessageSource = ZaloSource;
 
 /**
@@ -522,6 +582,8 @@ export type ChannelMessageReceived =
   | { channel: "discord"; text: string; source: DiscordMessageSource }
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
+  | { channel: "twilio"; text: string; source: TwilioMessageSource }
+  | { channel: "x"; text: string; source: XMessageSource }
   | { channel: "zalo"; text: string; source: ZaloMessageSource };
 
 /**
@@ -893,6 +955,18 @@ export function defineTelegramConnection(
   return defineConnection("telegram", config);
 }
 
+export function defineTwilioConnection(
+  config: TwilioConnectionInput,
+): TwilioConnectionDefinition {
+  return defineConnection("twilio", config);
+}
+
+export function defineXConnection(
+  config: XConnectionInput,
+): XConnectionDefinition {
+  return defineConnection("x", config);
+}
+
 export function defineZaloConnection(
   config: ZaloConnectionInput,
 ): ZaloConnectionDefinition {
@@ -959,6 +1033,22 @@ export function defineTelegramChannel<const Name extends string>(
   const { name, description, chatId, ...rules } = input;
 
   return defineChannelResource(name, description, chatId, undefined, rules);
+}
+
+export function defineTwilioChannel<const Name extends string>(
+  input: ResourceInput<Name, TwilioChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, from, ...rules } = input;
+
+  return defineChannelResource(name, description, from, undefined, rules);
+}
+
+export function defineXChannel<const Name extends string>(
+  input: ResourceInput<Name, XChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, userId, ...rules } = input;
+
+  return defineChannelResource(name, description, userId, undefined, rules);
 }
 
 export function defineZaloChannel<const Name extends string>(

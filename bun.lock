@@ -64,6 +64,8 @@
         "@chat-adapter/github": "^4.38.1",
         "@chat-adapter/slack": "^4.38.1",
         "@chat-adapter/telegram": "^4.38.1",
+        "@chat-adapter/twilio": "^4.38.1",
+        "@chat-adapter/x": "^4.38.1",
         "@convex-dev/stripe": "^0.1.6",
         "@convex-dev/workos-authkit": "^0.2.7",
         "@daytona/sdk": "^0.214.0",
@@ -751,6 +753,10 @@
     "@chat-adapter/slack": ["@chat-adapter/slack@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "@slack/socket-mode": "^2.0.5", "@slack/web-api": "^7.18.0", "chat": "4.38.1" } }, "sha512-xMZ43YUQKzqOAiePR5mEFjhJPI6/jsEHCMq9Y+Rrm+N4+DotBddQDpbGMzb5oiogZD6iyMVCMvWSPLST7ZX0sg=="],
 
     "@chat-adapter/telegram": ["@chat-adapter/telegram@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-twFrW8s+2+93jBhKlLcuLudqD986jjJgLHjHGxHnRWqx20jKEx7BlGSgx/Y8jH1UAhOyPZGaJd6cYYoj07U4Lg=="],
+
+    "@chat-adapter/twilio": ["@chat-adapter/twilio@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-INk+eM9GQGj7Z6vwewMFljJ+ILOPC4gh2UJsyehNlLGyrPJlbu9yF5L8w6SehCbiTUnNZ0u77/TY/zgQYrua1Q=="],
+
+    "@chat-adapter/x": ["@chat-adapter/x@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" }, "peerDependencies": { "@xdevplatform/chat-xdk": "^0.4.3", "@xdevplatform/xdk": "^0.6.6", "juicebox-sdk": "^0.3.6" }, "optionalPeers": ["@xdevplatform/chat-xdk", "@xdevplatform/xdk", "juicebox-sdk"] }, "sha512-n+PJphBIFm8H5po6cqeugUteHj+25NvpM4Y76WZHAlhtYxPnazVwdtolltUMb+gxnrihZOo+EJHP2nS0l9hIVA=="],
 
     "@chevrotain/types": ["@chevrotain/types@11.1.2", "", {}, "sha512-U+HFai5+zmJCkK86QsaJtoITlboZHBqrVketcO2ROv865xfCMSFpELQoz1GkX5GzME8pTa+3kbKrZHQtI0gdbw=="],
 

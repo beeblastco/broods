@@ -74,6 +74,8 @@ The room id field is named after the provider:
 | GitHub   | `repo`           |             |
 | Telegram | `chatId`         |             |
 | Zalo     | `chatId`         |             |
+| Twilio   | `from`           |             |
+| X        | `userId`         |             |
 | Pancake  | `conversationId` |             |
 
 Notes on the fields:

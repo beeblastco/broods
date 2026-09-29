@@ -10,6 +10,8 @@ import type { DiscordAdapterConfig } from "@chat-adapter/discord";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
+import type { TwilioAdapterConfig } from "@chat-adapter/twilio";
+import type { XAdapterConfig } from "@chat-adapter/x";
 import type {
   JSONSchema7,
   LanguageModelCallOptions,
@@ -319,6 +321,8 @@ export interface AgentChannelsConfig {
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
+  twilio?: AgentTwilioChannelConfig;
+  x?: AgentXChannelConfig;
   zalo?: AgentZaloChannelConfig;
   matrix?: AgentMatrixChannelConfig;
   [key: string]: unknown;
@@ -377,6 +381,31 @@ type ChannelCredentialDrift = AssertAllExact<
       string | undefined
     >,
     Exactly<DiscordAdapterConfig["publicKey"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["accountSid"]>,
+      string | undefined
+    >,
+    Exactly<TwilioAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["authToken"]>,
+      string | undefined
+    >,
+    Exactly<TwilioAdapterConfig["messagingServiceSid"], string | undefined>,
+    Exactly<TwilioAdapterConfig["phoneNumber"], string | undefined>,
+    Exactly<TwilioAdapterConfig["statusCallbackUrl"], string | undefined>,
+    Exactly<TwilioAdapterConfig["userName"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["webhookUrl"]>,
+      string | undefined
+    >,
+    Exactly<XAdapterConfig["apiBaseUrl"], string | undefined>,
+    Exactly<XAdapterConfig["consumerSecret"], string | undefined>,
+    Exactly<
+      SerializedCredential<XAdapterConfig["userAccessToken"]>,
+      string | undefined
+    >,
+    Exactly<XAdapterConfig["userId"], string | undefined>,
+    Exactly<XAdapterConfig["userName"], string | undefined>,
   ]
 >;
 
@@ -492,6 +521,50 @@ export interface AgentZaloChannelConfig {
   id?: string;
   botToken?: string;
   webhookSecret?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Twilio number or Messaging Service for SMS and MMS. `authToken` checks
+ * Twilio's signature, which covers the exact public URL Twilio called, so
+ * `webhookUrl` is only set when that URL is not the broods webhook URL.
+ */
+export interface AgentTwilioChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  accountSid?: string;
+  apiUrl?: string;
+  authToken?: string;
+  /** `MG...`. Replies go through the service instead of the number texted. */
+  messagingServiceSid?: string;
+  /** E.164 number, e.g. `+15551234567`. Messages to any other number are ignored. */
+  phoneNumber?: string;
+  statusCallbackUrl?: string;
+  userName?: string;
+  /** The URL entered in the Twilio console, when it is not `{PUBLIC_BASE_URL}/v1/webhooks/...`. */
+  webhookUrl?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * An X account answering DMs through the X Activity API. `consumerSecret`
+ * answers the CRC challenge and checks every delivery; replies are sent with
+ * `userAccessToken`, an OAuth 2.0 user token for the account `userId` names.
+ */
+export interface AgentXChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  apiBaseUrl?: string;
+  consumerSecret?: string;
+  userAccessToken?: string;
+  userId?: string;
+  userName?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

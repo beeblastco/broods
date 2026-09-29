@@ -1030,6 +1030,8 @@ function normalizeChannelsConfig(
   normalizeDiscordConfig(channels.discord);
   normalizeMatrixConfig(channels.matrix, options);
   normalizePancakeConfig(channels.pancake);
+  normalizeTwilioConfig(channels.twilio);
+  normalizeXConfig(channels.x, options);
   normalizeZaloConfig(channels.zalo);
 }
 
@@ -1172,6 +1174,83 @@ function normalizePancakeConfig(value: unknown): void {
     "config.channels.pancake.webhookSecret",
   );
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
+}
+
+/**
+ * Every URL Twilio is told to call, and the one it signs, is held to public
+ * https. A Messaging Service sid is the reply sender, so it must look like one
+ * or the adapter would send it as a phone number.
+ */
+function normalizeTwilioConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.twilio must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.twilio");
+  assertOptionalString(config.accountSid, "config.channels.twilio.accountSid");
+  assertOptionalString(config.authToken, "config.channels.twilio.authToken");
+  for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"] as const) {
+    assertOptionalString(config[key], `config.channels.twilio.${key}`);
+    if (typeof config[key] === "string") {
+      assertPublicHttpsUrl(config[key], `config.channels.twilio.${key}`);
+    }
+  }
+  assertOptionalString(
+    config.messagingServiceSid,
+    "config.channels.twilio.messagingServiceSid",
+  );
+  if (
+    typeof config.messagingServiceSid === "string" &&
+    !/^MG[0-9a-fA-F]{32}$/.test(config.messagingServiceSid)
+  ) {
+    throw new ClientError(
+      'config.channels.twilio.messagingServiceSid must be a Messaging Service sid ("MG" and 32 hex digits)',
+    );
+  }
+  assertOptionalString(
+    config.phoneNumber,
+    "config.channels.twilio.phoneNumber",
+  );
+  assertOptionalString(config.userName, "config.channels.twilio.userName");
+}
+
+/**
+ * The adapter never looks the bot up, so `userId` is what tells the bot's own
+ * DMs from the ones it answers. A patch may carry the secret alone, so the
+ * merged config checks it.
+ */
+function normalizeXConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.x must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.x");
+  assertOptionalString(config.apiBaseUrl, "config.channels.x.apiBaseUrl");
+  if (typeof config.apiBaseUrl === "string") {
+    assertPublicHttpsUrl(config.apiBaseUrl, "config.channels.x.apiBaseUrl");
+  }
+  assertOptionalString(
+    config.consumerSecret,
+    "config.channels.x.consumerSecret",
+  );
+  assertOptionalString(
+    config.userAccessToken,
+    "config.channels.x.userAccessToken",
+  );
+  assertOptionalString(config.userId, "config.channels.x.userId");
+  assertOptionalString(config.userName, "config.channels.x.userName");
+  if (
+    typeof config.consumerSecret === "string" &&
+    config.userId === undefined &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      "config.channels.x.userId is required: the bot account's numeric X user id",
+    );
+  }
 }
 
 function normalizeZaloConfig(value: unknown): void {

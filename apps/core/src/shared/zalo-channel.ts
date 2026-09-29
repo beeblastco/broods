@@ -7,7 +7,11 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
+import {
+  chunkChannelText,
+  isAllowedId,
+  parseChannelWebhookBody,
+} from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -90,7 +94,7 @@ export function createZaloActions(
 ): ChannelActions {
   return {
     sendText: async function (text) {
-      for (const chunk of chunkZaloText(text)) {
+      for (const chunk of chunkChannelText(text, ZALO_TEXT_LIMIT)) {
         await callZaloApi(botToken, "sendMessage", {
           chat_id: source.chatId,
           text: chunk,
@@ -290,32 +294,6 @@ async function callZaloApi(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function chunkZaloText(text: string): string[] {
-  if (text.length === 0) {
-    return [""];
-  }
-
-  const chunks: string[] = [];
-  for (let offset = 0; offset < text.length;) {
-    let end = Math.min(offset + ZALO_TEXT_LIMIT, text.length);
-    const previousCodeUnit = text.charCodeAt(end - 1);
-    const nextCodeUnit = text.charCodeAt(end);
-    if (
-      end < text.length &&
-      previousCodeUnit >= 0xd800 &&
-      previousCodeUnit <= 0xdbff &&
-      nextCodeUnit >= 0xdc00 &&
-      nextCodeUnit <= 0xdfff
-    ) {
-      end -= 1;
-    }
-    chunks.push(text.slice(offset, end));
-    offset = end;
-  }
-
-  return chunks;
 }
 
 function describeZaloUpdate(update: ZaloUpdate): string {
