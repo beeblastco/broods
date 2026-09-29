@@ -75,7 +75,6 @@ import {
   createMatrixChannel,
   MATRIX_FORWARDER_URL_ENV,
 } from "../shared/matrix-channel.ts";
-import { createNotionChannel } from "../shared/notion-channel.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
@@ -1832,7 +1831,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
   const linearChannel = createLinearChannelFromConfig(config);
-  const notionChannel = createNotionChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
@@ -1844,7 +1842,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       telegramChannel,
       githubChannel,
       linearChannel,
-      notionChannel,
       slackChannel,
       discordChannel,
       pancakeChannel,
@@ -2629,28 +2626,6 @@ function createLinearChannelFromConfig(
     apiUrl: channel.apiUrl,
     userName: channel.userName,
     webhookSecret: channel.webhookSecret,
-  });
-}
-
-// A connection with no verificationToken yet is still live: it takes Notion's
-// one-time handshake and nothing else until the token is set.
-function createNotionChannelFromConfig(
-  config: AgentConfig,
-): ChannelAdapter | null {
-  const channel = config.channels?.notion;
-  if (!channel?.token) {
-    return null;
-  }
-
-  return createNotionChannel({
-    allowedChannelIds: reachSet(channel.allowedChannelIds),
-    allowedUserIds: reachSet(channel.allowedUserIds),
-    apiBaseUrl: channel.apiBaseUrl,
-    keywords: channel.keywords,
-    mentionMode: channel.mentionMode,
-    token: channel.token,
-    userName: channel.userName,
-    verificationToken: channel.verificationToken,
   });
 }
 

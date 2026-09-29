@@ -1,7 +1,7 @@
 {
   "name": "@broods/core",
   "private": true,
-  "description": "Multi-account AI agent harness. One Bun container on the Vercel AI SDK with Google, OpenAI, Bedrock, and Vercel providers, plus channel integrations for Telegram, Discord, Slack, GitHub, Linear, Notion, Pancake, and Zalo. AWS resources deployed with SST.",
+  "description": "Multi-account AI agent harness. One Bun container on the Vercel AI SDK with Google, OpenAI, Bedrock, and Vercel providers, plus channel integrations for Telegram, Discord, Slack, GitHub, Linear, Pancake, and Zalo. AWS resources deployed with SST.",
   "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
@@ -64,7 +64,6 @@
     "@chat-adapter/discord": "^4.38.1",
     "@chat-adapter/github": "^4.38.1",
     "@chat-adapter/linear": "^4.38.1",
-    "@chat-adapter/notion": "^4.38.1",
     "@chat-adapter/slack": "^4.38.1",
     "@chat-adapter/telegram": "^4.38.1",
     "@convex-dev/stripe": "^0.1.6",

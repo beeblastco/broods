@@ -15,7 +15,7 @@ This page covers how core turns a provider webhook into an agent run and sends t
 | `src/harness/channel-media.ts`    | Inbound attachment download, storage and model hand-off                                             |
 | `src/shared/media-ticket.ts`      | Sealed `/v1/media/{ticket}` links                                                                   |
 
-Slack, Telegram, Discord, GitHub, Linear and Notion build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`, `/linear`, `/notion`), used as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing an adapter keeps in Chat state survives. That rules out Linear OAuth and client-credentials tokens, which the adapter refreshes and caches there, so Linear takes a personal API key only. Linear verifies with the Linear SDK's own webhook client, which also refuses a delivery signed more than a minute earlier. A Notion event names a comment by id, so the Notion adapter reads it back from the API inside `parse`. Before its `verificationToken` is set, a Notion connection accepts only Notion's unsigned one-time handshake and logs the token for the operator. Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
+Slack, Telegram, Discord, GitHub and Linear build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`, `/linear`), used as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing an adapter keeps in Chat state survives. That rules out Linear OAuth and client-credentials tokens, which the adapter refreshes and caches there, so Linear takes a personal API key only. Linear verifies with the Linear SDK's own webhook client, which also refuses a delivery signed more than a minute earlier. Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
 
 Webhooks arrive at `/v1/webhooks/{accountId}/{channel}` for the production stage and `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage, so two stages sharing one bot never receive each other's traffic.
 
@@ -180,14 +180,14 @@ classDiagram
 
 `ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `sendReplyButtons`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
 
-| Tool             | Registers when                                                                                                                                                    |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                                 |
-| `send-update`    | always on a channel turn, since every provider can post text                                                                                                      |
-| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                                |
-| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                                       |
-| `send-sticker`   | `sendSticker` exists                                                                                                                                              |
-| `send-reactions` | `supportsReactions` is `true`. Telegram, Matrix and Linear always, Slack, Discord and GitHub when the inbound message id is known, never Pancake, Zalo or Notion. |
+| Tool             | Registers when                                                                                                                                            |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                         |
+| `send-update`    | always on a channel turn, since every provider can post text                                                                                              |
+| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                        |
+| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                               |
+| `send-sticker`   | `sendSticker` exists                                                                                                                                      |
+| `send-reactions` | `supportsReactions` is `true`. Telegram, Matrix and Linear always, Slack, Discord and GitHub when the inbound message id is known, never Pancake or Zalo. |
 
 The normalized `InboundMessage`:
 
@@ -205,7 +205,7 @@ The normalized `InboundMessage`:
 
 Adapters do not implement these; the shared pipeline does:
 
-- Commands. Slack, Discord, Matrix, Telegram and Zalo route `/command` input through `commands.ts` instead of the agent. GitHub, Linear, Notion and Pancake treat slash text as agent input.
+- Commands. Slack, Discord, Matrix, Telegram and Zalo route `/command` input through `commands.ts` instead of the agent. GitHub, Linear and Pancake treat slash text as agent input.
 - Typing and reaction are fire-and-forget. A failed typing or reaction call never fails the turn.
 - Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` (`handler.ts`).
 - A failed turn replies with `formatChannelErrorText()`, a `⚠️` line with the error simplified, so a quota error reads "Usage limit reached..." and a 429 reads "The model is busy right now...". Policy refusals use the same format.
@@ -216,9 +216,9 @@ Adapters do not implement these; the shared pipeline does:
 
 ## Reply streaming
 
-Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake, Zalo, Linear and Notion have no `stream()` and send one final `sendText` reply. Linear and Notion could edit a comment as it grows, but each Linear edit comes back as another webhook delivery.
+Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake, Zalo and Linear have no `stream()` and send one final `sendText` reply. Linear could edit a comment as it grows, but each edit comes back as another webhook delivery.
 
-Slack, Telegram, Discord, GitHub, Linear and Notion delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
+Slack, Telegram, Discord, GitHub and Linear delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
 
 ## Outbound files and images
 

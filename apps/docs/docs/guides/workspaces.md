@@ -114,10 +114,10 @@ A new child folder starts empty. Files at the root are not copied in. A [channel
 
 ### When a child folder is deleted
 
-| Channel                                                         | End of conversation       | Folder deleted |
-| --------------------------------------------------------------- | ------------------------- | -------------- |
-| GitHub issue or pull request                                    | closed                    | yes            |
-| Slack, Discord, Telegram, Matrix, Pancake, Zalo, Linear, Notion | never, threads do not end | no             |
+| Channel                                                 | End of conversation       | Folder deleted |
+| ------------------------------------------------------- | ------------------------- | -------------- |
+| GitHub issue or pull request                            | closed                    | yes            |
+| Slack, Discord, Telegram, Matrix, Pancake, Zalo, Linear | never, threads do not end | no             |
 
 Only `conversation` folders are ever deleted, shortly after the close event. On chat channels they pile up one per thread, so prune them from the dashboard Files view or the files API, or use `shared` there.
 

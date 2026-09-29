@@ -73,7 +73,6 @@ The room id field is named after the provider:
 | Matrix   | `channelId`      |             |
 | GitHub   | `repo`           |             |
 | Linear   | `team`           |             |
-| Notion   | `pageId`         |             |
 | Telegram | `chatId`         |             |
 | Zalo     | `chatId`         |             |
 | Pancake  | `conversationId` |             |

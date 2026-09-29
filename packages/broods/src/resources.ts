@@ -10,7 +10,6 @@ import type {
   AgentGitHubChannelConfig,
   AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
-  AgentNotionChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   ChannelPartition,
@@ -23,7 +22,6 @@ import type {
   TelegramSource,
   GitHubSource,
   LinearSource,
-  NotionSource,
   SlackSource,
   DiscordSource,
   MatrixSource,
@@ -208,7 +206,6 @@ export type ChannelType =
   | "telegram"
   | "github"
   | "linear"
-  | "notion"
   | "slack"
   | "discord"
   | "matrix"
@@ -297,26 +294,6 @@ export type LinearConnectionInput = EnvRefString<
 > &
   ConnectionIdentityInput;
 
-/**
- * `verificationToken` is omitted until Notion's subscription handshake hands
- * it over; the connection logs it for you on the first deploy.
- */
-export type NotionConnectionInput = EnvRefString<
-  RequiredChannelKeys<
-    Pick<
-      AgentNotionChannelConfig,
-      | "apiBaseUrl"
-      | "keywords"
-      | "mentionMode"
-      | "token"
-      | "userName"
-      | "verificationToken"
-    >,
-    "token"
-  >
-> &
-  ConnectionIdentityInput;
-
 export type SlackConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
@@ -374,10 +351,6 @@ export type LinearConnectionDefinition = ConnectionDefinition<
   "linear",
   LinearConnectionInput
 >;
-export type NotionConnectionDefinition = ConnectionDefinition<
-  "notion",
-  NotionConnectionInput
->;
 export type SlackConnectionDefinition = ConnectionDefinition<
   "slack",
   SlackConnectionInput
@@ -402,7 +375,6 @@ export type AnyConnectionDefinition =
   | TelegramConnectionDefinition
   | GitHubConnectionDefinition
   | LinearConnectionDefinition
-  | NotionConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
   | MatrixConnectionDefinition
@@ -482,12 +454,6 @@ export type LinearChannelInput = ChannelRulesInput & {
   team: string | readonly string[];
 };
 
-export type NotionChannelInput = ChannelRulesInput & {
-  connection: NotionConnectionDefinition;
-  /** Page id, with or without hyphens as in the page URL, or several. */
-  pageId: string | readonly string[];
-};
-
 export type TelegramChannelInput = ChannelRulesInput & {
   connection: TelegramConnectionDefinition;
   /** Telegram chat id, e.g. "-1001234567". */
@@ -565,7 +531,6 @@ type Handler<Event, Result> = (
 export type TelegramMessageSource = TelegramSource;
 export type GitHubMessageSource = GitHubSource;
 export type LinearMessageSource = LinearSource;
-export type NotionMessageSource = NotionSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
@@ -580,7 +545,6 @@ export type ChannelMessageReceived =
   | { channel: "telegram"; text: string; source: TelegramMessageSource }
   | { channel: "github"; text: string; source: GitHubMessageSource }
   | { channel: "linear"; text: string; source: LinearMessageSource }
-  | { channel: "notion"; text: string; source: NotionMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
@@ -944,12 +908,6 @@ export function defineMatrixConnection(
   return defineConnection("matrix", config);
 }
 
-export function defineNotionConnection(
-  config: NotionConnectionInput,
-): NotionConnectionDefinition {
-  return defineConnection("notion", config);
-}
-
 export function definePancakeConnection(
   config: PancakeConnectionInput,
 ): PancakeConnectionDefinition {
@@ -1012,29 +970,6 @@ export function defineMatrixChannel<const Name extends string>(
   const { name, description, channelId, ...rules } = input;
 
   return defineChannelResource(name, description, channelId, undefined, rules);
-}
-
-// Core names a page by the hyphenated id the Notion API returns; a page URL
-// ends in the same 32 hex digits without them.
-export function defineNotionChannel<const Name extends string>(
-  input: ResourceInput<Name, NotionChannelInput>,
-): ChannelResource<Name> {
-  const { name, description, pageId, ...rules } = input;
-  const hyphenate = (id: string): string =>
-    id
-      .toLowerCase()
-      .replace(
-        /^([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})$/,
-        "$1-$2-$3-$4-$5",
-      );
-
-  return defineChannelResource(
-    name,
-    description,
-    typeof pageId === "string" ? hyphenate(pageId) : pageId.map(hyphenate),
-    undefined,
-    rules,
-  );
 }
 
 export function definePancakeChannel<const Name extends string>(

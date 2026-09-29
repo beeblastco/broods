@@ -63,7 +63,6 @@
         "@chat-adapter/discord": "^4.38.1",
         "@chat-adapter/github": "^4.38.1",
         "@chat-adapter/linear": "^4.38.1",
-        "@chat-adapter/notion": "^4.38.1",
         "@chat-adapter/slack": "^4.38.1",
         "@chat-adapter/telegram": "^4.38.1",
         "@convex-dev/stripe": "^0.1.6",
@@ -750,8 +749,6 @@
     "@chat-adapter/github": ["@chat-adapter/github@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "@octokit/auth-app": "^8.2.0", "@octokit/rest": "^22.0.1", "chat": "4.38.1" } }, "sha512-zFWE0qOKiswI97F+ZpWvF8vjGPtgoExuqsyvp1fOcmVkb9VIAqmUl5oAqtrCgF+o7UaBjQtRzdLVZ3i3QB1gvQ=="],
 
     "@chat-adapter/linear": ["@chat-adapter/linear@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "@linear/sdk": "^76.0.0", "chat": "4.38.1" } }, "sha512-U+fTfOi6AIqFSZkMZ75se75xEN6pHlhQzOkPYBc7OjkKp2opVZ0yPqi9r6N2wFa1AQUSywypkCUvLnIAYPiEpA=="],
-
-    "@chat-adapter/notion": ["@chat-adapter/notion@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-Dwnnaz9Wb0TEqHydTkwnk2emZtPaPvNbXEyK2/q8oSIAlpYu1PB6L8odrleLq1VTNGddl/qOsBYhmHhwvwMy/A=="],
 
     "@chat-adapter/shared": ["@chat-adapter/shared@4.38.1", "", { "dependencies": { "chat": "4.38.1" } }, "sha512-zJiMl43fiS3a2RjLFdCyTUTqcDY2xss1Acbzc9yfsw8YAkS0LZRdrNmp9/RjLhZB0+FzLarNAayvdKqF2GwnQg=="],
 

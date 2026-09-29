@@ -1027,7 +1027,6 @@ function normalizeChannelsConfig(
   normalizeTelegramConfig(channels.telegram);
   normalizeGitHubConfig(channels.github);
   normalizeLinearConfig(channels.linear, options);
-  normalizeNotionConfig(channels.notion, options);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
   normalizeMatrixConfig(channels.matrix, options);
@@ -1122,49 +1121,6 @@ function normalizeLinearConfig(
   if (!config.webhookSecret) {
     throw new ClientError(
       "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
-    );
-  }
-}
-
-/**
- * `keyword` mode answers only the listed words, so it needs at least one. A
- * patch may switch the mode alone, so the merged config checks it.
- */
-function normalizeNotionConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.notion must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.notion");
-  assertOptionalString(config.apiBaseUrl, "config.channels.notion.apiBaseUrl");
-  if (typeof config.apiBaseUrl === "string") {
-    assertPublicHttpsUrl(
-      config.apiBaseUrl,
-      "config.channels.notion.apiBaseUrl",
-    );
-  }
-  assertOptionalStringArray(config.keywords, "config.channels.notion.keywords");
-  assertOptionalEnum(config.mentionMode, "config.channels.notion.mentionMode", [
-    "mention",
-    "all-comments",
-    "keyword",
-  ] as const);
-  assertOptionalString(config.token, "config.channels.notion.token");
-  assertOptionalString(config.userName, "config.channels.notion.userName");
-  assertOptionalString(
-    config.verificationToken,
-    "config.channels.notion.verificationToken",
-  );
-  if (
-    config.mentionMode === "keyword" &&
-    !(Array.isArray(config.keywords) && config.keywords.length > 0) &&
-    !options.patch
-  ) {
-    throw new ClientError(
-      'config.channels.notion.keywords must list at least one word when mentionMode is "keyword"',
     );
   }
 }
