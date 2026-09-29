@@ -30,12 +30,17 @@ describe("linear channel adapter", () => {
     expect(
       await adapter.authenticate(delivery(body, sign(body, "other-secret"))),
     ).toBe(false);
-    expect(
-      await adapter.authenticate(
-        delivery(body, sign(body), Date.now() - 5 * 60_000),
-      ),
-    ).toBe(false);
     expect(await adapter.authenticate(delivery(body, ""))).toBe(false);
+  });
+
+  it("refuses a captured delivery resent with a fresh timestamp header", async (): Promise<void> => {
+    const stale = commentWebhook("@acme-agent hi");
+    stale.webhookTimestamp = Date.now() - 5 * 60_000;
+    const body = JSON.stringify(stale);
+
+    expect(await channel().authenticate(delivery(body, sign(body)))).toBe(
+      false,
+    );
   });
 
   it("turns a comment that mentions the agent into a turn on its thread", async (): Promise<void> => {

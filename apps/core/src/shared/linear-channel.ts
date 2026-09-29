@@ -10,7 +10,6 @@ import { LinearAdapter } from "@chat-adapter/linear";
 import {
   type EntityWebhookPayloadWithCommentData,
   LINEAR_WEBHOOK_SIGNATURE_HEADER,
-  LINEAR_WEBHOOK_TS_HEADER,
   LinearWebhookClient,
 } from "@linear/sdk/webhooks";
 import { ConsoleLogger } from "chat";
@@ -85,8 +84,8 @@ export function createLinearChannel(
       return LINEAR_WEBHOOK_SIGNATURE_HEADER in req.headers;
     },
 
-    // The SDK check also refuses a delivery signed more than a minute ago, so
-    // a captured body cannot be replayed later.
+    // The SDK check also refuses a delivery whose signed webhookTimestamp is
+    // more than a minute off, so a captured body cannot be replayed later.
     authenticate: function (req): boolean {
       const signature = req.headers[LINEAR_WEBHOOK_SIGNATURE_HEADER];
       const timestamp = webhookTimestamp(req);
@@ -250,13 +249,10 @@ function toLinearSource(source: Record<string, unknown>): LinearSource {
   };
 }
 
-// Linear sends the signing time as a header and in the body; either one bounds
-// the replay window.
-function webhookTimestamp(req: ChannelRequest): string | number | undefined {
-  const header = req.headers[LINEAR_WEBHOOK_TS_HEADER];
-  if (header) {
-    return header;
-  }
+// The signing time from the body. Linear also sends it as a header, but the
+// signature covers only the body, so a header time would let a captured
+// delivery pass the replay window again.
+function webhookTimestamp(req: ChannelRequest): number | undefined {
   const body = parseChannelWebhookBody<{ webhookTimestamp?: unknown }>(
     "linear",
     req.body,
