@@ -48,7 +48,7 @@ Twilio stores one webhook per number. Pointing a number at a stage URL moves all
 | --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | `accountSid`          | yes      | the `AC...` account SID                                                                                          |
 | `authToken`           | yes      | signs every webhook (`X-Twilio-Signature`) and authenticates replies                                             |
-| `phoneNumber`         | no       | E.164 number, such as `+15550001111`. Messages to any other number on the same URL are ignored                   |
+| `phoneNumber`         | no       | E.164 number, such as `+15550001111`. A message to another number on the same URL goes to the agent holding it   |
 | `messagingServiceSid` | no       | `MG...` sid. Replies go through the service instead of from the number the person texted                         |
 | `webhookUrl`          | no       | the URL Twilio calls, when it is not the Broods webhook URL. Public `https` only                                 |
 | `statusCallbackUrl`   | no       | where Twilio posts delivery status for each reply. Public `https` only. Receipts sent to the webhook are ignored |

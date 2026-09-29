@@ -1210,6 +1210,16 @@ function normalizeTwilioConfig(value: unknown): void {
     config.phoneNumber,
     "config.channels.twilio.phoneNumber",
   );
+  // Core compares it to the E.164 `To` Twilio posts, so any other spelling
+  // would ignore every message.
+  if (
+    typeof config.phoneNumber === "string" &&
+    !/^\+[1-9]\d{1,14}$/.test(config.phoneNumber)
+  ) {
+    throw new ClientError(
+      'config.channels.twilio.phoneNumber must be an E.164 number, e.g. "+15551234567"',
+    );
+  }
   assertOptionalString(config.userName, "config.channels.twilio.userName");
 }
 

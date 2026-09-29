@@ -5325,7 +5325,8 @@ components:
               description: Twilio auth token. Checks each webhook signature and authenticates replies.
             phoneNumber:
               type: string
-              description: E.164 number the agent answers on. Messages to any other number are ignored.
+              pattern: "^\\+[1-9]\\d{1,14}$"
+              description: E.164 number the agent answers on. A message to another number on the same URL goes to the agent that holds that number.
             messagingServiceSid:
               type: string
               pattern: "^MG[0-9a-fA-F]{32}$"

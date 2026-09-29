@@ -530,7 +530,7 @@ export interface AgentTwilioChannelConfig {
   authToken?: string;
   /** `MG...`. Replies go through the service instead of the number texted. */
   messagingServiceSid?: string;
-  /** E.164 number, e.g. `+15551234567`. Messages to any other number are ignored. */
+  /** E.164 number, e.g. `+15551234567`. Messages to another number go to the agent holding it. */
   phoneNumber?: string;
   statusCallbackUrl?: string;
   userName?: string;

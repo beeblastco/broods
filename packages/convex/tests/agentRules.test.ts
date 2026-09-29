@@ -134,6 +134,11 @@ describe("agent rules", () => {
         channels: { twilio: { id: "sms", messagingServiceSid: "+1555" } },
       }),
     ).toThrow("config.channels.twilio.messagingServiceSid must be");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { twilio: { id: "sms", phoneNumber: "+1 (555) 000-1111" } },
+      }),
+    ).toThrow("config.channels.twilio.phoneNumber must be");
     expect(
       redactConfigSecrets({
         channels: {

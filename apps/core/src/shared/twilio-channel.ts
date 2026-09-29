@@ -5,27 +5,33 @@
  * indicator and no reactions, so those actions do nothing.
  */
 
-import { TwilioAdapter } from "@chat-adapter/twilio";
+import { TwilioAdapter, TwilioFormatConverter } from "@chat-adapter/twilio";
 import {
   parseTwilioWebhookBody,
+  type TwilioWebhookPayload,
   TwilioWebhookVerificationError,
   verifyTwilioRequest,
 } from "@chat-adapter/twilio/webhook";
-import { ConsoleLogger } from "chat";
+import { type Attachment, ConsoleLogger } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
   ChannelParseResult,
   ChannelResponse,
 } from "./channels.ts";
+import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import { chunkChannelText, isAllowedId } from "./channels.ts";
+import type { PinnedFetchTransport } from "./http.ts";
 import { logWarn } from "./log.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { TWILIO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const TWILIO_SIGNATURE_HEADER = "x-twilio-signature";
 const TWILIO_DEFAULT_USER_NAME = "twilio-bot";
 // Twilio joins up to ten segments into one message and refuses anything longer.
 const TWILIO_TEXT_LIMIT = 1600;
+const TWILIO_FETCH_TIMEOUT_MS = 30_000;
+const TWILIO_FORMAT = new TwilioFormatConverter();
 // Twilio reads the webhook answer as TwiML. An empty one sends no reply of its
 // own, since the agent replies through the API once it has run.
 const TWIML_EMPTY: ChannelResponse = {
@@ -45,6 +51,8 @@ export interface TwilioChannelOptions {
   /** Where core is reached publicly; the signed URL is this plus the request path. */
   publicBaseUrl?: string;
   statusCallbackUrl?: string;
+  /** Tests only: the pinned-fetch seam, see `PinnedFetchTransport`. */
+  transport?: PinnedFetchTransport;
   userName?: string;
   webhookUrl?: string;
 }
@@ -68,6 +76,7 @@ export function createTwilioChannel(
     accountSid: options.accountSid,
     apiUrl: options.apiUrl,
     authToken: options.authToken,
+    fetch: twilioFetch(options.transport),
     logger: new ConsoleLogger("error").child("twilio"),
     messagingServiceSid: options.messagingServiceSid,
     phoneNumber: options.phoneNumber,
@@ -78,12 +87,24 @@ export function createTwilioChannel(
   return {
     name: "twilio",
 
-    rehydrateAttachment: function (attachment) {
+    rehydrateAttachment: function (attachment): Attachment {
       return transport.rehydrateAttachment(attachment);
     },
 
-    canHandle: function (req) {
-      return req.method === "POST" && TWILIO_SIGNATURE_HEADER in req.headers;
+    // One Twilio account can point several numbers at the same URL, all
+    // signed with its one auth token, so a message to another number must
+    // leave this agent out of the credential scan instead of being dropped.
+    canHandle: function (req): boolean {
+      if (req.method !== "POST" || !(TWILIO_SIGNATURE_HEADER in req.headers)) {
+        return false;
+      }
+      const payload = readTwilioForm(req.body);
+
+      return (
+        payload.kind !== "text" ||
+        !options.phoneNumber ||
+        payload.to === options.phoneNumber
+      );
     },
 
     // Twilio signs the URL it called plus every form field, so the check needs
@@ -121,7 +142,7 @@ export function createTwilioChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const payload = parseTwilioWebhookBody(new URLSearchParams(req.body));
+      const payload = readTwilioForm(req.body);
       // Delivery receipts ride the same URL when statusCallbackUrl points here.
       if (payload.kind !== "text") {
         return {
@@ -134,14 +155,6 @@ export function createTwilioChannel(
         return {
           kind: "ignore",
           reason: "missing_message_sid",
-          response: TWIML_EMPTY,
-        };
-      }
-      // One Twilio account can point several numbers at the same URL.
-      if (options.phoneNumber && payload.to !== options.phoneNumber) {
-        return {
-          kind: "ignore",
-          reason: "another number",
           response: TWIML_EMPTY,
         };
       }
@@ -191,15 +204,20 @@ export function createTwilioChannel(
 
       return {
         sendText: async function (text): Promise<void> {
-          for (const chunk of chunkChannelText(text, TWILIO_TEXT_LIMIT)) {
-            await transport.postMessage(threadId, { markdown: chunk });
+          for (const chunk of renderTwilioText(text)) {
+            await transport.postMessage(threadId, { raw: chunk });
           }
         },
         // MMS by URL: Twilio fetches each picture itself. No sendFiles, since
         // most carriers drop documents, so `send-files` sends links instead.
+        // A long caption goes first as text, the pictures ride its last part.
         sendImages: async function (images, caption): Promise<void> {
+          const chunks = renderTwilioText(caption ?? "");
+          for (const chunk of chunks.slice(0, -1)) {
+            await transport.postMessage(threadId, { raw: chunk });
+          }
           await transport.postMessage(threadId, {
-            markdown: caption ?? "",
+            raw: chunks.at(-1) ?? "",
             attachments: images,
           });
         },
@@ -212,6 +230,24 @@ export function createTwilioChannel(
       };
     },
   };
+}
+
+// Renders Markdown the way the adapter would, then splits the result: the
+// adapter cuts anything past 1600 characters without a word, and rendering
+// can grow a piece (a table becomes an ASCII block).
+function renderTwilioText(text: string): string[] {
+  return chunkChannelText(TWILIO_FORMAT.fromMarkdown(text), TWILIO_TEXT_LIMIT);
+}
+
+// Every inbound message carries `SmsStatus=received`, and the adapter reads a
+// status with no Body as a delivery receipt, which drops a picture sent alone.
+function readTwilioForm(body: string): TwilioWebhookPayload {
+  const form = new URLSearchParams(body);
+  for (const name of ["MessageStatus", "SmsStatus"]) {
+    if (form.get(name) === "received") form.delete(name);
+  }
+
+  return parseTwilioWebhookBody(form);
 }
 
 function toTwilioSource(source: Record<string, unknown>): TwilioSource {
@@ -228,4 +264,47 @@ function toTwilioSource(source: Record<string, unknown>): TwilioSource {
     messageSid: source.messageSid,
     to: source.to,
   };
+}
+
+/**
+ * The adapter's `fetch`. Every URL it reaches is the tenant's: `apiUrl` from
+ * config, and media URLs from a webhook signed with the tenant's own token.
+ * `guardedFetch` pins each hop to a checked public address and caps the body.
+ * Media answers with a redirect to Twilio's CDN, which rules out
+ * `publicHostFetch`.
+ */
+function twilioFetch(
+  transport: PinnedFetchTransport | undefined,
+): typeof fetch {
+  const request = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const url = input instanceof Request ? input.url : input;
+    const body = init?.body;
+    if (body != null && !(body instanceof URLSearchParams)) {
+      throw new Error("Twilio requests carry a form body only");
+    }
+    const response = await guardedFetch(
+      url,
+      {
+        body: body?.toString(),
+        headers: Object.fromEntries(new Headers(init?.headers)),
+        method: init?.method,
+      },
+      {
+        ...transport,
+        binary: true,
+        bodyLimitBytes: MAX_ATTACHMENT_BYTES,
+        timeoutMs: TWILIO_FETCH_TIMEOUT_MS,
+      },
+    );
+
+    return new Response(response.bodyBytes, {
+      headers: response.headers,
+      status: response.status,
+    });
+  };
+
+  return Object.assign(request, { preconnect: fetch.preconnect });
 }
