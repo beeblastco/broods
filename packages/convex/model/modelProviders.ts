@@ -5,6 +5,14 @@
  * `satisfies` there fails the build if the two ever drift.
  */
 
+/**
+ * Provider settings that name an endpoint the factory will call, like
+ * `baseURL`, OpenRouter's `baseUrl` or its `decisionsBaseURL`. Convex holds
+ * each to a public https URL and core sends that provider's requests through
+ * its private-address guard.
+ */
+export const PROVIDER_ENDPOINT_SETTING = /url$/i;
+
 /** Display metadata for the dashboard's provider pickers. */
 export interface ModelProviderMeta {
   label: string;
@@ -12,12 +20,14 @@ export interface ModelProviderMeta {
 }
 
 /**
- * Every Vercel AI SDK provider that ships language models, plus `custom`
- * (any OpenAI-compatible endpoint) and `minimax`. Image-, speech- and
- * transcription-only providers are deliberately absent: they cannot back
- * `config.model`.
+ * Every Vercel AI SDK provider that ships language models, the community
+ * providers on the same spec that take an API key (`cloudflare`, `llmgateway`,
+ * `ollama`, `openrouter`), and `custom` (any OpenAI-compatible endpoint).
+ * Image-, speech- and transcription-only providers are deliberately absent:
+ * they cannot back `config.model`.
  */
 export const MODEL_PROVIDERS = {
+  alibaba: { label: "Alibaba Qwen", modelPlaceholder: "qwen3-max" },
   anthropic: {
     label: "Anthropic",
     modelPlaceholder: "claude-sonnet-4-5-20250929",
@@ -29,6 +39,10 @@ export const MODEL_PROVIDERS = {
     modelPlaceholder: "anthropic.claude-sonnet-4-5-20250929-v1:0",
   },
   cerebras: { label: "Cerebras", modelPlaceholder: "llama3.1-8b" },
+  cloudflare: {
+    label: "Cloudflare Workers AI",
+    modelPlaceholder: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  },
   cohere: { label: "Cohere", modelPlaceholder: "command-a-03-2025" },
   custom: {
     label: "Custom OpenAI-compatible",
@@ -45,9 +59,20 @@ export const MODEL_PROVIDERS = {
   },
   google: { label: "Google", modelPlaceholder: "gemini-2.5-flash" },
   groq: { label: "Groq", modelPlaceholder: "llama-3.3-70b-versatile" },
+  huggingface: {
+    label: "Hugging Face",
+    modelPlaceholder: "meta-llama/Llama-3.3-70B-Instruct",
+  },
+  llmgateway: { label: "LLM Gateway", modelPlaceholder: "openai/gpt-4.1-mini" },
   minimax: { label: "MiniMax", modelPlaceholder: "MiniMax-M2.7" },
   mistral: { label: "Mistral", modelPlaceholder: "mistral-large-latest" },
+  moonshotai: { label: "Moonshot AI Kimi", modelPlaceholder: "kimi-k2.6" },
+  ollama: { label: "Ollama", modelPlaceholder: "gpt-oss:120b" },
   openai: { label: "OpenAI", modelPlaceholder: "gpt-4.1-mini" },
+  openrouter: {
+    label: "OpenRouter",
+    modelPlaceholder: "anthropic/claude-sonnet-4.5",
+  },
   perplexity: { label: "Perplexity", modelPlaceholder: "low" },
   togetherai: {
     label: "Together.ai",
@@ -60,6 +85,7 @@ export const MODEL_PROVIDERS = {
   },
   vertex: { label: "Google Vertex AI", modelPlaceholder: "gemini-2.5-flash" },
   xai: { label: "xAI Grok", modelPlaceholder: "grok-4" },
+  zai: { label: "Z.ai GLM", modelPlaceholder: "glm-4.7" },
 } as const satisfies Record<string, ModelProviderMeta>;
 
 export type AccountModelProviderName = keyof typeof MODEL_PROVIDERS;

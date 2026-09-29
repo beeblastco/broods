@@ -341,6 +341,24 @@ describe("agent rules", () => {
     ).toThrow(
       "config.provider.custom.base_url must not point to a private or internal address",
     );
+    // Every endpoint a factory reads is held to the base URL's rule, not only
+    // the two spellings broods names itself.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          openrouter: { apiKey: "sk", baseUrl: "https://169.254.169.254" },
+        },
+      }),
+    ).toThrow(
+      "config.provider.openrouter.baseUrl must not point to a private or internal address",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          openrouter: { apiKey: "sk", decisionsBaseURL: "http://example.com" },
+        },
+      }),
+    ).toThrow("config.provider.openrouter.decisionsBaseURL must use https");
     expect(
       normalizeAgentConfig({
         provider: { custom: { base_url: "https://api.example.com" } },
