@@ -206,6 +206,13 @@ export type ChannelWebhookBody<T> =
 
 export interface ChannelAdapter {
   readonly name: string;
+  /**
+   * Set when one provider app can serve several agents and every entry of a
+   * delivery names its owner (a WhatsApp number, a Page). Each agent whose
+   * credentials verify the delivery parses it and keeps only its own entries.
+   * Unset, the lowest verifying agentId takes the whole delivery.
+   */
+  readonly routesEachEntry?: true;
   canHandle(req: ChannelRequest): boolean;
   authenticate(req: ChannelRequest): boolean | Promise<boolean>;
   /**

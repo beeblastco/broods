@@ -40,6 +40,7 @@ interface TeamsActivity {
     team?: { id?: string };
     tenant?: { id?: string };
   };
+  channelId?: string;
   conversation?: { id?: string; tenantId?: string };
   entities?: {
     mentioned?: { id?: string };
@@ -135,6 +136,14 @@ export function createTeamsChannel(
         return body;
       }
       const activity = body.payload;
+      // An Azure Bot also serves Web Chat and Direct Line, whose replies and
+      // identities are not Teams'.
+      if (activity.channelId !== "msteams") {
+        return {
+          kind: "ignore",
+          reason: `not_teams:${activity.channelId ?? "unknown"}`,
+        };
+      }
       if (activity.type !== "message" || !activity.conversation?.id) {
         return { kind: "ignore", reason: `activity:${activity.type}` };
       }

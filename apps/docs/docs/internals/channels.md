@@ -79,7 +79,7 @@ sequenceDiagram
 
 A `queued` or `duplicate` outcome starts no worker for this message, only one for a group that admission recovered from an expired owner. The current owner drains the queued envelope on its own worker slot when its turn settles.
 
-If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
+If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie. An adapter that sets `routesEachEntry` (WhatsApp) instead hands the delivery to every agent that verifies it, each keeping only the entries it owns, under the one ack budget.
 
 A record lookup that finds nothing falls back to the credential holder. A lookup that fails refuses the turn and posts "I can't reach my channel configuration right now", because running without the record's policies and `denyTools` would be an escalation. The channel path already needs the control plane to admit ingress, so this costs no availability that is not already lost. A `context` message whose lookup fails is dropped with a warning.
 

@@ -44,7 +44,7 @@ The WhatsApp channel answers customers who message your business number, through
 
 8. Run `broods dev` or `broods deploy`. Under **WhatsApp > Configuration**, set the **Callback URL** to the printed URL, `/v1/webhooks/{accountId}/whatsapp`, and the **Verify token** to your verify token. Click **Verify and save**, then subscribe to the `messages` webhook field.
 
-Meta stores one callback URL per app. Registering a stage URL moves all of the app's numbers to that stage. Deliveries for a number other than `phoneNumberId` are ignored.
+Meta stores one callback URL per app. Registering a stage URL moves all of the app's numbers to that stage. Several agents can share one app, each with its own `phoneNumberId`: each gets only its own number's messages. Messages for a number no agent owns are ignored.
 
 ## Configuration
 
@@ -77,6 +77,7 @@ export const vip = defineWhatsAppChannel({
 - Text in both directions. Markdown is converted to WhatsApp formatting, and long replies are split at 4096 characters.
 - Inbound pictures, documents, audio, voice notes, video and stickers. Broods reads them through the Graph API with the access token. A caption arrives as the message text.
 - Taps on reply buttons and list rows arrive as the button's label.
+- A delivery Meta batches runs every message for the agent's number, each as its own turn, in order.
 - Outbound pictures and documents. Workspace files are uploaded, and a public `https` URL is passed to Meta as a link.
 - Typing indicator. It also marks the customer's message as read.
 - Reactions, only when the agent calls `send-reactions`. An accepted message gets no automatic reaction.
@@ -87,6 +88,5 @@ What does not:
 - Replies must fall inside WhatsApp's 24-hour customer service window. A deferred reply or a `send-message` to a customer who wrote more than 24 hours ago is refused by Meta. Template messages are not supported.
 - No streaming. The reply goes out once the turn ends.
 - Group chats. The Cloud API has none.
-- A delivery with several messages runs the first one and logs the rest.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.

@@ -138,6 +138,14 @@ describe("teams channel adapter", () => {
     ).toBe("ignore");
   });
 
+  it("ignores Web Chat and Direct Line activities, which are not Teams", async (): Promise<void> => {
+    const webChat = { ...channelActivity("hi"), channelId: "webchat" };
+
+    expect(
+      await channel().parse(delivery(JSON.stringify(webChat), "")),
+    ).toEqual({ kind: "ignore", reason: "not_teams:webchat" });
+  });
+
   it("posts the reply to the conversation the message came from", async (): Promise<void> => {
     const post = spyOn(TeamsAdapter.prototype, "postMessage").mockResolvedValue(
       { id: "reply-1", threadId: "", raw: {} },

@@ -1256,7 +1256,7 @@ function normalizeTeamsConfig(
   if (
     typeof config.appId === "string" &&
     config.appType !== "MultiTenant" &&
-    config.appTenantId === undefined &&
+    !(typeof config.appTenantId === "string" && config.appTenantId.trim()) &&
     !options.patch
   ) {
     throw new ClientError(

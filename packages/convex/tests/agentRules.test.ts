@@ -500,6 +500,20 @@ describe("agent rules", () => {
     ).toThrow(
       'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
     );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          teams: {
+            id: "teams",
+            appId: "app",
+            appPassword: "pw",
+            appTenantId: "  ",
+          },
+        },
+      }),
+    ).toThrow(
+      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
+    );
     expect(
       normalizeAgentConfig({
         channels: {

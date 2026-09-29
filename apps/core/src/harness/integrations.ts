@@ -151,6 +151,13 @@ const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 const RUN_PATH = "/v1/runs";
 const RUN_PATH_PREFIX = `${RUN_PATH}/`;
 
+// One receiver's reading of a delivery: an answer the provider needs right
+// away, nothing to run, or turns whose admission is still in flight.
+type ChannelReceipt =
+  | { kind: "response"; response: ChannelResponse }
+  | { kind: "ignore"; response: ChannelResponse }
+  | { kind: "accepted"; ack: ChannelResponse; admitted?: Promise<void> };
+
 type DirectIngressEvent =
   | UserModelMessage
   | ToolModelMessage
@@ -167,10 +174,19 @@ type ChannelTarget =
   | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
   | { kind: "unavailable" };
 
+// An agent whose channel credentials verified a delivery, with the adapter
+// that verified it and now parses it.
+interface ChannelReceiver {
+  agent: AgentRecord;
+  adapter: ChannelAdapter;
+}
+
 // With no agent in the webhook URL, "nobody configures this channel", "nobody's
 // credentials verified" and "the scan broke" are the operator's whole diagnosis.
+// A holder is one receiver, or every verifying one when the adapter
+// `routesEachEntry`.
 type ChannelCredentialHolder =
-  | { kind: "holder"; agent: AgentRecord }
+  | { kind: "holder"; receivers: ChannelReceiver[] }
   | { kind: "unconfigured"; configured: boolean }
   | { kind: "unknown-stage" }
   | { kind: "unverified" }
@@ -728,48 +744,11 @@ async function handleHttpRequest(
     if (holder.kind === "unavailable") {
       return notFoundResponse();
     }
-    const agent = holder.agent;
-
-    const accountChannelRegistry = createChannelRegistry(agent.config);
-    const accountChannel = accountChannelRegistry.webhookChannels.find(
-      (channel) =>
-        channel.name === channelName && channel.canHandle(channelRequest),
-    );
-
-    logDebug("Webhook received", {
-      accountId: account.accountId,
-      agentId: agentId,
-      channel: channelName,
-      method: request.method,
-      rawPath: request.path,
-      channelConfigured: accountChannelRegistry.webhookChannels.some(
-        (channel) => channel.name === channelName,
-      ),
-      channelMatched: !!accountChannel,
-    });
-
-    if (!accountChannel) {
-      const isConfigured = accountChannelRegistry.webhookChannels.some(
-        (channel) => channel.name === channelName,
-      );
-
-      return integrationNotConfigured(
-        isConfigured ? `Webhook ${channelName}` : channelName,
-      );
-    }
-
-    const deployment = await context.deploymentLoader(
-      account.accountId,
-      agent.agentId,
-    );
-
     return handleChannelWebhook(
-      accountChannel,
+      holder.receivers,
       channelRequest,
       handlers,
       account,
-      agent,
-      deployment,
       context,
     );
   }
@@ -935,7 +914,7 @@ async function findChannelCredentialHolder(
   // account whose 30th agent owns the Slack app must still be reachable. Sort
   // first: the cap is applied while scanning, so ordering it afterwards would
   // still leave *which* agents were considered up to the lister.
-  const candidates: Array<{ agent: AgentRecord; adapter: ChannelAdapter }> = [];
+  const candidates: ChannelReceiver[] = [];
   let configured = false;
   let truncated = false;
   for (const candidate of [...listed].sort((left, right) =>
@@ -968,23 +947,28 @@ async function findChannelCredentialHolder(
   // Sort before authenticating. With no agent in the URL this scan is the only
   // thing choosing a receiver, so two agents sharing one provider app must not
   // resolve differently between requests. Pick the same one every time and say
-  // so, since the channel record is what disambiguates them.
+  // so, since the channel record is what disambiguates them. An adapter that
+  // `routesEachEntry` names each entry's owner itself, so every verifying
+  // agent receives the delivery and keeps its own entries.
   candidates.sort((left, right) =>
     left.agent.agentId.localeCompare(right.agent.agentId),
   );
+  const receivers: ChannelReceiver[] = [];
   for (const candidate of candidates) {
-    if (await candidate.adapter.authenticate(request)) {
-      if (candidates.length > 1) {
-        logInfo("Channel credentials matched multiple agents", {
-          accountId: accountId,
-          channel: channelName,
-          candidates: candidates.length,
-          receivingAgentId: candidate.agent.agentId,
-        });
-      }
-
-      return { kind: "holder", agent: candidate.agent };
-    }
+    if (!(await candidate.adapter.authenticate(request))) continue;
+    receivers.push(candidate);
+    if (!candidate.adapter.routesEachEntry) break;
+  }
+  if (receivers.length > 0 && candidates.length > 1) {
+    logInfo("Channel credentials matched multiple agents", {
+      accountId: accountId,
+      channel: channelName,
+      candidates: candidates.length,
+      receivingAgentIds: receivers.map((receiver) => receiver.agent.agentId),
+    });
+  }
+  if (receivers.length > 0) {
+    return { kind: "holder", receivers: receivers };
   }
 
   return candidates.length > 0
@@ -1166,16 +1150,88 @@ function channelRuntimeAgentConfig(
     : config;
 }
 
+/**
+ * Admit a verified delivery through every receiver the credential scan found.
+ * A direct response from a receiver answers the provider at once. Otherwise
+ * one ack budget bounds admission for all of them; whatever is still admitting
+ * when it runs out carries on in the background after the ack.
+ */
 async function handleChannelWebhook(
-  adapter: ChannelAdapter,
+  receivers: ChannelReceiver[],
   request: ChannelRequest,
   handlers: IntegrationHandlers,
   account: AccountRecord,
-  agent: AgentRecord,
-  deployment: AgentDeploymentScope | null,
   context: HttpRoutingContext,
 ): Promise<Response> {
+  const admissions: Promise<void>[] = [];
+  let ack: ChannelResponse | undefined;
+  let ignored: ChannelResponse | undefined;
+  try {
+    for (const receiver of receivers) {
+      const receipt = await receiveChannelWebhook(
+        receiver,
+        request,
+        handlers,
+        account,
+        context,
+      );
+      if (receipt.kind === "response") {
+        return toResponse(receipt.response);
+      }
+      if (receipt.kind === "ignore") {
+        ignored ??= receipt.response;
+        continue;
+      }
+      ack ??= receipt.ack;
+      if (receipt.admitted) {
+        // Handled here, so a failure while later receivers parse is not an
+        // unhandled rejection; the race below still sees it.
+        receipt.admitted.catch((): void => {});
+        admissions.push(receipt.admitted);
+      }
+    }
+    if (admissions.length > 0) {
+      const admitted = Promise.all(admissions).then((): void => undefined);
+      context.waitUntil(admitted);
+      let ackTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        admitted,
+        new Promise<void>((resolve): void => {
+          ackTimer = setTimeout(resolve, CHANNEL_ACK_BUDGET_MS);
+        }),
+      ]);
+      clearTimeout(ackTimer);
+    }
+
+    return toResponse(ack ?? ignored ?? { statusCode: 200 });
+  } catch (err) {
+    logError("Failed to process webhook request", {
+      channel: receivers[0]?.adapter.name,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return errorResponse(500, "Internal server error");
+  }
+}
+
+/**
+ * Parse a delivery with one receiver's adapter, under that agent's deployment
+ * scope, and start admitting the turns it keeps. The credential scan already
+ * authenticated the request with this same adapter.
+ */
+async function receiveChannelWebhook(
+  receiver: ChannelReceiver,
+  request: ChannelRequest,
+  handlers: IntegrationHandlers,
+  account: AccountRecord,
+  context: HttpRoutingContext,
+): Promise<ChannelReceipt> {
+  const { adapter, agent } = receiver;
   const waitUntil = context.waitUntil;
+  const deployment = await context.deploymentLoader(
+    account.accountId,
+    agent.agentId,
+  );
   const previousObservabilityContext = getObservabilityContext();
   if (deployment) {
     setObservabilityContext({
@@ -1198,16 +1254,6 @@ async function handleChannelWebhook(
       agentId: agent.agentId,
       method: request.method,
     });
-
-    if (!(await adapter.authenticate(request))) {
-      logWarn("Channel webhook authentication failed", {
-        channel: adapter.name,
-        accountId: account.accountId,
-        agentId: agent.agentId,
-      });
-
-      return unauthorizedResponse();
-    }
 
     const parsed = await adapter.parse(request);
     logDebug("Channel webhook parsed", {
@@ -1236,7 +1282,7 @@ async function handleChannelWebhook(
         statusCode: parsed.response.statusCode,
       });
 
-      return toResponse(parsed.response);
+      return { kind: "response", response: parsed.response };
     }
 
     // Webhook is valid enough to accept, but should not run the agent.
@@ -1250,7 +1296,10 @@ async function handleChannelWebhook(
         statusCode: parsed.response?.statusCode ?? 200,
       });
 
-      return toResponse(parsed.response ?? { statusCode: 200 });
+      return {
+        kind: "ignore",
+        response: parsed.response ?? { statusCode: 200 },
+      };
     }
 
     if (parsed.kind === "cleanup") {
@@ -1274,13 +1323,11 @@ async function handleChannelWebhook(
         ),
       );
 
-      return toResponse(response);
+      return { kind: "accepted", ack: response };
     }
 
-    // One ack budget bounds admission for the whole delivery. A batch admits
-    // its turns in order, each on its own; one that fails is logged and the
-    // rest still run. Whatever is still admitting when the budget runs out
-    // carries on in the background after the ack.
+    // A batch admits its turns in order, each on its own; one that fails is
+    // logged and the rest still run.
     const admitted =
       parsed.kind === "batch"
         ? runWithObservabilityScope(async (): Promise<void> => {
@@ -1317,26 +1364,12 @@ async function handleChannelWebhook(
               context,
             )
           )?.();
-    if (admitted) {
-      waitUntil(admitted);
-      let ackTimer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        admitted,
-        new Promise<void>((resolve): void => {
-          ackTimer = setTimeout(resolve, CHANNEL_ACK_BUDGET_MS);
-        }),
-      ]);
-      clearTimeout(ackTimer);
-    }
 
-    return toResponse(parsed.ack ?? { statusCode: 200 });
-  } catch (err) {
-    logError("Failed to process webhook request", {
-      channel: adapter.name,
-      error: err instanceof Error ? err.message : String(err),
-    });
-
-    return errorResponse(500, "Internal server error");
+    return {
+      kind: "accepted",
+      ack: parsed.ack ?? { statusCode: 200 },
+      ...(admitted ? { admitted: admitted } : {}),
+    };
   } finally {
     if (deployment) {
       setObservabilityContext(previousObservabilityContext);

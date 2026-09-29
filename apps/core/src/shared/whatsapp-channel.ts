@@ -136,6 +136,8 @@ export function createWhatsAppChannel(
 
   return {
     name: "whatsapp",
+    // One Meta app holds several numbers, each possibly its own agent's.
+    routesEachEntry: true,
 
     rehydrateAttachment: function (attachment) {
       return transport.rehydrateAttachment(attachment);

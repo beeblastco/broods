@@ -596,6 +596,81 @@ describe("account webhook ingress", () => {
     ]);
   });
 
+  it("hands each number of a shared Meta app to the agent that owns it", async () => {
+    // One Meta app, one app secret, two numbers: both agents verify the POST,
+    // and each must run only the messages sent to its own number.
+    const firstAgent = { ...WHATSAPP_AGENT, agentId: "agent_aaa" };
+    const secondAgent = {
+      ...WHATSAPP_AGENT,
+      agentId: "agent_bbb",
+      config: {
+        channels: {
+          whatsapp: {
+            ...WHATSAPP_AGENT.config.channels.whatsapp,
+            phoneNumberId: "phone-2",
+          },
+        },
+      },
+    };
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent([
+        { phoneNumberId: "phone-1", from: "15551111111", id: "wamid.1" },
+        { phoneNumberId: "phone-2", from: "15552222222", id: "wamid.2" },
+        // No agent owns this number: ignored, never a 401 Meta would count.
+        { phoneNumberId: "phone-3", from: "15553333333", id: "wamid.3" },
+      ]),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents
+        .map((event) => [event.agentId, event.eventId])
+        .sort(([left], [right]) => left!.localeCompare(right!)),
+    ).toEqual([
+      ["agent_aaa", "acct:acct_test:agent:agent_aaa:whatsapp:wamid.1"],
+      ["agent_bbb", "acct:acct_test:agent:agent_bbb:whatsapp:wamid.2"],
+    ]);
+  });
+
+  it("still gives a delivery to one agent when two share a channel app", async () => {
+    // Zalo, like Slack, carries no per-entry owner, so both answering would
+    // mean two replies to one message. The lowest agentId takes it.
+    const firstAgent = { ...ZALO_AGENT, agentId: "agent_aaa" };
+    const secondAgent = { ...ZALO_AGENT, agentId: "agent_bbb" };
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createZaloEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.agentId)).toEqual(["agent_aaa"]);
+  });
+
   it("still admits the rest of a WhatsApp batch when one admission fails", async () => {
     globalThis.fetch = Object.assign(
       async (): Promise<Response> =>
@@ -761,31 +836,40 @@ function createPancakeEvent(): ReturnType<typeof coreRequest> {
   );
 }
 
-// One signed Meta delivery carrying two customers' messages in two entries.
-function createWhatsAppBatchEvent(): ReturnType<typeof coreRequest> {
-  const change = (from: string, id: string, text: string): unknown => ({
-    field: "messages",
-    value: {
-      messaging_product: "whatsapp",
-      metadata: { phone_number_id: "phone-1" },
-      contacts: [{ profile: { name: from }, wa_id: from }],
-      messages: [
-        {
-          from: from,
-          id: id,
-          timestamp: "1713916800",
-          type: "text",
-          text: { body: text },
-        },
-      ],
-    },
-  });
+// One signed Meta delivery, one entry per message. By default two customers
+// writing to `phone-1`.
+function createWhatsAppBatchEvent(
+  messages: { phoneNumberId: string; from: string; id: string }[] = [
+    { phoneNumberId: "phone-1", from: "15551111111", id: "wamid.1" },
+    { phoneNumberId: "phone-1", from: "15552222222", id: "wamid.2" },
+  ],
+): ReturnType<typeof coreRequest> {
   const body = JSON.stringify({
     object: "whatsapp_business_account",
-    entry: [
-      { id: "waba-1", changes: [change("15551111111", "wamid.1", "first")] },
-      { id: "waba-1", changes: [change("15552222222", "wamid.2", "second")] },
-    ],
+    entry: messages.map((message) => ({
+      id: "waba-1",
+      changes: [
+        {
+          field: "messages",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { phone_number_id: message.phoneNumberId },
+            contacts: [
+              { profile: { name: message.from }, wa_id: message.from },
+            ],
+            messages: [
+              {
+                from: message.from,
+                id: message.id,
+                timestamp: "1713916800",
+                type: "text",
+                text: { body: `hello from ${message.from}` },
+              },
+            ],
+          },
+        },
+      ],
+    })),
   });
   const signature = createHmac("sha256", "wa-app-secret")
     .update(body)
