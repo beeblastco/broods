@@ -480,8 +480,6 @@ export const createAsyncToolResult = internalMutation({
     input: v.any(),
     delivery: v.optional(v.any()),
     completionToken: v.optional(v.string()),
-    // Ignored. Core before #871 still sends it; drop once that core has rolled.
-    sealed: v.optional(v.boolean()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -494,7 +492,7 @@ export const createAsyncToolResult = internalMutation({
       return false;
     }
     const now = new Date().toISOString();
-    const { completionToken, sealed: _sealed, ...persistedArgs } = args;
+    const { completionToken, ...persistedArgs } = args;
     await ctx.db.insert("runtimeAsyncToolResults", {
       accountId: accountId,
       ...persistedArgs,
