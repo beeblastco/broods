@@ -78,6 +78,6 @@ export const myAgent = defineAgent({
 - On OpenAI and Azure, pruning keeps tool calls in context until compaction. Those providers replay a message by reference to a stored reasoning item, which they refuse without the tool call it produced.
 - A tool call with no result, such as an approval nobody answered, is always left out of what the model sees.
 - Compaction stores a summary, keeps the latest user message, and folds earlier summaries into the next one. The summary reads the full stored history.
-- On Slack, Discord, Matrix, Telegram, Zalo, Messenger and Instagram, `/compact [instructions]` compacts on demand between turns, whatever the config says. The instructions steer what the summary keeps. `/new` and `/clear` start over.
+- On Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Messenger and Instagram, `/compact [instructions]` compacts on demand between turns, whatever the config says. The instructions steer what the summary keeps. `/new` and `/clear` start over.
 
 A [harness adapter](agents.md) manages its own model context, so these settings apply to the default Broods loop.

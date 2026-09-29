@@ -7,7 +7,6 @@ import {
 import {
   createPendingAsyncToolResult,
   getAsyncToolResult,
-  getDetachedAsyncToolGroup,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
 } from "../src/harness/async-tool-result.ts";
@@ -133,24 +132,14 @@ describe("async tool result persistence", () => {
     });
   });
 
-  it("sorts fan-in ids and exposes general results without callback-token reads", async () => {
+  it("exposes general results without callback-token reads", async () => {
     queryMock.mockResolvedValueOnce({
       resultId: "result-1",
       status: "completed",
     } as never);
-    queryMock.mockResolvedValueOnce({
-      parentEventId: "event-1",
-      resultIds: ["result-2", "result-1"],
-      sealed: true,
-    });
     runtime.query = queryMock as never;
     await expect(getAsyncToolResult("result-1")).resolves.toMatchObject({
       status: "completed",
-    });
-    expect(await getDetachedAsyncToolGroup("event-1")).toEqual({
-      parentEventId: "event-1",
-      resultIds: ["result-1", "result-2"],
-      sealed: true,
     });
     expect(queryMock).toHaveBeenCalledWith("getAsyncToolResult", {
       resultId: "result-1",

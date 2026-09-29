@@ -1,4 +1,4 @@
-/** Async tool result, fan-in, callback, delivery, and observed state in Convex. */
+/** Async tool result, callback, delivery, and observed state in Convex. */
 
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
@@ -39,11 +39,6 @@ export interface AsyncToolResultRecord {
   sandbox?: ReservedSandbox;
   expiresAt: number;
 }
-export interface DetachedAsyncToolGroup {
-  parentEventId: string;
-  resultIds: string[];
-  sealed: boolean;
-}
 /** Records the machine a background bash job launched on, so a replaced machine fails its settle. */
 export function bindAsyncToolResultSandbox(
   resultId: string,
@@ -55,9 +50,9 @@ export function bindAsyncToolResultSandbox(
   });
 }
 /**
- * A one-row group sealed on insert, for a tool that settles on its own later
- * (a background job, an open question). The parent event is derived from the
- * turn that started it.
+ * A row for a tool that settles on its own later (a background job, an open
+ * question). Its parent event is unique to the row, derived from the turn that
+ * started it, so settling it resumes the conversation alone.
  */
 export function createDetachedAsyncToolResult(options: {
   eventId: string;
@@ -75,7 +70,6 @@ export function createDetachedAsyncToolResult(options: {
   return runtime.mutate("createAsyncToolResult", {
     ...row,
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
-    sealed: true,
   });
 }
 /** Inserts a `processing` row for an async tool call; `AsyncToolCoordinator` calls it before the tool starts in the background. */
@@ -96,31 +90,6 @@ export function getAsyncToolResult(
   resultId: string,
 ): Promise<AsyncToolResultRecord | null> {
   return runtime.query("getAsyncToolResult", { resultId: resultId });
-}
-/** Reads a parent event's dispatch group, ids sorted; the handler uses it to decide whether a settled result can resume the conversation. */
-export async function getDetachedAsyncToolGroup(
-  parentEventId: string,
-): Promise<DetachedAsyncToolGroup | null> {
-  const row = await runtime.query<DetachedAsyncToolGroup | null>(
-    "getAsyncToolGroup",
-    { parentEventId: parentEventId },
-  );
-
-  return row
-    ? {
-        parentEventId: row.parentEventId,
-        resultIds: [...row.resultIds].sort(),
-        sealed: row.sealed,
-      }
-    : null;
-}
-/** Lists every row of a parent event; the handler uses it to build a continuation run. */
-export function listAsyncToolResultsByParentEvent(
-  parentEventId: string,
-): Promise<AsyncToolResultRecord[]> {
-  return runtime.query("listAsyncToolResults", {
-    parentEventId: parentEventId,
-  });
 }
 /** Settles a still-processing row as completed; the coordinator and `async_status` call it. */
 export async function markAsyncToolResultCompleted(options: {

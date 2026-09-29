@@ -171,6 +171,14 @@ export interface ParsedChannelContext {
   ack?: ChannelResponse;
 }
 
+// Several turns in one delivery, when a provider batches them into one POST.
+// Each runs on its own, in order; `ack` answers the whole delivery.
+export interface ParsedChannelBatch {
+  kind: "batch";
+  results: Array<ParsedChannelMessage | ParsedChannelContext>;
+  ack?: ChannelResponse;
+}
+
 export interface ParsedChannelCleanup {
   kind: "cleanup";
   channelName: string;
@@ -186,6 +194,7 @@ export interface ParsedChannelCleanup {
 export type ChannelParseResult =
   | ParsedChannelMessage
   | ParsedChannelContext
+  | ParsedChannelBatch
   | ParsedChannelCleanup
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
@@ -197,6 +206,13 @@ export type ChannelWebhookBody<T> =
 
 export interface ChannelAdapter {
   readonly name: string;
+  /**
+   * Set when one provider app can serve several agents and every entry of a
+   * delivery names its owner (a WhatsApp number, a Page). Each agent whose
+   * credentials verify the delivery parses it and keeps only its own entries.
+   * Unset, the lowest verifying agentId takes the whole delivery.
+   */
+  readonly routesEachEntry?: true;
   canHandle(req: ChannelRequest): boolean;
   authenticate(req: ChannelRequest): boolean | Promise<boolean>;
   /**

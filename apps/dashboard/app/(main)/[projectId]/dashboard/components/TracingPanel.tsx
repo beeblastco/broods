@@ -279,11 +279,14 @@ const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "slack-command:", label: "Slack" },
   { prefix: "discord:", label: "Discord" },
   { prefix: "matrix:", label: "Matrix" },
+  { prefix: "gchat:", label: "Google Chat" },
   { prefix: "gh:", label: "GitHub" },
   { prefix: "pancake:", label: "Pancake" },
+  { prefix: "teams:", label: "Teams" },
   { prefix: "zalo:", label: "Zalo" },
   { prefix: "instagram:", label: "Instagram" },
   { prefix: "messenger:", label: "Messenger" },
+  { prefix: "whatsapp:", label: "WhatsApp" },
   { prefix: "cron:", label: "Cron" },
 ];
 

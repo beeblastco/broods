@@ -510,7 +510,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook check or handshake
-      description: Without a query string, answers `{"status":"ok","method":"POST"}` so a provider console sees the URL live. With one, it is a subscription handshake and goes to the channel like a delivery. Messenger and Instagram answer Meta's `hub.mode=subscribe` check with `hub.challenge` when `hub.verify_token` matches an agent's `verifyToken`. The stage URL behaves the same.
+      description: Without a query string, answers `{"status":"ok","method":"POST"}` so a provider console sees the URL live. With one, it is a subscription handshake and goes to the channel like a delivery. WhatsApp, Messenger and Instagram answer Meta's `hub.mode=subscribe` check with `hub.challenge` when `hub.verify_token` matches an agent's `verifyToken`. The stage URL behaves the same.
       parameters:
         - name: accountId
           in: path
@@ -531,7 +531,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, matrix, pancake, zalo, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -552,6 +552,9 @@ paths:
                 matrix,
                 pancake,
                 zalo,
+                whatsapp,
+                teams,
+                gchat,
                 instagram,
                 messenger,
               ]
@@ -595,6 +598,9 @@ paths:
                 matrix,
                 pancake,
                 zalo,
+                whatsapp,
+                teams,
+                gchat,
                 instagram,
                 messenger,
               ]
@@ -785,7 +791,6 @@ paths:
                       processedEventsDeleted: 14
                       asyncAgentResultDeleted: 2
                       asyncToolResultDeleted: 3
-                      asyncToolGroupDeleted: 1
                       sandboxReservationDeleted: 2
                       filesystemObjectsDeleted: 8
                       reservedSandboxesReleased: 0
@@ -3615,13 +3620,12 @@ components:
       description: >-
         The 202 for a body carrying `answers`. `resultId` is the last prompt
         settled. `accepted` means the conversation resumed (`invoked`), or had
-        nothing to resume; `waiting_for_async_tools` means other async tools of
-        the same turn are still pending, and the turn resumes once they settle.
+        nothing to resume.
       required: [status, resultId]
       properties:
         status:
           type: string
-          enum: [accepted, waiting_for_async_tools]
+          enum: [accepted]
         resultId:
           type: string
         eventId:
@@ -3630,9 +3634,6 @@ components:
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
-        pendingCount:
-          type: integer
-          description: Present with `waiting_for_async_tools`. Async tools of the turn still pending.
 
     IngressStatus:
       type: object
@@ -4078,8 +4079,6 @@ components:
               type: integer
             asyncToolResultDeleted:
               type: integer
-            asyncToolGroupDeleted:
-              type: integer
             sandboxReservationDeleted:
               type: integer
             filesystemObjectsDeleted:
@@ -4458,7 +4457,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, pancake, zalo, instagram, messenger.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, pancake, zalo, whatsapp, teams, gchat, instagram, messenger.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -5479,6 +5478,162 @@ components:
               items:
                 type: string
               description: Page-scoped user ids (PSIDs) allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        whatsapp:
+          type: object
+          description: WhatsApp Business Cloud API number. Every delivery must carry a valid `X-Hub-Signature-256` made with `appSecret`. Meta's GET subscription handshake is answered when `hub.verify_token` equals `verifyToken`.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            accessToken:
+              type: string
+              description: System user access token with the whatsapp_business_messaging permission.
+            appSecret:
+              type: string
+              description: Meta app secret that signs each webhook delivery.
+            phoneNumberId:
+              type: string
+              description: Phone number id, not the number. Deliveries for the app's other numbers are ignored.
+            verifyToken:
+              type: string
+              description: Value you choose and enter in the Meta webhook settings.
+            apiUrl:
+              type: string
+              description: Graph API base URL. Public https only. Defaults to https://graph.facebook.com.
+            apiVersion:
+              type: string
+              pattern: "^v[0-9]+[.][0-9]+$"
+              description: Graph API version, e.g. v25.0.
+            userName:
+              type: string
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        teams:
+          type: object
+          description: Microsoft Teams bot on Azure Bot Service with a client secret. Every activity must carry a Bot Framework token for `appId` whose `serviceurl` claim matches the activity.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            appId:
+              type: string
+              description: Microsoft App ID of the bot.
+            appPassword:
+              type: string
+              description: Client secret of the bot's app registration.
+            appTenantId:
+              type: string
+              description: Directory (tenant) id. Required unless appType is MultiTenant.
+            appType:
+              type: string
+              enum: [SingleTenant, MultiTenant]
+              default: SingleTenant
+            apiUrl:
+              type: string
+              description: Bot Framework service URL. Public https only. Defaults to https://smba.trafficmanager.net/teams.
+            userName:
+              type: string
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        gchat:
+          type: object
+          description: Google Chat app on an HTTP endpoint, replying as a service account. Every event must carry a Google-signed token whose audience is `endpointUrl` or `googleChatProjectNumber`, and one of the two is required.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            credentials:
+              type: string
+              description: The service-account key JSON, as downloaded from Google Cloud.
+            endpointUrl:
+              type: string
+              description: The webhook URL, when the app's authentication audience is "HTTP endpoint URL". Public https only.
+            googleChatProjectNumber:
+              type: string
+              pattern: "^[0-9]+$"
+              description: Numeric project number, when the authentication audience is "Project number".
+            workspaceAddOnServiceAccountEmail:
+              type: string
+              description: The app's own service-{projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com identity, for an app built as a Workspace add-on.
+            userName:
+              type: string
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             trace:
               type: string
               enum: [enabled, disabled]
