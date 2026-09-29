@@ -173,7 +173,10 @@ export function modelProviderFactories(): Record<
     mistral: createMistral,
     moonshotai: createMoonshotAI,
     ollama: (settings: OllamaProviderSettings): ModelProviderInstance =>
-      createOllama({ baseURL: OLLAMA_CLOUD_BASE_URL, ...settings }),
+      createOllama({
+        ...settings,
+        baseURL: settings.baseURL?.trim() || OLLAMA_CLOUD_BASE_URL,
+      }),
     openai: createOpenAI,
     openrouter: createOpenRouter,
     perplexity: createPerplexity,

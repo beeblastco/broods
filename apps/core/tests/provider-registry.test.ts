@@ -55,31 +55,34 @@ describe("model provider registry", () => {
     },
   );
 
-  it("sends Ollama to Ollama Cloud, never core's own loopback, by default", async () => {
-    const urls: string[] = [];
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = Object.assign(
-      async (input: string | URL | Request): Promise<Response> => {
-        urls.push(input instanceof Request ? input.url : String(input));
+  it.each([{}, { baseURL: "" }])(
+    "sends Ollama to Ollama Cloud, never core's own loopback, by default (%o)",
+    async (endpoint) => {
+      const urls: string[] = [];
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = Object.assign(
+        async (input: string | URL | Request): Promise<Response> => {
+          urls.push(input instanceof Request ? input.url : String(input));
 
-        return Response.json({ error: "stop" }, { status: 400 });
-      },
-      { preconnect: realFetch.preconnect },
-    );
-    try {
-      const { model } = resolveConfiguredModel({
-        model: { provider: "ollama", modelId: "gpt-oss:120b" },
-        provider: { ollama: { apiKey: "sk-test" } },
-      });
-      await generateText({ model: model, prompt: "hi", maxRetries: 0 }).catch(
-        () => undefined,
+          return Response.json({ error: "stop" }, { status: 400 });
+        },
+        { preconnect: realFetch.preconnect },
       );
+      try {
+        const { model } = resolveConfiguredModel({
+          model: { provider: "ollama", modelId: "gpt-oss:120b" },
+          provider: { ollama: { apiKey: "sk-test", ...endpoint } },
+        });
+        await generateText({ model: model, prompt: "hi", maxRetries: 0 }).catch(
+          () => undefined,
+        );
 
-      expect(new URL(urls[0] ?? "").hostname).toBe("ollama.com");
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-  });
+        expect(new URL(urls[0] ?? "").hostname).toBe("ollama.com");
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    },
+  );
 
   it("guards an endpoint under a name broods does not know", async () => {
     const { model } = resolveConfiguredModel({
