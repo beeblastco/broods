@@ -787,7 +787,6 @@ paths:
                       processedEventsDeleted: 14
                       asyncAgentResultDeleted: 2
                       asyncToolResultDeleted: 3
-                      asyncToolGroupDeleted: 1
                       sandboxReservationDeleted: 2
                       filesystemObjectsDeleted: 8
                       reservedSandboxesReleased: 0
@@ -3617,13 +3616,12 @@ components:
       description: >-
         The 202 for a body carrying `answers`. `resultId` is the last prompt
         settled. `accepted` means the conversation resumed (`invoked`), or had
-        nothing to resume; `waiting_for_async_tools` means other async tools of
-        the same turn are still pending, and the turn resumes once they settle.
+        nothing to resume.
       required: [status, resultId]
       properties:
         status:
           type: string
-          enum: [accepted, waiting_for_async_tools]
+          enum: [accepted]
         resultId:
           type: string
         eventId:
@@ -3632,9 +3630,6 @@ components:
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
-        pendingCount:
-          type: integer
-          description: Present with `waiting_for_async_tools`. Async tools of the turn still pending.
 
     IngressStatus:
       type: object
@@ -4079,8 +4074,6 @@ components:
             asyncAgentResultDeleted:
               type: integer
             asyncToolResultDeleted:
-              type: integer
-            asyncToolGroupDeleted:
               type: integer
             sandboxReservationDeleted:
               type: integer

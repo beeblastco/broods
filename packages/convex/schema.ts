@@ -1082,14 +1082,6 @@ export const runtimeAsyncToolResultsFields = {
   updatedAt: v.string(),
   expiresAt: v.number(),
 };
-/** Transactional fan-in group for detached tool siblings. */
-export const runtimeAsyncToolGroupsFields = {
-  accountId: v.id("accounts"),
-  parentEventId: v.string(),
-  resultIds: v.array(v.string()),
-  sealed: v.boolean(),
-  expiresAt: v.number(),
-};
 /** Authoritative persistent-sandbox reservation mapping. */
 export const sandboxReservationsFields = {
   accountId: v.id("accounts"),
@@ -1510,17 +1502,12 @@ export default defineSchema({
     .index("by_expiresAt", ["expiresAt"]),
   runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
     .index("by_resultId", ["resultId"])
-    .index("by_parentEventId", ["parentEventId"])
     .index("by_accountId", ["accountId"])
     .index("by_conversationKey_and_toolName_and_status", [
       "conversationKey",
       "toolName",
       "status",
     ])
-    .index("by_expiresAt", ["expiresAt"]),
-  runtimeAsyncToolGroups: defineTable(runtimeAsyncToolGroupsFields)
-    .index("by_parentEventId", ["parentEventId"])
-    .index("by_accountId", ["accountId"])
     .index("by_expiresAt", ["expiresAt"]),
   sandboxReservations: defineTable(sandboxReservationsFields)
     .index("by_provider_and_reservationKey", ["provider", "reservationKey"])
