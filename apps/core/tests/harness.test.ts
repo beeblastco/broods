@@ -592,8 +592,8 @@ mock.module("@ai-sdk/gateway", () => ({
   createGateway: createGatewayMock,
 }));
 
-mock.module("vercel-minimax-ai-provider", () => ({
-  createMinimax: createMinimaxMock,
+mock.module("@ai-sdk/minimax", () => ({
+  createMiniMax: createMinimaxMock,
 }));
 
 mock.module("ai", () => ({
