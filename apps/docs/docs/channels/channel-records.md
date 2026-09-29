@@ -72,6 +72,7 @@ The room id field is named after the provider:
 | Discord     | `channelId`      | `guildId`   |
 | Matrix      | `channelId`      |             |
 | GitHub      | `repo`           |             |
+| Linear      | `team`           |             |
 | Telegram    | `chatId`         |             |
 | Zalo        | `chatId`         |             |
 | WhatsApp    | `waId`           |             |

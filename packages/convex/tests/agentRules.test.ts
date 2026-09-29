@@ -121,6 +121,53 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.trace must be one of: enabled, disabled");
   });
 
+  it("holds Linear to its URL, identity and secret settings", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: { id: "lin", apiUrl: "https://169.254.169.254/graphql" },
+        },
+      }),
+    ).toThrow("must not point to a private or internal address");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { linear: { id: "lin", apiKey: "lin_api_key" } },
+      }),
+    ).toThrow("config.channels.linear.userName is required");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: {
+            id: "lin",
+            apiKey: "lin_api_key",
+            userName: " ",
+            webhookSecret: "lin-secret",
+          },
+        },
+      }),
+    ).toThrow("config.channels.linear.userName is required");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: { id: "lin", apiKey: "lin_api_key", userName: "acme-agent" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
+    );
+    expect(
+      redactConfigSecrets({
+        channels: {
+          linear: { apiKey: "lin-key", webhookSecret: "lin-secret" },
+        },
+      }),
+    ).toEqual({
+      channels: {
+        linear: { apiKey: "********", webhookSecret: "********" },
+      },
+    });
+  });
+
   it("holds Twilio to its URL and identity settings", () => {
     for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"]) {
       expect(() =>

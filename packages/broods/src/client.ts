@@ -90,6 +90,7 @@ export interface ChannelReference {
     | "telegram"
     | "gchat"
     | "github"
+    | "linear"
     | "slack"
     | "discord"
     | "matrix"

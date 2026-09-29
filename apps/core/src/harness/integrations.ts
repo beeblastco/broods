@@ -70,6 +70,7 @@ import {
   methodNotAllowed,
   type CoreRequest,
 } from "../shared/http.ts";
+import { createLinearChannel } from "../shared/linear-channel.ts";
 import {
   collectSecretValues,
   logDebug,
@@ -1945,6 +1946,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const googleChatChannel = createGoogleChatChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
+  const linearChannel = createLinearChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
@@ -1961,6 +1963,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       telegramChannel,
       googleChatChannel,
       githubChannel,
+      linearChannel,
       slackChannel,
       discordChannel,
       pancakeChannel,
@@ -2764,6 +2767,24 @@ function createGitHubChannelFromConfig(
       triggerOnPROpen: channel.triggerOnPROpen,
     },
   );
+}
+
+function createLinearChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.linear;
+  if (!channel?.apiKey || !channel.webhookSecret || !channel.userName) {
+    return null;
+  }
+
+  return createLinearChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiKey: channel.apiKey,
+    apiUrl: channel.apiUrl,
+    userName: channel.userName,
+    webhookSecret: channel.webhookSecret,
+  });
 }
 
 function createSlackChannelFromConfig(
