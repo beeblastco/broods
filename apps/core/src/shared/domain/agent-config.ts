@@ -7,10 +7,13 @@
  */
 
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
+import type { GoogleChatAdapterBaseConfig } from "@chat-adapter/gchat";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
+import type { TeamsAdapterConfig } from "@chat-adapter/teams";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
 import type { TwilioAdapterConfig } from "@chat-adapter/twilio";
+import type { WhatsAppAdapterConfig } from "@chat-adapter/whatsapp";
 import type {
   JSONSchema7,
   LanguageModelCallOptions,
@@ -335,13 +338,16 @@ export interface AgentMcpEntry {
 
 export interface AgentChannelsConfig {
   telegram?: AgentTelegramChannelConfig;
+  gchat?: AgentGoogleChatChannelConfig;
   github?: AgentGitHubChannelConfig;
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
+  teams?: AgentTeamsChannelConfig;
   twilio?: AgentTwilioChannelConfig;
   zalo?: AgentZaloChannelConfig;
   matrix?: AgentMatrixChannelConfig;
+  whatsapp?: AgentWhatsAppChannelConfig;
   [key: string]: unknown;
 }
 
@@ -398,6 +404,25 @@ type ChannelCredentialDrift = AssertAllExact<
       string | undefined
     >,
     Exactly<DiscordAdapterConfig["publicKey"], string | undefined>,
+    Exactly<GoogleChatAdapterBaseConfig["endpointUrl"], string | undefined>,
+    Exactly<
+      GoogleChatAdapterBaseConfig["googleChatProjectNumber"],
+      string | undefined
+    >,
+    Exactly<GoogleChatAdapterBaseConfig["userName"], string | undefined>,
+    Exactly<
+      GoogleChatAdapterBaseConfig["workspaceAddOnServiceAccountEmail"],
+      string | undefined
+    >,
+    Exactly<TeamsAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<TeamsAdapterConfig["appId"], string | undefined>,
+    Exactly<TeamsAdapterConfig["appPassword"], string | undefined>,
+    Exactly<TeamsAdapterConfig["appTenantId"], string | undefined>,
+    Exactly<
+      TeamsAdapterConfig["appType"],
+      "MultiTenant" | "SingleTenant" | undefined
+    >,
+    Exactly<TeamsAdapterConfig["userName"], string | undefined>,
     Exactly<
       SerializedCredential<TwilioAdapterConfig["accountSid"]>,
       string | undefined
@@ -415,6 +440,13 @@ type ChannelCredentialDrift = AssertAllExact<
       SerializedCredential<TwilioAdapterConfig["webhookUrl"]>,
       string | undefined
     >,
+    Exactly<WhatsAppAdapterConfig["accessToken"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["apiVersion"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["appSecret"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["phoneNumberId"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["userName"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["verifyToken"], string | undefined>,
   ]
 >;
 
@@ -536,6 +568,48 @@ export interface AgentZaloChannelConfig {
 }
 
 /**
+ * A Google Chat app on the HTTP endpoint connection. It posts as the service
+ * account in `credentials`, and a webhook is accepted when its Google-signed
+ * token names `endpointUrl` or `googleChatProjectNumber` as the audience.
+ */
+export interface AgentGoogleChatChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  /** The service-account key JSON, as downloaded from Google Cloud. */
+  credentials?: string;
+  /** Audience when the app authenticates with "HTTP endpoint URL". */
+  endpointUrl?: string;
+  /** Audience when the app authenticates with "Project number". */
+  googleChatProjectNumber?: string;
+  /** `service-{projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`, for an app built as a Workspace add-on. */
+  workspaceAddOnServiceAccountEmail?: string;
+  userName?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Microsoft Teams bot registered in Azure Bot Service, authenticated with a
+ * client secret. `appTenantId` is required unless `appType` is `MultiTenant`.
+ */
+export interface AgentTeamsChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  apiUrl?: string;
+  appId?: string;
+  appPassword?: string;
+  appTenantId?: string;
+  appType?: "MultiTenant" | "SingleTenant";
+  userName?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
  * A Twilio number or Messaging Service for SMS and MMS. `authToken` checks
  * Twilio's signature, which covers the exact public URL Twilio called, so
  * `webhookUrl` is only set when that URL is not the broods webhook URL.
@@ -555,6 +629,26 @@ export interface AgentTwilioChannelConfig {
   userName?: string;
   /** The URL entered in the Twilio console, when it is not `{PUBLIC_BASE_URL}/v1/webhooks/...`. */
   webhookUrl?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A WhatsApp Business Cloud API number. `appSecret` signs every delivery and
+ * `verifyToken` answers Meta's subscription handshake.
+ */
+export interface AgentWhatsAppChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  accessToken?: string;
+  apiUrl?: string;
+  apiVersion?: string;
+  appSecret?: string;
+  phoneNumberId?: string;
+  userName?: string;
+  verifyToken?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

@@ -1025,13 +1025,16 @@ function normalizeChannelsConfig(
     throw new ClientError("config.channels must be an object");
   const channels = value as Record<string, unknown>;
   normalizeTelegramConfig(channels.telegram);
+  normalizeGoogleChatConfig(channels.gchat, options);
   normalizeGitHubConfig(channels.github);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
   normalizeMatrixConfig(channels.matrix, options);
   normalizePancakeConfig(channels.pancake);
+  normalizeTeamsConfig(channels.teams, options);
   normalizeTwilioConfig(channels.twilio);
   normalizeZaloConfig(channels.zalo);
+  normalizeWhatsAppConfig(channels.whatsapp);
 }
 
 function normalizeTelegramConfig(value: unknown): void {
@@ -1057,6 +1060,57 @@ function normalizeTelegramConfig(value: unknown): void {
     config.reactionEmoji,
     "config.channels.telegram.reactionEmoji",
   );
+}
+
+/**
+ * A Google Chat app is only reachable once one audience is set: without it no
+ * webhook token can be verified. A patch may carry the key alone, so the
+ * merged config checks it.
+ */
+function normalizeGoogleChatConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.gchat must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.gchat");
+  assertOptionalString(config.credentials, "config.channels.gchat.credentials");
+  assertOptionalString(config.endpointUrl, "config.channels.gchat.endpointUrl");
+  if (typeof config.endpointUrl === "string") {
+    assertPublicHttpsUrl(
+      config.endpointUrl,
+      "config.channels.gchat.endpointUrl",
+    );
+  }
+  assertOptionalString(
+    config.googleChatProjectNumber,
+    "config.channels.gchat.googleChatProjectNumber",
+  );
+  if (
+    typeof config.googleChatProjectNumber === "string" &&
+    !/^\d+$/.test(config.googleChatProjectNumber)
+  ) {
+    throw new ClientError(
+      "config.channels.gchat.googleChatProjectNumber must be the numeric project number",
+    );
+  }
+  assertOptionalString(
+    config.workspaceAddOnServiceAccountEmail,
+    "config.channels.gchat.workspaceAddOnServiceAccountEmail",
+  );
+  assertOptionalString(config.userName, "config.channels.gchat.userName");
+  if (
+    typeof config.credentials === "string" &&
+    config.endpointUrl === undefined &&
+    config.googleChatProjectNumber === undefined &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      "config.channels.gchat needs endpointUrl or googleChatProjectNumber to verify webhooks",
+    );
+  }
 }
 
 function normalizeGitHubConfig(value: unknown): void {
@@ -1176,6 +1230,43 @@ function normalizePancakeConfig(value: unknown): void {
 }
 
 /**
+ * A single-tenant bot signs in against its own tenant, so it cannot work
+ * without one. A patch may carry the app id alone, so the merged config checks it.
+ */
+function normalizeTeamsConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.teams must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.teams");
+  assertOptionalString(config.apiUrl, "config.channels.teams.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.teams.apiUrl");
+  }
+  assertOptionalString(config.appId, "config.channels.teams.appId");
+  assertOptionalString(config.appPassword, "config.channels.teams.appPassword");
+  assertOptionalString(config.appTenantId, "config.channels.teams.appTenantId");
+  assertOptionalEnum(config.appType, "config.channels.teams.appType", [
+    "MultiTenant",
+    "SingleTenant",
+  ] as const);
+  assertOptionalString(config.userName, "config.channels.teams.userName");
+  if (
+    typeof config.appId === "string" &&
+    config.appType !== "MultiTenant" &&
+    !(typeof config.appTenantId === "string" && config.appTenantId.trim()) &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
+    );
+  }
+}
+
+/**
  * Every URL Twilio is told to call, and the one it signs, is held to public
  * https. A Messaging Service sid is the reply sender, so it must look like one
  * or the adapter would send it as a phone number.
@@ -1221,6 +1312,48 @@ function normalizeTwilioConfig(value: unknown): void {
     );
   }
   assertOptionalString(config.userName, "config.channels.twilio.userName");
+}
+
+/**
+ * The version is spliced into every Graph API path, so it is held to Meta's
+ * `vNN.N` shape rather than taken as free text.
+ */
+function normalizeWhatsAppConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.whatsapp must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.whatsapp");
+  assertOptionalString(
+    config.accessToken,
+    "config.channels.whatsapp.accessToken",
+  );
+  assertOptionalString(config.apiUrl, "config.channels.whatsapp.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.whatsapp.apiUrl");
+  }
+  assertOptionalString(
+    config.apiVersion,
+    "config.channels.whatsapp.apiVersion",
+  );
+  if (
+    typeof config.apiVersion === "string" &&
+    !/^v\d+\.\d+$/.test(config.apiVersion)
+  ) {
+    throw new ClientError(
+      'config.channels.whatsapp.apiVersion must look like "v25.0"',
+    );
+  }
+  assertOptionalString(config.appSecret, "config.channels.whatsapp.appSecret");
+  assertOptionalString(
+    config.phoneNumberId,
+    "config.channels.whatsapp.phoneNumberId",
+  );
+  assertOptionalString(config.userName, "config.channels.whatsapp.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.whatsapp.verifyToken",
+  );
 }
 
 function normalizeZaloConfig(value: unknown): void {

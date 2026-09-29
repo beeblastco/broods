@@ -649,9 +649,12 @@ import {
   defineGitHubConnection,
   defineSlackConnection,
   defineDiscordConnection,
+  defineGoogleChatConnection,
   defineMatrixConnection,
   definePancakeConnection,
+  defineTeamsConnection,
   defineTwilioConnection,
+  defineWhatsAppConnection,
   defineZaloConnection,
   env,
 } from "${RESOURCES_MODULE}";
@@ -711,17 +714,40 @@ export const twilio = defineTwilioConnection({
   allowedUserIds: ["+15551234567"],
 });
 
+export const gchat = defineGoogleChatConnection({
+  credentials: env("GCHAT_SERVICE_ACCOUNT_KEY"),
+  googleChatProjectNumber: "123456789012",
+  allowedChannelIds: ["spaces/AAA"],
+});
+export const teams = defineTeamsConnection({
+  appId: env("TEAMS_APP_ID"),
+  appPassword: env("TEAMS_APP_PASSWORD"),
+  appTenantId: "tenant-1",
+  allowedChannelIds: ["19:general@thread.tacv2"],
+});
+export const whatsapp = defineWhatsAppConnection({
+  accessToken: env("WHATSAPP_ACCESS_TOKEN"),
+  appSecret: env("WHATSAPP_APP_SECRET"),
+  phoneNumberId: "phone-1",
+  verifyToken: env("WHATSAPP_VERIFY_TOKEN"),
+  allowedChannelIds: ["*"],
+  allowedUserIds: ["15551234567"],
+});
+
 export const support = defineAgent({
   name: "support",
   connections: [
     telegram,
+    gchat,
     github,
     slack,
     discord,
     matrix,
     pancake,
+    teams,
     twilio,
     zalo,
+    whatsapp,
   ],
 });
 `,
@@ -768,6 +794,19 @@ export const support = defineAgent({
         allowedUserIds: ["+15551234567"],
       },
       zalo: { allowedUserIds: ["user-1"], allowedChannelIds: ["*"] },
+      gchat: {
+        googleChatProjectNumber: "123456789012",
+        allowedChannelIds: ["spaces/AAA"],
+      },
+      teams: {
+        appTenantId: "tenant-1",
+        allowedChannelIds: ["19:general@thread.tacv2"],
+      },
+      whatsapp: {
+        phoneNumberId: "phone-1",
+        allowedChannelIds: ["*"],
+        allowedUserIds: ["15551234567"],
+      },
     },
   });
   expect(
@@ -778,12 +817,15 @@ export const support = defineAgent({
     })),
   ).toEqual([
     { alias: "discord", type: "discord", agentName: "support" },
+    { alias: "gchat", type: "gchat", agentName: "support" },
     { alias: "github", type: "github", agentName: "support" },
     { alias: "matrix", type: "matrix", agentName: "support" },
     { alias: "pancake", type: "pancake", agentName: "support" },
     { alias: "slack", type: "slack", agentName: "support" },
+    { alias: "teams", type: "teams", agentName: "support" },
     { alias: "telegram", type: "telegram", agentName: "support" },
     { alias: "twilio", type: "twilio", agentName: "support" },
+    { alias: "whatsapp", type: "whatsapp", agentName: "support" },
     { alias: "zalo", type: "zalo", agentName: "support" },
   ]);
   expect(collectEnvRefNames(manifest)).toContain("GITHUB_PRIVATE_KEY");

@@ -76,6 +76,20 @@ const ZALO_AGENT = {
   },
 };
 
+const WHATSAPP_AGENT = {
+  ...TEST_AGENT,
+  config: {
+    channels: {
+      whatsapp: {
+        accessToken: "wa-token",
+        appSecret: "wa-app-secret",
+        phoneNumberId: "phone-1",
+        verifyToken: "wa-verify-token",
+      },
+    },
+  },
+};
+
 const ORIGINAL_FETCH = globalThis.fetch;
 
 describe("account webhook ingress", () => {
@@ -510,6 +524,204 @@ describe("account webhook ingress", () => {
     });
   });
 
+  it("answers Meta's GET handshake through the WhatsApp credential holder", async () => {
+    const whatsAppAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          whatsapp: {
+            accessToken: "wa-token",
+            appSecret: "wa-app-secret",
+            phoneNumberId: "phone-1",
+            verifyToken: "wa-verify-token",
+          },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => whatsAppAgent,
+      agentLister: async () => [whatsAppAgent],
+    });
+    const handshake = (token: string): ReturnType<typeof coreRequest> =>
+      coreRequest(
+        "GET",
+        `/v1/webhooks/acct_test/whatsapp?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=1158201444`,
+      );
+
+    const accepted = await routeIncomingEvent(
+      handshake("wa-verify-token"),
+      createHandlers(),
+    );
+    const refused = await routeIncomingEvent(
+      handshake("wrong"),
+      createHandlers(),
+    );
+
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.body).toBe("1158201444");
+    expect(refused.statusCode).toBe(401);
+  });
+
+  it("admits every message of one batched WhatsApp delivery as its own run", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => WHATSAPP_AGENT,
+      agentLister: async () => [WHATSAPP_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents.map((event) => [event.eventId, event.conversationKey]),
+    ).toEqual([
+      [
+        "acct:acct_test:agent:agent_test:whatsapp:wamid.1",
+        "acct:acct_test:agent:agent_test:whatsapp:phone-1:15551111111",
+      ],
+      [
+        "acct:acct_test:agent:agent_test:whatsapp:wamid.2",
+        "acct:acct_test:agent:agent_test:whatsapp:phone-1:15552222222",
+      ],
+    ]);
+  });
+
+  it("hands each number of a shared Meta app to the agent that owns it", async () => {
+    // One Meta app, one app secret, two numbers: both agents verify the POST,
+    // and each must run only the messages sent to its own number.
+    const firstAgent = { ...WHATSAPP_AGENT, agentId: "agent_aaa" };
+    const secondAgent = {
+      ...WHATSAPP_AGENT,
+      agentId: "agent_bbb",
+      config: {
+        channels: {
+          whatsapp: {
+            ...WHATSAPP_AGENT.config.channels.whatsapp,
+            phoneNumberId: "phone-2",
+          },
+        },
+      },
+    };
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent([
+        { phoneNumberId: "phone-1", from: "15551111111", id: "wamid.1" },
+        { phoneNumberId: "phone-2", from: "15552222222", id: "wamid.2" },
+        // No agent owns this number: ignored, never a 401 Meta would count.
+        { phoneNumberId: "phone-3", from: "15553333333", id: "wamid.3" },
+      ]),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents
+        .map((event) => [event.agentId, event.eventId])
+        .sort(([left], [right]) => left!.localeCompare(right!)),
+    ).toEqual([
+      ["agent_aaa", "acct:acct_test:agent:agent_aaa:whatsapp:wamid.1"],
+      ["agent_bbb", "acct:acct_test:agent:agent_bbb:whatsapp:wamid.2"],
+    ]);
+  });
+
+  it("still gives a delivery to one agent when two share a channel app", async () => {
+    // Zalo, like Slack, carries no per-entry owner, so both answering would
+    // mean two replies to one message. The lowest agentId takes it.
+    const firstAgent = { ...ZALO_AGENT, agentId: "agent_aaa" };
+    const secondAgent = { ...ZALO_AGENT, agentId: "agent_bbb" };
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createZaloEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.agentId)).toEqual(["agent_aaa"]);
+  });
+
+  it("still admits the rest of a WhatsApp batch when one admission fails", async () => {
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> =>
+        Response.json({ messages: [{ id: "wamid.reply" }] }),
+      { preconnect: ORIGINAL_FETCH.preconnect },
+    );
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => WHATSAPP_AGENT,
+      agentLister: async () => [WHATSAPP_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          if (event.eventId.endsWith("wamid.1")) {
+            throw new Error("admission failed");
+          }
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.eventId)).toEqual([
+      "acct:acct_test:agent:agent_test:whatsapp:wamid.2",
+    ]);
+  });
+
+  it("answers a GET no channel claims as live, query string or not", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => PANCAKE_AGENT,
+      agentLister: async () => [PANCAKE_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      coreRequest(
+        "GET",
+        "/v1/webhooks/acct_test/pancake?secret=pancake-secret",
+      ),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(responseJson(response)).toEqual({ status: "ok", method: "POST" });
+  });
+
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
@@ -762,6 +974,53 @@ function createPancakeEvent(): ReturnType<typeof coreRequest> {
     },
     "/v1/webhooks/acct_test/pancake",
     "secret=pancake-secret",
+  );
+}
+
+// One signed Meta delivery, one entry per message. By default two customers
+// writing to `phone-1`.
+function createWhatsAppBatchEvent(
+  messages: { phoneNumberId: string; from: string; id: string }[] = [
+    { phoneNumberId: "phone-1", from: "15551111111", id: "wamid.1" },
+    { phoneNumberId: "phone-1", from: "15552222222", id: "wamid.2" },
+  ],
+): ReturnType<typeof coreRequest> {
+  const body = JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: messages.map((message) => ({
+      id: "waba-1",
+      changes: [
+        {
+          field: "messages",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { phone_number_id: message.phoneNumberId },
+            contacts: [
+              { profile: { name: message.from }, wa_id: message.from },
+            ],
+            messages: [
+              {
+                from: message.from,
+                id: message.id,
+                timestamp: "1713916800",
+                type: "text",
+                text: { body: `hello from ${message.from}` },
+              },
+            ],
+          },
+        },
+      ],
+    })),
+  });
+  const signature = createHmac("sha256", "wa-app-secret")
+    .update(body)
+    .digest("hex");
+
+  return coreRequest(
+    "POST",
+    "/v1/webhooks/acct_test/whatsapp",
+    { "x-hub-signature-256": `sha256=${signature}` },
+    body,
   );
 }
 

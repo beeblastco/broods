@@ -15,9 +15,11 @@ This page covers how core turns a provider webhook into an agent run and sends t
 | `src/harness/channel-media.ts`    | Inbound attachment download, storage and model hand-off                                             |
 | `src/shared/media-ticket.ts`      | Sealed `/v1/media/{ticket}` links                                                                   |
 
-Slack, Telegram, Discord, GitHub and Twilio build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`, `/twilio`), used as transport only: verify, parse, post. Core never creates a `Chat` instance. Twilio signs the public URL it called, so its adapter rebuilds that URL from `PUBLIC_BASE_URL` and the request path, or takes `webhookUrl` when the tenant set one. Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
+Slack, Telegram, Discord, GitHub, WhatsApp, Teams, Google Chat and Twilio build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`, `/whatsapp`, `/teams`, `/gchat`, `/twilio`), used as transport only: verify, parse, post. Core never creates a `Chat` instance. Teams checks the inbound token with the Teams SDK JWT validator (`@microsoft/teams.apps`), accepting only Bot Framework connector tokens whose `serviceurl` claim matches the activity, and Google Chat verifies through the adapter's own `handleWebhook`, which with no `Chat` behind it does nothing after the check. Twilio signs the public URL it called, so its adapter rebuilds that URL from `PUBLIC_BASE_URL` and the request path, or takes `webhookUrl` when the tenant set one. Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
 
 Webhooks arrive at `/v1/webhooks/{accountId}/{channel}` for the production stage and `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage, so two stages sharing one bot never receive each other's traffic.
+
+A GET on a webhook URL with no query string answers `{"status":"ok"}` so a provider console sees it live. A GET with a query string is a subscription handshake. It goes through the same credential scan as a delivery, and the adapter answers it from `parse` with a `response`: WhatsApp checks `hub.verify_token` in `authenticate` and echoes `hub.challenge`. A GET with a query string that no channel claims, such as Pancake's `?secret=` URL, still answers `{"status":"ok"}`.
 
 ## Runtime flow
 
@@ -77,7 +79,7 @@ sequenceDiagram
 
 A `queued` or `duplicate` outcome starts no worker for this message, only one for a group that admission recovered from an expired owner. The current owner drains the queued envelope on its own worker slot when its turn settles.
 
-If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie.
+If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie. An adapter that sets `routesEachEntry` (WhatsApp) instead hands the delivery to every agent that verifies it, each keeping only the entries it owns, under the one ack budget.
 
 A record lookup that finds nothing falls back to the credential holder. A lookup that fails refuses the turn and posts "I can't reach my channel configuration right now", because running without the record's policies and `denyTools` would be an escalation. The channel path already needs the control plane to admit ingress, so this costs no availability that is not already lost. A `context` message whose lookup fails is dropped with a warning.
 
@@ -120,6 +122,9 @@ classDiagram
   ParsedChannelMessage : +ack? ChannelResponse
   class ParsedChannelContext["ParsedChannelContext, kind context"]
   ParsedChannelContext : +message InboundMessage
+  class ParsedChannelBatch["ParsedChannelBatch, kind batch"]
+  ParsedChannelBatch : +results ParsedChannelMessage or ParsedChannelContext[]
+  ParsedChannelBatch : +ack? ChannelResponse
   class ParsedChannelCleanup["ParsedChannelCleanup, kind cleanup"]
   ParsedChannelCleanup : +channelName string
   ParsedChannelCleanup : +conversationKey string
@@ -150,6 +155,7 @@ classDiagram
   ChannelAdapter ..> ChannelActions : actions
   ChannelParseResult <|-- ParsedChannelMessage
   ChannelParseResult <|-- ParsedChannelContext
+  ChannelParseResult <|-- ParsedChannelBatch
   ChannelParseResult <|-- ParsedChannelCleanup
   ChannelParseResult <|-- Ignore
   ChannelParseResult <|-- Respond
@@ -174,20 +180,21 @@ classDiagram
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `message`  | Continue into the agent loop after sending `ack` or a default `200`                                                                                                                                      |
 | `context`  | Store the message as conversation context without running the agent. Slack, Discord, Telegram and Matrix return it for messages that do not address the bot, so a later mention sees what the room said. |
+| `batch`    | Several `message` or `context` results from one delivery, each resolved and admitted on its own, in order, inside one ack budget. WhatsApp returns it when Meta batches messages into one POST.          |
 | `cleanup`  | Delete the conversation's partition folder (`cleanupChannelPartitions`). GitHub returns it when an issue or PR closes.                                                                                   |
 | `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                             |
 | `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                   |
 
 `ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `sendReplyButtons`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
 
-| Tool             | Registers when                                                                                                                                            |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                         |
-| `send-update`    | always on a channel turn, since every provider can post text                                                                                              |
-| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                        |
-| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                               |
-| `send-sticker`   | `sendSticker` exists                                                                                                                                      |
-| `send-reactions` | `supportsReactions` is `true`. Telegram and Matrix always, Slack, Discord and GitHub when the inbound message id is known, never Pancake, Zalo or Twilio. |
+| Tool             | Registers when                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                                                       |
+| `send-update`    | always on a channel turn, since every provider can post text                                                                                                                            |
+| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                                                      |
+| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                                                             |
+| `send-sticker`   | `sendSticker` exists                                                                                                                                                                    |
+| `send-reactions` | `supportsReactions` is `true`. Telegram, Matrix and WhatsApp always, Slack, Discord and GitHub when the inbound message id is known, never Pancake, Zalo, Teams, Google Chat or Twilio. |
 
 The normalized `InboundMessage`:
 
@@ -205,7 +212,7 @@ The normalized `InboundMessage`:
 
 Adapters do not implement these; the shared pipeline does:
 
-- Commands. Slack, Discord, Matrix, Telegram, Zalo and Twilio route `/command` input through `commands.ts` instead of the agent. GitHub and Pancake treat slash text as agent input.
+- Commands. Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat and Twilio route `/command` input through `commands.ts` instead of the agent. GitHub and Pancake treat slash text as agent input.
 - Typing and reaction are fire-and-forget. A failed typing or reaction call never fails the turn.
 - Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` (`handler.ts`).
 - A failed turn replies with `formatChannelErrorText()`, a `⚠️` line with the error simplified, so a quota error reads "Usage limit reached..." and a 429 reads "The model is busy right now...". Policy refusals use the same format.
@@ -216,24 +223,27 @@ Adapters do not implement these; the shared pipeline does:
 
 ## Reply streaming
 
-Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake, Zalo and Twilio have no `stream()` and send one final `sendText` reply.
+Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake, Zalo, WhatsApp, Teams, Google Chat and Twilio have no `stream()` and send one final `sendText` reply.
 
-Slack, Telegram, Discord, GitHub and Twilio delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
+Slack, Telegram, Discord, GitHub, WhatsApp, Teams, Google Chat and Twilio delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
 
 ## Outbound files and images
 
 The model only ever names workspace paths or public URLs. The adapter decides how the provider takes them:
 
-| Channel  | Pictures                          | Documents                        | Batch                   |
-| -------- | --------------------------------- | -------------------------------- | ----------------------- |
-| Telegram | fetches the URL                   | fetches the URL                  | album of 2 to 10        |
-| Slack    | Block Kit image blocks            | uploads bytes (`files.uploadV2`) | one message, one upload |
-| Discord  | uploads bytes                     | uploads bytes                    | one multipart message   |
-| Matrix   | uploads bytes                     | uploads bytes                    | one per message         |
-| Pancake  | uploads bytes (`upload_contents`) | uploads bytes                    | one per message         |
-| Zalo     | fetches the URL                   | none                             | one per message         |
-| Twilio   | fetches the URL (MMS)             | none                             | one per message         |
-| GitHub   | none                              | none                             | text links only         |
+| Channel     | Pictures                          | Documents                        | Batch                   |
+| ----------- | --------------------------------- | -------------------------------- | ----------------------- |
+| Telegram    | fetches the URL                   | fetches the URL                  | album of 2 to 10        |
+| Slack       | Block Kit image blocks            | uploads bytes (`files.uploadV2`) | one message, one upload |
+| Discord     | uploads bytes                     | uploads bytes                    | one multipart message   |
+| Matrix      | uploads bytes                     | uploads bytes                    | one per message         |
+| Pancake     | uploads bytes (`upload_contents`) | uploads bytes                    | one per message         |
+| Zalo        | fetches the URL                   | none                             | one per message         |
+| WhatsApp    | uploads bytes, or links a URL     | uploads bytes, or links a URL    | one per message         |
+| Teams       | none                              | none                             | text links only         |
+| Google Chat | none                              | none                             | text links only         |
+| Twilio      | fetches the URL (MMS)             | none                             | one per message         |
+| GitHub      | none                              | none                             | text links only         |
 
 A workspace attachment carries both a sealed link and a reader, so fetch-style providers take the link and upload-style providers read the bytes only at upload time. A caption rides the first message only.
 
@@ -243,7 +253,7 @@ A workspace file leaves as a durable `/v1/media/{ticket}` link served by core, n
 
 ## Inbound attachments
 
-- Parsing never downloads. `ingestChannelAttachments` reads media after parse, just before admission, so a queued turn still carries it. The ACK waits at most 2 s for that, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack.
+- Parsing never downloads. `ingestChannelAttachments` reads media after parse, just before admission, so a queued turn still carries it. The ACK waits at most 2 s for that, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack. Teams sends the bot token only to the activity's own connector; any other attachment URL goes through core's guarded fetch.
 - With a workspace attached, each attachment is read once and written twice, to the agent's default workspace under `media/` for its own tools, and to the attachment store, a prefix of the managed bucket that no sandbox mounts. The model gets a `/v1/media/{ticket}` link to the attachment-store copy, so it survives the agent tidying its workspace. Nothing is inlined as base64, because the conversation is stored as JSON and a link still resolves when the turn replays later. Deleting the account deletes the store.
 - With no workspace, nothing is stored. The bytes reach the model on the turn they arrive, and the message keeps a reference to the channel's own copy so a later turn re-reads it with the channel's credentials. The channel then decides how long media works. A Telegram file id lasts, and a Discord link expires within a day.
 - Core checks limits twice, on the declared size and on the bytes read. The limits are 6 MB for a picture, 25 MB for anything else, at most ten attachments per message. The media type is sniffed from the bytes, not taken from the provider, except when the sniff only identifies a container, since a `.docx` is a zip. An unreadable attachment becomes a line of text saying so.

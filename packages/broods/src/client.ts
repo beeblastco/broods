@@ -88,13 +88,16 @@ export interface ChannelReference {
   readonly kind: "channel";
   readonly type:
     | "telegram"
+    | "gchat"
     | "github"
     | "slack"
     | "discord"
     | "matrix"
     | "pancake"
+    | "teams"
     | "twilio"
-    | "zalo";
+    | "zalo"
+    | "whatsapp";
   readonly agentName: string;
   readonly agentId: string;
   readonly accountId: string;

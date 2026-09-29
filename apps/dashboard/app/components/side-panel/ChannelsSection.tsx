@@ -68,6 +68,42 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
+    kind: "gchat",
+    label: "Google Chat",
+    fields: [
+      {
+        key: "credentials",
+        label: "Service account key (JSON)",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "endpointUrl",
+        label: "Endpoint URL audience",
+        type: "text",
+        placeholder: "The webhook URL, when the audience is the endpoint URL",
+      },
+      {
+        key: "googleChatProjectNumber",
+        label: "Project number audience",
+        type: "text",
+        placeholder: "123456789012",
+      },
+      {
+        key: "workspaceAddOnServiceAccountEmail",
+        label: "Add-on service account",
+        type: "text",
+        placeholder: "service-123@gcp-sa-gsuiteaddons.iam.gserviceaccount.com",
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed spaces",
+        type: "stringList",
+        placeholder: "spaces/AAAA, *",
+      },
+    ],
+  },
+  {
     kind: "github",
     label: "GitHub",
     fields: [
@@ -231,6 +267,43 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
+    kind: "teams",
+    label: "Microsoft Teams",
+    fields: [
+      { key: "appId", label: "App ID", type: "text", required: true },
+      {
+        key: "appPassword",
+        label: "Client secret",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "appTenantId",
+        label: "Tenant ID",
+        type: "text",
+        placeholder: "Required unless the app type is MultiTenant",
+      },
+      {
+        key: "appType",
+        label: "App type",
+        type: "text",
+        placeholder: "SingleTenant or MultiTenant",
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed channel IDs",
+        type: "stringList",
+        placeholder: "19:abc@thread.tacv2, *",
+      },
+      {
+        key: "apiUrl",
+        label: "Service URL",
+        type: "text",
+        placeholder: "https://smba.trafficmanager.net/teams",
+      },
+    ],
+  },
+  {
     kind: "twilio",
     label: "Twilio SMS",
     fields: [
@@ -288,6 +361,48 @@ const CHANNELS: ChannelKind[] = [
         label: "Allowed user IDs",
         type: "stringList",
         placeholder: "123456789, …",
+      },
+    ],
+  },
+  {
+    kind: "whatsapp",
+    label: "WhatsApp",
+    fields: [
+      {
+        key: "phoneNumberId",
+        label: "Phone number ID",
+        type: "text",
+        required: true,
+      },
+      {
+        key: "accessToken",
+        label: "Access token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "appSecret",
+        label: "App secret",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "verifyToken",
+        label: "Verify token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "allowedUserIds",
+        label: "Allowed WhatsApp IDs",
+        type: "stringList",
+        placeholder: "15551234567, …",
+      },
+      {
+        key: "apiUrl",
+        label: "API URL",
+        type: "text",
+        placeholder: "https://graph.facebook.com",
       },
     ],
   },
