@@ -109,8 +109,6 @@ export const defineTelegramConnection = passthrough;
 export const defineTwilioChannel = passthrough;
 export const defineTwilioConnection = passthrough;
 export const defineWorkspace = passthrough;
-export const defineXChannel = passthrough;
-export const defineXConnection = passthrough;
 export const defineZaloChannel = passthrough;
 export const defineZaloConnection = passthrough;
 export const env = (name) => ({ __beeblastEnv: true, name });

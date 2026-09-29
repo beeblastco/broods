@@ -109,7 +109,6 @@ import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
-import { createXChannel } from "../shared/x-channel.ts";
 import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
   applyMessageSendingHook,
@@ -558,17 +557,15 @@ async function handleHttpRequest(
     }
   }
 
-  // A provider console may GET a webhook URL to check it is live. A GET with a
-  // query string is a subscription handshake (Meta's `hub.challenge`) and goes
-  // to the channel like a delivery. Any other GET is a path core does not
-  // serve; `/healthz` is answered in server.ts.
-  if (method === "GET" && !(request.search && matchWebhookPath(request.path))) {
+  // A provider console may GET a webhook URL to check it is live. Any other GET
+  // is a path core does not serve; `/healthz` is answered in server.ts.
+  if (method === "GET") {
     return matchWebhookPath(request.path)
       ? jsonResponse(200, { status: "ok", method: "POST" })
       : notFoundResponse();
   }
 
-  if (method !== "GET" && method !== "POST") {
+  if (method !== "POST") {
     return methodNotAllowed(["GET", "POST"]);
   }
 
@@ -1812,7 +1809,6 @@ function supportsInlineCommands(channelName: string): boolean {
     channelName === "slack" ||
     channelName === "telegram" ||
     channelName === "twilio" ||
-    channelName === "x" ||
     channelName === "zalo"
   );
 }
@@ -1839,7 +1835,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
   const twilioChannel = createTwilioChannelFromConfig(config);
-  const xChannel = createXChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
   const matrixChannel = createMatrixChannelFromConfig(config);
 
@@ -1851,7 +1846,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       discordChannel,
       pancakeChannel,
       twilioChannel,
-      xChannel,
       zaloChannel,
       matrixChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
@@ -2718,23 +2712,6 @@ function createTwilioChannelFromConfig(
     statusCallbackUrl: channel.statusCallbackUrl,
     userName: channel.userName,
     webhookUrl: channel.webhookUrl,
-  });
-}
-
-function createXChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
-  const channel = config.channels?.x;
-  if (!channel?.consumerSecret || !channel.userAccessToken || !channel.userId) {
-    return null;
-  }
-
-  return createXChannel({
-    allowedChannelIds: reachSet(channel.allowedChannelIds),
-    allowedUserIds: reachSet(channel.allowedUserIds),
-    apiBaseUrl: channel.apiBaseUrl,
-    consumerSecret: channel.consumerSecret,
-    userAccessToken: channel.userAccessToken,
-    userId: channel.userId,
-    userName: channel.userName,
   });
 }
 

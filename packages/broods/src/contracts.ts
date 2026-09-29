@@ -18,7 +18,6 @@ import type {
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   AgentTwilioChannelConfig,
-  AgentXChannelConfig,
   AgentZaloChannelConfig,
   AgentProviderSettings,
   AgentWorkspaceRef,
@@ -43,7 +42,6 @@ export type { DiscordSource } from "../../../apps/core/src/shared/discord-channe
 export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
 export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
 export type { TwilioSource } from "../../../apps/core/src/shared/twilio-channel.ts";
-export type { XSource } from "../../../apps/core/src/shared/x-channel.ts";
 export type { ZaloSource } from "../../../apps/core/src/shared/zalo-channel.ts";
 
 export type Id<TableName extends string = string> = string & {
@@ -68,7 +66,6 @@ export type {
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   AgentTwilioChannelConfig,
-  AgentXChannelConfig,
   AgentZaloChannelConfig,
   AgentProviderSettings,
   AgentWorkspaceRef,

@@ -282,7 +282,6 @@ const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "gh:", label: "GitHub" },
   { prefix: "pancake:", label: "Pancake" },
   { prefix: "twilio:", label: "Twilio" },
-  { prefix: "x:", label: "X" },
   { prefix: "zalo:", label: "Zalo" },
   { prefix: "cron:", label: "Cron" },
 ];

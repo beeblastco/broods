@@ -12,7 +12,6 @@ import { createMatrixChannel } from "../src/shared/matrix-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 import { createSlackChannel } from "../src/shared/slack-channel.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
-import { createXChannel } from "../src/shared/x-channel.ts";
 import { createZaloChannel } from "../src/shared/zalo-channel.ts";
 
 const INVALID_PAYLOAD: { kind: "ignore"; reason: "invalid_payload" } = {
@@ -36,13 +35,6 @@ const adapters: ChannelAdapter[] = [
   pancake,
   createSlackChannel("token", "secret", null, null),
   createTelegramChannel("token", "secret", null, null, "👀"),
-  createXChannel({
-    allowedChannelIds: null,
-    allowedUserIds: null,
-    consumerSecret: "secret",
-    userAccessToken: "token",
-    userId: "1",
-  }),
   zalo,
 ];
 

@@ -101,7 +101,7 @@ If Convex cannot reach core directly, fix the network rather than the flags. Run
 
 ## Forwarders
 
-Discord delivers regular messages only over a Gateway WebSocket, and Matrix only over `/sync` long-polls. Each forwarder holds those connections and POSTs what arrives to the channel webhook through the gateway. Telegram, Slack, Zalo, GitHub, Pancake, Twilio and X post to a registered webhook and need no forwarder.
+Discord delivers regular messages only over a Gateway WebSocket, and Matrix only over `/sync` long-polls. Each forwarder holds those connections and POSTs what arrives to the channel webhook through the gateway. Telegram, Slack, Zalo, GitHub, Pancake and Twilio post to a registered webhook and need no forwarder.
 
 Both share one design, and the Matrix forwarder imports the Discord forwarder's `config.ts`, `connections.ts`, `backoff.ts`, `forward.ts`, `log.ts` and `supervisor.ts`:
 

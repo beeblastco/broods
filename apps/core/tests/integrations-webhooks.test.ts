@@ -593,39 +593,6 @@ describe("account webhook ingress", () => {
       else process.env.PUBLIC_BASE_URL = originalBaseUrl;
     }
   });
-
-  it("answers X's CRC GET through the X credential holder", async () => {
-    const xAgent = {
-      ...TEST_AGENT,
-      config: {
-        channels: {
-          x: {
-            consumerSecret: "x-consumer-secret",
-            userAccessToken: "x-user-token",
-            userId: "2244994945",
-          },
-        },
-      },
-    };
-    const routeIncomingEvent = createIncomingEventRouter({
-      accountLoader: async () => TEST_ACCOUNT,
-      agentLoader: async () => xAgent,
-      agentLister: async () => [xAgent],
-    });
-
-    const response = await routeIncomingEvent(
-      coreRequest(
-        "GET",
-        "/v1/webhooks/acct_test/x?crc_token=crc-token-0123456789&nonce=1",
-      ),
-      createHandlers(),
-    );
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(String(response.body))).toEqual({
-      response_token: `sha256=${createHmac("sha256", "x-consumer-secret").update("crc-token-0123456789").digest("base64")}`,
-    });
-  });
 });
 
 function createHandlers(

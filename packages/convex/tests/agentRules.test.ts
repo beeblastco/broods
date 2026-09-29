@@ -121,7 +121,7 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.trace must be one of: enabled, disabled");
   });
 
-  it("holds Twilio and X to their URL and identity settings", () => {
+  it("holds Twilio to its URL and identity settings", () => {
     for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"]) {
       expect(() =>
         normalizeAgentConfig({
@@ -134,27 +134,15 @@ describe("agent rules", () => {
         channels: { twilio: { id: "sms", messagingServiceSid: "+1555" } },
       }),
     ).toThrow("config.channels.twilio.messagingServiceSid must be");
-    expect(() =>
-      normalizeAgentConfig({
-        channels: { x: { id: "x", apiBaseUrl: "http://api.x.com" } },
-      }),
-    ).toThrow("config.channels.x.apiBaseUrl must use https");
-    expect(() =>
-      normalizeAgentConfig({
-        channels: { x: { id: "x", consumerSecret: "secret" } },
-      }),
-    ).toThrow("config.channels.x.userId is required");
     expect(
       redactConfigSecrets({
         channels: {
           twilio: { accountSid: "AC1", authToken: "twilio-token" },
-          x: { consumerSecret: "x-secret", userAccessToken: "x-token" },
         },
       }),
     ).toEqual({
       channels: {
         twilio: { accountSid: "AC1", authToken: "********" },
-        x: { consumerSecret: "********", userAccessToken: "********" },
       },
     });
   });

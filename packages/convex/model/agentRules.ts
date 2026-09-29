@@ -1031,7 +1031,6 @@ function normalizeChannelsConfig(
   normalizeMatrixConfig(channels.matrix, options);
   normalizePancakeConfig(channels.pancake);
   normalizeTwilioConfig(channels.twilio);
-  normalizeXConfig(channels.x, options);
   normalizeZaloConfig(channels.zalo);
 }
 
@@ -1212,45 +1211,6 @@ function normalizeTwilioConfig(value: unknown): void {
     "config.channels.twilio.phoneNumber",
   );
   assertOptionalString(config.userName, "config.channels.twilio.userName");
-}
-
-/**
- * The adapter never looks the bot up, so `userId` is what tells the bot's own
- * DMs from the ones it answers. A patch may carry the secret alone, so the
- * merged config checks it.
- */
-function normalizeXConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.x must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.x");
-  assertOptionalString(config.apiBaseUrl, "config.channels.x.apiBaseUrl");
-  if (typeof config.apiBaseUrl === "string") {
-    assertPublicHttpsUrl(config.apiBaseUrl, "config.channels.x.apiBaseUrl");
-  }
-  assertOptionalString(
-    config.consumerSecret,
-    "config.channels.x.consumerSecret",
-  );
-  assertOptionalString(
-    config.userAccessToken,
-    "config.channels.x.userAccessToken",
-  );
-  assertOptionalString(config.userId, "config.channels.x.userId");
-  assertOptionalString(config.userName, "config.channels.x.userName");
-  if (
-    typeof config.consumerSecret === "string" &&
-    config.userId === undefined &&
-    !options.patch
-  ) {
-    throw new ClientError(
-      "config.channels.x.userId is required: the bot account's numeric X user id",
-    );
-  }
 }
 
 function normalizeZaloConfig(value: unknown): void {

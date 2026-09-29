@@ -652,7 +652,6 @@ import {
   defineMatrixConnection,
   definePancakeConnection,
   defineTwilioConnection,
-  defineXConnection,
   defineZaloConnection,
   env,
 } from "${RESOURCES_MODULE}";
@@ -711,13 +710,6 @@ export const twilio = defineTwilioConnection({
   allowedChannelIds: ["*"],
   allowedUserIds: ["+15551234567"],
 });
-export const x = defineXConnection({
-  consumerSecret: env("X_CONSUMER_SECRET"),
-  userAccessToken: env("X_USER_ACCESS_TOKEN"),
-  userId: "2244994945",
-  allowedChannelIds: ["*"],
-  allowedUserIds: ["783214"],
-});
 
 export const support = defineAgent({
   name: "support",
@@ -729,7 +721,6 @@ export const support = defineAgent({
     matrix,
     pancake,
     twilio,
-    x,
     zalo,
   ],
 });
@@ -776,11 +767,6 @@ export const support = defineAgent({
         allowedChannelIds: ["*"],
         allowedUserIds: ["+15551234567"],
       },
-      x: {
-        userId: "2244994945",
-        allowedChannelIds: ["*"],
-        allowedUserIds: ["783214"],
-      },
       zalo: { allowedUserIds: ["user-1"], allowedChannelIds: ["*"] },
     },
   });
@@ -798,7 +784,6 @@ export const support = defineAgent({
     { alias: "slack", type: "slack", agentName: "support" },
     { alias: "telegram", type: "telegram", agentName: "support" },
     { alias: "twilio", type: "twilio", agentName: "support" },
-    { alias: "x", type: "x", agentName: "support" },
     { alias: "zalo", type: "zalo", agentName: "support" },
   ]);
   expect(collectEnvRefNames(manifest)).toContain("GITHUB_PRIVATE_KEY");

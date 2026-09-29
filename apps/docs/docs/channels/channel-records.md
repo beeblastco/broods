@@ -75,7 +75,6 @@ The room id field is named after the provider:
 | Telegram | `chatId`         |             |
 | Zalo     | `chatId`         |             |
 | Twilio   | `from`           |             |
-| X        | `userId`         |             |
 | Pancake  | `conversationId` |             |
 
 Notes on the fields:

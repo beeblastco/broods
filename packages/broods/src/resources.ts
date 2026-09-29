@@ -12,7 +12,6 @@ import type {
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   AgentTwilioChannelConfig,
-  AgentXChannelConfig,
   ChannelPartition,
   ChannelReplyIn,
   PolicyDocument,
@@ -27,7 +26,6 @@ import type {
   MatrixSource,
   PancakeSource,
   TwilioSource,
-  XSource,
   ZaloSource,
 } from "./contracts.ts";
 
@@ -212,7 +210,6 @@ export type ChannelType =
   | "matrix"
   | "pancake"
   | "twilio"
-  | "x"
   | "zalo";
 
 /**
@@ -344,21 +341,6 @@ export type TwilioConnectionInput = EnvRefString<
 > &
   ConnectionIdentityInput;
 
-export type XConnectionInput = EnvRefString<
-  RequiredChannelKeys<
-    Pick<
-      AgentXChannelConfig,
-      | "apiBaseUrl"
-      | "consumerSecret"
-      | "userAccessToken"
-      | "userId"
-      | "userName"
-    >,
-    "consumerSecret" | "userAccessToken" | "userId"
-  >
-> &
-  ConnectionIdentityInput;
-
 export interface ZaloConnectionInput extends ConnectionIdentityInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
@@ -392,7 +374,6 @@ export type TwilioConnectionDefinition = ConnectionDefinition<
   "twilio",
   TwilioConnectionInput
 >;
-export type XConnectionDefinition = ConnectionDefinition<"x", XConnectionInput>;
 export type ZaloConnectionDefinition = ConnectionDefinition<
   "zalo",
   ZaloConnectionInput
@@ -405,7 +386,6 @@ export type AnyConnectionDefinition =
   | MatrixConnectionDefinition
   | PancakeConnectionDefinition
   | TwilioConnectionDefinition
-  | XConnectionDefinition
   | ZaloConnectionDefinition;
 
 /**
@@ -487,12 +467,6 @@ export type TwilioChannelInput = ChannelRulesInput & {
   from: string | readonly string[];
 };
 
-export type XChannelInput = ChannelRulesInput & {
-  connection: XConnectionDefinition;
-  /** Numeric X user id of the person sending the DM, or several. */
-  userId: string | readonly string[];
-};
-
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
   /** Zalo user or group chat id, or several that share one set of rules. */
@@ -568,7 +542,6 @@ export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
 export type TwilioMessageSource = TwilioSource;
-export type XMessageSource = XSource;
 export type ZaloMessageSource = ZaloSource;
 
 /**
@@ -583,7 +556,6 @@ export type ChannelMessageReceived =
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
   | { channel: "twilio"; text: string; source: TwilioMessageSource }
-  | { channel: "x"; text: string; source: XMessageSource }
   | { channel: "zalo"; text: string; source: ZaloMessageSource };
 
 /**
@@ -961,12 +933,6 @@ export function defineTwilioConnection(
   return defineConnection("twilio", config);
 }
 
-export function defineXConnection(
-  config: XConnectionInput,
-): XConnectionDefinition {
-  return defineConnection("x", config);
-}
-
 export function defineZaloConnection(
   config: ZaloConnectionInput,
 ): ZaloConnectionDefinition {
@@ -1041,14 +1007,6 @@ export function defineTwilioChannel<const Name extends string>(
   const { name, description, from, ...rules } = input;
 
   return defineChannelResource(name, description, from, undefined, rules);
-}
-
-export function defineXChannel<const Name extends string>(
-  input: ResourceInput<Name, XChannelInput>,
-): ChannelResource<Name> {
-  const { name, description, userId, ...rules } = input;
-
-  return defineChannelResource(name, description, userId, undefined, rules);
 }
 
 export function defineZaloChannel<const Name extends string>(

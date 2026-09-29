@@ -11,7 +11,6 @@ import type { GitHubAdapterConfig } from "@chat-adapter/github";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
 import type { TwilioAdapterConfig } from "@chat-adapter/twilio";
-import type { XAdapterConfig } from "@chat-adapter/x";
 import type {
   JSONSchema7,
   LanguageModelCallOptions,
@@ -322,7 +321,6 @@ export interface AgentChannelsConfig {
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
   twilio?: AgentTwilioChannelConfig;
-  x?: AgentXChannelConfig;
   zalo?: AgentZaloChannelConfig;
   matrix?: AgentMatrixChannelConfig;
   [key: string]: unknown;
@@ -398,14 +396,6 @@ type ChannelCredentialDrift = AssertAllExact<
       SerializedCredential<TwilioAdapterConfig["webhookUrl"]>,
       string | undefined
     >,
-    Exactly<XAdapterConfig["apiBaseUrl"], string | undefined>,
-    Exactly<XAdapterConfig["consumerSecret"], string | undefined>,
-    Exactly<
-      SerializedCredential<XAdapterConfig["userAccessToken"]>,
-      string | undefined
-    >,
-    Exactly<XAdapterConfig["userId"], string | undefined>,
-    Exactly<XAdapterConfig["userName"], string | undefined>,
   ]
 >;
 
@@ -546,25 +536,6 @@ export interface AgentTwilioChannelConfig {
   userName?: string;
   /** The URL entered in the Twilio console, when it is not `{PUBLIC_BASE_URL}/v1/webhooks/...`. */
   webhookUrl?: string;
-  trace?: "enabled" | "disabled";
-  partition?: ChannelPartition;
-  [key: string]: unknown;
-}
-
-/**
- * An X account answering DMs through the X Activity API. `consumerSecret`
- * answers the CRC challenge and checks every delivery; replies are sent with
- * `userAccessToken`, an OAuth 2.0 user token for the account `userId` names.
- */
-export interface AgentXChannelConfig {
-  allowedChannelIds?: string[];
-  allowedUserIds?: string[];
-  id?: string;
-  apiBaseUrl?: string;
-  consumerSecret?: string;
-  userAccessToken?: string;
-  userId?: string;
-  userName?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

@@ -273,37 +273,6 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
-    kind: "x",
-    label: "X",
-    fields: [
-      {
-        key: "consumerSecret",
-        label: "API key secret",
-        type: "secret",
-        required: true,
-      },
-      {
-        key: "userAccessToken",
-        label: "User access token",
-        type: "secret",
-        required: true,
-      },
-      {
-        key: "userId",
-        label: "Bot user ID",
-        type: "text",
-        required: true,
-        placeholder: "2244994945",
-      },
-      {
-        key: "allowedUserIds",
-        label: "Allowed user IDs",
-        type: "stringList",
-        placeholder: "783214, *",
-      },
-    ],
-  },
-  {
     kind: "zalo",
     label: "Zalo",
     fields: [

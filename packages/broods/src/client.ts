@@ -94,7 +94,6 @@ export interface ChannelReference {
     | "matrix"
     | "pancake"
     | "twilio"
-    | "x"
     | "zalo";
   readonly agentName: string;
   readonly agentId: string;
