@@ -30,7 +30,7 @@ broods run support "Hi there"    # chat with it in the terminal
 - Agents with any AI SDK model provider, streaming, structured output, and reasoning.
 - Sandboxes where the agent runs `bash`, Python and Node. They run on Broods-hosted Firecracker VMs, AWS Lambda MicroVMs, Daytona, E2B, Vercel, or your own computer.
 - Workspaces with persistent files and memory. They survive between runs and several agents can share one.
-- Channels for Telegram, Slack, Discord, GitHub, Matrix, Pancake and Zalo, with one webhook per account.
+- Channels for Telegram, Slack, Discord, GitHub, Linear, Notion, Matrix, Pancake and Zalo, with one webhook per account.
 - Tools from your model provider or any MCP server, including servers Broods hosts for you.
 - Skills, subagents, cron jobs, code hooks, lifecycle webhooks, and policies.
 - A typed SDK, a raw HTTP and WebSocket API, a CLI, and a dashboard for logs, traces and config.

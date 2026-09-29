@@ -121,6 +121,49 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.trace must be one of: enabled, disabled");
   });
 
+  it("holds Linear and Notion to their URL, identity and mention settings", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: { id: "lin", apiUrl: "https://169.254.169.254/graphql" },
+        },
+      }),
+    ).toThrow("must not point to a private or internal address");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { linear: { id: "lin", apiKey: "lin_api_key" } },
+      }),
+    ).toThrow("config.channels.linear.userName is required");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { notion: { id: "no", apiBaseUrl: "http://api.notion.com" } },
+      }),
+    ).toThrow("config.channels.notion.apiBaseUrl must use https");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { notion: { id: "no", mentionMode: "keyword" } },
+      }),
+    ).toThrow("config.channels.notion.keywords must list at least one word");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { notion: { id: "no", mentionMode: "everything" } },
+      }),
+    ).toThrow("config.channels.notion.mentionMode must be one of");
+    expect(
+      redactConfigSecrets({
+        channels: {
+          linear: { apiKey: "lin-key", webhookSecret: "lin-secret" },
+          notion: { token: "ntn-token", verificationToken: "ntn-verify" },
+        },
+      }),
+    ).toEqual({
+      channels: {
+        linear: { apiKey: "********", webhookSecret: "********" },
+        notion: { token: "********", verificationToken: "********" },
+      },
+    });
+  });
+
   it("validates one reach pair for every provider and rejects the retired keys", () => {
     expect(
       normalizeAgentConfig({

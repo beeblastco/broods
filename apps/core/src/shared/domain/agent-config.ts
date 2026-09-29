@@ -8,6 +8,8 @@
 
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
+import type { LinearAdapterAPIKeyConfig } from "@chat-adapter/linear";
+import type { NotionAdapterConfig } from "@chat-adapter/notion";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
 import type {
@@ -316,6 +318,8 @@ export interface AgentMcpEntry {
 export interface AgentChannelsConfig {
   telegram?: AgentTelegramChannelConfig;
   github?: AgentGitHubChannelConfig;
+  linear?: AgentLinearChannelConfig;
+  notion?: AgentNotionChannelConfig;
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
@@ -369,6 +373,22 @@ type ChannelCredentialDrift = AssertAllExact<
       Extract<GitHubAdapterConfig, { appId: string }>["privateKey"],
       string
     >,
+    Exactly<LinearAdapterAPIKeyConfig["apiKey"], string>,
+    Exactly<LinearAdapterAPIKeyConfig["apiUrl"], string | undefined>,
+    Exactly<LinearAdapterAPIKeyConfig["userName"], string | undefined>,
+    Exactly<LinearAdapterAPIKeyConfig["webhookSecret"], string | undefined>,
+    Exactly<NotionAdapterConfig["apiBaseUrl"], string | undefined>,
+    Exactly<NotionAdapterConfig["keywords"], string[] | undefined>,
+    Exactly<
+      NotionAdapterConfig["mentionMode"],
+      AgentNotionChannelConfig["mentionMode"]
+    >,
+    Exactly<
+      SerializedCredential<NotionAdapterConfig["token"]>,
+      string | undefined
+    >,
+    Exactly<NotionAdapterConfig["userName"], string | undefined>,
+    Exactly<NotionAdapterConfig["verificationToken"], string | undefined>,
     Exactly<SlackAdapterConfig["apiUrl"], string | undefined>,
     Exactly<SlackAdapterConfig["signingSecret"], string | undefined>,
     Exactly<DiscordAdapterConfig["apiUrl"], string | undefined>,
@@ -411,6 +431,49 @@ export interface AgentGitHubChannelConfig {
   triggerOnIssueOpen?: boolean;
   /** When false, the bot does not auto-trigger on new PRs (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to a PR. */
   triggerOnPROpen?: boolean;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Linear member the agent comments as, through that member's personal API
+ * key. The agent answers comments that mention `@userName` on issues, and
+ * `webhookSecret` checks every delivery.
+ */
+export interface AgentLinearChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  apiKey?: string;
+  /** Linear GraphQL endpoint. Defaults to `https://api.linear.app/graphql`. */
+  apiUrl?: string;
+  /** The member's display name, e.g. `acme-agent`. `@acme-agent` addresses the agent. */
+  userName?: string;
+  webhookSecret?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Notion integration the agent comments as. `token` reads comments and
+ * replies; `verificationToken` is the key Notion signs every event with, sent
+ * once in the subscription handshake.
+ */
+export interface AgentNotionChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  apiBaseUrl?: string;
+  /** Words that address the agent when `mentionMode` is `keyword`. */
+  keywords?: string[];
+  /** `mention` (default) answers `@userName`, `all-comments` every comment, `keyword` the `keywords`. */
+  mentionMode?: "mention" | "all-comments" | "keyword";
+  token?: string;
+  /** Plain-text name comments address, e.g. `@acme-agent`. Defaults to `notion-bot`. */
+  userName?: string;
+  verificationToken?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

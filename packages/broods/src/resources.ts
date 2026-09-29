@@ -8,7 +8,9 @@ import type {
   AgentConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
+  AgentNotionChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   ChannelPartition,
@@ -20,6 +22,8 @@ import type {
   WorkspaceConfig,
   TelegramSource,
   GitHubSource,
+  LinearSource,
+  NotionSource,
   SlackSource,
   DiscordSource,
   MatrixSource,
@@ -203,6 +207,8 @@ export interface McpDefinitionConfig {
 export type ChannelType =
   | "telegram"
   | "github"
+  | "linear"
+  | "notion"
   | "slack"
   | "discord"
   | "matrix"
@@ -280,6 +286,37 @@ export type GitHubConnectionInput = EnvRefString<
 > &
   ConnectionIdentityInput;
 
+export type LinearConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentLinearChannelConfig,
+      "apiKey" | "apiUrl" | "userName" | "webhookSecret"
+    >,
+    "apiKey" | "userName" | "webhookSecret"
+  >
+> &
+  ConnectionIdentityInput;
+
+/**
+ * `verificationToken` is omitted until Notion's subscription handshake hands
+ * it over; the connection logs it for you on the first deploy.
+ */
+export type NotionConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentNotionChannelConfig,
+      | "apiBaseUrl"
+      | "keywords"
+      | "mentionMode"
+      | "token"
+      | "userName"
+      | "verificationToken"
+    >,
+    "token"
+  >
+> &
+  ConnectionIdentityInput;
+
 export type SlackConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
@@ -333,6 +370,14 @@ export type GitHubConnectionDefinition = ConnectionDefinition<
   "github",
   GitHubConnectionInput
 >;
+export type LinearConnectionDefinition = ConnectionDefinition<
+  "linear",
+  LinearConnectionInput
+>;
+export type NotionConnectionDefinition = ConnectionDefinition<
+  "notion",
+  NotionConnectionInput
+>;
 export type SlackConnectionDefinition = ConnectionDefinition<
   "slack",
   SlackConnectionInput
@@ -356,6 +401,8 @@ export type ZaloConnectionDefinition = ConnectionDefinition<
 export type AnyConnectionDefinition =
   | TelegramConnectionDefinition
   | GitHubConnectionDefinition
+  | LinearConnectionDefinition
+  | NotionConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
   | MatrixConnectionDefinition
@@ -427,6 +474,18 @@ export type GitHubChannelInput = ChannelRulesInput & {
   connection: GitHubConnectionDefinition;
   /** Repository full name, e.g. "beeblast/api". */
   repo: string;
+};
+
+export type LinearChannelInput = ChannelRulesInput & {
+  connection: LinearConnectionDefinition;
+  /** Team key, e.g. "ENG", or several that share one set of rules. */
+  team: string | readonly string[];
+};
+
+export type NotionChannelInput = ChannelRulesInput & {
+  connection: NotionConnectionDefinition;
+  /** Page id, with or without hyphens as in the page URL, or several. */
+  pageId: string | readonly string[];
 };
 
 export type TelegramChannelInput = ChannelRulesInput & {
@@ -505,6 +564,8 @@ type Handler<Event, Result> = (
  */
 export type TelegramMessageSource = TelegramSource;
 export type GitHubMessageSource = GitHubSource;
+export type LinearMessageSource = LinearSource;
+export type NotionMessageSource = NotionSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
@@ -518,6 +579,8 @@ export type ZaloMessageSource = ZaloSource;
 export type ChannelMessageReceived =
   | { channel: "telegram"; text: string; source: TelegramMessageSource }
   | { channel: "github"; text: string; source: GitHubMessageSource }
+  | { channel: "linear"; text: string; source: LinearMessageSource }
+  | { channel: "notion"; text: string; source: NotionMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
@@ -869,10 +932,22 @@ export function defineGitHubConnection(
   return defineConnection("github", config);
 }
 
+export function defineLinearConnection(
+  config: LinearConnectionInput,
+): LinearConnectionDefinition {
+  return defineConnection("linear", config);
+}
+
 export function defineMatrixConnection(
   config: MatrixConnectionInput,
 ): MatrixConnectionDefinition {
   return defineConnection("matrix", config);
+}
+
+export function defineNotionConnection(
+  config: NotionConnectionInput,
+): NotionConnectionDefinition {
+  return defineConnection("notion", config);
 }
 
 export function definePancakeConnection(
@@ -923,12 +998,43 @@ export function defineGitHubChannel<const Name extends string>(
   return defineChannelResource(name, description, repo, owner, rules);
 }
 
+export function defineLinearChannel<const Name extends string>(
+  input: ResourceInput<Name, LinearChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, team, ...rules } = input;
+
+  return defineChannelResource(name, description, team, undefined, rules);
+}
+
 export function defineMatrixChannel<const Name extends string>(
   input: ResourceInput<Name, MatrixChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, channelId, ...rules } = input;
 
   return defineChannelResource(name, description, channelId, undefined, rules);
+}
+
+// Core names a page by the hyphenated id the Notion API returns; a page URL
+// ends in the same 32 hex digits without them.
+export function defineNotionChannel<const Name extends string>(
+  input: ResourceInput<Name, NotionChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, pageId, ...rules } = input;
+  const hyphenate = (id: string): string =>
+    id
+      .toLowerCase()
+      .replace(
+        /^([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})$/,
+        "$1-$2-$3-$4-$5",
+      );
+
+  return defineChannelResource(
+    name,
+    description,
+    typeof pageId === "string" ? hyphenate(pageId) : pageId.map(hyphenate),
+    undefined,
+    rules,
+  );
 }
 
 export function definePancakeChannel<const Name extends string>(

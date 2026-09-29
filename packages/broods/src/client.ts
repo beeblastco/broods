@@ -89,6 +89,8 @@ export interface ChannelReference {
   readonly type:
     | "telegram"
     | "github"
+    | "linear"
+    | "notion"
     | "slack"
     | "discord"
     | "matrix"

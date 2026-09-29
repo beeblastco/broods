@@ -1026,6 +1026,8 @@ function normalizeChannelsConfig(
   const channels = value as Record<string, unknown>;
   normalizeTelegramConfig(channels.telegram);
   normalizeGitHubConfig(channels.github);
+  normalizeLinearConfig(channels.linear, options);
+  normalizeNotionConfig(channels.notion, options);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
   normalizeMatrixConfig(channels.matrix, options);
@@ -1083,6 +1085,84 @@ function normalizeGitHubConfig(value: unknown): void {
     "config.channels.github.botUserId",
     Number.MAX_SAFE_INTEGER,
   );
+}
+
+/**
+ * Linear has no bot account: the agent comments as the member whose API key it
+ * holds, and `userName` is both what mentions it and how it knows its own
+ * comments. A patch may carry the key alone, so the merged config checks it.
+ */
+function normalizeLinearConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.linear must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.linear");
+  assertOptionalString(config.apiKey, "config.channels.linear.apiKey");
+  assertOptionalString(config.apiUrl, "config.channels.linear.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.linear.apiUrl");
+  }
+  assertOptionalString(config.userName, "config.channels.linear.userName");
+  assertOptionalString(
+    config.webhookSecret,
+    "config.channels.linear.webhookSecret",
+  );
+  if (
+    typeof config.apiKey === "string" &&
+    config.userName === undefined &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      "config.channels.linear.userName is required: the display name of the member the API key belongs to",
+    );
+  }
+}
+
+/**
+ * `keyword` mode answers only the listed words, so it needs at least one. A
+ * patch may switch the mode alone, so the merged config checks it.
+ */
+function normalizeNotionConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.notion must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.notion");
+  assertOptionalString(config.apiBaseUrl, "config.channels.notion.apiBaseUrl");
+  if (typeof config.apiBaseUrl === "string") {
+    assertPublicHttpsUrl(
+      config.apiBaseUrl,
+      "config.channels.notion.apiBaseUrl",
+    );
+  }
+  assertOptionalStringArray(config.keywords, "config.channels.notion.keywords");
+  assertOptionalEnum(config.mentionMode, "config.channels.notion.mentionMode", [
+    "mention",
+    "all-comments",
+    "keyword",
+  ] as const);
+  assertOptionalString(config.token, "config.channels.notion.token");
+  assertOptionalString(config.userName, "config.channels.notion.userName");
+  assertOptionalString(
+    config.verificationToken,
+    "config.channels.notion.verificationToken",
+  );
+  if (
+    config.mentionMode === "keyword" &&
+    !(Array.isArray(config.keywords) && config.keywords.length > 0) &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      'config.channels.notion.keywords must list at least one word when mentionMode is "keyword"',
+    );
+  }
 }
 
 function normalizeSlackConfig(value: unknown): void {

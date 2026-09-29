@@ -4,7 +4,7 @@ title: Channels
 
 # Channels
 
-A channel puts your agent in Slack, Telegram, Discord, GitHub, Matrix, Pancake or Zalo. Messages that arrive there become agent turns, and the answer goes back to the same place.
+A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Notion, Matrix, Pancake or Zalo. Messages that arrive there become agent turns, and the answer goes back to the same place.
 
 - A connection is one app install and holds its credentials, such as a Slack bot token.
 - A channel names one room the connection answers in, such as `#product-eng`.
@@ -52,6 +52,8 @@ An agent can hold several connections of different providers. One connection bel
 | [Slack](slack.md)       | channels, private groups, DMs          | `botToken`, `signingSecret`                  | yes      |
 | [Discord](discord.md)   | guild channels and threads             | `botToken`, `publicKey`                      | yes      |
 | [GitHub](github.md)     | issues, pull requests, comment threads | `webhookSecret`, `appId`, `privateKey`       | no       |
+| [Linear](linear.md)     | issue comments that mention the agent  | `apiKey`, `webhookSecret`, `userName`        | no       |
+| [Notion](notion.md)     | page comments that address the agent   | `token`, `verificationToken`                 | no       |
 | [Matrix](matrix.md)     | rooms, including encrypted ones        | `apiUrl`, `botToken`                         | yes      |
 | [Pancake](pancake.md)   | Pancake inbox messages and comments    | `pageId`, `pageAccessToken`, `webhookSecret` | no       |
 | [Zalo](zalo.md)         | private chats and groups               | `botToken`, `webhookSecret`                  | yes      |
@@ -90,7 +92,7 @@ A connection that declares no channel and no `allowedChannelIds` fails `broods d
 
 ## Chat commands
 
-Telegram, Slack, Discord, Matrix and Zalo route these commands to Broods instead of the agent. GitHub and Pancake pass slash text to the agent as normal input.
+Telegram, Slack, Discord, Matrix and Zalo route these commands to Broods instead of the agent. GitHub, Linear, Notion and Pancake pass slash text to the agent as normal input.
 
 | Command                                   | Effect                                                                   |
 | ----------------------------------------- | ------------------------------------------------------------------------ |
@@ -130,6 +132,8 @@ Tools other than `send-update` appear only where the provider supports them. The
 | Pancake  | uploaded             | uploaded             | one per message         |
 | Zalo     | provider fetches URL | sent as links        | one per message         |
 | GitHub   | links in text        | links in text        | text only               |
+| Linear   | links in text        | links in text        | text only               |
+| Notion   | links in text        | links in text        | text only               |
 
 Where a provider has no document endpoint, `send-files` posts the links as text and tells the model so. If a provider rejects pictures, `send-images` falls back to sending them as documents or links. A caption rides the first message only.
 
@@ -146,6 +150,8 @@ Media sent to the agent is read while the turn runs.
 | Pancake  | photos and videos                                                          |
 | Zalo     | photos, stickers, voice notes                                              |
 | GitHub   | none. A pasted image stays a markdown URL in the text                      |
+| Linear   | none. A pasted image stays a markdown URL in the text                      |
+| Notion   | files attached to the comment                                              |
 
 The limits are 6 MB per picture, 25 MB for anything else, and 10 attachments per message. The media type comes from the bytes, not the provider's label. An attachment that cannot be read becomes a line of text saying so, and the rest of the message still arrives.
 
@@ -170,7 +176,7 @@ A failed transcription never drops the message. The note names the cause, such a
 
 ## Shared behavior
 
-- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub reacts with eyes. Zalo shows typing only. Pancake does neither.
+- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub and Linear react with eyes. Zalo shows typing only. Pancake and Notion do neither.
 - Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
 - Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.
