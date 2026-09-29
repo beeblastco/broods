@@ -24,6 +24,7 @@ globalThis.fetch = Object.assign(
   },
 );
 
+// Throws for any URL the guarded fetch or preconnect may not open.
 function assertLoopback(input: string | URL): void {
   const url = new URL(input);
   if (!LOOPBACK_HOSTS.has(url.hostname)) {
