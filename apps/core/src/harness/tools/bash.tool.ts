@@ -242,7 +242,7 @@ async function dispatchBackground(
     );
   }
 
-  // Create the sealed tracking row BEFORE launching so a fast job's callback
+  // Create the tracking row BEFORE launching so a fast job's callback
   // can never arrive before the row exists.
   await createDetachedAsyncToolResult({
     eventId: context.background.eventId,
