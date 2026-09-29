@@ -20,7 +20,7 @@ import {
   type MediaTicket,
 } from "../src/shared/media-ticket.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
-import type { S3ObjectHead } from "../src/shared/s3.ts";
+import type { S3Access, S3ObjectHead } from "../src/shared/s3.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -41,10 +41,35 @@ const writeS3ObjectMock = mock(
     _bucket: string,
     _key: string,
     body: string | Uint8Array,
-    _options?: { contentType?: string; executable?: boolean },
+    _options?: {
+      contentType?: string;
+      executable?: boolean;
+      access?: S3Access;
+    },
   ): Promise<number> =>
     typeof body === "string" ? body.length : body.byteLength,
 );
+
+// A bring-your-own bucket is reached on a role core assumes; the session it
+// hands back is what the workspace write must carry.
+void mock.module("@aws-sdk/client-sts", () => ({
+  STSClient: class {
+    send = async (): Promise<{
+      Credentials: {
+        AccessKeyId: string;
+        SecretAccessKey: string;
+        SessionToken: string;
+      };
+    }> => ({
+      Credentials: {
+        AccessKeyId: "ASIA_BYO",
+        SecretAccessKey: "byo-secret",
+        SessionToken: "byo-token",
+      },
+    });
+  },
+  AssumeRoleCommand: class {},
+}));
 
 mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
@@ -190,6 +215,41 @@ describe("ingestInboundAttachments", () => {
     expect(meterWrites).toEqual([
       { accountId: ACCOUNT, usage: { ingressGb: PNG_BYTES.byteLength / 1e9 } },
     ]);
+  });
+
+  it("writes a bring-your-own workspace copy on the assumed role, the store copy on core's", async () => {
+    await ingestInboundAttachments([imageAttachment()], {
+      accountId: ACCOUNT,
+      channelName: "telegram",
+      eventId: "evt-1",
+      workspace: {
+        ...workspace(),
+        config: {
+          storage: {
+            provider: "s3",
+            bucket: "acme",
+            prefix: "agents/",
+            region: "eu-west-1",
+            auth: { type: "assumeRole", roleArn: "arn:aws:iam::2:role/byo" },
+          },
+        },
+      },
+    });
+
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
+    const [workspaceBucket, workspaceKey, , workspaceOptions] =
+      writeS3ObjectMock.mock.calls[0]!;
+    const [storeBucket, , , storeOptions] = writeS3ObjectMock.mock.calls[1]!;
+    expect(workspaceBucket).toBe("acme");
+    expect(workspaceKey).toStartWith("agents/media/");
+    expect(workspaceOptions?.access?.credentials).toEqual({
+      accessKeyId: "ASIA_BYO",
+      secretAccessKey: "byo-secret",
+      sessionToken: "byo-token",
+    });
+    expect(workspaceOptions?.access?.region).toBe("eu-west-1");
+    expect(storeBucket).toBe("filesystem-bucket");
+    expect(storeOptions?.access).toBeUndefined();
   });
 
   it("seals the link against the attachment store, not the workspace", async () => {

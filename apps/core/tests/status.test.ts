@@ -14,7 +14,8 @@ import {
 const originalQuery = runtime.query;
 const originalMutation = runtime.mutate;
 const queryMock = mock(
-  async (_name: string, _args: Record<string, unknown>) => null,
+  async (_name: string, _args: Record<string, unknown>): Promise<unknown> =>
+    null,
 );
 const mutationMock = mock(
   async (name: string, _args: Record<string, unknown>) =>

@@ -11,7 +11,20 @@ import { createHash } from "node:crypto";
 import type { ToolSet } from "ai";
 import * as realS3 from "../src/shared/s3.ts";
 import type { AccountHookRecord } from "../src/shared/domain/account-hooks.ts";
-import type { AgentHookEventName } from "../src/shared/domain/agent-config.ts";
+import type {
+  AgentHookEventName,
+  HookAgentConfig,
+} from "../src/shared/domain/agent-config.ts";
+
+const HOOK_CONFIG: HookAgentConfig = {
+  model: {},
+  tools: [],
+  mcp: [],
+  channels: [],
+  skills: [],
+  subagents: [],
+  denyTools: [],
+};
 
 const HOOK_BUNDLE = `export default {
   "agent.started": (ctx, event) => {
@@ -26,6 +39,7 @@ const HOOK_BUNDLE = `export default {
   "subagent.task.finished": (ctx, event) => ({ visibleResult: "summary of " + event.taskId }),
   "channel.message.received": (ctx, event) =>
     event.text === "spam" ? { drop: true } : { text: event.text.toUpperCase() },
+  "channel.message.sending": (ctx) => ({ text: JSON.stringify(ctx.config) }),
 };`;
 
 const bundleSha = createHash("sha256")
@@ -59,6 +73,7 @@ describe("code hooks end-to-end (real isolate)", () => {
       const dispatcher = createHookDispatcher(
         "acct_test",
         indexFor(["agent.started", "tool.call.started"]),
+        HOOK_CONFIG,
       );
 
       const mutation = await dispatcher.runMutation("agent.started", {
@@ -79,6 +94,7 @@ describe("code hooks end-to-end (real isolate)", () => {
     const dispatcher = createHookDispatcher(
       "acct_test",
       indexFor(["agent.started", "tool.call.started"]),
+      HOOK_CONFIG,
     );
 
     let bashRan = false;
@@ -119,6 +135,7 @@ describe("code hooks end-to-end (real isolate)", () => {
     const dispatcher = createHookDispatcher(
       "acct_test",
       indexFor(["agent.started", "agent.finished"]),
+      HOOK_CONFIG,
     );
 
     // First hook seeds ctx.state.calls; the second reads what it left behind.
@@ -143,6 +160,7 @@ describe("code hooks end-to-end (real isolate)", () => {
       const dispatcher = createHookDispatcher(
         "acct_test",
         indexFor(["agent.started", "agent.finished"]),
+        HOOK_CONFIG,
       );
 
       // Parallel tool calls / subagent finishes can enter runMutation concurrently;
@@ -169,6 +187,7 @@ describe("code hooks end-to-end (real isolate)", () => {
       const dispatcher = createHookDispatcher(
         "acct_test",
         indexFor(["subagent.task.finished", "channel.message.received"]),
+        HOOK_CONFIG,
       );
 
       expect(
@@ -189,6 +208,67 @@ describe("code hooks end-to-end (real isolate)", () => {
           text: "hi",
         }),
       ).toEqual({ text: "HI" });
+    },
+  );
+});
+
+describe("hook ctx.config", () => {
+  realRunnerIt(
+    "hands a hook the allow-listed agent config and no credentials",
+    async () => {
+      process.env.TOOL_BUNDLES_BUCKET_NAME = "test-bundles";
+      const { createAgentHookDispatcher } =
+        await import("../src/harness/hook-dispatcher.ts");
+      const { setStorageForTests, resetStorageForTests } =
+        await import("../src/shared/storage.ts");
+      const { machineStorage } = await import("./helpers/machine.ts");
+      const record = indexFor(["channel.message.sending"]).get(
+        "channel.message.sending",
+      )![0]!;
+      const base = machineStorage();
+      setStorageForTests({
+        ...base,
+        accountHooks: {
+          ...base.accountHooks,
+          getById: async (): Promise<typeof record> => record,
+        },
+      });
+      try {
+        const dispatcher = await createAgentHookDispatcher("acct_test", {
+          model: { provider: "openai", modelId: "gpt-5" },
+          provider: {
+            openai: {
+              apiKey: "sk-SECRET",
+              base_url: "https://proxy.example.com/?key=SECRET",
+              headers: { "X-Tenant": "SECRET" },
+            },
+          },
+          tools: { webSearch: { config: { braveApiKey: "SECRET" } } },
+          mcp: { docs: { headers: { Authorization: "Bearer SECRET" } } },
+          hooks: {
+            code: [{ hookId: record.hookId }],
+            webhooks: [{ url: "https://hooks.slack.com/services/T/B/SECRET" }],
+          },
+        });
+        const mutation = await dispatcher.runMutation(
+          "channel.message.sending",
+          { channel: "telegram", text: "hi" },
+        );
+        const seen = String(mutation?.text);
+
+        expect(JSON.parse(seen)).toEqual({
+          model: { provider: "openai", modelId: "gpt-5" },
+          tools: ["webSearch"],
+          mcp: ["docs"],
+          channels: [],
+          skills: [],
+          subagents: [],
+          denyTools: [],
+        });
+        expect(seen).not.toContain("SECRET");
+      } finally {
+        resetStorageForTests();
+      }
     },
   );
 });

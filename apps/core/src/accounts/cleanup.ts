@@ -117,23 +117,6 @@ export async function deleteAccountSkills(accountId: string): Promise<number> {
 }
 
 /**
- * Deletes one workspace's S3 prefix (its own bucket or the shared filesystem
- * bucket); used per workspace during account cleanup.
- */
-export async function deleteWorkspaceFilesystem(
-  accountId: string,
-  workspaceId: string,
-  storage: WorkspaceStorageConfig | undefined,
-): Promise<number> {
-  if (!storage?.bucket && !optionalEnv("FILESYSTEM_BUCKET_NAME")) return 0;
-  const target = await resolveS3ReadTarget(
-    workspaceReadContext(storage, workspaceNamespace(accountId, workspaceId)),
-  );
-
-  return deleteS3Prefix(target.bucket, target.prefix, target.access);
-}
-
-/**
  * Repeats the batched deleteAccountRuntimeData Convex mutation until it deletes
  * nothing, summing the per-table counts.
  */
@@ -171,6 +154,23 @@ async function deleteConvexRuntimeRows(
   throw new Error(
     `Account runtime cleanup exceeded ${ACCOUNT_RUNTIME_DELETE_MAX_BATCHES} Convex batches; retry deletion to continue`,
   );
+}
+
+/**
+ * Deletes one workspace's S3 prefix (its own bucket or the shared filesystem
+ * bucket); used per workspace during account cleanup.
+ */
+async function deleteWorkspaceFilesystem(
+  accountId: string,
+  workspaceId: string,
+  storage: WorkspaceStorageConfig | undefined,
+): Promise<number> {
+  if (!storage?.bucket && !optionalEnv("FILESYSTEM_BUCKET_NAME")) return 0;
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(storage, workspaceNamespace(accountId, workspaceId)),
+  );
+
+  return deleteS3Prefix(target.bucket, target.prefix, target.access);
 }
 
 /**
