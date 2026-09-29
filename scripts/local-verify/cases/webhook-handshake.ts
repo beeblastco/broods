@@ -3,7 +3,7 @@ import { assertStep, type VerifyContext } from "../harness.ts";
 
 /**
  * A GET on a webhook URL is a liveness check without a query string and a
- * subscription handshake with one (Meta's `hub.challenge`). The handshake must
+ * subscription handshake with one (X's `crc_token`). The handshake must
  * reach core's channel scan through the gateway, query intact, instead of
  * getting the liveness answer.
  */
@@ -12,7 +12,7 @@ export async function webhookHandshake(context: VerifyContext): Promise<void> {
     "load account",
     (): Promise<BroodsAccount> => context.account.getAccount(),
   );
-  const url = context.client.accountWebhookUrl(account.accountId, "whatsapp");
+  const url = context.client.accountWebhookUrl(account.accountId, "x");
 
   const live = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   assertStep(
@@ -22,17 +22,17 @@ export async function webhookHandshake(context: VerifyContext): Promise<void> {
   );
 
   const handshake = await context.measure(
-    "whatsapp handshake",
+    "x crc handshake",
     (): Promise<Response> =>
-      fetch(
-        `${url}?hub.mode=subscribe&hub.verify_token=${context.runId}&hub.challenge=42`,
-        { signal: AbortSignal.timeout(10_000) },
-      ),
+      fetch(`${url}?crc_token=${context.runId}`, {
+        signal: AbortSignal.timeout(10_000),
+      }),
   );
   const body = await handshake.text();
   assertStep(
-    "a handshake GET reaches the channel scan, which finds no WhatsApp agent",
-    handshake.status === 503 && body.includes("whatsapp"),
+    "a handshake GET reaches the channel scan, which finds no X agent",
+    handshake.status === 503 &&
+      body.includes("x integration is not configured"),
     `${handshake.status} ${body.slice(0, 200)}`,
   );
 }
