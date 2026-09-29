@@ -9,6 +9,7 @@ import {
   callMcpToolResult,
   listMcpTools,
   mcpConnection,
+  type McpConnection,
 } from "../harness/mcp/client.ts";
 import type { McpRecord } from "../shared/domain/mcp.ts";
 import {
@@ -50,19 +51,22 @@ export async function handleMcpServiceRpc(
     return errorResponse(400, "method must be tools/list or tools/call");
   }
 
-  let record: McpRecord | null;
+  let connection: McpConnection;
   if (typeof body.serverId === "string") {
-    record = await getStorage().mcp.getById(accountId, body.serverId);
+    const record = await getStorage().mcp.getById(accountId, body.serverId);
     if (!record || record.status !== "active") {
       return errorResponse(404, "MCP server not found");
     }
+    connection = mcpConnection(record, undefined);
   } else {
     const probe = parseProbe(body.probe);
     if (typeof probe === "string") return errorResponse(400, probe);
-    record = probeRecord(accountId, probe);
+    connection = {
+      ...mcpConnection(probeRecord(accountId, probe), undefined),
+      uncached: true,
+    };
   }
 
-  const connection = mcpConnection(record, undefined);
   if (method === "tools/list") {
     const tools = await listMcpTools(connection);
 
@@ -121,8 +125,8 @@ function parseProbe(value: unknown): McpProbe | string {
 }
 
 /**
- * A synthetic one-shot record for verification. The unique serverId gives each
- * probe its own client cache key, so it never reads a saved row's cached tools.
+ * A synthetic one-shot record for verification. Its connection is marked
+ * uncached, so a probe neither reads nor fills the MCP client caches.
  */
 function probeRecord(accountId: string, probe: McpProbe): McpRecord {
   const now = new Date().toISOString();

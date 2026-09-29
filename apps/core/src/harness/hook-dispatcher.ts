@@ -14,6 +14,7 @@ import type {
   AgentCodeHookConfig,
   AgentConfig,
   AgentHookEventName,
+  HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -79,16 +80,18 @@ export async function createAgentHookDispatcher(
     return NO_HOOKS;
   }
 
-  return createHookDispatcher(accountId, index);
+  return createHookDispatcher(accountId, index, hookVisibleConfig(agentConfig));
 }
 
 /**
  * Runs the indexed hooks for each fire-point, one at a time, sharing one run
- * state. Called by `createAgentHookDispatcher`, and directly by the hook tests.
+ * state and handing each the allow-listed `config` as ctx.config. Called by
+ * `createAgentHookDispatcher`, and directly by the hook tests.
  */
 export function createHookDispatcher(
   accountId: string,
   index: Map<AgentHookEventName, AccountHookRecord[]>,
+  config: HookAgentConfig,
 ): HookDispatcher {
   // ctx.state: a mutable scratchpad shared by every hook in this run. Seeded
   // empty, threaded into each hook, and replaced with what the hook left behind
@@ -117,6 +120,7 @@ export function createHookDispatcher(
             record: record,
             event: event,
             payload: payload,
+            config: config,
             state: runState,
           });
           runState = state;
@@ -204,6 +208,24 @@ function buildEventIndex(
   }
 
   return index;
+}
+
+/** Projects the agent config onto what a hook may read as ctx.config; see HookAgentConfig. */
+function hookVisibleConfig(agentConfig: AgentConfig): HookAgentConfig {
+  return {
+    model: {
+      provider: agentConfig.model?.provider,
+      modelId: agentConfig.model?.modelId,
+    },
+    harness: agentConfig.harness?.type,
+    maxTurn: agentConfig.agent?.maxTurn,
+    tools: Object.keys(agentConfig.tools ?? {}),
+    mcp: Object.keys(agentConfig.mcp ?? {}),
+    channels: Object.keys(agentConfig.channels ?? {}),
+    skills: agentConfig.skills?.allowed ?? [],
+    subagents: agentConfig.subagent?.allowed ?? [],
+    denyTools: agentConfig.denyTools ?? [],
+  };
 }
 
 /** Fetches the active account hook records an agent's config refers to, once per run. */

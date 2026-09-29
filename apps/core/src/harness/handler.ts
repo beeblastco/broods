@@ -60,8 +60,6 @@ import {
 } from "./async-agent-result.ts";
 import {
   getAsyncToolResult,
-  getDetachedAsyncToolGroup,
-  listAsyncToolResultsByParentEvent,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
   type AsyncToolDelivery,
@@ -180,7 +178,6 @@ const pendingWorkerRuns: [kind: string, run: InProcessWorkerRun][] = [];
 let activeInProcessWorkers = 0;
 
 type ContinuationOutcome =
-  | { kind: "pending"; pendingCount: number }
   | { kind: "ready"; invoked: boolean; publicEventId: string }
   | { kind: "skip" };
 type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
@@ -567,31 +564,13 @@ async function handleSandboxJobCompletionRequest(
 }
 
 /**
- * After a tool row settles, resume the conversation once every result in its
- * dispatch group is in. Derives the account/agent from the (scoped) parentEventId
- * so it serves both the account-authed and token-authed completion paths.
+ * After a detached tool row settles, resume the conversation with its result.
+ * Derives the account/agent from the (scoped) parentEventId so it serves both
+ * the account-authed and token-authed completion paths.
  */
 async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
-  const toolResults = await listCurrentParentToolResults(settled);
-  const dispatchGroup = await getDetachedAsyncToolGroup(settled.parentEventId);
-  const missingCount = Math.max(
-    (dispatchGroup?.resultIds.length ?? 0) - toolResults.length,
-    0,
-  );
-  const pendingCount =
-    toolResults.filter((result) => result.status === "processing").length +
-    missingCount;
-  if (!dispatchGroup?.sealed || pendingCount > 0) {
-    return {
-      kind: "pending",
-      pendingCount: dispatchGroup?.sealed
-        ? pendingCount
-        : Math.max(pendingCount, 1),
-    };
-  }
-
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
   if (!scope) {
     return { kind: "skip" };
@@ -604,10 +583,8 @@ async function continueAfterAsyncToolSettlement(
     return { kind: "skip" };
   }
 
-  // Drop results the model already pulled via async_status; if everything in the
-  // group was observed, there is nothing to deliver and no continuation to run.
-  const events = settledToolResultsToParentMessages(toolResults);
-  if (events.length === 0) {
+  // A result the model already pulled via async_status would be answered twice.
+  if (settled.status === "processing" || settled.observed === true) {
     return { kind: "skip" };
   }
   const publicConversationKey = eventPublicConversationKey(
@@ -650,7 +627,18 @@ async function continueAfterAsyncToolSettlement(
     publicEventId: `async-tools-${settled.resultId}`,
     conversationKey: settled.conversationKey,
     publicConversationKey: publicConversationKey,
-    events: events,
+    events: [
+      completionToParentMessage({
+        resultId: settled.resultId,
+        toolName: settled.toolName,
+        input: settled.input,
+        status: settled.status,
+        ...(settled.response !== undefined
+          ? { response: settled.response }
+          : {}),
+        ...(settled.error ? { error: settled.error } : {}),
+      }),
+    ],
     // An answer joins a live run at its next step boundary; a finished job
     // waits its turn behind the current one.
     requestedMode:
@@ -686,13 +674,6 @@ function continuationResponse(
   settled: AsyncToolResultRecord,
   outcome: ContinuationOutcome,
 ): Response {
-  if (outcome.kind === "pending") {
-    return jsonResponse(202, {
-      status: "waiting_for_async_tools",
-      resultId: settled.resultId,
-      pendingCount: outcome.pendingCount,
-    });
-  }
   if (outcome.kind === "skip") {
     return jsonResponse(202, {
       status: "accepted",
@@ -2657,70 +2638,6 @@ async function resolveReentryTarget(options: {
         }
       : {}),
   };
-}
-
-async function listCurrentParentToolResults(
-  settled: AsyncToolResultRecord,
-): Promise<AsyncToolResultRecord[]> {
-  const dispatchGroup = await getDetachedAsyncToolGroup(settled.parentEventId);
-  const queried = dispatchGroup?.sealed
-    ? (
-        await Promise.all(
-          dispatchGroup.resultIds.map((resultId) =>
-            getAsyncToolResult(resultId),
-          ),
-        )
-      ).filter(
-        (result): result is AsyncToolResultRecord =>
-          result?.parentEventId === settled.parentEventId,
-      )
-    : await listAsyncToolResultsByParentEvent(settled.parentEventId);
-  const byResultId = new Map(
-    queried.map((result) => [result.resultId, result]),
-  );
-  byResultId.set(settled.resultId, settled);
-
-  const refreshed = await Promise.all(
-    [...byResultId.values()].map(async (result) => {
-      if (result.status !== "processing") {
-        return result;
-      }
-
-      const latest = await getAsyncToolResult(result.resultId);
-
-      return latest?.parentEventId === settled.parentEventId ? latest : result;
-    }),
-  );
-
-  return refreshed;
-}
-
-function settledToolResultsToParentMessages(
-  results: AsyncToolResultRecord[],
-): DirectInboundEvent["events"] {
-  return (
-    results
-      // Skip results the model already pulled via async_status. Re-injecting them
-      // would make the model answer the same completion twice.
-      .filter(
-        (result) =>
-          (result.status === "completed" || result.status === "failed") &&
-          result.observed !== true,
-      )
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .map((result) =>
-        completionToParentMessage({
-          resultId: result.resultId,
-          toolName: result.toolName,
-          input: result.input,
-          status: result.status === "completed" ? "completed" : "failed",
-          ...(result.response !== undefined
-            ? { response: result.response }
-            : {}),
-          ...(result.error ? { error: result.error } : {}),
-        }),
-      )
-  );
 }
 
 function createDirectContinuationSseBody(
