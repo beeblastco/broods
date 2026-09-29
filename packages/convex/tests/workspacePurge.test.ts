@@ -57,6 +57,7 @@ test("purge deletes only objects under the workspace namespace", async () => {
   bucketKeys.add(`${namespace}/notes.md`);
   bucketKeys.add(`${namespace}/src/index.ts`);
   bucketKeys.add(`${neighbour}/notes.md`);
+  bucketKeys.add(`${namespace}-archive/notes.md`);
 
   const deleted = await purgeWorkspaceFilesystem({
     accountId: "account_a",
@@ -64,7 +65,10 @@ test("purge deletes only objects under the workspace namespace", async () => {
   });
 
   expect(deleted).toBe(2);
-  expect([...bucketKeys]).toEqual([`${neighbour}/notes.md`]);
+  expect([...bucketKeys]).toEqual([
+    `${neighbour}/notes.md`,
+    `${namespace}-archive/notes.md`,
+  ]);
 });
 
 test("purge refuses a bring-your-own bucket with no prefix", async () => {
