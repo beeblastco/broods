@@ -1,6 +1,6 @@
 /** Channel routing fixtures use credentials generated for this test process. */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import {
@@ -94,6 +94,15 @@ const WHATSAPP_AGENT = {
 const ORIGINAL_FETCH = globalThis.fetch;
 
 describe("account webhook ingress", () => {
+  // Admitted turns fire typing and reactions through the real adapters, so
+  // every test answers them locally instead of calling Meta, Zalo or Telegram.
+  beforeEach(() => {
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> => Response.json({ ok: true }),
+      { preconnect: ORIGINAL_FETCH.preconnect },
+    );
+  });
+
   afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
     setObservabilityContext(null);
@@ -742,11 +751,6 @@ describe("account webhook ingress", () => {
   });
 
   it("still admits the rest of a WhatsApp batch when one admission fails", async () => {
-    globalThis.fetch = Object.assign(
-      async (): Promise<Response> =>
-        Response.json({ messages: [{ id: "wamid.reply" }] }),
-      { preconnect: ORIGINAL_FETCH.preconnect },
-    );
     const handledEvents: ChannelInboundEvent[] = [];
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,

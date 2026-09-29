@@ -219,6 +219,12 @@ describe("channel record resolution", () => {
     // loader reads `undefined.getByExternalId`, the shape that broke CI.
     const runs: ChannelInboundEvent[] = [];
     const waited: Promise<unknown>[] = [];
+    // The refusal goes out through the real Telegram adapter; answer it locally.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> => Response.json({ ok: true }),
+      { preconnect: originalFetch.preconnect },
+    );
     const router = createIncomingEventRouter({
       accountLoader: async () => ACCOUNT,
       agentLoader: async () => SUPPORT_AGENT,
@@ -229,30 +235,35 @@ describe("channel record resolution", () => {
       },
     });
 
-    const response = await router(
-      coreRequest(
-        "POST",
-        "/v1/webhooks/acct_test/telegram",
-        { "x-telegram-bot-api-secret-token": "telegram-secret" },
+    let response: Response;
+    try {
+      response = await router(
+        coreRequest(
+          "POST",
+          "/v1/webhooks/acct_test/telegram",
+          { "x-telegram-bot-api-secret-token": "telegram-secret" },
+          {
+            update_id: 7,
+            message: {
+              message_id: 9,
+              date: 1713916800,
+              text: "hello",
+              chat: { id: 123, type: "private" },
+              from: { id: 456, is_bot: false, username: "alice" },
+            },
+          },
+        ),
         {
-          update_id: 7,
-          message: {
-            message_id: 9,
-            date: 1713916800,
-            text: "hello",
-            chat: { id: 123, type: "private" },
-            from: { id: 456, is_bot: false, username: "alice" },
+          handleDirectRequest: async () => new Response("ok"),
+          handleChannelRequest: async (event: ChannelInboundEvent) => {
+            runs.push(event);
           },
         },
-      ),
-      {
-        handleDirectRequest: async () => new Response("ok"),
-        handleChannelRequest: async (event: ChannelInboundEvent) => {
-          runs.push(event);
-        },
-      },
-    );
-    await Promise.all(waited);
+      );
+      await Promise.all(waited);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
 
     expect(response.status).toBe(200);
     expect(runs).toHaveLength(0);
