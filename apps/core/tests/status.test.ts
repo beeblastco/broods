@@ -15,7 +15,8 @@ import {
 const originalQuery = runtime.query;
 const originalMutation = runtime.mutate;
 const queryMock = mock(
-  async (_name: string, _args: Record<string, unknown>) => null,
+  async (_name: string, _args: Record<string, unknown>): Promise<unknown> =>
+    null,
 );
 const mutationMock = mock(
   async (name: string, _args: Record<string, unknown>) =>
@@ -141,12 +142,12 @@ describe("async tool result persistence", () => {
       parentEventId: "event-1",
       resultIds: ["result-2", "result-1"],
       sealed: true,
-    } as never);
+    });
     runtime.query = queryMock as never;
     await expect(getAsyncToolResult("result-1")).resolves.toMatchObject({
       status: "completed",
     });
-    await expect(getDetachedAsyncToolGroup("event-1")).resolves.toEqual({
+    expect(await getDetachedAsyncToolGroup("event-1")).toEqual({
       parentEventId: "event-1",
       resultIds: ["result-1", "result-2"],
       sealed: true,

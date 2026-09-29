@@ -11,8 +11,8 @@
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
 import type {
-  AgentConfig,
   AgentHookEventName,
+  HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
@@ -52,8 +52,8 @@ export interface RunCodeHookParams {
   event: AgentHookEventName;
   /** Event data handed to the hook as its second argument (JSON-serializable). */
   payload: Record<string, JSONValue | undefined>;
-  /** The agent config with secrets removed, exposed to the hook as ctx.config. */
-  config: AgentConfig;
+  /** The allow-listed agent config, exposed to the hook as ctx.config. */
+  config: HookAgentConfig;
   /** Mutable per-run scratchpad exposed to the hook as ctx.state. */
   state: Record<string, unknown>;
 }
