@@ -567,6 +567,35 @@ paths:
           description: Unknown account or channel, or no agent holds credentials for it
 
   /v1/webhooks/{accountId}/dev/{endpointId}/{channelName}:
+    get:
+      tags:
+        - Direct API
+      summary: Channel provider webhook check or handshake for one stage
+      description: The GET of the bare URL, pinned to the stage `endpointId` names. Without a query string it answers `{"status":"ok","method":"POST"}`; with one, only that stage's agents can answer the subscription handshake.
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: endpointId
+          in: path
+          required: true
+          description: The stage's endpoint id, stable across renames and runtime key rotation.
+          schema:
+            type: string
+        - name: channelName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The URL is live, or the provider's challenge echoed back as text/plain
+        "401":
+          description: No agent's verify token matched
+        "404":
+          description: A handshake for an unknown account, or for an endpointId no stage of this account is deployed at (`unknown_webhook_stage`)
     post:
       tags:
         - Direct API

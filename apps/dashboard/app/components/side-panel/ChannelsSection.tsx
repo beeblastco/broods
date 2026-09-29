@@ -346,6 +346,12 @@ const CHANNELS: ChannelKind[] = [
         required: true,
       },
       {
+        key: "allowedChannelIds",
+        label: "Allowed chat IDs (IGSID)",
+        type: "stringList",
+        placeholder: "123456789, *",
+      },
+      {
         key: "allowedUserIds",
         label: "Allowed user IDs (IGSID)",
         type: "stringList",
@@ -375,6 +381,12 @@ const CHANNELS: ChannelKind[] = [
         label: "Verify token",
         type: "secret",
         required: true,
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed chat IDs (PSID)",
+        type: "stringList",
+        placeholder: "123456789, *",
       },
       {
         key: "allowedUserIds",

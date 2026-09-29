@@ -1033,8 +1033,8 @@ function normalizeChannelsConfig(
   normalizePancakeConfig(channels.pancake);
   normalizeTeamsConfig(channels.teams, options);
   normalizeZaloConfig(channels.zalo);
-  normalizeInstagramConfig(channels.instagram);
-  normalizeMessengerConfig(channels.messenger);
+  normalizeInstagramConfig(channels.instagram, options);
+  normalizeMessengerConfig(channels.messenger, options);
   normalizeWhatsAppConfig(channels.whatsapp);
 }
 
@@ -1329,7 +1329,10 @@ function normalizeZaloConfig(value: unknown): void {
   }
 }
 
-function normalizeInstagramConfig(value: unknown): void {
+function normalizeInstagramConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
   if (value == null) return;
   if (!isPlainObject(value))
     throw new ClientError("config.channels.instagram must be an object");
@@ -1352,9 +1355,18 @@ function normalizeInstagramConfig(value: unknown): void {
     config.verifyToken,
     "config.channels.instagram.verifyToken",
   );
+  assertMetaCredentials(
+    config,
+    "config.channels.instagram",
+    ["accessToken", "accountId", "appSecret", "verifyToken"],
+    options,
+  );
 }
 
-function normalizeMessengerConfig(value: unknown): void {
+function normalizeMessengerConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
   if (value == null) return;
   if (!isPlainObject(value))
     throw new ClientError("config.channels.messenger must be an object");
@@ -1371,6 +1383,33 @@ function normalizeMessengerConfig(value: unknown): void {
     config.verifyToken,
     "config.channels.messenger.verifyToken",
   );
+  assertMetaCredentials(
+    config,
+    "config.channels.messenger",
+    ["appSecret", "pageAccessToken", "verifyToken"],
+    options,
+  );
+}
+
+/**
+ * Core builds a Messenger or Instagram adapter only when every one of these is
+ * set, so a config that has some but not all would never answer. A patch may
+ * carry one alone, so the merged config checks it.
+ */
+function assertMetaCredentials(
+  config: Record<string, unknown>,
+  path: string,
+  fields: readonly string[],
+  options: AgentConfigCheckOptions,
+): void {
+  if (options.patch) return;
+  const present = fields.find((field) => config[field] !== undefined);
+  const missing = fields.find((field) => config[field] === undefined);
+  if (present && missing) {
+    throw new ClientError(
+      `${path}.${missing} is required when ${path}.${present} is set`,
+    );
+  }
 }
 
 /**

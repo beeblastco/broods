@@ -498,13 +498,47 @@ describe("agent rules", () => {
         channels: {
           instagram: {
             id: "ig",
+            accessToken: "ig-token",
             accountId: "17841400000000000",
             apiVersion: "v26.0",
+            appSecret: "ig-secret",
+            verifyToken: "ig-verify",
           },
         },
       }),
     ).toMatchObject({
       channels: { instagram: { accountId: "17841400000000000" } },
+    });
+  });
+
+  it("refuses Messenger and Instagram credentials core could not run", () => {
+    // Core builds no adapter without all of them, so the channel would
+    // silently never answer.
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          instagram: { id: "ig", accountId: "17841400000000000" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.instagram.accessToken is required when config.channels.instagram.accountId is set",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          messenger: { id: "fb", pageAccessToken: "fb-token", appSecret: "s" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.messenger.verifyToken is required when config.channels.messenger.appSecret is set",
+    );
+    // A patch may rotate one secret alone; the merged config still has the rest.
+    expect(
+      normalizeAgentConfigPatch({
+        channels: { messenger: { id: "fb", pageAccessToken: "rotated" } },
+      }),
+    ).toEqual({
+      channels: { messenger: { id: "fb", pageAccessToken: "rotated" } },
     });
   });
 
