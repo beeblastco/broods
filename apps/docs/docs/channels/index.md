@@ -77,7 +77,7 @@ There is one webhook URL per account and provider. It never names an agent. The 
 Channel telegram (telegram): https://gateway.broods.app/v1/webhooks/acct_.../telegram
 ```
 
-The stage URL reaches only the stage it names. Use it when two stages share one bot, otherwise both stages compete for the same traffic. Providers that store one webhook per bot, such as Telegram, Zalo, WhatsApp, Teams, Google Chat and Twilio, move all traffic to whichever URL you registered last.
+The stage URL reaches only the stage it names. Use it when two stages share one bot, otherwise both stages compete for the same traffic. Providers that store one webhook per bot, such as Telegram, Zalo, WhatsApp, Teams and Google Chat, move all traffic to whichever URL you registered last. Twilio stores one per phone number or messaging service, so the URL you set last on each number wins for that number.
 
 ## Where the agent listens
 

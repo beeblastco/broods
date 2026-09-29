@@ -309,7 +309,8 @@ export function chunkChannelText(text: string, limit: number): string[] {
       nextCodeUnit >= 0xdc00 &&
       nextCodeUnit <= 0xdfff
     ) {
-      end -= 1;
+      // Never split a pair; when it alone is wider than the limit, keep it whole.
+      end = end - 1 > offset ? end - 1 : end + 1;
     }
     chunks.push(text.slice(offset, end));
     offset = end;
