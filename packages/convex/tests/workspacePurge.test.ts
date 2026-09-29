@@ -1,8 +1,4 @@
-import {
-  DeleteObjectCommand,
-  ListObjectsV2Command,
-  type ServiceInputTypes,
-} from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { purgeWorkspaceFilesystem } from "../model/workspaceFs";
 import { workspaceNamespace } from "../model/workspaceRules";
@@ -10,9 +6,12 @@ import { workspaceNamespace } from "../model/workspaceRules";
 const { bucketKeys, mockSend } = vi.hoisted(() => {
   const bucketKeys = new Set<string>();
   const mockSend = vi.fn(
-    async (command: {
-      input: ServiceInputTypes;
-    }): Promise<{ Contents?: { Key: string }[] }> => {
+    async (
+      command: ListObjectsV2Command | DeleteObjectCommand,
+    ): Promise<{ Contents?: { Key: string }[] }> => {
+      // Only the managed bucket holds objects, so a purge aimed at any other
+      // bucket deletes nothing and fails the assertions.
+      if (command.input.Bucket !== "managed-workspace-bucket") return {};
       if (command instanceof ListObjectsV2Command) {
         const prefix = command.input.Prefix ?? "";
 
@@ -22,8 +21,7 @@ const { bucketKeys, mockSend } = vi.hoisted(() => {
             .map((key) => ({ Key: key })),
         };
       }
-      if (command instanceof DeleteObjectCommand)
-        bucketKeys.delete(command.input.Key ?? "");
+      bucketKeys.delete(command.input.Key ?? "");
 
       return {};
     },
@@ -65,10 +63,9 @@ test("purge deletes only objects under the workspace namespace", async () => {
   });
 
   expect(deleted).toBe(2);
-  expect([...bucketKeys]).toEqual([
-    `${neighbour}/notes.md`,
-    `${namespace}-archive/notes.md`,
-  ]);
+  expect(bucketKeys).toEqual(
+    new Set([`${neighbour}/notes.md`, `${namespace}-archive/notes.md`]),
+  );
 });
 
 test("purge refuses a bring-your-own bucket with no prefix", async () => {
