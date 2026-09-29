@@ -208,7 +208,7 @@ export interface ChannelAdapter {
   readonly name: string;
   /**
    * Set when one provider app can serve several agents and every entry of a
-   * delivery names its owner (a WhatsApp number, a Page). Each agent whose
+   * delivery names its owner (a WhatsApp number, a Page, an Instagram account). Each agent whose
    * credentials verify the delivery parses it and keeps only its own entries.
    * Unset, the lowest verifying agentId takes the whole delivery.
    */

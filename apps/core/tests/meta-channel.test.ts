@@ -1,6 +1,6 @@
 /** Messenger and Instagram adapters: Meta's handshake and signature, parsing, and the Send API. */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { ChannelRequest } from "../src/shared/channels.ts";
 import { createInstagramChannel } from "../src/shared/instagram-channel.ts";
@@ -14,6 +14,10 @@ interface SentRequest {
   url: string;
   body: unknown;
 }
+
+beforeEach((): void => {
+  recordFetch({});
+});
 
 afterEach((): void => {
   globalThis.fetch = ORIGINAL_FETCH;
@@ -90,6 +94,60 @@ describe("messenger channel adapter", () => {
     expect((await restricted.parse(delivery(body, sign(body)))).kind).toBe(
       "ignore",
     );
+  });
+
+  it("routes each entry of a shared app to the agent that owns it", (): void => {
+    expect(messenger().routesEachEntry).toBe(true);
+    expect(instagram().routesEachEntry).toBe(true);
+  });
+
+  it("keeps only the entries for its own Page, looked up once from the token", async (): Promise<void> => {
+    const lookups: string[] = [];
+    recordFetch({}, lookups);
+    const adapter = createMessengerChannel({
+      ...messengerOptions(),
+      pageAccessToken: "page-token-once",
+    });
+    const body = JSON.stringify(
+      metaWebhook("page", [
+        { id: "page-2", messages: [{ sender: "psid-2", mid: "mid.2" }] },
+        { id: "page-1", messages: [{ sender: "psid-1", mid: "mid.1" }] },
+      ]),
+    );
+
+    const first = await adapter.parse(delivery(body, sign(body)));
+    await adapter.parse(delivery(body, sign(body)));
+
+    expect(first).toMatchObject({
+      kind: "message",
+      message: { eventId: "messenger:psid-1:mid.1" },
+    });
+    expect(lookups).toEqual([
+      "https://graph.facebook.com/v21.0/me?access_token=page-token-once&fields=id",
+    ]);
+  });
+
+  it("returns several messages to its Page as one batch", async (): Promise<void> => {
+    const body = JSON.stringify(
+      metaWebhook("page", [
+        {
+          id: "page-1",
+          messages: [
+            { sender: "psid-1", mid: "mid.1" },
+            { sender: "psid-2", mid: "mid.2" },
+          ],
+        },
+      ]),
+    );
+
+    const parsed = await messenger().parse(delivery(body, sign(body)));
+
+    expect(parsed.kind).toBe("batch");
+    expect(
+      parsed.kind === "batch"
+        ? parsed.results.map((result) => result.message.eventId)
+        : [],
+    ).toEqual(["messenger:psid-1:mid.1", "messenger:psid-2:mid.2"]);
   });
 
   it("sends the reply and the typing indicator through the Send API", async (): Promise<void> => {
@@ -189,6 +247,25 @@ describe("instagram channel adapter", () => {
     expect(
       (await instagram().parse(delivery(otherBody, sign(otherBody)))).kind,
     ).toBe("ignore");
+  });
+
+  it("returns several messages to its account as one batch, skipping others", async (): Promise<void> => {
+    const body = JSON.stringify(
+      metaWebhook("instagram", [
+        { id: "ig-1", messages: [{ sender: "igsid-1", mid: "ig-mid.1" }] },
+        { id: "ig-other", messages: [{ sender: "igsid-9", mid: "ig-mid.9" }] },
+        { id: "ig-1", messages: [{ sender: "igsid-2", mid: "ig-mid.2" }] },
+      ]),
+    );
+
+    const parsed = await instagram().parse(delivery(body, sign(body)));
+
+    expect(parsed.kind).toBe("batch");
+    expect(
+      parsed.kind === "batch"
+        ? parsed.results.map((result) => result.message.eventId)
+        : [],
+    ).toEqual(["instagram:igsid-1:ig-mid.1", "instagram:igsid-2:ig-mid.2"]);
   });
 
   it("sends the reply to the account's messages endpoint", async (): Promise<void> => {
@@ -305,6 +382,26 @@ function instagramWebhook(text: string): {
   };
 }
 
+// A signed-body shape with any number of entries, each with its messages.
+function metaWebhook(
+  object: "instagram" | "page",
+  entries: { id: string; messages: { sender: string; mid: string }[] }[],
+): ReturnType<typeof messengerWebhook> {
+  return {
+    object: object,
+    entry: entries.map((entry) => ({
+      id: entry.id,
+      time: 1_760_000_000_000,
+      messaging: entry.messages.map((message) => ({
+        sender: { id: message.sender },
+        recipient: { id: entry.id },
+        timestamp: 1_760_000_000_000,
+        message: { mid: message.mid, text: `hello from ${message.sender}` },
+      })),
+    })),
+  };
+}
+
 function messenger(): ReturnType<typeof createMessengerChannel> {
   return createMessengerChannel(messengerOptions());
 }
@@ -352,15 +449,25 @@ function messengerWebhook(text: string): {
 }
 
 // Records every Graph call and answers each with the same Send API result.
-function recordFetch(result: Record<string, string>): SentRequest[] {
+// The Page lookup (`/me`) answers `page-1` and lands in `lookups` instead.
+function recordFetch(
+  result: Record<string, string>,
+  lookups: string[] = [],
+): SentRequest[] {
   const calls: SentRequest[] = [];
   globalThis.fetch = Object.assign(
     async (
       input: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
+      const url = input instanceof Request ? input.url : input.toString();
+      if (new URL(url).pathname.endsWith("/me")) {
+        lookups.push(url);
+
+        return Response.json({ id: "page-1" });
+      }
       calls.push({
-        url: input instanceof Request ? input.url : input.toString(),
+        url: url,
         body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
       });
 

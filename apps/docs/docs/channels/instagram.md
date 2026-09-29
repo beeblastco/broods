@@ -44,6 +44,8 @@ The Instagram channel answers direct messages to an Instagram professional accou
 7. Run `broods dev` or `broods deploy`. Under **Configure webhooks**, enter the printed URL, `/v1/webhooks/{accountId}/instagram`, and the verify token, then **Verify and save**. Meta sends a GET handshake, and Broods answers it with the challenge once the verify token matches.
 8. Subscribe the `messages` and `messaging_postbacks` webhook fields.
 
+Several accounts can share one app: each agent answers only the messages sent to its own `accountId`.
+
 Production apps that message accounts they do not own need Meta's Advanced Access for `instagram_business_manage_messages`.
 
 ## Configuration
@@ -74,7 +76,7 @@ export const vip = defineInstagramChannel({
 
 ## What works
 
-- Text in and out. Replies longer than Instagram's 1000-byte limit go out as several messages.
+- Text in and out. Replies go out in pieces of at most 950 bytes, under Instagram's 1000-byte limit, so a long one arrives as several messages.
 - Inbound pictures, video, audio, story replies and story mentions. Meta hosts them and the agent reads the link.
 - Outbound pictures, video, audio and PDFs. Workspace files are uploaded, public `https` URLs are sent as links for Instagram to fetch.
 - Quick replies and postbacks. A tap arrives as its title.
@@ -86,7 +88,6 @@ What does not:
 - No reactions.
 - No streaming. The reply goes out whole when the turn ends.
 - Echoes, deleted and unsupported messages, reactions and reads are ignored.
-- Meta can batch several messages in one delivery under load. Only the first runs a turn; the rest are logged and dropped.
 - Instagram allows free-form replies only within 24 hours of the person's last message.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.

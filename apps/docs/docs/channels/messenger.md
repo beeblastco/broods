@@ -45,6 +45,8 @@ The Messenger channel answers direct messages to a Facebook Page, through the Me
 
 Meta keeps one callback URL per app. Pointing it at a stage URL moves all of that app's traffic to that stage.
 
+Several Pages can share one app: each agent answers only the messages sent to the Page its access token belongs to.
+
 ## Configuration
 
 | Field               | Required | Where it comes from                                                  |
@@ -72,7 +74,7 @@ export const vip = defineMessengerChannel({
 
 ## What works
 
-- Text in and out. Replies longer than the 2000-character Send API limit go out as several messages.
+- Text in and out. Replies go out in pieces of at most 1900 characters, under the 2000-character Send API limit, so a long one arrives as several messages.
 - Buttons and the Get Started button. A tap arrives as the button title.
 - Inbound pictures, video, audio and files. Meta hosts them and the agent reads the link.
 - Typing indicators.
@@ -84,7 +86,6 @@ What does not:
 - No reactions. A Page cannot react to a message.
 - No streaming. The reply goes out whole when the turn ends.
 - Echoes of the Page's own messages, reactions, reads and deliveries are ignored.
-- Meta can batch several messages in one delivery under load. Only the first runs a turn; the rest are logged and dropped.
 - Meta allows free-form replies only within 24 hours of the person's last message.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.

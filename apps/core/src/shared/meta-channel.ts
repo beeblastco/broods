@@ -2,8 +2,9 @@
  * What Messenger and Instagram share. Both deliver Meta Graph webhooks: a GET
  * subscription handshake answered with the verify token, an
  * `X-Hub-Signature-256` HMAC over every POST, and one envelope of batched
- * messaging events. Both reply through a Chat SDK adapter used as transport
- * only. Each channel file builds its transport and names how the two differ.
+ * messaging events whose entries each name the Page or account they are for.
+ * Both reply through a Chat SDK adapter used as transport only. Each channel
+ * file builds its transport and names how the two differ.
  */
 
 import { createHmac } from "node:crypto";
@@ -16,6 +17,7 @@ import type {
   ChannelImage,
   ChannelParseResult,
   ChannelRequest,
+  ParsedChannelMessage,
 } from "./channels.ts";
 import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
@@ -68,9 +70,9 @@ export interface MetaChannelOptions<Event extends MetaMessagingEvent> {
   allowedChannelIds: ReadonlySet<string> | null;
   allowedUserIds: ReadonlySet<string> | null;
   appSecret: string;
-  /** Only entries for this id run, when set. */
-  entryId?: string;
   name: "instagram" | "messenger";
+  /** The Page or account this agent answers for; only its entries run. */
+  ownerId(): Promise<string>;
   /** The webhook `object` this channel subscribes to. */
   object: "instagram" | "page";
   /** Whether the transport's `postMessage` delivers attachments. */
@@ -87,6 +89,12 @@ interface MetaTextLimit {
   unit: "bytes" | "chars";
 }
 
+// One messaging event and the Page or account its entry names.
+interface MetaEvent<Event> {
+  event: Event;
+  recipientId: string;
+}
+
 interface MetaWebhookPayload<Event> {
   object?: string;
   entry?: { id: string; messaging?: Event[] }[];
@@ -94,8 +102,9 @@ interface MetaWebhookPayload<Event> {
 
 /**
  * The adapter behind `messenger-channel.ts` and `instagram-channel.ts`. It
- * answers the GET handshake itself, runs the first message of a delivery and
- * replies through the Chat SDK transport.
+ * answers the GET handshake itself, turns every message of a delivery sent to
+ * its own Page or account into a turn and replies through the Chat SDK
+ * transport.
  */
 export function createMetaChannel<Event extends MetaMessagingEvent>(
   options: MetaChannelOptions<Event>,
@@ -104,6 +113,8 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
 
   return {
     name: name,
+    // One Meta app can serve several Pages or accounts, each its own agent's.
+    routesEachEntry: true,
 
     canHandle: function (req): boolean {
       if (req.method === "GET") {
@@ -142,7 +153,7 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
       return true;
     },
 
-    parse: function (req): ChannelParseResult {
+    parse: async function (req): Promise<ChannelParseResult> {
       if (req.method === "GET") {
         return {
           kind: "response",
@@ -164,53 +175,24 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
       if (body.payload.object !== options.object) {
         return { kind: "ignore", reason: "not a messaging subscription" };
       }
-      const found = firstMessageEvent(options, body.payload);
-      if (!found) {
+      const events = messageEvents(body.payload);
+      if (events.length === 0) {
         return { kind: "ignore", reason: "no message" };
       }
-      const senderId = found.event.sender.id;
-      if (
-        !isAllowedId(options.allowedChannelIds, senderId) ||
-        !isAllowedId(options.allowedUserIds, senderId)
-      ) {
-        logWarn("Meta sender not in allow list", {
-          channel: name,
-          userId: senderId,
-        });
-
-        return { kind: "ignore", reason: "not allowed" };
+      // Meta batches events under load; each message is its own turn.
+      const ownerId = await options.ownerId();
+      const results = events
+        .filter((found) => found.recipientId === ownerId)
+        .map((found) => parseEvent(options, found));
+      const messages = results.filter((result) => result.kind === "message");
+      if (messages.length > 1) {
+        return { kind: "batch", results: messages };
       }
-      const parsed = transport.parseMessage(found.event);
-      const attachments = urlAttachments(parsed.attachments);
-      if (!parsed.text.trim() && attachments.length === 0) {
-        return { kind: "ignore", reason: "empty message" };
-      }
-      const source: MetaSource = {
-        messageId: parsed.id,
-        recipientId: found.recipientId,
-        senderId: senderId,
-        threadId: parsed.threadId,
-      };
 
-      return {
-        kind: "message",
-        message: {
-          eventId: `${options.prefix}${senderId}:${parsed.id}`,
-          conversationKey: `${options.prefix}${found.recipientId}:${senderId}`,
-          channelName: name,
-          content: parsed.text,
-          ...(attachments.length > 0 ? { attachments: attachments } : {}),
-          // A Messenger or Instagram chat is always one person, so the sender
-          // is also the place the reply goes.
-          identity: {
-            workspaceRef: found.recipientId,
-            channelId: senderId,
-            userId: senderId,
-          },
-          // Spread so the typed source reaches a Record<string, unknown> field.
-          source: { ...source },
-        },
-      };
+      return (
+        messages[0] ??
+        results[0] ?? { kind: "ignore", reason: "no message for this owner" }
+      );
     },
 
     actions: function (msg): ChannelActions {
@@ -254,51 +236,83 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
   };
 }
 
-/**
- * The first event in a delivery a person sent: a message or a button tap. Meta
- * batches events under load and a parse runs one turn, so the rest are logged
- * and dropped. Echoes of the agent's own replies, reactions, reads and
- * deliveries are never messages.
- */
-function firstMessageEvent<Event extends MetaMessagingEvent>(
-  options: MetaChannelOptions<Event>,
-  payload: MetaWebhookPayload<Event>,
-): { event: Event; recipientId: string } | null {
-  const found: { event: Event; recipientId: string }[] = [];
-  for (const entry of payload.entry ?? []) {
-    // One Meta app can serve several accounts; another account's DM is not ours.
-    if (options.entryId && entry.id !== options.entryId) {
-      logWarn("Meta webhook entry is for another account", {
-        channel: options.name,
-        entryId: entry.id,
-      });
-      continue;
-    }
-    for (const event of entry.messaging ?? []) {
-      const message = event.message;
-      const isMessage =
-        message !== undefined &&
-        !message.is_echo &&
-        !message.is_deleted &&
-        !message.is_unsupported;
-      if (isMessage || event.postback) {
-        found.push({ event: event, recipientId: entry.id });
-      }
-    }
-  }
-  if (found.length > 1) {
-    logWarn("Meta webhook carried more than one message", {
-      channel: options.name,
-      count: found.length,
-    });
-  }
-
-  return found[0] ?? null;
-}
-
 // Meta sends the handshake as `hub.*` query parameters on a GET.
 function handshakeParams(req: ChannelRequest): URLSearchParams {
   return new URLSearchParams(req.rawQueryString);
+}
+
+/**
+ * Every event in a delivery a person sent: a message or a button tap, with the
+ * Page or account it was sent to. Echoes of the agent's own replies,
+ * reactions, reads and deliveries are never messages.
+ */
+function messageEvents<Event extends MetaMessagingEvent>(
+  payload: MetaWebhookPayload<Event>,
+): MetaEvent<Event>[] {
+  return (payload.entry ?? []).flatMap((entry) =>
+    (entry.messaging ?? [])
+      .filter((event) => {
+        const message = event.message;
+        const isMessage =
+          message !== undefined &&
+          !message.is_echo &&
+          !message.is_deleted &&
+          !message.is_unsupported;
+
+        return isMessage || event.postback !== undefined;
+      })
+      .map((event) => ({ event: event, recipientId: entry.id })),
+  );
+}
+
+// One person's message as a turn, or why it does not run.
+function parseEvent<Event extends MetaMessagingEvent>(
+  options: MetaChannelOptions<Event>,
+  found: MetaEvent<Event>,
+): ParsedChannelMessage | { kind: "ignore"; reason: string } {
+  const senderId = found.event.sender.id;
+  if (
+    !isAllowedId(options.allowedChannelIds, senderId) ||
+    !isAllowedId(options.allowedUserIds, senderId)
+  ) {
+    logWarn("Meta sender not in allow list", {
+      channel: options.name,
+      userId: senderId,
+    });
+
+    return { kind: "ignore", reason: "not allowed" };
+  }
+  const parsed = options.transport.parseMessage(found.event);
+  const attachments = urlAttachments(parsed.attachments);
+  if (!parsed.text.trim() && attachments.length === 0) {
+    return { kind: "ignore", reason: "empty message" };
+  }
+  const source: MetaSource = {
+    messageId: parsed.id,
+    recipientId: found.recipientId,
+    senderId: senderId,
+    threadId: parsed.threadId,
+  };
+
+  return {
+    kind: "message",
+    message: {
+      eventId: `${options.prefix}${senderId}:${parsed.id}`,
+      conversationKey: `${options.prefix}${found.recipientId}:${senderId}`,
+      channelName: options.name,
+      content: parsed.text,
+      ...(attachments.length > 0 ? { attachments: attachments } : {}),
+      // A Messenger or Instagram chat is always one person, so the sender is
+      // also the place the reply goes.
+      identity: {
+        workspaceRef: found.recipientId,
+        channelId: senderId,
+        userId: senderId,
+      },
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
+    },
+  };
 }
 
 /**

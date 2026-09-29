@@ -79,7 +79,7 @@ sequenceDiagram
 
 A `queued` or `duplicate` outcome starts no worker for this message, only one for a group that admission recovered from an expired owner. The current owner drains the queued envelope on its own worker slot when its turn settles.
 
-If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie. An adapter that sets `routesEachEntry` (WhatsApp) instead hands the delivery to every agent that verifies it, each keeping only the entries it owns, under the one ack budget.
+If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie. An adapter that sets `routesEachEntry` (WhatsApp, Messenger, Instagram) instead hands the delivery to every agent that verifies it, each keeping only the entries it owns, under the one ack budget.
 
 A record lookup that finds nothing falls back to the credential holder. A lookup that fails refuses the turn and posts "I can't reach my channel configuration right now", because running without the record's policies and `denyTools` would be an escalation. The channel path already needs the control plane to admit ingress, so this costs no availability that is not already lost. A `context` message whose lookup fails is dropped with a warning.
 
@@ -176,14 +176,14 @@ classDiagram
 
 `parse()` outcomes:
 
-| Result     | Meaning                                                                                                                                                                                                  |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message`  | Continue into the agent loop after sending `ack` or a default `200`                                                                                                                                      |
-| `context`  | Store the message as conversation context without running the agent. Slack, Discord, Telegram and Matrix return it for messages that do not address the bot, so a later mention sees what the room said. |
-| `batch`    | Several `message` or `context` results from one delivery, each resolved and admitted on its own, in order, inside one ack budget. WhatsApp returns it when Meta batches messages into one POST.          |
-| `cleanup`  | Delete the conversation's partition folder (`cleanupChannelPartitions`). GitHub returns it when an issue or PR closes.                                                                                   |
-| `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                             |
-| `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                   |
+| Result     | Meaning                                                                                                                                                                                                                 |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message`  | Continue into the agent loop after sending `ack` or a default `200`                                                                                                                                                     |
+| `context`  | Store the message as conversation context without running the agent. Slack, Discord, Telegram and Matrix return it for messages that do not address the bot, so a later mention sees what the room said.                |
+| `batch`    | Several `message` or `context` results from one delivery, each resolved and admitted on its own, in order, inside one ack budget. WhatsApp, Messenger and Instagram return it when Meta batches messages into one POST. |
+| `cleanup`  | Delete the conversation's partition folder (`cleanupChannelPartitions`). GitHub returns it when an issue or PR closes.                                                                                                  |
+| `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                                            |
+| `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                                  |
 
 `ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `sendReplyButtons`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
 

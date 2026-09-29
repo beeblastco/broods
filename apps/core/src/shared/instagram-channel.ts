@@ -52,10 +52,11 @@ export function createInstagramChannel(
     allowedChannelIds: options.allowedChannelIds,
     allowedUserIds: options.allowedUserIds,
     appSecret: options.appSecret,
-    // One Meta app can serve several Instagram accounts under one app secret.
-    entryId: options.accountId,
     name: "instagram",
     object: "instagram",
+    ownerId: async function (): Promise<string> {
+      return options.accountId;
+    },
     postsAttachments: true,
     prefix: INSTAGRAM_INTEGRATION_PREFIX,
     textLimit: { max: INSTAGRAM_TEXT_LIMIT_BYTES, unit: "bytes" },
