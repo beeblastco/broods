@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DataModel, Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { deleteStageContents } from "../stage";
@@ -232,6 +232,15 @@ async function rowsForStage(
 // `cascade.purgeProject` call, so a table missing from it orphans rows on
 // every deletion path at once.
 describe("deleteStageContents", () => {
+  // The cascade schedules runtime and S3 cleanup. Fake timers keep those
+  // actions from firing after a test ends, where their logs race worker teardown.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   test("seeds one row in every stage-scoped table", async () => {
     const t = cascadeTest();
     const { stageId } = await seedFullStage(t);
