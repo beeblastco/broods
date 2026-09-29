@@ -21,6 +21,7 @@ import type {
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
   AgentTelegramChannelConfig,
+  AgentTwilioChannelConfig,
   AgentWhatsAppChannelConfig,
   AgentZaloChannelConfig,
   AgentProviderSettings,
@@ -48,6 +49,7 @@ export type { DiscordSource } from "../../../apps/core/src/shared/discord-channe
 export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
 export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
 export type { TeamsSource } from "../../../apps/core/src/shared/teams-channel.ts";
+export type { TwilioSource } from "../../../apps/core/src/shared/twilio-channel.ts";
 export type { WhatsAppSource } from "../../../apps/core/src/shared/whatsapp-channel.ts";
 export type { ZaloSource } from "../../../apps/core/src/shared/zalo-channel.ts";
 
@@ -76,6 +78,7 @@ export type {
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
   AgentTelegramChannelConfig,
+  AgentTwilioChannelConfig,
   AgentWhatsAppChannelConfig,
   AgentZaloChannelConfig,
   AgentProviderSettings,

@@ -654,6 +654,7 @@ import {
   defineMatrixConnection,
   definePancakeConnection,
   defineTeamsConnection,
+  defineTwilioConnection,
   defineWhatsAppConnection,
   defineZaloConnection,
   env,
@@ -712,6 +713,13 @@ export const linear = defineLinearConnection({
   userName: "support-ai",
   allowedChannelIds: ["ENG"],
 });
+export const twilio = defineTwilioConnection({
+  accountSid: env("TWILIO_ACCOUNT_SID"),
+  authToken: env("TWILIO_AUTH_TOKEN"),
+  phoneNumber: "+15550001111",
+  allowedChannelIds: ["*"],
+  allowedUserIds: ["+15551234567"],
+});
 
 export const gchat = defineGoogleChatConnection({
   credentials: env("GCHAT_SERVICE_ACCOUNT_KEY"),
@@ -745,6 +753,7 @@ export const support = defineAgent({
     matrix,
     pancake,
     teams,
+    twilio,
     zalo,
     whatsapp,
   ],
@@ -788,6 +797,11 @@ export const support = defineAgent({
       },
       linear: { userName: "support-ai", allowedChannelIds: ["ENG"] },
       pancake: { senderId: "staff-1", allowedChannelIds: ["*"] },
+      twilio: {
+        phoneNumber: "+15550001111",
+        allowedChannelIds: ["*"],
+        allowedUserIds: ["+15551234567"],
+      },
       zalo: { allowedUserIds: ["user-1"], allowedChannelIds: ["*"] },
       gchat: {
         googleChatProjectNumber: "123456789012",
@@ -820,6 +834,7 @@ export const support = defineAgent({
     { alias: "slack", type: "slack", agentName: "support" },
     { alias: "teams", type: "teams", agentName: "support" },
     { alias: "telegram", type: "telegram", agentName: "support" },
+    { alias: "twilio", type: "twilio", agentName: "support" },
     { alias: "whatsapp", type: "whatsapp", agentName: "support" },
     { alias: "zalo", type: "zalo", agentName: "support" },
   ]);

@@ -15,6 +15,7 @@ import type {
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
   AgentTelegramChannelConfig,
+  AgentTwilioChannelConfig,
   AgentWhatsAppChannelConfig,
   ChannelPartition,
   ChannelReplyIn,
@@ -32,6 +33,7 @@ import type {
   MatrixSource,
   PancakeSource,
   TeamsSource,
+  TwilioSource,
   ZaloSource,
   WhatsAppSource,
 } from "./contracts.ts";
@@ -219,6 +221,7 @@ export type ChannelType =
   | "matrix"
   | "pancake"
   | "teams"
+  | "twilio"
   | "zalo"
   | "whatsapp";
 
@@ -392,6 +395,24 @@ export interface PancakeConnectionInput extends ConnectionIdentityInput {
   senderId?: string | EnvRef;
 }
 
+export type TwilioConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentTwilioChannelConfig,
+      | "accountSid"
+      | "apiUrl"
+      | "authToken"
+      | "messagingServiceSid"
+      | "phoneNumber"
+      | "statusCallbackUrl"
+      | "userName"
+      | "webhookUrl"
+    >,
+    "accountSid" | "authToken"
+  >
+> &
+  ConnectionIdentityInput;
+
 export interface ZaloConnectionInput extends ConnectionIdentityInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
@@ -433,6 +454,10 @@ export type TeamsConnectionDefinition = ConnectionDefinition<
   "teams",
   TeamsConnectionInput
 >;
+export type TwilioConnectionDefinition = ConnectionDefinition<
+  "twilio",
+  TwilioConnectionInput
+>;
 export type ZaloConnectionDefinition = ConnectionDefinition<
   "zalo",
   ZaloConnectionInput
@@ -451,6 +476,7 @@ export type AnyConnectionDefinition =
   | MatrixConnectionDefinition
   | PancakeConnectionDefinition
   | TeamsConnectionDefinition
+  | TwilioConnectionDefinition
   | ZaloConnectionDefinition
   | WhatsAppConnectionDefinition;
 
@@ -547,6 +573,12 @@ export type TelegramChannelInput = ChannelRulesInput & {
   chatId: string;
 };
 
+export type TwilioChannelInput = ChannelRulesInput & {
+  connection: TwilioConnectionDefinition;
+  /** Sender's number in E.164, e.g. "+15551234567", or several. */
+  from: string | readonly string[];
+};
+
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
   /** Zalo user or group chat id, or several that share one set of rules. */
@@ -631,6 +663,7 @@ export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
 export type TeamsMessageSource = TeamsSource;
+export type TwilioMessageSource = TwilioSource;
 export type ZaloMessageSource = ZaloSource;
 export type WhatsAppMessageSource = WhatsAppSource;
 
@@ -648,6 +681,7 @@ export type ChannelMessageReceived =
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
   | { channel: "teams"; text: string; source: TeamsMessageSource }
+  | { channel: "twilio"; text: string; source: TwilioMessageSource }
   | { channel: "zalo"; text: string; source: ZaloMessageSource }
   | { channel: "whatsapp"; text: string; source: WhatsAppMessageSource };
 
@@ -1038,6 +1072,12 @@ export function defineTelegramConnection(
   return defineConnection("telegram", config);
 }
 
+export function defineTwilioConnection(
+  config: TwilioConnectionInput,
+): TwilioConnectionDefinition {
+  return defineConnection("twilio", config);
+}
+
 export function defineWhatsAppConnection(
   config: WhatsAppConnectionInput,
 ): WhatsAppConnectionDefinition {
@@ -1134,6 +1174,14 @@ export function defineTelegramChannel<const Name extends string>(
   const { name, description, chatId, ...rules } = input;
 
   return defineChannelResource(name, description, chatId, undefined, rules);
+}
+
+export function defineTwilioChannel<const Name extends string>(
+  input: ResourceInput<Name, TwilioChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, from, ...rules } = input;
+
+  return defineChannelResource(name, description, from, undefined, rules);
 }
 
 export function defineWhatsAppChannel<const Name extends string>(

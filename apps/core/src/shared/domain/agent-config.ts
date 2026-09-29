@@ -13,6 +13,7 @@ import type { LinearAdapterAPIKeyConfig } from "@chat-adapter/linear";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TeamsAdapterConfig } from "@chat-adapter/teams";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
+import type { TwilioAdapterConfig } from "@chat-adapter/twilio";
 import type { WhatsAppAdapterConfig } from "@chat-adapter/whatsapp";
 import type {
   JSONSchema7,
@@ -345,6 +346,7 @@ export interface AgentChannelsConfig {
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
   teams?: AgentTeamsChannelConfig;
+  twilio?: AgentTwilioChannelConfig;
   zalo?: AgentZaloChannelConfig;
   matrix?: AgentMatrixChannelConfig;
   whatsapp?: AgentWhatsAppChannelConfig;
@@ -427,6 +429,23 @@ type ChannelCredentialDrift = AssertAllExact<
       "MultiTenant" | "SingleTenant" | undefined
     >,
     Exactly<TeamsAdapterConfig["userName"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["accountSid"]>,
+      string | undefined
+    >,
+    Exactly<TwilioAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["authToken"]>,
+      string | undefined
+    >,
+    Exactly<TwilioAdapterConfig["messagingServiceSid"], string | undefined>,
+    Exactly<TwilioAdapterConfig["phoneNumber"], string | undefined>,
+    Exactly<TwilioAdapterConfig["statusCallbackUrl"], string | undefined>,
+    Exactly<TwilioAdapterConfig["userName"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["webhookUrl"]>,
+      string | undefined
+    >,
     Exactly<WhatsAppAdapterConfig["accessToken"], string | undefined>,
     Exactly<WhatsAppAdapterConfig["apiUrl"], string | undefined>,
     Exactly<WhatsAppAdapterConfig["apiVersion"], string | undefined>,
@@ -611,6 +630,31 @@ export interface AgentTeamsChannelConfig {
   appTenantId?: string;
   appType?: "MultiTenant" | "SingleTenant";
   userName?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Twilio number or Messaging Service for SMS and MMS. `authToken` checks
+ * Twilio's signature, which covers the exact public URL Twilio called, so
+ * `webhookUrl` is only set when that URL is not the broods webhook URL.
+ */
+export interface AgentTwilioChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  accountSid?: string;
+  apiUrl?: string;
+  authToken?: string;
+  /** `MG...`. Replies go through the service instead of the number texted. */
+  messagingServiceSid?: string;
+  /** E.164 number, e.g. `+15551234567`. Messages to another number go to the agent holding it. */
+  phoneNumber?: string;
+  statusCallbackUrl?: string;
+  userName?: string;
+  /** The URL entered in the Twilio console, when it is not `{PUBLIC_BASE_URL}/v1/webhooks/...`. */
+  webhookUrl?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

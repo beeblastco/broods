@@ -96,6 +96,7 @@ export interface ChannelReference {
     | "matrix"
     | "pancake"
     | "teams"
+    | "twilio"
     | "zalo"
     | "whatsapp";
   readonly agentName: string;

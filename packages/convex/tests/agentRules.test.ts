@@ -168,6 +168,37 @@ describe("agent rules", () => {
     });
   });
 
+  it("holds Twilio to its URL and identity settings", () => {
+    for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"]) {
+      expect(() =>
+        normalizeAgentConfig({
+          channels: { twilio: { id: "sms", [key]: "https://169.254.169.254" } },
+        }),
+      ).toThrow("must not point to a private or internal address");
+    }
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { twilio: { id: "sms", messagingServiceSid: "+1555" } },
+      }),
+    ).toThrow("config.channels.twilio.messagingServiceSid must be");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { twilio: { id: "sms", phoneNumber: "+1 (555) 000-1111" } },
+      }),
+    ).toThrow("config.channels.twilio.phoneNumber must be");
+    expect(
+      redactConfigSecrets({
+        channels: {
+          twilio: { accountSid: "AC1", authToken: "twilio-token" },
+        },
+      }),
+    ).toEqual({
+      channels: {
+        twilio: { accountSid: "AC1", authToken: "********" },
+      },
+    });
+  });
+
   it("validates one reach pair for every provider and rejects the retired keys", () => {
     expect(
       normalizeAgentConfig({

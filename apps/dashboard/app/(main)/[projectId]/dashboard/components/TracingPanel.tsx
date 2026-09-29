@@ -284,6 +284,7 @@ const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "linear:", label: "Linear" },
   { prefix: "pancake:", label: "Pancake" },
   { prefix: "teams:", label: "Teams" },
+  { prefix: "twilio:", label: "Twilio" },
   { prefix: "zalo:", label: "Zalo" },
   { prefix: "whatsapp:", label: "WhatsApp" },
   { prefix: "cron:", label: "Cron" },

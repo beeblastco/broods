@@ -531,7 +531,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -556,6 +556,7 @@ paths:
                 whatsapp,
                 teams,
                 gchat,
+                twilio,
               ]
       responses:
         "200":
@@ -601,6 +602,7 @@ paths:
                 whatsapp,
                 teams,
                 gchat,
+                twilio,
               ]
       responses:
         "200":
@@ -4455,7 +4457,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -5377,6 +5379,65 @@ components:
             senderId:
               type: string
               description: Optional staff user ID for replies
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        twilio:
+          type: object
+          description: Twilio SMS and MMS on a number or Messaging Service. Every delivery must carry a valid `X-Twilio-Signature`, made with `authToken` over the public URL Twilio called and the posted form.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            accountSid:
+              type: string
+              description: Twilio account SID, `AC...`.
+            authToken:
+              type: string
+              description: Twilio auth token. Checks each webhook signature and authenticates replies.
+            phoneNumber:
+              type: string
+              pattern: "^\\+[1-9]\\d{1,14}$"
+              description: E.164 number the agent answers on. A message to another number on the same URL goes to the agent that holds that number.
+            messagingServiceSid:
+              type: string
+              pattern: "^MG[0-9a-fA-F]{32}$"
+              description: Messaging Service sid. Replies go through the service instead of from the number texted.
+            webhookUrl:
+              type: string
+              description: The exact URL Twilio calls, when it is not the Broods webhook URL. Public https only.
+            statusCallbackUrl:
+              type: string
+              description: Where Twilio posts delivery status for replies. Public https only.
+            apiUrl:
+              type: string
+              description: Twilio API base URL. Public https only. Defaults to https://api.twilio.com.
+            userName:
+              type: string
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Sender ids this connection answers. Every sender when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             trace:
               type: string
               enum: [enabled, disabled]
