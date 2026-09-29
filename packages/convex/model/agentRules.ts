@@ -1089,8 +1089,10 @@ function normalizeGitHubConfig(value: unknown): void {
 
 /**
  * Linear has no bot account: the agent comments as the member whose API key it
- * holds, and `userName` is both what mentions it and how it knows its own
- * comments. A patch may carry the key alone, so the merged config checks it.
+ * holds, and `userName` is what mentions it. Core runs the channel only with
+ * the key, the name and the webhook secret, so a config with the key and not
+ * the other two is refused here. A patch may carry the key alone, so the merged
+ * config checks it.
  */
 function normalizeLinearConfig(
   value: unknown,
@@ -1111,13 +1113,15 @@ function normalizeLinearConfig(
     config.webhookSecret,
     "config.channels.linear.webhookSecret",
   );
-  if (
-    typeof config.apiKey === "string" &&
-    config.userName === undefined &&
-    !options.patch
-  ) {
+  if (typeof config.apiKey !== "string" || options.patch) return;
+  if (typeof config.userName !== "string" || !config.userName.trim()) {
     throw new ClientError(
       "config.channels.linear.userName is required: the display name of the member the API key belongs to",
+    );
+  }
+  if (!config.webhookSecret) {
+    throw new ClientError(
+      "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
     );
   }
 }

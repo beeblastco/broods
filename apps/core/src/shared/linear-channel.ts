@@ -49,15 +49,18 @@ export interface LinearSource {
   threadId: string;
 }
 
-// The adapter's postMessage reads the bot's own id back into its result, and
-// Chat fills that in on initialize(), which core never calls. This asks Linear
-// for it once per request instead.
+// Chat fills the bot's own id in on initialize(), which core never calls. This
+// asks Linear for it once per adapter instead: parse needs it to spot the
+// bot's own comments, and postMessage reads it back into its result.
 class BroodsLinearAdapter extends LinearAdapter {
-  async loadIdentity(): Promise<void> {
-    if (this.defaultBotUserId) return;
-    const identity = await this.fetchClientIdentity(this.getClient());
-    this.defaultBotUserId = identity.botUserId;
-    this.defaultOrganizationId = identity.organizationId;
+  async loadIdentity(): Promise<string> {
+    if (!this.defaultBotUserId) {
+      const identity = await this.fetchClientIdentity(this.getClient());
+      this.defaultBotUserId = identity.botUserId;
+      this.defaultOrganizationId = identity.organizationId;
+    }
+
+    return this.defaultBotUserId;
   }
 }
 
@@ -80,7 +83,7 @@ export function createLinearChannel(
   return {
     name: "linear",
 
-    canHandle: function (req) {
+    canHandle: function (req): boolean {
       return LINEAR_WEBHOOK_SIGNATURE_HEADER in req.headers;
     },
 
@@ -101,7 +104,7 @@ export function createLinearChannel(
       }
     },
 
-    parse: function (req): ChannelParseResult {
+    parse: async function (req): Promise<ChannelParseResult> {
       const body = parseChannelWebhookBody<LinearCommentWebhook>(
         "linear",
         req.body,
@@ -120,11 +123,13 @@ export function createLinearChannel(
       if (!comment.issueId || !issue || !user || comment.botActor) {
         return { kind: "ignore", reason: "not a member comment on an issue" };
       }
-      if (isAuthor(user.url, options.userName)) {
-        return { kind: "ignore", reason: "own comment" };
-      }
       if (!mentions(comment.body, options.userName)) {
         return { kind: "ignore", reason: "not mentioned" };
+      }
+      // By viewer id, not name: a wrong userName must not make the agent
+      // answer its own reply that quotes `@userName`.
+      if (user.id === (await transport.loadIdentity())) {
+        return { kind: "ignore", reason: "own comment" };
       }
       if (!isAllowedId(options.allowedChannelIds, issue.team.key)) {
         logWarn("Linear team not in allow list", { team: issue.team.key });
@@ -213,13 +218,6 @@ function formatIssueContext(issue: LinearIssueRef): string {
     `URL: ${quote(issue.url)}`,
     `</${LINEAR_CONTEXT_TAG}>`,
   ].join("\n");
-}
-
-// A profile URL ends in the member's display name, the name userName holds.
-function isAuthor(profileUrl: string, userName: string): boolean {
-  const name = profileUrl.split(LINEAR_PROFILE_PATH)[1]?.split(/[/?#]/)[0];
-
-  return name?.toLowerCase() === userName.toLowerCase();
 }
 
 // The mention gate in parse, the same plain match the GitHub channel uses.

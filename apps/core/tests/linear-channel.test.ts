@@ -1,6 +1,6 @@
 /** Linear adapter: the signed and timed webhook, parsing an issue comment mention, and the reply comment. */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import { z } from "zod";
 import type { ChannelRequest } from "../src/shared/channels.ts";
@@ -14,6 +14,16 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const GRAPHQL_REQUEST = z.object({
   query: z.string(),
   variables: z.unknown().optional(),
+});
+
+interface GraphqlCall {
+  query: string;
+  variables: unknown;
+  auth: string | null;
+}
+
+beforeEach((): void => {
+  globalThis.fetch = linearApi([]);
 });
 
 afterEach((): void => {
@@ -79,22 +89,16 @@ describe("linear channel adapter", () => {
     });
   });
 
-  it("ignores comments without a mention, its own comments and other teams", async (): Promise<void> => {
-    const own = commentWebhook("@acme-agent done");
-    own.data.user.url = "https://linear.app/acme/profiles/acme-agent";
-    const payloads = [commentWebhook("just a note"), own];
+  it("ignores comments without a mention and other teams", async (): Promise<void> => {
     const restricted = createLinearChannel({
       ...options(),
       allowedChannelIds: new Set(["OPS"]),
     });
+    const note = JSON.stringify(commentWebhook("just a note"));
 
-    for (const payload of payloads) {
-      const body = JSON.stringify(payload);
-
-      expect((await channel().parse(delivery(body, sign(body)))).kind).toBe(
-        "ignore",
-      );
-    }
+    expect((await channel().parse(delivery(note, sign(note)))).kind).toBe(
+      "ignore",
+    );
     const body = JSON.stringify(commentWebhook("@acme-agent hi"));
 
     expect((await restricted.parse(delivery(body, sign(body)))).kind).toBe(
@@ -102,27 +106,21 @@ describe("linear channel adapter", () => {
     );
   });
 
-  it("replies as a comment under the root comment", async (): Promise<void> => {
-    const calls: { query: string; variables: unknown; auth: string | null }[] =
-      [];
-    globalThis.fetch = Object.assign(
-      async (
-        _input: string | URL | Request,
-        init?: RequestInit,
-      ): Promise<Response> => {
-        const request = GRAPHQL_REQUEST.parse(
-          typeof init?.body === "string" ? JSON.parse(init.body) : null,
-        );
-        calls.push({
-          query: request.query,
-          variables: request.variables,
-          auth: new Headers(init?.headers).get("authorization"),
-        });
+  it("ignores its own comment by viewer id even when the profile slug differs from userName", async (): Promise<void> => {
+    const own = commentWebhook("@acme-agent done, see @acme-agent notes");
+    own.data.user.id = "user-agent";
+    own.data.userId = "user-agent";
+    own.data.user.url = "https://linear.app/acme/profiles/acme-bot";
+    const body = JSON.stringify(own);
 
-        return Response.json({ data: graphqlAnswer(request.query) });
-      },
-      { preconnect: ORIGINAL_FETCH.preconnect },
+    expect((await channel().parse(delivery(body, sign(body)))).kind).toBe(
+      "ignore",
     );
+  });
+
+  it("replies as a comment under the root comment", async (): Promise<void> => {
+    const calls: GraphqlCall[] = [];
+    globalThis.fetch = linearApi(calls);
     const body = JSON.stringify(commentWebhook("@acme-agent hi"));
     const parsed = await channel().parse(delivery(body, sign(body)));
     if (parsed.kind !== "message") throw new Error("expected a message");
@@ -226,7 +224,29 @@ function delivery(
   };
 }
 
-// What Linear's GraphQL API answers to each query the reply path sends.
+// A fetch that answers as Linear's GraphQL API and records every call.
+function linearApi(calls: GraphqlCall[]): typeof fetch {
+  return Object.assign(
+    async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const request = GRAPHQL_REQUEST.parse(
+        typeof init?.body === "string" ? JSON.parse(init.body) : null,
+      );
+      calls.push({
+        query: request.query,
+        variables: request.variables,
+        auth: new Headers(init?.headers).get("authorization"),
+      });
+
+      return Response.json({ data: graphqlAnswer(request.query) });
+    },
+    { preconnect: ORIGINAL_FETCH.preconnect },
+  );
+}
+
+// What Linear's GraphQL API answers to each query the adapter sends.
 function graphqlAnswer(query: string): object {
   const comment = {
     id: "reply-1",

@@ -136,6 +136,27 @@ describe("agent rules", () => {
     ).toThrow("config.channels.linear.userName is required");
     expect(() =>
       normalizeAgentConfig({
+        channels: {
+          linear: {
+            id: "lin",
+            apiKey: "lin_api_key",
+            userName: " ",
+            webhookSecret: "lin-secret",
+          },
+        },
+      }),
+    ).toThrow("config.channels.linear.userName is required");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: { id: "lin", apiKey: "lin_api_key", userName: "acme-agent" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
+    );
+    expect(() =>
+      normalizeAgentConfig({
         channels: { notion: { id: "no", apiBaseUrl: "http://api.notion.com" } },
       }),
     ).toThrow("config.channels.notion.apiBaseUrl must use https");

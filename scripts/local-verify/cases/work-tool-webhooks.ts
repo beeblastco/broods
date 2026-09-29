@@ -5,7 +5,7 @@ import { assertStep, type VerifyContext } from "../harness.ts";
 /**
  * The config plane stores a Linear and a Notion connection, answers them back
  * with every secret redacted, and refuses a Linear key with no `userName`,
- * since that name is how the agent tells its own comments apart. The webhook
+ * since that name is what mentions the agent. The webhook
  * URL for each reaches core's channel scan through the gateway. An agent with
  * no deployment is no candidate there, so the signature checks themselves are
  * covered by core's channel tests.

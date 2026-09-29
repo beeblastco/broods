@@ -94,7 +94,7 @@ export function createNotionChannel(
   return {
     name: "notion",
 
-    canHandle: function (req) {
+    canHandle: function (req): boolean {
       return req.method === "POST";
     },
 
