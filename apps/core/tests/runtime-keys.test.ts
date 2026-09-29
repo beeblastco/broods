@@ -73,6 +73,26 @@ describe("channelScopeKeyFromConversation", () => {
     );
   });
 
+  it("collapses Linear root-comment threads to their issue", () => {
+    expect(channelScopeKeyFromConversation("linear:issue-1:c:comment-1")).toBe(
+      "linear:issue-1",
+    );
+    expect(
+      channelScopeKeyFromConversation(
+        "acct:acct_1:agent:agent_1:linear:issue-1:c:comment-2",
+      ),
+    ).toBe("linear:issue-1");
+    expect(channelScopeKeyFromConversation("linear:issue-1")).toBe(
+      "linear:issue-1",
+    );
+    expect(
+      channelScopeKeyFromConversation(
+        "linear:issue-1:c:comment-1",
+        "conversation",
+      ),
+    ).toBe("linear:issue-1:c:comment-1");
+  });
+
   it("falls back to the whole conversation key for direct/custom conversations", () => {
     expect(channelScopeKeyFromConversation("api:thread-1")).toBe(
       "api:thread-1",

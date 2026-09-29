@@ -10,6 +10,7 @@ import type {
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
   AgentGoogleChatChannelConfig,
+  AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
@@ -26,6 +27,7 @@ import type {
   TelegramSource,
   GoogleChatSource,
   GitHubSource,
+  LinearSource,
   SlackSource,
   DiscordSource,
   MatrixSource,
@@ -213,6 +215,7 @@ export type ChannelType =
   | "telegram"
   | "gchat"
   | "github"
+  | "linear"
   | "slack"
   | "discord"
   | "matrix"
@@ -304,6 +307,17 @@ export type GitHubConnectionInput = EnvRefString<
       | "triggerOnPROpen"
     >,
     "webhookSecret" | "appId" | "privateKey"
+  >
+> &
+  ConnectionIdentityInput;
+
+export type LinearConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentLinearChannelConfig,
+      "apiKey" | "apiUrl" | "userName" | "webhookSecret"
+    >,
+    "apiKey" | "userName" | "webhookSecret"
   >
 > &
   ConnectionIdentityInput;
@@ -416,6 +430,10 @@ export type GitHubConnectionDefinition = ConnectionDefinition<
   "github",
   GitHubConnectionInput
 >;
+export type LinearConnectionDefinition = ConnectionDefinition<
+  "linear",
+  LinearConnectionInput
+>;
 export type SlackConnectionDefinition = ConnectionDefinition<
   "slack",
   SlackConnectionInput
@@ -452,6 +470,7 @@ export type AnyConnectionDefinition =
   | TelegramConnectionDefinition
   | GoogleChatConnectionDefinition
   | GitHubConnectionDefinition
+  | LinearConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
   | MatrixConnectionDefinition
@@ -532,6 +551,12 @@ export type GitHubChannelInput = ChannelRulesInput & {
   connection: GitHubConnectionDefinition;
   /** Repository full name, e.g. "beeblast/api". */
   repo: string;
+};
+
+export type LinearChannelInput = ChannelRulesInput & {
+  connection: LinearConnectionDefinition;
+  /** Team key, e.g. "ENG", or several that share one set of rules. */
+  team: string | readonly string[];
 };
 
 export type TeamsChannelInput = ChannelRulesInput & {
@@ -632,6 +657,7 @@ type Handler<Event, Result> = (
 export type TelegramMessageSource = TelegramSource;
 export type GoogleChatMessageSource = GoogleChatSource;
 export type GitHubMessageSource = GitHubSource;
+export type LinearMessageSource = LinearSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
@@ -649,6 +675,7 @@ export type ChannelMessageReceived =
   | { channel: "telegram"; text: string; source: TelegramMessageSource }
   | { channel: "gchat"; text: string; source: GoogleChatMessageSource }
   | { channel: "github"; text: string; source: GitHubMessageSource }
+  | { channel: "linear"; text: string; source: LinearMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
@@ -1009,6 +1036,12 @@ export function defineGoogleChatConnection(
   return defineConnection("gchat", config);
 }
 
+export function defineLinearConnection(
+  config: LinearConnectionInput,
+): LinearConnectionDefinition {
+  return defineConnection("linear", config);
+}
+
 export function defineMatrixConnection(
   config: MatrixConnectionInput,
 ): MatrixConnectionDefinition {
@@ -1087,6 +1120,14 @@ export function defineGoogleChatChannel<const Name extends string>(
   const { name, description, spaceName, ...rules } = input;
 
   return defineChannelResource(name, description, spaceName, undefined, rules);
+}
+
+export function defineLinearChannel<const Name extends string>(
+  input: ResourceInput<Name, LinearChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, team, ...rules } = input;
+
+  return defineChannelResource(name, description, team, undefined, rules);
 }
 
 export function defineMatrixChannel<const Name extends string>(

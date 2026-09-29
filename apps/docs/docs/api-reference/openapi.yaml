@@ -531,7 +531,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -547,6 +547,7 @@ paths:
               [
                 telegram,
                 github,
+                linear,
                 slack,
                 discord,
                 matrix,
@@ -592,6 +593,7 @@ paths:
               [
                 telegram,
                 github,
+                linear,
                 slack,
                 discord,
                 matrix,
@@ -4455,7 +4457,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, pancake, zalo, whatsapp, teams, gchat, twilio.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -5150,6 +5152,52 @@ components:
             triggerOnPROpen:
               type: boolean
               description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        linear:
+          type: object
+          description: Linear issue comments that mention the agent. The agent comments as the member whose personal API key it holds. Every delivery must carry a valid `Linear-Signature`, made with `webhookSecret`, and be signed less than a minute before it arrives.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            apiKey:
+              type: string
+              description: Personal API key of the Linear member the agent comments as.
+            webhookSecret:
+              type: string
+              description: Signing secret of the Linear webhook.
+            userName:
+              type: string
+              description: Display name of that member. Required with `apiKey`. A comment mentioning `@userName` runs the agent, and comments by that member are ignored.
+            apiUrl:
+              type: string
+              description: Linear GraphQL endpoint. Public https only. Defaults to https://api.linear.app/graphql.
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Team keys this connection answers in, such as ENG. Every team when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             trace:
               type: string
               enum: [enabled, disabled]

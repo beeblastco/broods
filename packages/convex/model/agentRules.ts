@@ -1027,6 +1027,7 @@ function normalizeChannelsConfig(
   normalizeTelegramConfig(channels.telegram);
   normalizeGoogleChatConfig(channels.gchat, options);
   normalizeGitHubConfig(channels.github);
+  normalizeLinearConfig(channels.linear, options);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
   normalizeMatrixConfig(channels.matrix, options);
@@ -1138,6 +1139,45 @@ function normalizeGitHubConfig(value: unknown): void {
     "config.channels.github.botUserId",
     Number.MAX_SAFE_INTEGER,
   );
+}
+
+/**
+ * Linear has no bot account: the agent comments as the member whose API key it
+ * holds, and `userName` is what mentions it. Core runs the channel only with
+ * the key, the name and the webhook secret, so a config with the key and not
+ * the other two is refused here. A patch may carry the key alone, so the merged
+ * config checks it.
+ */
+function normalizeLinearConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.linear must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.linear");
+  assertOptionalString(config.apiKey, "config.channels.linear.apiKey");
+  assertOptionalString(config.apiUrl, "config.channels.linear.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.linear.apiUrl");
+  }
+  assertOptionalString(config.userName, "config.channels.linear.userName");
+  assertOptionalString(
+    config.webhookSecret,
+    "config.channels.linear.webhookSecret",
+  );
+  if (typeof config.apiKey !== "string" || options.patch) return;
+  if (typeof config.userName !== "string" || !config.userName.trim()) {
+    throw new ClientError(
+      "config.channels.linear.userName is required: the display name of the member the API key belongs to",
+    );
+  }
+  if (!config.webhookSecret) {
+    throw new ClientError(
+      "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
+    );
+  }
 }
 
 function normalizeSlackConfig(value: unknown): void {

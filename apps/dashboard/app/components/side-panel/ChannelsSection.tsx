@@ -147,6 +147,32 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
+    kind: "linear",
+    label: "Linear",
+    fields: [
+      { key: "apiKey", label: "API key", type: "secret", required: true },
+      {
+        key: "webhookSecret",
+        label: "Webhook signing secret",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "userName",
+        label: "Display name (for @-mention gating)",
+        type: "text",
+        required: true,
+        placeholder: "acme-agent",
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed team keys",
+        type: "stringList",
+        placeholder: "ENG, *",
+      },
+    ],
+  },
+  {
     kind: "slack",
     label: "Slack",
     fields: [

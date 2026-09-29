@@ -8,6 +8,7 @@ import {
 } from "../src/shared/channels.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
+import { createLinearChannel } from "../src/shared/linear-channel.ts";
 import { createMatrixChannel } from "../src/shared/matrix-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 import { createSlackChannel } from "../src/shared/slack-channel.ts";
@@ -25,6 +26,13 @@ const zalo = createZaloChannel("token", "secret");
 const adapters: ChannelAdapter[] = [
   createDiscordChannel("token", "a".repeat(64), null, null),
   github,
+  createLinearChannel({
+    allowedChannelIds: null,
+    allowedUserIds: null,
+    apiKey: "key",
+    userName: "agent",
+    webhookSecret: "secret",
+  }),
   createMatrixChannel({
     accessToken: "secret",
     apiUrl: "https://matrix.test",

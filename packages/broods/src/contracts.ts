@@ -15,6 +15,7 @@ import type {
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
   AgentGoogleChatChannelConfig,
+  AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
@@ -42,6 +43,7 @@ import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channe
 export type { TelegramSource } from "../../../apps/core/src/shared/telegram-channel.ts";
 export type { GoogleChatSource } from "../../../apps/core/src/shared/gchat-channel.ts";
 export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
+export type { LinearSource } from "../../../apps/core/src/shared/linear-channel.ts";
 export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
 export type { DiscordSource } from "../../../apps/core/src/shared/discord-channel.ts";
 export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
@@ -70,6 +72,7 @@ export type {
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
   AgentGoogleChatChannelConfig,
+  AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
