@@ -373,15 +373,18 @@ export const dailyDigest = defineCron({
 
 A connection holds one app's credentials. A channel names one room on that connection and the rules for it. Agents list connections in `connections`.
 
-| Provider | Connection                 | Channel                 | Room field       |
-| -------- | -------------------------- | ----------------------- | ---------------- |
-| Telegram | `defineTelegramConnection` | `defineTelegramChannel` | `chatId`         |
-| Slack    | `defineSlackConnection`    | `defineSlackChannel`    | `channelId`      |
-| Discord  | `defineDiscordConnection`  | `defineDiscordChannel`  | `channelId`      |
-| GitHub   | `defineGitHubConnection`   | `defineGitHubChannel`   | `repo`           |
-| Matrix   | `defineMatrixConnection`   | `defineMatrixChannel`   | `channelId`      |
-| Pancake  | `definePancakeConnection`  | `definePancakeChannel`  | `conversationId` |
-| Zalo     | `defineZaloConnection`     | `defineZaloChannel`     | `chatId`         |
+| Provider    | Connection                   | Channel                   | Room field       |
+| ----------- | ---------------------------- | ------------------------- | ---------------- |
+| Telegram    | `defineTelegramConnection`   | `defineTelegramChannel`   | `chatId`         |
+| Slack       | `defineSlackConnection`      | `defineSlackChannel`      | `channelId`      |
+| Discord     | `defineDiscordConnection`    | `defineDiscordChannel`    | `channelId`      |
+| GitHub      | `defineGitHubConnection`     | `defineGitHubChannel`     | `repo`           |
+| Matrix      | `defineMatrixConnection`     | `defineMatrixChannel`     | `channelId`      |
+| Pancake     | `definePancakeConnection`    | `definePancakeChannel`    | `conversationId` |
+| Zalo        | `defineZaloConnection`       | `defineZaloChannel`       | `chatId`         |
+| WhatsApp    | `defineWhatsAppConnection`   | `defineWhatsAppChannel`   | `waId`           |
+| Teams       | `defineTeamsConnection`      | `defineTeamsChannel`      | `channelId`      |
+| Google Chat | `defineGoogleChatConnection` | `defineGoogleChatChannel` | `spaceName`      |
 
 Every connection also takes `allowedChannelIds`, where `["*"]` answers everywhere, `allowedUserIds`, `partition` and `trace`. Channels take `agents`, `instructions`, `workspaces`, `policies`, `denyTools`, `partition`, `sandboxImages`, `tagRoles`, and `replyIn` on Slack. Provider fields are on each [channel page](../channels/index.md).
 
