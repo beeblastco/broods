@@ -12,8 +12,19 @@ import {
   resolveConfiguredModel,
   resolveTranscriptionModel,
 } from "../src/harness/provider.ts";
-import { ACCOUNT_MODEL_PROVIDER_NAMES } from "@broods/convex/model/modelProviders";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  type AccountModelProviderName,
+} from "@broods/convex/model/modelProviders";
 import { normalizeAgentConfig } from "@broods/convex/model/agentRules";
+
+// What a provider refuses to be built without, besides the API key.
+const PROVIDER_REQUIRED_SETTINGS: Partial<
+  Record<AccountModelProviderName, Record<string, string>>
+> = {
+  cloudflare: { accountId: "account-test" },
+  custom: { base_url: "https://llm.example.com/v1" },
+};
 
 describe("model provider registry", () => {
   it("has a live AI SDK factory for every supported provider name", () => {
@@ -26,14 +37,68 @@ describe("model provider registry", () => {
     }
   });
 
-  it("builds a model for a provider added purely through the registry", () => {
-    const resolved = resolveConfiguredModel({
-      model: { provider: "deepseek", modelId: "deepseek-reasoner" },
-      provider: { deepseek: { apiKey: "sk-test" } },
+  it.each(ACCOUNT_MODEL_PROVIDER_NAMES)(
+    "builds a %s model from an API key and its own required settings",
+    (name) => {
+      const resolved = resolveConfiguredModel({
+        model: { provider: name, modelId: "some-model" },
+        provider: {
+          [name]: {
+            apiKey: "sk-test",
+            ...PROVIDER_REQUIRED_SETTINGS[name],
+          },
+        },
+      });
+
+      expect(resolved.providerName).toBe(name);
+      expect(resolved.model).toBeDefined();
+    },
+  );
+
+  it.each([{}, { baseURL: "" }])(
+    "sends Ollama to Ollama Cloud, never core's own loopback, by default (%o)",
+    async (endpoint) => {
+      const urls: string[] = [];
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = Object.assign(
+        async (input: string | URL | Request): Promise<Response> => {
+          urls.push(input instanceof Request ? input.url : String(input));
+
+          return Response.json({ error: "stop" }, { status: 400 });
+        },
+        { preconnect: realFetch.preconnect },
+      );
+      try {
+        const { model } = resolveConfiguredModel({
+          model: { provider: "ollama", modelId: "gpt-oss:120b" },
+          provider: { ollama: { apiKey: "sk-test", ...endpoint } },
+        });
+        await generateText({ model: model, prompt: "hi", maxRetries: 0 }).catch(
+          () => undefined,
+        );
+
+        expect(new URL(urls[0] ?? "").hostname).toBe("ollama.com");
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    },
+  );
+
+  it("guards an endpoint under a name broods does not know", async () => {
+    const { model } = resolveConfiguredModel({
+      model: { provider: "openrouter", modelId: "openai/gpt-5" },
+      provider: {
+        openrouter: { apiKey: "sk-test", baseUrl: "https://10.0.0.8/api/v1" },
+      },
     });
 
-    expect(resolved.providerName).toBe("deepseek");
-    expect(resolved.model).toBeDefined();
+    const error = await generateText({
+      model: model,
+      prompt: "hi",
+      maxRetries: 0,
+    }).catch((caught: unknown) => caught);
+
+    expect(String(error)).toMatch(/private address/);
   });
 
   it("passes provider-owned settings through validation untouched", () => {
