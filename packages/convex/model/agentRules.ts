@@ -1482,8 +1482,8 @@ function normalizeMessengerConfig(
 
 /**
  * Core builds a Messenger or Instagram adapter only when every one of these is
- * set, so a config that has some but not all would never answer. A patch may
- * carry one alone, so the merged config checks it.
+ * set and non-empty, so a config that has some but not all would never answer.
+ * A patch may carry one alone, so the merged config checks it.
  */
 function assertMetaCredentials(
   config: Record<string, unknown>,
@@ -1493,8 +1493,12 @@ function assertMetaCredentials(
 ): void {
   if (options.patch) return;
   const present = fields.find((field) => config[field] !== undefined);
+  if (!present) return;
+  const empty = fields.find((field) => config[field] === "");
+  if (empty)
+    throw new ClientError(`${path}.${empty} must be a non-empty string`);
   const missing = fields.find((field) => config[field] === undefined);
-  if (present && missing) {
+  if (missing) {
     throw new ClientError(
       `${path}.${missing} is required when ${path}.${present} is set`,
     );

@@ -610,6 +610,19 @@ describe("agent rules", () => {
     ).toThrow(
       "config.channels.messenger.verifyToken is required when config.channels.messenger.appSecret is set",
     );
+    // Core treats an empty credential as unset, so it would never answer either.
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          messenger: {
+            id: "fb",
+            appSecret: "",
+            pageAccessToken: "",
+            verifyToken: "",
+          },
+        },
+      }),
+    ).toThrow("config.channels.messenger.appSecret must be a non-empty string");
     // A patch may rotate one secret alone; the merged config still has the rest.
     expect(
       normalizeAgentConfigPatch({
