@@ -1031,6 +1031,8 @@ function normalizeChannelsConfig(
   normalizeMatrixConfig(channels.matrix, options);
   normalizePancakeConfig(channels.pancake);
   normalizeZaloConfig(channels.zalo);
+  normalizeInstagramConfig(channels.instagram);
+  normalizeMessengerConfig(channels.messenger);
 }
 
 function normalizeTelegramConfig(value: unknown): void {
@@ -1192,6 +1194,66 @@ function normalizeZaloConfig(value: unknown): void {
         "config.channels.zalo.webhookSecret must be 8 to 256 characters",
       );
   }
+}
+
+function normalizeInstagramConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.instagram must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.instagram");
+  assertOptionalString(
+    config.accessToken,
+    "config.channels.instagram.accessToken",
+  );
+  assertOptionalString(config.accountId, "config.channels.instagram.accountId");
+  // The account id is a path segment of every Graph call the SDK makes.
+  if (typeof config.accountId === "string" && !/^\d+$/.test(config.accountId))
+    throw new ClientError(
+      "config.channels.instagram.accountId must be the numeric Instagram account id",
+    );
+  normalizeGraphApiVersion(config, "config.channels.instagram");
+  assertOptionalString(config.appSecret, "config.channels.instagram.appSecret");
+  assertOptionalString(config.userName, "config.channels.instagram.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.instagram.verifyToken",
+  );
+}
+
+function normalizeMessengerConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.messenger must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.messenger");
+  normalizeGraphApiVersion(config, "config.channels.messenger");
+  assertOptionalString(config.appSecret, "config.channels.messenger.appSecret");
+  assertOptionalString(
+    config.pageAccessToken,
+    "config.channels.messenger.pageAccessToken",
+  );
+  assertOptionalString(config.userName, "config.channels.messenger.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.messenger.verifyToken",
+  );
+}
+
+/**
+ * Messenger and Instagram put `apiVersion` into the path of every Graph call,
+ * so it may only be a version, never a path.
+ */
+function normalizeGraphApiVersion(
+  config: Record<string, unknown>,
+  name: string,
+): void {
+  assertOptionalString(config.apiVersion, `${name}.apiVersion`);
+  if (
+    typeof config.apiVersion === "string" &&
+    !/^v\d+\.\d+$/.test(config.apiVersion)
+  )
+    throw new ClientError(`${name}.apiVersion must look like "v21.0"`);
 }
 
 function normalizeChannelIdentityConfig(

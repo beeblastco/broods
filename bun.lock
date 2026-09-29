@@ -62,6 +62,8 @@
         "@broods/convex": "workspace:*",
         "@chat-adapter/discord": "^4.38.1",
         "@chat-adapter/github": "^4.38.1",
+        "@chat-adapter/instagram": "^4.38.1",
+        "@chat-adapter/messenger": "^4.38.1",
         "@chat-adapter/slack": "^4.38.1",
         "@chat-adapter/telegram": "^4.38.1",
         "@convex-dev/stripe": "^0.1.6",
@@ -745,6 +747,10 @@
     "@chat-adapter/discord": ["@chat-adapter/discord@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1", "discord-api-types": "^0.37.119", "discord-interactions": "^4.4.0", "discord.js": "^14.25.1" } }, "sha512-bSNs4wVS1sx4ZyKCD+nrTyO2xiHGMfuDiBPhmqtpyk86jZ3BjqfKrEuf9t/6VWtvSMQ1rZOt3wMmbUzmMyi1QA=="],
 
     "@chat-adapter/github": ["@chat-adapter/github@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "@octokit/auth-app": "^8.2.0", "@octokit/rest": "^22.0.1", "chat": "4.38.1" } }, "sha512-zFWE0qOKiswI97F+ZpWvF8vjGPtgoExuqsyvp1fOcmVkb9VIAqmUl5oAqtrCgF+o7UaBjQtRzdLVZ3i3QB1gvQ=="],
+
+    "@chat-adapter/instagram": ["@chat-adapter/instagram@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-cqBzevM2bLlTM8UjZrVCrImU3ciao5JsQTZySYMhCwhamYV7vfLHN7E5ocMwn9pKBIzdZYp9hy/Pj2K2x5zKDw=="],
+
+    "@chat-adapter/messenger": ["@chat-adapter/messenger@4.38.1", "", { "dependencies": { "@chat-adapter/shared": "4.38.1", "chat": "4.38.1" } }, "sha512-dqt0c2KHY6UWpfMHX3jJjwB7qoGtwKT2gzM55zog36STZuBIKx/8FJavBhfNj4HWxr3wLZmGrPRt9Zju5KOXSA=="],
 
     "@chat-adapter/shared": ["@chat-adapter/shared@4.38.1", "", { "dependencies": { "chat": "4.38.1" } }, "sha512-zJiMl43fiS3a2RjLFdCyTUTqcDY2xss1Acbzc9yfsw8YAkS0LZRdrNmp9/RjLhZB0+FzLarNAayvdKqF2GwnQg=="],
 

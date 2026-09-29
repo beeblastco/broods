@@ -1,6 +1,7 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
+import { metaHandshake } from "./meta-handshake.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { trailingSlash } from "./trailing-slash.ts";
@@ -12,4 +13,5 @@ export const verifyCases: readonly VerifyCase[] = [
   queuedFollowup,
   machineSandbox,
   trailingSlash,
+  metaHandshake,
 ];

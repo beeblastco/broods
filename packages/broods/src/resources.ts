@@ -8,7 +8,9 @@ import type {
   AgentConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentInstagramChannelConfig,
   AgentMatrixChannelConfig,
+  AgentMessengerChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   ChannelPartition,
@@ -25,6 +27,8 @@ import type {
   MatrixSource,
   PancakeSource,
   ZaloSource,
+  InstagramSource,
+  MessengerSource,
 } from "./contracts.ts";
 
 export type { ChannelPartition };
@@ -207,7 +211,9 @@ export type ChannelType =
   | "discord"
   | "matrix"
   | "pancake"
-  | "zalo";
+  | "zalo"
+  | "instagram"
+  | "messenger";
 
 /**
  * A connection is one app install: the credentials an agent needs before a
@@ -325,6 +331,37 @@ export interface ZaloConnectionInput extends ConnectionIdentityInput {
   webhookSecret: ChannelSecret;
 }
 
+export type InstagramConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentInstagramChannelConfig,
+      | "accessToken"
+      | "accountId"
+      | "apiVersion"
+      | "appSecret"
+      | "userName"
+      | "verifyToken"
+    >,
+    "accessToken" | "accountId" | "appSecret" | "verifyToken"
+  >
+> &
+  ConnectionIdentityInput;
+
+export type MessengerConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentMessengerChannelConfig,
+      | "apiVersion"
+      | "appSecret"
+      | "pageAccessToken"
+      | "userName"
+      | "verifyToken"
+    >,
+    "appSecret" | "pageAccessToken" | "verifyToken"
+  >
+> &
+  ConnectionIdentityInput;
+
 export type TelegramConnectionDefinition = ConnectionDefinition<
   "telegram",
   TelegramConnectionInput
@@ -353,6 +390,14 @@ export type ZaloConnectionDefinition = ConnectionDefinition<
   "zalo",
   ZaloConnectionInput
 >;
+export type InstagramConnectionDefinition = ConnectionDefinition<
+  "instagram",
+  InstagramConnectionInput
+>;
+export type MessengerConnectionDefinition = ConnectionDefinition<
+  "messenger",
+  MessengerConnectionInput
+>;
 export type AnyConnectionDefinition =
   | TelegramConnectionDefinition
   | GitHubConnectionDefinition
@@ -360,7 +405,9 @@ export type AnyConnectionDefinition =
   | DiscordConnectionDefinition
   | MatrixConnectionDefinition
   | PancakeConnectionDefinition
-  | ZaloConnectionDefinition;
+  | ZaloConnectionDefinition
+  | InstagramConnectionDefinition
+  | MessengerConnectionDefinition;
 
 /**
  * One real place a team talks: a Slack channel, a Discord channel, a repo. It
@@ -441,6 +488,18 @@ export type ZaloChannelInput = ChannelRulesInput & {
   chatId: string | readonly string[];
 };
 
+export type InstagramChannelInput = ChannelRulesInput & {
+  connection: InstagramConnectionDefinition;
+  /** Instagram-scoped id (IGSID) of the person, or several. */
+  igsid: string | readonly string[];
+};
+
+export type MessengerChannelInput = ChannelRulesInput & {
+  connection: MessengerConnectionDefinition;
+  /** Page-scoped id (PSID) of the person, or several. */
+  psid: string | readonly string[];
+};
+
 export type PancakeChannelInput = ChannelRulesInput & {
   connection: PancakeConnectionDefinition;
   /** Pancake conversation id. */
@@ -510,6 +569,8 @@ export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
 export type ZaloMessageSource = ZaloSource;
+export type InstagramMessageSource = InstagramSource;
+export type MessengerMessageSource = MessengerSource;
 
 /**
  * Inbound channel message passed to `onMessageReceived`, discriminated on
@@ -522,7 +583,9 @@ export type ChannelMessageReceived =
   | { channel: "discord"; text: string; source: DiscordMessageSource }
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
-  | { channel: "zalo"; text: string; source: ZaloMessageSource };
+  | { channel: "zalo"; text: string; source: ZaloMessageSource }
+  | { channel: "instagram"; text: string; source: InstagramMessageSource }
+  | { channel: "messenger"; text: string; source: MessengerMessageSource };
 
 /**
  * Inline agent hook callbacks. Handlers are serialized with `.toString()`,
@@ -869,10 +932,22 @@ export function defineGitHubConnection(
   return defineConnection("github", config);
 }
 
+export function defineInstagramConnection(
+  config: InstagramConnectionInput,
+): InstagramConnectionDefinition {
+  return defineConnection("instagram", config);
+}
+
 export function defineMatrixConnection(
   config: MatrixConnectionInput,
 ): MatrixConnectionDefinition {
   return defineConnection("matrix", config);
+}
+
+export function defineMessengerConnection(
+  config: MessengerConnectionInput,
+): MessengerConnectionDefinition {
+  return defineConnection("messenger", config);
 }
 
 export function definePancakeConnection(
@@ -923,12 +998,28 @@ export function defineGitHubChannel<const Name extends string>(
   return defineChannelResource(name, description, repo, owner, rules);
 }
 
+export function defineInstagramChannel<const Name extends string>(
+  input: ResourceInput<Name, InstagramChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, igsid, ...rules } = input;
+
+  return defineChannelResource(name, description, igsid, undefined, rules);
+}
+
 export function defineMatrixChannel<const Name extends string>(
   input: ResourceInput<Name, MatrixChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, channelId, ...rules } = input;
 
   return defineChannelResource(name, description, channelId, undefined, rules);
+}
+
+export function defineMessengerChannel<const Name extends string>(
+  input: ResourceInput<Name, MessengerChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, psid, ...rules } = input;
+
+  return defineChannelResource(name, description, psid, undefined, rules);
 }
 
 export function definePancakeChannel<const Name extends string>(

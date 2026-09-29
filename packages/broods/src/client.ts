@@ -93,7 +93,9 @@ export interface ChannelReference {
     | "discord"
     | "matrix"
     | "pancake"
-    | "zalo";
+    | "zalo"
+    | "instagram"
+    | "messenger";
   readonly agentName: string;
   readonly agentId: string;
   readonly accountId: string;

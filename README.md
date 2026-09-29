@@ -23,7 +23,7 @@ This is the source-available engine behind [Broods](https://github.com/beeblastc
 - **Container agent runtime.** One Bun container handles account management, streaming agent execution, webhooks, async work, and cron runs behind the gateway.
 - **Multi-tenant.** Each account has its own encrypted config, hashed API secret, and isolated data.
 - **Bring your own model.** Google, OpenAI, AWS Bedrock, Vercel AI Gateway, or custom providers via the Vercel AI SDK.
-- **Multi-channel.** Telegram, Discord, Slack, Matrix, GitHub, Facebook Messenger (Pancake), and Zalo are built in.
+- **Multi-channel.** Telegram, Discord, Slack, Matrix, GitHub, Pancake, Zalo, Facebook Messenger and Instagram DMs are built in.
 - **Extensible.** Skills, subagents, workspaces, sandboxes, cron jobs, async tools, and custom uploaded tools.
 
 ---

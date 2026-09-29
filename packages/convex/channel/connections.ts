@@ -7,7 +7,7 @@
  * buttons) to an endpoint, but ordinary messages arrive only over a Gateway
  * WebSocket. `apps/matrix-forwarder`: Matrix has no webhooks at all, so it
  * long-polls `/sync` against the homeserver in `apiUrl`. Telegram, Slack, Zalo,
- * GitHub and Pancake all register a plain webhook URL and need nothing held
+ * GitHub, Pancake, Messenger and Instagram all register a plain webhook URL and need nothing held
  * open, so they have no forwarder today. Slack Socket Mode or Telegram long
  * polling would want exactly this answer.
  *

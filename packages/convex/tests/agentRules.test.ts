@@ -480,6 +480,34 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
   });
 
+  it("keeps Messenger and Instagram Graph settings out of the URL path", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { messenger: { id: "fb", apiVersion: "../me" } },
+      }),
+    ).toThrow('config.channels.messenger.apiVersion must look like "v21.0"');
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { instagram: { id: "ig", accountId: "1/../me" } },
+      }),
+    ).toThrow(
+      "config.channels.instagram.accountId must be the numeric Instagram account id",
+    );
+    expect(
+      normalizeAgentConfig({
+        channels: {
+          instagram: {
+            id: "ig",
+            accountId: "17841400000000000",
+            apiVersion: "v26.0",
+          },
+        },
+      }),
+    ).toMatchObject({
+      channels: { instagram: { accountId: "17841400000000000" } },
+    });
+  });
+
   it("validates harness configs", () => {
     const harness = {
       activeTools: ["shell", "read"],

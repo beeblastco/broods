@@ -13,7 +13,9 @@ import type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentInstagramChannelConfig,
   AgentMatrixChannelConfig,
+  AgentMessengerChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
@@ -41,6 +43,8 @@ export type { DiscordSource } from "../../../apps/core/src/shared/discord-channe
 export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
 export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
 export type { ZaloSource } from "../../../apps/core/src/shared/zalo-channel.ts";
+export type { InstagramSource } from "../../../apps/core/src/shared/instagram-channel.ts";
+export type { MessengerSource } from "../../../apps/core/src/shared/messenger-channel.ts";
 
 export type Id<TableName extends string = string> = string & {
   readonly __tableName?: TableName;
@@ -59,7 +63,9 @@ export type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentInstagramChannelConfig,
   AgentMatrixChannelConfig,
+  AgentMessengerChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,

@@ -56,6 +56,7 @@ import {
 } from "../shared/domain/channel-record.ts";
 import { getHarnessPublicUrl, optionalEnv } from "../shared/env.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
+import { createInstagramChannel } from "../shared/instagram-channel.ts";
 import type { QuestionAnswer } from "../../../../packages/broods/src/websocket-contracts.ts";
 import {
   errorResponse,
@@ -100,6 +101,7 @@ import {
 } from "../shared/runtime-keys.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
+import { createMessengerChannel } from "../shared/messenger-channel.ts";
 import { createSlackChannel } from "../shared/slack-channel.ts";
 import type { AgentDeploymentScope } from "../shared/storage.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -556,15 +558,18 @@ async function handleHttpRequest(
     }
   }
 
-  // A provider console may GET a webhook URL to check it is live. Any other GET
-  // is a path core does not serve; `/healthz` is answered in server.ts.
-  if (method === "GET") {
+  // A provider console may GET a webhook URL to check it is live. A GET with a
+  // query string may be a subscription handshake (Meta's `hub.challenge`), so
+  // it goes to the channels like a delivery and is answered as live when none
+  // claims it. Any other GET is a path core does not serve; `/healthz` is
+  // answered in server.ts.
+  if (method === "GET" && !(request.search && matchWebhookPath(request.path))) {
     return matchWebhookPath(request.path)
       ? jsonResponse(200, { status: "ok", method: "POST" })
       : notFoundResponse();
   }
 
-  if (method !== "POST") {
+  if (method !== "GET" && method !== "POST") {
     return methodNotAllowed(["GET", "POST"]);
   }
 
@@ -675,6 +680,11 @@ async function handleHttpRequest(
     // Without an agent in the URL these three cases would all collapse into one
     // 404, so keep them apart: nothing configures the channel, something does
     // but no credentials verified, or the scan itself failed.
+    // A GET no channel claims is the liveness check, whatever its query string
+    // carries (Pancake's `?secret=`, a cache-buster).
+    if (holder.kind === "unconfigured" && method === "GET") {
+      return jsonResponse(200, { status: "ok", method: "POST" });
+    }
     if (holder.kind === "unconfigured") {
       logWarn("Webhook channel not configured by any agent", {
         accountId: account.accountId,
@@ -1804,7 +1814,9 @@ function resolveCommandToken(
 function supportsInlineCommands(channelName: string): boolean {
   return (
     channelName === "discord" ||
+    channelName === "instagram" ||
     channelName === "matrix" ||
+    channelName === "messenger" ||
     channelName === "slack" ||
     channelName === "telegram" ||
     channelName === "zalo"
@@ -1834,6 +1846,8 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const pancakeChannel = createPancakeChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
   const matrixChannel = createMatrixChannelFromConfig(config);
+  const instagramChannel = createInstagramChannelFromConfig(config);
+  const messengerChannel = createMessengerChannelFromConfig(config);
 
   return {
     webhookChannels: [
@@ -1844,6 +1858,8 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       pancakeChannel,
       zaloChannel,
       matrixChannel,
+      instagramChannel,
+      messengerChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
@@ -2699,5 +2715,49 @@ function createZaloChannelFromConfig(
   return createZaloChannel(channel.botToken, channel.webhookSecret, {
     allowedChannelIds: reachSet(channel.allowedChannelIds),
     allowedUserIds: reachSet(channel.allowedUserIds),
+  });
+}
+
+function createInstagramChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.instagram;
+  if (
+    !channel?.accessToken ||
+    !channel.accountId ||
+    !channel.appSecret ||
+    !channel.verifyToken
+  ) {
+    return null;
+  }
+
+  return createInstagramChannel({
+    accessToken: channel.accessToken,
+    accountId: channel.accountId,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
+  });
+}
+
+function createMessengerChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.messenger;
+  if (!channel?.appSecret || !channel.pageAccessToken || !channel.verifyToken) {
+    return null;
+  }
+
+  return createMessengerChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    pageAccessToken: channel.pageAccessToken,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
   });
 }

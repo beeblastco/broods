@@ -63,6 +63,8 @@
     "@broods/convex": "workspace:*",
     "@chat-adapter/discord": "^4.38.1",
     "@chat-adapter/github": "^4.38.1",
+    "@chat-adapter/instagram": "^4.38.1",
+    "@chat-adapter/messenger": "^4.38.1",
     "@chat-adapter/slack": "^4.38.1",
     "@chat-adapter/telegram": "^4.38.1",
     "@convex-dev/stripe": "^0.1.6",

@@ -527,6 +527,46 @@ describe("account webhook ingress", () => {
       error: { message: "Unauthorized" },
     });
   });
+
+  it("answers Meta's GET handshake through the Messenger credential holder", async () => {
+    const messengerAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          messenger: {
+            appSecret: "fb-app-secret",
+            pageAccessToken: "fb-page-token",
+            verifyToken: "fb-verify-token",
+          },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => messengerAgent,
+      agentLister: async () => [messengerAgent],
+    });
+    const get = (query: string): ReturnType<typeof coreRequest> =>
+      coreRequest("GET", `/v1/webhooks/acct_test/messenger${query}`);
+
+    const accepted = await routeIncomingEvent(
+      get(
+        "?hub.mode=subscribe&hub.verify_token=fb-verify-token&hub.challenge=77",
+      ),
+      createHandlers(),
+    );
+    const refused = await routeIncomingEvent(
+      get("?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=77"),
+      createHandlers(),
+    );
+    const live = await routeIncomingEvent(get(""), createHandlers());
+
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.body).toBe("77");
+    expect(refused.statusCode).toBe(401);
+    expect(live.statusCode).toBe(200);
+    expect(responseJson(live)).toEqual({ status: "ok", method: "POST" });
+  });
 });
 
 function createHandlers(
