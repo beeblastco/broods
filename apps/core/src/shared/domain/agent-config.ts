@@ -92,6 +92,25 @@ export interface AgentConfig {
   [key: string]: unknown;
 }
 
+/**
+ * What a code hook reads as ctx.config: the model and the names of what the
+ * agent can use. An allow-list, so no credential field can reach hook code.
+ */
+export interface HookAgentConfig {
+  readonly model: {
+    readonly provider?: AccountModelProviderName;
+    readonly modelId?: string;
+  };
+  readonly harness?: AgentHarnessConfig["type"];
+  readonly maxTurn?: number;
+  readonly tools: readonly string[];
+  readonly mcp: readonly string[];
+  readonly channels: readonly string[];
+  readonly skills: readonly string[];
+  readonly subagents: readonly string[];
+  readonly denyTools: readonly string[];
+}
+
 export interface AgentBehaviorConfig {
   // Model/tool loop steps per turn. 0 lifts the cap; unset is the harness default.
   maxTurn?: number;

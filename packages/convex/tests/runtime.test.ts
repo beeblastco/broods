@@ -362,7 +362,7 @@ describe("runtime persistence", () => {
     });
   });
 
-  test("settles async tools once and seals fan-in groups", async () => {
+  test("settles async tools once and refuses joins to a sealed group", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -423,13 +423,6 @@ describe("runtime persistence", () => {
       parentEventId: parentEventId,
     });
     expect(refreshedGroup?.expiresAt).toBeGreaterThan(1);
-    const group = await t.mutation(internal.runtime.sealAsyncToolGroup, {
-      parentEventId: parentEventId,
-    });
-    expect(group).toMatchObject({
-      resultIds: ["result-1", "result-2"],
-      sealed: true,
-    });
     expect(
       await t.mutation(internal.runtime.updateAsyncToolResult, {
         resultId: "result-1",
@@ -472,6 +465,15 @@ describe("runtime persistence", () => {
     );
     expect(persisted?.completionTokenHash).toBeDefined();
     expect(persisted?.completionTokenHash).not.toBe("secret");
+    await t.run(async (ctx): Promise<void> => {
+      const group = await ctx.db
+        .query("runtimeAsyncToolGroups")
+        .withIndex("by_parentEventId", (q) =>
+          q.eq("parentEventId", parentEventId),
+        )
+        .unique();
+      if (group) await ctx.db.patch(group._id, { sealed: true });
+    });
     await expect(
       t.mutation(internal.runtime.createAsyncToolResult, {
         resultId: "result-3",
@@ -789,10 +791,6 @@ describe("runtime persistence", () => {
           toolName: "bash",
           toolCallId: "call-new",
           input: {},
-        }),
-      () =>
-        t.mutation(internal.runtime.sealAsyncToolGroup, {
-          parentEventId: parentEventId,
         }),
       () =>
         t.mutation(internal.runtime.updateAsyncToolResult, {
