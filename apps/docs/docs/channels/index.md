@@ -4,7 +4,7 @@ title: Channels
 
 # Channels
 
-A channel puts your agent in Slack, Telegram, Discord, GitHub, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams or Google Chat. Messages that arrive there become agent turns, and the answer goes back to the same place.
+A channel puts your agent in Slack, Telegram, Discord, GitHub, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat or Twilio SMS. Messages that arrive there become agent turns, and the answer goes back to the same place.
 
 - A connection is one app install and holds its credentials, such as a Slack bot token.
 - A channel names one room the connection answers in, such as `#product-eng`.
@@ -58,6 +58,7 @@ An agent can hold several connections of different providers. One connection bel
 | [WhatsApp](whatsapp.md) | customer chats with a business number  | `accessToken`, `appSecret`, `phoneNumberId`, `verifyToken` | yes      |
 | [Teams](teams.md)       | personal chats, group chats, channels  | `appId`, `appPassword`, `appTenantId`                      | yes      |
 | [Google Chat](gchat.md) | direct messages, @-mentions in spaces  | `credentials`, `googleChatProjectNumber` or `endpointUrl`  | yes      |
+| [Twilio SMS](twilio.md) | SMS and MMS to a Twilio number         | `accountSid`, `authToken`                                  | yes      |
 
 Store every secret with `broods env set NAME` and reference it with `env("NAME")`. Never inline a token.
 
@@ -76,7 +77,7 @@ There is one webhook URL per account and provider. It never names an agent. The 
 Channel telegram (telegram): https://gateway.broods.app/v1/webhooks/acct_.../telegram
 ```
 
-The stage URL reaches only the stage it names. Use it when two stages share one bot, otherwise both stages compete for the same traffic. Providers that store one webhook per bot, such as Telegram, Zalo, WhatsApp, Teams and Google Chat, move all traffic to whichever URL you registered last.
+The stage URL reaches only the stage it names. Use it when two stages share one bot, otherwise both stages compete for the same traffic. Providers that store one webhook per bot, such as Telegram, Zalo, WhatsApp, Teams and Google Chat, move all traffic to whichever URL you registered last. Twilio stores one per phone number or messaging service, so the URL you set last on each number wins for that number.
 
 ## Where the agent listens
 
@@ -93,7 +94,7 @@ A connection that declares no channel and no `allowedChannelIds` fails `broods d
 
 ## Chat commands
 
-Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams and Google Chat route these commands to Broods instead of the agent. GitHub and Pancake pass slash text to the agent as normal input.
+Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat and Twilio route these commands to Broods instead of the agent. GitHub and Pancake pass slash text to the agent as normal input.
 
 | Command                                   | Effect                                                                   |
 | ----------------------------------------- | ------------------------------------------------------------------------ |
@@ -135,6 +136,7 @@ Tools other than `send-update` appear only where the provider supports them. The
 | WhatsApp    | uploaded or linked   | uploaded or linked   | one per message         |
 | Teams       | links in text        | links in text        | text only               |
 | Google Chat | links in text        | links in text        | text only               |
+| Twilio      | provider fetches URL | sent as links        | one per message         |
 | GitHub      | links in text        | links in text        | text only               |
 
 Where a provider has no document endpoint, `send-files` posts the links as text and tells the model so. If a provider rejects pictures, `send-images` falls back to sending them as documents or links. A caption rides the first message only.
@@ -154,6 +156,7 @@ Media sent to the agent is read while the turn runs.
 | WhatsApp    | pictures, documents, audio, voice notes, video, stickers                   |
 | Teams       | files and pictures                                                         |
 | Google Chat | attachments                                                                |
+| Twilio      | MMS pictures, audio and video                                              |
 | GitHub      | none. A pasted image stays a markdown URL in the text                      |
 
 The limits are 6 MB per picture, 25 MB for anything else, and 10 attachments per message. The media type comes from the bytes, not the provider's label. An attachment that cannot be read becomes a line of text saying so, and the rest of the message still arrives.
@@ -179,7 +182,7 @@ A failed transcription never drops the message. The note names the cause, such a
 
 ## Shared behavior
 
-- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub reacts with eyes. Zalo and Teams show typing only. WhatsApp shows typing and reacts only when the agent calls `send-reactions`. Pancake and Google Chat do neither.
+- Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub reacts with eyes. Zalo and Teams show typing only. WhatsApp shows typing and reacts only when the agent calls `send-reactions`. Pancake, Google Chat and Twilio do neither.
 - Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
 - Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.
