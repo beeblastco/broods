@@ -28,7 +28,6 @@ export interface AccountCleanupSummary {
   processedEventsDeleted: number;
   asyncAgentResultDeleted: number;
   asyncToolResultDeleted: number;
-  asyncToolGroupDeleted: number;
   sandboxReservationDeleted: number;
   filesystemObjectsDeleted: number;
   reservedSandboxesReleased: number;
@@ -118,23 +117,6 @@ export async function deleteAccountSkills(accountId: string): Promise<number> {
 }
 
 /**
- * Deletes one workspace's S3 prefix (its own bucket or the shared filesystem
- * bucket); used per workspace during account cleanup.
- */
-export async function deleteWorkspaceFilesystem(
-  accountId: string,
-  workspaceId: string,
-  storage: WorkspaceStorageConfig | undefined,
-): Promise<number> {
-  if (!storage?.bucket && !optionalEnv("FILESYSTEM_BUCKET_NAME")) return 0;
-  const target = await resolveS3ReadTarget(
-    workspaceReadContext(storage, workspaceNamespace(accountId, workspaceId)),
-  );
-
-  return deleteS3Prefix(target.bucket, target.prefix, target.access);
-}
-
-/**
  * Repeats the batched deleteAccountRuntimeData Convex mutation until it deletes
  * nothing, summing the per-table counts.
  */
@@ -151,7 +133,6 @@ async function deleteConvexRuntimeRows(
     processedEventsDeleted: 0,
     asyncAgentResultDeleted: 0,
     asyncToolResultDeleted: 0,
-    asyncToolGroupDeleted: 0,
     sandboxReservationDeleted: 0,
   };
   for (
@@ -166,7 +147,6 @@ async function deleteConvexRuntimeRows(
     totals.processedEventsDeleted += batch.processedEventsDeleted;
     totals.asyncAgentResultDeleted += batch.asyncAgentResultDeleted;
     totals.asyncToolResultDeleted += batch.asyncToolResultDeleted;
-    totals.asyncToolGroupDeleted += batch.asyncToolGroupDeleted;
     totals.sandboxReservationDeleted += batch.sandboxReservationDeleted;
     if (batch.totalDeleted === 0) return totals;
   }
@@ -174,6 +154,23 @@ async function deleteConvexRuntimeRows(
   throw new Error(
     `Account runtime cleanup exceeded ${ACCOUNT_RUNTIME_DELETE_MAX_BATCHES} Convex batches; retry deletion to continue`,
   );
+}
+
+/**
+ * Deletes one workspace's S3 prefix (its own bucket or the shared filesystem
+ * bucket); used per workspace during account cleanup.
+ */
+async function deleteWorkspaceFilesystem(
+  accountId: string,
+  workspaceId: string,
+  storage: WorkspaceStorageConfig | undefined,
+): Promise<number> {
+  if (!storage?.bucket && !optionalEnv("FILESYSTEM_BUCKET_NAME")) return 0;
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(storage, workspaceNamespace(accountId, workspaceId)),
+  );
+
+  return deleteS3Prefix(target.bucket, target.prefix, target.access);
 }
 
 /**

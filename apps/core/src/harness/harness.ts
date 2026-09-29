@@ -28,6 +28,7 @@ import {
   type ToolApprovalRequestOutput,
   type ToolCallPart,
   type ToolSet,
+  type TypedToolCall,
   type UserModelMessage,
 } from "ai";
 import {
@@ -632,7 +633,7 @@ export async function runAgentLoop(
   const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
     session.delivery?.kind === "channel" ? session.delivery : undefined;
-  const builtTools = {
+  const builtTools: ToolSet = {
     ...(await createTools(
       {
         accountId: session.accountId,
@@ -690,7 +691,7 @@ export async function runAgentLoop(
       },
       agentConfig,
     )),
-  } satisfies ToolSet;
+  };
   // Hooks let tool.call.started deny or edit args and tool.result transform
   // output; the owner fence rechecks conversation ownership before each call.
   const tools = wrapToolsWithOwnerFence(
@@ -1526,13 +1527,10 @@ export async function runAgentLoop(
         });
       }
 
-      // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)
-      // by the AI SDK; cast to the shape extractCacheWriteTokens expects.
-      const meta = providerMetadata as Record<string, unknown> | undefined;
       const stepTokens = usageTokenTotals(usage);
       taskCacheWriteTokens +=
         stepTokens.cacheWriteTokens ||
-        extractCacheWriteTokens(configuredModel.providerName, meta);
+        extractCacheWriteTokens(configuredModel.providerName, providerMetadata);
       // An aborted run never reaches onEnd, so finished steps are summed here.
       // onEnd replaces both with its own totals.
       const soFar = usageTokenTotals(taskUsage);
@@ -1735,7 +1733,6 @@ export async function runAgentLoop(
         });
       }
       stepSpans.delete(stepNumber);
-      firstChunkAt.delete(stepNumber);
       if (activeStepNumber === stepNumber) {
         activeStepNumber = undefined;
       }
@@ -2733,42 +2730,16 @@ function summarizeApprovalRequest(
 /** Merges an update into a tool call's summary, keyed by call id, as the loop's tool hooks fire. */
 function recordToolCallSummary(
   summaries: Map<string, ToolCallSummary>,
-  toolCall: unknown,
+  toolCall: TypedToolCall<ToolSet>,
   update: Partial<Omit<ToolCallSummary, "toolCallId" | "toolName">>,
 ): void {
-  const identity = toolCallIdentity(toolCall);
-  if (!identity) {
-    return;
-  }
-
-  const existing = summaries.get(identity.toolCallId);
-  summaries.set(identity.toolCallId, {
+  const existing = summaries.get(toolCall.toolCallId);
+  summaries.set(toolCall.toolCallId, {
     ...existing,
-    ...identity,
+    toolCallId: toolCall.toolCallId,
+    toolName: toolCall.toolName,
     ...update,
   });
-}
-
-/** The id and name of an SDK tool call, or null when either is missing, for `recordToolCallSummary`. */
-function toolCallIdentity(
-  toolCall: unknown,
-): Pick<ToolCallSummary, "toolCallId" | "toolName"> | null {
-  if (!toolCall || typeof toolCall !== "object") {
-    return null;
-  }
-
-  const record = toolCall as Record<string, unknown>;
-  if (
-    typeof record.toolCallId !== "string" ||
-    typeof record.toolName !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    toolCallId: record.toolCallId,
-    toolName: record.toolName,
-  };
 }
 
 /** Tool names, per-tool counts and step-ordered calls for the finish and failure logs and events. */
@@ -2841,7 +2812,12 @@ function withApprovalToolCalls(
       return [toToolCallPart(toolCall), part];
     });
 
-    return { ...message, content: content } satisfies AssistantModelMessage;
+    const withToolCalls: AssistantModelMessage = {
+      ...message,
+      content: content,
+    };
+
+    return withToolCalls;
   });
 }
 

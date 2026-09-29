@@ -23,7 +23,7 @@ Agent-platform domain (shared with core): `accounts`, `agents`,
 `skills`, `workspaceFiles`,
 `crons`. Core runtime coordination uses `runtimeConversationEvents`,
 `runtimeClaims`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`,
-`runtimeAsyncToolGroups`, `runtimeHarnessSessions`, and
+`runtimeHarnessSessions`, and
 `sandboxReservations`.
 `runtimeHarnessSessions` stores only the opaque adapter checkpoint for Claude
 Code, Codex, Deep Agents, OpenCode, or Pi, with a 64 KiB write limit. The

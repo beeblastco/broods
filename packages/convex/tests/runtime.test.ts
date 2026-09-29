@@ -362,7 +362,7 @@ describe("runtime persistence", () => {
     });
   });
 
-  test("settles async tools once and seals fan-in groups", async () => {
+  test("settles async tools once and keeps the callback token hashed", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -377,6 +377,8 @@ describe("runtime persistence", () => {
         input: { command: "true" },
         delivery: { kind: "async" },
         completionToken: "secret",
+        // A core pod from before #871 still sends this during rollout.
+        sealed: true,
       }),
     ).toBe(true);
     expect(
@@ -389,47 +391,6 @@ describe("runtime persistence", () => {
         input: {},
       }),
     ).toBe(false);
-    await t.run(async (ctx) => {
-      const group = await ctx.db
-        .query("runtimeAsyncToolGroups")
-        .withIndex("by_parentEventId", (q) =>
-          q.eq("parentEventId", parentEventId),
-        )
-        .unique();
-      if (!group) throw new Error("Expected async tool group");
-      await ctx.db.patch(group._id, { expiresAt: 1 });
-    });
-    expect(
-      await t.mutation(internal.runtime.createAsyncToolResult, {
-        resultId: "result-2",
-        parentEventId: parentEventId,
-        conversationKey: conversationKey,
-        toolName: "bash",
-        toolCallId: "call-2",
-        input: {},
-        delivery: { kind: "async" },
-      }),
-    ).toBe(true);
-    expect(
-      await t.query(internal.runtime.getAsyncToolGroup, {
-        parentEventId: parentEventId,
-      }),
-    ).toMatchObject({
-      resultIds: ["result-1", "result-2"],
-      sealed: false,
-      expiresAt: expect.any(Number),
-    });
-    const refreshedGroup = await t.query(internal.runtime.getAsyncToolGroup, {
-      parentEventId: parentEventId,
-    });
-    expect(refreshedGroup?.expiresAt).toBeGreaterThan(1);
-    const group = await t.mutation(internal.runtime.sealAsyncToolGroup, {
-      parentEventId: parentEventId,
-    });
-    expect(group).toMatchObject({
-      resultIds: ["result-1", "result-2"],
-      sealed: true,
-    });
     expect(
       await t.mutation(internal.runtime.updateAsyncToolResult, {
         resultId: "result-1",
@@ -472,22 +433,6 @@ describe("runtime persistence", () => {
     );
     expect(persisted?.completionTokenHash).toBeDefined();
     expect(persisted?.completionTokenHash).not.toBe("secret");
-    await expect(
-      t.mutation(internal.runtime.createAsyncToolResult, {
-        resultId: "result-3",
-        parentEventId: parentEventId,
-        conversationKey: conversationKey,
-        toolName: "bash",
-        toolCallId: "call-3",
-        input: {},
-        delivery: { kind: "async" },
-      }),
-    ).rejects.toThrow("sealed group");
-    expect(
-      await t.query(internal.runtime.getAsyncToolResult, {
-        resultId: "result-3",
-      }),
-    ).toBeNull();
     await t.mutation(internal.runtime.observeAsyncToolResult, {
       resultId: "result-1",
     });
@@ -791,10 +736,6 @@ describe("runtime persistence", () => {
           input: {},
         }),
       () =>
-        t.mutation(internal.runtime.sealAsyncToolGroup, {
-          parentEventId: parentEventId,
-        }),
-      () =>
         t.mutation(internal.runtime.updateAsyncToolResult, {
           resultId: `acct:${accountId}:async-tool`,
           status: "completed",
@@ -832,7 +773,6 @@ describe("runtime persistence", () => {
         events: await ctx.db.query("runtimeConversationEvents").collect(),
         agentResults: await ctx.db.query("runtimeAsyncAgentResults").collect(),
         toolResults: await ctx.db.query("runtimeAsyncToolResults").collect(),
-        groups: await ctx.db.query("runtimeAsyncToolGroups").collect(),
         reservations: await ctx.db.query("sandboxReservations").collect(),
       })),
     ).toMatchObject({
@@ -843,7 +783,6 @@ describe("runtime persistence", () => {
       events: [expect.objectContaining({ cursor: "001" })],
       agentResults: [expect.objectContaining({ status: "processing" })],
       toolResults: [expect.objectContaining({ status: "processing" })],
-      groups: [expect.objectContaining({ sealed: false })],
       reservations: [
         expect.objectContaining({ externalId: "sandbox-existing" }),
       ],
@@ -870,13 +809,6 @@ describe("runtime persistence", () => {
           cursor: String(index).padStart(3, "0"),
           event: { index: index },
         });
-        await ctx.db.insert("runtimeAsyncToolGroups", {
-          accountId: accountId,
-          parentEventId: `acct:${accountId}:parent:${index}`,
-          resultIds: [`result-${index}`],
-          sealed: true,
-          expiresAt: 2_000_000_000,
-        });
         await ctx.db.insert("sandboxReservations", {
           accountId: accountId,
           provider: "sandbox",
@@ -902,27 +834,24 @@ describe("runtime persistence", () => {
         processedEventsDeleted: 0,
         asyncAgentResultDeleted: 0,
         asyncToolResultDeleted: 0,
-        asyncToolGroupDeleted: 100,
         harnessSessionDeleted: 0,
         sandboxReservationDeleted: 100,
-        totalDeleted: 300,
+        totalDeleted: 200,
       },
       {
         conversationsDeleted: 1,
         processedEventsDeleted: 0,
         asyncAgentResultDeleted: 0,
         asyncToolResultDeleted: 0,
-        asyncToolGroupDeleted: 1,
         harnessSessionDeleted: 0,
         sandboxReservationDeleted: 1,
-        totalDeleted: 3,
+        totalDeleted: 2,
       },
       {
         conversationsDeleted: 0,
         processedEventsDeleted: 0,
         asyncAgentResultDeleted: 0,
         asyncToolResultDeleted: 0,
-        asyncToolGroupDeleted: 0,
         harnessSessionDeleted: 0,
         sandboxReservationDeleted: 0,
         totalDeleted: 0,
@@ -931,10 +860,9 @@ describe("runtime persistence", () => {
     expect(
       await t.run(async (ctx) => ({
         events: await ctx.db.query("runtimeConversationEvents").collect(),
-        groups: await ctx.db.query("runtimeAsyncToolGroups").collect(),
         reservations: await ctx.db.query("sandboxReservations").collect(),
       })),
-    ).toEqual({ events: [], groups: [], reservations: [] });
+    ).toEqual({ events: [], reservations: [] });
   });
 
   test("prunes expired operational rows without removing live rows", async () => {
@@ -974,13 +902,6 @@ describe("runtime persistence", () => {
           updatedAt: new Date().toISOString(),
           expiresAt: expiresAt,
         });
-        await ctx.db.insert("runtimeAsyncToolGroups", {
-          accountId: accountId,
-          parentEventId: `${suffix}-parent`,
-          resultIds: [`${suffix}-tool`],
-          sealed: true,
-          expiresAt: expiresAt,
-        });
         await ctx.db.insert("sandboxReservations", {
           accountId: accountId,
           provider: "sandbox",
@@ -991,7 +912,7 @@ describe("runtime persistence", () => {
       }
     });
 
-    expect(await t.mutation(internal.runtime.pruneExpired, {})).toBe(4);
+    expect(await t.mutation(internal.runtime.pruneExpired, {})).toBe(3);
     expect(
       await t.run(async (ctx) => ({
         claims: (await ctx.db.query("runtimeClaims").collect()).map(
@@ -1003,9 +924,6 @@ describe("runtime persistence", () => {
         tools: (await ctx.db.query("runtimeAsyncToolResults").collect()).map(
           (row) => row.resultId,
         ),
-        groups: (await ctx.db.query("runtimeAsyncToolGroups").collect()).map(
-          (row) => row.parentEventId,
-        ),
         reservations: (await ctx.db.query("sandboxReservations").collect()).map(
           (row) => row.externalId,
         ),
@@ -1014,7 +932,6 @@ describe("runtime persistence", () => {
       claims: ["live-claim"],
       agents: ["live-agent"],
       tools: ["live-tool"],
-      groups: ["live-parent"],
       // Both survive: deleting an expired reservation here would drop the only
       // copy of its provider id and strand the sandbox. The core sweeper owns it.
       reservations: ["expired-sandbox", "live-sandbox"],

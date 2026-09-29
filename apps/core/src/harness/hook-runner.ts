@@ -10,7 +10,10 @@
 
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
-import type { AgentHookEventName } from "../shared/domain/agent-config.ts";
+import type {
+  AgentHookEventName,
+  HookAgentConfig,
+} from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { readS3Bytes } from "../shared/s3.ts";
@@ -49,8 +52,8 @@ export interface RunCodeHookParams {
   event: AgentHookEventName;
   /** Event data handed to the hook as its second argument (JSON-serializable). */
   payload: Record<string, JSONValue | undefined>;
-  /** Optional config object exposed to the hook as ctx.config. */
-  config?: Record<string, unknown>;
+  /** The allow-listed agent config, exposed to the hook as ctx.config. */
+  config: HookAgentConfig;
   /** Mutable per-run scratchpad exposed to the hook as ctx.state. */
   state: Record<string, unknown>;
 }
@@ -151,7 +154,7 @@ async function createHookRunnerPayload(
     toolName: record.name,
     hookEvent: event,
     input: payload,
-    config: config ?? {},
+    config: config,
     state: params.state,
   };
 }

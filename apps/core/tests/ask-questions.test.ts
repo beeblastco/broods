@@ -69,7 +69,7 @@ describe("rootEventId", () => {
 });
 
 describe("ask_questions tool", () => {
-  it("leaves a sealed question row and posts the numbered prompt", async () => {
+  it("leaves a question row and posts the numbered prompt", async () => {
     stubMutations();
     const sendText = mock(async (_text: string): Promise<void> => {});
     const detached: string[] = [];
@@ -98,7 +98,6 @@ describe("ask_questions tool", () => {
       conversationKey: CONVERSATION_KEY,
       toolName: "ask_questions",
       delivery: { kind: "async" },
-      sealed: true,
       input: {
         questions: [QUESTION],
         blocking: false,

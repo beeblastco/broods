@@ -218,11 +218,6 @@ describe("background job continuation", () => {
     const answers: Record<string, unknown> = {
       getAsyncToolResult: job,
       getAsyncToolToken: true,
-      getAsyncToolGroup: {
-        parentEventId: job.parentEventId,
-        resultIds: [job.resultId],
-        sealed: true,
-      },
       getConversationTarget: { ...CHANNEL_TARGET, agentConfig: narrowed },
     };
     runtime.query = async function (name: string) {
