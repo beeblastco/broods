@@ -880,12 +880,16 @@ describe("session messages", (): void => {
     expect(prepared.publicConversationKey).toBe("tg:target-chat");
   });
 
-  // The record a cross-agent session ran through is gone, or the place's
-  // record now binds another agent.
+  // The record a session ran through is gone, or now binds another agent.
   for (const [name, refs, record] of [
     [
       "a cross-agent session whose record is gone",
       { credentialAgentId: "agent_holder", channelRecordId: "rec_1" },
+      null,
+    ],
+    [
+      "a session whose pinned record is gone",
+      { channelRecordId: "rec_1" },
       null,
     ],
     [

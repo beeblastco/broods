@@ -393,12 +393,13 @@ export async function loadChannelSessionConfig(options: {
   }
   const activeRecord = record?.status === "active" ? record : undefined;
   const boundAgentId = activeRecord && resolveChannelAgentId(activeRecord);
-  // A record now bound elsewhere hands the place to that agent. Another
-  // agent's credentials only reach this session through its record, so
-  // without both this agent no longer answers in that channel.
+  // A pinned record that is gone may have been replaced with other rules, and
+  // one now bound elsewhere hands the place to that agent. Either way the
+  // next channel turn repins; until then this session is not reachable.
   if (
+    (target.channelRecordId && !activeRecord) ||
     (boundAgentId && boundAgentId !== options.agentId) ||
-    (target.credentialAgentId && (!credentialHolder || !activeRecord))
+    (target.credentialAgentId && !credentialHolder)
   ) {
     throw new Error("Channel session is no longer bound to this agent");
   }
