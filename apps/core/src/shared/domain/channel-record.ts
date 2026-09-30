@@ -11,12 +11,14 @@ import type { ChannelReplyIn } from "@broods/convex/model/channelRules";
 import type { SystemModelMessage } from "ai";
 import { logWarn } from "../log.ts";
 import { isPlainObject } from "../object.ts";
-import type {
-  AgentBehaviorConfig,
-  ChannelPartition,
-  AgentConfig,
-  AgentWorkspaceRef,
+import {
+  toChannelRuntimeAgentConfig,
+  type AgentBehaviorConfig,
+  type ChannelPartition,
+  type AgentConfig,
+  type AgentWorkspaceRef,
 } from "./agent-config.ts";
+import type { AgentRecord } from "./agents.ts";
 
 export type { ChannelReplyIn } from "@broods/convex/model/channelRules";
 export {
@@ -155,6 +157,37 @@ export function channelRecordMatchesWorkspace(
   if (!recordWorkspaceRef || !messageWorkspaceRef) return true;
 
   return recordWorkspaceRef === messageWorkspaceRef;
+}
+
+/**
+ * A channel turn's run config: the running agent scoped to this channel, the
+ * credential holder's entry for it (the app the reply must come from), then
+ * the record layered over both. The webhook builds it per turn, and a
+ * re-entered channel session rebuilds it from the same live rows.
+ */
+export function channelRuntimeAgentConfig(
+  target: { agent: AgentRecord; record?: ChannelRecord },
+  channelName: string,
+  credentialHolderConfig: AgentConfig,
+): AgentConfig {
+  const targetConfig = toChannelRuntimeAgentConfig(
+    target.agent.config,
+    channelName,
+  );
+  const credentialChannel = credentialHolderConfig.channels?.[channelName];
+  const config = credentialChannel
+    ? {
+        ...targetConfig,
+        channels: {
+          ...targetConfig.channels,
+          [channelName]: credentialChannel,
+        },
+      }
+    : targetConfig;
+
+  return target.record
+    ? applyChannelRecord(config, target.record, channelName)
+    : config;
 }
 
 export function resolveChannelAgentId(

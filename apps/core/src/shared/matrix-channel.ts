@@ -27,6 +27,7 @@ import {
   type ChannelParseResult,
 } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
+import { publicHostFetch } from "./http.ts";
 import { logDebug, logWarn } from "./log.ts";
 import {
   MATRIX_ACCESS_TOKEN_HEADER,
@@ -337,7 +338,7 @@ async function downloadMedia(
     throw new Error(`Not a Matrix media URL: ${location.mxcUrl}`);
   }
   const [, serverName, mediaId] = mxc;
-  const response = await fetch(
+  const response = await publicHostFetch(
     `${trimSlash(connection.apiUrl)}/_matrix/client/v1/media/download/${encodeURIComponent(serverName!)}/${encodeURIComponent(mediaId!)}`,
     {
       headers: { Authorization: `Bearer ${connection.accessToken}` },
@@ -857,7 +858,7 @@ async function uploadMedia(
   bytes: Buffer,
   mimeType: string,
 ): Promise<string> {
-  const response = await fetch(
+  const response = await publicHostFetch(
     `${trimSlash(connection.apiUrl)}/_matrix/media/v3/upload?filename=${encodeURIComponent(name)}`,
     {
       body: bytes,

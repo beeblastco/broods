@@ -14,6 +14,7 @@ import {
   sendSlackResponseUrl,
   SlackApiError,
   uploadSlackFiles,
+  type SlackApiOptions,
   type SlackFileUpload,
 } from "@chat-adapter/slack/api";
 import { answeredSlackInputBlocks } from "@chat-adapter/slack/blocks";
@@ -47,6 +48,7 @@ import {
   type ChannelParseResult,
 } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
+import { channelApiFetch } from "./http.ts";
 import { logWarn } from "./log.ts";
 import {
   SLACK_COMMAND_INTEGRATION_PREFIX,
@@ -765,6 +767,11 @@ function createSlackActions(
   source: SlackSource,
   reactionEmoji: string,
 ): ChannelActions {
+  const api: SlackApiOptions = {
+    token: botToken,
+    apiUrl: apiUrl,
+    fetch: channelApiFetch(apiUrl),
+  };
   const threadId = source.threadTs
     ? slack.encodeThreadId({
         channel: source.channelId,
@@ -791,8 +798,7 @@ function createSlackActions(
           }),
         ),
         {
-          token: botToken,
-          apiUrl: apiUrl,
+          ...api,
           channelId: source.channelId,
           ...(caption ? { initialComment: caption } : {}),
           ...(source.threadTs ? { threadTs: source.threadTs } : {}),
@@ -806,8 +812,7 @@ function createSlackActions(
       // though sendFiles uploads: an image block renders inline, while an
       // uploaded file shows as an attachment to open.
       await postSlackCard(
-        botToken,
-        apiUrl,
+        api,
         source,
         Card({
           children: [
@@ -830,8 +835,7 @@ function createSlackActions(
       const single = prompt.questions.length === 1;
       const thread = source.inThreadTs ?? source.messageTs ?? SLACK_NO_THREAD;
       await postSlackCard(
-        botToken,
-        apiUrl,
+        api,
         source,
         Card({
           children: [
@@ -870,8 +874,7 @@ function createSlackActions(
       }
       if (value.includes("://")) {
         await postSlackCard(
-          botToken,
-          apiUrl,
+          api,
           source,
           Card({
             children: [Image({ url: value, alt: "Sticker" })],
@@ -888,8 +891,7 @@ function createSlackActions(
         return;
       }
       await postSlackMessage({
-        token: botToken,
-        apiUrl: apiUrl,
+        ...api,
         channel: source.channelId,
         text: text,
         threadTs: source.threadTs,
@@ -907,8 +909,7 @@ function createSlackActions(
       }
 
       await postSlackMessage({
-        token: botToken,
-        apiUrl: apiUrl,
+        ...api,
         channel: source.channelId,
         markdownText: text,
         threadTs: source.threadTs,
@@ -936,7 +937,10 @@ function createSlackActions(
             timestamp: source.messageTs,
             name: (emoji ?? reactionEmoji).replace(/^:+|:+$/g, ""),
           },
-          { token: botToken, apiUrl: apiUrl, contentType: "json" },
+          {
+            ...api,
+            contentType: "json",
+          },
         ),
       );
     },
@@ -963,8 +967,7 @@ function createSlackActions(
 }
 
 async function postSlackCard(
-  botToken: string,
-  apiUrl: string | undefined,
+  api: SlackApiOptions,
   source: SlackSource,
   card: CardElement,
 ): Promise<void> {
@@ -976,8 +979,7 @@ async function postSlackCard(
     return;
   }
   await postSlackMessage({
-    token: botToken,
-    apiUrl: apiUrl,
+    ...api,
     channel: source.channelId,
     text: text,
     blocks: blocks,

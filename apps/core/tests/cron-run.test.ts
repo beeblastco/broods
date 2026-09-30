@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage } from "ai";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import type { ConversationDispatchTarget } from "../src/harness/ingress.ts";
+import { toChannelRuntimeAgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import type { ChannelRecord } from "../src/shared/domain/channel-record.ts";
 import type { CronRecord, CronRunRecord } from "../src/shared/domain/cron.ts";
 import {
   resetStorageForTests,
@@ -16,12 +19,25 @@ const AGENT: AgentRecord = {
   accountId: "acct_1",
   agentId: "agent_1",
   name: "scheduler",
-  config: { model: { provider: "openai", modelId: "gpt-5.5" } },
+  config: {
+    model: { provider: "openai", modelId: "gpt-5.5" },
+    channels: { slack: { botToken: "current-token" } },
+  },
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-01T00:00:00.000Z",
 };
-const CHANNEL_TARGET = {
-  agentConfig: { channels: { slack: {} } },
+const CHANNEL_RECORD: ChannelRecord = {
+  accountId: "acct_1",
+  channelRecordId: "rec_1",
+  platform: "slack",
+  externalId: "C1",
+  name: "general",
+  config: { agentBindings: [], denyTools: ["bash"] },
+  status: "active",
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+};
+const CHANNEL_TARGET: ConversationDispatchTarget = {
   channelName: "slack",
   source: { teamId: "T1", channelId: "C1" },
 };
@@ -29,7 +45,7 @@ const CHANNEL_TARGET = {
 const originalQuery = runtime.query;
 const originalMutate = runtime.mutate;
 
-let channelTarget: typeof CHANNEL_TARGET | null;
+let channelTarget: ConversationDispatchTarget | null;
 let conversationKey: string | undefined;
 let scheduleExpression: string;
 let admitted: Record<string, unknown>[];
@@ -54,6 +70,13 @@ beforeEach(() => {
     agentDeployments: {
       getByAgentId: async function () {
         return null;
+      },
+    },
+    channelRecords: {
+      getById: async function (_accountId: string, channelRecordId: string) {
+        return channelRecordId === CHANNEL_RECORD.channelRecordId
+          ? CHANNEL_RECORD
+          : null;
       },
     },
     crons: {
@@ -127,7 +150,10 @@ describe("handleScheduledCron", () => {
       channel: "slack",
       source: CHANNEL_TARGET.source,
     });
-    expect(admitted[0]?.agentConfig).toEqual(CHANNEL_TARGET.agentConfig);
+    // Rebuilt from the live agent row, never a copy the coordinator kept.
+    expect(admitted[0]?.agentConfig).toEqual(
+      toChannelRuntimeAgentConfig(AGENT.config, "slack"),
+    );
     expect(failures).toEqual([
       "Cron conversation is already processing another turn",
     ]);
@@ -214,11 +240,13 @@ describe("background job continuation", () => {
       },
       expiresAt: 0,
     };
-    const narrowed = { ...CHANNEL_TARGET.agentConfig, denyTools: ["bash"] };
     const answers: Record<string, unknown> = {
       getAsyncToolResult: job,
       getAsyncToolToken: true,
-      getConversationTarget: { ...CHANNEL_TARGET, agentConfig: narrowed },
+      getConversationTarget: {
+        ...CHANNEL_TARGET,
+        channelRecordId: CHANNEL_RECORD.channelRecordId,
+      },
     };
     runtime.query = async function (name: string) {
       return answers[name] ?? null;
@@ -244,7 +272,10 @@ describe("background job continuation", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(admitted[0]?.agentConfig).toEqual(narrowed);
+    expect(admitted[0]?.agentConfig).toMatchObject({
+      channels: { slack: { botToken: "current-token" } },
+      denyTools: ["bash"],
+    });
   });
 });
 

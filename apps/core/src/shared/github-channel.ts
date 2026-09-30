@@ -14,6 +14,7 @@ import type {
   ChannelParseResult,
 } from "./channels.ts";
 import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
+import { channelApiFetch } from "./http.ts";
 import { logWarn } from "./log.ts";
 import { GITHUB_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -391,8 +392,9 @@ async function createGitHubRestClient(options: {
     /\/+$/,
     "",
   );
+  const request = channelApiFetch(options.apiUrl);
   const appJwt = createGitHubAppJwt(options.appId, options.privateKey);
-  const tokenResponse = await fetch(
+  const tokenResponse = await request(
     `${baseApiUrl}/app/installations/${options.installationId}/access_tokens`,
     {
       method: "POST",
@@ -415,7 +417,7 @@ async function createGitHubRestClient(options: {
 
   return {
     get: async function <T>(path: string): Promise<T> {
-      const response = await fetch(`${baseApiUrl}${path}`, {
+      const response = await request(`${baseApiUrl}${path}`, {
         method: "GET",
         headers: {
           Accept: "application/vnd.github+json",

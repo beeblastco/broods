@@ -13,6 +13,7 @@ import {
   type StreamChunk,
 } from "chat";
 import { timingSafeStringEqual } from "./auth.ts";
+import { channelApiFetch, publicHostFetch } from "./http.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -75,6 +76,81 @@ export interface TelegramSource {
   fromUsername?: string;
 }
 
+/** One Bot API answer, as the SDK's error mapping reads it. */
+interface TelegramApiAnswer<TResult> {
+  description?: string;
+  error_code?: number;
+  ok: boolean;
+  parameters?: { retry_after?: number };
+  result?: TResult;
+}
+
+// A tenant `apiUrl` is their host, and the bot token rides every path to it,
+// so the SDK's two calls there go pinned to a checked public address with
+// redirects refused. Telegram itself keeps the SDK's own calls.
+class BroodsTelegramAdapter extends TelegramAdapter {
+  private get tenantApiUrl(): boolean {
+    return this.apiBaseUrl !== TELEGRAM_API_URL;
+  }
+
+  protected override async downloadFile(fileId: string): Promise<Buffer> {
+    if (!this.tenantApiUrl) return super.downloadFile(fileId);
+    const file = await this.telegramFetch<{ file_path?: string }>("getFile", {
+      file_id: fileId,
+    });
+    if (!file.file_path) {
+      throw new Error(`Telegram file ${fileId} has no path`);
+    }
+    const botToken = this.staticBotToken ?? (await this.resolveBotToken());
+    const response = await publicHostFetch(
+      `${this.apiBaseUrl}/file/bot${botToken}/${file.file_path}`,
+      { signal: AbortSignal.timeout(TELEGRAM_REQUEST_TIMEOUT_MS) },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download Telegram file ${fileId}: ${response.status}`,
+      );
+    }
+
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  protected override async telegramFetch<TResult>(
+    method: string,
+    payload?: Record<string, unknown> | FormData,
+    request?: { signal?: AbortSignal },
+  ): Promise<TResult> {
+    if (!this.tenantApiUrl) {
+      return super.telegramFetch(method, payload, request);
+    }
+    const botToken = this.staticBotToken ?? (await this.resolveBotToken());
+    const response = await publicHostFetch(
+      `${this.apiBaseUrl}/bot${botToken}/${method}`,
+      {
+        method: "POST",
+        ...(payload instanceof FormData
+          ? { body: payload }
+          : {
+              body: JSON.stringify(payload ?? {}),
+              headers: { "Content-Type": "application/json" },
+            }),
+        ...(request?.signal ? { signal: request.signal } : {}),
+      },
+    );
+    // A proxy error page is not JSON; its status still maps the error.
+    const data = (await response
+      .json()
+      .catch((): TelegramApiAnswer<TResult> => ({
+        ok: false,
+      }))) as TelegramApiAnswer<TResult>;
+    if (!response.ok || !data.ok || data.result === undefined) {
+      this.throwTelegramApiError(method, response.status, data);
+    }
+
+    return data.result;
+  }
+}
+
 export function createTelegramChannel(
   botToken: string,
   webhookSecret: string,
@@ -85,7 +161,7 @@ export function createTelegramChannel(
   options: TelegramChannelOptions = {},
 ): ChannelAdapter {
   const botUsername = normalizeBotUsername(options.botUsername);
-  const transport = new TelegramAdapter({
+  const transport = new BroodsTelegramAdapter({
     apiUrl: apiUrl,
     botToken: botToken,
     secretToken: webhookSecret,
@@ -625,7 +701,7 @@ async function callTelegramBotApi(
     controller.abort();
   }, TELEGRAM_REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await channelApiFetch(apiUrl)(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

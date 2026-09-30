@@ -42,7 +42,6 @@ import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
 import {
   applyRunOverrides,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
-  toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type ChannelPartition,
   type AgentConfig,
@@ -50,9 +49,9 @@ import {
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
-  applyChannelRecord,
   channelActorRoles,
   channelRecordMatchesWorkspace,
+  channelRuntimeAgentConfig,
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
@@ -134,6 +133,7 @@ import {
   getIngressStatus,
   getIngressStatusByEventId,
   type AppliedIngress,
+  type ChannelTargetRefs,
   type IngressMode,
   type IngressStatusRecord,
   type PublicDeploymentIngress,
@@ -319,6 +319,9 @@ export interface ChannelInboundEvent {
   channelName: string;
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
+  // The rows this turn's config came from, pinned so a later re-entry into the
+  // session rebuilds it instead of reading a stored copy.
+  channelTarget?: ChannelTargetRefs;
   channel: ChannelActions;
   channelFactory?: (source: Record<string, unknown>) => ChannelActions;
   commandToken?: string;
@@ -1128,32 +1131,6 @@ function channelReplySource(
   return adapter.applyReplyIn(message.source, replyIn);
 }
 
-/** Scope the run to this channel's own config, then layer the record over it. */
-function channelRuntimeAgentConfig(
-  target: { agent: AgentRecord; record?: ChannelRecord },
-  channelName: string,
-  credentialHolderConfig: AgentConfig,
-): AgentConfig {
-  const targetConfig = toChannelRuntimeAgentConfig(
-    target.agent.config,
-    channelName,
-  );
-  const credentialChannel = credentialHolderConfig.channels?.[channelName];
-  const config = credentialChannel
-    ? {
-        ...targetConfig,
-        channels: {
-          ...targetConfig.channels,
-          [channelName]: credentialChannel,
-        },
-      }
-    : targetConfig;
-
-  return target.record
-    ? applyChannelRecord(config, target.record, channelName)
-    : config;
-}
-
 /**
  * Admit a verified delivery through every receiver the credential scan found.
  * A direct response from a receiver answers the provider at once. Otherwise
@@ -1583,6 +1560,14 @@ async function acceptChannelTurn(
             channelName: message.channelName,
             ...(identity ? { identity: identity } : {}),
             source: source,
+            channelTarget: {
+              ...(target.agent.agentId !== agent.agentId
+                ? { credentialAgentId: agent.agentId }
+                : {}),
+              ...(target.record
+                ? { channelRecordId: target.record.channelRecordId }
+                : {}),
+            },
             channel: channel,
             channelFactory: (replySource): ChannelActions =>
               adapter.actions({ ...message, source: replySource }),

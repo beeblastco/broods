@@ -93,10 +93,25 @@ const recoveredIngressValidator = v.object({
   applied: appliedEnvelopeValidator,
 });
 
-const channelTargetValidator = v.object({
-  agentConfig: v.any(),
+// What a channel session keeps so a cron, background job or inter-session
+// message can reach it again: the place, and the rows core rebuilds the run's
+// config from. Never the config itself, which holds decrypted secrets.
+const channelTargetFields = {
   channelName: v.string(),
   source: v.record(v.string(), v.any()),
+  // The agent whose channel credentials verified the delivery, when it is not
+  // the agent that runs the conversation.
+  credentialAgentId: v.optional(v.string()),
+  channelRecordId: v.optional(v.string()),
+};
+
+const channelTargetValidator = v.object(channelTargetFields);
+
+const admittedChannelTargetValidator = v.object({
+  ...channelTargetFields,
+  // Still sent by a core pod from before this rollout. Accepted and dropped so
+  // Convex can deploy first; remove once core has rolled.
+  agentConfig: v.optional(v.any()),
 });
 
 const ingressStatusResultValidator = v.object({
@@ -160,7 +175,7 @@ export const accept = internalMutation({
     delivery: v.any(),
     requestedMode: ingressModeValidator,
     agentConfig: v.optional(v.any()),
-    channelTarget: v.optional(channelTargetValidator),
+    channelTarget: v.optional(admittedChannelTargetValidator),
     ephemeralSystem: v.optional(v.array(v.any())),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
@@ -510,20 +525,23 @@ export const getConversationTarget = internalQuery({
   handler: async (
     ctx,
     args,
-  ): Promise<NonNullable<
-    Doc<"runtimeConversationCoordinators">["channelTarget"]
-  > | null> => {
+  ): Promise<Infer<typeof channelTargetValidator> | null> => {
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const coordinator = await getCoordinator(ctx, args.conversationKey);
+    const target = coordinator?.channelTarget;
+    // A target still carrying `agentConfig` predates the rows core rebuilds
+    // from, so rebuilding would drop its record's narrowing. It names no
+    // session until the next channel turn repins it.
     if (
-      !coordinator ||
+      !target ||
+      target.agentConfig !== undefined ||
       coordinator.accountId !== args.accountId ||
       coordinator.agentId !== args.agentId
     ) {
       return null;
     }
 
-    return coordinator.channelTarget ?? null;
+    return target;
   },
 });
 
@@ -1303,7 +1321,7 @@ async function prepareAdmissionCoordinator(
     accountId: Id<"accounts">;
     agentId: string;
     conversationKey: string;
-    channelTarget?: Infer<typeof channelTargetValidator>;
+    channelTarget?: Infer<typeof admittedChannelTargetValidator>;
   },
   now: number,
 ): Promise<{
@@ -1325,13 +1343,14 @@ async function prepareAdmissionCoordinator(
     throw new Error("Conversation coordinator scope mismatch");
   }
   if (args.channelTarget !== undefined) {
+    const { agentConfig: _legacyConfig, ...channelTarget } = args.channelTarget;
     await ctx.db.patch(coordinator._id, {
-      channelTarget: args.channelTarget,
+      channelTarget: channelTarget,
       updatedAt: now,
     });
     coordinator = {
       ...coordinator,
-      channelTarget: args.channelTarget,
+      channelTarget: channelTarget,
       updatedAt: now,
     };
   }

@@ -960,11 +960,16 @@ export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
   conversationKey: v.string(),
+  // Where a channel session replies, and the rows core rebuilds its config
+  // from on re-entry. `agentConfig` is legacy: never written any more, and a
+  // row still holding it reads as no session. Purge it, then remove it.
   channelTarget: v.optional(
     v.object({
-      agentConfig: v.any(),
       channelName: v.string(),
       source: v.record(v.string(), v.any()),
+      credentialAgentId: v.optional(v.string()),
+      channelRecordId: v.optional(v.string()),
+      agentConfig: v.optional(v.any()),
     }),
   ),
   nextSequence: v.number(),
