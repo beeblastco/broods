@@ -13,6 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import module from "node:module";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
@@ -90,6 +91,7 @@ import {
 import {
   isNewerVersion,
   latestPublishedVersion,
+  majorVersion,
   updateTarget,
 } from "./update.ts";
 import packageJson from "../../package.json" with { type: "json" };
@@ -333,9 +335,10 @@ bounds either call, and the agent asserts confirm:true itself. A value from
 .env or .env.local is ignored, since the agent can write those files.`,
   update: `Usage: broods update
 
-Installs the newest published broods over the copy you are running, with the
-package manager that installed it (bun or npm). Global installs are replaced in
-place; inside a project the dependency is upgraded instead.`,
+Installs the newest published broods of the major you are running, with the
+package manager that installed it (bun or npm, or the one a project's lockfile
+names: bun, pnpm or yarn). Global installs are replaced in place; inside a
+project the dependency is upgraded instead. A new major is only announced.`,
   whoami: `Usage: broods whoami [options]
 
 Shows the login, server, org, plan, project and stage the next command uses.
@@ -344,6 +347,7 @@ ${GLOBAL_OPTIONS}`,
 };
 
 async function main(): Promise<void> {
+  assertSupportedRuntime();
   const [, , command, ...args] = process.argv;
 
   switch (command) {
@@ -551,7 +555,7 @@ async function init(args: string[]): Promise<void> {
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
     force: force,
   });
-  await ensureModuleType();
+  await ensureProjectModuleType();
   printSuccess(`Created ${PROJECT_DIR}/`);
 }
 
@@ -1027,6 +1031,7 @@ async function diff(args: string[]): Promise<void> {
 }
 
 async function deploy(args: string[]): Promise<void> {
+  await ensureProjectModuleType();
   const { manifest, config, resourceAliases, channels } = await compileProject({
     project: optionValue(args, "--project"),
     stage: optionValue(args, "--stage"),
@@ -1054,7 +1059,6 @@ async function deploy(args: string[]): Promise<void> {
     channels,
   );
   await ensureGitIgnore();
-  await ensureModuleType();
   printSuccess(
     `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.stage}`,
   );
@@ -1116,12 +1120,19 @@ async function update(): Promise<void> {
   }
 
   const target = updateTarget();
+  const major = majorVersion(VERSION);
+  const sameMajor = majorVersion(latest) === major;
+  const next = sameMajor ? latest : `the newest ${major}.x`;
   console.log(
-    `Updating broods ${VERSION} → ${latest} ${target.global ? "globally" : "in this project"}`,
+    `Updating broods ${VERSION} → ${next} ${target.global ? "globally" : "in this project"}`,
   );
   console.log(`$ ${[target.command, ...target.args].join(" ")}`);
   await new Promise<void>((resolveInstall, reject) => {
-    const child = spawn(target.command, target.args, { stdio: "inherit" });
+    // Every manager is a `.cmd` shim on Windows, which only a shell can run.
+    const child = spawn(target.command, target.args, {
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    });
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) {
@@ -1134,7 +1145,12 @@ async function update(): Promise<void> {
       );
     });
   });
-  console.log(`broods ${latest} installed.`);
+  console.log(`broods ${sameMajor ? latest : `${major}.x`} installed.`);
+  if (!sameMajor) {
+    printWarning(
+      `broods ${latest} is a new major version. Install broods@${majorVersion(latest)} yourself to move to it.`,
+    );
+  }
 }
 
 /**
@@ -1179,12 +1195,24 @@ async function dev(args: string[]): Promise<void> {
 
   await printDevTarget(args);
   await warnOnOutdatedCli();
-  await runSyncChild(args, childEnv);
 
   let timer: NodeJS.Timeout | undefined;
   let syncing = false;
   let pending = false;
-  let lastSourceSignature = await sourceSignature();
+  // Recorded only after a sync succeeds, so a failed one retries on the next save.
+  let lastSourceSignature: string | undefined;
+
+  const syncChanged = async (): Promise<void> => {
+    const signature = await sourceSignature();
+    if (signature === lastSourceSignature) return;
+    await runSyncChild(args, childEnv);
+    lastSourceSignature = signature;
+  };
+  const printSyncError = (error: unknown): void =>
+    console.error(error instanceof Error ? error.message : String(error));
+
+  // A failed first sync keeps the watcher up, so fixing the file retries it.
+  await syncChanged().catch(printSyncError);
 
   const runSync = (): void => {
     if (syncing) {
@@ -1193,15 +1221,8 @@ async function dev(args: string[]): Promise<void> {
       return;
     }
     syncing = true;
-    sourceSignature()
-      .then(async (signature) => {
-        if (signature === lastSourceSignature) return;
-        lastSourceSignature = signature;
-        await runSyncChild(args, childEnv);
-      })
-      .catch((error) =>
-        console.error(error instanceof Error ? error.message : String(error)),
-      )
+    syncChanged()
+      .catch(printSyncError)
       .finally(() => {
         syncing = false;
         if (pending) {
@@ -1344,6 +1365,7 @@ async function pathExists(path: string): Promise<boolean> {
 async function ensureProjectShell(): Promise<void> {
   const root = resolve(process.cwd(), PROJECT_DIR);
   await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
+  await ensureProjectModuleType();
 
   const files: string[] = [];
   await collectSourceFiles(root, files);
@@ -1824,7 +1846,6 @@ async function syncDevOnce(
     channels,
   );
   await ensureGitIgnore();
-  await ensureModuleType();
 
   const declined = await loadDeclinedDeletes();
   const deletes = diff.filter((entry) => entry.operation === "delete");
@@ -2778,22 +2799,19 @@ async function ensureGitIgnore(): Promise<void> {
 }
 
 /**
- * Node warns (MODULE_TYPELESS_PACKAGE_JSON) and reparses every project file when
- * the host package.json declares no module type. Our project files are ESM.
+ * Scopes `broods/` as ESM with its own package.json, so Node neither warns
+ * (MODULE_TYPELESS_PACKAGE_JSON) nor reparses a project `.js` file, and the
+ * host package.json keeps whatever module type the app already uses. Runs
+ * before a compile; an existing file is the user's and is left alone.
  */
-async function ensureModuleType(): Promise<void> {
-  const path = resolve(process.cwd(), "package.json");
-  const existing = await readTextIfExists(path);
-  if (!existing) return;
-  let manifest: { type?: string };
-  try {
-    manifest = JSON.parse(existing) as { type?: string };
-  } catch {
-    return;
-  }
-  if (manifest.type) return;
-  manifest.type = "module";
-  await writeFile(path, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+async function ensureProjectModuleType(): Promise<void> {
+  const root = resolve(process.cwd(), PROJECT_DIR);
+  if (!(await pathExists(root))) return;
+  await writeStarter(
+    resolve(root, "package.json"),
+    '{\n  "type": "module"\n}\n',
+    false,
+  );
 }
 
 async function writeLocalEnvDefaults(options: {
@@ -2968,6 +2986,19 @@ function starterAgent(): string {
   );
 }
 
+/**
+ * Refuses a Node older than `engines`. Without `module.registerHooks` the
+ * compile cannot load `broods/*.ts`, and it would fail far from the cause.
+ */
+function assertSupportedRuntime(): void {
+  if ("bun" in process.versions) return;
+  if (typeof module.registerHooks === "function") return;
+
+  throw new Error(
+    `broods needs Node ${packageJson.engines.node.replace(">=", "")} or newer, or Bun. This is Node ${process.version}.`,
+  );
+}
+
 // Renames ship no compatibility shim, so the pre-rename names have to fail
 // here. `--env`/BROODS_ENVIRONMENT left alone resolve to Development and the
 // command acts on a stage the user never named; `status` would only reach the
@@ -2977,7 +3008,7 @@ function assertNoPreRenameConfig(command: string, args: string[]): void {
     throw new Error("status was renamed to whoami. Run `broods whoami`.");
   }
 
-  if (args.includes("--env")) {
+  if (hasFlag(args, "--env")) {
     throw new Error(
       "--env was renamed to --stage. Pass --stage <name> instead.",
     );

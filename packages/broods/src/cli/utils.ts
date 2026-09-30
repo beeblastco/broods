@@ -40,8 +40,25 @@ interface LoginCallback {
   baseUrl: string;
 }
 
+/**
+ * The command that opens `url` in the default browser. Windows skips `cmd /c
+ * start`, whose parser cuts the URL at the first `&`.
+ */
+export function browserCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "darwin") return { command: "open", args: [url] };
+  if (platform === "win32") {
+    return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] };
+  }
+
+  return { command: "xdg-open", args: [url] };
+}
+
+/** True when `name` is passed, bare or as `name=value`. */
 export function hasFlag(args: string[], name: string): boolean {
-  return args.includes(name);
+  return args.some((arg) => arg === name || arg.startsWith(`${name}=`));
 }
 
 export function isPlainObject(
@@ -50,10 +67,20 @@ export function isPlainObject(
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The value of the first `name value` or `name=value`. An empty `name=` reads
+ * as missing, so callers that reject a bare flag reject it too.
+ */
 export function optionValue(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === name) return args[index + 1];
+    if (arg?.startsWith(`${name}=`)) {
+      return arg.slice(name.length + 1) || undefined;
+    }
+  }
 
-  return index >= 0 ? args[index + 1] : undefined;
+  return undefined;
 }
 
 /**
@@ -323,13 +350,7 @@ function callbackPort(): number {
 }
 
 function openBrowser(url: string): void {
-  const command =
-    process.platform === "darwin"
-      ? "open"
-      : process.platform === "win32"
-        ? "cmd"
-        : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", url] : [url];
+  const { command, args } = browserCommand(url);
   const child = spawn(command, args, { stdio: "ignore", detached: true });
   child.unref();
 }

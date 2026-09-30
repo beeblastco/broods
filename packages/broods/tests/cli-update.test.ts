@@ -1,7 +1,15 @@
-import { expect, test } from "bun:test";
-import { homedir } from "node:os";
+import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { isNewerVersion, updateTarget } from "../src/cli/update.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  for (const dir of tempDirs.splice(0))
+    await rm(dir, { recursive: true, force: true });
+});
 
 /**
  * `broods update` and the notice on `broods dev` both hang off this comparison,
@@ -34,7 +42,7 @@ test("a copy inside the project upgrades the dependency, not a global", () => {
 
   expect(target.global).toBe(false);
   expect(target.args).not.toContain("-g");
-  expect(target.args).toContain("broods@latest");
+  expect(target.args.at(-1)).toMatch(/^broods@\d+$/);
 });
 
 // A workspace runs the root-installed CLI from its own directory, which is not
@@ -88,4 +96,41 @@ test.each([
   expect(target.global).toBe(true);
   expect(target.manager).toBe(manager);
   expect(target.args).toContain("-g");
+});
+
+// `broods@latest` crossed majors, so a 1.0 would have landed on a 0.x project.
+test("the install stays on the running major", () => {
+  const target = updateTarget(
+    join(sep, "somewhere", "else"),
+    join(
+      sep,
+      "usr",
+      "lib",
+      "node_modules",
+      "broods",
+      "dist",
+      "cli",
+      "index.js",
+    ),
+    "0.26.0",
+  );
+
+  expect(target.args).toEqual(["install", "-g", "broods@0"]);
+});
+
+test.each([
+  ["pnpm-lock.yaml", "pnpm", ["add", "broods@1"]],
+  ["yarn.lock", "yarn", ["add", "broods@1"]],
+  ["bun.lock", "bun", ["add", "broods@1"]],
+  ["package-lock.json", "npm", ["install", "broods@1"]],
+])("a project with %s upgrades through %s", async (lockfile, manager, args) => {
+  const root = await mkdtemp(join(tmpdir(), "broods-update-"));
+  tempDirs.push(root);
+  await writeFile(join(root, lockfile), "", "utf8");
+  const self = join(root, "node_modules", "broods", "dist", "cli", "index.js");
+
+  const target = updateTarget(root, self, "1.4.0");
+
+  expect(target.manager).toBe(manager);
+  expect(target.args).toEqual(args);
 });

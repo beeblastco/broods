@@ -759,8 +759,11 @@ async function assertOk(response: Response, message: string): Promise<void> {
   // Without an envelope, the raw body is the best reason available.
   const { message: reason = body, code } = errorEnvelope(body);
   if (code === "manifest_conflict") throw new ManifestConflictError(reason);
+  // CLI tokens expire, and a 401 is how the control plane says so.
+  const hint =
+    response.status === 401 ? "\nRun `broods login` to sign in again." : "";
 
-  throw new Error(`${message}: ${response.status} ${reason}`);
+  throw new Error(`${message}: ${response.status} ${reason}${hint}`);
 }
 
 /** The `message` and `code` of an error envelope body, or neither. */
