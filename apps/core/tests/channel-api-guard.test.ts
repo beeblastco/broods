@@ -1,11 +1,10 @@
-import { dns } from "bun";
-import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { ChannelActions, InboundMessage } from "../src/shared/channels.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
-import { resetPublicHostsForTests } from "../src/shared/http.ts";
 import { createSlackChannel } from "../src/shared/slack-channel.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 import { createWhatsAppChannel } from "../src/shared/whatsapp-channel.ts";
+import { stubPublicDns } from "./helpers/http.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const TENANT_API_URL = "https://api.tenant.example";
@@ -82,15 +81,12 @@ const TENANT_CALLS: Array<{
 
 afterEach((): void => {
   globalThis.fetch = ORIGINAL_FETCH;
-  resetPublicHostsForTests();
 });
 
 describe("tenant channel apiUrl", () => {
   for (const call of TENANT_CALLS) {
     it(`${call.name} refuses a host that resolves to a private address`, async (): Promise<void> => {
-      const lookup = spyOn(dns, "lookup").mockResolvedValue([
-        { address: "10.0.0.5", family: 4, ttl: 30 },
-      ]);
+      const restoreDns = stubPublicDns("10.0.0.5");
       let requests = 0;
       globalThis.fetch = Object.assign(
         async (): Promise<Response> => {
@@ -103,7 +99,7 @@ describe("tenant channel apiUrl", () => {
       try {
         expect((await refusal(call)).message).toMatch(/private address/);
       } finally {
-        lookup.mockRestore();
+        restoreDns();
       }
 
       expect(requests).toBe(0);
@@ -126,9 +122,7 @@ describe("tenant channel apiUrl", () => {
           });
         },
       });
-      const lookup = spyOn(dns, "lookup").mockResolvedValue([
-        { address: "93.184.216.34", family: 4, ttl: 30 },
-      ]);
+      const restoreDns = stubPublicDns();
       globalThis.fetch = Object.assign(
         (
           input: string | URL | Request,
@@ -146,7 +140,7 @@ describe("tenant channel apiUrl", () => {
       try {
         expect(await refusal(call)).toBeInstanceOf(Error);
       } finally {
-        lookup.mockRestore();
+        restoreDns();
         void server.stop(true);
       }
 

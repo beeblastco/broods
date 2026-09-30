@@ -1,12 +1,11 @@
-import { dns } from "bun";
-import { describe, expect, it, spyOn } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
   sendChannelFailure,
   type ChannelActions,
   type ChannelRequest,
 } from "../src/shared/channels.ts";
-import { resetPublicHostsForTests } from "../src/shared/http.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
+import { stubPublicDns } from "./helpers/http.ts";
 
 const STATUS_ID = "async_tool_2f1c9a9e-8d2f-4a7b-9c3d-0e1f2a3b4c5d";
 const WEBHOOK_SECRET = "secret";
@@ -238,17 +237,12 @@ describe("telegram retry after a failed run", () => {
 
 describe("telegram bot api", () => {
   it("posts JSON to the configured https endpoint, pinned, without following redirects", async () => {
-    const lookup = spyOn(dns, "lookup").mockResolvedValue([
-      { address: "93.184.216.34", family: 4, ttl: 30 },
-    ]);
+    const restoreDns = stubPublicDns();
     const calls = await withTelegramApi(() =>
       telegramActions("https://bot-api.example/").sendQuestions!(
         QUESTION_PROMPT,
       ),
-    ).finally((): void => {
-      lookup.mockRestore();
-      resetPublicHostsForTests();
-    });
+    ).finally(restoreDns);
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(

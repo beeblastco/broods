@@ -1,10 +1,6 @@
 /** Discord channel adapter. */
 
-import {
-  DiscordAdapter,
-  type DiscordAdapterConfig,
-  type DiscordThreadId,
-} from "@chat-adapter/discord";
+import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
 import { ConsoleLogger, type Attachment, type FileUpload } from "chat";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import { timingSafeStringEqual } from "./auth.ts";
@@ -155,13 +151,6 @@ export interface DiscordSource {
 // (`verifySignature`, `parseSlashCommand`, requestContext), so this subclass is an
 // access shim, plus the tenant `apiUrl` guard on the SDK's REST call.
 class BroodsDiscordAdapter extends DiscordAdapter {
-  private readonly tenantApiUrl: boolean;
-
-  constructor(config: DiscordAdapterConfig) {
-    super(config);
-    this.tenantApiUrl = Boolean(config.apiUrl);
-  }
-
   // A tenant `apiUrl` is their host, so the bot token only goes there pinned to
   // a checked public address with redirects refused. Discord itself keeps the
   // SDK's own call.
@@ -170,7 +159,9 @@ class BroodsDiscordAdapter extends DiscordAdapter {
     method: string,
     body?: unknown,
   ): Promise<Response> {
-    if (!this.tenantApiUrl) return super.discordFetch(path, method, body);
+    if (new URL(this.apiBaseUrl).host === "discord.com") {
+      return super.discordFetch(path, method, body);
+    }
     const response = await publicHostFetch(`${this.apiBaseUrl}${path}`, {
       method: method,
       headers: {

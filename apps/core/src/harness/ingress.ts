@@ -8,7 +8,6 @@
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
   channelRuntimeAgentConfig,
   resolveChannelAgentId,
@@ -371,19 +370,17 @@ export async function interruptLiveOwners(error: string): Promise<number> {
  * The config a re-entered channel session runs on: a cron, a send-message, a
  * settled background job, a continue. Rebuilt from the live agent, credential
  * holder and record every time, the way a webhook turn would build it now, so
- * a rotated key or a changed tool applies to the next run. Pass `agent` when
- * the caller already loaded the running agent.
+ * a rotated key or a changed tool applies to the next run.
  */
 export async function loadChannelSessionConfig(options: {
   accountId: string;
   agentId: string;
   target: ConversationDispatchTarget;
-  agent?: AgentRecord;
 }): Promise<AgentConfig> {
   const { accountId, target } = options;
   const storage = getStorage();
   const [agent, credentialHolder, record] = await Promise.all([
-    options.agent ?? storage.agents.getById(accountId, options.agentId),
+    storage.agents.getById(accountId, options.agentId),
     target.credentialAgentId
       ? storage.agents.getById(accountId, target.credentialAgentId)
       : null,

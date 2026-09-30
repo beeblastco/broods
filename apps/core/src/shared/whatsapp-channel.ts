@@ -11,7 +11,10 @@ import {
 } from "@chat-adapter/whatsapp";
 import { ConsoleLogger, type Message } from "chat";
 import { z } from "zod";
-import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
+import {
+  FETCH_TIMEOUT_MS,
+  guardedFetch,
+} from "../harness/isolate/runner/pinned-fetch.mjs";
 import { timingSafeStringEqual } from "./auth.ts";
 import { publicHostFetch } from "./http.ts";
 import type {
@@ -31,8 +34,6 @@ import { WHATSAPP_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const WHATSAPP_SIGNATURE_HEADER = "x-hub-signature-256";
 const WHATSAPP_DEFAULT_USER_NAME = "whatsapp-bot";
-// A tenant Graph API host that never answers must not hold the turn open.
-const WHATSAPP_TENANT_TIMEOUT_MS = 30_000;
 // The part of Graph's media lookup the download needs.
 const MEDIA_LOOKUP = z.looseObject({ url: z.string() });
 
@@ -83,11 +84,8 @@ export interface WhatsAppSource {
 // subclass is an access shim, plus the guarded media download and the tenant
 // `apiUrl` guard on the Graph API calls.
 class BroodsWhatsAppAdapter extends WhatsAppAdapter {
-  private readonly tenantApiUrl: boolean;
-
-  constructor(config: ConstructorParameters<typeof WhatsAppAdapter>[0]) {
-    super(config);
-    this.tenantApiUrl = Boolean(config.apiUrl);
+  private get tenantApiUrl(): boolean {
+    return new URL(this.graphApiUrl).host !== "graph.facebook.com";
   }
 
   // The download URL is whatever the media lookup answers, and a custom
@@ -157,7 +155,7 @@ class BroodsWhatsAppAdapter extends WhatsAppAdapter {
       method: "POST",
       body: init.body,
       headers: { Authorization: `Bearer ${this.accessToken}`, ...init.headers },
-      signal: AbortSignal.timeout(WHATSAPP_TENANT_TIMEOUT_MS),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {
       throw new Error(

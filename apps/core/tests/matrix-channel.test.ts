@@ -1,13 +1,4 @@
-import { dns } from "bun";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  jest,
-  spyOn,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import type {
   ChannelAdapter,
   ChannelParseResult,
@@ -26,8 +17,8 @@ import {
   MATRIX_BOT_MARKER,
   type MatrixForwardedEvent,
 } from "../src/shared/matrix-wire.ts";
-import { resetPublicHostsForTests } from "../src/shared/http.ts";
 import { channelScopeKeyFromConversation } from "../src/shared/runtime-keys.ts";
+import { stubPublicDns } from "./helpers/http.ts";
 
 const API_URL = "https://matrix.example.org";
 // Where the homeserver name resolves: media calls are pinned to it.
@@ -54,17 +45,16 @@ interface HeldForwarder {
   release(): Promise<void>;
 }
 
+let restoreDns = (): void => {};
+
 beforeEach((): void => {
-  spyOn(dns, "lookup").mockResolvedValue([
-    { address: API_ADDRESS, family: 4, ttl: 30 },
-  ]);
+  restoreDns = stubPublicDns(API_ADDRESS);
 });
 
 afterEach((): void => {
   globalThis.fetch = originalFetch;
   process.env.MATRIX_FORWARDER_URL = originalForwarderUrl;
-  jest.restoreAllMocks();
-  resetPublicHostsForTests();
+  restoreDns();
 });
 
 describe("matrix channel adapter", () => {

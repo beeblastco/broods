@@ -2,7 +2,6 @@
 
 import {
   TelegramAdapter,
-  type TelegramAdapterConfig,
   type TelegramMessage,
   type TelegramUpdate,
 } from "@chat-adapter/telegram";
@@ -90,11 +89,8 @@ interface TelegramApiAnswer<TResult> {
 // so the SDK's two calls there go pinned to a checked public address with
 // redirects refused. Telegram itself keeps the SDK's own calls.
 class BroodsTelegramAdapter extends TelegramAdapter {
-  private readonly tenantApiUrl: boolean;
-
-  constructor(config: TelegramAdapterConfig) {
-    super(config);
-    this.tenantApiUrl = Boolean(config.apiUrl);
+  private get tenantApiUrl(): boolean {
+    return this.apiBaseUrl !== TELEGRAM_API_URL;
   }
 
   protected override async downloadFile(fileId: string): Promise<Buffer> {

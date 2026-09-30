@@ -107,6 +107,13 @@ const channelTargetFields = {
 
 const channelTargetValidator = v.object(channelTargetFields);
 
+const admittedChannelTargetValidator = v.object({
+  ...channelTargetFields,
+  // Still sent by a core pod from before this rollout. Accepted and dropped so
+  // Convex can deploy first; remove once core has rolled.
+  agentConfig: v.optional(v.any()),
+});
+
 const ingressStatusResultValidator = v.object({
   eventId: v.string(),
   runId: v.string(),
@@ -168,14 +175,7 @@ export const accept = internalMutation({
     delivery: v.any(),
     requestedMode: ingressModeValidator,
     agentConfig: v.optional(v.any()),
-    channelTarget: v.optional(
-      v.object({
-        ...channelTargetFields,
-        // Still sent by a core pod from before this rollout. Accepted and
-        // dropped so Convex can deploy first; remove once core has rolled.
-        agentConfig: v.optional(v.any()),
-      }),
-    ),
+    channelTarget: v.optional(admittedChannelTargetValidator),
     ephemeralSystem: v.optional(v.array(v.any())),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
@@ -541,7 +541,7 @@ export const getConversationTarget = internalQuery({
       return null;
     }
 
-    return channelTargetRow(target);
+    return target;
   },
 });
 
@@ -1055,26 +1055,6 @@ async function canonicalIdentity(options: {
 }
 
 /**
- * The channel target down to the fields it may hold. A candidate from an old
- * core pod still carries the decrypted agent config; this keeps it out of the
- * row.
- */
-function channelTargetRow(
-  target: Infer<typeof channelTargetValidator>,
-): Infer<typeof channelTargetValidator> {
-  return {
-    channelName: target.channelName,
-    source: target.source,
-    ...(target.credentialAgentId !== undefined
-      ? { credentialAgentId: target.credentialAgentId }
-      : {}),
-    ...(target.channelRecordId !== undefined
-      ? { channelRecordId: target.channelRecordId }
-      : {}),
-  };
-}
-
-/**
  * Idempotency check for `accept`: an identity match replays its prior
  * admission (or conflicts on a different payload digest), and an eventId
  * reused under a different identity is always a conflict. Null means the
@@ -1341,7 +1321,7 @@ async function prepareAdmissionCoordinator(
     accountId: Id<"accounts">;
     agentId: string;
     conversationKey: string;
-    channelTarget?: Infer<typeof channelTargetValidator>;
+    channelTarget?: Infer<typeof admittedChannelTargetValidator>;
   },
   now: number,
 ): Promise<{
@@ -1363,7 +1343,7 @@ async function prepareAdmissionCoordinator(
     throw new Error("Conversation coordinator scope mismatch");
   }
   if (args.channelTarget !== undefined) {
-    const channelTarget = channelTargetRow(args.channelTarget);
+    const { agentConfig: _legacyConfig, ...channelTarget } = args.channelTarget;
     await ctx.db.patch(coordinator._id, {
       channelTarget: channelTarget,
       updatedAt: now,
