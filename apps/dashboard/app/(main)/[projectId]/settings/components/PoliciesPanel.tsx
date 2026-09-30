@@ -1,6 +1,7 @@
 "use client";
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -190,24 +191,28 @@ export function PoliciesPanel({
               </span>
               {canWrite && (
                 <>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    className="cursor-pointer"
-                    onClick={() => beginEdit(policy)}
-                  >
-                    <Pencil className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted-destructive"
-                    className="cursor-pointer"
-                    onClick={() => setDeletingPolicy(policy)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  <IconTooltip label={`Edit ${policy.name}`}>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted"
+                      className="cursor-pointer"
+                      onClick={() => beginEdit(policy)}
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
+                  </IconTooltip>
+                  <IconTooltip label={`Delete ${policy.name}`}>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted-destructive"
+                      className="cursor-pointer"
+                      onClick={() => setDeletingPolicy(policy)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </IconTooltip>
                 </>
               )}
             </div>

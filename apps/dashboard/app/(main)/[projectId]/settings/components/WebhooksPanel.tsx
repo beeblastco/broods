@@ -6,6 +6,7 @@
  */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -219,22 +220,23 @@ export function WebhooksPanel({
                         {webhook.enabled ? "Active" : "Inactive"}
                       </button>
                       {canWrite && (
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          tone="muted-destructive"
-                          className="shrink-0 cursor-pointer"
-                          onClick={() =>
-                            setDeletingWebhook({
-                              agentConfigId: agent.agentConfigId,
-                              index: webhook.index,
-                              url: webhook.url ?? "webhook",
-                            })
-                          }
-                          title="Remove webhook"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
+                        <IconTooltip label="Remove webhook">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            tone="muted-destructive"
+                            className="shrink-0 cursor-pointer"
+                            onClick={() =>
+                              setDeletingWebhook({
+                                agentConfigId: agent.agentConfigId,
+                                index: webhook.index,
+                                url: webhook.url ?? "webhook",
+                              })
+                            }
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </IconTooltip>
                       )}
                     </div>
 
