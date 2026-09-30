@@ -84,8 +84,8 @@ jobs:
             NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}
             NEXT_PUBLIC_WORKOS_REDIRECT_URI=${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
             NEXT_PUBLIC_BROODS_BASE_URL=${{ vars.NEXT_PUBLIC_BROODS_BASE_URL || 'https://gateway.broods.app' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=broods-dashboard
+          cache-to: type=gha,mode=max,scope=broods-dashboard
 
   rollout:
     needs: build

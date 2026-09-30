@@ -53,10 +53,15 @@ export async function proxyHttp(
   options: ProxyOptions,
 ): Promise<Response> {
   const headers = new Headers(request.headers);
+  // Only a 401 failover sends the body twice, so only then is it buffered. A
+  // single upstream gets the client's stream, so an unauthenticated upload
+  // never sits whole in gateway memory.
   const body =
     request.method === "GET" || request.method === "HEAD"
       ? undefined
-      : await request.arrayBuffer();
+      : coreBaseUrls.length > 1
+        ? await request.arrayBuffer()
+        : request.body;
   let response: Response | null = null;
   let unreachable = false;
 

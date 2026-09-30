@@ -49,6 +49,7 @@ type ActiveRun = {
 type IngressHttpResponse = {
   eventId?: string;
   runId?: string;
+  agentId?: string;
   conversationKey?: string;
   status?: IngressStatus | "not_found";
   requestedMode?: "reject" | "followup" | "collect" | "steer";
@@ -661,7 +662,12 @@ async function attachCoreStream(
 
       return;
     }
-    if (status.conversationKey !== message.conversationKey) {
+    // The run's own agent, not the client's claim, names the NATS subject. A
+    // core that omits it fails closed.
+    if (
+      status.agentId !== message.agentId ||
+      status.conversationKey !== message.conversationKey
+    ) {
       sendAgentTest(socket, {
         type: "replay_unavailable",
         requestId: message.requestId,

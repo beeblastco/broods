@@ -112,14 +112,16 @@ Other languages use the same endpoint over HTTP. See [HTTP API](reference/http-a
 
 ## 6. Deploy to production
 
-```bash
-bunx broods deploy
-```
-
-`deploy` syncs the same resources to your `production` stage once. It does not push `.env.local` values. Set production secrets first:
+`deploy` does not push `.env.local` values, so set production secrets first:
 
 ```bash
 bunx broods env set OPENAI_API_KEY --stage production
+```
+
+Then sync the same resources to your `production` stage once:
+
+```bash
+bunx broods deploy
 ```
 
 ## Check where you are pointed

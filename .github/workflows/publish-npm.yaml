@@ -99,15 +99,30 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # A declared prerelease (`1.0.0-rc.1`) goes to `next`, so a plain
+      # `npm i broods` keeps getting the last stable release.
       - name: Publish to npm
         if: steps.npm-version.outputs.exists == 'false'
         working-directory: packages/broods
-        run: npm publish
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --tag next
+          else
+            npm publish
+          fi
 
       # Tag prefixed, not a bare `v0.6.0`: this monorepo publishes one package
-      # today but the tag namespace has to survive a second one.
+      # today but the tag namespace has to survive a second one. Runs even when
+      # the version was already on npm, so a publish whose tagging failed gets
+      # its tag on the next run instead of never, on the commit npm recorded
+      # for it rather than today's head.
       - name: Tag and release
-        if: steps.npm-version.outputs.exists == 'false'
+        if: steps.package.outputs.bump != 'none'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,9 +136,15 @@ jobs:
             exit 0
           fi
 
+          TARGET="$(npm view "broods@$VERSION" gitHead 2>/dev/null || true)"
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --target "${TARGET:-$GITHUB_SHA}" \
             --title "broods $VERSION" \
-            --generate-notes
+            --generate-notes \
+            "${flags[@]}"
           echo "Published and released **broods $VERSION** ([npm](https://www.npmjs.com/package/broods/v/$VERSION))." >> "$GITHUB_STEP_SUMMARY"
