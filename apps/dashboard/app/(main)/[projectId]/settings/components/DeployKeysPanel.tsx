@@ -2,6 +2,7 @@
 
 import { useCopied } from "@/app/components/CopyButton";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -139,15 +140,17 @@ export function DeployKeysPanel({
                 {key.keyHint}
               </code>
               {canWrite && (
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  tone="muted-destructive"
-                  className="cursor-pointer"
-                  onClick={() => setDeletingKey(key)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                <IconTooltip label={`Delete ${key.name}`}>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    tone="muted-destructive"
+                    className="cursor-pointer"
+                    onClick={() => setDeletingKey(key)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </IconTooltip>
               )}
             </div>
           ))}

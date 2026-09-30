@@ -1,5 +1,6 @@
 "use client";
 
+import { IconTooltip } from "@/app/components/IconTooltip";
 import type { StageDeployment } from "@/app/components/side-panel/DetailsTab";
 import {
   Collapsible,
@@ -321,27 +322,31 @@ function ChatWindow({
           />
           <InputGroupAddon align="block-end" className="pt-0">
             <div className="flex w-full items-center justify-between">
-              <InputGroupButton
-                size="icon-xs"
-                variant="ghost"
-                onClick={resetChat}
-                title="New chat"
-              >
-                <RotateCcw className="size-3.5" />
-              </InputGroupButton>
-              <InputGroupButton
-                type="submit"
-                size="icon-xs"
-                variant="default"
-                disabled={!input.trim() || composerLocked}
-                className="rounded-sm"
-              >
-                {status === "streaming" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <ArrowUp className="size-3.5" />
-                )}
-              </InputGroupButton>
+              <IconTooltip label="New chat">
+                <InputGroupButton
+                  size="icon-xs"
+                  variant="ghost"
+                  className="cursor-pointer"
+                  onClick={resetChat}
+                >
+                  <RotateCcw className="size-3.5" />
+                </InputGroupButton>
+              </IconTooltip>
+              <IconTooltip label="Send">
+                <InputGroupButton
+                  type="submit"
+                  size="icon-xs"
+                  variant="default"
+                  disabled={!input.trim() || composerLocked}
+                  className="cursor-pointer rounded-sm disabled:cursor-not-allowed"
+                >
+                  {status === "streaming" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <ArrowUp className="size-3.5" />
+                  )}
+                </InputGroupButton>
+              </IconTooltip>
             </div>
           </InputGroupAddon>
         </InputGroup>

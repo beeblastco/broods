@@ -5,7 +5,7 @@
  * its hash is stored, so it can never be read back.
  */
 
-import { useCopied } from "@/app/components/CopyButton";
+import { CopyRow, useCopied } from "@/app/components/CopyButton";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -19,6 +19,7 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
@@ -42,11 +43,8 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const accountCopy = useCopied(account?.accountId ?? "");
   const secretCopy = useCopied(revealedSecret ?? "");
-
-  const harnessUrl =
-    process.env.NEXT_PUBLIC_BROODS_HARNESS_URL ?? "(not configured)";
+  const coreEndpoint = resolveCoreEndpoint();
 
   async function handleProvision(): Promise<void> {
     setPending(true);
@@ -138,29 +136,30 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
           <Label variant="muted" className="text-xs">
             Account ID
           </Label>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-              {account.accountId}
-            </code>
-            <Button
-              variant="outline"
-              size="sm"
-              className="cursor-pointer"
-              onClick={accountCopy.copy}
-            >
-              <Copy className="size-3.5 mr-1" />
-              {accountCopy.copied ? "Copied" : "Copy"}
-            </Button>
-          </div>
+          <CopyRow
+            value={account.accountId}
+            className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+          >
+            <span className="flex-1 truncate">{account.accountId}</span>
+          </CopyRow>
         </div>
 
         <div className="grid gap-1">
           <Label variant="muted" className="text-xs">
             Base URL
           </Label>
-          <code className="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
-            {harnessUrl}
-          </code>
+          {coreEndpoint.ok ? (
+            <CopyRow
+              value={coreEndpoint.httpBaseUrl}
+              className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+            >
+              <span className="flex-1 truncate">
+                {coreEndpoint.httpBaseUrl}
+              </span>
+            </CopyRow>
+          ) : (
+            <p className="text-xs text-warning">{coreEndpoint.message}</p>
+          )}
         </div>
 
         <div className="grid gap-1">

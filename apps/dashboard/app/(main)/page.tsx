@@ -1,5 +1,7 @@
 "use client";
 
+import { StatusPage } from "@/app/components/StatusPage";
+import { Button } from "@/app/components/ui/button";
 import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import { useAction, useConvex, useMutation, useQuery } from "convex/react";
@@ -13,14 +15,16 @@ export default function HomePage(): React.JSX.Element {
   const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
   const provision = useAction(api.org.lifecycle.provision);
   const currentUser = useQuery(api.user.getCurrent);
-  const bootstrapped = useRef(false);
-  const [error, setError] = useState<string | null>(null);
+  const started = useRef<number | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [error, setError] = useState<Error | null>(null);
 
   // Get or create the caller's org, then open the requested or default project.
+  // Runs once per attempt; Retry bumps `attempt` to run it again.
   useEffect(() => {
-    if (!currentUser || bootstrapped.current) return;
+    if (!currentUser || started.current === attempt) return;
 
-    bootstrapped.current = true;
+    started.current = attempt;
     (async () => {
       try {
         const orgId = await getOrCreateOrg({});
@@ -28,8 +32,7 @@ export default function HomePage(): React.JSX.Element {
         // On first login (brand-new org with no backend account), auto-provision
         // and hand the one-time secret to the onboarding dialog, then land on the
         // (empty) projects page. Onboarding ends with `broods dev`, which
-        // creates the first project. `provision` throws if an account already
-        // exists, which we treat as already-provisioned.
+        // creates the first project.
         const account = await convex.query(api.org.orgs.getActiveAccount, {});
         if (account === null) {
           try {
@@ -39,7 +42,11 @@ export default function HomePage(): React.JSX.Element {
 
             return;
           } catch (provisionErr) {
-            console.warn("Auto-provision skipped:", provisionErr);
+            // A production client only sees "Server Error" from an action, so
+            // "already provisioned" (another tab won the race) is read from
+            // the account, not the message.
+            const raced = await convex.query(api.org.orgs.getActiveAccount, {});
+            if (raced === null) throw provisionErr;
           }
         }
 
@@ -79,15 +86,11 @@ export default function HomePage(): React.JSX.Element {
         router.replace(projectId ? `/${projectId}` : "/projects");
       } catch (err) {
         console.error("Failed to open workspace:", err);
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to open workspace. Refresh to retry.",
-        );
-        bootstrapped.current = false;
+        setError(err instanceof Error ? err : new Error(String(err)));
       }
     })();
   }, [
+    attempt,
     currentUser,
     convex,
     getOrCreateOrg,
@@ -96,26 +99,27 @@ export default function HomePage(): React.JSX.Element {
     router,
   ]);
 
+  if (error) {
+    return (
+      <StatusPage title="Workspace setup failed" error={error}>
+        <Button
+          className="cursor-pointer"
+          onClick={() => {
+            setError(null);
+            setAttempt(attempt + 1);
+          }}
+        >
+          Retry
+        </Button>
+      </StatusPage>
+    );
+  }
+
   return (
     <div className="flex h-full w-full items-center justify-center bg-background">
-      {error ? (
-        <div className="flex flex-col items-center gap-3 text-center">
-          <p className="text-sm text-destructive">{error}</p>
-          <button
-            className="text-xs text-muted-foreground underline cursor-pointer"
-            onClick={() => {
-              bootstrapped.current = false;
-              setError(null);
-            }}
-          >
-            Retry
-          </button>
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Setting up your workspace…
-        </p>
-      )}
+      <p className="text-sm text-muted-foreground">
+        Setting up your workspace…
+      </p>
     </div>
   );
 }

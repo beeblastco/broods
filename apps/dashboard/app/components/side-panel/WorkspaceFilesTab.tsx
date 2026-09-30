@@ -2,6 +2,7 @@
 
 /** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { cn } from "@/app/lib/utils";
@@ -538,54 +539,57 @@ export function WorkspaceFilesTab({
       {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-end gap-0.5 px-3 py-2">
         {workspaceId && (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            className="cursor-pointer disabled:cursor-not-allowed"
-            title="Refresh workspace files"
-            disabled={isRefreshing}
-            onClick={(e) => {
-              e.stopPropagation();
-              void refreshRuntimeFiles(true, true).catch((err) => {
-                setError(
-                  err instanceof Error
-                    ? err.message
-                    : "Failed to refresh workspace files.",
-                );
-              });
-            }}
-          >
-            <RefreshCw
-              className={cn("size-3.5", isRefreshing && "animate-spin")}
-            />
-          </Button>
+          <IconTooltip label="Refresh workspace files">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="cursor-pointer disabled:cursor-not-allowed"
+              disabled={isRefreshing}
+              onClick={(e) => {
+                e.stopPropagation();
+                void refreshRuntimeFiles(true, true).catch((err) => {
+                  setError(
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to refresh workspace files.",
+                  );
+                });
+              }}
+            >
+              <RefreshCw
+                className={cn("size-3.5", isRefreshing && "animate-spin")}
+              />
+            </Button>
+          </IconTooltip>
         )}
         {canWrite && (
           <>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="cursor-pointer"
-              title="Upload files"
-              onClick={(e) => {
-                e.stopPropagation();
-                fileInputRef.current?.click();
-              }}
-            >
-              <Upload className="size-3.5" />
-            </Button>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="cursor-pointer"
-              title="Upload folder"
-              onClick={(e) => {
-                e.stopPropagation();
-                folderInputRef.current?.click();
-              }}
-            >
-              <FolderUp className="size-3.5" />
-            </Button>
+            <IconTooltip label="Upload files">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+              >
+                <Upload className="size-3.5" />
+              </Button>
+            </IconTooltip>
+            <IconTooltip label="Upload folder">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  folderInputRef.current?.click();
+                }}
+              >
+                <FolderUp className="size-3.5" />
+              </Button>
+            </IconTooltip>
           </>
         )}
       </div>
@@ -1065,31 +1069,33 @@ function TreeRow({
               <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
             ) : canWrite ? (
               <>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className="size-5 cursor-pointer"
-                  title="Rename"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRenameStart(node.path);
-                  }}
-                >
-                  <Pencil className="size-3.5" />
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  tone="destructive"
-                  className="size-5 cursor-pointer"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(node);
-                  }}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                <IconTooltip label={`Rename ${node.name}`}>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="size-5 cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRenameStart(node.path);
+                    }}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                </IconTooltip>
+                <IconTooltip label={`Delete ${node.name}`}>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    tone="destructive"
+                    className="size-5 cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(node);
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </IconTooltip>
               </>
             ) : null}
           </span>

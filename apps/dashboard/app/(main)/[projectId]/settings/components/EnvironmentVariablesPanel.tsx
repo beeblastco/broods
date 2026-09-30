@@ -1,6 +1,7 @@
 "use client";
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -163,33 +164,38 @@ export function EnvironmentVariablesPanel({
               </code>
               {canWrite && (
                 <>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    className="shrink-0 cursor-pointer"
-                    title={
+                  <IconTooltip
+                    label={
                       revealed[v._id] !== undefined
-                        ? "Hide value"
-                        : "Reveal value"
+                        ? `Hide ${v.name}`
+                        : `Reveal ${v.name}`
                     }
-                    onClick={() => toggleReveal(v._id)}
                   >
-                    {revealed[v._id] !== undefined ? (
-                      <EyeOff className="size-3.5" />
-                    ) : (
-                      <Eye className="size-3.5" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted-destructive"
-                    className="shrink-0 cursor-pointer"
-                    onClick={() => setDeletingVar(v)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted"
+                      className="shrink-0 cursor-pointer"
+                      onClick={() => toggleReveal(v._id)}
+                    >
+                      {revealed[v._id] !== undefined ? (
+                        <EyeOff className="size-3.5" />
+                      ) : (
+                        <Eye className="size-3.5" />
+                      )}
+                    </Button>
+                  </IconTooltip>
+                  <IconTooltip label={`Delete ${v.name}`}>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted-destructive"
+                      className="shrink-0 cursor-pointer"
+                      onClick={() => setDeletingVar(v)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </IconTooltip>
                 </>
               )}
             </div>
