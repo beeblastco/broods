@@ -4,7 +4,7 @@ import NotFound from "@/app/not-found";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
-import { use } from "react";
+import { useParams } from "next/navigation";
 
 /**
  * Guards every project route. A well-formed id the caller cannot read (deleted,
@@ -15,15 +15,11 @@ import { use } from "react";
  */
 export default function ProjectLayout({
   children,
-  params,
 }: {
   children: React.ReactNode;
-  params: Promise<{ projectId: string }>;
 }): React.JSX.Element {
-  const { projectId } = use(params);
-  const stages = useQuery(api.stage.list, {
-    projectId: projectId as Id<"projects">,
-  });
+  const { projectId } = useParams<{ projectId: Id<"projects"> }>();
+  const stages = useQuery(api.stage.list, { projectId: projectId });
 
   return stages?.length === 0 ? <NotFound /> : <>{children}</>;
 }
