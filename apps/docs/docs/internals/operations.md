@@ -35,7 +35,7 @@ flowchart LR
 ```
 
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user that SST creates. The key lives in the `core-secrets` k8s secret.
-- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
+- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A run waiting for a slot keeps its conversation lease renewed, so a long queue does not expire it. A model that sends nothing for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before its first chunk, or `MODEL_CHUNK_TIMEOUT_MS` between chunks (both default 5 minutes), fails its run. Time spent inside a tool call does not count. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
 - Core runs as a single replica, because the machine sandbox registry and the worker queue live in memory.
 - On boot and every 30 seconds, `apps/core/src/harness/ingress-recovery.ts` starts queued work whose conversation has no live owner. Convex promotes each queue atomically, so an overlapping pod never runs one twice.
 

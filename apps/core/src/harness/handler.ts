@@ -84,15 +84,18 @@ import {
 } from "./hook-dispatcher.ts";
 import {
   acceptIngress,
+  DEFAULT_CONVERSATION_LEASE_TTL_MS,
   getConversationDispatchTarget,
   getIngressStatusByEventId,
   loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
+  renewIngressOwner,
   type AppliedIngress,
   type IngressAdmission,
   type IngressDelivery,
   type IngressSettlement,
+  type LiveOwner,
   type SessionMessageInput,
   type SessionMessageResult,
 } from "./ingress.ts";
@@ -160,6 +163,9 @@ const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
+// A queued run holds its lease from admission, so the queue renews it well
+// inside the TTL until a slot starts the run.
+const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on this clock. A frame the client acts on checks exactly: a stale
 // run must not land one in a stream the next owner is writing to. `waiting` is
@@ -175,9 +181,14 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
 ]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerRuns: [kind: string, run: InProcessWorkerRun][] = [];
+const pendingWorkerRuns: [
+  kind: string,
+  run: InProcessWorkerRun,
+  lease: LiveOwner | undefined,
+][] = [];
 
 let activeInProcessWorkers = 0;
+let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
 
 type ContinuationOutcome =
   | { kind: "ready"; invoked: boolean; publicEventId: string }
@@ -222,10 +233,12 @@ interface ParentContinuationResult {
  * slot is busy. Every background run goes through here, channel turns
  * included, so MAX_INPROCESS_WORKERS bounds what the pod runs at once.
  * @param kind a label for logs
+ * @param lease the conversation lease the run already holds, renewed while it waits
  */
 export function dispatchInProcessWorker(
   kind: string,
   run: InProcessWorkerRun,
+  lease?: LiveOwner,
 ): void {
   if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
     if (pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
@@ -233,7 +246,14 @@ export function dispatchInProcessWorker(
       // growing without bound.
       throw new Error("In-process worker queue is full");
     }
-    pendingWorkerRuns.push([kind, run]);
+    pendingWorkerRuns.push([kind, run, lease]);
+    if (!queuedLeaseTimer) {
+      queuedLeaseTimer = setInterval(
+        renewQueuedLeases,
+        QUEUED_LEASE_RENEW_INTERVAL_MS,
+      );
+      queuedLeaseTimer.unref();
+    }
 
     return;
   }
@@ -276,8 +296,12 @@ export function dispatchInProcessWorker(
     activeInProcessWorkers -= 1;
     inProcessWorkers.delete(worker);
     const next = pendingWorkerRuns.shift();
+    if (pendingWorkerRuns.length === 0 && queuedLeaseTimer) {
+      clearInterval(queuedLeaseTimer);
+      queuedLeaseTimer = undefined;
+    }
     if (next) {
-      dispatchInProcessWorker(next[0], next[1]);
+      dispatchInProcessWorker(next[0], next[1], next[2]);
     }
   });
   inProcessWorkers.add(worker);
@@ -1554,22 +1578,29 @@ export async function handleChannelRequest(
   // The webhook acked long ago, so a failure outside a turn is said here.
   const observability = getObservabilityContext();
   try {
-    dispatchInProcessWorker("channel-worker", (context): Promise<void> =>
-      runWithObservabilityScope(
-        (): Promise<void> =>
-          runChannelTurns(event, session, ingested.turnEvents, context).catch(
-            async (err: unknown): Promise<never> => {
-              await sendChannelFailure(
-                event.channel,
-                formatChannelErrorText(
-                  err instanceof Error ? err.message : String(err),
-                ),
-              ).catch((): void => {});
-              throw err;
-            },
-          ),
-        observability,
-      ),
+    dispatchInProcessWorker(
+      "channel-worker",
+      (context): Promise<void> =>
+        runWithObservabilityScope(
+          (): Promise<void> =>
+            runChannelTurns(event, session, ingested.turnEvents, context).catch(
+              async (err: unknown): Promise<never> => {
+                await sendChannelFailure(
+                  event.channel,
+                  formatChannelErrorText(
+                    err instanceof Error ? err.message : String(err),
+                  ),
+                ).catch((): void => {});
+                throw err;
+              },
+            ),
+          observability,
+        ),
+      {
+        conversationKey: session.conversationKey,
+        ownerEventId: session.eventId,
+        ownerGeneration: admission.ownerGeneration,
+      },
     );
   } catch (err) {
     await settleFailedIngressAndDrain(
@@ -2405,9 +2436,43 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
-  dispatchInProcessWorker(payload.kind, (context): Promise<Response> =>
-    handler(payload, context),
+  const { event } = payload;
+  dispatchInProcessWorker(
+    payload.kind,
+    (context): Promise<Response> => handler(payload, context),
+    event.ownerGeneration === undefined
+      ? undefined
+      : {
+          conversationKey: event.conversationKey,
+          ownerEventId: event.eventId,
+          ownerGeneration: event.ownerGeneration,
+        },
   );
+}
+
+/** The queue's timer: renews every waiting run's lease, so a long wait does not hand its conversation to `maintain`. */
+function renewQueuedLeases(): void {
+  for (const [kind, , lease] of pendingWorkerRuns) {
+    if (!lease) continue;
+    renewIngressOwner(lease).then(
+      (renewal): void => {
+        if (renewal !== "renewed") {
+          logWarn("Queued worker lease was not renewed", {
+            kind: kind,
+            conversationKey: lease.conversationKey,
+            renewal: renewal,
+          });
+        }
+      },
+      (err: unknown): void => {
+        logError("Queued worker lease renewal failed", {
+          kind: kind,
+          conversationKey: lease.conversationKey,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    );
+  }
 }
 
 function asyncToolContinuationEventId(parentEventId: string): string {

@@ -91,6 +91,9 @@ let streamTextScenario:
   | "real-two-step" = "empty";
 // The model the last "real-two-step" run was given, so a test can read its calls.
 let twoStepModelInUse: MockLanguageModelV4 | undefined;
+// How long the "real-two-step" second model call and weather tool take.
+let twoStepAnswerDelayMs = 20;
+let weatherDelayMs = 0;
 
 const weatherTool = actualAi.tool({
   inputSchema: actualAi.jsonSchema<{ city: string }>({
@@ -98,10 +101,11 @@ const weatherTool = actualAi.tool({
     properties: { city: { type: "string" } },
     required: ["city"],
   }),
-  execute: async ({ city }): Promise<{ city: string; tempC: number }> => ({
-    city: city,
-    tempC: 31,
-  }),
+  execute: async ({ city }): Promise<{ city: string; tempC: number }> => {
+    await Bun.sleep(weatherDelayMs);
+
+    return { city: city, tempC: 31 };
+  },
 });
 
 const streamTextMock = mock(
@@ -611,6 +615,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   setStorageForTests(null);
   streamTextScenario = "empty";
+  twoStepAnswerDelayMs = 20;
+  weatherDelayMs = 0;
   streamTextMock.mockClear();
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
@@ -897,6 +903,36 @@ describe("runAgentLoop", () => {
     expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(
       true,
     );
+  });
+
+  it("fails the run when the model sends nothing within the chunk timeout", async () => {
+    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
+    // Longer than the timeout; the mock stream ignores the abort a real
+    // provider fetch would honour, so the test still waits it out.
+    twoStepAnswerDelayMs = 1_200;
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(true);
+    expect(stream.failureText()).toBe(
+      "The model sent no output for 1s, so the run was stopped",
+    );
+    // The stalled second call was aborted, not left holding its socket.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+    expect(twoStepModelInUse?.doStreamCalls[1]?.abortSignal?.aborted).toBe(
+      true,
+    );
+  });
+
+  it("does not count a slow tool as a silent model", async () => {
+    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
+    process.env.MODEL_CHUNK_TIMEOUT_MS = "300";
+    weatherDelayMs = 900;
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(false);
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
   });
 
   it("keeps the run alive when a reader that drains on its own leaves early", async () => {
@@ -3035,7 +3071,7 @@ function twoStepModel(): MockLanguageModelV4 {
   });
   const step1 = actualAi.simulateReadableStream<LanguageModelV4StreamPart>({
     // A reader that stops during step 0 must find the model still running.
-    initialDelayInMs: 20,
+    initialDelayInMs: twoStepAnswerDelayMs,
     chunks: [
       { type: "stream-start", warnings: [] },
       { type: "text-start", id: "t1" },
