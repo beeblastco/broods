@@ -83,11 +83,12 @@ export function majorVersion(version: string): number {
 }
 
 /**
- * Reads the install site off this module's own path. The `node_modules` this
- * copy sits in names its project root, and the install belongs to that project
- * only when the caller is inside that root, so a workspace running the
- * root-installed CLI from `apps/foo` upgrades the dependency instead of
- * installing a second copy on the PATH. A checkout with no `node_modules` in
+ * Reads the install site off this module's own path. The first `node_modules`
+ * in it names the project root, so pnpm's and bun's isolated store
+ * (`node_modules/.pnpm/broods@x/node_modules/broods`) resolve to the project
+ * too. The install belongs to that project only when the caller is inside
+ * that root, so a workspace running the root-installed CLI from `apps/foo`
+ * upgrades the dependency instead of installing a second copy on the PATH. A checkout with no `node_modules` in
  * the path falls back to whether the caller is inside the checkout. A project
  * install uses the manager its lockfile names. The install stays on the
  * running major, since a new major can break the project.
@@ -98,7 +99,7 @@ export function updateTarget(
   version = packageJson.version,
 ): UpdateTarget {
   const marker = `${sep}node_modules${sep}`;
-  const markerAt = self.lastIndexOf(marker);
+  const markerAt = self.indexOf(marker);
   const projectRoot = markerAt === -1 ? null : self.slice(0, markerAt);
   const local =
     projectRoot === null

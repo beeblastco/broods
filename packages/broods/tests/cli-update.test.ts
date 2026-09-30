@@ -134,3 +134,27 @@ test.each([
   expect(target.manager).toBe(manager);
   expect(target.args).toEqual(args);
 });
+
+// pnpm and bun's isolated linker run the CLI from their store, which holds a
+// second `node_modules`. Reading the root off that one called it a global.
+test("a copy in pnpm's store upgrades the project through pnpm", async () => {
+  const root = await mkdtemp(join(tmpdir(), "broods-update-"));
+  tempDirs.push(root);
+  await writeFile(join(root, "pnpm-lock.yaml"), "", "utf8");
+  const self = join(
+    root,
+    "node_modules",
+    ".pnpm",
+    "broods@1.4.0",
+    "node_modules",
+    "broods",
+    "dist",
+    "cli",
+    "index.js",
+  );
+
+  const target = updateTarget(root, self, "1.4.0");
+
+  expect(target.manager).toBe("pnpm");
+  expect(target.args).toEqual(["add", "broods@1"]);
+});
