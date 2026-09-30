@@ -4,20 +4,29 @@ on:
   pull_request:
     paths:
       - "packages/broods/**"
+      - "packages/demos/**"
+      - "tsconfig.base.json"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"
       - ".github/workflows/publish-npm.yaml"
+  # dev only, like ci.yaml: a branch push is already checked by its pull request.
   push:
-    branches-ignore:
-      - main
+    branches:
+      - dev
     paths:
       - "packages/broods/**"
+      - "packages/demos/**"
+      - "tsconfig.base.json"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"
       - ".github/workflows/publish-npm.yaml"
   workflow_dispatch:
+
+concurrency:
+  group: check-broods-sdk-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Each job grants only the token permissions it needs.
 permissions: {}
@@ -60,3 +69,11 @@ jobs:
       - name: Check CLI bundle budget
         # pack:check leaves dist built; the budget reads it.
         run: bun bench/bundles.ts --check cli
+
+      - name: Typecheck demos
+        # Each demo links the SDK as file:../../broods, whose entry is the dist
+        # pack:check just built, so install only after it.
+        run: |
+          for demo in packages/demos/*/; do
+            (cd "$demo" && bun install --frozen-lockfile && bun run check)
+          done
