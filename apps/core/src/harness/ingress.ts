@@ -39,7 +39,7 @@ export type IngressStatus =
   | "expired";
 
 /** One conversation lease this process holds, as Convex fences it. */
-interface LiveOwner {
+export interface LiveOwner {
   conversationKey: string;
   ownerEventId: string;
   ownerGeneration: number;
@@ -453,6 +453,18 @@ export async function releaseIngressOwner(owner: LiveOwner): Promise<void> {
     ownerGeneration: owner.ownerGeneration,
   });
   forgetOwner(owner);
+}
+
+/** Extends the lease while the caller still holds that generation, or reports it stopped or stale. */
+export function renewIngressOwner(
+  owner: LiveOwner,
+): Promise<"renewed" | "stopped" | "stale"> {
+  return runtime.mutate("renewIngressOwner", {
+    conversationKey: owner.conversationKey,
+    ownerEventId: owner.ownerEventId,
+    ownerGeneration: owner.ownerGeneration,
+    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  });
 }
 
 /**
