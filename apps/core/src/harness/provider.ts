@@ -680,8 +680,9 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
 /**
  * Every model request goes out with Bun's socket idle timeout off. Bun drops a
  * connection that stays silent for 300s, and a busy provider can hold a stream
- * that long, so a model call ends only on the provider's own error or the run's
- * abort signal. A provider with any tenant-supplied endpoint also gets the
+ * that long, so a model call ends on the provider's own error or the run's
+ * abort signal, which `watchModelStream` in harness.ts fires on a silent
+ * stream. A provider with any tenant-supplied endpoint also gets the
  * resolve-then-connect `fetch`.
  */
 function withModelFetch<T extends AgentProviderSettings>(

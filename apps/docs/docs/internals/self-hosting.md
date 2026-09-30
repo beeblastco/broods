@@ -160,7 +160,7 @@ Refuses to start without the four service secrets. Keep it cluster-internal; the
 | `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                                                                                                       | no                     | Same as on Convex                                                                              |
 | `BROODS_CONTAINER_RUNTIME`                                                                                                                              | no                     | `1` in a deployed pod, enables isolate prewarm. Leave unset locally                            |
 
-The tuning knobs and their defaults are `REQUEST_TIMEOUT_BUDGET_MS` 600000, `WORKER_TIMEOUT_BUDGET_MS` 600000, `MAX_INPROCESS_WORKERS` 8, `SHUTDOWN_DEADLINE_MS` 25000, `MCP_BATCH_WINDOW_MS` 10, `MCP_BATCH_MAX` 8, `ISOLATE_POOL`, `ISOLATE_WORKER_POOL_SIZE` 4, `ISOLATE_MEMORY_LIMIT_MB`, `ISOLATE_RUNNER_TIMEOUT_SECONDS`, `SANDBOX_SWEEP_INTERVAL_SECONDS`, and the `WORKSPACE_SANDBOX_*` limits in `apps/core/src/shared/sandbox.ts`.
+The tuning knobs and their defaults are `REQUEST_TIMEOUT_BUDGET_MS` 600000, `WORKER_TIMEOUT_BUDGET_MS` 600000, `MAX_INPROCESS_WORKERS` 8, `MODEL_FIRST_CHUNK_TIMEOUT_MS` 300000, `MODEL_CHUNK_TIMEOUT_MS` 300000, `SHUTDOWN_DEADLINE_MS` 25000, `MCP_BATCH_WINDOW_MS` 10, `MCP_BATCH_MAX` 8, `ISOLATE_POOL`, `ISOLATE_WORKER_POOL_SIZE` 4, `ISOLATE_MEMORY_LIMIT_MB`, `ISOLATE_RUNNER_TIMEOUT_SECONDS`, `SANDBOX_SWEEP_INTERVAL_SECONDS`, and the `WORKSPACE_SANDBOX_*` limits in `apps/core/src/shared/sandbox.ts`.
 
 Model and tool API keys are never deployment-wide. Accounts set them in agent config or as stage env vars.
 

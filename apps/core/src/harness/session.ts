@@ -51,8 +51,8 @@ import {
 } from "./compaction.ts";
 import {
   applySteering,
-  DEFAULT_CONVERSATION_LEASE_TTL_MS,
   releaseIngressOwner,
+  renewIngressOwner,
   settleIngress,
   takeNextIngress,
   type AppliedIngress,
@@ -386,11 +386,10 @@ export class Session {
   async renewConversationLease(): Promise<"renewed" | "stopped" | "stale"> {
     if (this.ownerGeneration === undefined) return "renewed";
 
-    return runtime.mutate("renewIngressOwner", {
+    return renewIngressOwner({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
-      leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
     });
   }
 
