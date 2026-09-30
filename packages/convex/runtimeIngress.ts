@@ -528,17 +528,20 @@ export const getConversationTarget = internalQuery({
   ): Promise<Infer<typeof channelTargetValidator> | null> => {
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const coordinator = await getCoordinator(ctx, args.conversationKey);
+    const target = coordinator?.channelTarget;
+    // A target still carrying `agentConfig` predates the rows core rebuilds
+    // from, so rebuilding would drop its record's narrowing. It names no
+    // session until the next channel turn repins it.
     if (
-      !coordinator ||
+      !target ||
+      target.agentConfig !== undefined ||
       coordinator.accountId !== args.accountId ||
       coordinator.agentId !== args.agentId
     ) {
       return null;
     }
 
-    return coordinator.channelTarget
-      ? channelTargetRow(coordinator.channelTarget)
-      : null;
+    return channelTargetRow(target);
   },
 });
 
@@ -1052,9 +1055,9 @@ async function canonicalIdentity(options: {
 }
 
 /**
- * The stored channel target, down to the fields it may hold. A row written
- * before this rollout, or a candidate from an old core pod, still carries the
- * decrypted agent config; this is what keeps it out of writes and reads.
+ * The channel target down to the fields it may hold. A candidate from an old
+ * core pod still carries the decrypted agent config; this keeps it out of the
+ * row.
  */
 function channelTargetRow(
   target: Infer<typeof channelTargetValidator>,

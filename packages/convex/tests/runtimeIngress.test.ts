@@ -144,7 +144,7 @@ describe("runtime ingress", () => {
     });
   });
 
-  test("reads a legacy channel target without its stored config", async (): Promise<void> => {
+  test("reads a legacy channel target as no session", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -178,7 +178,7 @@ describe("runtime ingress", () => {
         agentId: "test-agent",
         conversationKey: conversationKey,
       }),
-    ).toEqual({ channelName: "telegram", source: { chatId: "chat-1" } });
+    ).toBeNull();
   });
 
   test("returns only narrowed public deployment ingress provenance from delivery", async () => {
