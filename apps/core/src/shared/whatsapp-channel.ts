@@ -31,6 +31,8 @@ import { WHATSAPP_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const WHATSAPP_SIGNATURE_HEADER = "x-hub-signature-256";
 const WHATSAPP_DEFAULT_USER_NAME = "whatsapp-bot";
+// A tenant Graph API host that never answers must not hold the turn open.
+const WHATSAPP_TENANT_TIMEOUT_MS = 30_000;
 // The part of Graph's media lookup the download needs.
 const MEDIA_LOOKUP = z.looseObject({ url: z.string() });
 
@@ -155,6 +157,7 @@ class BroodsWhatsAppAdapter extends WhatsAppAdapter {
       method: "POST",
       body: init.body,
       headers: { Authorization: `Bearer ${this.accessToken}`, ...init.headers },
+      signal: AbortSignal.timeout(WHATSAPP_TENANT_TIMEOUT_MS),
     });
     if (!response.ok) {
       throw new Error(
