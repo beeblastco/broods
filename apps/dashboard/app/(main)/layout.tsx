@@ -7,6 +7,7 @@ import { Header } from "@/app/components/Header";
 import { PerfReporter } from "@/app/components/PerfReporter";
 import { ShortcutOverlay } from "@/app/components/ShortcutOverlay";
 import { ShortcutProvider } from "@/app/components/ShortcutProvider";
+import { TooltipProvider } from "@/app/components/ui/tooltip";
 import {
   clearOnboardingSecret,
   readOnboardingSecret,
@@ -69,9 +70,12 @@ export default function MainLayout({
     return subscribeOnboardingSecret(sync);
   }, []);
 
+  // An expired session signs in again and lands back where it was; the
+  // sign-in route validates `returnTo`.
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.replace("/auth/sign-in?returnTo=/");
+      const returnTo = window.location.pathname + window.location.search;
+      router.replace(`/auth/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
     }
   }, [isLoading, isAuthenticated, router]);
 
@@ -127,30 +131,34 @@ export default function MainLayout({
     <>
       <PerfReporter />
       <ShortcutProvider>
-        <Suspense>
-          <CopilotProvider>
-            <div className="flex h-screen w-screen flex-col bg-background">
-              <Header />
-              {onboardingSecret && (
-                <OnboardingDialog
-                  secret={onboardingSecret}
-                  onDone={() => {
-                    clearOnboardingSecret();
-                    router.push("/projects");
-                  }}
-                />
-              )}
-              {/* The dock is a column beside the page, not a sheet over it: what
+        <TooltipProvider>
+          <Suspense>
+            <CopilotProvider>
+              <div className="flex h-screen w-screen flex-col bg-background">
+                <Header />
+                {onboardingSecret && (
+                  <OnboardingDialog
+                    secret={onboardingSecret}
+                    onDone={() => {
+                      clearOnboardingSecret();
+                      router.push("/projects");
+                    }}
+                  />
+                )}
+                {/* The dock is a column beside the page, not a sheet over it: what
                   it is about to change has to stay on screen. */}
-              <div className="relative flex flex-1 overflow-hidden">
-                <div className="min-w-0 flex-1 overflow-hidden">{children}</div>
-                <CopilotLauncher />
-                <CopilotDock />
+                <div className="relative flex flex-1 overflow-hidden">
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    {children}
+                  </div>
+                  <CopilotLauncher />
+                  <CopilotDock />
+                </div>
+                <ShortcutOverlay />
               </div>
-              <ShortcutOverlay />
-            </div>
-          </CopilotProvider>
-        </Suspense>
+            </CopilotProvider>
+          </Suspense>
+        </TooltipProvider>
       </ShortcutProvider>
     </>
   );

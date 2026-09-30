@@ -1,6 +1,7 @@
 "use client";
 
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import type { NodeType } from "@/app/components/canvas/nodeTemplates";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
@@ -728,9 +729,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </Badge>
           )}
         </div>
-        <Button variant="ghost" size="icon-xs" onClick={onClose}>
-          <X className="size-4" />
-        </Button>
+        <IconTooltip label="Close panel">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="cursor-pointer"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
+        </IconTooltip>
       </div>
 
       <Separator />

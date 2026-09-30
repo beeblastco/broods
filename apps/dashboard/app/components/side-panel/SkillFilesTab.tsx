@@ -5,6 +5,7 @@
  * constraints: SKILL.md at root required, text files only, 5 MB per file /
  * 30 MB total. Publish action pushes the files to the broods account.
  */
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -324,16 +325,17 @@ export function SkillFilesTab({
             Publish to account
           </Button>
           {getSkillsBearerToken() && (
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              tone="muted"
-              className="size-7 cursor-pointer"
-              title="Clear saved Bearer token"
-              onClick={() => clearSkillsBearerToken()}
-            >
-              <X className="size-3" />
-            </Button>
+            <IconTooltip label="Clear saved Bearer token">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                tone="muted"
+                className="size-7 cursor-pointer"
+                onClick={() => clearSkillsBearerToken()}
+              >
+                <X className="size-3" />
+              </Button>
+            </IconTooltip>
           )}
         </div>
       )}
@@ -465,18 +467,20 @@ function TokenPrompt({
             if (e.key === "Escape") onCancel();
           }}
         />
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="cursor-pointer"
-          onClick={() => setShow((v) => !v)}
-        >
-          {show ? (
-            <EyeOff className="size-3.5" />
-          ) : (
-            <Eye className="size-3.5" />
-          )}
-        </Button>
+        <IconTooltip label={show ? "Hide token" : "Show token"}>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className="cursor-pointer"
+            onClick={() => setShow((v) => !v)}
+          >
+            {show ? (
+              <EyeOff className="size-3.5" />
+            ) : (
+              <Eye className="size-3.5" />
+            )}
+          </Button>
+        </IconTooltip>
       </div>
       <Button
         size="sm"

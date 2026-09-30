@@ -29,6 +29,7 @@ import {
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { StatusDot } from "@/app/components/StatusDot";
+import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import {
   ContextMenu,
@@ -276,6 +277,11 @@ const DROP_NODES: Node[] = applyTidyLayout(
 /** The url MCP frame starts collapsed, so the fixture shows both frame states. */
 const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";
 
+// What a production client receives when a Convex action throws a plain Error.
+const CONVEX_SERVER_ERROR = new Error(
+  "[CONVEX A(org/lifecycle:provision)] [Request ID: 4f1c9a2e7b3d0a51] Server Error\n  Called by client",
+);
+
 const subscribeNever = (): (() => void) => () => {};
 
 export function UiGallery(): React.JSX.Element {
@@ -513,6 +519,23 @@ export function UiGallery(): React.JSX.Element {
           >
             <StandInTable />
           </DetailSplit>
+        </div>
+      </section>
+
+      <section data-fixture="status-page" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Status page under the header</h2>
+        {/* The home route's setup failure and the project guard render it
+            below the header, so it has to fill that box, not the viewport. */}
+        <div className="flex h-64 w-160 flex-col border border-border">
+          <div className="h-10 shrink-0 border-b border-border" />
+          <div data-status-frame className="min-h-0 flex-1">
+            <StatusPage
+              title="Workspace setup failed"
+              error={CONVEX_SERVER_ERROR}
+            >
+              <Button className="cursor-pointer">Retry</Button>
+            </StatusPage>
+          </div>
         </div>
       </section>
 
