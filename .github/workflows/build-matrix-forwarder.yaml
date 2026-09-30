@@ -86,8 +86,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ (github.ref_name == 'dev' || github.ref_name == 'main') && format('{0}:{1}', env.IMAGE_NAME, github.ref_name) || '' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=broods-matrix-forwarder
+          cache-to: type=gha,mode=max,scope=broods-matrix-forwarder
 
   # One release, not one per stage: it serves every config plane, prod included.
   # So a push to `dev` builds and tests without shipping, and the roll happens on

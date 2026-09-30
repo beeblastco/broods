@@ -66,8 +66,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ (github.ref_name == 'dev' || github.ref_name == 'main') && format('{0}:{1}', env.IMAGE_NAME, github.ref_name) || '' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=broods-core
+          cache-to: type=gha,mode=max,scope=broods-core
 
   # Building an image deploys nothing: the pod lives in a k3s cluster the infra
   # repo owns. Without this job a green build meant only that a tag moved, which
