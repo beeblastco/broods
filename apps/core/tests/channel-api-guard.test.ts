@@ -130,7 +130,10 @@ describe("tenant channel apiUrl", () => {
         { address: "93.184.216.34", family: 4, ttl: 30 },
       ]);
       globalThis.fetch = Object.assign(
-        (input: string | URL | Request, init?: RequestInit) => {
+        (
+          input: string | URL | Request,
+          init?: RequestInit,
+        ): Promise<Response> => {
           const url = new URL(input instanceof Request ? input.url : input);
           expect(url.hostname).toBe("93.184.216.34");
           url.protocol = "http:";
