@@ -2146,7 +2146,7 @@ export async function runAgentLoop(
     );
     throw terminalError;
   }
-  void watchModelStream(stream.fullStream, (error): void => {
+  void watchModelStream(stream.fullStream, usesAiSdkHarness, (error): void => {
     if (runAbort.signal.aborted) return;
     terminalError ??= error;
     runAbort.abort(error);
@@ -2566,12 +2566,15 @@ function startHarnessLeaseMonitor(
  * Fails the run when its model goes silent: no first chunk of a model call
  * within MODEL_FIRST_CHUNK_TIMEOUT_MS, or no chunk within MODEL_CHUNK_TIMEOUT_MS
  * of the last. The clock stops while a tool call is open, so a long tool never
- * reads as a stalled model. It reads its own copy of the stream, which covers
+ * reads as a stalled model. A provider-executed call only stops it on a
+ * harness, whose native tools (bash) are provider-executed; on streamText its
+ * result streams back from the model itself. It reads its own copy of the stream, which covers
  * streamText and HarnessAgent alike: the SDK's `timeout.chunkMs` keeps ticking
  * through tool execution, and HarnessAgent ignores `timeout`.
  */
 async function watchModelStream(
   parts: AsyncIterable<TextStreamPart<ToolSet>>,
+  harness: boolean,
   fail: (error: Error) => void,
 ): Promise<void> {
   const firstChunkMs = positiveIntegerEnv(
@@ -2601,7 +2604,10 @@ async function watchModelStream(
     for await (const part of parts) {
       // The model is done; onEnd may still be persisting.
       if (part.type === "finish") break;
-      if (part.type === "tool-call") {
+      if (
+        part.type === "tool-call" &&
+        (harness || part.providerExecuted !== true)
+      ) {
         openToolCalls.add(part.toolCallId);
       } else if (
         part.type === "tool-result" ||
