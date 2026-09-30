@@ -366,11 +366,10 @@ test("rejects an attach whose durable status conversation does not own the reque
 });
 
 test("rejects an attach that names another agent than the run's own", async () => {
-  const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
   let natsRequested = false;
-  globalThis.fetch = (async () =>
+  const respond = async (): Promise<Response> =>
     new Response(
       JSON.stringify({
         eventId: "victim-event",
@@ -382,7 +381,10 @@ test("rejects an attach that names another agent than the run's own", async () =
         status: 200,
         headers: { "Content-Type": "application/json" },
       },
-    )) as unknown as typeof fetch;
+    );
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(respond, { preconnect: (): void => {} }),
+  );
 
   try {
     handleAgentMessage(
@@ -416,7 +418,7 @@ test("rejects an attach that names another agent than the run's own", async () =
     });
   } finally {
     stopActiveRun(socket);
-    globalThis.fetch = originalFetch;
+    fetchSpy.mockRestore();
   }
 });
 
@@ -1649,16 +1651,20 @@ test("proxyHttp strips hop-by-hop headers and preserves method query and body", 
 });
 
 test("proxyHttp buffers the body only to resend it on a 401 failover", async () => {
-  const originalFetch = globalThis.fetch;
   const bodies: string[] = [];
-
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+  const respond = async (
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
     bodies.push(await new Response(init?.body).text());
 
     return bodies.length === 1
       ? new Response("unauthorized", { status: 401 })
       : new Response("ok", { status: 200 });
-  }) as typeof fetch;
+  };
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(respond, { preconnect: (): void => {} }),
+  );
 
   try {
     const response = await proxyHttp(
@@ -1673,7 +1679,7 @@ test("proxyHttp buffers the body only to resend it on a 401 failover", async () 
     expect(response.status).toBe(200);
     expect(bodies).toEqual(["hello", "hello"]);
   } finally {
-    globalThis.fetch = originalFetch;
+    fetchSpy.mockRestore();
   }
 });
 
