@@ -158,6 +158,7 @@ const DEFAULT_MODEL_CHUNK_TIMEOUT_MS = 300_000;
 // Parts after which the model is starting a new call, not mid-stream.
 const MODEL_CALL_BOUNDARY_PART_TYPES: ReadonlySet<string> = new Set([
   "start",
+  "start-step",
   "finish-step",
   "tool-result",
   "tool-error",
