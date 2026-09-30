@@ -197,8 +197,8 @@ export const create = mutation({
 });
 
 /**
- * Returns the caller's active (most recently joined) org, or null when they
- * have not yet created or joined one.
+ * Returns the caller's active org (chosen, else the oldest membership), or null
+ * when they have not yet created or joined one.
  */
 export const getActive = query({
   args: {},
@@ -290,8 +290,9 @@ export const getByIdForAdmin = query({
 
 /**
  * Returns the caller's active org id, creating a default "My Workspace" org
- * with an owner membership if the user does not yet belong to any. The
- * broods `accounts` row is still provisioned on-demand by `org/lifecycle:provision`.
+ * with an owner membership, set as the active org, if the user does not yet
+ * belong to any. The broods `accounts` row is still provisioned on-demand by
+ * `org/lifecycle:provision`.
  */
 export const getOrCreate = mutation({
   args: {},
@@ -335,6 +336,8 @@ export const getOrCreate = mutation({
       role: "owner",
       createdAt: now,
     });
+
+    await ctx.db.patch(user._id, { activeOrgId: orgId });
 
     return orgId;
   },

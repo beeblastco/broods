@@ -30,7 +30,9 @@ export async function getOrgMembership(
 
 /**
  * Returns the user's explicitly-chosen active org when set and still valid,
- * otherwise the most recently joined membership. Null if the user belongs to none.
+ * otherwise the oldest membership. Oldest, not newest, because any org admin
+ * can add a user without consent, and that membership is always newer than the
+ * user's own. Null if the user belongs to none.
  */
 export async function getActiveOrgForUser(
   ctx: QueryCtx | MutationCtx,
@@ -51,8 +53,8 @@ export async function getActiveOrgForUser(
     }
   }
 
-  const newest = memberships.sort((a, b) => b.createdAt - a.createdAt)[0];
-  const org = await ctx.db.get(newest.orgId);
+  const oldest = memberships.sort((a, b) => a.createdAt - b.createdAt)[0];
+  const org = await ctx.db.get(oldest.orgId);
 
   return org ?? null;
 }
