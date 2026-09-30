@@ -28,8 +28,8 @@ npm install -g broods
 broods dev
 ```
 
-`broods update` installs the newest release over the copy you are running, and
-`broods dev` says so when one is out.
+`broods update` installs the newest release of the major you run over the copy
+you are running, and `broods dev` says so when one is out.
 
 `ai` is a peer dependency that bun, npm and pnpm install automatically, so the
 CLI and your project share one copy. On a package manager that does not

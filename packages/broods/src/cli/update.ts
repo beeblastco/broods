@@ -8,6 +8,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { USER_CONFIG_PATH } from "../config.ts";
+import packageJson from "../../package.json" with { type: "json" };
 
 const CACHE_PATH = join(dirname(USER_CONFIG_PATH), "update-check.json");
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -15,15 +16,26 @@ const REGISTRY_URL = "https://registry.npmjs.org/broods/latest";
 // A version check is never worth stalling a sync behind, so the fetch is capped
 // well under the time a user would notice and a miss just skips the notice.
 const REGISTRY_TIMEOUT_MS = 2_000;
+// First match wins, so a project that holds two lockfiles picks the same one each run.
+const LOCKFILES: readonly (readonly [string, PackageManager])[] = [
+  ["bun.lock", "bun"],
+  ["bun.lockb", "bun"],
+  ["pnpm-lock.yaml", "pnpm"],
+  ["yarn.lock", "yarn"],
+];
+
+type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
 
 /** Where this copy of the CLI lives, and therefore how to replace it. */
 export interface UpdateTarget {
-  manager: "bun" | "npm";
+  manager: PackageManager;
   /** False for a copy inside a project's node_modules, which `-g` must not touch. */
   global: boolean;
   /** Package manager binary to run. */
   command: string;
-  /** Arguments that install the newest release over this copy. */
+  /** Where it runs: the project root for a project install, so a workspace child's manifest is never touched. */
+  cwd: string;
+  /** Arguments that install the newest release of this major over this copy. */
   args: string[];
 }
 
@@ -67,35 +79,56 @@ export async function latestPublishedVersion(
   return fetched;
 }
 
+/** The major of a version string, which `broods update` never moves past. */
+export function majorVersion(version: string): number {
+  return releaseTriple(version)[0] ?? 0;
+}
+
 /**
- * Reads the install site off this module's own path. The `node_modules` this
- * copy sits in names its project root, and the install belongs to that project
- * only when the caller is inside that root, so a workspace running the
- * root-installed CLI from `apps/foo` upgrades the dependency instead of
- * installing a second copy on the PATH. A checkout with no `node_modules` in
- * the path falls back to whether the caller is inside the checkout.
+ * Reads the install site off this module's own path. The first `node_modules`
+ * in it names the project root, so pnpm's and bun's isolated store
+ * (`node_modules/.pnpm/broods@x/node_modules/broods`) resolve to the project
+ * too. The install belongs to that project only when the caller is inside
+ * that root, so a workspace running the root-installed CLI from `apps/foo`
+ * upgrades the dependency instead of installing a second copy on the PATH. A checkout with no `node_modules` in
+ * the path falls back to whether the caller is inside the checkout. A project
+ * install uses the manager its lockfile names. The install stays on the
+ * running major, since a new major can break the project.
  */
 export function updateTarget(
   cwd = resolve(process.cwd()),
   self = fileURLToPath(import.meta.url),
+  version = packageJson.version,
 ): UpdateTarget {
   const marker = `${sep}node_modules${sep}`;
-  const markerAt = self.lastIndexOf(marker);
+  const markerAt = self.indexOf(marker);
   const projectRoot = markerAt === -1 ? null : self.slice(0, markerAt);
   const local =
     projectRoot === null
       ? self.startsWith(`${cwd}${sep}`)
       : cwd === projectRoot || cwd.startsWith(`${projectRoot}${sep}`);
   const bunGlobal = self.includes(`${sep}.bun${sep}install${sep}global${sep}`);
-  const manager =
-    bunGlobal || (local && hasBunLockfile(projectRoot ?? cwd)) ? "bun" : "npm";
-  const verb = manager === "bun" ? "add" : "install";
+  const root = projectRoot ?? cwd;
+  const manager: PackageManager = local
+    ? lockfileManager(root)
+    : bunGlobal
+      ? "bun"
+      : "npm";
+  const verb = manager === "npm" ? "install" : "add";
+  // pnpm refuses to add to a workspace root without `-w`.
+  const rootFlag =
+    manager === "pnpm" && existsSync(join(root, "pnpm-workspace.yaml"))
+      ? ["-w"]
+      : [];
+  // `broods@0` is the X-range `^0`, spelled without the caret cmd.exe eats.
+  const spec = `broods@${majorVersion(version)}`;
 
   return {
     manager: manager,
     global: !local,
     command: manager,
-    args: local ? [verb, "broods@latest"] : [verb, "-g", "broods@latest"],
+    cwd: local ? root : cwd,
+    args: local ? [verb, ...rootFlag, spec] : [verb, "-g", spec],
   };
 }
 
@@ -114,12 +147,6 @@ async function fetchLatestVersion(): Promise<string | null> {
   }
 }
 
-function hasBunLockfile(root: string): boolean {
-  return (
-    existsSync(join(root, "bun.lock")) || existsSync(join(root, "bun.lockb"))
-  );
-}
-
 function isPrerelease(version: string): boolean {
   return version.includes("-");
 }
@@ -136,6 +163,12 @@ async function readCachedCheck(): Promise<CachedCheck | null> {
   } catch {
     return null;
   }
+}
+
+function lockfileManager(root: string): PackageManager {
+  const match = LOCKFILES.find(([file]) => existsSync(join(root, file)));
+
+  return match?.[1] ?? "npm";
 }
 
 function releaseTriple(version: string): number[] {

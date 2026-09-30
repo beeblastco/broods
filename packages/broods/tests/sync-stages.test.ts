@@ -131,3 +131,17 @@ test("listStages surfaces a JSON 404 as a normal request failure", async () => {
     /Project demo-app was not found/,
   );
 });
+
+// CLI tokens expire after 90 days, and the bare 401 did not say what to do.
+test("a 401 tells the user to log in again", async () => {
+  const { client } = clientWith(
+    () =>
+      new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
+        status: 401,
+      }),
+  );
+
+  await expect(client.listStages("demo-app")).rejects.toThrow(
+    "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
+  );
+});
