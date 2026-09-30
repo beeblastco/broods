@@ -25,6 +25,7 @@ import {
   type ModelMessage,
   type StepResult,
   type SystemModelMessage,
+  type TextStreamPart,
   type ToolApprovalRequestOutput,
   type ToolCallPart,
   type ToolSet,
@@ -45,6 +46,7 @@ import {
   AGENT_MAX_TURN_UNLIMITED,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
+import { positiveIntegerEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import {
   collectSecretValues,
@@ -149,6 +151,18 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "send-sticker",
 ]);
 const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
+// How long a model may stay silent before its run fails; overridable by
+// MODEL_FIRST_CHUNK_TIMEOUT_MS and MODEL_CHUNK_TIMEOUT_MS.
+const DEFAULT_MODEL_FIRST_CHUNK_TIMEOUT_MS = 300_000;
+const DEFAULT_MODEL_CHUNK_TIMEOUT_MS = 300_000;
+// Parts after which the model is starting a new call, not mid-stream.
+const MODEL_CALL_BOUNDARY_PART_TYPES: ReadonlySet<string> = new Set([
+  "start",
+  "finish-step",
+  "tool-result",
+  "tool-error",
+  "tool-output-denied",
+]);
 // A machine only one conversation uses is released after a day idle instead of
 // the default week, so abandoned subagent tasks stop holding machines.
 const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
@@ -2131,6 +2145,11 @@ export async function runAgentLoop(
     );
     throw terminalError;
   }
+  void watchModelStream(stream.fullStream, (error): void => {
+    if (runAbort.signal.aborted) return;
+    terminalError ??= error;
+    runAbort.abort(error);
+  });
   let harnessStreamFinalized = false;
   /**
    * Parks the AI SDK Harness session once its stream ends, and fires onEnd or
@@ -2540,6 +2559,63 @@ function startHarnessLeaseMonitor(
   timer.unref();
 
   return () => clearInterval(timer);
+}
+
+/**
+ * Fails the run when its model goes silent: no first chunk of a model call
+ * within MODEL_FIRST_CHUNK_TIMEOUT_MS, or no chunk within MODEL_CHUNK_TIMEOUT_MS
+ * of the last. The clock stops while a tool call is open, so a long tool never
+ * reads as a stalled model. It reads its own copy of the stream, which covers
+ * streamText and HarnessAgent alike: the SDK's `timeout.chunkMs` keeps ticking
+ * through tool execution, and HarnessAgent ignores `timeout`.
+ */
+async function watchModelStream(
+  parts: AsyncIterable<TextStreamPart<ToolSet>>,
+  fail: (error: Error) => void,
+): Promise<void> {
+  const firstChunkMs = positiveIntegerEnv(
+    "MODEL_FIRST_CHUNK_TIMEOUT_MS",
+    DEFAULT_MODEL_FIRST_CHUNK_TIMEOUT_MS,
+  );
+  const chunkMs = positiveIntegerEnv(
+    "MODEL_CHUNK_TIMEOUT_MS",
+    DEFAULT_MODEL_CHUNK_TIMEOUT_MS,
+  );
+  const openToolCalls = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (limitMs: number): void => {
+    clearTimeout(timer);
+    if (openToolCalls.size > 0) return;
+    timer = setTimeout((): void => {
+      fail(
+        new Error(
+          `The model sent no output for ${Math.ceil(limitMs / 1000)}s, so the run was stopped`,
+        ),
+      );
+    }, limitMs);
+    timer.unref?.();
+  };
+  arm(firstChunkMs);
+  try {
+    for await (const part of parts) {
+      if (part.type === "tool-call") {
+        openToolCalls.add(part.toolCallId);
+      } else if (
+        part.type === "tool-result" ||
+        part.type === "tool-error" ||
+        part.type === "tool-output-denied"
+      ) {
+        openToolCalls.delete(part.toolCallId);
+      }
+      arm(
+        MODEL_CALL_BOUNDARY_PART_TYPES.has(part.type) ? firstChunkMs : chunkMs,
+      );
+    }
+  } catch {
+    // The run's own reader reports a failed stream.
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** One provider call warning as a single line, for the per-step warning log. */
