@@ -2598,6 +2598,8 @@ async function watchModelStream(
   arm(firstChunkMs);
   try {
     for await (const part of parts) {
+      // The model is done; onEnd may still be persisting.
+      if (part.type === "finish") break;
       if (part.type === "tool-call") {
         openToolCalls.add(part.toolCallId);
       } else if (

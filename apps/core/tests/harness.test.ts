@@ -906,10 +906,10 @@ describe("runAgentLoop", () => {
   });
 
   it("fails the run when the model sends nothing within the chunk timeout", async () => {
-    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "50";
+    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
     // Longer than the timeout; the mock stream ignores the abort a real
     // provider fetch would honour, so the test still waits it out.
-    twoStepAnswerDelayMs = 300;
+    twoStepAnswerDelayMs = 1_200;
     const stream = await startTwoStepTurn();
     await stream.consumeStream();
 
@@ -925,9 +925,9 @@ describe("runAgentLoop", () => {
   });
 
   it("does not count a slow tool as a silent model", async () => {
-    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "50";
-    process.env.MODEL_CHUNK_TIMEOUT_MS = "50";
-    weatherDelayMs = 200;
+    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
+    process.env.MODEL_CHUNK_TIMEOUT_MS = "300";
+    weatherDelayMs = 900;
     const stream = await startTwoStepTurn();
     await stream.consumeStream();
 
