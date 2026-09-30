@@ -1,9 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { dns } from "bun";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
   sendChannelFailure,
   type ChannelActions,
   type ChannelRequest,
 } from "../src/shared/channels.ts";
+import { resetPublicHostsForTests } from "../src/shared/http.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
 const STATUS_ID = "async_tool_2f1c9a9e-8d2f-4a7b-9c3d-0e1f2a3b4c5d";
@@ -235,22 +237,30 @@ describe("telegram retry after a failed run", () => {
 });
 
 describe("telegram bot api", () => {
-  it("posts JSON to the configured https endpoint without following redirects", async () => {
+  it("posts JSON to the configured https endpoint, pinned, without following redirects", async () => {
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+    ]);
     const calls = await withTelegramApi(() =>
       telegramActions("https://bot-api.example/").sendQuestions!(
         QUESTION_PROMPT,
       ),
-    );
+    ).finally((): void => {
+      lookup.mockRestore();
+      resetPublicHostsForTests();
+    });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(
-      "https://bot-api.example/botbot-token/sendMessage",
+      "https://93.184.216.34/botbot-token/sendMessage",
     );
     expect(calls[0]!.init).toMatchObject({
       method: "POST",
-      headers: { "content-type": "application/json" },
-      redirect: "manual",
+      redirect: "error",
     });
+    const headers = new Headers(calls[0]!.init?.headers);
+    expect(headers.get("host")).toBe("bot-api.example");
+    expect(headers.get("content-type")).toBe("application/json");
     expect(calls[0]!.body).toMatchObject({
       chat_id: 123,
       text: "Which stage?",

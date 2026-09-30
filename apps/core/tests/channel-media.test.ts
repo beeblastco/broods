@@ -2,14 +2,26 @@
  * An attachment nobody can read must still leave the message legible.
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { dns } from "bun";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
-import type { PinnedFetchTransport } from "../src/shared/http.ts";
+import {
+  resetPublicHostsForTests,
+  type PinnedFetchTransport,
+} from "../src/shared/http.ts";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
@@ -596,10 +608,18 @@ describe("rehydrateStoredMedia", () => {
 
   it("reads the bytes back through the channel that delivered them", async () => {
     const fetchMock = telegramFetch();
+    // The configured apiUrl is the tenant's host, so the download is pinned to
+    // where it resolves.
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+    ]);
     const messages = await rehydrateStoredMedia(
       [storedMessage("file-77")],
       telegramConfig(),
-    );
+    ).finally((): void => {
+      lookup.mockRestore();
+      resetPublicHostsForTests();
+    });
 
     const content = messages[0]?.content;
     if (!Array.isArray(content)) throw new Error("expected message parts");

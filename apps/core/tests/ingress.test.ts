@@ -33,7 +33,13 @@ import type {
 } from "../src/harness/integrations.ts";
 import type { PendingQuestionSummary } from "../src/harness/questions.ts";
 import { Session } from "../src/harness/session.ts";
-import { getStorage } from "../src/shared/storage.ts";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import {
+  getStorage,
+  resetStorageForTests,
+  setStorageForTests,
+} from "../src/shared/storage.ts";
 
 const originalMutate = runtime.mutate;
 const originalQuery = runtime.query;
@@ -42,6 +48,17 @@ afterEach(() => {
   runtime.mutate = originalMutate;
   runtime.query = originalQuery;
 });
+
+function agentRecord(config: AgentConfig): AgentRecord {
+  return {
+    accountId: "acct_test",
+    agentId: "agent_test",
+    name: "agent",
+    config: config,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  };
+}
 
 function candidate(): IngressCandidate {
   return {
@@ -77,6 +94,7 @@ describe("ingress admission payloads", () => {
     await acceptIngress({
       ...candidate(),
       agentConfig: agentConfig,
+      channelTarget: { channelRecordId: "rec_1" },
       delivery: {
         kind: "channel",
         channel: "telegram",
@@ -85,8 +103,9 @@ describe("ingress admission payloads", () => {
       },
     });
 
+    // The rows to rebuild from, never the resolved config and its secrets.
     expect(call?.channelTarget).toEqual({
-      agentConfig: agentConfig,
+      channelRecordId: "rec_1",
       channelName: "telegram",
       source: { chatId: "chat-1" },
     });
@@ -786,12 +805,21 @@ describe("live owners at shutdown", (): void => {
 });
 
 describe("session messages", (): void => {
+  afterEach((): void => {
+    resetStorageForTests();
+  });
+
   it("builds a follow-up for another channel session", async (): Promise<void> => {
     const target: ConversationDispatchTarget = {
-      agentConfig: { channels: { telegram: { botToken: "secret" } } },
       channelName: "telegram",
       source: { chatId: "target-chat" },
     };
+    const agentConfig = { channels: { telegram: { botToken: "rotated" } } };
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<AgentRecord> => agentRecord(agentConfig),
+      },
+    } as never);
     let queryArgs: Record<string, unknown> | undefined;
     runtime.query = async function <T>(
       name: Parameters<typeof runtime.query>[0],
@@ -818,7 +846,7 @@ describe("session messages", (): void => {
       conversationKey: "acct:acct_test:agent:agent_test:tg:target-chat",
     });
     expect(prepared.candidate).toMatchObject({
-      agentConfig: target.agentConfig,
+      agentConfig: agentConfig,
       conversationKey: "acct:acct_test:agent:agent_test:tg:target-chat",
       delivery: {
         kind: "channel",
@@ -835,6 +863,34 @@ describe("session messages", (): void => {
       ],
     });
     expect(prepared.publicConversationKey).toBe("tg:target-chat");
+  });
+
+  it("refuses a session whose record no longer binds this agent", async (): Promise<void> => {
+    runtime.query = (async (): Promise<ConversationDispatchTarget> => ({
+      channelName: "telegram",
+      source: { chatId: "target-chat" },
+      credentialAgentId: "agent_holder",
+      channelRecordId: "rec_1",
+    })) as never;
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<AgentRecord> => agentRecord({}),
+      },
+      channelRecords: {
+        getById: async (): Promise<null> => null,
+      },
+    } as never);
+
+    const refusal = await prepareSessionMessage({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
+      input: { conversationKey: "tg:target-chat", message: "hi" },
+    }).catch((err: unknown): unknown => err);
+
+    expect(refusal).toEqual(
+      new Error("Channel session is no longer bound to this agent"),
+    );
   });
 
   it("rejects the current conversation and another agent's conversation", async (): Promise<void> => {

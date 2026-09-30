@@ -18,6 +18,7 @@ import {
   toRuntimeAgentConfig,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
   isOneTimeSchedule,
   withScheduledRunContext,
@@ -85,6 +86,7 @@ import {
   acceptIngress,
   getConversationDispatchTarget,
   getIngressStatusByEventId,
+  loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
   type AppliedIngress,
@@ -598,6 +600,7 @@ async function continueAfterAsyncToolSettlement(
     agentId: scope.agentId,
     publicConversationKey: publicConversationKey,
     agentConfig: toRuntimeAgentConfig(agent.config),
+    agent: agent,
   });
 
   const continuationEvent: DirectInboundEvent = {
@@ -1477,6 +1480,7 @@ export async function handleChannelRequest(
       source: event.source,
     },
     agentConfig: event.agentConfig ?? {},
+    channelTarget: event.channelTarget,
   });
   const scope: IngressDispatchScope = {
     accountId: event.accountId,
@@ -2552,6 +2556,7 @@ async function createCronDirectEvent(
     agentId: job.agentId,
     publicConversationKey: publicConversationKey,
     agentConfig: toRuntimeAgentConfig(agent.config),
+    agent: agent,
   });
 
   return {
@@ -2573,16 +2578,18 @@ async function createCronDirectEvent(
 
 /**
  * Where a re-entered conversation (cron, continue, a settled background job)
- * runs and answers. A live
- * channel session keeps its key, its record-narrowed config and its reply
- * target; anything else is the direct `api:` conversation on the given config.
- * The deployment scope is what puts the run's trace on the dashboard stream.
+ * runs and answers. A live channel session keeps its key and reply target, and
+ * runs on its record-narrowed config rebuilt from live rows; anything else is
+ * the direct `api:` conversation on the given config. `agent` is the running
+ * agent when the caller already loaded it. The deployment scope is what puts
+ * the run's trace on the dashboard stream.
  */
 async function resolveReentryTarget(options: {
   accountId: string;
   agentId: string;
   publicConversationKey: string;
   agentConfig: AgentConfig;
+  agent?: AgentRecord;
 }): Promise<
   Pick<
     DirectInboundEvent,
@@ -2611,10 +2618,17 @@ async function resolveReentryTarget(options: {
     }),
   ]);
 
+  const agentConfig = channelTarget
+    ? await loadChannelSessionConfig({
+        accountId: options.accountId,
+        agentId: options.agentId,
+        target: channelTarget,
+        ...(options.agent ? { agent: options.agent } : {}),
+      })
+    : options.agentConfig;
+
   return {
-    agentConfig: channelTarget
-      ? channelTarget.agentConfig
-      : options.agentConfig,
+    agentConfig: agentConfig,
     conversationKey: channelTarget
       ? sessionConversationKey
       : scopedDirectConversationKey(

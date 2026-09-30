@@ -93,11 +93,19 @@ const recoveredIngressValidator = v.object({
   applied: appliedEnvelopeValidator,
 });
 
-const channelTargetValidator = v.object({
-  agentConfig: v.any(),
+// What a channel session keeps so a cron, background job or inter-session
+// message can reach it again: the place, and the rows core rebuilds the run's
+// config from. Never the config itself, which holds decrypted secrets.
+const channelTargetFields = {
   channelName: v.string(),
   source: v.record(v.string(), v.any()),
-});
+  // The agent whose channel credentials verified the delivery, when it is not
+  // the agent that runs the conversation.
+  credentialAgentId: v.optional(v.string()),
+  channelRecordId: v.optional(v.string()),
+};
+
+const channelTargetValidator = v.object(channelTargetFields);
 
 const ingressStatusResultValidator = v.object({
   eventId: v.string(),
@@ -160,7 +168,14 @@ export const accept = internalMutation({
     delivery: v.any(),
     requestedMode: ingressModeValidator,
     agentConfig: v.optional(v.any()),
-    channelTarget: v.optional(channelTargetValidator),
+    channelTarget: v.optional(
+      v.object({
+        ...channelTargetFields,
+        // Still sent by a core pod from before this rollout. Accepted and
+        // dropped so Convex can deploy first; remove once core has rolled.
+        agentConfig: v.optional(v.any()),
+      }),
+    ),
     ephemeralSystem: v.optional(v.array(v.any())),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
@@ -510,9 +525,7 @@ export const getConversationTarget = internalQuery({
   handler: async (
     ctx,
     args,
-  ): Promise<NonNullable<
-    Doc<"runtimeConversationCoordinators">["channelTarget"]
-  > | null> => {
+  ): Promise<Infer<typeof channelTargetValidator> | null> => {
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const coordinator = await getCoordinator(ctx, args.conversationKey);
     if (
@@ -523,7 +536,9 @@ export const getConversationTarget = internalQuery({
       return null;
     }
 
-    return coordinator.channelTarget ?? null;
+    return coordinator.channelTarget
+      ? channelTargetRow(coordinator.channelTarget)
+      : null;
   },
 });
 
@@ -1037,6 +1052,26 @@ async function canonicalIdentity(options: {
 }
 
 /**
+ * The stored channel target, down to the fields it may hold. A row written
+ * before this rollout, or a candidate from an old core pod, still carries the
+ * decrypted agent config; this is what keeps it out of writes and reads.
+ */
+function channelTargetRow(
+  target: Infer<typeof channelTargetValidator>,
+): Infer<typeof channelTargetValidator> {
+  return {
+    channelName: target.channelName,
+    source: target.source,
+    ...(target.credentialAgentId !== undefined
+      ? { credentialAgentId: target.credentialAgentId }
+      : {}),
+    ...(target.channelRecordId !== undefined
+      ? { channelRecordId: target.channelRecordId }
+      : {}),
+  };
+}
+
+/**
  * Idempotency check for `accept`: an identity match replays its prior
  * admission (or conflicts on a different payload digest), and an eventId
  * reused under a different identity is always a conflict. Null means the
@@ -1325,13 +1360,14 @@ async function prepareAdmissionCoordinator(
     throw new Error("Conversation coordinator scope mismatch");
   }
   if (args.channelTarget !== undefined) {
+    const channelTarget = channelTargetRow(args.channelTarget);
     await ctx.db.patch(coordinator._id, {
-      channelTarget: args.channelTarget,
+      channelTarget: channelTarget,
       updatedAt: now,
     });
     coordinator = {
       ...coordinator,
-      channelTarget: args.channelTarget,
+      channelTarget: channelTarget,
       updatedAt: now,
     };
   }

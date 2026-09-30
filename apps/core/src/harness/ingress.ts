@@ -8,6 +8,11 @@
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
+import {
+  channelRuntimeAgentConfig,
+  resolveChannelAgentId,
+} from "../shared/domain/channel-record.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import {
   accountAgentScopedKey,
@@ -15,6 +20,7 @@ import {
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
 } from "../shared/runtime-keys.ts";
+import { getStorage } from "../shared/storage.ts";
 import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 
 export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
@@ -73,8 +79,19 @@ export interface PublicDeploymentIngress {
   projectSlug: string;
 }
 
-export interface ConversationDispatchTarget {
-  agentConfig: AgentConfig;
+/** The rows a channel session's run config is rebuilt from on re-entry. */
+export interface ChannelTargetRefs {
+  // The agent whose channel credentials verified the delivery, when another
+  // agent runs the conversation. Absent means the running agent holds them.
+  credentialAgentId?: string;
+  channelRecordId?: string;
+}
+
+/**
+ * Where a channel session replies, as Convex keeps it. Never the config: that
+ * holds decrypted secrets, so core rebuilds it with `loadChannelSessionConfig`.
+ */
+export interface ConversationDispatchTarget extends ChannelTargetRefs {
   channelName: string;
   source: Record<string, unknown>;
 }
@@ -156,6 +173,9 @@ export interface IngressCandidate {
   // request runs under its own config/overrides, never a previous owner's.
   agentConfig?: AgentConfig;
   ephemeralSystem?: SystemModelMessage[];
+  // Set on a turn a channel delivered: pins this conversation's channel target
+  // so a later cron or inter-session message can reach it.
+  channelTarget?: ChannelTargetRefs;
 }
 
 export interface AppliedIngress {
@@ -238,12 +258,13 @@ export async function acceptIngress(
     }),
   );
 
+  const { channelTarget, ...admitted } = candidate;
   const admission = await runtime.mutate<IngressAdmission>("acceptIngress", {
-    ...candidate,
-    ...(candidate.delivery.kind === "channel" && candidate.agentConfig
+    ...admitted,
+    ...(candidate.delivery.kind === "channel" && channelTarget
       ? {
           channelTarget: {
-            agentConfig: candidate.agentConfig,
+            ...channelTarget,
             channelName: candidate.delivery.channel,
             source: candidate.delivery.source ?? {},
           },
@@ -346,6 +367,55 @@ export async function interruptLiveOwners(error: string): Promise<number> {
     .length;
 }
 
+/**
+ * The config a re-entered channel session runs on: a cron, a send-message, a
+ * settled background job, a continue. Rebuilt from the live agent, credential
+ * holder and record every time, the way a webhook turn would build it now, so
+ * a rotated key or a changed tool applies to the next run. Pass `agent` when
+ * the caller already loaded the running agent.
+ */
+export async function loadChannelSessionConfig(options: {
+  accountId: string;
+  agentId: string;
+  target: ConversationDispatchTarget;
+  agent?: AgentRecord;
+}): Promise<AgentConfig> {
+  const { accountId, target } = options;
+  const storage = getStorage();
+  const [agent, credentialHolder, record] = await Promise.all([
+    options.agent ?? storage.agents.getById(accountId, options.agentId),
+    target.credentialAgentId
+      ? storage.agents.getById(accountId, target.credentialAgentId)
+      : null,
+    target.channelRecordId
+      ? storage.channelRecords.getById(accountId, target.channelRecordId)
+      : null,
+  ]);
+  if (!agent) {
+    throw new Error(`Agent not found: ${options.agentId}`);
+  }
+  const activeRecord = record?.status === "active" ? record : undefined;
+  // Another agent's credentials only reach this session through its record,
+  // so without both this agent no longer answers in that channel.
+  if (
+    target.credentialAgentId &&
+    (!credentialHolder ||
+      !activeRecord ||
+      resolveChannelAgentId(activeRecord) !== options.agentId)
+  ) {
+    throw new Error("Channel session is no longer bound to this agent");
+  }
+
+  return channelRuntimeAgentConfig(
+    {
+      agent: agent,
+      ...(activeRecord ? { record: activeRecord } : {}),
+    },
+    target.channelName,
+    (credentialHolder ?? agent).config,
+  );
+}
+
 export async function prepareSessionMessage(options: {
   accountId: string;
   agentId: string;
@@ -393,11 +463,17 @@ export async function prepareSessionMessage(options: {
     options.agentId,
   );
 
+  const agentConfig = await loadChannelSessionConfig({
+    accountId: options.accountId,
+    agentId: options.agentId,
+    target: target,
+  });
+
   return {
     candidate: {
       accountId: options.accountId,
       agentId: options.agentId,
-      agentConfig: target.agentConfig,
+      agentConfig: agentConfig,
       eventId: eventId,
       runId: createRunId(),
       conversationKey: conversationKey,

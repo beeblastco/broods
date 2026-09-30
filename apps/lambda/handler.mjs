@@ -3,11 +3,12 @@
  * runs one batch of requests (#397) in a child Node process with a scrubbed
  * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
  * frames to core. The child stays warm keyed by accountId + sha256 (#189),
- * bounded and retired on any batch-level failure. The function runs PER_TENANT
- * by default: core invokes with TenantId = accountId, so Lambda gives each
- * account its own execution environments and this code never sees the tenant id.
- * The child stays a containment layer, not a trust boundary. Same-UID, so keep the execution
- * role empty.
+ * bounded and retired on any batch-level failure. The function is shared by
+ * default, so warm environments can serve several accounts. With
+ * MCP_TENANT_ISOLATION it runs PER_TENANT: core invokes with TenantId =
+ * accountId, and Lambda gives each account its own execution environments.
+ * The child stays a containment layer, not a trust boundary. Same-UID, so keep
+ * the execution role empty.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */

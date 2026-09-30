@@ -1,4 +1,13 @@
-import { afterEach, describe, expect, it, jest } from "bun:test";
+import { dns } from "bun";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+  spyOn,
+} from "bun:test";
 import type {
   ChannelAdapter,
   ChannelParseResult,
@@ -17,9 +26,12 @@ import {
   MATRIX_BOT_MARKER,
   type MatrixForwardedEvent,
 } from "../src/shared/matrix-wire.ts";
+import { resetPublicHostsForTests } from "../src/shared/http.ts";
 import { channelScopeKeyFromConversation } from "../src/shared/runtime-keys.ts";
 
 const API_URL = "https://matrix.example.org";
+// Where the homeserver name resolves: media calls are pinned to it.
+const API_ADDRESS = "93.184.216.34";
 const FORWARDER_URL = "http://forwarder.test";
 const ROOM_ID = "!room:example.org";
 const TOKEN = "syt_token";
@@ -42,9 +54,17 @@ interface HeldForwarder {
   release(): Promise<void>;
 }
 
+beforeEach((): void => {
+  spyOn(dns, "lookup").mockResolvedValue([
+    { address: API_ADDRESS, family: 4, ttl: 30 },
+  ]);
+});
+
 afterEach((): void => {
   globalThis.fetch = originalFetch;
   process.env.MATRIX_FORWARDER_URL = originalForwarderUrl;
+  jest.restoreAllMocks();
+  resetPublicHostsForTests();
 });
 
 describe("matrix channel adapter", () => {
@@ -252,7 +272,7 @@ describe("matrix channel adapter", () => {
       Buffer.from((await attachment!.fetchData!()) as Buffer).toString(),
     ).toBe("voice note bytes");
     expect(requested).toEqual([
-      `${API_URL}/_matrix/client/v1/media/download/example.org/media-1`,
+      `https://${API_ADDRESS}/_matrix/client/v1/media/download/example.org/media-1`,
     ]);
     expect(redirects).toEqual(["error"]);
   });

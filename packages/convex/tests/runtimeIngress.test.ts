@@ -81,9 +81,9 @@ describe("runtime ingress", () => {
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
     const channelTarget = {
-      agentConfig: { channels: { telegram: { botToken: "secret" } } },
       channelName: "telegram",
       source: { chatId: "chat-1", messageId: "message-1" },
+      channelRecordId: "rec-1",
     };
     await t.mutation(internal.runtimeIngress.accept, {
       ...admission({
@@ -107,6 +107,78 @@ describe("runtime ingress", () => {
         conversationKey: conversationKey,
       }),
     ).toEqual(channelTarget);
+  });
+
+  test("never keeps the resolved config an older core still sends", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const source = { chatId: "chat-1" };
+    await t.mutation(internal.runtimeIngress.accept, {
+      ...admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "old-core",
+        mode: "followup",
+      }),
+      channelTarget: {
+        agentConfig: { channels: { telegram: { botToken: "secret" } } },
+        channelName: "telegram",
+        source: source,
+      },
+      delivery: { kind: "channel", channel: "telegram", source: source },
+    });
+
+    const stored = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("runtimeConversationCoordinators")
+          .withIndex("by_conversationKey", (q) =>
+            q.eq("conversationKey", conversationKey),
+          )
+          .unique(),
+    );
+    expect(stored?.channelTarget).toEqual({
+      channelName: "telegram",
+      source: source,
+    });
+  });
+
+  test("reads a legacy channel target without its stored config", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtimeIngress.accept, {
+      ...admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "legacy",
+        mode: "followup",
+      }),
+    });
+    await t.run(async (ctx): Promise<void> => {
+      const coordinator = await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique();
+      await ctx.db.patch(coordinator!._id, {
+        channelTarget: {
+          agentConfig: { channels: { telegram: { botToken: "secret" } } },
+          channelName: "telegram",
+          source: { chatId: "chat-1" },
+        },
+      });
+    });
+
+    expect(
+      await t.query(internal.runtimeIngress.getConversationTarget, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+      }),
+    ).toEqual({ channelName: "telegram", source: { chatId: "chat-1" } });
   });
 
   test("returns only narrowed public deployment ingress provenance from delivery", async () => {

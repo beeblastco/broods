@@ -1,6 +1,10 @@
 /** Discord channel adapter. */
 
-import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
+import {
+  DiscordAdapter,
+  type DiscordAdapterConfig,
+  type DiscordThreadId,
+} from "@chat-adapter/discord";
 import { ConsoleLogger, type Attachment, type FileUpload } from "chat";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import { timingSafeStringEqual } from "./auth.ts";
@@ -15,6 +19,7 @@ import {
 } from "./channels.ts";
 import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
+import { channelApiFetch, publicHostFetch } from "./http.ts";
 import { logWarn } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
@@ -148,8 +153,42 @@ export interface DiscordSource {
 // per-tenant config scoping, durable session setup, and Convex conversation
 // history writes. The SDK also keeps the lower-level hooks this needs protected
 // (`verifySignature`, `parseSlashCommand`, requestContext), so this subclass is an
-// access shim and nothing else. Delete it if those hooks become public.
+// access shim, plus the tenant `apiUrl` guard on the SDK's REST call.
 class BroodsDiscordAdapter extends DiscordAdapter {
+  private readonly tenantApiUrl: boolean;
+
+  constructor(config: DiscordAdapterConfig) {
+    super(config);
+    this.tenantApiUrl = Boolean(config.apiUrl);
+  }
+
+  // A tenant `apiUrl` is their host, so the bot token only goes there pinned to
+  // a checked public address with redirects refused. Discord itself keeps the
+  // SDK's own call.
+  protected override async discordFetch(
+    path: string,
+    method: string,
+    body?: unknown,
+  ): Promise<Response> {
+    if (!this.tenantApiUrl) return super.discordFetch(path, method, body);
+    const response = await publicHostFetch(`${this.apiBaseUrl}${path}`, {
+      method: method,
+      headers: {
+        Authorization: `Bot ${await this.resolveBotToken()}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Discord API error: ${response.status} ${await response.text()}`,
+      );
+    }
+
+    return response;
+  }
+
   verifyRequestSignature(
     body: string,
     signature: string | null | undefined,
@@ -630,7 +669,7 @@ async function callDiscordApi(
   body: Record<string, unknown>,
 ): Promise<void> {
   const base = (apiUrl ?? "https://discord.com/api/v10").replace(/\/+$/, "");
-  const response = await fetch(`${base}/${path}`, {
+  const response = await channelApiFetch(apiUrl)(`${base}/${path}`, {
     method: "POST",
     headers: {
       authorization: `Bot ${botToken}`,

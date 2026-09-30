@@ -47,6 +47,7 @@ import {
   type ChannelParseResult,
 } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
+import { channelApiFetch } from "./http.ts";
 import { logWarn } from "./log.ts";
 import {
   SLACK_COMMAND_INTEGRATION_PREFIX,
@@ -793,6 +794,7 @@ function createSlackActions(
         {
           token: botToken,
           apiUrl: apiUrl,
+          fetch: channelApiFetch(apiUrl),
           channelId: source.channelId,
           ...(caption ? { initialComment: caption } : {}),
           ...(source.threadTs ? { threadTs: source.threadTs } : {}),
@@ -890,6 +892,7 @@ function createSlackActions(
       await postSlackMessage({
         token: botToken,
         apiUrl: apiUrl,
+        fetch: channelApiFetch(apiUrl),
         channel: source.channelId,
         text: text,
         threadTs: source.threadTs,
@@ -909,6 +912,7 @@ function createSlackActions(
       await postSlackMessage({
         token: botToken,
         apiUrl: apiUrl,
+        fetch: channelApiFetch(apiUrl),
         channel: source.channelId,
         markdownText: text,
         threadTs: source.threadTs,
@@ -936,7 +940,12 @@ function createSlackActions(
             timestamp: source.messageTs,
             name: (emoji ?? reactionEmoji).replace(/^:+|:+$/g, ""),
           },
-          { token: botToken, apiUrl: apiUrl, contentType: "json" },
+          {
+            token: botToken,
+            apiUrl: apiUrl,
+            fetch: channelApiFetch(apiUrl),
+            contentType: "json",
+          },
         ),
       );
     },
@@ -978,6 +987,7 @@ async function postSlackCard(
   await postSlackMessage({
     token: botToken,
     apiUrl: apiUrl,
+    fetch: channelApiFetch(apiUrl),
     channel: source.channelId,
     text: text,
     blocks: blocks,

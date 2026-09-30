@@ -13,6 +13,7 @@ import { ConsoleLogger, type Message } from "chat";
 import { z } from "zod";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import { timingSafeStringEqual } from "./auth.ts";
+import { publicHostFetch } from "./http.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -77,8 +78,16 @@ export interface WhatsAppSource {
 }
 
 // The SDK keeps the signature check and its Graph API call protected, so this
-// subclass is an access shim, plus the guarded media download.
+// subclass is an access shim, plus the guarded media download and the tenant
+// `apiUrl` guard on the Graph API calls.
 class BroodsWhatsAppAdapter extends WhatsAppAdapter {
+  private readonly tenantApiUrl: boolean;
+
+  constructor(config: ConstructorParameters<typeof WhatsAppAdapter>[0]) {
+    super(config);
+    this.tenantApiUrl = Boolean(config.apiUrl);
+  }
+
   // The download URL is whatever the media lookup answers, and a custom
   // `apiUrl` is the tenant's own server, so both hops take the private-address
   // guard and size cap every channel's media gets.
@@ -100,6 +109,27 @@ class BroodsWhatsAppAdapter extends WhatsAppAdapter {
     return Buffer.from(download.bodyBytes);
   }
 
+  protected override graphApiRequest<T = unknown>(
+    path: string,
+    body: unknown,
+  ): Promise<T> {
+    if (!this.tenantApiUrl) return super.graphApiRequest(path, body);
+
+    return this.tenantGraphApi(path, {
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  protected override graphApiUpload<T = unknown>(
+    path: string,
+    formData: FormData,
+  ): Promise<T> {
+    if (!this.tenantApiUrl) return super.graphApiUpload(path, formData);
+
+    return this.tenantGraphApi(path, { body: formData });
+  }
+
   verifyWebhookSignature(body: string, signature: string | undefined): boolean {
     return this.verifySignature(body, signature ?? null);
   }
@@ -113,6 +143,26 @@ class BroodsWhatsAppAdapter extends WhatsAppAdapter {
       message_id: messageId,
       typing_indicator: { type: "text" },
     });
+  }
+
+  // A tenant `apiUrl` is their host, so the access token only goes there
+  // pinned to a checked public address with redirects refused.
+  private async tenantGraphApi<T>(
+    path: string,
+    init: { body: string | FormData; headers?: Record<string, string> },
+  ): Promise<T> {
+    const response = await publicHostFetch(`${this.graphApiUrl}${path}`, {
+      method: "POST",
+      body: init.body,
+      headers: { Authorization: `Bearer ${this.accessToken}`, ...init.headers },
+    });
+    if (!response.ok) {
+      throw new Error(
+        `WhatsApp API error: ${response.status} ${await response.text()}`,
+      );
+    }
+
+    return (await response.json()) as T;
   }
 }
 

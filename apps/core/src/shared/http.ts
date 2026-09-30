@@ -158,6 +158,19 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
 }
 
 /**
+ * The `fetch` a channel reaches its provider API with. A configured `apiUrl` is
+ * the tenant's host, so it takes `publicHostFetch`; the provider's own default
+ * host takes plain `fetch`. Shaped as `typeof fetch` for SDKs that accept one.
+ */
+export function channelApiFetch(apiUrl: string | undefined): typeof fetch {
+  return apiUrl
+    ? Object.assign(publicHostFetch.bind(undefined), {
+        preconnect: fetch.preconnect,
+      })
+    : fetch;
+}
+
+/**
  * `fetch` for a tenant-configured endpoint (model base URL, MCP server, its
  * OAuth token URL): resolve the hostname, refuse it when any address is
  * private, link-local or a metadata range, then connect to the validated
