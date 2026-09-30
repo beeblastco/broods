@@ -231,8 +231,8 @@ export function gatewayLimitsFromEnv(
       maxBunIdleTimeoutSeconds,
     ),
     runStartTimeoutMs: positiveInt(env.GATEWAY_RUN_START_TIMEOUT_MS, 15_000),
-    // Every proxied body is buffered here, so it is capped. The default is the
-    // Convex HTTP action limit, the largest either upstream accepts.
+    // Bun.serve refuses a body past this, streamed or buffered. The default is
+    // the Convex HTTP action limit, the largest either upstream accepts.
     maxRequestBodyBytes: positiveInt(
       env.GATEWAY_MAX_REQUEST_BODY_BYTES,
       20 * 1024 * 1024,

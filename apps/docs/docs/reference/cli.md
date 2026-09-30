@@ -40,6 +40,8 @@ Help does not apply `defineBroods` project or stage settings, because it never l
 
 Pages of commands that act on a stage start with a target line. It appears on `--help` pages and on the page a grouped command prints with no subcommand. `org`, `stage`, `env`, `agent`, `project` and `machine` print their page that way. After `broods stage use staging`, `broods deploy -h` shows `now  my-app → production  (ignores stage staging)`. The note only appears when `BROODS_STAGE` or `--stage` names another stage.
 
+Options take their value as the next argument or inline, so `--stage staging` and `--stage=staging` are the same.
+
 Every command marks its output the same way. `✔` marks a completed change, `!` a warning and `✖` an error. Errors go to stderr and exit with code 1.
 
 ## Where a command acts
@@ -58,6 +60,7 @@ Four settings decide what a command touches.
 - A variable exported in your shell wins over `.env.local`. The CLI warns when an export shadows a value it just wrote. `unset BROODS_API_KEY` to let the file take effect.
 - `~/.broods/config.json` keeps one login per server, so a dev dashboard login never replaces a production one. A command uses the login for the server `BROODS_BASE_URL` names and stops with `Not logged in to <server>` when there is none.
 - The CLI writes `~/.broods/config.json` and `.env.local` with mode `0600`, and `~/.broods` with `0700`. The CLI adds `.env*.local` to `.gitignore` when nothing ignores `.env.local` yet.
+- The CLI loads `broods/*.ts` as ESM itself and never edits a `package.json`, so a CommonJS app keeps its module type.
 - The dashboard tracks its own active organization. After `broods org use`, switch the dashboard too, or a `?project=…&stage=…` deep link resolves against the old one.
 
 ## Global options
@@ -375,13 +378,13 @@ See [Security](../guides/security.md) for minting a role session.
 
 ## update
 
-Installs the newest release with the package manager that installed the CLI.
+Installs the newest release of the major you run, with the package manager that installed the CLI.
 
 ```bash
 broods update
 ```
 
-A global bun or npm install is replaced in place. Inside a project, the dependency is upgraded instead.
+A global bun or npm install is replaced in place. Inside a project, the dependency is upgraded with the manager its lockfile names: bun, pnpm, yarn, or npm when there is none. A new major is only announced. Install it yourself, for example `npm install -g broods@1`.
 
 ## Upgrading from older versions
 
