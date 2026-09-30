@@ -88,7 +88,7 @@ Poll `GET /v1/runs/{runId}` until the status settles. Status records stay readab
 | `failed`                                      | `error` explains. `stoppedByUser: true` marks a deliberate `/stop` |
 | `expired`                                     | Queued work timed out before it ran                                |
 
-Each status also reports `requestedMode`, `appliedMode` and `appliedToEventId`.
+Each status also reports the owning `agentId`, plus `requestedMode`, `appliedMode` and `appliedToEventId`.
 
 ## Answer a question
 
@@ -232,7 +232,7 @@ A socket holds up to 8 `control` inputs that have not yet reached `applied` or a
 
 ### Resume after a disconnect
 
-Output is kept for about 3 minutes, up to 2,000 frames per conversation. Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`. Later frames are live. When the cursor is too old or belongs to another event, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
+Output is kept for about 3 minutes, up to 2,000 frames per conversation. Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`. Later frames are live. When the cursor is too old or belongs to another event, or the attach names an `agentId` or `conversationKey` that is not the run's own, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
 
 ## Channel webhooks
 

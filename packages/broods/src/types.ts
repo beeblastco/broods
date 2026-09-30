@@ -49,6 +49,8 @@ export interface AsyncStatus {
   /** Set on every core answer. Absent only on the `not_found` the SDK returns for a 404. */
   runId?: string;
   eventId?: string;
+  /** The agent that owns the run. A subagent run names the child agent. */
+  agentId?: string;
   conversationKey?: string;
   requestedMode?: "reject" | "followup" | "collect" | "steer";
   appliedMode?: "reject" | "followup" | "collect" | "steer";

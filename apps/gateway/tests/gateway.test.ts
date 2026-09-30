@@ -192,7 +192,8 @@ test("attaches virtual and private child streams through durable parent deployme
     const socket = gatewaySocket(sent);
     const connection = replayThenLiveConnection(fixture);
     // Core authorizes the child status read (covered by core's status-access
-    // tests); the gateway only proceeds when the returned conversationKey matches.
+    // tests); the gateway only proceeds when the returned agentId and
+    // conversationKey match.
     globalThis.fetch = (async (input, init) => {
       if (
         new Headers(init?.headers).get("authorization") !== "Bearer runtime-key"
@@ -208,6 +209,7 @@ test("attaches virtual and private child streams through durable parent deployme
       return new Response(
         JSON.stringify({
           eventId: taskId,
+          agentId: fixture.childAgentId,
           conversationKey: fixture.publicConversationKey,
           status: "processing",
         }),
@@ -363,6 +365,61 @@ test("rejects an attach whose durable status conversation does not own the reque
   }
 });
 
+test("rejects an attach that names another agent than the run's own", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let natsRequested = false;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        eventId: "victim-event",
+        agentId: "agent_own",
+        conversationKey: "shared-conversation",
+        status: "processing",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    )) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-wrong-agent",
+        agentId: "agent_other",
+        conversationKey: "shared-conversation",
+        eventId: "victim-event",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => {
+        natsRequested = true;
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "replay_unavailable",
+    );
+    expect(natsRequested).toBe(false);
+    expect(sent).toContainEqual({
+      type: "replay_unavailable",
+      requestId: "attach-wrong-agent",
+      eventId: "victim-event",
+      status: "processing",
+      statusUrl: "/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("keeps a zero-buffer processing attach open for future live frames", async () => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
@@ -409,6 +466,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
     new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: "processing",
       }),
@@ -521,6 +579,7 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
     new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: "completed",
       }),
@@ -616,6 +675,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
     new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: "completed",
       }),
@@ -681,6 +741,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
     return new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: statusReads === 1 ? "processing" : "completed",
       }),
@@ -769,6 +830,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
     return new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: statusReads === 1 ? "processing" : "failed",
         error: "child failed",
@@ -904,6 +966,7 @@ test("falls back to durable attach status when NATS consumer creation fails", as
     return new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: statusReads === 1 ? "processing" : "completed",
       }),
@@ -1577,9 +1640,38 @@ test("proxyHttp strips hop-by-hop headers and preserves method query and body", 
     expect(headers.has("host")).toBe(false);
     expect(headers.has("connection")).toBe(false);
     expect(headers.has("upgrade")).toBe(false);
-    expect(new TextDecoder().decode(calls[0]!.init?.body as ArrayBuffer)).toBe(
-      "hello",
+    // One upstream streams the client body instead of buffering it.
+    expect(calls[0]!.init?.body).toBeInstanceOf(ReadableStream);
+    expect(await new Response(calls[0]!.init?.body).text()).toBe("hello");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("proxyHttp buffers the body only to resend it on a 401 failover", async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies: string[] = [];
+
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    bodies.push(await new Response(init?.body).text());
+
+    return bodies.length === 1
+      ? new Response("unauthorized", { status: 401 })
+      : new Response("ok", { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const response = await proxyHttp(
+      new Request("https://gateway.example/v1/runs", {
+        method: "POST",
+        body: "hello",
+      }),
+      ["https://dev.example", "https://prod.example"],
+      { path: "/v1/runs" },
     );
+
+    expect(response.status).toBe(200);
+    expect(bodies).toEqual(["hello", "hello"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

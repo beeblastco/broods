@@ -287,6 +287,7 @@ paths:
                   value:
                     runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
+                    agentId: agent_123
                     conversationKey: conversation-identifier
                     status: processing
                 awaitingApproval:
@@ -294,6 +295,7 @@ paths:
                   value:
                     runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
+                    agentId: agent_123
                     conversationKey: conversation-identifier
                     status: awaiting_approval
                     approvals:
@@ -307,6 +309,7 @@ paths:
                   value:
                     runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
+                    agentId: agent_123
                     conversationKey: conversation-identifier
                     status: completed
                     result:
@@ -319,6 +322,7 @@ paths:
                   value:
                     runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
+                    agentId: agent_123
                     conversationKey: conversation-identifier
                     status: failed
                     error: Model provider returned 503
@@ -3670,7 +3674,7 @@ components:
 
     IngressStatus:
       type: object
-      required: [runId, eventId, conversationKey, status]
+      required: [runId, eventId, agentId, conversationKey, status]
       properties:
         runId:
           type: string
@@ -3678,6 +3682,9 @@ components:
         eventId:
           type: string
           description: The caller's own id for the request, echoed back.
+        agentId:
+          type: string
+          description: The agent that owns this run, read from the stored run. A subagent run names the child agent.
         conversationKey:
           type: string
         status:

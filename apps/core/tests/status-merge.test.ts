@@ -167,6 +167,14 @@ describe("status route ingress/async merge", () => {
     expect(payload.requestedMode).toBe("reject");
   });
 
+  it("names the agent the stored run belongs to", async () => {
+    ingressRow = ingress({ agentId: "agent_child" });
+    asyncRow = null;
+
+    const payload = await responseJson(await statusRequest());
+    expect(payload.agentId).toBe("agent_child");
+  });
+
   it("returns 404 when the run id resolves to nothing", async () => {
     ingressRow = null;
     asyncRow = null;

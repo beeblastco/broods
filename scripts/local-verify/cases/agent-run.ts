@@ -62,6 +62,11 @@ export async function agentRun(context: VerifyContext): Promise<void> {
         : status.status === "completed" || status.status === "failed",
       JSON.stringify(status),
     );
+    assertStep(
+      `${turn.step} status names its agent`,
+      status.agentId === agentId,
+      JSON.stringify(status),
+    );
   }
 
   const prepared = lastJsonLine<ContextPreparedLog>(

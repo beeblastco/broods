@@ -1881,6 +1881,7 @@ async function handleStatusRequest(
   return jsonResponse(200, {
     runId: event.runId,
     eventId: event.publicEventId,
+    agentId: event.agentId,
     conversationKey: eventPublicConversationKey(
       conversationKey,
       event.accountId,

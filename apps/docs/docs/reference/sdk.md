@@ -133,7 +133,7 @@ await client.run(api.agents.myAgent, {
 | `failed`                                      | `error` explains. `stoppedByUser: true` means a deliberate stop     |
 | `expired`                                     | Queued work was never run                                           |
 
-Every status also carries `requestedMode`, `appliedMode` and `appliedToEventId`, which say whether a busy request steered the live run or became a follow-up. See [Conversations](../guides/conversations.md).
+Every status also carries the owning `agentId`, plus `requestedMode`, `appliedMode` and `appliedToEventId`, which say whether a busy request steered the live run or became a follow-up. See [Conversations](../guides/conversations.md).
 
 ### Busy conversations
 
