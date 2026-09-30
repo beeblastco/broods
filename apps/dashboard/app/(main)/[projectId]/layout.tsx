@@ -8,10 +8,8 @@ import { useParams } from "next/navigation";
 
 /**
  * Guards every project route. A well-formed id the caller cannot read (deleted,
- * or another org's) lists no stages, since every project is created with its
- * default stage, so the page under the header becomes the not-found state
- * instead of loading forever. Same query and args as `useStage`, so it shares
- * that subscription.
+ * or another org's) resolves to no project, so the page under the header
+ * becomes the not-found state instead of loading forever.
  */
 export default function ProjectLayout({
   children,
@@ -19,7 +17,7 @@ export default function ProjectLayout({
   children: React.ReactNode;
 }): React.JSX.Element {
   const { projectId } = useParams<{ projectId: Id<"projects"> }>();
-  const stages = useQuery(api.stage.list, { projectId: projectId });
+  const project = useQuery(api.project.getById, { projectId: projectId });
 
-  return stages?.length === 0 ? <NotFound /> : <>{children}</>;
+  return project === null ? <NotFound /> : <>{children}</>;
 }
