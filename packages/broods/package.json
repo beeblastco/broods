@@ -51,6 +51,7 @@
     "build": "bun scripts/build.ts && rollup -c rollup.dts.config.mjs && rm -rf .dts-temp",
     "check": "tsc --noEmit",
     "pack:check": "bun run build && publint && attw --pack .",
+    "prepublishOnly": "bun run build",
     "test": "bun test"
   },
   "dependencies": {

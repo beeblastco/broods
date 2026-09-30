@@ -5,7 +5,7 @@
   "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
-    "postinstall": "bun run scripts/compaction-prompt.ts && sst install",
+    "postinstall": "bun run scripts/compaction-prompt.ts && if [ -f .env ] || [ -n \"$AWS_ACCOUNT_ID\" ]; then sst install; else echo 'Skipping sst install: set AWS_ACCOUNT_ID, PROJECT_NAME and PROJECT_OWNER_EMAIL (apps/core/.env) first.'; fi",
     "dev": "bun run scripts/compaction-prompt.ts && sst dev",
     "serve": "bun run scripts/compaction-prompt.ts && bun run src/server.ts",
     "build": "bun run scripts/build.ts",
