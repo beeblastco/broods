@@ -35,6 +35,7 @@ import type { PendingQuestionSummary } from "../src/harness/questions.ts";
 import { Session } from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import type { ChannelRecord } from "../src/shared/domain/channel-record.ts";
 import {
   getStorage,
   resetStorageForTests,
@@ -75,6 +76,20 @@ function candidate(): IngressCandidate {
       publicEventId: "event-1",
       publicConversationKey: "conversation-1",
     },
+  };
+}
+
+function channelRecord(agentId: string): ChannelRecord {
+  return {
+    accountId: "acct_test",
+    channelRecordId: "rec_1",
+    platform: "telegram",
+    externalId: "target-chat",
+    name: "chat",
+    config: { agentBindings: [{ agentId: agentId, isDefault: true }] },
+    status: "active",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
   };
 }
 
@@ -865,33 +880,47 @@ describe("session messages", (): void => {
     expect(prepared.publicConversationKey).toBe("tg:target-chat");
   });
 
-  it("refuses a session whose record no longer binds this agent", async (): Promise<void> => {
-    runtime.query = (async (): Promise<ConversationDispatchTarget> => ({
-      channelName: "telegram",
-      source: { chatId: "target-chat" },
-      credentialAgentId: "agent_holder",
-      channelRecordId: "rec_1",
-    })) as never;
-    setStorageForTests({
-      agents: {
-        getById: async (): Promise<AgentRecord> => agentRecord({}),
-      },
-      channelRecords: {
-        getById: async (): Promise<null> => null,
-      },
-    } as never);
+  // The record a cross-agent session ran through is gone, or the place's
+  // record now binds another agent.
+  for (const [name, refs, record] of [
+    [
+      "a cross-agent session whose record is gone",
+      { credentialAgentId: "agent_holder", channelRecordId: "rec_1" },
+      null,
+    ],
+    [
+      "a session whose record now binds another agent",
+      { channelRecordId: "rec_1" },
+      channelRecord("agent_other"),
+    ],
+  ] as const) {
+    it(`refuses ${name}`, async (): Promise<void> => {
+      runtime.query = (async (): Promise<ConversationDispatchTarget> => ({
+        channelName: "telegram",
+        source: { chatId: "target-chat" },
+        ...refs,
+      })) as never;
+      setStorageForTests({
+        agents: {
+          getById: async (): Promise<AgentRecord> => agentRecord({}),
+        },
+        channelRecords: {
+          getById: async (): Promise<ChannelRecord | null> => record,
+        },
+      } as never);
 
-    const refusal = await prepareSessionMessage({
-      accountId: "acct_test",
-      agentId: "agent_test",
-      sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
-      input: { conversationKey: "tg:target-chat", message: "hi" },
-    }).catch((err: unknown): unknown => err);
+      const refusal = await prepareSessionMessage({
+        accountId: "acct_test",
+        agentId: "agent_test",
+        sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
+        input: { conversationKey: "tg:target-chat", message: "hi" },
+      }).catch((err: unknown): unknown => err);
 
-    expect(refusal).toEqual(
-      new Error("Channel session is no longer bound to this agent"),
-    );
-  });
+      expect(refusal).toEqual(
+        new Error("Channel session is no longer bound to this agent"),
+      );
+    });
+  }
 
   it("rejects the current conversation and another agent's conversation", async (): Promise<void> => {
     const options = {

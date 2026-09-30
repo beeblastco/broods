@@ -141,7 +141,12 @@ class BroodsTelegramAdapter extends TelegramAdapter {
         ...(request?.signal ? { signal: request.signal } : {}),
       },
     );
-    const data = (await response.json()) as TelegramApiAnswer<TResult>;
+    // A proxy error page is not JSON; its status still maps the error.
+    const data = (await response
+      .json()
+      .catch((): TelegramApiAnswer<TResult> => ({
+        ok: false,
+      }))) as TelegramApiAnswer<TResult>;
     if (!response.ok || !data.ok || data.result === undefined) {
       this.throwTelegramApiError(method, response.status, data);
     }

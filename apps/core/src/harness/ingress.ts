@@ -395,13 +395,13 @@ export async function loadChannelSessionConfig(options: {
     throw new Error(`Agent not found: ${options.agentId}`);
   }
   const activeRecord = record?.status === "active" ? record : undefined;
-  // Another agent's credentials only reach this session through its record,
-  // so without both this agent no longer answers in that channel.
+  const boundAgentId = activeRecord && resolveChannelAgentId(activeRecord);
+  // A record now bound elsewhere hands the place to that agent. Another
+  // agent's credentials only reach this session through its record, so
+  // without both this agent no longer answers in that channel.
   if (
-    target.credentialAgentId &&
-    (!credentialHolder ||
-      !activeRecord ||
-      resolveChannelAgentId(activeRecord) !== options.agentId)
+    (boundAgentId && boundAgentId !== options.agentId) ||
+    (target.credentialAgentId && (!credentialHolder || !activeRecord))
   ) {
     throw new Error("Channel session is no longer bound to this agent");
   }
