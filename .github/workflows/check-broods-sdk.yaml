@@ -5,6 +5,7 @@ on:
     paths:
       - "packages/broods/**"
       - "packages/demos/**"
+      - "tsconfig.base.json"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"
@@ -16,6 +17,7 @@ on:
     paths:
       - "packages/broods/**"
       - "packages/demos/**"
+      - "tsconfig.base.json"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"

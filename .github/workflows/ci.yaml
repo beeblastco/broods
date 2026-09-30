@@ -10,15 +10,12 @@ on:
   # checks on `dev`, and a workflow a path filter skips never reports them, so a
   # docs-only pull request would wait forever on a check that cannot arrive.
   pull_request:
-  # dev only: a branch push is already tested by its pull request, and dev's
-  # own run is what promote.yaml waits on before moving main.
+  # dev only: a branch push is already tested by its pull request. No path
+  # filter either: promote.yaml waits on these checks on dev's head, so a
+  # docs-only head that skipped them would stall the promote.
   push:
     branches:
       - dev
-    paths-ignore:
-      - "apps/docs/**"
-      - ".github/workflows/deploy-docs.yaml"
-      - "**/*.md"
 
 # A new push to a pull request cancels its stale run. A dev run is never
 # cancelled mid-run; a newer dev push only replaces a queued one, and
@@ -41,8 +38,7 @@ jobs:
       contents: read
     env:
       AWS_REGION: ${{ vars.DEV_AWS_REGION || 'us-east-1' }}
-      # sst.config.ts reads these at runtime (no in-source defaults). The postinstall
-      # `sst install` needs them set, or it fails with "Project name is required".
+      # sst.config.ts reads these at runtime (no in-source defaults).
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
