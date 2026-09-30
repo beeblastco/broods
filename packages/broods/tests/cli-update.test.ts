@@ -158,3 +158,18 @@ test("a copy in pnpm's store upgrades the project through pnpm", async () => {
   expect(target.manager).toBe("pnpm");
   expect(target.args).toEqual(["add", "broods@1"]);
 });
+
+// A workspace child running the root CLI must not add broods to its own
+// manifest, and pnpm refuses a workspace-root add without `-w`.
+test("a pnpm workspace updates the root dependency from the root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "broods-update-"));
+  tempDirs.push(root);
+  await writeFile(join(root, "pnpm-lock.yaml"), "", "utf8");
+  await writeFile(join(root, "pnpm-workspace.yaml"), "", "utf8");
+  const self = join(root, "node_modules", "broods", "dist", "cli", "index.js");
+
+  const target = updateTarget(join(root, "apps", "foo"), self, "1.4.0");
+
+  expect(target.cwd).toBe(root);
+  expect(target.args).toEqual(["add", "-w", "broods@1"]);
+});

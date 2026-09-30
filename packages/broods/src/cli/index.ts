@@ -1130,6 +1130,7 @@ async function update(): Promise<void> {
   await new Promise<void>((resolveInstall, reject) => {
     // Every manager is a `.cmd` shim on Windows, which only a shell can run.
     const child = spawn(target.command, target.args, {
+      cwd: target.cwd,
       stdio: "inherit",
       shell: process.platform === "win32",
     });
@@ -3008,7 +3009,7 @@ function assertNoPreRenameConfig(command: string, args: string[]): void {
     throw new Error("status was renamed to whoami. Run `broods whoami`.");
   }
 
-  if (hasFlag(args, "--env")) {
+  if (hasFlag(args, "--env") || optionValue(args, "--env") !== undefined) {
     throw new Error(
       "--env was renamed to --stage. Pass --stage <name> instead.",
     );

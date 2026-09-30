@@ -33,6 +33,8 @@ export interface UpdateTarget {
   global: boolean;
   /** Package manager binary to run. */
   command: string;
+  /** Where it runs: the project root for a project install, so a workspace child's manifest is never touched. */
+  cwd: string;
   /** Arguments that install the newest release of this major over this copy. */
   args: string[];
 }
@@ -106,12 +108,18 @@ export function updateTarget(
       ? self.startsWith(`${cwd}${sep}`)
       : cwd === projectRoot || cwd.startsWith(`${projectRoot}${sep}`);
   const bunGlobal = self.includes(`${sep}.bun${sep}install${sep}global${sep}`);
+  const root = projectRoot ?? cwd;
   const manager: PackageManager = local
-    ? lockfileManager(projectRoot ?? cwd)
+    ? lockfileManager(root)
     : bunGlobal
       ? "bun"
       : "npm";
   const verb = manager === "npm" ? "install" : "add";
+  // pnpm refuses to add to a workspace root without `-w`.
+  const rootFlag =
+    manager === "pnpm" && existsSync(join(root, "pnpm-workspace.yaml"))
+      ? ["-w"]
+      : [];
   // `broods@0` is the X-range `^0`, spelled without the caret cmd.exe eats.
   const spec = `broods@${majorVersion(version)}`;
 
@@ -119,7 +127,8 @@ export function updateTarget(
     manager: manager,
     global: !local,
     command: manager,
-    args: local ? [verb, spec] : [verb, "-g", spec],
+    cwd: local ? root : cwd,
+    args: local ? [verb, ...rootFlag, spec] : [verb, "-g", spec],
   };
 }
 

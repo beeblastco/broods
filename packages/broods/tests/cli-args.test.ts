@@ -42,10 +42,16 @@ test("optionValue reads an inline --name=value", () => {
   expect(optionValue(["--level="], "--level")).toBeUndefined();
 });
 
-test("hasFlag matches a bare flag and its inline form only", () => {
+test("hasFlag reads a value option inline and a boolean flag only bare", () => {
   expect(hasFlag(["--sandbox=abc"], "--sandbox")).toBe(true);
   expect(hasFlag(["--force"], "--force")).toBe(true);
   expect(hasFlag(["--forced"], "--force")).toBe(false);
+});
+
+// `broods project delete x --yes=false` must still ask before deleting.
+test("hasFlag ignores a boolean flag given a value", () => {
+  expect(hasFlag(["--yes=false"], "--yes")).toBe(false);
+  expect(hasFlag(["--prune=false"], "--prune")).toBe(false);
 });
 
 // `cmd /c start` cut the login URL at its first `&`, dropping the PKCE challenge.

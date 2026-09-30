@@ -56,9 +56,16 @@ export function browserCommand(
   return { command: "xdg-open", args: [url] };
 }
 
-/** True when `name` is passed, bare or as `name=value`. */
+/**
+ * True when `name` is passed. A value option also counts as `name=value`, a
+ * boolean flag only bare, so `--yes=false` never skips a confirmation.
+ */
 export function hasFlag(args: string[], name: string): boolean {
-  return args.some((arg) => arg === name || arg.startsWith(`${name}=`));
+  const inline = VALUE_OPTIONS.has(name) ? `${name}=` : null;
+
+  return args.some(
+    (arg) => arg === name || (inline !== null && arg.startsWith(inline)),
+  );
 }
 
 export function isPlainObject(
