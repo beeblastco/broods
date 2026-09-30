@@ -555,7 +555,6 @@ async function init(args: string[]): Promise<void> {
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
     force: force,
   });
-  await ensureProjectModuleType();
   printSuccess(`Created ${PROJECT_DIR}/`);
 }
 
@@ -1031,7 +1030,6 @@ async function diff(args: string[]): Promise<void> {
 }
 
 async function deploy(args: string[]): Promise<void> {
-  await ensureProjectModuleType();
   const { manifest, config, resourceAliases, channels } = await compileProject({
     project: optionValue(args, "--project"),
     stage: optionValue(args, "--stage"),
@@ -1366,7 +1364,6 @@ async function pathExists(path: string): Promise<boolean> {
 async function ensureProjectShell(): Promise<void> {
   const root = resolve(process.cwd(), PROJECT_DIR);
   await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
-  await ensureProjectModuleType();
 
   const files: string[] = [];
   await collectSourceFiles(root, files);
@@ -2797,22 +2794,6 @@ async function ensureGitIgnore(): Promise<void> {
     ? existing.trimEnd() + "\n" + missing.join("\n") + "\n"
     : missing.join("\n") + "\n";
   await writeFile(path, body, "utf8");
-}
-
-/**
- * Scopes `broods/` as ESM with its own package.json, so Node neither warns
- * (MODULE_TYPELESS_PACKAGE_JSON) nor reparses a project `.js` file, and the
- * host package.json keeps whatever module type the app already uses. Runs
- * before a compile; an existing file is the user's and is left alone.
- */
-async function ensureProjectModuleType(): Promise<void> {
-  const root = resolve(process.cwd(), PROJECT_DIR);
-  if (!(await pathExists(root))) return;
-  await writeStarter(
-    resolve(root, "package.json"),
-    '{\n  "type": "module"\n}\n',
-    false,
-  );
 }
 
 async function writeLocalEnvDefaults(options: {

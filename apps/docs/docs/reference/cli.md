@@ -60,7 +60,7 @@ Four settings decide what a command touches.
 - A variable exported in your shell wins over `.env.local`. The CLI warns when an export shadows a value it just wrote. `unset BROODS_API_KEY` to let the file take effect.
 - `~/.broods/config.json` keeps one login per server, so a dev dashboard login never replaces a production one. A command uses the login for the server `BROODS_BASE_URL` names and stops with `Not logged in to <server>` when there is none.
 - The CLI writes `~/.broods/config.json` and `.env.local` with mode `0600`, and `~/.broods` with `0700`. The CLI adds `.env*.local` to `.gitignore` when nothing ignores `.env.local` yet.
-- `init`, `dev` and `deploy` write `broods/package.json` with `"type": "module"` when it is missing, so Node loads the project as ESM. Your own `package.json` is never edited.
+- The CLI loads `broods/*.ts` as ESM itself and never edits a `package.json`, so a CommonJS app keeps its module type.
 - The dashboard tracks its own active organization. After `broods org use`, switch the dashboard too, or a `?project=…&stage=…` deep link resolves against the old one.
 
 ## Global options
