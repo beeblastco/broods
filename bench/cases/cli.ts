@@ -15,6 +15,7 @@ const ROOT = resolve(import.meta.dir, "../..");
 const FIXTURE_PROJECT = resolve(import.meta.dir, "../fixtures/project");
 const FIXTURE_SDK_LINK = resolve(FIXTURE_PROJECT, "node_modules/broods");
 const CLI_DIST = resolve(ROOT, "packages/broods/dist/cli/index.js");
+const SDK_DIST = resolve(ROOT, "packages/broods/dist/index.js");
 const COMPILE_ONCE = resolve(import.meta.dir, "../fixtures/compile-once.ts");
 const COMPILE_OPTIONS = {
   cwd: FIXTURE_PROJECT,
@@ -29,6 +30,7 @@ export const cliCases: readonly BenchCase[] = [
     name: "cli/compile-project-cached",
     iterations: 20,
     samples: 11,
+    available: (): boolean => existsSync(SDK_DIST),
     setup: linkSdkIntoFixture,
     // Same process, so the project's modules stay in the import cache and this
     // is manifest assembly alone: the resource walk, the validation passes and
@@ -39,6 +41,7 @@ export const cliCases: readonly BenchCase[] = [
     name: "cli/compile-project-cold",
     iterations: 1,
     samples: 7,
+    available: (): boolean => existsSync(SDK_DIST),
     setup: linkSdkIntoFixture,
     // A fresh process per compile, the way the CLI actually runs it.
     run: (): unknown => spawnChecked(["bun", COMPILE_ONCE, FIXTURE_PROJECT]),
@@ -60,7 +63,8 @@ export const cliCases: readonly BenchCase[] = [
 ];
 
 /**
- * The fixture imports `broods` the way a user project does. Root node_modules
+ * The fixture imports `broods` the way a user project does, which resolves to
+ * the built dist, so the compile cases skip without a build. Root node_modules
  * is Bun's isolated layout with no top-level link, so the SDK is linked in by
  * hand: no install, no network, and the workspace's own dependencies resolve
  * through the link's real path.
