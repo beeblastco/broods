@@ -145,8 +145,11 @@ it("releases a live reservation without the expiry condition before the cascade"
   } as never);
   runtime.query = (async (name: string, args: Record<string, unknown>) => {
     // The release looks up each provider's machine by key; only `sandbox` holds one.
-    if (name === "getSandboxReservation") {
-      return args.provider === "sandbox" ? "sbx_live" : null;
+    if (name === "getSandboxReleaseTarget") {
+      return {
+        externalId: args.provider === "sandbox" ? "sbx_live" : null,
+        instance: null,
+      };
     }
     order.push(name);
     expect(args.accountId).toBe("acct_test");

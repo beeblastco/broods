@@ -217,7 +217,7 @@ stateDiagram-v2
 
 - `lifecycle.maxLifetimeSeconds` is checked on acquire, never on a timer, so it cannot interrupt a running command.
 - Deleting a workspace or account tears down its reservations (`releaseReservedSandboxes()`). A sandbox config that still holds an instance is kept when its CLI resource or canvas card goes, so the instance never names a missing config; the sweeper releases it and the next prune drops the config.
-- A release goes through the provider that reserved the machine, not the config's current one, so switching provider or turning `persistent` off leaves nothing stranded. It tries every config of that provider, then the platform's credentials, except for a machine on the tenant's own (`ownCredentials`), which only a config holding those credentials can release.
+- A release goes through the provider that reserved the machine, not the config's current one, so switching provider or turning `persistent` off leaves nothing stranded. A release reads a 404 as "already gone", so it only uses credentials for the account that owns the machine: the reserving config for one on the tenant's own (`ownCredentials` on the instance row), the platform's for the rest. With no instance row to say, only a MicroVM gets the platform's.
 - A persistent MicroVM counts against the account's allocated-memory quota while running or suspended. Too many persistent configs make every new launch fail with `ServiceQuotaExceededException`, and `fallbackProvider` cannot help because reserved sandboxes have none.
 
 ## Lifecycle actions and audit

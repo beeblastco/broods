@@ -10,20 +10,25 @@ import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
-  getSandboxExternalId,
+  getSandboxReleaseTarget,
 } from "../harness/sandbox/instance-store.ts";
 import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
-import type { ReservedSandbox } from "../harness/sandbox/types.ts";
+import type {
+  ReservedSandbox,
+  SandboxReleaseTarget,
+} from "../harness/sandbox/types.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
   SandboxConfig,
+  SandboxConfigRecord,
   SandboxProvider,
 } from "./domain/sandbox-config.ts";
 import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
+import { runsOnOwnCredentials } from "./workspaces.ts";
 
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
   "daytona",
@@ -71,11 +76,11 @@ export async function releaseExpiredSandboxes(
     });
     if (!taken) continue;
     const done = await releaseOnProvider(
+      accountId,
       reservation.provider,
       configs,
       key,
       reservation.externalId,
-      reservation.ownCredentials === true,
     );
     if (!done) {
       // The claim refuses if a run mapped the key meanwhile, which is right:
@@ -113,9 +118,9 @@ export async function releaseReservedSandboxes(
   let released = 0;
   for (const namespace of namespaces) {
     for (const provider of RELEASABLE_PROVIDERS) {
-      // No instance row to say whose credentials it ran on, but the row goes
-      // either way, so the platform's are worth the try.
-      if (await releaseOnProvider(provider, configs, namespace)) released++;
+      if (await releaseOnProvider(accountId, provider, configs, namespace)) {
+        released++;
+      }
       await deleteSandboxInstance(provider, namespace, accountId).catch(
         () => {},
       );
@@ -124,63 +129,6 @@ export async function releaseReservedSandboxes(
   }
 
   return released;
-}
-
-async function sandboxConfigs(accountId: string): Promise<SandboxConfig[]> {
-  const configs = await getStorage()
-    .sandboxConfigs.list(accountId)
-    .catch((error: unknown) => {
-      logWarn("Sandbox config list failed, only platform credentials remain", {
-        accountId: accountId,
-        error: toErrorMessage(error),
-      });
-
-      return [];
-    });
-
-  return configs.map((record) => record.config);
-}
-
-/**
- * Tears down the machine `provider` reserved under `namespace`. Every config of
- * that provider is tried, persistent or not: turning `persistent` off or
- * switching provider leaves the machine where it was. Then the platform's own
- * credentials, unless the machine runs on the tenant's, where a 404 from the
- * wrong account would read as "already gone".
- * @returns whether the machine is gone; false when nothing was reserved
- */
-async function releaseOnProvider(
-  provider: SandboxProvider,
-  configs: SandboxConfig[],
-  namespace: string,
-  expectedExternalId?: string,
-  ownCredentials = false,
-): Promise<boolean> {
-  const externalId =
-    expectedExternalId ?? (await getSandboxExternalId(provider, namespace));
-  if (!externalId) {
-    return false;
-  }
-  const candidates = configs.filter((config) => config.provider === provider);
-  if (!ownCredentials) candidates.push({ provider: provider });
-  for (const config of candidates) {
-    try {
-      await executorFor(config).release({
-        namespace: namespace,
-        expectedExternalId: externalId,
-      });
-
-      return true;
-    } catch (error) {
-      logWarn("Reserved sandbox release failed", {
-        provider: provider,
-        namespace: namespace,
-        error: toErrorMessage(error),
-      });
-    }
-  }
-
-  return false;
 }
 
 function executorFor(
@@ -203,4 +151,106 @@ function executorFor(
     default:
       return new VercelSandboxExecutor(config);
   }
+}
+
+/**
+ * The configs to release through, limited to the account that owns the machine:
+ * a release reads a 404 as "already gone", so credentials for another account
+ * would drop a live machine's rows. A tenant-owned machine goes through the
+ * config that reserved it; a platform-owned one through the platform's
+ * credentials. With no instance row to say, only a MicroVM, which always runs
+ * on the platform's, gets them.
+ */
+function releaseCandidates(
+  provider: SandboxProvider,
+  records: SandboxConfigRecord[],
+  instance: SandboxReleaseTarget["instance"],
+): SandboxConfig[] {
+  const sameProvider = records.filter(
+    (record) => record.config.provider === provider,
+  );
+  if (instance?.ownCredentials) {
+    return sameProvider
+      .filter(
+        (record) =>
+          record.sandboxId === instance.sandboxConfigId &&
+          runsOnOwnCredentials(record.config),
+      )
+      .map((record) => record.config);
+  }
+  const configs = sameProvider.map((record) => record.config);
+  const platform: SandboxConfig = { provider: provider };
+  if (instance) {
+    return [
+      ...configs.filter((config) => !runsOnOwnCredentials(config)),
+      platform,
+    ];
+  }
+
+  return provider === "lambda" ? [platform] : configs;
+}
+
+/**
+ * Tears down the machine `provider` reserved under `namespace`, through the
+ * provider recorded on the reservation: switching provider or turning
+ * `persistent` off leaves the machine where it was.
+ * @returns whether the machine is gone; false when nothing was reserved
+ */
+async function releaseOnProvider(
+  accountId: string,
+  provider: SandboxProvider,
+  records: SandboxConfigRecord[],
+  namespace: string,
+  expectedExternalId?: string,
+): Promise<boolean> {
+  const target = await getSandboxReleaseTarget(
+    accountId,
+    provider,
+    namespace,
+    expectedExternalId,
+  ).catch((error: unknown): null => {
+    logWarn("Reserved sandbox lookup failed", {
+      provider: provider,
+      namespace: namespace,
+      error: toErrorMessage(error),
+    });
+
+    return null;
+  });
+  if (!target?.externalId) {
+    return false;
+  }
+  for (const config of releaseCandidates(provider, records, target.instance)) {
+    try {
+      await executorFor(config).release({
+        namespace: namespace,
+        expectedExternalId: target.externalId,
+      });
+
+      return true;
+    } catch (error) {
+      logWarn("Reserved sandbox release failed", {
+        provider: provider,
+        namespace: namespace,
+        error: toErrorMessage(error),
+      });
+    }
+  }
+
+  return false;
+}
+
+async function sandboxConfigs(
+  accountId: string,
+): Promise<SandboxConfigRecord[]> {
+  return getStorage()
+    .sandboxConfigs.list(accountId)
+    .catch((error: unknown) => {
+      logWarn("Sandbox config list failed", {
+        accountId: accountId,
+        error: toErrorMessage(error),
+      });
+
+      return [];
+    });
 }

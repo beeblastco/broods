@@ -179,9 +179,9 @@ async function sweepAccount(
       (one) => !done.has(`${one.provider}:${one.reservationKey}`),
     );
     // Every release path that returns false has already said why, except a machine
-    // on the tenant's own credentials that no config of its provider holds any more;
-    // name what is left either way, or an hourly "released: 0" is the only trace
-    // of a sandbox that never dies.
+    // no config can safely reach: its reserving config lost the tenant's
+    // credentials, or no instance row says whose they are. Name what is left either
+    // way, or an hourly "released: 0" is the only trace of a sandbox that never dies.
     if (pending.length > 0) {
       logWarn("Sandbox sweep left expired reservations unreleased", {
         accountId: accountId,

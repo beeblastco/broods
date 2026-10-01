@@ -208,8 +208,15 @@ export interface ReservedSandbox {
   externalId: string;
   /** The idle window it was claimed with, so a restore keeps it. */
   ttlSeconds?: number;
-  /** It runs on the tenant's own provider credentials, so the platform's cannot release it. */
-  ownCredentials?: boolean;
+}
+
+/**
+ * The reserved machine, and the instance row's record of whose credentials it
+ * runs on and which config reserved it; null while no row names that machine.
+ */
+export interface SandboxReleaseTarget {
+  externalId: string | null;
+  instance: { ownCredentials: boolean; sandboxConfigId?: string } | null;
 }
 
 /**

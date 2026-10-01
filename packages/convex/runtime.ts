@@ -88,8 +88,17 @@ const sandboxReservationSummary = v.object({
   ...reservedSandboxValidator.fields,
   accountId: v.id("accounts"),
   ttlSeconds: v.optional(v.number()),
-  /** Off the instance row: the machine runs on the tenant's own provider credentials. */
-  ownCredentials: v.optional(v.boolean()),
+});
+
+const sandboxReleaseTarget = v.object({
+  externalId: v.union(v.string(), v.null()),
+  instance: v.union(
+    v.object({
+      ownCredentials: v.boolean(),
+      sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+    }),
+    v.null(),
+  ),
 });
 
 interface SandboxReservationPage {
@@ -685,6 +694,57 @@ export const getSandboxReservation = internalQuery({
 });
 
 /**
+ * What a release needs to pick credentials: the reserved machine, and the
+ * instance row's record of whose credentials it runs on and which config
+ * reserved it. The row is a best-effort mirror, so it is returned only while
+ * it still names `externalId`, or the reserved machine when none is given.
+ * @returns the reserved provider id, or null, and the matching instance row, or null
+ */
+export const getSandboxReleaseTarget = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    provider: sandboxProviderValidator,
+    reservationKey: v.string(),
+    externalId: v.optional(v.string()),
+  },
+  returns: sandboxReleaseTarget,
+  handler: async (ctx, args): Promise<Infer<typeof sandboxReleaseTarget>> => {
+    const reservation = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    const externalId = args.externalId ?? reservation?.externalId ?? null;
+    if (!externalId) return { externalId: null, instance: null };
+    const instances = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", args.reservationKey),
+      )
+      .collect();
+    const instance = instances.find(
+      (row) =>
+        row.accountId === args.accountId &&
+        row.provider === args.provider &&
+        row.externalId === externalId,
+    );
+
+    return {
+      externalId: externalId,
+      instance: instance
+        ? {
+            ownCredentials: instance.ownCredentials === true,
+            sandboxConfigId: instance.sandboxConfigId,
+          }
+        : null,
+    };
+  },
+});
+
+/**
  * The reservation's sandbox and when it was claimed, for the executors that enforce
  * `lifecycle.maxLifetimeSeconds` themselves and would otherwise read the same row
  * twice. A reconnect only patches the row, so `claimedAt` stays the creation time of
@@ -736,29 +796,13 @@ export const listExpiredSandboxReservations = internalQuery({
       .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
       .take(args.limit);
 
-    const expired: Infer<typeof sandboxReservationSummary>[] = [];
-    for (const row of rows) {
-      const instances = await ctx.db
-        .query("sandboxInstances")
-        .withIndex("by_reservationKey", (q) =>
-          q.eq("reservationKey", row.reservationKey),
-        )
-        .collect();
-      const instance = instances.find(
-        (one) =>
-          one.accountId === row.accountId && one.provider === row.provider,
-      );
-      expired.push({
-        accountId: row.accountId,
-        provider: row.provider,
-        reservationKey: row.reservationKey,
-        externalId: row.externalId,
-        ttlSeconds: row.ttlSeconds,
-        ownCredentials: instance?.ownCredentials,
-      });
-    }
-
-    return expired;
+    return rows.map((row) => ({
+      accountId: row.accountId,
+      provider: row.provider,
+      reservationKey: row.reservationKey,
+      externalId: row.externalId,
+      ttlSeconds: row.ttlSeconds,
+    }));
   },
 });
 
@@ -834,7 +878,6 @@ export const listOrphanedSandboxInstances = internalQuery({
         provider: row.provider,
         reservationKey: row.reservationKey,
         externalId: row.externalId,
-        ownCredentials: row.ownCredentials,
       });
     }
 

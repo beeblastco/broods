@@ -978,9 +978,9 @@ describe("sandbox reservation expiry", () => {
     ]);
   });
 
-  // Platform credentials must never stand in for a tenant's own: a 404 from the
-  // wrong account would read as "already gone" and drop a live machine's row.
-  test("carries the instance row's own-credentials flag", async () => {
+  // A release trusts a 404 only from the account that owns the machine, so the
+  // instance row counts only while it still names the reserved machine.
+  test("release target carries the instance row only while it names the machine", async () => {
     const t = runtimeTest();
     ACCOUNT = await createActiveAccount(t);
     await reservation(t, "byo", Math.floor(Date.now() / 1000) - 60);
@@ -998,20 +998,22 @@ describe("sandbox reservation expiry", () => {
         lastUsedAt: Date.now(),
       });
     });
-
-    expect(
-      await t.query(internal.runtime.listExpiredSandboxReservations, {
-        limit: 10,
-      }),
-    ).toEqual([
-      {
+    const target = (externalId?: string) =>
+      t.query(internal.runtime.getSandboxReleaseTarget, {
         accountId: ACCOUNT,
         provider: "sandbox",
         reservationKey: "byo",
-        externalId: "sbx-byo",
-        ownCredentials: true,
-      },
-    ]);
+        externalId: externalId,
+      });
+
+    expect(await target()).toEqual({
+      externalId: "sbx-byo",
+      instance: { ownCredentials: true },
+    });
+    expect(await target("sbx-replaced")).toEqual({
+      externalId: "sbx-replaced",
+      instance: null,
+    });
   });
 
   test("deferral moves a row off the head of the expiry page", async () => {
