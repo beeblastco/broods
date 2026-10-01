@@ -1,10 +1,10 @@
 /**
  * Render-budget probe. Loads every page cold in its own fresh browser context
- * (so no page is served from another's cache) and reaches every header
+ * (so no page is served from another's cache) and reaches every sidebar
  * destination by client-side navigation. Each is timed until its own content
  * is on screen; anything over the render budget fails the run. The
  * dashboard sub-tabs (Monitoring, Tracing, Usage, Billing) are covered by the
- * cold loads; header navigation covers the top-level routes. The session and
+ * cold loads; sidebar navigation covers the top-level routes. The session and
  * project come from `auth.setup.ts`.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -80,19 +80,19 @@ const PROJECT_PAGES: ProbePage[] = [
   {
     name: "Sandbox",
     path: "/sandbox",
-    ready: (page) => page.getByRole("heading", { name: "Sandboxes" }),
+    ready: (page) => page.getByRole("heading", { name: "Instances" }),
   },
   {
     name: "Settings",
     path: "/settings",
-    ready: (page) => page.getByRole("heading", { name: "Settings" }).first(),
+    ready: (page) => page.getByRole("heading", { name: "General" }),
   },
 ];
 
-// Header destinations reached by client-side navigation, each paired with the
+// Sidebar destinations reached by client-side navigation, each paired with the
 // marker that means it has rendered. "Dashboard" lands on the Monitoring tab,
 // so its marker is that tab's heading, not a probe named "Dashboard".
-const HEADER_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
+const SIDEBAR_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
   {
     label: "Dashboard",
     ready: (page) => page.getByRole("heading", { name: "Monitoring" }),
@@ -103,11 +103,11 @@ const HEADER_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
   },
   {
     label: "Sandbox",
-    ready: (page) => page.getByRole("heading", { name: "Sandboxes" }),
+    ready: (page) => page.getByRole("heading", { name: "Instances" }),
   },
   {
     label: "Settings",
-    ready: (page) => page.getByRole("heading", { name: "Settings" }).first(),
+    ready: (page) => page.getByRole("heading", { name: "General" }),
   },
   {
     label: "Architecture",
@@ -117,7 +117,7 @@ const HEADER_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
 
 test.skip(!hasProbe(), MISSING_PROBE);
 
-test("every page renders cold within budget, and every header destination by navigation", async ({
+test("every page renders cold within budget, and every sidebar destination by navigation", async ({
   browser,
 }) => {
   const projectId = readProjectId();
@@ -142,13 +142,13 @@ test("every page renders cold within budget, and every header destination by nav
     samples.push({ page: probe.name, kind: "cold", ms: fastest });
   }
 
-  // Client-side navigation across the header, one warm context, the path a
+  // Client-side navigation across the sidebar, one warm context, the path a
   // user actually walks between top-level routes.
   const navContext = await browser.newContext(SIGNED_IN_CONTEXT);
   const navPage = await navContext.newPage();
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
   await PROJECT_PAGES[0].ready(navPage).first().waitFor({ timeout: 30_000 });
-  for (const dest of HEADER_NAV) {
+  for (const dest of SIDEBAR_NAV) {
     const start = await navPage.evaluate(() => performance.now());
     await navPage.getByRole("link", { name: dest.label, exact: true }).click();
     await dest.ready(navPage).first().waitFor({ timeout: 30_000 });

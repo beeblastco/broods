@@ -10,7 +10,6 @@
  */
 import { CommandPalette } from "@/app/components/CommandPalette";
 import { CopilotDock } from "@/app/components/copilot/CopilotDock";
-import { CopilotLauncher } from "@/app/components/copilot/CopilotLauncher";
 import {
   CopilotStateProvider,
   type CopilotMessage,
@@ -241,7 +240,6 @@ function Surfaces(): React.JSX.Element {
           </ol>
         </div>
 
-        <CopilotLauncher />
         <CopilotDock />
       </div>
       <ShortcutOverlay />

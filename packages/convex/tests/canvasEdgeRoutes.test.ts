@@ -80,8 +80,8 @@ describe("routeCanvasEdges", () => {
 
     expect(agent.get("top")!.gutter).toBeNull();
     // Left of the column, one lane the two deep edges branch off.
-    expect(agent.get("deep")!.gutter?.x).toBe(232);
-    expect(agent.get("deeper")!.gutter?.x).toBe(232);
+    expect(agent.get("deep")!.gutter?.x).toBe(216);
+    expect(agent.get("deeper")!.gutter?.x).toBe(216);
     expect(
       new Set([...agent.values()].map((route) => route.busDrop)).size,
     ).toBe(1);
