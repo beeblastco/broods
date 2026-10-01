@@ -445,6 +445,35 @@ describe("queuedCommand", () => {
     ).toEqual({ commandToken: "/compact", text: "/compact keep the deploy" });
   });
 
+  it("keeps one-turn system events beside the command", () => {
+    expect(
+      queuedCommand([
+        { role: "system", content: "be brief" },
+        { role: "user", content: [{ type: "text", text: "/compact" }] },
+      ]),
+    ).toEqual({ commandToken: "/compact", text: "/compact" });
+  });
+
+  it("leaves a command sent with a file, or on a channel without commands, as a message", () => {
+    expect(
+      queuedCommand([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "/compact" },
+            { type: "image", image: "https://files.test/a.png" },
+          ],
+        },
+      ]),
+    ).toBeUndefined();
+    expect(
+      queuedCommand([{ role: "user", content: "/compact" }], "pancake"),
+    ).toBeUndefined();
+    expect(
+      queuedCommand([{ role: "user", content: "/compact" }], "telegram"),
+    ).toEqual({ commandToken: "/compact", text: "/compact" });
+  });
+
   it("ignores ordinary turns and commands that are not queued", () => {
     expect(queuedCommand([{ role: "user", content: "hello" }])).toBeUndefined();
     expect(queuedCommand([{ role: "user", content: "/new" }])).toBeUndefined();
@@ -463,7 +492,7 @@ describe("compactConversation via /compact command", () => {
     const channel = createMockChannelActions({ sendText: sendText });
     const compact = mock(async (_instructions: string) => 12);
 
-    const reply = await executeCommand(
+    const result = await executeCommand(
       "/compact",
       createCommandContext({
         channel: channel,
@@ -472,9 +501,10 @@ describe("compactConversation via /compact command", () => {
       }),
     );
 
+    const reply = "Context compacted. 12 message(s) summarized.";
     expect(compact).toHaveBeenCalledWith("keep the deploy decisions");
-    expect(reply).toBe("Context compacted. 12 message(s) summarized.");
-    expect(sendText).toHaveBeenCalledWith(reply!);
+    expect(result).toEqual({ reply: reply });
+    expect(sendText).toHaveBeenCalledWith(reply);
   });
 
   it("reports when there is nothing to compact", async () => {
@@ -491,7 +521,7 @@ describe("compactConversation via /compact command", () => {
   it("reports a failed compaction", async () => {
     const channel = createMockChannelActions();
 
-    await executeCommand(
+    const result = await executeCommand(
       "/compact",
       createCommandContext({
         channel: channel,
@@ -502,6 +532,7 @@ describe("compactConversation via /compact command", () => {
     expect(channel.sendText).toHaveBeenCalledWith(
       "Something went wrong. Please try again.",
     );
+    expect(result?.error).toBe("model unavailable");
   });
 });
 

@@ -57,6 +57,12 @@ export interface QueuedCommand {
   text: string;
 }
 
+/** What a command answered; `error` is set when it threw instead. */
+export interface CommandResult {
+  reply: string;
+  error?: string;
+}
+
 export interface DiscordCommandRegistration {
   name: string;
   description: string;
@@ -229,29 +235,30 @@ export const commands: CommandHandler[] = [
   },
 ];
 
-/** Runs a command and sends its reply; resolves with that reply. */
+/** Runs a command and sends its reply; resolves with what it answered. */
 export async function executeCommand(
   commandToken: string,
   ctx: CommandContext,
-): Promise<string | undefined> {
+): Promise<CommandResult | undefined> {
   const handler = getExecutableCommands().find((c) =>
     c.aliases.includes(commandToken),
   );
   if (!handler?.execute) return undefined;
 
-  let reply: string;
+  let result: CommandResult;
   try {
-    reply = await handler.execute(ctx);
+    result = { reply: await handler.execute(ctx) };
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
     logError("Command execution failed", {
       command: commandToken,
-      error: err instanceof Error ? err.message : String(err),
+      error: error,
     });
-    reply = "Something went wrong. Please try again.";
+    result = { reply: "Something went wrong. Please try again.", error: error };
   }
-  await ctx.channel?.sendText(reply);
+  await ctx.channel?.sendText(result.reply);
 
-  return reply;
+  return result;
 }
 
 export function getDiscordCommandRegistrations(
@@ -287,14 +294,27 @@ export function parseCommand(text: string): string | null {
 }
 
 /**
- * The queued command an envelope carries in place of a message: one user
- * message whose text is a `queued` command. Undefined for an ordinary turn.
+ * The queued command an envelope carries in place of a message: one text-only
+ * user message that is a `queued` command, beside any one-turn system events.
+ * Undefined for an ordinary turn, and on a channel that takes no commands.
  */
 export function queuedCommand(
   events: readonly ModelMessage[],
+  channelName?: string,
 ): QueuedCommand | undefined {
-  const event = events.length === 1 ? events[0] : undefined;
-  if (event?.role !== "user") return undefined;
+  if (channelName !== undefined && !supportsInlineCommands(channelName)) {
+    return undefined;
+  }
+  const turn = events.filter((event) => event.role !== "system");
+  const event = turn.length === 1 ? turn[0] : undefined;
+  // A file or image sent with the command would be dropped with it.
+  if (
+    event?.role !== "user" ||
+    (typeof event.content !== "string" &&
+      !event.content.every((part) => part.type === "text"))
+  ) {
+    return undefined;
+  }
   const text = extractText(event.content).trim();
   const commandToken = parseCommand(text);
   if (
@@ -335,6 +355,23 @@ export function resolveChannelCommand({
   return text
     ? { kind: "rewrite", text: text, requestedMode: requestedMode }
     : { kind: "reply", commandToken: commandToken };
+}
+
+/** Whether a channel reads chat commands at all; others pass `/text` on as is. */
+export function supportsInlineCommands(channelName: string): boolean {
+  return (
+    channelName === "discord" ||
+    channelName === "gchat" ||
+    channelName === "instagram" ||
+    channelName === "matrix" ||
+    channelName === "messenger" ||
+    channelName === "slack" ||
+    channelName === "teams" ||
+    channelName === "telegram" ||
+    channelName === "twilio" ||
+    channelName === "whatsapp" ||
+    channelName === "zalo"
+  );
 }
 
 export function resolveDiscordCommand(

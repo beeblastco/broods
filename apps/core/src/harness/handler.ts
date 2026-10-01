@@ -22,6 +22,7 @@ import {
   executeCommand,
   queuedCommand,
   resolveChannelCommand,
+  type CommandResult,
   type QueuedCommand,
 } from "../shared/commands.ts";
 import {
@@ -1133,7 +1134,7 @@ async function handleAsyncWorkerRequest(
       eventId: event.asyncResultEventId ?? event.eventId,
       conversationKey: event.conversationKey,
     });
-    const command = queuedCommand(event.events);
+    const command = queuedCommand(event.events, event.replyTarget?.channelName);
     if (command) {
       session = directSession(event);
       await finish(await commandOutcome(session, command));
@@ -1476,7 +1477,7 @@ export async function handleChannelRequest(
   if (!event.accountId || !event.agentId) {
     throw new Error("Channel ingress requires account and agent scope");
   }
-  const command = queuedCommand(event.events);
+  const command = queuedCommand(event.events, event.channelName);
   if (!command && (await settleChannelQuestion(event))) return;
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
@@ -1690,10 +1691,12 @@ async function runChannelTurns(
       // A thrown turn must still settle its envelope terminally before the
       // queue drains on; otherwise accepted work is stranded in processing.
       try {
-        const command = queuedCommand(incoming);
+        const command = queuedCommand(incoming, event.channelName);
         if (command) {
-          const reply = await runQueuedCommand(session, command);
-          await session.settleIngress("completed", { result: reply });
+          const { status, ...settlement } = outcomeSettlement(
+            await commandOutcome(session, command),
+          );
+          await session.settleIngress(status, settlement);
         } else {
           const ephemeralSystem = await session.appendIngressEvents(incoming);
           ephemeralSystem.push(...incomingEphemeral);
@@ -3143,12 +3146,30 @@ async function runCommandTurn(options: {
 }): Promise<AsyncAgentOutcome> {
   const { event } = options;
   const session = directSession(event);
-  const outcome = await commandOutcome(session, options.command, options.send);
-  const { status, ...settlement } = outcomeSettlement(outcome);
-  await session.settleIngress(status, settlement).catch((): boolean => false);
-  const transferred = await dispatchNextIngress(session, event).catch(
-    (): boolean => false,
+  const checkOwner = ownerCheckForStream(session);
+  const outcome = await commandOutcome(
+    session,
+    options.command,
+    async (chunk): Promise<void> => {
+      await checkOwner(chunk);
+      await options.send(chunk);
+    },
   );
+  // Settled in the hand-off mutation, which retries the settle on its own
+  // when the hand-off throws.
+  const transferred = await dispatchNextIngress(
+    session,
+    event,
+    outcomeSettlement(outcome),
+  ).catch((err: unknown): boolean => {
+    logError("Queued command settle or hand-off failed", {
+      eventId: event.eventId,
+      conversationKey: event.conversationKey,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return false;
+  });
   if (!transferred) {
     await session.releaseConversationLease().catch((): void => {});
   }
@@ -3166,14 +3187,17 @@ async function commandOutcome(
   send?: (chunk: TextStreamPart<ToolSet>) => Promise<void>,
 ): Promise<AsyncAgentOutcome> {
   try {
-    const reply = (await runQueuedCommand(session, command)) ?? "";
+    const result = await runQueuedCommand(session, command);
+    const reply = result?.reply ?? "";
     if (send) {
       await send({ type: "text-start", id: session.eventId });
       await send({ type: "text-delta", id: session.eventId, text: reply });
       await send({ type: "text-end", id: session.eventId });
     }
 
-    return { status: "completed", response: reply };
+    return result?.error === undefined
+      ? { status: "completed", response: reply }
+      : { status: "failed", error: result.error };
   } catch (err) {
     return {
       status: "failed",
@@ -3184,13 +3208,13 @@ async function commandOutcome(
 
 /**
  * Runs a command the queue held until the turn before it ended, in place of a
- * model turn and under the session's lease. Resolves with its reply, which it
- * also sends when the session has a channel.
+ * model turn and under the session's lease. Resolves with what it answered,
+ * which it also sends when the session has a channel.
  */
 async function runQueuedCommand(
   session: Session,
   command: QueuedCommand,
-): Promise<string | undefined> {
+): Promise<CommandResult | undefined> {
   return executeCommand(command.commandToken, {
     conversationKey: session.conversationKey,
     channel: session.channelActions,

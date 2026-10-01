@@ -79,30 +79,39 @@ export async function queuedCompact(context: VerifyContext): Promise<void> {
     status.requestedMode === "followup",
     JSON.stringify(status),
   );
+  // Without a model the summary call fails, and the run must say so.
   assertStep(
     context.hasModelKey
       ? "queued /compact summarized the finished turn"
-      : `queued /compact completed (${MODEL_KEY_HINT})`,
-    status.status === "completed" &&
-      (!context.hasModelKey || COMPACTED.test(String(status.response))),
+      : `queued /compact failed with the summary call (${MODEL_KEY_HINT})`,
+    context.hasModelKey
+      ? status.status === "completed" && COMPACTED.test(String(status.response))
+      : status.status === "failed",
     JSON.stringify(status),
   );
 
   const idle = await context.measure(
     "idle /compact",
-    (): Promise<AgentRunResult> =>
-      context.client.run({
-        agentId: agentId,
-        conversationKey: key,
-        eventId: `${key}-idle`,
-        input: "/compact",
-      }),
+    async (): Promise<AgentRunResult | Error> =>
+      context.client
+        .run({
+          agentId: agentId,
+          conversationKey: key,
+          eventId: `${key}-idle`,
+          input: "/compact",
+        })
+        .catch((err: unknown): Error =>
+          err instanceof Error ? err : new Error(String(err)),
+        ),
   );
   assertStep(
-    "idle /compact answers on the sync stream",
-    idle.text === "Nothing to compact yet." ||
-      COMPACTED.test(idle.text) ||
-      (!context.hasModelKey && idle.text.length > 0),
-    idle.text,
+    context.hasModelKey
+      ? "idle /compact answers on the sync stream"
+      : `idle /compact fails on the sync stream (${MODEL_KEY_HINT})`,
+    context.hasModelKey
+      ? !(idle instanceof Error) &&
+          (idle.text === "Nothing to compact yet." || COMPACTED.test(idle.text))
+      : idle instanceof Error && idle.message.startsWith("Agent run failed"),
+    idle instanceof Error ? idle.message : idle.text,
   );
 }

@@ -35,7 +35,7 @@ import {
   formatChannelErrorText,
   reachSet,
 } from "../shared/channels.ts";
-import { parseCommand } from "../shared/commands.ts";
+import { parseCommand, supportsInlineCommands } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
 import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
@@ -1894,22 +1894,6 @@ function resolveCommandToken(
   }
 
   return null;
-}
-
-function supportsInlineCommands(channelName: string): boolean {
-  return (
-    channelName === "discord" ||
-    channelName === "gchat" ||
-    channelName === "instagram" ||
-    channelName === "matrix" ||
-    channelName === "messenger" ||
-    channelName === "slack" ||
-    channelName === "teams" ||
-    channelName === "telegram" ||
-    channelName === "twilio" ||
-    channelName === "whatsapp" ||
-    channelName === "zalo"
-  );
 }
 
 function toResponse(response: ChannelResponse): Response {
