@@ -56,9 +56,20 @@ test("a hidden sidebar peeks at the left edge and stays hidden across a reload",
   await page.keyboard.press("ControlOrMeta+b");
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
   await expect(container).not.toBeInViewport();
+  // Out of view is out of the tab order: Tab never lands on a hidden link.
+  for (let press = 0; press < 30; press++) {
+    await page.keyboard.press("Tab");
+    expect(
+      await container.evaluate((node) => node.contains(document.activeElement)),
+    ).toBe(false);
+  }
 
   await page.mouse.move(4, 400);
   await expect(container).toBeInViewport();
+  // A peek is the real sidebar, links and all.
+  const link = container.getByRole("link").first();
+  await link.focus();
+  await expect(link).toBeFocused();
   // Moving along the edge, where the reveal strip was, keeps it up.
   await page.mouse.move(8, 440);
   await expect(container).toBeInViewport();
