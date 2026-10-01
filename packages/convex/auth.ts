@@ -4,7 +4,7 @@
 
 import { AuthKit } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
-import type { DataModel, Doc } from "./_generated/dataModel";
+import type { DataModel } from "./_generated/dataModel";
 
 export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   components.workOSAuthKit,
@@ -31,7 +31,7 @@ export const { authKitEvent } = authKit.events({
     if (existing) {
       await ctx.db.patch(existing._id, {
         email: event.data.email,
-        name: keptName(existing, event.data),
+        name: existing.nameEdited ? existing.name : deriveName(event.data),
         avatarUrl: avatarUrl,
       });
 
@@ -64,7 +64,7 @@ export const { authKitEvent } = authKit.events({
 
     await ctx.db.patch(user._id, {
       email: event.data.email,
-      name: keptName(user, event.data),
+      name: user.nameEdited ? user.name : deriveName(event.data),
       avatarUrl: avatarUrl,
     });
   },
@@ -107,12 +107,4 @@ export function deriveName(data: {
   const last = data.lastName ?? "";
 
   return `${first} ${last}`.trim() || data.email;
-}
-
-/** Name to store on a WorkOS sync: a name saved in Account settings wins over WorkOS. */
-function keptName(
-  user: Doc<"users">,
-  data: Parameters<typeof deriveName>[0],
-): string {
-  return user.nameEdited ? user.name : deriveName(data);
 }

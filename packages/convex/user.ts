@@ -98,32 +98,25 @@ export const updateProfile = mutation({
       throw new Error("User record not found. Please sign in again.");
     }
 
-    const nameEdited = user.nameEdited || args.name !== user.name;
-    if (args.accountHandle) {
-      const normalizedHandle = args.accountHandle.trim().toLowerCase();
+    const accountHandle = args.accountHandle?.trim().toLowerCase() || undefined;
+    if (accountHandle) {
       const existingHandle = await ctx.db
         .query("users")
         .withIndex("by_accountHandle", (q) =>
-          q.eq("accountHandle", normalizedHandle),
+          q.eq("accountHandle", accountHandle),
         )
         .first();
 
       if (existingHandle && existingHandle._id !== user._id) {
         throw new Error("Account handle is already taken.");
       }
-
-      await ctx.db.patch(user._id, {
-        name: args.name,
-        nameEdited: nameEdited,
-        accountHandle: normalizedHandle,
-      });
-    } else {
-      await ctx.db.patch(user._id, {
-        name: args.name,
-        nameEdited: nameEdited,
-        accountHandle: undefined,
-      });
     }
+
+    await ctx.db.patch(user._id, {
+      name: args.name,
+      nameEdited: user.nameEdited || args.name !== user.name,
+      accountHandle: accountHandle,
+    });
 
     return user._id;
   },
@@ -161,8 +154,9 @@ export const syncProfile = mutation({
     if (avatarUrl && avatarUrl !== user.avatarUrl) {
       patch.avatarUrl = avatarUrl;
     }
-    if (name?.trim() && !user.nameEdited && name.trim() !== user.name) {
-      patch.name = name.trim();
+    const trimmedName = name?.trim();
+    if (trimmedName && !user.nameEdited && trimmedName !== user.name) {
+      patch.name = trimmedName;
     }
 
     if (Object.keys(patch).length > 0) {

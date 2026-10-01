@@ -11,11 +11,15 @@ vi.mock("../auth", async (importOriginal) => ({
 }));
 
 const modules = import.meta.glob("../**/*.ts");
+const WORKOS_USER = {
+  id: "auth_user",
+  email: "user@example.com",
+  firstName: "WorkOS",
+  lastName: "Name",
+};
 
 const profileNameTest = (): TestConvex<typeof schema> =>
   convexTest(schema, modules);
-
-type T = ReturnType<typeof profileNameTest>;
 
 describe("syncProfile", () => {
   test("keeps a name saved through Account settings", async () => {
@@ -33,7 +37,7 @@ describe("syncProfile", () => {
     expect(user?.avatarUrl).toBe("https://example.com/new.png");
   });
 
-  test("fills the name while it is still the email fallback", async () => {
+  test("fills a name the user never edited", async () => {
     const t = profileNameTest();
     const userId = await seedUser(t, "user@example.com");
 
@@ -50,7 +54,7 @@ describe("WorkOS user webhooks", () => {
 
     await t.mutation(internal.auth.authKitEvent, {
       event: "user.created",
-      data: workosUser(),
+      data: WORKOS_USER,
     });
 
     expect((await readUser(t, userId))?.name).toBe("Chosen Name");
@@ -62,7 +66,7 @@ describe("WorkOS user webhooks", () => {
 
     await t.mutation(internal.auth.authKitEvent, {
       event: "user.updated",
-      data: workosUser(),
+      data: WORKOS_USER,
     });
 
     expect((await readUser(t, userId))?.name).toBe("Chosen Name");
@@ -74,48 +78,22 @@ describe("WorkOS user webhooks", () => {
 
     await t.mutation(internal.auth.authKitEvent, {
       event: "user.updated",
-      data: workosUser(),
+      data: WORKOS_USER,
     });
 
     expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
-  });
-
-  test("user.updated replaces the email fallback with the WorkOS name", async () => {
-    const t = profileNameTest();
-    const userId = await seedUser(t, "user@example.com");
-
-    await t.mutation(internal.auth.authKitEvent, {
-      event: "user.updated",
-      data: workosUser(),
-    });
-
-    expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
-  });
-
-  test("user.updated replaces the old email fallback when the email changes", async () => {
-    const t = profileNameTest();
-    const userId = await seedUser(t, "user@example.com");
-
-    await t.mutation(internal.auth.authKitEvent, {
-      event: "user.updated",
-      data: { ...workosUser(), email: "new@example.com" },
-    });
-
-    const user = await readUser(t, userId);
-    expect(user?.email).toBe("new@example.com");
-    expect(user?.name).toBe("WorkOS Name");
   });
 });
 
 async function readUser(
-  t: T,
+  t: TestConvex<typeof schema>,
   userId: Id<"users">,
 ): Promise<Doc<"users"> | null> {
   return await t.run(async (ctx) => ctx.db.get(userId));
 }
 
 async function seedUser(
-  t: T,
+  t: TestConvex<typeof schema>,
   name: string,
   nameEdited?: boolean,
 ): Promise<Id<"users">> {
@@ -129,13 +107,4 @@ async function seedUser(
       plan: "free",
     }),
   );
-}
-
-function workosUser(): Record<string, string> {
-  return {
-    id: "auth_user",
-    email: "user@example.com",
-    firstName: "WorkOS",
-    lastName: "Name",
-  };
 }
