@@ -169,6 +169,15 @@ function Sidebar({
   const hidden =
     state === "collapsed" && collapsible === "offcanvas" && !peeking;
 
+  // Inert drops focus to the page, so focus inside hands over to the trigger
+  // that brings the sidebar back. Before paint, while focus is still inside.
+  React.useLayoutEffect(() => {
+    if (!hidden || !containerRef.current?.contains(document.activeElement)) {
+      return;
+    }
+    document.querySelector<HTMLElement>('[data-sidebar="trigger"]')?.focus();
+  }, [hidden]);
+
   // Hide again once the pointer moves past the sidebar's width, unless a menu
   // opened from inside (the account menu) is still up. By width, not by what
   // is under the pointer, so the slide-in and the edge strip never count as
