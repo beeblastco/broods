@@ -425,6 +425,10 @@ async function insertMcpServer(
     project: PROJECT,
     stage: STAGE,
   });
+  await tt.mutation(internal.cli.sync.finishManifestSync, {
+    stageId: scope.stageId,
+    revision: scope.revision,
+  });
 
   return await tt.mutation(internal.account.mcp.create, {
     accountId: accountId,
@@ -505,10 +509,14 @@ async function recordMcpServer(
 /** A skill `stage` recorded as CLI-managed, with the file `syncSkillNodeFiles` mirrors. */
 async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
   const secretHash = await sha256Hex(SECRET);
-  await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
+  const scope = await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
     secretHash: secretHash,
     project: PROJECT,
     stage: stage,
+  });
+  await tt.mutation(internal.cli.sync.finishManifestSync, {
+    stageId: scope.stageId,
+    revision: scope.revision,
   });
   const storageId = await tt.run(
     async (ctx) => await ctx.storage.store(new Blob(["# skill"])),

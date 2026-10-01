@@ -1554,6 +1554,10 @@ export const oneMinuteCron = defineCron({
     command: "dev",
   });
 
+  expect(
+    manifest.resources.find((resource) => resource.kind === "cron")?.config,
+  ).toMatchObject({ status: "active" });
+
   await writeGeneratedFiles(
     manifest,
     {

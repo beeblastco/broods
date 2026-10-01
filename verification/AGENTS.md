@@ -7,10 +7,11 @@ Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun worksp
 - `Broods/AsyncResults.lean`: the async result row, settled with its envelope in one `runtimeIngress.settle`, plus `runtimeAsyncToolResults`. proves envelope and result row agree at every throw point, including a callback throw the harness swallows, a recorded outcome survives later throws, a failed write never loses what the run produced, a tool row settles once.
 - `Broods/Cron.lean`: `packages/convex/agent/crons.ts` run rows. proves the first settle wins and a drained run settles as a no-op.
 - `Broods/Sync.lean`: `broods dev` / `deploy` manifest sync with server rename matching. proves the next diff after a sync is deletes only, empty after prune; outright for skill/hook/mcp, given `normalize` round-trips for the rest.
-- `Broods/SyncExternal.lean`, `SyncCron.lean`, `SyncEnv.lean`, `SyncConcurrency.lean`: stage-scoped external prune by recorded row that waits for the manifest sync, cron keys, legacy-name renames and orphans, env push, and interleaved PUTs (last writer per row group wins; mixed stage witnessed).
+- `Broods/SyncExternal.lean`, `SyncCron.lean`, `SyncEnv.lean`, `SyncConcurrency.lean`: stage-scoped external prune by recorded row that waits for the manifest sync, cron keys, legacy-name renames and orphans, env push, and exclusive manifest PUT claims (overlapping writes are refused with or without a revision; stale cleanup cannot release a newer claim).
 
 ## Rules
 
+- `bun run verification:test` runs the TypeScript contract tests beside `lake build` in CI. These test implementation behavior and representative normalization round trips; they do not prove TypeScript equivalent to Lean. Models omit auth, admission, I/O and many product features.
 - the model is hand-written from the TypeScript. change the mirrored code = update the model in the same PR. docstring on each def names the TS it mirrors.
 - `example ... := by decide` blocks are findings: concrete inputs where the code does something surprising. fix the code = flip the example to the fixed outcome.
 - no `sorry`, no `native_decide`, no new `axiom`, so every proof rests on `propext`, `Quot.sound`, `Classical.choice` only. `lake build` enforces it: the audit at the end of `Broods.lean` fails on any other axiom a `Broods` declaration rests on, `sorryAx` and `native_decide`'s included.

@@ -63,6 +63,7 @@ export const stagesFields = {
 export const stageSyncsFields = {
   stageId: v.id("stages"),
   revision: v.number(),
+  activeUntil: v.optional(v.number()),
 };
 
 /** Minimal agent config fields; extra UI settings are stored as optional fields. */

@@ -8,13 +8,14 @@ transaction: it writes the stage's rows in separate mutations, first
 `recordExternalResourcesBySecretHash` (skills, hooks and MCP snapshots), then
 `syncManifestBySecretHash` (everything else), and with prune a second record that
 drops what the manifest no longer declares. Each mutation is serializable on its
-own, so two sessions interleave mutation by mutation.
+own, so without an exclusive claim two sessions can interleave mutation by mutation.
 
-The PUT's first mutation, `ensureScopeBySecretHash`, claims the stage's next
-manifest revision (`claimManifestRevision`). `broods dev` sends the revision it
-read, and a claim another sync has moved past is refused before the PUT writes
-anything. `broods deploy` and older CLIs send none and always claim, so they keep
-the last-writer-wins behaviour the first two witnesses show.
+The PUT's first mutation claims the revision and keeps an exclusive stage claim
+until `finishManifestSync` runs in `finally`. Every overlapping PUT is refused,
+including a deploy without a revision and a client that read the in-flight revision.
+`active` abstracts a nonexpired `stageSyncs.activeUntil` as its owning revision.
+Abandoned-claim expiry is outside this model: the implementation waits longer than
+the HTTP action and child Node action execution limits before admitting another PUT.
 -/
 
 namespace Broods.SyncConcurrency
@@ -26,11 +27,13 @@ structure Server where
   ext : State
   main : State
   rev : Nat
+  active : Option Nat
   deriving DecidableEq, Repr
 
 /-- One mutation of `handleManifestSync`. -/
 inductive Step where
   | claim (expected : Option Nat)
+  | release (revision : Nat)
   | record (m : Manifest) (prune : Bool)
   | main (m : Manifest) (prune : Bool)
   deriving DecidableEq, Repr
@@ -46,15 +49,17 @@ def Step.isRecord : Step → Bool
   | .record _ _ => true
   | _ => false
 
-/-- `claimManifestRevision`: a claim with no revision, or with the current one, takes
-the next revision. -/
+/-- `claimManifestRevision`: an idle stage accepts no revision or the current one
+and takes the next revision. -/
 def claims (s : Server) (expected : Option Nat) : Bool :=
-  expected.all (· == s.rev)
+  s.active.isNone && expected.all (· == s.rev)
 
 /-- One committed mutation: `recordExternalResourcesBySecretHash` reconciles the
 external rows, `syncManifestBySecretHash` the rest, each in its own transaction. -/
 def apply (store : Resource → Resource) : Step → Server → Server
-  | .claim e, s => if claims s e then { s with rev := s.rev + 1 } else s
+  | .claim e, s =>
+    if claims s e then { s with rev := s.rev + 1, active := some (s.rev + 1) } else s
+  | .release r, s => if s.active == some r then { s with active := none } else s
   | .record m p, s => { s with ext := sync store (extPart m) p s.ext }
   | .main m p, s => { s with main := sync store (mainPart m) p s.main }
 
@@ -71,7 +76,10 @@ def run (store : Resource → Resource) (steps : List Step) (s : Server) : Serve
 when the claim is refused (the action throws a 409). -/
 def putAt (store : Resource → Resource) (m : Manifest) (prune : Bool)
     (expected : Option Nat) (s : Server) : Server :=
-  if claims s expected then run store (put m prune) { s with rev := s.rev + 1 } else s
+  if claims s expected then
+    let claimed := { s with rev := s.rev + 1, active := some (s.rev + 1) }
+    apply store (.release (s.rev + 1)) (run store (put m prune) claimed)
+  else s
 
 /-- `GET /manifest`. -/
 def readAll (s : Server) : Manifest := read s.ext ++ read s.main
@@ -93,7 +101,7 @@ private theorem run_main_untouched (post : List Step) (s : Server)
     simp only [run, List.foldl_cons] at ih ⊢
     rw [ih _ (fun st' hs => h st' (List.mem_cons_of_mem _ hs))]
     cases st with
-    | claim => simp [Step.isRecord] at h
+    | claim | release => simp [Step.isRecord] at h
     | record => rfl
     | main => simp [Step.isRecord] at h
 
@@ -105,7 +113,7 @@ private theorem run_ext_untouched (post : List Step) (s : Server)
     simp only [run, List.foldl_cons] at ih ⊢
     rw [ih _ (fun st' hs => h st' (List.mem_cons_of_mem _ hs))]
     cases st with
-    | claim => simp only [apply]; split <;> rfl
+    | claim | release => simp only [apply]; split <;> rfl
     | record => simp [Step.isRecord] at h
     | main => rfl
 
@@ -152,52 +160,55 @@ theorem stale_put_noop (m : Manifest) (prune : Bool) (s : Server) (k : Nat)
     (hk : k ≠ s.rev) : putAt store m prune (some k) s = s := by
   simp [putAt, claims, hk]
 
-/-- A PUT sent with the current revision, or with none, applies in full. -/
+/-- An admitted PUT applies its modeled writes and releases its claim. -/
 theorem fresh_put_applies (m : Manifest) (prune : Bool) (s : Server) (e : Option Nat)
     (he : claims s e = true) :
-    putAt store m prune e s = run store (put m prune) { s with rev := s.rev + 1 } := by
+    putAt store m prune e s =
+      apply store (.release (s.rev + 1))
+        (run store (put m prune) { s with rev := s.rev + 1, active := some (s.rev + 1) }) := by
   simp [putAt, he]
+
+/-- While the action owns the stage, every overlapping PUT writes nothing. -/
+theorem busy_put_noop (m : Manifest) (prune : Bool) (s : Server) (e : Option Nat)
+    (h : s.active.isNone = false) : putAt store m prune e s = s := by
+  simp [putAt, claims, h]
+
+/-- An older action's cleanup cannot release a newer claim. -/
+theorem stale_release_noop (s : Server) (r : Nat) (h : s.active ≠ some r) :
+    apply store (.release r) s = s := by
+  simp [apply, h]
 
 end
 
-/-! ## Without a revision: `broods deploy` and older CLIs -/
+/-! ## Exclusive claims, with and without revisions -/
 
-/-- Interleaved pruning PUTs leave a stage neither session declared: B's hooks next
-to A's agents. -/
+/-- A second deploy cannot claim while A is uploading. Only A's rows land. -/
 example :
     let mA : Manifest := [⟨.hook, 1, ⟨0, none, none⟩⟩, ⟨.agent, 1, ⟨0, none, none⟩⟩]
     let mB : Manifest := [⟨.hook, 2, ⟨0, none, none⟩⟩, ⟨.agent, 2, ⟨0, none, none⟩⟩]
-    let s := run id [.record mA false, .record mB false, .main mB true, .main mA true,
-      .record mA true, .record mB true] ⟨[], [], 0⟩
-    readAll s = [⟨.hook, 2, ⟨0, none, none⟩⟩, ⟨.agent, 1, ⟨0, none, none⟩⟩] ∧
-      diff mA (readAll s) ≠ [] ∧ diff mB (readAll s) ≠ [] := by
+    let claimed := apply id (.claim none) ⟨[], [], 0, none⟩
+    putAt id mB true none claimed = claimed ∧
+      readAll (run id (put mA true ++ [.release 1]) claimed) = mA := by
   decide
 
-/-- Without prune a stale session still removes another's resource: B, which never
-saw A's agent 1, declares agent 2 with the same content, and the server renames
-agent 1 away. -/
+/-- Reading the in-flight revision does not admit a second writer either. -/
 example :
-    let s := run id (put [⟨.agent, 1, ⟨7, none, none⟩⟩] false ++
-      put [⟨.agent, 2, ⟨7, none, none⟩⟩] false) ⟨[], [], 0⟩
-    readAll s = [⟨.agent, 2, ⟨7, none, none⟩⟩] := by
+    let claimed := apply id (.claim (some 0)) ⟨[], [], 0, none⟩
+    putAt id [⟨.agent, 2, ⟨7, none, none⟩⟩] false (some 1) claimed = claimed := by
   decide
 
-/-! ## With the revision `broods dev` read -/
-
-/-- The stale session is refused: B read revision 0, A synced first, and agent 1
-stays. -/
+/-- After A finishes, a stale dev revision is refused without renaming A's agent. -/
 example :
-    let a := putAt id [⟨.agent, 1, ⟨7, none, none⟩⟩] false (some 0) ⟨[], [], 0⟩
+    let a := putAt id [⟨.agent, 1, ⟨7, none, none⟩⟩] false (some 0) ⟨[], [], 0, none⟩
     let b := putAt id [⟨.agent, 2, ⟨7, none, none⟩⟩] false (some 0) a
-    readAll b = [⟨.agent, 1, ⟨7, none, none⟩⟩] := by
+    readAll b = [⟨.agent, 1, ⟨7, none, none⟩⟩] ∧ b.active = none := by
   decide
 
-/-- Two sessions that read the same revision: the second claim is refused, its PUT
-writes nothing, and the stage is exactly A's. -/
+/-- A later deploy can replace A once its claim has been released. -/
 example :
-    let mA : Manifest := [⟨.hook, 1, ⟨0, none, none⟩⟩, ⟨.agent, 1, ⟨0, none, none⟩⟩]
-    let s := run id ([.claim (some 0), .claim (some 0)] ++ put mA true) ⟨[], [], 0⟩
-    s = run id (.claim (some 0) :: put mA true) ⟨[], [], 0⟩ ∧ diff mA (readAll s) = [] := by
+    let a := putAt id [⟨.agent, 1, ⟨7, none, none⟩⟩] true none ⟨[], [], 0, none⟩
+    let b := putAt id [⟨.agent, 2, ⟨8, none, none⟩⟩] true none a
+    readAll b = [⟨.agent, 2, ⟨8, none, none⟩⟩] ∧ b.active = none := by
   decide
 
 end Broods.SyncConcurrency

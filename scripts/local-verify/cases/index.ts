@@ -1,5 +1,6 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
+import { manifestSync } from "./manifest-sync.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { sdkClient } from "./sdk-client.ts";
@@ -14,6 +15,7 @@ export const verifyCases: readonly VerifyCase[] = [
   queuedFollowup,
   machineSandbox,
   trailingSlash,
+  manifestSync,
   workToolWebhooks,
   webhookHandshake,
 ];

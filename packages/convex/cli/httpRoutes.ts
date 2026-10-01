@@ -534,138 +534,145 @@ async function handleManifestSync(
       revision: body.revision,
     },
   );
-  // Skills and hooks are account-wide, so the org secret and a login token
-  // may move a name between stages (dev then deploy). Only a stage-scoped
-  // deploy key is fenced to the names another stage recorded, read before this
-  // sync records anything.
-  const fenced = "deployKeyId" in auth;
-  const foreign =
-    fenced &&
-    originalManifest.resources.some((entry) =>
-      isExternalResourceKind(entry.kind),
-    )
-      ? (await externalOwnership(ctx, accountId, scope.stageId)).foreign
-      : new Set<string>();
-  // The manifest's rules run before the first write, so a manifest they
-  // refuse leaves the stage's skills, hooks and MCP servers as they were.
-  const external = await prepareExternalResources(
-    ctx,
-    originalManifest,
-    foreign,
-  );
-  await validateManifest(ctx, scope, originalManifest);
-  const externalIds = await syncExternalResources(
-    ctx,
-    accountId,
-    scope,
-    external,
-  );
-  const recordExternal = (pruneRecords: boolean): Promise<null> =>
-    ctx.runMutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
-      secretHash: secretHash,
-      project: route.project,
-      stage: route.stage,
-      resources: originalManifest.resources as never,
-      ids: externalIds,
-      prune: pruneRecords,
-    });
-  await recordExternal(false);
-  const syncManifest = rewriteExternalResourceRefs(
-    originalManifest,
-    externalIds,
-  );
-  const result = await ctx.runMutation(
-    internal.cli.sync.syncManifestBySecretHash,
-    {
-      secretHash: secretHash,
-      manifest: syncManifest as never,
-      prune: prune,
-    },
-  );
-  let reservedResources: string[] = [];
-  if (prune) {
-    // Only once the manifest synced, so a rejected deploy removes nothing, and
-    // with ownership read now, so a name another stage recorded meanwhile is
-    // not this stage's to remove.
-    const { owned } = await externalOwnership(ctx, accountId, scope.stageId);
-    await pruneExternalResources(ctx, {
-      accountId: accountId,
-      stageId: scope.stageId,
-      manifest: originalManifest,
-      owned: owned,
-      secretHash: secretHash,
-    });
-    await recordExternal(true);
-    await terminateDoomedInstances(ctx, auth, route, {
-      resources: syncManifest.resources,
-    });
-    reservedResources = await ctx.runMutation(
-      internal.cli.sync.pruneSandboxesBySecretHash,
+  try {
+    // Skills and hooks are account-wide, so the org secret and a login token
+    // may move a name between stages (dev then deploy). Only a stage-scoped
+    // deploy key is fenced to the names another stage recorded, read before this
+    // sync records anything.
+    const fenced = "deployKeyId" in auth;
+    const foreign =
+      fenced &&
+      originalManifest.resources.some((entry) =>
+        isExternalResourceKind(entry.kind),
+      )
+        ? (await externalOwnership(ctx, accountId, scope.stageId)).foreign
+        : new Set<string>();
+    // The manifest's rules run before the first write, so a manifest they
+    // refuse leaves the stage's skills, hooks and MCP servers as they were.
+    const external = await prepareExternalResources(
+      ctx,
+      originalManifest,
+      foreign,
+    );
+    await validateManifest(ctx, scope, originalManifest);
+    const externalIds = await syncExternalResources(
+      ctx,
+      accountId,
+      scope,
+      external,
+    );
+    const recordExternal = (pruneRecords: boolean): Promise<null> =>
+      ctx.runMutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
+        secretHash: secretHash,
+        project: route.project,
+        stage: route.stage,
+        resources: originalManifest.resources as never,
+        ids: externalIds,
+        prune: pruneRecords,
+      });
+    await recordExternal(false);
+    const syncManifest = rewriteExternalResourceRefs(
+      originalManifest,
+      externalIds,
+    );
+    const result = await ctx.runMutation(
+      internal.cli.sync.syncManifestBySecretHash,
       {
         secretHash: secretHash,
-        manifest: syncManifest,
+        manifest: syncManifest as never,
+        prune: prune,
       },
     );
-  }
-  await syncSkillNodeFiles(ctx, {
-    secretHash: secretHash,
-    project: route.project,
-    stage: route.stage,
-    manifest: originalManifest,
-  });
-
-  const cronIds = await syncCrons(
-    ctx,
-    accountId,
-    syncManifest,
-    result.ids,
-    prune,
-  );
-  const refreshed = await ctx.runQuery(
-    internal.cli.sync.getManifestBySecretHash,
-    {
+    let reservedResources: string[] = [];
+    if (prune) {
+      // Only once the manifest synced, so pre-sync rejection removes nothing, and
+      // with ownership read now, so a name another stage recorded meanwhile is
+      // not this stage's to remove.
+      const { owned } = await externalOwnership(ctx, accountId, scope.stageId);
+      await pruneExternalResources(ctx, {
+        accountId: accountId,
+        stageId: scope.stageId,
+        manifest: originalManifest,
+        owned: owned,
+        secretHash: secretHash,
+      });
+      await recordExternal(true);
+      await terminateDoomedInstances(ctx, auth, route, {
+        resources: syncManifest.resources,
+      });
+      reservedResources = await ctx.runMutation(
+        internal.cli.sync.pruneSandboxesBySecretHash,
+        {
+          secretHash: secretHash,
+          manifest: syncManifest,
+        },
+      );
+    }
+    await syncSkillNodeFiles(ctx, {
       secretHash: secretHash,
       project: route.project,
       stage: route.stage,
-    },
-  );
+      manifest: originalManifest,
+    });
 
-  // Mint or reuse the stage's recoverable runtime API key so the CLI
-  // can write BROODS_API_KEY locally on first or later deploys.
-  const deployment = await ctx.runMutation(
-    internal.cli.sync.ensureRuntimeKeyBySecretHash,
-    {
-      secretHash: secretHash,
-      project: route.project,
-      stage: route.stage,
-      rotate: body.rotateRuntimeKey === true,
-      createdByAuthId: "cliAuthId" in auth ? auth.cliAuthId : undefined,
-      auditSync: {
-        resourceCount: originalManifest.resources.length,
-        prune: prune,
-        actorKind: fenced ? "deployKey" : "cli",
-        actorId:
-          "deployKeyId" in auth
-            ? auth.deployKeyId
-            : "cliTokenId" in auth
-              ? auth.cliTokenId
-              : accountId,
+    const cronIds = await syncCrons(
+      ctx,
+      accountId,
+      syncManifest,
+      result.ids,
+      prune,
+    );
+    const refreshed = await ctx.runQuery(
+      internal.cli.sync.getManifestBySecretHash,
+      {
+        secretHash: secretHash,
+        project: route.project,
+        stage: route.stage,
       },
-    },
-  );
+    );
 
-  // `refreshed` is re-read from the DB and carries no warnings, so merge
-  // the sync mutation's warnings back in either way.
-  return json({
-    ...(refreshed ?? {
-      ...result,
-      ids: { ...result.ids, ...externalIds, crons: cronIds },
-    }),
-    warnings: { ...result.warnings, reservedResources: reservedResources },
-    deployment: deployment,
-    // This sync's own revision: a later sync may already have claimed the next.
-    revision: scope.revision,
-  });
+    // Mint or reuse the stage's recoverable runtime API key so the CLI
+    // can write BROODS_API_KEY locally on first or later deploys.
+    const deployment = await ctx.runMutation(
+      internal.cli.sync.ensureRuntimeKeyBySecretHash,
+      {
+        secretHash: secretHash,
+        project: route.project,
+        stage: route.stage,
+        rotate: body.rotateRuntimeKey === true,
+        createdByAuthId: "cliAuthId" in auth ? auth.cliAuthId : undefined,
+        auditSync: {
+          resourceCount: originalManifest.resources.length,
+          prune: prune,
+          actorKind: fenced ? "deployKey" : "cli",
+          actorId:
+            "deployKeyId" in auth
+              ? auth.deployKeyId
+              : "cliTokenId" in auth
+                ? auth.cliTokenId
+                : accountId,
+        },
+      },
+    );
+
+    // `refreshed` is re-read from the DB and carries no warnings, so merge
+    // the sync mutation's warnings back in either way.
+    return json({
+      ...(refreshed ?? {
+        ...result,
+        ids: { ...result.ids, ...externalIds, crons: cronIds },
+      }),
+      warnings: { ...result.warnings, reservedResources: reservedResources },
+      deployment: deployment,
+      // The claim stays held until the response is built.
+      revision: scope.revision,
+    });
+  } finally {
+    await ctx.runMutation(internal.cli.sync.finishManifestSync, {
+      stageId: scope.stageId,
+      revision: scope.revision,
+    });
+  }
 }
 
 function manifestMatchesRoute(

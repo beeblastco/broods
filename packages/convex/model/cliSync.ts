@@ -19,6 +19,9 @@ import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 import { ClientError } from "./clientError";
 
+// Exceeds Convex's 30-minute HTTP action limit plus a 10-minute child Node action.
+const MANIFEST_SYNC_TIMEOUT_MS = 45 * 60_000;
+
 /**
  * Resource kinds owned by the account service and snapshotted per stage in
  * `cliExternalResources`. The one list behind every "is this external" filter
@@ -166,7 +169,7 @@ export async function authIdForAccount(
 /**
  * Claims the stage's next manifest revision for a sync. A sync that sends the
  * revision it read is refused when another sync claimed one since; one that
- * sends none (`broods deploy`, an older CLI) always claims.
+ * sends none claims only after the previous sync has finished.
  * @returns the revision this sync writes
  */
 export async function claimManifestRevision(
@@ -176,6 +179,13 @@ export async function claimManifestRevision(
 ): Promise<number> {
   const row = await stageSyncRow(ctx, stageId);
   const current = row?.revision ?? 0;
+  const now = Date.now();
+  if (row?.activeUntil !== undefined && row.activeUntil > now) {
+    throw new ClientError(
+      "Another manifest sync is still running for this stage. Retry after it finishes.",
+      "manifest_conflict",
+    );
+  }
   if (expected !== undefined && expected !== current) {
     throw new ClientError(
       `Stage changed since your last sync (revision ${current}, you sent ${expected}). Re-sync to see the new diff.`,
@@ -183,8 +193,15 @@ export async function claimManifestRevision(
     );
   }
   const next = current + 1;
-  if (row) await ctx.db.patch(row._id, { revision: next });
-  else await ctx.db.insert("stageSyncs", { stageId: stageId, revision: next });
+  const activeUntil = now + MANIFEST_SYNC_TIMEOUT_MS;
+  if (row)
+    await ctx.db.patch(row._id, { revision: next, activeUntil: activeUntil });
+  else
+    await ctx.db.insert("stageSyncs", {
+      stageId: stageId,
+      revision: next,
+      activeUntil: activeUntil,
+    });
 
   return next;
 }
@@ -413,6 +430,17 @@ export function renameComparableResource(
     description: description,
     config: config,
   };
+}
+
+/** Releases only this sync's claim, including when validation or an upload failed. */
+export async function releaseManifestSync(
+  ctx: MutationCtx,
+  stageId: Id<"stages">,
+  revision: number,
+): Promise<void> {
+  const row = await stageSyncRow(ctx, stageId);
+  if (row?.revision === revision)
+    await ctx.db.patch(row._id, { activeUntil: undefined });
 }
 
 export function resourceName(value: string): string {

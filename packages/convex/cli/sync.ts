@@ -35,6 +35,7 @@ import {
   isExternalResourceKind,
   manifestRevision,
   resourceName,
+  releaseManifestSync,
   snapshotExternalConfig,
   type ExternalResourceKind,
 } from "../model/cliSync";
@@ -397,6 +398,17 @@ export const ensureScopeBySecretHash = internalMutation({
       stageId: stageDoc._id,
       revision: revision,
     };
+  },
+});
+
+/** Ends the manifest action's claim; an older action cannot release a newer sync. */
+export const finishManifestSync = internalMutation({
+  args: { stageId: v.id("stages"), revision: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await releaseManifestSync(ctx, args.stageId, args.revision);
+
+    return null;
   },
 });
 

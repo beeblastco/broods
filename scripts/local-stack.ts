@@ -29,6 +29,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { Doc } from "../packages/convex/_generated/dataModel.ts";
 
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
@@ -318,8 +319,8 @@ async function perf(record: boolean): Promise<void> {
 }
 
 /**
- * End-to-end check: mint an account with the admin secret, then run every
- * case in scripts/local-verify/cases against it through the gateway. Without
+ * End-to-end check: verify admin account creation, then run every case
+ * through the gateway using an org-backed local fixture. Without
  * DEEPSEEK_API_KEY runs fail at the provider call; reaching that failure still
  * proves routing, auth, config encrypt/decrypt, and Convex round-trips.
  */
@@ -349,8 +350,12 @@ async function verify(): Promise<void> {
       assertStep("gateway healthz", health === 200, `status ${health}`);
     });
     const runId = Date.now().toString(36);
-    const accountSecret = await measure("create account", (): Promise<string> =>
+    await measure("create account", (): Promise<string> =>
       createAccount(gatewayUrl, state.secrets.adminAccount, `smoke-${runId}`),
+    );
+    const accountSecret = await measure(
+      "create manifest account",
+      async (): Promise<string> => createManifestAccount(state, runId),
     );
     const context = verifyContext(state, accountSecret, runId, measure);
     for (const verifyCase of verifyCases) {
@@ -423,6 +428,45 @@ function convexSourceHash(): string {
   return hash.digest("hex");
 }
 
+/** Creates a local org-backed fixture; admin API accounts have synthetic org bindings. */
+function createManifestAccount(state: InstanceState, runId: string): string {
+  const slug = `smoke-${runId}`;
+  const path = join(instanceDir(state.instanceId), "verify-org.jsonl");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      name: slug,
+      slug: slug,
+      ownerAuthId: `local-${runId}`,
+      plan: "free",
+      createdAt: Date.now(),
+    }) + "\n",
+  );
+  runConvexCli(state, ["import", "--append", "--table", "orgs", path]);
+  const orgs: Doc<"orgs">[] = JSON.parse(
+    runConvexCli(state, ["data", "orgs", "--format", "json"], true),
+  );
+  const org = orgs.find((entry): boolean => entry.slug === slug);
+  if (!org) throw new Error("Verify org was not found in the local backend");
+  const secret = `fp_${randomBytes(32).toString("base64url")}`;
+  const secretHash = createHash("sha256").update(secret).digest("hex");
+  runConvexCli(
+    state,
+    [
+      "run",
+      "account/accounts:create",
+      JSON.stringify({
+        orgId: org._id,
+        username: slug,
+        secretHash: secretHash,
+      }),
+    ],
+    true,
+  );
+
+  return secret;
+}
+
 // Maps host.docker.internal so Convex reaches core on Linux; Docker Desktop
 // resolves it on its own.
 function ensureConvexContainer(state: InstanceState): void {
@@ -482,11 +526,15 @@ function generateConvexAdminKey(state: InstanceState): string {
 
 // CONVEX_DEPLOYMENT is empty, not unset, so a cloud deployment a `convex dev`
 // login left in packages/convex/.env.local cannot win over the self-hosted one.
-function runConvexCli(state: InstanceState, args: string[]): void {
-  execFileSync("bunx", ["convex", ...args], {
+function runConvexCli(
+  state: InstanceState,
+  args: string[],
+  capture = false,
+): string {
+  const output = execFileSync("bunx", ["convex", ...args], {
     cwd: join(repoRoot, "packages", "convex"),
     encoding: "utf8",
-    stdio: "inherit",
+    stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
     env: {
       ...process.env,
       CONVEX_DEPLOY_KEY: undefined,
@@ -495,6 +543,8 @@ function runConvexCli(state: InstanceState, args: string[]): void {
       CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${state.ports.convexApi}`,
     },
   });
+
+  return output ?? "";
 }
 
 // --- host processes -----------------------------------------------------
