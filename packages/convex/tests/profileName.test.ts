@@ -43,8 +43,20 @@ describe("syncProfile", () => {
   });
 });
 
-describe("user.updated webhook", () => {
-  test("keeps a name saved through Account settings", async () => {
+describe("WorkOS user webhooks", () => {
+  test("user.created for an existing row keeps a saved name", async () => {
+    const t = profileNameTest();
+    const userId = await seedUser(t, "Chosen Name");
+
+    await t.mutation(internal.auth.authKitEvent, {
+      event: "user.created",
+      data: workosUser(),
+    });
+
+    expect((await readUser(t, userId))?.name).toBe("Chosen Name");
+  });
+
+  test("user.updated keeps a saved name", async () => {
     const t = profileNameTest();
     const userId = await seedUser(t, "Chosen Name");
 
@@ -56,7 +68,7 @@ describe("user.updated webhook", () => {
     expect((await readUser(t, userId))?.name).toBe("Chosen Name");
   });
 
-  test("replaces the email fallback with the WorkOS name", async () => {
+  test("user.updated replaces the email fallback with the WorkOS name", async () => {
     const t = profileNameTest();
     const userId = await seedUser(t, "user@example.com");
 
@@ -68,7 +80,7 @@ describe("user.updated webhook", () => {
     expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
   });
 
-  test("replaces the old email fallback when the email changes", async () => {
+  test("user.updated replaces the old email fallback when the email changes", async () => {
     const t = profileNameTest();
     const userId = await seedUser(t, "user@example.com");
 

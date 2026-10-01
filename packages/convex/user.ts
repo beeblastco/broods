@@ -129,8 +129,8 @@ export const updateProfile = mutation({
 /**
  * Refreshes the caller's avatarUrl from the WorkOS client session, and fills
  * their name only while it is still the email fallback `deriveName` writes
- * when the webhook payload had no first or last name. A name saved through
- * Account settings is never overwritten.
+ * when the webhook payload had no first or last name, so a name saved through
+ * Account settings stays.
  */
 export const syncProfile = mutation({
   args: {
