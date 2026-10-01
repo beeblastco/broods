@@ -459,7 +459,8 @@ describe("queuedCommand", () => {
 
 describe("compactConversation via /compact command", () => {
   it("compacts and reports the summary", async () => {
-    const channel = createMockChannelActions();
+    const sendText = mock(async (_text: string) => {});
+    const channel = createMockChannelActions({ sendText: sendText });
     const compact = mock(async (_instructions: string) => 12);
 
     const reply = await executeCommand(
@@ -473,7 +474,7 @@ describe("compactConversation via /compact command", () => {
 
     expect(compact).toHaveBeenCalledWith("keep the deploy decisions");
     expect(reply).toBe("Context compacted. 12 message(s) summarized.");
-    expect(channel.sendText).toHaveBeenCalledWith(reply!);
+    expect(sendText).toHaveBeenCalledWith(reply!);
   });
 
   it("reports when there is nothing to compact", async () => {

@@ -3132,13 +3132,6 @@ async function runParentContinuationLoop(options: {
 }
 
 /**
- * Bridges one completed parent model pass to the next continuation pass: waits
- * for outstanding in-process work, heartbeats while waiting, and injects
- * parent-visible completions plus timeout notices near the request or worker
- * deadline. Detached sandbox background jobs add no in-memory pending work, so
- * waiting here only holds the caller for subagents and async tools.
- */
-/**
  * A queued command on a sync HTTP or WebSocket run, in place of its model
  * turn: replies through `send`, settles the envelope, and hands the lease on.
  * Never throws; a failure settles the run as failed.
@@ -3210,6 +3203,13 @@ async function runQueuedCommand(
   });
 }
 
+/**
+ * Bridges one completed parent model pass to the next continuation pass: waits
+ * for outstanding in-process work, heartbeats while waiting, and injects
+ * parent-visible completions plus timeout notices near the request or worker
+ * deadline. Detached sandbox background jobs add no in-memory pending work, so
+ * waiting here only holds the caller for subagents and async tools.
+ */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
   asyncToolCoordinator: AsyncToolCoordinator,
@@ -3315,27 +3315,31 @@ function commandSseResponse(
   event: DirectInboundEvent,
   command: QueuedCommand,
 ): Response {
-  const send = (
-    controller: ReadableStreamDefaultController<Uint8Array>,
-    chunk: TextStreamPart<ToolSet> | { type: "error"; error: string },
-  ): void => {
-    controller.enqueue(
-      textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-    );
-  };
-
   return new Response(
     new ReadableStream({
       start: async function (controller): Promise<void> {
+        // A client that left takes nothing more; the command already ran, so
+        // its outcome stays the run's own.
+        const send = (
+          chunk: TextStreamPart<ToolSet> | { type: "error"; error: string },
+        ): void => {
+          try {
+            controller.enqueue(
+              textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+            );
+          } catch {}
+        };
         const outcome = await runCommandTurn({
           event: event,
           command: command,
-          send: async (chunk): Promise<void> => send(controller, chunk),
+          send: async (chunk): Promise<void> => send(chunk),
         });
         if (outcome.status === "failed") {
-          send(controller, { type: "error", error: outcome.error });
+          send({ type: "error", error: outcome.error });
         }
-        controller.close();
+        try {
+          controller.close();
+        } catch {}
       },
     }),
     { status: 200, headers: { "content-type": "text/event-stream" } },

@@ -688,29 +688,37 @@ describe("channel senders", (): void => {
         events: [{ role: "user", content: "/compact keep the deploy" }],
       };
     }) as never;
+    const compacted: string[] = [];
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
-    ).mockResolvedValue(4);
+    ).mockImplementation(async (instructions: string): Promise<number> => {
+      compacted.push(instructions);
+
+      return 4;
+    });
     const replies: string[] = [];
     const message = aliceMessage();
 
-    await handleChannelRequest({
-      ...message,
-      channel: {
-        ...message.channel,
-        sendText: async (text: string): Promise<void> => {
-          replies.push(text);
+    try {
+      await handleChannelRequest({
+        ...message,
+        channel: {
+          ...message.channel,
+          sendText: async (text: string): Promise<void> => {
+            replies.push(text);
+          },
         },
-      },
-    });
-    await drainInProcessWorkers();
+      });
+      await drainInProcessWorkers();
+    } finally {
+      compact.mockRestore();
+    }
 
     // Only alice's turn reached the history; the command never did.
     expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }]);
-    expect(compact).toHaveBeenCalledWith("keep the deploy");
+    expect(compacted).toEqual(["keep the deploy"]);
     expect(replies.at(-1)).toBe("Context compacted. 4 message(s) summarized.");
-    compact.mockRestore();
   });
 
   it("keeps the sender on an envelope recovered for another worker", async (): Promise<void> => {
