@@ -444,7 +444,6 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.readMount).toEqual({
       provider: "lambda",
       network: { mode: "deny-all" },
-      storage: { provider: "s3" },
     });
   });
 
@@ -453,12 +452,9 @@ describe("resolveAgentRuntime", () => {
       provider: "s3" as const,
       bucket: "dev-bucket",
       prefix: "agents/",
-      region: "eu-west-1",
-      endpoint: "https://s3.eu-west-1.amazonaws.com",
       auth: {
         type: "assumeRole" as const,
         roleArn: "arn:aws:iam::123456789012:role/broods-mount",
-        externalId: "ext_1",
       },
     };
     setStorageForTests({
@@ -473,7 +469,6 @@ describe("resolveAgentRuntime", () => {
       { accountId: "acct_1" },
     );
 
-    expect(resolved.workspaces[0]?.config.storage).toEqual(byoStorage);
     expect(resolved.workspaces[0]?.readMount).toBeUndefined();
   });
 

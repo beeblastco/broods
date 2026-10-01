@@ -56,7 +56,7 @@ export interface ResolvedWorkspace {
   // ref did not explicitly opt out with `sandbox: null`. read/glob use it to read
   // through the mount so they see committed writes immediately; undefined => read S3
   // directly (the `sandbox: null` opt-out, which skips Lambda/VPC but lags mount writes).
-  readMount?: WorkspaceSandboxConfig;
+  readMount?: SandboxConfig;
 }
 
 // A sandbox from `config.sandboxes`. `name` is the sandbox record name the model
@@ -296,17 +296,11 @@ export async function resolveAgentRuntime(
       // opt-out ("no sandbox, no compute") also skips the mount: read straight from
       // S3 instead. A bring-your-own bucket reads straight from S3 too: the deny-all
       // connector only routes to the managed bucket.
-      const readMount: WorkspaceSandboxConfig | undefined =
+      const readMount: SandboxConfig | undefined =
         !effectiveSandbox &&
         ref.sandbox !== null &&
         !record.config.storage.bucket
-          ? {
-              provider: "lambda",
-              network: { mode: "deny-all" },
-              ...(record.config.storage
-                ? { storage: record.config.storage }
-                : {}),
-            }
+          ? { provider: "lambda", network: { mode: "deny-all" } }
           : undefined;
       workspaces.push({
         name: ref.name,
