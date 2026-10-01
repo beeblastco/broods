@@ -39,7 +39,7 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
-  // A hidden sidebar shown over the page while the pointer is near it.
+  // A collapsed icon rail opened over the page while the pointer is on it.
   peek: boolean;
   setPeek: (peek: boolean) => void;
 };
@@ -164,10 +164,9 @@ function Sidebar({
   const { isMobile, state, openMobile, setOpenMobile, peek, setPeek } =
     useSidebar();
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const offcanvas = state === "collapsed" && collapsible === "offcanvas";
-  const peeking = peek && offcanvas;
-  // Off canvas and not peeking: out of view, so out of the tab order too.
-  const hidden = offcanvas && !peek;
+  const peeking = peek && state === "collapsed" && collapsible === "icon";
+  // Off canvas: out of view, so out of the tab order too.
+  const hidden = state === "collapsed" && collapsible === "offcanvas";
 
   // Inert drops focus to the page, so focus inside hands over to the trigger
   // that brings the sidebar back. Before paint, while focus is still inside.
@@ -178,25 +177,46 @@ function Sidebar({
     document.querySelector<HTMLElement>('[data-sidebar="trigger"]')?.focus();
   }, [hidden]);
 
-  // Hide again once the pointer moves past the sidebar's width, unless a menu
-  // opened from inside (the account menu) is still up. By width, not by what
-  // is under the pointer, so the slide-in and the edge strip never count as
-  // leaving.
+  // Close again once the pointer is past the sidebar's width or out of the
+  // window, unless a menu opened from inside (the account menu) is still up.
+  // Measured only once the width has finished growing, and again when it does,
+  // so a pointer that outruns the opening edge never counts as leaving.
   React.useEffect(() => {
-    if (!peeking) return;
-    const onMove = (event: PointerEvent): void => {
-      const container = containerRef.current;
-      if (!container) return;
+    const container = containerRef.current;
+    if (!peeking || !container) return;
+    // Null until the first move; then the pointer's x, or null once it is out.
+    let pointerX: number | null | undefined;
+    const check = (): void => {
+      if (pointerX === undefined || container.getAnimations().length > 0) {
+        return;
+      }
       const inside =
-        side === "left"
-          ? event.clientX <= container.offsetWidth
-          : event.clientX >= window.innerWidth - container.offsetWidth;
+        pointerX !== null &&
+        (side === "left"
+          ? pointerX <= container.offsetWidth
+          : pointerX >= window.innerWidth - container.offsetWidth);
       if (inside || container.querySelector("[data-popup-open]")) return;
       setPeek(false);
     };
+    const onMove = (event: PointerEvent): void => {
+      pointerX = event.clientX;
+      check();
+    };
+    // No element to go to: the pointer left the window, with no move after.
+    const onOut = (event: PointerEvent): void => {
+      if (event.relatedTarget) return;
+      pointerX = null;
+      check();
+    };
     document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerout", onOut);
+    container.addEventListener("transitionend", check);
 
-    return () => document.removeEventListener("pointermove", onMove);
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerout", onOut);
+      container.removeEventListener("transitionend", check);
+    };
   }, [peeking, setPeek, side]);
 
   if (collapsible === "none") {
@@ -256,28 +276,25 @@ function Sidebar({
           "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
-          peeking && "w-0",
+          // Peeking draws over the page, so the gap keeps the rail's width.
+          peeking && "w-(--sidebar-width-icon)",
           variant === "floating" || variant === "inset"
             ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
         )}
       />
-      {hidden && (
-        <div
-          data-slot="sidebar-reveal"
-          aria-hidden="true"
-          className={cn(
-            "fixed inset-y-0 z-20 w-3",
-            side === "left" ? "left-0" : "right-0",
-          )}
-          onPointerEnter={() => setPeek(true)}
-        />
-      )}
       <div
         ref={containerRef}
         inert={hidden}
         data-slot="sidebar-container"
         data-side={side}
+        // A collapsed icon rail opens over the page once a mouse or pen is on
+        // it. Not on touch: no pointer moves away to close it again.
+        onPointerEnter={(event) => {
+          if (state === "collapsed" && event.pointerType !== "touch") {
+            setPeek(true);
+          }
+        }}
         className={cn(
           "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
           // Adjust the padding for floating and inset variants.

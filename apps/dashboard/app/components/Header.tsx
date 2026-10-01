@@ -25,28 +25,30 @@ export function Header(): React.JSX.Element {
         data-sidebar="trigger"
         onClick={toggleSidebar}
         draggable={false}
-        className="cursor-pointer transition-opacity hover:opacity-80"
+        className="shrink-0 cursor-pointer transition-opacity hover:opacity-80"
       >
         <BroodsLogo className="h-6 w-auto" />
       </button>
 
-      <div className="h-4 w-px bg-border" />
-      <OrgSwitcher />
-      {role === "member" && (
-        <span
-          className="flex select-none items-center gap-1 text-2xs text-warning/90"
-          title="Members read everything and change nothing. Ask an org admin for changes."
-        >
-          <Lock className="size-3" />
-          read-only
-        </span>
-      )}
+      {/* Scrolls sideways inside the header when a phone is too narrow for
+          every switcher, so the page itself never does. */}
+      <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-3 overflow-x-auto">
+        <div className="h-4 w-px shrink-0 bg-border" />
+        <OrgSwitcher />
+        {role === "member" && (
+          <span
+            className="flex shrink-0 select-none items-center gap-1 text-2xs text-warning/90"
+            title="Members read everything and change nothing. Ask an org admin for changes."
+          >
+            <Lock className="size-3" />
+            read-only
+          </span>
+        )}
 
-      <ProjectHeaderLeft />
-
-      <div className="ml-auto">
-        <CommandMenu />
+        <ProjectHeaderLeft />
       </div>
+
+      <CommandMenu />
     </header>
   );
 }

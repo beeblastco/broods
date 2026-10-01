@@ -3,8 +3,8 @@
 /**
  * The signed-in sidebar, under the header: the current scope's sections, the
  * open section's tabs, and the account at the foot. Inside a project it walks
- * the project's sections, everywhere else the account's. Hidden, it slides
- * back in over the page while the pointer is at the left edge.
+ * the project's sections, everywhere else the account's. Collapsed, it is an
+ * icon rail that opens over the page while the pointer is on it.
  */
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import {
@@ -78,7 +78,7 @@ export function AppSidebar(): React.JSX.Element {
   }, [pathname, searchParams, setOpenMobile]);
 
   return (
-    <Sidebar className="top-(--header-height) h-auto">
+    <Sidebar collapsible="icon" className="top-(--header-height) h-auto">
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>

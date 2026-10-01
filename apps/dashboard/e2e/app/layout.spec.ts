@@ -1,6 +1,7 @@
 /**
- * The signed-in shell at a laptop viewport: header and sidebar fit with no
- * sideways scroll on every project page, with the sidebar pinned and hidden.
+ * The signed-in shell at laptop, tablet and phone viewports: header and
+ * sidebar fit with no sideways scroll on every project page, with the sidebar
+ * pinned and collapsed.
  * The header once ran 127px past 1280, cutting off the last nav links and the
  * avatar and scrolling the page on every hover.
  */
@@ -14,9 +15,12 @@ import {
 } from "../lib/session";
 
 test.skip(!hasProbe(), MISSING_PROBE);
+const RAIL_WIDTH = 48;
+const SIDEBAR_WIDTH = 256;
+
 test.use({ viewport: { width: 1280, height: 800 } });
 
-test("every project page fits 1280 wide, sidebar pinned and hidden", async ({
+test("every project page fits 1280 wide, sidebar pinned and collapsed", async ({
   page,
 }) => {
   const projectId = readProjectId();
@@ -33,8 +37,30 @@ test("every project page fits 1280 wide, sidebar pinned and hidden", async ({
 
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
-  expect(await horizontalOverflow(page), "hidden").toBe(0);
+  expect(await horizontalOverflow(page), "collapsed").toBe(0);
 });
+
+// A phone gets the sidebar as a sheet and a tablet the icon rail; the header's
+// switchers once ran 500px past a phone and 107px past a tablet.
+for (const viewport of [
+  { width: 375, height: 812 },
+  { width: 768, height: 1024 },
+]) {
+  test(`every project page fits ${viewport.width} wide`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const projectId = readProjectId();
+
+    for (const item of NAV_ITEMS) {
+      await page.goto(`/${projectId}${item.segment}`);
+      await expect(
+        item.segment === ""
+          ? page.locator(CANVAS_READY)
+          : page.getByRole("heading", { level: 1 }),
+      ).toBeAttached();
+      expect(await horizontalOverflow(page), item.label).toBe(0);
+    }
+  });
+}
 
 async function horizontalOverflow(page: Page): Promise<number> {
   return page.evaluate(
@@ -44,40 +70,36 @@ async function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
-test("a hidden sidebar peeks at the left edge and stays hidden across a reload", async ({
+test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and stays collapsed across a reload", async ({
   page,
 }) => {
-  await page.goto(`/${readProjectId()}/dashboard`);
+  await page.goto(`/${readProjectId()}/dashboard?tab=tracing`);
   const container = page.locator('[data-slot="sidebar-container"]');
   await expect(container).toBeInViewport();
 
-  // Off the edge first: the pointer starts at 0,0, where a hidden sidebar peeks.
   await page.mouse.move(800, 400);
-  const toggle = page.getByRole("button", { name: "Toggle sidebar" });
   const link = container.getByRole("link").first();
-  // Hiding with focus inside hands it to the toggle, not to the page, and
-  // takes the hidden links out of the tab order.
   await link.focus();
   await page.keyboard.press("ControlOrMeta+b");
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
-  await expect(container).not.toBeInViewport();
-  await expect(container).toHaveAttribute("inert", "");
-  await expect(toggle).toBeFocused();
-
-  await page.mouse.move(4, 400);
   await expect(container).toBeInViewport();
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
+  // The rail stays in the tab order, so the focused link keeps its focus.
+  await expect(container).not.toHaveAttribute("inert");
+  await expect(link).toBeFocused();
+
+  await page.mouse.move(20, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
   // The log table's sticky header and the search icon once painted over it.
   await expect.poll(() => pointsCoveringSidebar(page)).toEqual([]);
-  // A peek is the real sidebar, links and all.
-  await link.focus();
-  await expect(link).toBeFocused();
-  // Moving along the edge, where the reveal strip was, keeps it up.
-  await page.mouse.move(8, 440);
-  await expect(container).toBeInViewport();
-  // A peek ending hands focus back to the toggle too.
   await page.mouse.move(800, 400);
-  await expect(container).not.toBeInViewport();
-  await expect(toggle).toBeFocused();
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
 
   await page.reload();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
