@@ -284,30 +284,14 @@ export async function resolveAgentRuntime(
       } else {
         effectiveSandbox = sandbox;
       }
-      // The file tools need an S3 mount, and a machine has none: they would act
-      // on the daemon's own disk instead.
-      if (effectiveSandbox?.provider === "machine") {
-        throw new Error(
-          `Workspace "${ref.name}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
-        );
-      }
-      // A MicroVM network other than allow-all only routes to the managed bucket, so
-      // it can never mount a bucket the workspace names itself.
       const ownBucket = Boolean(record.config.storage?.bucket);
-      if (
-        effectiveSandbox?.provider === "lambda" &&
-        effectiveSandbox.network?.mode !== "allow-all" &&
-        ownBucket
-      ) {
-        throw new Error(
-          `Workspace "${ref.name}" uses its own bucket, which a lambda sandbox reaches only with network allow-all; set that or sandbox: null`,
-        );
-      }
+      assertSandboxReachesWorkspace(ref.name, effectiveSandbox, ownBucket);
       // Read-only workspace (no effective sandbox): default to reading through a
       // service-managed read-only Lambda mount (network denied, cheapest mount slot)
       // so reads reflect committed writes immediately. The existing `sandbox: null`
       // opt-out ("no sandbox, no compute") also skips the mount: read straight from
-      // S3 instead, and so does a workspace on its own bucket (see above).
+      // S3 instead, and so does a workspace on its own bucket (see
+      // assertSandboxReachesWorkspace).
       const readMount: SandboxConfig | undefined =
         !effectiveSandbox && ref.sandbox !== null && !ownBucket
           ? { provider: "lambda", network: { mode: "deny-all" } }
@@ -406,6 +390,30 @@ export function workspaceNamespacesForAccount(
   return workspaceIds.map((workspaceId) =>
     workspaceNamespace(accountId, workspaceId),
   );
+}
+
+// The file tools need the workspace's S3 mount. A machine has none (they would act
+// on the daemon's own disk), and a MicroVM network other than allow-all only routes
+// to the managed bucket, so it can never mount a bucket the workspace names itself.
+function assertSandboxReachesWorkspace(
+  workspaceName: string,
+  sandbox: WorkspaceSandboxConfig | undefined,
+  ownBucket: boolean,
+): void {
+  if (sandbox?.provider === "machine") {
+    throw new Error(
+      `Workspace "${workspaceName}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
+    );
+  }
+  if (
+    sandbox?.provider === "lambda" &&
+    sandbox.network?.mode !== "allow-all" &&
+    ownBucket
+  ) {
+    throw new Error(
+      `Workspace "${workspaceName}" uses its own bucket, which a lambda sandbox reaches only with network allow-all; set that or sandbox: null`,
+    );
+  }
 }
 
 // bash picks a sandbox by record name, so two records under one name would leave
