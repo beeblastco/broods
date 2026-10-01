@@ -44,7 +44,8 @@ export type WorkspaceSandboxConfig = SandboxConfig & {
 //   - the FIRST workspace in the list is the default (used when the model omits `workspace`).
 //   - `sandbox` undefined => the workspace is read-only (write/edit/grep/bash are not
 //     exposed). read/glob then run through `readMount` (a service-managed read-only
-//     Lambda mount) by default, or straight from S3 when the ref opts out with `sandbox: null`.
+//     Lambda mount) by default, or straight from S3 when the ref opts out with
+//     `sandbox: null` or the workspace brings its own bucket.
 export interface ResolvedWorkspace {
   name: string;
   workspaceId: string;
@@ -52,10 +53,10 @@ export interface ResolvedWorkspace {
   description?: string;
   config: WorkspaceConfig;
   sandbox?: WorkspaceSandboxConfig;
-  // Read-only read runner. Set when the workspace has no effective sandbox AND the
-  // ref did not explicitly opt out with `sandbox: null`. read/glob use it to read
-  // through the mount so they see committed writes immediately; undefined => read S3
-  // directly (the `sandbox: null` opt-out, which skips Lambda/VPC but lags mount writes).
+  // Read-only read runner. Set when the workspace has no effective sandbox, the ref
+  // did not opt out with `sandbox: null`, and the workspace uses the managed bucket.
+  // read/glob use it to read through the mount so they see committed writes
+  // immediately; undefined => read S3 directly (skips Lambda/VPC but lags mount writes).
   readMount?: SandboxConfig;
 }
 

@@ -42,7 +42,7 @@ The routing below dates from the earlier S3 Files mount, where a mount write too
 
 The agent always reads through the mount, so it always sees its own writes. The choice only applies to harness-side reads.
 
-Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag.
+Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag. A read-only workspace on a bring-your-own bucket always reads S3 directly, because the mount's `deny-all` network only reaches the managed bucket.
 
 One known exception exists. `Session.loadMemoryFile` reads `memory/MEMORY.md` through the S3 API at the start of each turn, so a workspace with no sandbox still serves memory. A read that lands before the agent's last edit reached the bucket is stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
 

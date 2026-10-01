@@ -425,16 +425,32 @@ describe("resolveAgentRuntime", () => {
   });
 
   it("resolves a read-only workspace (no agent sandbox, no override) without a sandbox", async () => {
+    const ownBucket = {
+      provider: "s3",
+      bucket: "dev-bucket",
+      prefix: "agents/",
+      auth: {
+        type: "assumeRole",
+        roleArn: "arn:aws:iam::123456789012:role/broods-mount",
+      },
+    };
     setStorageForTests({
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
-          id === "ws_a" ? { config: { storage: { provider: "s3" } } } : null,
+          id === "ws_a"
+            ? { config: { storage: { provider: "s3" } } }
+            : { config: { storage: ownBucket } },
       },
     } as never);
 
     const resolved = await resolveAgentRuntime(
-      { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
+      {
+        workspaces: [
+          { name: "notes", workspaceId: "ws_a" },
+          { name: "byo", workspaceId: "ws_b" },
+        ],
+      },
       { accountId: "acct_1" },
     );
 
@@ -445,31 +461,10 @@ describe("resolveAgentRuntime", () => {
       provider: "lambda",
       network: { mode: "deny-all" },
     });
-  });
-
-  it("reads a read-only bring-your-own bucket directly from S3, not the deny-all mount", async () => {
-    const byoStorage = {
-      provider: "s3" as const,
-      bucket: "dev-bucket",
-      prefix: "agents/",
-      auth: {
-        type: "assumeRole" as const,
-        roleArn: "arn:aws:iam::123456789012:role/broods-mount",
-      },
-    };
-    setStorageForTests({
-      sandboxConfigs: { getById: async () => null },
-      workspaceConfigs: {
-        getById: async () => ({ config: { storage: byoStorage } }),
-      },
-    } as never);
-
-    const resolved = await resolveAgentRuntime(
-      { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
-      { accountId: "acct_1" },
-    );
-
-    expect(resolved.workspaces[0]?.readMount).toBeUndefined();
+    // The mount's deny-all network only reaches the managed bucket, so a workspace
+    // on its own bucket reads S3 directly with its own role.
+    expect(resolved.workspaces[1]?.sandbox).toBeUndefined();
+    expect(resolved.workspaces[1]?.readMount).toBeUndefined();
   });
 
   it("reads a read-only workspace directly from S3 when the ref opts out with sandbox: null", async () => {

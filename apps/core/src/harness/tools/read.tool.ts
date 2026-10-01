@@ -2,7 +2,8 @@
  * Read tool. Reads a file from the workspace, returning numbered lines
  * (Claude-Code-style). Sandbox-backed workspaces read through the mount; a
  * read-only workspace reads through a service-managed read-only mount by default
- * (readMount), or directly from S3 when the ref opts out with `sandbox: null`.
+ * (readMount), or directly from S3 when the ref opts out with `sandbox: null` or
+ * the workspace brings its own bucket.
  * Audio is the exception: reading a voice note returns what it says.
  */
 
