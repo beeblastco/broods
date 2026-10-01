@@ -291,16 +291,25 @@ export async function resolveAgentRuntime(
           `Workspace "${ref.name}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
         );
       }
+      // A MicroVM network other than allow-all only routes to the managed bucket, so
+      // it can never mount a bucket the workspace names itself.
+      const ownBucket = Boolean(record.config.storage?.bucket);
+      if (
+        effectiveSandbox?.provider === "lambda" &&
+        effectiveSandbox.network?.mode !== "allow-all" &&
+        ownBucket
+      ) {
+        throw new Error(
+          `Workspace "${ref.name}" uses its own bucket, which a lambda sandbox reaches only with network allow-all; set that or sandbox: null`,
+        );
+      }
       // Read-only workspace (no effective sandbox): default to reading through a
       // service-managed read-only Lambda mount (network denied, cheapest mount slot)
       // so reads reflect committed writes immediately. The existing `sandbox: null`
       // opt-out ("no sandbox, no compute") also skips the mount: read straight from
-      // S3 instead. A bring-your-own bucket reads straight from S3 too: the deny-all
-      // connector only routes to the managed bucket.
+      // S3 instead, and so does a workspace on its own bucket (see above).
       const readMount: SandboxConfig | undefined =
-        !effectiveSandbox &&
-        ref.sandbox !== null &&
-        !record.config.storage?.bucket
+        !effectiveSandbox && ref.sandbox !== null && !ownBucket
           ? { provider: "lambda", network: { mode: "deny-all" } }
           : undefined;
       workspaces.push({

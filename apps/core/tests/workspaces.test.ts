@@ -10,6 +10,17 @@ import {
 } from "../src/shared/workspaces.ts";
 import { setStorageForTests } from "../src/shared/storage.ts";
 
+// A bring-your-own bucket, as workspace config validation accepts it.
+const OWN_BUCKET_STORAGE = {
+  provider: "s3",
+  bucket: "dev-bucket",
+  prefix: "agents/",
+  auth: {
+    type: "assumeRole",
+    roleArn: "arn:aws:iam::123456789012:role/broods-mount",
+  },
+};
+
 afterEach(() => {
   setStorageForTests(null);
 });
@@ -401,15 +412,22 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[1]?.readMount).toBeUndefined();
   });
 
-  it("refuses a workspace whose effective sandbox is a machine", async () => {
+  it("refuses a workspace whose effective sandbox cannot reach its storage", async () => {
     setStorageForTests({
       sandboxConfigs: {
-        getById: async () => ({
-          config: { provider: "machine", permissionMode: "edit" },
+        getById: async (_accountId: string, id: string) => ({
+          config:
+            id === "sb_mac"
+              ? { provider: "machine", permissionMode: "edit" }
+              : { provider: "lambda", network: { mode: "deny-all" } },
         }),
       },
       workspaceConfigs: {
-        getById: async () => ({ config: { storage: { provider: "s3" } } }),
+        getById: async (_accountId: string, id: string) => ({
+          config: {
+            storage: id === "ws_byo" ? OWN_BUCKET_STORAGE : { provider: "s3" },
+          },
+        }),
       },
     } as never);
 
@@ -422,25 +440,27 @@ describe("resolveAgentRuntime", () => {
         { accountId: "acct_1" },
       ),
     ).rejects.toThrow('Workspace "notes" cannot run on a machine sandbox');
+    // A deny-all MicroVM only routes to the managed bucket.
+    const ownBucketRefusal = await resolveAgentRuntime(
+      {
+        sandboxes: ["sb_vm"],
+        workspaces: [{ name: "byo", workspaceId: "ws_byo" }],
+      },
+      { accountId: "acct_1" },
+    ).catch((cause: unknown) => cause);
+    expect(String(ownBucketRefusal)).toContain(
+      'Workspace "byo" uses its own bucket',
+    );
   });
 
   it("resolves a read-only workspace (no agent sandbox, no override) without a sandbox", async () => {
-    const ownBucket = {
-      provider: "s3",
-      bucket: "dev-bucket",
-      prefix: "agents/",
-      auth: {
-        type: "assumeRole",
-        roleArn: "arn:aws:iam::123456789012:role/broods-mount",
-      },
-    };
     setStorageForTests({
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
           id === "ws_a"
             ? { config: { storage: { provider: "s3" } } }
-            : { config: { storage: ownBucket } },
+            : { config: { storage: OWN_BUCKET_STORAGE } },
       },
     } as never);
 
