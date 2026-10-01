@@ -59,6 +59,8 @@ test("a hidden sidebar peeks at the left edge and stays hidden across a reload",
 
   await page.mouse.move(4, 400);
   await expect(container).toBeInViewport();
+  // The log table's sticky header and the search icon once painted over it.
+  await expect.poll(() => pointsCoveringSidebar(page)).toEqual([]);
   // Moving along the edge, where the reveal strip was, keeps it up.
   await page.mouse.move(8, 440);
   await expect(container).toBeInViewport();
@@ -80,6 +82,23 @@ test("on a phone the sidebar sheet closes once a link moves the page", async ({
   await expect(page).toHaveURL(/scheduler/);
   await expect(sheet).toBeHidden();
 });
+
+// Heights down the sidebar's middle where something other than the sidebar is
+// the topmost element.
+async function pointsCoveringSidebar(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    const container = document.querySelector('[data-slot="sidebar-container"]');
+    if (!container) return [-1];
+    const rect = container.getBoundingClientRect();
+    const covered: number[] = [];
+    for (let y = rect.top + 4; y < rect.bottom; y += 16) {
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, y);
+      if (!hit || !container.contains(hit)) covered.push(Math.round(y));
+    }
+
+    return covered;
+  });
+}
 
 function sidebarState(page: Page): Locator {
   return page.locator('[data-slot="sidebar"]');
