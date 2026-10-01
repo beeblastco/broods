@@ -1,13 +1,12 @@
 "use client";
 
-import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
+import { DASHBOARD_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
-import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { BillingPanel } from "./components/BillingPanel";
@@ -21,16 +20,6 @@ import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
 import DashboardLoading from "./loading";
 
-const TABS = [
-  { id: "monitoring", label: "Monitoring" },
-  { id: "tracing", label: "Tracing" },
-  { id: "usage", label: "Usage" },
-  { id: "billing", label: "Billing & Plan" },
-  { id: "api-key", label: "API key" },
-] as const;
-
-type DashboardTab = (typeof TABS)[number]["id"];
-
 export default function DashboardPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
@@ -43,16 +32,8 @@ export default function DashboardPage(): React.JSX.Element {
       ? undefined
       : (projects.find((candidate) => candidate._id === projectId) ?? null);
   const { stageId: activeStageId } = useStage();
-  const activeTab = (searchParams.get("tab") as DashboardTab) || "monitoring";
-
-  // Carries the current params (e.g. ?stage=) through, so a tab link stays
-  // shareable and survives being opened in a new browser tab.
-  const tabHref = (tabId: DashboardTab): string => {
-    const next = new URLSearchParams(searchParams.toString());
-    next.set("tab", tabId);
-
-    return `/${projectId}/dashboard?${next.toString()}`;
-  };
+  const tab = pickTab(DASHBOARD_TABS, searchParams.get("tab"));
+  const activeTab = tab.id;
 
   // Source of projectSlug, stageSlug and endpointId: the observability WS and
   // the session-storage key lookup are both keyed on them.
@@ -159,8 +140,6 @@ export default function DashboardPage(): React.JSX.Element {
     );
   }
 
-  const tab = TABS.find((t) => t.id === activeTab);
-  const activeLabel = tab?.label ?? "";
   // Monitoring and tracing are dense, scroll-internally panels that should fill
   // the viewport width and height; billing stays narrow; usage keeps the chart width.
   const isObservabilityTab =
@@ -253,27 +232,6 @@ export default function DashboardPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-48 shrink-0 flex-col bg-transparent">
-        <div className="px-6 pt-9.25 pb-3">
-          <h2 className="text-xl font-semibold text-foreground">Dashboard</h2>
-        </div>
-        <nav className="flex flex-col gap-0.5 px-3">
-          {TABS.map((t) => (
-            <Button
-              key={t.id}
-              nativeButton={false}
-              render={<Link href={tabHref(t.id)} draggable={false} />}
-              variant="nav"
-              size="sm"
-              data-active={activeTab === t.id}
-              className="w-full select-none justify-start cursor-pointer"
-            >
-              {t.label}
-            </Button>
-          ))}
-        </nav>
-      </aside>
-
       {/* Content area: observability tabs own their internal scroll and fill
           the height; other tabs scroll the whole column. */}
       <div
@@ -282,20 +240,10 @@ export default function DashboardPage(): React.JSX.Element {
           isObservabilityTab ? "overflow-hidden" : "overflow-auto",
         )}
       >
-        {/* Page title, aligned with sidebar header height */}
+        <h1 className="sr-only">{tab.label}</h1>
         <div
           className={cn(
-            "px-6 pt-9.25 pb-5 mx-auto w-full shrink-0",
-            contentMaxWidth,
-          )}
-        >
-          <h2 className="text-xl font-semibold text-foreground">
-            {activeLabel}
-          </h2>
-        </div>
-        <div
-          className={cn(
-            "mx-auto w-full px-6",
+            "mx-auto w-full px-6 pt-6",
             contentMaxWidth,
             isObservabilityTab ? "flex min-h-0 flex-1 flex-col pb-6" : "pb-12",
           )}

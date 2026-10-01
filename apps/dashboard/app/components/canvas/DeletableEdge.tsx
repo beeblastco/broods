@@ -4,11 +4,14 @@ import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { EdgeHoverLine } from "@/app/components/canvas/EdgeHoverLine";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
 import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
-import { agentEdgePath, type AgentEdgeData } from "@/app/lib/canvasFrameNodes";
+import {
+  agentEdgePath,
+  stepEdgePath,
+  type AgentEdgeData,
+} from "@/app/lib/canvasFrameNodes";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
@@ -56,14 +59,13 @@ export function DeletableEdge({
         { x: targetX, y: targetY },
         data.route,
       )
-    : getSmoothStepPath({
+    : stepEdgePath({
         sourceX: sourceX,
         sourceY: sourceY,
         targetX: targetX,
         targetY: targetY,
         sourcePosition: sourcePosition,
         targetPosition: targetPosition,
-        borderRadius: 16,
       });
 
   // Code-managed edges can't be deleted here: no red delete-hover, no trash. Canvas marks

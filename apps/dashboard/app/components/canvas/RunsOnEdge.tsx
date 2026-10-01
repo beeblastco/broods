@@ -5,11 +5,14 @@ import {
   EDGE_LOCK_REASON,
   LockedEdgeBadge,
 } from "@/app/components/canvas/LockedEdgeBadge";
-import { sideEdgePath, type SideEdgeData } from "@/app/lib/canvasFrameNodes";
+import {
+  sideEdgePath,
+  stepEdgePath,
+  type SideEdgeData,
+} from "@/app/lib/canvasFrameNodes";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
@@ -42,14 +45,13 @@ export function RunsOnEdge({
         { x: targetX, y: targetY },
         data.route,
       )
-    : getSmoothStepPath({
+    : stepEdgePath({
         sourceX: sourceX,
         sourceY: sourceY,
         targetX: targetX,
         targetY: targetY,
         sourcePosition: sourcePosition,
         targetPosition: targetPosition,
-        borderRadius: 16,
       });
 
   return (

@@ -101,7 +101,7 @@ export function CommandPalette({
         className="flex h-6.5 w-56 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2 text-muted-foreground transition-colors hover:text-foreground"
       >
         <Search className="size-3.5" />
-        <span className="text-xs">Search</span>
+        <span className="text-xs">Search or ask Broods</span>
         <ShortcutKeys id="search.open" className="ml-auto" />
       </button>
 

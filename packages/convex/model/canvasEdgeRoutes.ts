@@ -24,8 +24,15 @@
 
 import type { LayoutPosition, LayoutRect } from "./canvasLayout";
 
+/**
+ * The shortest last run into a handle: an arrowhead (9px) plus a rounded
+ * corner (8px), past the few pixels a handle sits outside its box, so the
+ * arrow lies straight instead of bending round the corner into the node.
+ */
+export const ARROW_RUN = 24;
+
 /** Above a target's top, or below the boxes a side edge runs under, the first lane. */
-const APPROACH_INSET = 12;
+const APPROACH_INSET = ARROW_RUN;
 
 /** How far past its ends one agent's bus keeps other agents' buses off its lane. */
 const BUS_END_GAP = 24;
@@ -40,7 +47,7 @@ const BUS_SPACING = 16;
 const FAN_INSET = 16;
 
 /** Between a box's side and the gutter lane nearest it. */
-const GUTTER_INSET = 8;
+const GUTTER_INSET = ARROW_RUN;
 
 /** Distance between two parallel runs. */
 export const LANE_SPACING = 8;
