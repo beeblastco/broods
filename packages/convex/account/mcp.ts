@@ -40,6 +40,7 @@ export const create = internalMutation({
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
+    bundleBytes: v.optional(v.number()),
     headers: v.optional(v.record(v.string(), v.string())),
     oauth: mcpFields.oauth,
     allowedTools: v.optional(v.array(v.string())),
@@ -79,6 +80,7 @@ export const create = internalMutation({
     assertMcpRow({
       transport: transport,
       runtime: args.runtime,
+      bundleBytes: args.bundleBytes,
       url: args.url,
       sandbox: args.sandbox,
       headers: args.headers,
@@ -99,6 +101,7 @@ export const create = internalMutation({
       sandbox: args.sandbox,
       bundleStorageKey: args.bundleStorageKey,
       sha256: args.sha256,
+      bundleBytes: args.bundleBytes,
       headers: args.headers,
       oauth: args.oauth,
       allowedTools: args.allowedTools,
@@ -252,6 +255,7 @@ export const update = internalMutation({
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
+    bundleBytes: v.optional(v.number()),
     headers: v.optional(v.record(v.string(), v.string())),
     oauth: mcpFields.oauth,
     allowedTools: v.optional(v.array(v.string())),
@@ -286,6 +290,21 @@ export const update = internalMutation({
   },
 });
 
+/**
+ * A new bundle brings its own size, or none for a storage-id upload; the
+ * same bundle carried forward keeps the size already on the row.
+ */
+function bundleBytesPatch(
+  args: { sha256?: string; bundleBytes?: number },
+  doc: Doc<"mcp">,
+): Partial<Doc<"mcp">> {
+  const newBundle = args.sha256 !== undefined && args.sha256 !== doc.sha256;
+
+  return args.bundleBytes !== undefined || newBundle
+    ? { bundleBytes: args.bundleBytes }
+    : {};
+}
+
 async function requireNameFree(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -319,6 +338,7 @@ function updatePatch(
     sandbox?: string;
     bundleStorageKey?: string;
     sha256?: string;
+    bundleBytes?: number;
     headers?: Record<string, string>;
     oauth?: McpOauth;
     allowedTools?: string[];
@@ -340,6 +360,7 @@ function updatePatch(
       ? { bundleStorageKey: args.bundleStorageKey }
       : {}),
     ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
+    ...bundleBytesPatch(args, doc),
     ...(args.headers !== undefined ? { headers: args.headers } : {}),
     ...(args.oauth !== undefined ? { oauth: args.oauth } : {}),
     ...(args.allowedTools !== undefined
@@ -355,6 +376,7 @@ function updatePatch(
           runtime: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
+          bundleBytes: undefined,
           sourceCode: undefined,
           sandbox: undefined,
         }
@@ -367,6 +389,7 @@ function updatePatch(
           runtime: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
+          bundleBytes: undefined,
           sourceCode: undefined,
         }
       : {}),

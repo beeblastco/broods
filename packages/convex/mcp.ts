@@ -24,6 +24,7 @@ import {
   CREDENTIAL_HEADER_VALUE_PATTERN,
   normalizeMcpInput,
   type McpInput,
+  type McpRuntime,
 } from "./model/mcp";
 import { stripUndefined } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
@@ -54,6 +55,9 @@ interface ResolvedConnection {
   headers?: Record<string, string>;
   bundleStorageKey?: string;
   sha256?: string;
+  bundleBytes?: number;
+  /** The row's own runtime, so the save-time probe runs where the row will. */
+  runtime?: McpRuntime;
 }
 
 /** One canvas-owned server as `listByStage` returns it. */
@@ -501,6 +505,8 @@ async function resolveConnection(
     transport: transport,
     bundleStorageKey: stored.bundleStorageKey,
     sha256: stored.sha256,
+    bundleBytes: stored.bundleBytes,
+    runtime: existing?.runtime,
     headers: input.headers ?? existing?.headers,
   });
 }
@@ -510,7 +516,11 @@ async function storeBundle(
   ctx: ActionCtx,
   context: NodeContext,
   input: McpInput,
-): Promise<{ bundleStorageKey: string; sha256: string } | null> {
+): Promise<{
+  bundleStorageKey: string;
+  sha256: string;
+  bundleBytes?: number;
+} | null> {
   const bundleStorageKey = await storeMcpBundle(
     ctx,
     context.accountId,
@@ -518,7 +528,11 @@ async function storeBundle(
     context.existing,
   );
   if (bundleStorageKey !== undefined) {
-    return { bundleStorageKey: bundleStorageKey, sha256: input.sha256! };
+    return stripUndefined({
+      bundleStorageKey: bundleStorageKey,
+      sha256: input.sha256!,
+      bundleBytes: input.bundleBytes,
+    });
   }
   const existing = context.existing;
   if (existing?.bundleStorageKey && existing.sha256) {

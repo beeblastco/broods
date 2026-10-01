@@ -182,7 +182,7 @@ export interface McpDefinitionConfig {
   /**
    * Hosted only: where `handler` runs. Omit for the Lambda default.
    * `"cloudflare"` opts into Cloudflare Dynamic Workers: Workers-compatible
-   * JavaScript only (no Node builtins), bundles up to 10 MiB.
+   * JavaScript only (no Node builtins), bundles up to 10 MB.
    */
   runtime?: McpRuntime;
   /** External server's MCP endpoint; http(s), no embedded credentials. */

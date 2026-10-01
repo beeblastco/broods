@@ -303,6 +303,29 @@ describe("normalizeMcpInput", () => {
         { requireConnection: true },
       ),
     ).rejects.toThrow("runtime applies only to hosted MCP servers");
+    expect(input.bundleBytes).toBe(17);
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "tools",
+          bundleStorageId: "kg2storage",
+          sha256: "a".repeat(64),
+          runtime: "cloudflare",
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("not bundleStorageId");
+    // A runtime-only patch over a bundle of unknown size must resend it.
+    expect(() =>
+      assertMcpRow({ transport: "hosted", runtime: "cloudflare" }),
+    ).toThrow("needs its bundle sent inline");
+    expect(() =>
+      assertMcpRow({
+        transport: "hosted",
+        runtime: "cloudflare",
+        bundleBytes: 17,
+      }),
+    ).not.toThrow();
     // A runtime-only patch leaves transport unset; the row invariant refuses it.
     expect(() =>
       assertMcpRow({

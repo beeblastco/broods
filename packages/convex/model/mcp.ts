@@ -27,6 +27,11 @@ const MAX_ALLOWED_TOOLS = 256;
 const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
 /** Ceiling for a hosted MCP server bundle by either upload path (#190). */
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
+/**
+ * A Cloudflare bundle must fit the Worker size cap, so it only travels
+ * inline, where its size is known. Mirrors apps/cloudflare-mcp and the CLI.
+ */
+const MAX_CLOUDFLARE_MCP_BUNDLE_BYTES = MAX_INLINE_BUNDLE_BYTES;
 
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -99,6 +104,8 @@ export interface McpInput {
    */
   bundleStorageId?: string;
   sha256?: string;
+  /** Set with an inline `bundle`: its UTF-8 byte size. */
+  bundleBytes?: number;
   headers?: Record<string, string>;
   oauth?: McpOauth;
   allowedTools?: string[];
@@ -114,6 +121,7 @@ export interface McpInput {
 export function assertMcpRow(row: {
   transport: McpTransport;
   runtime?: McpRuntime;
+  bundleBytes?: number;
   url?: string;
   sandbox?: string;
   headers?: Record<string, string>;
@@ -121,6 +129,17 @@ export function assertMcpRow(row: {
 }): void {
   if (row.runtime !== undefined && row.transport !== "hosted") {
     throw new ClientError("runtime applies only to hosted MCP servers");
+  }
+  // A runtime-only patch over a bundle of unknown size (a storage-id upload,
+  // or a row written before sizes were kept) must bring the bundle again.
+  if (
+    row.runtime === "cloudflare" &&
+    (row.bundleBytes === undefined ||
+      row.bundleBytes > MAX_CLOUDFLARE_MCP_BUNDLE_BYTES)
+  ) {
+    throw new ClientError(
+      `a cloudflare server needs its bundle sent inline (at most ${MAX_CLOUDFLARE_MCP_BUNDLE_BYTES} bytes) with this write`,
+    );
   }
   if (row.transport === "machine" && !row.sandbox) {
     throw new ClientError(
@@ -228,6 +247,7 @@ export async function normalizeMcpInput(
   // own, which the S3 writer verifies against the bytes.
   if (input.bundle !== undefined) {
     input.sha256 = await sha256Hex(input.bundle);
+    input.bundleBytes = new TextEncoder().encode(input.bundle).byteLength;
   }
   if (record.headers !== undefined && record.headers !== null) {
     input.headers = normalizeHeaders(record.headers);
@@ -476,6 +496,11 @@ function normalizeRuntime(
   }
   if (input.transport !== undefined && input.transport !== "hosted") {
     throw new ClientError("runtime applies only to hosted MCP servers");
+  }
+  if (record.runtime === "cloudflare" && input.bundleStorageId !== undefined) {
+    throw new ClientError(
+      `a cloudflare server's bundle goes inline as bundle (at most ${MAX_CLOUDFLARE_MCP_BUNDLE_BYTES} bytes), not bundleStorageId`,
+    );
   }
   input.runtime = record.runtime;
 }

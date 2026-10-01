@@ -4948,8 +4948,9 @@ components:
             Hosted-only: where the bundle runs. Omit for the Lambda default.
             `cloudflare` opts into Cloudflare Dynamic Workers, which the
             operator must enable; the bundle must be Workers-compatible
-            JavaScript (no Node builtins) of at most 10 MiB. Refused with url
-            or sandbox.
+            JavaScript (no Node builtins) sent inline as `bundle` (at most
+            10 MB, never bundleStorageId). A runtime-only switch to cloudflare
+            needs a bundle that was sent inline. Refused with url or sandbox.
         bundleStorageId:
           type: string
           description: >-

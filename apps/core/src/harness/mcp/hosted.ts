@@ -31,6 +31,8 @@ export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
 const BUNDLE_URL_TTL_SECONDS = 120;
 // Matches the Lambda client's requestTimeout below.
 const CLOUDFLARE_REQUEST_TIMEOUT_MS = 45_000;
+// Enough of a refusal's body to name its cause (bad origin, bad batch).
+const CLOUDFLARE_ERROR_BODY_CHARS = 512;
 
 // The parallel calls of one model step arrive well under 1ms apart; the window
 // only has to outlast that. The cap bounds what one batch's shared deadline,
@@ -224,18 +226,22 @@ function defaultClient(): LambdaClient {
 }
 
 // POST the batch to the Cloudflare runtime and push its NDJSON body into the
-// queue as it arrives. A refused request (bad token, invalid payload) runs no
-// tenant code, so onInvoked fires only on an accepted one.
+// queue as it arrives. Metering starts when the request is sent. A refusal
+// (bad token, invalid payload) runs no tenant code and costs nothing; a
+// timeout or abort after sending may have, so it still counts.
 async function drainBridgeStream(
   payload: McpHostPayload,
   abortSignal: AbortSignal,
   queue: FrameQueue,
-  onInvoked: () => void,
+  onInvoked: (startedAt: number) => void,
 ): Promise<void> {
-  const response = await fetch(requireEnv("CLOUDFLARE_MCP_URL"), {
+  const url = requireEnv("CLOUDFLARE_MCP_URL");
+  const apiKey = requireEnv("CLOUDFLARE_MCP_API_KEY");
+  const startedAt = Date.now();
+  const response = await fetch(url, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${requireEnv("CLOUDFLARE_MCP_API_KEY")}`,
+      authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify(payload),
@@ -244,13 +250,25 @@ async function drainBridgeStream(
       abortSignal,
       AbortSignal.timeout(CLOUDFLARE_REQUEST_TIMEOUT_MS),
     ]),
+  }).catch((error: unknown): never => {
+    if (
+      error instanceof DOMException &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      onInvoked(startedAt);
+    }
+    throw error;
   });
   if (!response.ok || !response.body) {
+    const reason = (await response.text()).slice(
+      0,
+      CLOUDFLARE_ERROR_BODY_CHARS,
+    );
     throw new Error(
-      `cloudflare MCP runtime failed with HTTP ${response.status}`,
+      `cloudflare MCP runtime failed with HTTP ${response.status}${reason ? `: ${reason}` : ""}`,
     );
   }
-  onInvoked();
+  onInvoked(startedAt);
   const decoder = new TextDecoder();
   for await (const chunk of response.body) {
     queue.push(decoder.decode(chunk, { stream: true }));
@@ -266,7 +284,7 @@ async function drainInvokeStream(
   payload: McpHostPayload,
   abortSignal: AbortSignal,
   queue: FrameQueue,
-  onInvoked: () => void,
+  onInvoked: (startedAt: number) => void,
 ): Promise<void> {
   const result = await client.send(
     new InvokeWithResponseStreamCommand({
@@ -282,7 +300,7 @@ async function drainInvokeStream(
     }),
     { abortSignal: abortSignal },
   );
-  onInvoked();
+  onInvoked(Date.now());
   // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
   // to carry state across them.
   const decoder = new TextDecoder();
@@ -452,11 +470,11 @@ async function sendBatch(
   };
   const queue = new FrameQueue();
   let transportError: unknown;
-  // Set once the runtime accepts the batch. A failure before that (no function
+  // When the batch got underway. A failure before that (no function
   // name, a refused or throttled request) runs nothing and costs nothing.
   let invokedAt: number | undefined;
-  const onInvoked = (): void => {
-    invokedAt = Date.now();
+  const onInvoked = (startedAt: number): void => {
+    invokedAt = startedAt;
   };
   const pump = (
     record.runtime === "cloudflare"
@@ -480,8 +498,15 @@ async function sendBatch(
       queue.frames(),
     );
     // A transport failure after the child's own terminal frame is noise; the
-    // child's answer stands.
-    if (transportError && !collected.ended) throw transportError;
+    // child's answer stands. A stream that closed without one is truncated.
+    if (!collected.ended) {
+      throw (
+        transportError ??
+        new Error(
+          `hosted MCP server ${record.name} stream closed without an end frame`,
+        )
+      );
+    }
 
     return collected.result;
   } finally {

@@ -276,6 +276,8 @@ export const mcpFields = {
   /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),
+  /** Hosted-only: byte size of an inline-uploaded bundle; absent after a storage-id upload. */
+  bundleBytes: v.optional(v.number()),
   headers: v.optional(v.record(v.string(), v.string())),
   /** OAuth 2.0 refresh-token grant for "http" rows; secret fields are ${NAME} refs. */
   oauth: v.optional(

@@ -239,19 +239,30 @@ describe("hosted MCP metering", () => {
           method: "POST",
           body: "{}",
         }),
-      ).rejects.toThrow("HTTP 401");
+      ).rejects.toThrow("HTTP 401: Unauthorized");
+
+      reply = (): Response =>
+        new Response(
+          `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
+        );
+      await expect(
+        hostedMcpFetch({ ...hostedRecord(), runtime: "cloudflare" })(URL, {
+          method: "POST",
+          body: "{}",
+        }),
+      ).rejects.toThrow("without an end frame");
       await Promise.resolve();
     } finally {
       bridge.mockRestore();
       lambda.mockRestore();
     }
 
-    expect(recorded).toEqual([
-      {
-        accountId: "acct_test",
-        usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
-      },
-    ]);
+    // The refused batch is free; the truncated one ran, so it is charged.
+    const charge = {
+      accountId: "acct_test",
+      usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
+    };
+    expect(recorded).toEqual([charge, charge]);
   });
 
   it("charges nothing when no invoke starts", async () => {

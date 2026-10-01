@@ -140,7 +140,11 @@ async function handleMcpCollectionRoute(
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
       ...(bundleStorageKey !== undefined
-        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+        ? {
+            bundleStorageKey: bundleStorageKey,
+            sha256: input.sha256!,
+            bundleBytes: input.bundleBytes,
+          }
         : {}),
       ...(input.description !== undefined
         ? { description: input.description }
@@ -210,7 +214,11 @@ async function patchMcpRoute(
     ...(input.url !== undefined ? { url: input.url } : {}),
     ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
     ...(bundleStorageKey !== undefined
-      ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+      ? {
+          bundleStorageKey: bundleStorageKey,
+          sha256: input.sha256!,
+          bundleBytes: input.bundleBytes,
+        }
       : {}),
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
     ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),

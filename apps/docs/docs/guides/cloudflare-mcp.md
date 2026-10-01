@@ -21,16 +21,19 @@ Remove `runtime` and sync again to move the server back to Lambda. Over the API,
 
 ## When to pick it
 
-| Runtime            | Runs                                | Bundle cap | Per call                              |
-| ------------------ | ----------------------------------- | ---------- | ------------------------------------- |
-| `lambda` (default) | Node.js, npm dependencies, builtins | 50 MB      | 30 s and 16 MB per batch              |
-| `cloudflare`       | Workers-compatible JavaScript only  | 10 MiB     | 5 s CPU, 50 subrequests, 16 MiB/batch |
+| Runtime            | Runs                                | Bundle cap         | Batch in | Batch out | Per call                      |
+| ------------------ | ----------------------------------- | ------------------ | -------- | --------- | ----------------------------- |
+| `lambda` (default) | Node.js, npm dependencies, builtins | 50 MB              | 6 MiB    | 16 MiB    | 30 s shared by the batch      |
+| `cloudflare`       | Workers-compatible JavaScript only  | 10 MB, sent inline | 6 MiB    | 16 MiB    | 30 s, 5 s CPU, 50 subrequests |
+
+A batch is the parallel calls of one model step to one server. On Cloudflare each call answers as soon as it finishes, and a call that would push the batch past 16 MiB fails on its own.
 
 Cloudflare starts in milliseconds. Pick it for a server that only does `fetch` calls and JSON. Stay on Lambda if the server needs Node builtins, native modules, a filesystem or long CPU work.
 
 ## What the server can reach
 
 - The CLI bundles for Workers: browser and `workerd` package exports, no Node builtins. An import such as `node:child_process` fails the sync, before anything uploads.
+- A Cloudflare bundle always goes inline, not through an upload URL. A `runtime` switch over a bundle uploaded by URL is refused until you send the bundle again.
 - Each account's bundle runs in its own isolate. Broods checks the bundle against its sha256 before it runs.
 - The isolate has no bindings and no platform secrets. Pass credentials through `headers` with `${NAME}` env refs, exactly as on Lambda.
 - Outbound `fetch` reaches the public internet. Raw TCP sockets (`connect()`) are not available.

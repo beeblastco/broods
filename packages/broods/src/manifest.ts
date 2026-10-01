@@ -136,8 +136,9 @@ export default {};
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
-// Workers' script size cap; apps/cloudflare-mcp refuses a bigger bundle.
-const MAX_CLOUDFLARE_MCP_BUNDLE_BYTES = 10 * 1024 * 1024;
+// A Cloudflare bundle must stay inline (the config plane refuses an upload
+// URL for one), which also keeps it under the Workers script size cap.
+const MAX_CLOUDFLARE_MCP_BUNDLE_BYTES = INLINE_MCP_BUNDLE_BYTES;
 const MAX_BUNDLE_TOTAL_BYTES = 20_000_000;
 const MAX_BUNDLE_FILES = 200;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
