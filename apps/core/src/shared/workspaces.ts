@@ -294,10 +294,12 @@ export async function resolveAgentRuntime(
       // service-managed read-only Lambda mount (network denied, cheapest mount slot)
       // so reads reflect committed writes immediately. The existing `sandbox: null`
       // opt-out ("no sandbox, no compute") also skips the mount: read straight from
-      // S3 instead. The mount carries the workspace's storage, so a bring-your-own
-      // bucket mounts its own bucket/prefix/creds rather than the managed one.
+      // S3 instead. A bring-your-own bucket reads straight from S3 too: the deny-all
+      // connector only routes to the managed bucket.
       const readMount: WorkspaceSandboxConfig | undefined =
-        !effectiveSandbox && ref.sandbox !== null
+        !effectiveSandbox &&
+        ref.sandbox !== null &&
+        !record.config.storage.bucket
           ? {
               provider: "lambda",
               network: { mode: "deny-all" },

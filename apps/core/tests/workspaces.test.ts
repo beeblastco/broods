@@ -448,7 +448,7 @@ describe("resolveAgentRuntime", () => {
     });
   });
 
-  it("attaches a bring-your-own bucket's storage to the read-only mount", async () => {
+  it("reads a read-only bring-your-own bucket directly from S3, not the deny-all mount", async () => {
     const byoStorage = {
       provider: "s3" as const,
       bucket: "dev-bucket",
@@ -473,7 +473,8 @@ describe("resolveAgentRuntime", () => {
       { accountId: "acct_1" },
     );
 
-    expect(resolved.workspaces[0]?.readMount?.storage).toEqual(byoStorage);
+    expect(resolved.workspaces[0]?.config.storage).toEqual(byoStorage);
+    expect(resolved.workspaces[0]?.readMount).toBeUndefined();
   });
 
   it("reads a read-only workspace directly from S3 when the ref opts out with sandbox: null", async () => {
