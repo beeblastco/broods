@@ -147,6 +147,7 @@ function Surfaces(): React.JSX.Element {
 
   const record = (entry: string): void => setRan((prev) => [...prev, entry]);
   const run = (action: CopilotAction): void => record(describe(action));
+  useShortcut("panel.toggle", () => record("command panel.toggle"));
 
   const ask = (query: string): void => {
     const trimmed = query.trim();
@@ -228,6 +229,16 @@ function Surfaces(): React.JSX.Element {
 
           <section data-fixture="editable" className="max-w-xs">
             <Input placeholder="A text field, where a bare letter is typing" />
+          </section>
+
+          {/* Spends Escape on itself, the way an inline rename cancels. */}
+          <section data-fixture="consumes-escape" className="max-w-xs">
+            <Input
+              placeholder="An inline rename, where Escape cancels"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") event.preventDefault();
+              }}
+            />
           </section>
 
           {/* Every action the surfaces took, oldest first. */}
