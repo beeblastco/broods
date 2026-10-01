@@ -123,19 +123,15 @@ export const updateProfile = mutation({
 });
 
 /**
- * Refreshes the caller's name and avatarUrl from the WorkOS client session,
- * covering webhook payloads that lacked them. Leaves `name` alone once the
- * user has saved one in Account settings (`nameEdited`).
+ * Refreshes the caller's avatarUrl from the WorkOS client session, for webhook
+ * payloads that lacked the picture. Names come only from the WorkOS webhooks.
  */
 export const syncProfile = mutation({
   args: {
-    name: v.optional(v.string()),
-    avatarUrl: v.optional(v.string()),
+    avatarUrl: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { name, avatarUrl } = args;
-
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
@@ -146,21 +142,8 @@ export const syncProfile = mutation({
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
       .first();
-    if (!user) {
-      return null;
-    }
-
-    const patch: { name?: string; avatarUrl?: string } = {};
-    if (avatarUrl && avatarUrl !== user.avatarUrl) {
-      patch.avatarUrl = avatarUrl;
-    }
-    const trimmedName = name?.trim();
-    if (trimmedName && !user.nameEdited && trimmedName !== user.name) {
-      patch.name = trimmedName;
-    }
-
-    if (Object.keys(patch).length > 0) {
-      await ctx.db.patch(user._id, patch);
+    if (user && args.avatarUrl !== user.avatarUrl) {
+      await ctx.db.patch(user._id, { avatarUrl: args.avatarUrl });
     }
 
     return null;

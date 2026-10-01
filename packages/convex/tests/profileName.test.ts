@@ -21,32 +21,6 @@ const WORKOS_USER = {
 const profileNameTest = (): TestConvex<typeof schema> =>
   convexTest(schema, modules);
 
-describe("syncProfile", () => {
-  test("keeps a name saved through Account settings", async () => {
-    const t = profileNameTest();
-    const userId = await seedUser(t, "WorkOS Name");
-    await t.mutation(api.user.updateProfile, { name: "Chosen Name" });
-
-    await t.mutation(api.user.syncProfile, {
-      name: "WorkOS Name",
-      avatarUrl: "https://example.com/new.png",
-    });
-
-    const user = await readUser(t, userId);
-    expect(user?.name).toBe("Chosen Name");
-    expect(user?.avatarUrl).toBe("https://example.com/new.png");
-  });
-
-  test("fills a name the user never edited", async () => {
-    const t = profileNameTest();
-    const userId = await seedUser(t, "user@example.com");
-
-    await t.mutation(api.user.syncProfile, { name: "WorkOS Name" });
-
-    expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
-  });
-});
-
 describe("WorkOS user webhooks", () => {
   test("user.created for an existing row keeps a saved name", async () => {
     const t = profileNameTest();
@@ -60,9 +34,10 @@ describe("WorkOS user webhooks", () => {
     expect((await readUser(t, userId))?.name).toBe("Chosen Name");
   });
 
-  test("user.updated keeps a saved name", async () => {
+  test("user.updated keeps a name saved through Account settings", async () => {
     const t = profileNameTest();
-    const userId = await seedUser(t, "Chosen Name", true);
+    const userId = await seedUser(t, "WorkOS Name");
+    await t.mutation(api.user.updateProfile, { name: "Chosen Name" });
 
     await t.mutation(internal.auth.authKitEvent, {
       event: "user.updated",
