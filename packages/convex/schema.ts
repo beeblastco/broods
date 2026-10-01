@@ -11,6 +11,8 @@ export const usersFields = {
   name: v.string(),
   avatarUrl: v.optional(v.string()),
   accountHandle: v.optional(v.string()),
+  /** Set once the user saves a name in Account settings; WorkOS syncs stop changing `name` after that. */
+  nameEdited: v.optional(v.boolean()),
   /** Source of truth for the user's tier, set from their Stripe subscriptions. */
   plan: planValidator,
   deletionScheduledFor: v.optional(v.number()),

@@ -104,16 +104,11 @@ export function MainShell({
   }, [currentUser, ensureSynced, syncRetry]);
 
   useEffect(() => {
-    if (profileSynced.current || !isAuthenticated || !user || !currentUser)
+    const avatarUrl = user?.profilePictureUrl;
+    if (profileSynced.current || !isAuthenticated || !avatarUrl || !currentUser)
       return;
-    const name = [user.firstName, user.lastName]
-      .filter(Boolean)
-      .join(" ")
-      .trim();
-    const avatarUrl = user.profilePictureUrl ?? undefined;
-    if (!name && !avatarUrl) return;
     profileSynced.current = true;
-    syncProfile({ name: name || undefined, avatarUrl: avatarUrl }).catch(() => {
+    syncProfile({ avatarUrl: avatarUrl }).catch(() => {
       profileSynced.current = false;
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);

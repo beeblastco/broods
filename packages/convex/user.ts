@@ -98,48 +98,40 @@ export const updateProfile = mutation({
       throw new Error("User record not found. Please sign in again.");
     }
 
-    if (args.accountHandle) {
-      const normalizedHandle = args.accountHandle.trim().toLowerCase();
+    const accountHandle = args.accountHandle?.trim().toLowerCase() || undefined;
+    if (accountHandle) {
       const existingHandle = await ctx.db
         .query("users")
         .withIndex("by_accountHandle", (q) =>
-          q.eq("accountHandle", normalizedHandle),
+          q.eq("accountHandle", accountHandle),
         )
         .first();
 
       if (existingHandle && existingHandle._id !== user._id) {
         throw new Error("Account handle is already taken.");
       }
-
-      await ctx.db.patch(user._id, {
-        name: args.name,
-        accountHandle: normalizedHandle,
-      });
-    } else {
-      await ctx.db.patch(user._id, {
-        name: args.name,
-        accountHandle: undefined,
-      });
     }
+
+    await ctx.db.patch(user._id, {
+      name: args.name,
+      nameEdited: user.nameEdited || args.name !== user.name,
+      accountHandle: accountHandle,
+    });
 
     return user._id;
   },
 });
 
 /**
- * Backfills the caller's name and avatarUrl from values supplied by the
- * WorkOS client session when the Convex doc is missing them. Used to recover
- * from cases where the webhook payload did not include the profile picture.
+ * Refreshes the caller's avatarUrl from the WorkOS client session, for webhook
+ * payloads that lacked the picture. Names come only from the WorkOS webhooks.
  */
 export const syncProfile = mutation({
   args: {
-    name: v.optional(v.string()),
-    avatarUrl: v.optional(v.string()),
+    avatarUrl: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { name, avatarUrl } = args;
-
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
@@ -150,20 +142,8 @@ export const syncProfile = mutation({
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
       .first();
-    if (!user) {
-      return null;
-    }
-
-    const patch: { name?: string; avatarUrl?: string } = {};
-    if (avatarUrl && avatarUrl !== user.avatarUrl) {
-      patch.avatarUrl = avatarUrl;
-    }
-    if (name && name.trim() && name.trim() !== user.name) {
-      patch.name = name.trim();
-    }
-
-    if (Object.keys(patch).length > 0) {
-      await ctx.db.patch(user._id, patch);
+    if (user && args.avatarUrl !== user.avatarUrl) {
+      await ctx.db.patch(user._id, { avatarUrl: args.avatarUrl });
     }
 
     return null;

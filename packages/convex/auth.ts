@@ -31,7 +31,7 @@ export const { authKitEvent } = authKit.events({
     if (existing) {
       await ctx.db.patch(existing._id, {
         email: event.data.email,
-        name: deriveName(event.data),
+        name: existing.nameEdited ? existing.name : deriveName(event.data),
         avatarUrl: avatarUrl,
       });
 
@@ -64,7 +64,7 @@ export const { authKitEvent } = authKit.events({
 
     await ctx.db.patch(user._id, {
       email: event.data.email,
-      name: deriveName(event.data),
+      name: user.nameEdited ? user.name : deriveName(event.data),
       avatarUrl: avatarUrl,
     });
   },
