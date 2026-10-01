@@ -94,12 +94,8 @@ test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: SIDEBAR_WIDTH });
-  // Drawn over the page, so nothing on it shows through the labels.
-  const covering = await page.evaluate(() => {
-    const hit = document.elementFromPoint(100, 300);
-    return hit?.closest('[data-slot="sidebar-container"]') !== null;
-  });
-  expect(covering).toBe(true);
+  // The log table's sticky header and the search icon once painted over it.
+  await expect.poll(() => pointsCoveringSidebar(page)).toEqual([]);
   await page.mouse.move(800, 400);
   await expect
     .poll(() => container.boundingBox())
@@ -120,6 +116,29 @@ test("on a phone the sidebar sheet closes once a link moves the page", async ({
   await expect(page).toHaveURL(/scheduler/);
   await expect(sheet).toBeHidden();
 });
+
+// Points on a 16px grid over the sidebar where something other than the
+// sidebar is the topmost element, as "x,y". The `next dev` badge in the
+// corner does not count: builds do not render it.
+async function pointsCoveringSidebar(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const container = document.querySelector('[data-slot="sidebar-container"]');
+    if (!container) throw new Error("no sidebar container");
+    const rect = container.getBoundingClientRect();
+    const covered: string[] = [];
+    for (let y = rect.top + 4; y < rect.bottom; y += 16) {
+      for (let x = rect.left + 4; x < rect.right; x += 16) {
+        const hit = document.elementFromPoint(x, y);
+        if (hit?.tagName === "NEXTJS-PORTAL") continue;
+        if (!hit || !container.contains(hit)) {
+          covered.push(`${Math.round(x)},${Math.round(y)}`);
+        }
+      }
+    }
+
+    return covered;
+  });
+}
 
 function sidebarState(page: Page): Locator {
   return page.locator('[data-slot="sidebar"]');
