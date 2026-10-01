@@ -349,7 +349,7 @@ async function verify(): Promise<void> {
       const health = await probeHttp(`${gatewayUrl}/healthz`);
       assertStep("gateway healthz", health === 200, `status ${health}`);
     });
-    const runId = Date.now().toString(36);
+    const runId = `${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
     await measure("create account", (): Promise<string> =>
       createAccount(gatewayUrl, state.secrets.adminAccount, `smoke-${runId}`),
     );
@@ -431,7 +431,7 @@ function convexSourceHash(): string {
 /** Creates a local org-backed fixture; admin API accounts have synthetic org bindings. */
 function createManifestAccount(state: InstanceState, runId: string): string {
   const slug = `smoke-${runId}`;
-  const path = join(instanceDir(state.instanceId), "verify-org.jsonl");
+  const path = join(instanceDir(state.instanceId), `verify-org-${runId}.jsonl`);
   writeFileSync(
     path,
     JSON.stringify({

@@ -162,6 +162,8 @@ On every sync `dev`:
 
 A sync that references an `env("NAME")` with no stored value fails before anything is written and names the missing variables. `dev` checks npm for a newer CLI at most once a day and prints a one-line notice.
 
+A manifest conflict causes up to three sync attempts. If another sync still holds the stage, `dev` reports the failure and keeps watching; save again or rerun after that sync finishes. It does not queue unchanged source for automatic retry.
+
 ## diff
 
 Shows local desired state against the current stage, without writing anything.
@@ -175,8 +177,6 @@ Markers are `[+]` create, `[~]` rename, `[*]` update and `[-]` delete. It also w
 ```text
 ! .env.local and demo-app/development disagree on 1 variable(s): ZALO_WEBHOOK_SECRET. Run `broods env sync` to push the local values.
 ```
-
-A manifest conflict causes up to three sync attempts. If another sync still holds the stage, `dev` reports the failure and keeps watching; save again or rerun after that sync finishes. It does not queue unchanged source for automatic retry.
 
 ## deploy
 
