@@ -1,6 +1,7 @@
 /**
- * The signed-in shell at a laptop viewport: header and sidebar fit with no
- * sideways scroll on every project page, with the sidebar pinned and collapsed.
+ * The signed-in shell at laptop, tablet and phone viewports: header and
+ * sidebar fit with no sideways scroll on every project page, with the sidebar
+ * pinned and collapsed.
  * The header once ran 127px past 1280, cutting off the last nav links and the
  * avatar and scrolling the page on every hover.
  */
@@ -38,6 +39,28 @@ test("every project page fits 1280 wide, sidebar pinned and collapsed", async ({
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
   expect(await horizontalOverflow(page), "collapsed").toBe(0);
 });
+
+// A phone gets the sidebar as a sheet and a tablet the icon rail; the header's
+// switchers once ran 500px past a phone and 107px past a tablet.
+for (const viewport of [
+  { width: 375, height: 812 },
+  { width: 768, height: 1024 },
+]) {
+  test(`every project page fits ${viewport.width} wide`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const projectId = readProjectId();
+
+    for (const item of NAV_ITEMS) {
+      await page.goto(`/${projectId}${item.segment}`);
+      await expect(
+        item.segment === ""
+          ? page.locator(CANVAS_READY)
+          : page.getByRole("heading", { level: 1 }),
+      ).toBeAttached();
+      expect(await horizontalOverflow(page), item.label).toBe(0);
+    }
+  });
+}
 
 async function horizontalOverflow(page: Page): Promise<number> {
   return page.evaluate(
