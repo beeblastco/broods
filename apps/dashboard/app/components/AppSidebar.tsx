@@ -40,13 +40,14 @@ import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
+import { useEffect } from "react";
 
 export function AppSidebar(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { toggleSidebar } = useSidebar();
+  const { setOpenMobile, toggleSidebar } = useSidebar();
   const projectId = params.projectId;
   const items = projectId ? NAV_ITEMS : ACCOUNT_NAV_ITEMS;
   const base = projectId ? `/${projectId}` : "";
@@ -69,6 +70,12 @@ export function AppSidebar(): React.JSX.Element {
     router.push(itemHref(stepNavItem(items, active, 1))),
   );
   useShortcut("sidebar.toggle", toggleSidebar);
+
+  // On a phone the sidebar is a sheet over the page: close it once a link,
+  // here or in the account menu, has moved to another page or tab.
+  useEffect(() => {
+    setOpenMobile(false);
+  }, [pathname, searchParams, setOpenMobile]);
 
   return (
     <Sidebar className="top-(--header-height) h-auto">

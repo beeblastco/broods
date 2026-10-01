@@ -166,23 +166,26 @@ function Sidebar({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const peeking = peek && state === "collapsed" && collapsible === "offcanvas";
 
-  // Hide again once the pointer leaves, unless a menu opened from inside
-  // (the account menu) is still up: its popup sits outside the container.
+  // Hide again once the pointer moves past the sidebar's width, unless a menu
+  // opened from inside (the account menu) is still up. By width, not by what
+  // is under the pointer, so the slide-in and the edge strip never count as
+  // leaving.
   React.useEffect(() => {
     if (!peeking) return;
     const onMove = (event: PointerEvent): void => {
       const container = containerRef.current;
       if (!container) return;
-      if (event.target instanceof Node && container.contains(event.target)) {
-        return;
-      }
-      if (container.querySelector("[data-popup-open]")) return;
+      const inside =
+        side === "left"
+          ? event.clientX <= container.offsetWidth
+          : event.clientX >= window.innerWidth - container.offsetWidth;
+      if (inside || container.querySelector("[data-popup-open]")) return;
       setPeek(false);
     };
     document.addEventListener("pointermove", onMove);
 
     return () => document.removeEventListener("pointermove", onMove);
-  }, [peeking, setPeek]);
+  }, [peeking, setPeek, side]);
 
   if (collapsible === "none") {
     return (
@@ -247,7 +250,7 @@ function Sidebar({
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
         )}
       />
-      {state === "collapsed" && collapsible === "offcanvas" && (
+      {state === "collapsed" && collapsible === "offcanvas" && !peeking && (
         <div
           data-slot="sidebar-reveal"
           aria-hidden="true"
@@ -711,7 +714,7 @@ function SidebarMenuSubButton({
   React.ComponentProps<"a"> & {
     size?: "sm" | "md";
     isActive?: boolean;
-    // Destructive mirrors Button's nav-destructive, for a Danger Zone tab.
+    // Destructive, for a Danger Zone tab.
     variant?: "default" | "destructive";
   }) {
   return useRender({

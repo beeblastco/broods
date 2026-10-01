@@ -57,11 +57,26 @@ test("a hidden sidebar peeks at the left edge and stays hidden across a reload",
 
   await page.mouse.move(4, 400);
   await expect(container).toBeInViewport();
+  // Moving along the edge, where the reveal strip was, keeps it up.
+  await page.mouse.move(8, 440);
+  await expect(container).toBeInViewport();
   await page.mouse.move(800, 400);
   await expect(container).not.toBeInViewport();
 
   await page.reload();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
+});
+
+test("on a phone the sidebar sheet closes once a link moves the page", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(`/${readProjectId()}/dashboard`);
+  await page.getByRole("button", { name: "Toggle sidebar" }).click();
+  const sheet = page.locator('[data-mobile="true"]');
+  await sheet.getByRole("link", { name: "Scheduler" }).click();
+  await expect(page).toHaveURL(/scheduler/);
+  await expect(sheet).toBeHidden();
 });
 
 function sidebarState(page: Page): Locator {
