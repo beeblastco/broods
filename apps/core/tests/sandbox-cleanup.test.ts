@@ -51,6 +51,29 @@ const removeSandboxInstanceMock = mock(
   ): Promise<void> => {},
 );
 
+const microvmSendMock = mock(
+  async (_command: { input: { microvmIdentifier?: string } }) => ({}),
+);
+// The executor builds one command per call; only the terminate is sent here.
+class TerminateMicrovmCommand {
+  input: { microvmIdentifier?: string };
+  constructor(input: { microvmIdentifier?: string }) {
+    this.input = input;
+  }
+}
+
+mock.module("@aws-sdk/client-lambda-microvms", () => ({
+  LambdaMicrovms: class {
+    send = microvmSendMock;
+  },
+  CreateMicrovmAuthTokenCommand: TerminateMicrovmCommand,
+  CreateMicrovmShellAuthTokenCommand: TerminateMicrovmCommand,
+  GetMicrovmCommand: TerminateMicrovmCommand,
+  ResumeMicrovmCommand: TerminateMicrovmCommand,
+  RunMicrovmCommand: TerminateMicrovmCommand,
+  SuspendMicrovmCommand: TerminateMicrovmCommand,
+  TerminateMicrovmCommand: TerminateMicrovmCommand,
+}));
 mock.module("e2b", () => ({
   Sandbox: {
     create: mock(async () => {}),
@@ -227,6 +250,22 @@ it("keeps to the account's configs when no instance row says whose machine it is
 
   expect(released).toEqual([]);
   expect(e2bKillMock).not.toHaveBeenCalled();
+});
+
+// A MicroVM only ever runs on the platform's AWS role, so it needs no row to say so.
+it("releases a MicroVM through the platform's credentials with no instance row", async () => {
+  instanceRow = null;
+  reservedProvider = "lambda";
+  accountConfigs = [];
+  microvmSendMock.mockClear();
+  const released = await releaseExpiredSandboxes("acct-1", [
+    { provider: "lambda", reservationKey: "key-a", externalId: "mvm-a" },
+  ]);
+
+  expect(released.map((r) => r.reservationKey)).toEqual(["key-a"]);
+  expect(
+    microvmSendMock.mock.calls.map((c) => c[0].input.microvmIdentifier),
+  ).toEqual(["mvm-a"]);
 });
 
 // Account delete disables the account before it releases, and Convex refuses a

@@ -581,8 +581,8 @@ async function materializeWorkspaceNode(
  * CLI-owned (`managedBy: "cli"`) rows are never touched. Code owns their
  * lifecycle and prune removes them via the CLI instead. A sandbox config that
  * still holds a reserved instance is kept, like the CLI prune does, so the
- * instance never names a config that is gone; the sweeper releases it and a
- * later save prunes the config.
+ * instance never names a config that is gone; once the sweeper releases it,
+ * `pruneReleasedDashboardSandbox` drops the config.
  */
 export async function pruneOrphanedDashboardRows(
   ctx: MutationCtx,
@@ -622,6 +622,32 @@ export async function pruneOrphanedDashboardRows(
       await ctx.db.delete(row._id);
     }
   }
+}
+
+/**
+ * Called when an instance row goes: deletes the dashboard sandbox config the
+ * canvas prune kept for it, once no card and no other instance holds it.
+ */
+export async function pruneReleasedDashboardSandbox(
+  ctx: MutationCtx,
+  sandboxConfigId: Id<"sandboxConfigs">,
+): Promise<void> {
+  const config = await ctx.db.get(sandboxConfigId);
+  if (!config?.projectId || !config.stageId) return;
+  if (config.managedBy === "cli" || config.managedBy === "api") return;
+  if (await hasReservation(ctx, config._id)) return;
+  const { projectId, stageId } = config;
+  const layout = await ctx.db
+    .query("canvasLayouts")
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
+    )
+    .unique();
+  if (!layout) return;
+  const referenced = layout.nodes.some(
+    (node) => asRecord(node.data).resourceId === config._id,
+  );
+  if (!referenced) await ctx.db.delete(config._id);
 }
 
 /** Compare only the node fields that materialize into runtime resource rows. */

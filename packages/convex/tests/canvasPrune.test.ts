@@ -7,6 +7,7 @@
 
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
+import { internal } from "../_generated/api";
 import { pruneOrphanedDashboardRows } from "../canvas";
 import schema from "../schema";
 
@@ -81,13 +82,22 @@ test("keeps an unreferenced sandbox config while an instance holds it", async ()
       });
       const account = await ctx.db.get(accountId);
 
+      await ctx.db.insert("canvasLayouts", {
+        authId: "auth_owner",
+        projectId: projectId,
+        stageId: stageId,
+        nodes: [],
+        edges: [],
+        updatedAt: now,
+      });
+
       await pruneOrphanedDashboardRows(ctx, account, stageId, []);
       const kept = await names();
-      // Once the sweeper releases the instance, the next prune drops the config.
-      for (const row of await ctx.db.query("sandboxInstances").collect()) {
-        await ctx.db.delete(row._id);
-      }
-      await pruneOrphanedDashboardRows(ctx, account, stageId, []);
+      // The sweeper's release removes the instance row, and the config goes with it.
+      await ctx.runMutation(internal.sandbox.instances.remove, {
+        accountId: accountId,
+        reservationKey: "reserved-key",
+      });
 
       return { kept: kept, afterRelease: await names() };
 
