@@ -3,6 +3,7 @@ import { agentRun } from "./agent-run.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { queuedFollowup } from "./queued-followup.ts";
+import { r2Workspace } from "./r2-workspace.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
@@ -16,6 +17,7 @@ export const verifyCases: readonly VerifyCase[] = [
   machineSandbox,
   trailingSlash,
   manifestSync,
+  r2Workspace,
   workToolWebhooks,
   webhookHandshake,
 ];

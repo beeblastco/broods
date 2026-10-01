@@ -881,9 +881,13 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
 /**
  * Code-first workspace config. Says `partitioned` where storage says
  * `isolation`: the flag permits a split, it does not perform one. A channel's
- * `partition` decides which folder a run mounts.
+ * `partition` decides which folder a run mounts. R2 keys take `env("NAME")`.
  */
-export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
+export type WorkspaceDefinitionConfig = Omit<
+  WorkspaceConfig,
+  "isolation" | "storage"
+> & {
+  storage: EnvRefString<WorkspaceConfig["storage"]>;
   /** Allow this workspace to be split into per-conversation folders. */
   partitioned?: boolean;
 };

@@ -8,6 +8,7 @@ import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { McpRecord } from "./domain/mcp.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { UsageQuantities } from "@broods/convex/model/pricing";
+import type { R2Credentials } from "@broods/convex/model/r2Credentials";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { PolicyRecord } from "./domain/policy.ts";
@@ -228,6 +229,12 @@ interface WorkspaceConfigStore {
     workspaceId: string,
   ): Promise<WorkspaceConfigRecord | null>;
   list(accountId: string): Promise<WorkspaceConfigRecord[]>;
+  /** One-hour R2 credentials scoped to `prefix`, minted by the config plane. */
+  mintR2Credentials(
+    accountId: string,
+    workspaceId: string,
+    prefix: string,
+  ): Promise<R2Credentials>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 

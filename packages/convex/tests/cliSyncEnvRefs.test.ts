@@ -171,6 +171,39 @@ describe("cli sync rejects env() refs with no stored value", () => {
 
     expect(await runtimeValue(tt)).toBe("sk-live-1");
   });
+
+  test("stores an R2 workspace's env() keys as refs, never values", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "r2-secret");
+    const ref = { __beeblastEnv: true, name: ENV_NAME };
+
+    await syncResources(tt, [
+      {
+        kind: "workspace",
+        name: "r2-files",
+        config: {
+          storage: {
+            provider: "s3",
+            bucket: "agent-files",
+            prefix: "broods/",
+            endpoint:
+              "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+            auth: { type: "r2", accessKeyId: ref, secretAccessKey: ref },
+          },
+        },
+      },
+    ]);
+
+    const stored = await tt.run(
+      async (ctx) => (await ctx.db.query("workspaceConfigs").first())?.config,
+    );
+    expect(stored.storage.auth).toEqual({
+      type: "r2",
+      accessKeyId: `\${${ENV_NAME}}`,
+      secretAccessKey: `\${${ENV_NAME}}`,
+    });
+  });
 });
 
 describe("removing an env var a synced resource still reads", () => {

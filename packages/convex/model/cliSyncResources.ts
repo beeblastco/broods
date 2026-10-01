@@ -286,7 +286,7 @@ export function assertManifestResources(
     resourceName(resource.name);
     if (resource.kind === "workspace") {
       assertSupportedWorkspaceStorage(resource);
-      normalizeWorkspaceConfig(resource.config);
+      normalizeWorkspaceConfig(rewriteEnvRefs(resource.config, new Set()));
     } else if (resource.kind === "policy") {
       normalizePolicyDocument(resource.config);
     } else if (resource.kind === "agent") {
@@ -717,7 +717,10 @@ export async function syncWorkspaceResources(
   for (const resource of workspaceResources) {
     assertSupportedWorkspaceStorage(resource);
     // Same rules as the config API: a sync never stores what it refuses.
-    const config = normalizeWorkspaceConfig(resource.config);
+    // `env()` R2 keys are stored as `${NAME}` refs, resolved only at mint time.
+    const config = normalizeWorkspaceConfig(
+      rewriteEnvRefs(resource.config, new Set()),
+    );
     const name = resourceName(resource.name);
     const current = existing.find((entry) => entry.name === name);
     const target =

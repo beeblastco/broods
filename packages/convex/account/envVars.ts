@@ -147,7 +147,7 @@ function encryptionSecret(): string {
 }
 
 /** Decrypt every account variable into the map used for write-time substitution. */
-async function loadValuesForAccount(
+export async function loadValuesForAccount(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
 ): Promise<Record<string, string>> {

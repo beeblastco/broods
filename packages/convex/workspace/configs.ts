@@ -2,15 +2,24 @@
  * Workspace config CRUD scoped to an account. Mirrors sandboxConfigs.ts, but the
  * config object holds no secrets and is stored in plaintext. The doc _id is the
  * public workspaceId; every mutation revalidates ownership against the
- * caller-supplied accountId.
+ * caller-supplied accountId. Also mints an R2 workspace's scoped credentials,
+ * since only Convex can decrypt the env vars its keys reference.
  */
 
 import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
+import { loadValuesForAccount } from "../account/envVars";
+import { ACCOUNT_ENV_REF_PATTERN } from "../model/envRefs";
+import { loadEnvironmentVariableValues } from "../model/environmentValues";
+import {
+  createR2Credentials,
+  type R2Credentials,
+} from "../model/r2Credentials";
 import {
   normalizeWorkspaceConfig,
+  workspaceStorageOwnAuth,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
 import { workspaceConfigsFields, paginationCursorFields } from "../schema";
@@ -223,5 +232,64 @@ export const remove = internalMutation({
     await ctx.db.delete(normalized);
 
     return null;
+  },
+});
+
+/**
+ * Scoped one-hour credentials for an R2 workspace, for core's sandbox mounts
+ * and harness reads and for the Convex file actions. `prefix` may narrow the
+ * workspace prefix (a partitioned folder), never leave it. A mutation, not a
+ * query: a cached query result would hand back expired credentials.
+ */
+export const r2Credentials = internalMutation({
+  args: {
+    accountId: v.string(),
+    workspaceId: v.string(),
+    prefix: v.string(),
+  },
+  returns: v.object({
+    accessKeyId: v.string(),
+    secretAccessKey: v.string(),
+    sessionToken: v.string(),
+    expiration: v.string(),
+  }),
+  handler: async (ctx, args): Promise<R2Credentials> => {
+    const id = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
+    const workspace = id ? await ctx.db.get(id) : null;
+    if (!workspace || workspace.accountId !== args.accountId)
+      throw new Error("Workspace not found");
+    const storage = normalizeWorkspaceConfig(workspace.config).storage;
+    const auth = workspaceStorageOwnAuth(storage);
+    if (auth?.type !== "r2" || !storage.bucket || !storage.endpoint)
+      throw new Error("Workspace storage is not an R2 bucket");
+    const base = `${storage.prefix?.replace(/^\/+|\/+$/g, "")}/`;
+    if (!args.prefix.startsWith(base))
+      throw new Error("R2 credential prefix is outside the workspace prefix");
+    const values =
+      workspace.projectId && workspace.stageId
+        ? await loadEnvironmentVariableValues(
+            ctx,
+            workspace.projectId,
+            workspace.stageId,
+          )
+        : await loadValuesForAccount(ctx, workspace.accountId);
+    const resolve = (reference: string): string => {
+      const name = ACCOUNT_ENV_REF_PATTERN.exec(reference)?.[1];
+      const value = name ? values[name] : undefined;
+      if (!value)
+        throw new ClientError(
+          `R2 workspace credential ${reference} has no value; set it with broods env set`,
+        );
+
+      return value;
+    };
+
+    return await createR2Credentials({
+      endpoint: storage.endpoint,
+      bucket: storage.bucket,
+      prefix: args.prefix,
+      accessKeyId: resolve(auth.accessKeyId),
+      secretAccessKey: resolve(auth.secretAccessKey),
+    });
   },
 });
