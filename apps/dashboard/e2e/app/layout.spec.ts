@@ -51,6 +51,8 @@ test("a hidden sidebar peeks at the left edge and stays hidden across a reload",
   const container = page.locator('[data-slot="sidebar-container"]');
   await expect(container).toBeInViewport();
 
+  // Off the edge first: the pointer starts at 0,0, where a hidden sidebar peeks.
+  await page.mouse.move(800, 400);
   await page.keyboard.press("ControlOrMeta+b");
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
   await expect(container).not.toBeInViewport();
