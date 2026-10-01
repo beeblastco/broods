@@ -145,6 +145,18 @@ test("Escape closes the panel from a text field, unless the field spends it", as
   await page.locator('[data-fixture="consumes-escape"] input').click();
   await page.keyboard.press("Escape");
   await expect(ran(page)).toHaveCount(1);
+
+  // Escape that cancels an input method's composition is the IME's, not ours.
+  await page.locator('[data-fixture="editable"] input').evaluate((field) =>
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        isComposing: true,
+        key: "Escape",
+      }),
+    ),
+  );
+  await expect(ran(page)).toHaveCount(1);
 });
 
 test("+ types in a field instead of zooming the canvas behind it", async ({
