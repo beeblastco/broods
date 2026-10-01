@@ -62,8 +62,8 @@ export class Sandbox extends DurableObject<Env> {
       stderr: "pipe",
     });
     const [stdout, stderr] = await Promise.all([
-      readCapped(process.stdout, request.outputLimitBytes),
-      readCapped(process.stderr, request.outputLimitBytes),
+      readCapped(process.stdout, request.outputLimitBytes, signal),
+      readCapped(process.stderr, request.outputLimitBytes, signal),
     ]);
     const exitCode = await process.exitCode.catch((): null => null);
 
@@ -214,28 +214,35 @@ async function authorized(request: Request, apiKey: string): Promise<boolean> {
 }
 
 // Keeps the first `limit` bytes and drains the rest, so a chatty command can
-// not grow the Durable Object's memory. A stream cut by the timeout ends early.
+// not grow the Durable Object's memory. The timeout cancels the read, so a
+// stream the killed process left open can not hold the request past it.
 async function readCapped(
   stream: ReadableStream<Uint8Array> | null,
   limit: number,
+  signal: AbortSignal,
 ): Promise<{ text: string; truncated: boolean }> {
   const kept: Uint8Array[] = [];
   let size = 0;
   let truncated = false;
+  const reader = stream?.getReader();
+  const cancel = (): void => void reader?.cancel().catch((): void => {});
+  signal.addEventListener("abort", cancel, { once: true });
   try {
-    if (stream) {
-      for await (const chunk of stream) {
-        const room = limit - size;
-        if (chunk.byteLength > room) truncated = true;
-        if (room > 0) {
-          const part = chunk.subarray(0, room);
-          kept.push(part);
-          size += part.byteLength;
-        }
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const room = limit - size;
+      if (value.byteLength > room) truncated = true;
+      if (room > 0) {
+        const part = value.subarray(0, room);
+        kept.push(part);
+        size += part.byteLength;
       }
     }
   } catch {
     // The process was killed mid-stream; keep what arrived.
+  } finally {
+    signal.removeEventListener("abort", cancel);
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
