@@ -246,9 +246,13 @@ export function routeCanvasEdges(
     leg.gutterX = takeLane(
       verticals,
       leg.request.source,
-      toLeft
-        ? leg.target.x - GUTTER_INSET
-        : leg.target.x + leg.target.width + GUTTER_INSET,
+      gutterBase(
+        leg.target,
+        toLeft ? "left" : "right",
+        boxes,
+        leg.start.y,
+        leg.end.y,
+      ),
       toLeft ? -1 : 1,
       leg.start.y,
       leg.end.y,
@@ -466,11 +470,29 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): T[][] {
   return [...groups.values()];
 }
 
-/** The gutter lane nearest a top-level box on one side. */
-function gutterBase(box: LayoutRect, side: SideEnd["side"]): number {
-  return side === "right"
-    ? box.x + box.width + GUTTER_INSET
-    : box.x - GUTTER_INSET;
+/**
+ * The gutter lane nearest a top-level box on one side: GUTTER_INSET out, or
+ * the middle of the gap when a box beside it, level with the run from `from`
+ * down to `to`, stands closer than twice that.
+ */
+function gutterBase(
+  box: LayoutRect,
+  side: SideEnd["side"],
+  boxes: ReadonlyMap<string, LayoutRect>,
+  from: number,
+  to: number,
+): number {
+  let inset = GUTTER_INSET;
+  for (const other of boxes.values()) {
+    if (other.y >= to || other.y + other.height <= from) continue;
+    const gap =
+      side === "right"
+        ? other.x - (box.x + box.width)
+        : box.x - (other.x + other.width);
+    if (gap > 0) inset = Math.min(inset, gap / 2);
+  }
+
+  return side === "right" ? box.x + box.width + inset : box.x - inset;
 }
 
 function overlaps(a: LayoutRect, b: LayoutRect): boolean {
@@ -609,8 +631,22 @@ function routeSide(
 
   const sourceOuter = boxes.get(edge.source.outerId) ?? edge.source.box;
   const targetOuter = boxes.get(edge.target.outerId) ?? edge.target.box;
-  const sourceBase = gutterBase(sourceOuter, edge.source.side);
-  const targetBase = gutterBase(targetOuter, edge.target.side);
+  // The run down to the lane under the boxes is not placed yet, so any box
+  // below a handle counts as beside it.
+  const sourceBase = gutterBase(
+    sourceOuter,
+    edge.source.side,
+    boxes,
+    start.y,
+    Infinity,
+  );
+  const targetBase = gutterBase(
+    targetOuter,
+    edge.target.side,
+    boxes,
+    end.y,
+    Infinity,
+  );
   const left = Math.min(sourceBase, targetBase);
   const right = Math.max(sourceBase, targetBase);
   const band: LayoutRect = {
