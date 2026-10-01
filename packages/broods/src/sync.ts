@@ -149,7 +149,7 @@ export interface DiffEntry {
   previousName?: string;
 }
 
-/** The stage changed since the revision a sync sent: read it again and retry. */
+/** A sync is already running or the stage revision changed: read it again and retry. */
 export class ManifestConflictError extends Error {}
 
 export class BroodsSyncClient {
@@ -179,7 +179,8 @@ export class BroodsSyncClient {
   /**
    * Syncs the manifest. With `revision`, the revision this client last read,
    * the server refuses the write with a `ManifestConflictError` when another
-   * sync landed since; without it the write always applies.
+   * sync landed since. An overlapping sync is refused with the same error,
+   * including a write without a revision.
    */
   async putManifest(
     manifest: CliManifest,

@@ -19,6 +19,8 @@ cp apps/core/.env.example apps/core/.env
 bun run check            # oxlint, oxfmt check, and every workspace check (dashboard adds @shadcn/lint)
 bun run test             # core, convex, and broods SDK tests
 bun run build            # build the core Bun container binary
+bun run verification:test # TypeScript contracts mirrored by the Lean models
+(cd verification && lake build) # machine-check those models
 # Try a demo (from repo root):
 cd packages/demos/basic-stream && bun run start
 ```

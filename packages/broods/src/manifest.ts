@@ -1093,6 +1093,7 @@ async function normalizeConfig(
     const agent = config.agent;
     config.agentId = isResource(agent) ? agent.name : agent;
     config.name = config.name ?? resource.name;
+    if (config.status === undefined) config.status = "active";
     delete config.agent;
     // Mirror the agent direct API: collapse the `input` shorthand into the
     // canonical events list so local and remote manifests diff identically.

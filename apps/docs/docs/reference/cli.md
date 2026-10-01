@@ -162,6 +162,8 @@ On every sync `dev`:
 
 A sync that references an `env("NAME")` with no stored value fails before anything is written and names the missing variables. `dev` checks npm for a newer CLI at most once a day and prints a one-line notice.
 
+A manifest conflict causes up to three sync attempts. If another sync still holds the stage, `dev` reports the failure and keeps watching; save again or rerun after that sync finishes. It does not queue unchanged source for automatic retry.
+
 ## diff
 
 Shows local desired state against the current stage, without writing anything.
@@ -189,7 +191,7 @@ broods deploy [--prune] [--rotate-key] [--stage <name>]
 | `--prune`      | Delete remote resources the project no longer declares                           |
 | `--rotate-key` | Mint a fresh runtime key and write it to `.env.local`. The old key stops working |
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a rejected deploy removes nothing. A removed agent takes its cron jobs with it. `deploy` sends no stage revision, so it always applies, whatever another session synced.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
 
 ## env
 
