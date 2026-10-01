@@ -55,12 +55,17 @@ test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and
   await expect(container).toBeInViewport();
 
   await page.mouse.move(800, 400);
+  const link = container.getByRole("link").first();
+  await link.focus();
   await page.keyboard.press("ControlOrMeta+b");
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
   await expect(container).toBeInViewport();
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
+  // The rail stays in the tab order, so the focused link keeps its focus.
+  await expect(container).not.toHaveAttribute("inert");
+  await expect(link).toBeFocused();
 
   await page.mouse.move(20, 400);
   await expect

@@ -464,7 +464,10 @@ function TokenPrompt({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
-            if (e.key === "Escape") onCancel();
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            }
           }}
         />
         <IconTooltip label={show ? "Hide token" : "Show token"}>

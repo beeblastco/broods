@@ -22,6 +22,7 @@ export function Header(): React.JSX.Element {
       <button
         type="button"
         aria-label="Toggle sidebar"
+        data-sidebar="trigger"
         onClick={toggleSidebar}
         draggable={false}
         className="cursor-pointer transition-opacity hover:opacity-80"
