@@ -354,7 +354,7 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
           ...(auth.externalId ? { externalId: auth.externalId } : {}),
         });
   if (!credentials) throw new Error("R2 workspace credentials were not minted");
-  const region = storage.region ?? (auth.type === "r2" ? "auto" : undefined);
+  const region = auth.type === "r2" ? "auto" : storage.region;
 
   return {
     bucket: storage.bucket,

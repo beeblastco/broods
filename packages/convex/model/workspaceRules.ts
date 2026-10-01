@@ -11,7 +11,10 @@
 
 import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
-import { ACCOUNT_ENV_REF_PATTERN } from "./envRefs";
+import {
+  ACCOUNT_ENV_PLACEHOLDER_PATTERN,
+  ACCOUNT_ENV_REF_PATTERN,
+} from "./envRefs";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
 
@@ -274,6 +277,11 @@ export function workspaceStorageOwnAuth(
         'config.storage.auth.type "r2" requires config.storage.endpoint to be your account R2 endpoint, https://<account id>.r2.cloudflarestorage.com',
       );
     }
+    if (storage.region !== undefined && storage.region !== "auto") {
+      throw new ClientError(
+        'config.storage.region must be "auto" or omitted for R2',
+      );
+    }
 
     return storage.auth;
   }
@@ -433,6 +441,26 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
     );
   }
   const auth = normalizeWorkspaceStorageAuth(value.auth);
+  // Only R2 keys are resolved; a ref anywhere else would be kept as literal text.
+  const literals = {
+    "config.storage.bucket": bucket,
+    "config.storage.region": region,
+    "config.storage.endpoint": endpoint,
+    "config.storage.prefix": prefix,
+    ...(auth?.type === "assumeRole"
+      ? {
+          "config.storage.auth.roleArn": auth.roleArn,
+          "config.storage.auth.externalId": auth.externalId,
+        }
+      : {}),
+  };
+  for (const [name, literal] of Object.entries(literals)) {
+    if (literal && ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(literal)) {
+      throw new ClientError(
+        `${name} cannot be an env reference; only R2 keys take env()`,
+      );
+    }
+  }
   const storage: WorkspaceStorageConfig = {
     provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
     ...(bucket ? { bucket: bucket } : {}),

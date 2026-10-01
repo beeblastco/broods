@@ -12,6 +12,8 @@ import {
 } from "./agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./sandboxConfigSync";
+import { ACCOUNT_ENV_REF_PATTERN } from "./envRefs";
+import type { WorkspaceConfig } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
 interface EnvironmentVariableWrite {
@@ -111,6 +113,11 @@ export async function assertEnvironmentVariableUnreferenced(
     .query("sandboxConfigs")
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
+  // A workspace keeps its R2 keys as `${NAME}` refs in plaintext config.
+  const workspaces = await ctx.db
+    .query("workspaceConfigs")
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .collect();
   const referencing = [
     ...agents
       .filter((entry) =>
@@ -122,6 +129,19 @@ export async function assertEnvironmentVariableUnreferenced(
         entry.runtimeVariables?.some((variable) => variable.key === name),
       )
       .map((entry) => `sandbox "${entry.name}"`),
+    ...workspaces
+      .filter((entry) => {
+        const auth = (entry.config as Partial<WorkspaceConfig> | null)?.storage
+          ?.auth;
+
+        return (
+          auth?.type === "r2" &&
+          [auth.accessKeyId, auth.secretAccessKey].some(
+            (ref) => ACCOUNT_ENV_REF_PATTERN.exec(ref)?.[1] === name,
+          )
+        );
+      })
+      .map((entry) => `workspace "${entry.name}"`),
   ].sort();
   if (referencing.length === 0) return;
 

@@ -1964,7 +1964,7 @@ paths:
                                 externalId: { type: string }
                             - type: object
                               required: [type, accessKeyId, secretAccessKey]
-                              description: "A Cloudflare R2 API token's S3 keys, each one `${NAME}` env reference, never a value. Requires `bucket`, `prefix` and `endpoint` set to `https://<account id>.r2.cloudflarestorage.com`. Each run gets one-hour R2 temporary credentials scoped to `bucket/prefix`."
+                              description: "A Cloudflare R2 API token's S3 keys, each one `${NAME}` env reference, never a value. Requires `bucket`, `prefix` and `endpoint` set to `https://<account id>.r2.cloudflarestorage.com`; `region` must be omitted or `auto`. Each run gets one-hour R2 temporary credentials scoped to `bucket/prefix`."
                               properties:
                                 type: { type: string, enum: [r2] }
                                 accessKeyId:

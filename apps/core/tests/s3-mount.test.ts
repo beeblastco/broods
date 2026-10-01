@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 
 let lastAssumeRoleInput: Record<string, unknown> | undefined;
 const assumeRoleSendMock = mock(async () => ({
@@ -19,7 +27,7 @@ mock.module("@aws-sdk/client-sts", () => ({
   },
 }));
 
-const { setStorageForTests } = await import("../src/shared/storage.ts");
+const { getStorage } = await import("../src/shared/storage.ts");
 const {
   mountRoleArn,
   resolveS3Mount,
@@ -397,31 +405,27 @@ describe("R2 storage", () => {
     },
   };
   const mints: string[][] = [];
+  let mint: { mockRestore(): void } | undefined;
 
   beforeEach(() => {
     mints.length = 0;
-    setStorageForTests({
-      workspaceConfigs: {
-        mintR2Credentials: async (
-          accountId: string,
-          workspaceId: string,
-          prefix: string,
-        ) => {
-          mints.push([accountId, workspaceId, prefix]);
+    mint = spyOn(
+      getStorage().workspaceConfigs,
+      "mintR2Credentials",
+    ).mockImplementation(async (accountId, workspaceId, prefix) => {
+      mints.push([accountId, workspaceId, prefix]);
 
-          return {
-            accessKeyId: "parent-id",
-            secretAccessKey: "derived-secret",
-            sessionToken: "session",
-            expiration: new Date(Date.now() + 3600_000).toISOString(),
-          };
-        },
-      },
-    } as never);
+      return {
+        accessKeyId: "parent-id",
+        secretAccessKey: "derived-secret",
+        sessionToken: "session",
+        expiration: new Date(Date.now() + 3600_000).toISOString(),
+      };
+    });
   });
 
   afterEach(() => {
-    setStorageForTests(null);
+    mint?.mockRestore();
   });
 
   it("mounts on credentials the config plane minted for the run's own folder", async () => {
@@ -444,6 +448,12 @@ describe("R2 storage", () => {
       },
     });
     expect(mountRoleArn(R2_STORAGE)).toBeUndefined();
+    expect(() =>
+      resolveS3MountIdentity({
+        storage: { ...R2_STORAGE, region: "eu-west-1" },
+        namespace: NS,
+      }),
+    ).toThrow('config.storage.region must be "auto" or omitted for R2');
     expect(assumeRoleSendMock).not.toHaveBeenCalled();
   });
 

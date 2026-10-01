@@ -887,9 +887,27 @@ export type WorkspaceDefinitionConfig = Omit<
   WorkspaceConfig,
   "isolation" | "storage"
 > & {
-  storage: EnvRefString<WorkspaceConfig["storage"]>;
+  storage?: WorkspaceStorageDefinition;
   /** Allow this workspace to be split into per-conversation folders. */
   partitioned?: boolean;
+};
+
+type WorkspaceStorageAuthConfig = NonNullable<
+  WorkspaceConfig["storage"]["auth"]
+>;
+type WorkspaceR2Auth = Extract<WorkspaceStorageAuthConfig, { type: "r2" }>;
+
+/** Workspace storage as authored: only the R2 keys take `env()`. */
+export type WorkspaceStorageDefinition = Omit<
+  WorkspaceConfig["storage"],
+  "auth"
+> & {
+  auth?:
+    | Exclude<WorkspaceStorageAuthConfig, { type: "r2" }>
+    | (Omit<WorkspaceR2Auth, "accessKeyId" | "secretAccessKey" | "owner"> & {
+        accessKeyId: string | EnvRef;
+        secretAccessKey: string | EnvRef;
+      });
 };
 
 export type WorkspaceResource<Name extends string = string> =

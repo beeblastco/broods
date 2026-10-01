@@ -203,6 +203,7 @@ describe("cli sync rejects env() refs with no stored value", () => {
       accessKeyId: `\${${ENV_NAME}}`,
       secretAccessKey: `\${${ENV_NAME}}`,
     });
+    await expect(removeEnv(tt)).rejects.toThrow('workspace "r2-files"');
   });
 });
 

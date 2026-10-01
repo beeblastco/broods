@@ -268,7 +268,14 @@ function fakeStorage(): Storage {
       seen: async () => undefined,
     },
     sandboxConfigs: { getById: none, list: empty, removeAllForAccount: zero },
-    workspaceConfigs: { getById: none, list: empty, removeAllForAccount: zero },
+    workspaceConfigs: {
+      getById: none,
+      list: empty,
+      mintR2Credentials: async () => {
+        throw new Error("the bench has no R2 workspace");
+      },
+      removeAllForAccount: zero,
+    },
     accountHooks: { getById: none, removeAllForAccount: zero },
     mcp: { getById: none, removeAllForAccount: zero },
     agentPolicies: { getById: none },

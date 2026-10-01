@@ -497,6 +497,16 @@ describe("R2 workspace storage", () => {
         storage: { provider: "s3", auth: R2_BUCKET.auth },
       }),
     ).toThrow("R2 has no managed bucket");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...R2_BUCKET, region: "eu-west-1" },
+      }),
+    ).toThrow('config.storage.region must be "auto" or omitted for R2');
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...R2_BUCKET, bucket: "${R2_BUCKET}" },
+      }),
+    ).toThrow("config.storage.bucket cannot be an env reference");
   });
 
   it("mints scoped credentials only for the owner's own prefix", async () => {

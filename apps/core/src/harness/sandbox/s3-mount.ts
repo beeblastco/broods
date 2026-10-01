@@ -171,8 +171,8 @@ export async function resolveS3Mount(
 
     return {
       ...identity,
-      // R2 signs for region "auto"; the harness's AWS region means nothing there.
-      region: ctx.storage?.region ?? "auto",
+      // R2 signs for region "auto"; validation refuses any other.
+      region: "auto",
       credentials: {
         AWS_ACCESS_KEY_ID: minted.accessKeyId,
         AWS_SECRET_ACCESS_KEY: minted.secretAccessKey,

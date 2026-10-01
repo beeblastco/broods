@@ -154,7 +154,7 @@ A workspace with `bucket` is rejected unless:
 - `bucket` is not one of the platform's own buckets.
 - `endpoint`, if set, is a public `https` URL. Other S3-compatible stores keep `provider: "s3"` and change `endpoint`.
 
-The platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. Set `externalId` when the role trusts Broods across accounts. No access keys are stored. Static access keys for MinIO and other stores are not supported. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
+With `assumeRole`, the platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. Set `externalId` when the role trusts Broods across accounts. No access keys are stored. Static access keys for MinIO and other stores are not supported. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
 
 ### Cloudflare R2
 
@@ -184,7 +184,7 @@ broods env set R2_ACCESS_KEY_ID
 broods env set R2_SECRET_ACCESS_KEY
 ```
 
-Over the API, write the keys as `"${R2_ACCESS_KEY_ID}"` references to account env vars set under `/v1/env`. A literal key is rejected, and so is any endpoint other than `https://<32-character account id>.r2.cloudflarestorage.com` (the `eu` and `fedramp` jurisdiction hosts work too). For each run the config plane signs R2 [temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) that last one hour and only reach `bucket/prefix`. The token's own keys never enter a sandbox. Revoking the token stops every credential minted from it.
+Over the API, write the keys as `"${R2_ACCESS_KEY_ID}"` references to account env vars set under `/v1/env`. A literal key is rejected, and so is any endpoint other than `https://<32-character account id>.r2.cloudflarestorage.com` (the `eu` and `fedramp` jurisdiction hosts work too). Leave `region` unset or `auto`. Only the two keys take `env()`. For each run the config plane signs R2 [temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) that last one hour and only reach `bucket/prefix`. The token's own keys never enter a sandbox. Revoking the token stops every credential minted from it.
 
 These rules are checked when you save and again whenever the storage is used, so a workspace saved before a rule existed fails with the same error until you fix it.
 

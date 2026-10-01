@@ -443,7 +443,7 @@ function workspaceConfigFromConvex(
 ): WorkspaceConfigRecord | null {
   if (!doc) return null;
   const config = doc.config ?? { storage: { provider: "s3" } };
-  const auth = config.storage.auth;
+  const auth = config.storage?.auth;
 
   return {
     accountId: doc.accountId,
