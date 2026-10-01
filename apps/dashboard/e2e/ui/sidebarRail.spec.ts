@@ -32,10 +32,10 @@ test("the rail opens over the page on hover, nothing showing through", async ({
   await page.goto("/ui-gallery?tab=monitoring");
   const container = page.locator('[data-slot="sidebar-container"]');
   await expect(container).toBeInViewport();
-  const searchIcon = (await page
-    .locator("svg.lucide-search")
-    .first()
-    .boundingBox())!;
+  const search = page.locator("svg.lucide-search").first();
+  await expect(search).toBeVisible();
+  const searchIcon = await search.boundingBox();
+  if (!searchIcon) throw new Error("The search icon has no box.");
 
   await page.mouse.move(20, 400);
   await expect
