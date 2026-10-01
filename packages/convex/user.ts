@@ -127,9 +127,10 @@ export const updateProfile = mutation({
 });
 
 /**
- * Backfills the caller's name and avatarUrl from values supplied by the
- * WorkOS client session when the Convex doc is missing them. Used to recover
- * from cases where the webhook payload did not include the profile picture.
+ * Refreshes the caller's avatarUrl from the WorkOS client session, and fills
+ * their name only while it is still the email fallback `deriveName` writes
+ * when the webhook payload had no first or last name. A name saved through
+ * Account settings is never overwritten.
  */
 export const syncProfile = mutation({
   args: {
@@ -158,7 +159,7 @@ export const syncProfile = mutation({
     if (avatarUrl && avatarUrl !== user.avatarUrl) {
       patch.avatarUrl = avatarUrl;
     }
-    if (name && name.trim() && name.trim() !== user.name) {
+    if (name?.trim() && user.name === user.email) {
       patch.name = name.trim();
     }
 
