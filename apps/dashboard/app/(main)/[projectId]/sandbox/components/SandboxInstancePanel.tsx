@@ -105,11 +105,14 @@ export function SandboxInstancePanel({
   const controllable =
     Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
   const commandRunnable = controllable && instance.status !== "terminating";
-  // The self-hosted workdir `sandbox` provider exposes an in-guest PTY WebSocket
-  // and AWS MicroVM (`lambda`) exposes its native shell endpoint; the third-party
-  // providers keep the bounded command runner.
+  // The self-hosted workdir `sandbox` provider exposes an in-guest PTY WebSocket,
+  // AWS MicroVM (`lambda`) exposes its native shell endpoint and the `cloudflare`
+  // bridge opens a PTY in its Container; the other third-party providers keep the
+  // bounded command runner.
   const supportsLiveTerminal =
-    instance.provider === "sandbox" || instance.provider === "lambda";
+    instance.provider === "sandbox" ||
+    instance.provider === "lambda" ||
+    instance.provider === "cloudflare";
   // Only the workdir `sandbox` provider has a runtime snapshot-to-image API, so
   // the capture action is hidden elsewhere. The others still keep state across
   // idle through suspend/resume.

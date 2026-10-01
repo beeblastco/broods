@@ -100,6 +100,7 @@ it("runs an ephemeral command on the bridge and destroys its container", async (
     timeoutSeconds: 10,
     outputLimitBytes: 1024,
     envVars: { PATH: "/evil", CALL_VAR: "b" },
+    args: ["one"],
   });
 
   expect(result).toMatchObject({
@@ -118,10 +119,9 @@ it("runs an ephemeral command on the bridge and destroys its container", async (
     enableInternet: false,
     instance: "standard-3",
   });
-  expect((exec?.body?.argv as string[]).slice(-2)).toEqual([
-    "/workspace",
-    "echo ok",
-  ]);
+  const argv = exec?.body?.argv;
+  if (!Array.isArray(argv)) throw new Error("exec body has no argv");
+  expect(argv.slice(-3)).toEqual(["/workspace", "echo ok", "one"]);
   expect(destroy?.method).toBe("DELETE");
   expect(destroy?.url).toBe(exec?.url.replace(/\/exec$/, ""));
 });
@@ -155,4 +155,45 @@ it("takes the winner's container when it loses the reservation race", async (): 
   });
 
   expect(calls[0]?.url).toContain("/v1/sandboxes/winner-id/exec");
+});
+
+it("runs a persistent config without an account as ephemeral", async (): Promise<void> => {
+  await new CloudflareSandboxExecutor({
+    ...config,
+    persistent: true,
+    controlPlane: undefined,
+  }).run({
+    code: "true",
+    reservationKey: "acct:workspace",
+    timeoutSeconds: 10,
+    outputLimitBytes: 1024,
+  });
+
+  expect(calls.map((call) => call.method)).toEqual(["POST", "DELETE"]);
+  expect(calls[0]?.url).toContain("/v1/sandboxes/fp-e-");
+});
+
+it("keeps the result when the ephemeral destroy fails", async (): Promise<void> => {
+  const executor = new CloudflareSandboxExecutor(config);
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+    input: string | URL | Request,
+  ): Promise<Response> =>
+    String(input).endsWith("/exec")
+      ? Response.json({
+          exitCode: 0,
+          stdout: "ok\n",
+          stderr: "",
+          truncated: false,
+          timedOut: false,
+        })
+      : new Response("boom", { status: 500 })) as typeof fetch);
+  restores.unshift((): void => fetchSpy.mockRestore());
+
+  const result = await executor.run({
+    code: "echo ok",
+    timeoutSeconds: 10,
+    outputLimitBytes: 1024,
+  });
+
+  expect(result.ok).toBe(true);
 });

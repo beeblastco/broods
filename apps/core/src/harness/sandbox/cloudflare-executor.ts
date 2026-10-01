@@ -7,8 +7,14 @@
  */
 
 import { z } from "zod";
+import {
+  MAX_OUTPUT_BYTES,
+  MAX_TIMEOUT_MS,
+} from "../../../../cloudflare-sandbox/src/limits.ts";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
+import { logWarn } from "../../shared/log.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSize } from "../../shared/sandbox-sizes.ts";
 import {
@@ -33,8 +39,10 @@ import {
   sandboxReservationKey,
 } from "./utils.ts";
 
-// Runs the code under a login bash in its working directory, which may not exist yet.
-const RUN_IN_CWD = 'mkdir -p -- "$1" && cd -- "$1" && exec bash -lc "$2"';
+// Runs the code under a login bash in its working directory, which may not exist
+// yet, with any further arguments as the code's own positional parameters.
+const RUN_IN_CWD =
+  'mkdir -p -- "$1" && cd -- "$1" && exec bash -lc "$2" bash "${@:3}"';
 // Cloudflare's named instance types nearest each size; a custom type needs a whole vCPU.
 const CLOUDFLARE_INSTANCES: Record<SandboxSize, string> = {
   tiny: "standard-1",
@@ -82,7 +90,12 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     const key = sandboxReservationKey(request);
-    const persistent = this.#config.persistent === true && key !== undefined;
+    // Without an account the reservation write is skipped, so the run degrades
+    // to ephemeral instead of failing, as `claimSandboxInstance` documents.
+    const persistent =
+      this.#config.persistent === true &&
+      key !== undefined &&
+      this.#config.controlPlane?.accountId !== undefined;
     const id = persistent
       ? await this.#reserve(key, request.metadata)
       : `fp-e-${crypto.randomUUID()}`;
@@ -96,6 +109,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
           "bash",
           requiredWorkspacePath(request, "/workspace"),
           request.code,
+          ...(request.args ?? []),
         ],
         request,
       );
@@ -112,7 +126,14 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         provider: "cloudflare",
       };
     } finally {
-      if (!persistent) await this.#bridge(`/v1/sandboxes/${id}`, "DELETE");
+      if (!persistent)
+        await this.#bridge(`/v1/sandboxes/${id}`, "DELETE").catch(
+          (error: unknown): void =>
+            logWarn("cloudflare sandbox destroy failed", {
+              id: id,
+              error: toErrorMessage(error),
+            }),
+        );
     }
   }
 
@@ -131,7 +152,12 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
 
   async prewarm(request: SandboxReservationRef): Promise<void> {
     const key = sandboxReservationKey(request);
-    if (this.#config.persistent !== true || !key) return;
+    if (
+      this.#config.persistent !== true ||
+      !key ||
+      this.#config.controlPlane?.accountId === undefined
+    )
+      return;
     const id = await this.#reserve(key, undefined);
     await this.#exec(id, ["true"], {
       timeoutSeconds: 30,
@@ -188,7 +214,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
       "envVars" | "outputLimitBytes" | "timeoutSeconds"
     >,
   ): Promise<z.infer<typeof execResult>> {
-    const timeoutMs = request.timeoutSeconds * 1000;
+    const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
     const response = await this.#bridge(
       `/v1/sandboxes/${id}/exec`,
       "POST",
@@ -196,7 +222,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         argv: argv,
         env: mergeSandboxEnv(this.#config.envVars, request.envVars),
         timeoutMs: timeoutMs,
-        outputLimitBytes: request.outputLimitBytes,
+        outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
         idleTimeoutSeconds: resolveSandboxLifecycle(this.#config.lifecycle)
           .idleTimeoutSeconds,
         enableInternet: this.#config.network?.mode === "allow-all",
@@ -243,7 +269,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     const winner = await getSandboxExternalId("cloudflare", key);
     if (!winner)
       throw new Error(
-        "failed to reserve a cloudflare sandbox: persistent runs need an account-scoped reservation",
+        "failed to reserve a cloudflare sandbox (lost the reservation race)",
       );
 
     return winner;

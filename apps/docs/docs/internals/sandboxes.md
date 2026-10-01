@@ -165,7 +165,7 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 
 - A Durable Object exists once named, so a persistent reservation is only the claim: the executor claims `sandboxNamePrefix(key)` plus a random suffix, and a run that loses the race uses the winner's id.
 - Ephemeral runs use a fresh `fp-e-<uuid>` id and `DELETE` it afterwards.
-- `lifecycle.idleTimeoutSeconds` becomes `setInactivityTimeout`, reapplied on every exec. A Container that sleeps loses its disk, so `getInstanceInfo` reports it gone rather than suspended, and the next exec starts a fresh one.
+- `lifecycle.idleTimeoutSeconds` becomes `setInactivityTimeout`, applied once per Durable Object instance. A Container that sleeps loses its disk, so `getInstanceInfo` reports it gone rather than suspended, and the next exec starts a fresh one.
 - `network.mode: "allow-all"` starts the Container with `enableInternet: true`; anything else starts it without internet. `restricted` is rejected.
 - `size` maps to the nearest named instance type, `standard-1` to `standard-4`. Custom types need a whole vCPU.
 - There are no background jobs, snapshots or suspend. Harness adapters refuse the provider.

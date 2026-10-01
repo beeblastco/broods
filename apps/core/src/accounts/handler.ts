@@ -553,7 +553,10 @@ async function openSandboxTerminal(
     }
   } else if (context.provider === "cloudflare") {
     // A stopped Container lost its disk; the next exec starts a fresh one.
-    if (!(await context.executor.getInstanceInfo?.(context.ref))) {
+    const info = await auditedSandboxCall(context, async () =>
+      context.executor.getInstanceInfo?.(context.ref),
+    );
+    if (!info) {
       await context.audit("error", {
         errorMessage: "Container is not running",
       });

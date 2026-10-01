@@ -8,11 +8,10 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
+import { MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS } from "./limits.ts";
 
 const SANDBOX_PATH =
   /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec|\/terminal)?$/;
-const MAX_OUTPUT_BYTES = 1024 * 1024;
-const MAX_TIMEOUT_MS = 15 * 60 * 1000;
 const TERMINAL_SIZE = { cols: 120, rows: 32 };
 
 const execRequest = z.object({
@@ -49,17 +48,12 @@ export interface ExecResult {
 
 /** One sandbox: the Container it starts and the commands core runs in it. */
 export class Sandbox extends DurableObject<Env> {
+  #starting: Promise<void> | null = null;
+
   /** Starts the Container on first use, then runs one command to completion. */
   async exec(request: ExecRequest): Promise<ExecResult> {
     const container = this.#container();
-    if (!container.running) {
-      container.start({
-        image: requiredImage(container),
-        enableInternet: request.enableInternet,
-        instance: request.instance,
-      });
-    }
-    await container.setInactivityTimeout(request.idleTimeoutSeconds * 1000);
+    await this.#ensureRunning(container, request);
     const signal = AbortSignal.timeout(request.timeoutMs);
     const process = await container.exec(request.argv, {
       env: request.env,
@@ -100,18 +94,25 @@ export class Sandbox extends DurableObject<Env> {
       pty: TERMINAL_SIZE,
       env: { TERM: "xterm-256color" },
       signal: abort.signal,
+      stdin: "pipe",
     });
+    if (!shell.stdin) {
+      abort.abort();
+      throw new Error("The terminal shell has no stdin");
+    }
+    const stdin = shell.stdin.getWriter();
     const { 0: client, 1: server } = new WebSocketPair();
     server.binaryType = "arraybuffer";
     server.accept();
-    const stdin = shell.stdin?.getWriter();
     const encoder = new TextEncoder();
     server.addEventListener("message", (event): void => {
       const bytes =
         typeof event.data === "string"
           ? encoder.encode(event.data)
           : new Uint8Array(event.data);
-      stdin?.write(bytes).catch((): void => {});
+      stdin
+        .write(bytes)
+        .catch((): void => server.close(1011, "Terminal input failed"));
     });
     server.addEventListener("close", (): void => abort.abort());
     void (async (): Promise<void> => {
@@ -133,6 +134,36 @@ export class Sandbox extends DurableObject<Env> {
     if (!container) throw new Error("The container binding is not configured");
 
     return container;
+  }
+
+  // `start()` returns before the Container is ready and its first `exec()`
+  // waits for it, per the Container API. Concurrent first calls share one
+  // start, and a failed setup destroys the half-started Container.
+  #ensureRunning(container: Container, request: ExecRequest): Promise<void> {
+    if (this.#starting === null || !container.running) {
+      this.#starting = (async (): Promise<void> => {
+        if (!container.running) {
+          container.start({
+            image: requiredImage(container),
+            enableInternet: request.enableInternet,
+            instance: request.instance,
+          });
+        }
+        try {
+          await container.setInactivityTimeout(
+            request.idleTimeoutSeconds * 1000,
+          );
+        } catch (error) {
+          await container.destroy();
+          throw error;
+        }
+      })().catch((error: unknown): never => {
+        this.#starting = null;
+        throw error;
+      });
+    }
+
+    return this.#starting;
   }
 }
 

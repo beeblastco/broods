@@ -24,7 +24,7 @@ export const helper = defineAgent({
 
 | Field                          | Behavior                                                                                             |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `persistent`                   | `true` keeps one Container per workspace or agent while it is warm. `false` uses a new one per call  |
+| `persistent`                   | `true` keeps one Container per agent while it is warm. `false` uses a new one per call               |
 | `lifecycle.idleTimeoutSeconds` | How long a warm Container waits for the next command before it sleeps. Default 15 minutes            |
 | `network.mode`                 | `allow-all` turns internet on. `deny-all` turns it off. `restricted` is rejected                     |
 | `size`                         | Picks the nearest Cloudflare instance type, from `standard-1` for `tiny` to `standard-4` for `large` |

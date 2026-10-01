@@ -283,11 +283,16 @@ export async function resolveAgentRuntime(
       } else {
         effectiveSandbox = sandbox;
       }
-      // The file tools need an S3 mount, and a machine has none: they would act
-      // on the daemon's own disk instead.
-      if (effectiveSandbox?.provider === "machine") {
+      // The file tools need an S3 mount, and a machine or a Cloudflare Container
+      // has none: they would act on the daemon's or the container's own disk.
+      // A fallback runs the same workspace, so it is held to the same rule.
+      const unmountable = [
+        effectiveSandbox?.provider,
+        effectiveSandbox?.fallbackProvider,
+      ].find((provider) => provider === "machine" || provider === "cloudflare");
+      if (unmountable) {
         throw new Error(
-          `Workspace "${ref.name}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
+          `Workspace "${ref.name}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,
         );
       }
       // Read-only workspace (no effective sandbox): default to reading through a
