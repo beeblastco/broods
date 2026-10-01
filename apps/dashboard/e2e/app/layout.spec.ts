@@ -1,6 +1,6 @@
 /**
  * The signed-in shell at a laptop viewport: header and sidebar fit with no
- * sideways scroll on every project page, with the sidebar pinned and hidden.
+ * sideways scroll on every project page, with the sidebar pinned and collapsed.
  * The header once ran 127px past 1280, cutting off the last nav links and the
  * avatar and scrolling the page on every hover.
  */
@@ -14,9 +14,12 @@ import {
 } from "../lib/session";
 
 test.skip(!hasProbe(), MISSING_PROBE);
+const RAIL_WIDTH = 48;
+const SIDEBAR_WIDTH = 256;
+
 test.use({ viewport: { width: 1280, height: 800 } });
 
-test("every project page fits 1280 wide, sidebar pinned and hidden", async ({
+test("every project page fits 1280 wide, sidebar pinned and collapsed", async ({
   page,
 }) => {
   const projectId = readProjectId();
@@ -33,7 +36,7 @@ test("every project page fits 1280 wide, sidebar pinned and hidden", async ({
 
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
-  expect(await horizontalOverflow(page), "hidden").toBe(0);
+  expect(await horizontalOverflow(page), "collapsed").toBe(0);
 });
 
 async function horizontalOverflow(page: Page): Promise<number> {
@@ -44,26 +47,35 @@ async function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
-test("a hidden sidebar peeks at the left edge and stays hidden across a reload", async ({
+test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and stays collapsed across a reload", async ({
   page,
 }) => {
-  await page.goto(`/${readProjectId()}/dashboard`);
+  await page.goto(`/${readProjectId()}/dashboard?tab=tracing`);
   const container = page.locator('[data-slot="sidebar-container"]');
   await expect(container).toBeInViewport();
 
-  // Off the edge first: the pointer starts at 0,0, where a hidden sidebar peeks.
   await page.mouse.move(800, 400);
   await page.keyboard.press("ControlOrMeta+b");
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
-  await expect(container).not.toBeInViewport();
+  await expect(container).toBeInViewport();
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
 
-  await page.mouse.move(4, 400);
-  await expect(container).toBeInViewport();
-  // Moving along the edge, where the reveal strip was, keeps it up.
-  await page.mouse.move(8, 440);
-  await expect(container).toBeInViewport();
+  await page.mouse.move(20, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+  // Drawn over the page, so nothing on it shows through the labels.
+  const covering = await page.evaluate(() => {
+    const hit = document.elementFromPoint(100, 300);
+    return hit?.closest('[data-slot="sidebar-container"]') !== null;
+  });
+  expect(covering).toBe(true);
   await page.mouse.move(800, 400);
-  await expect(container).not.toBeInViewport();
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
 
   await page.reload();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");

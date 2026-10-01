@@ -39,7 +39,7 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
-  // A hidden sidebar shown over the page while the pointer is near it.
+  // A collapsed icon rail opened over the page while the pointer is on it.
   peek: boolean;
   setPeek: (peek: boolean) => void;
 };
@@ -164,12 +164,11 @@ function Sidebar({
   const { isMobile, state, openMobile, setOpenMobile, peek, setPeek } =
     useSidebar();
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const peeking = peek && state === "collapsed" && collapsible === "offcanvas";
+  const peeking = peek && state === "collapsed" && collapsible === "icon";
 
-  // Hide again once the pointer moves past the sidebar's width, unless a menu
+  // Close again once the pointer moves past the sidebar's width, unless a menu
   // opened from inside (the account menu) is still up. By width, not by what
-  // is under the pointer, so the slide-in and the edge strip never count as
-  // leaving.
+  // is under the pointer, so the slide-out never counts as leaving.
   React.useEffect(() => {
     if (!peeking) return;
     const onMove = (event: PointerEvent): void => {
@@ -244,29 +243,21 @@ function Sidebar({
           "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
-          peeking && "w-0",
+          // Peeking draws over the page, so the gap keeps the rail's width.
+          peeking && "w-(--sidebar-width-icon)",
           variant === "floating" || variant === "inset"
             ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
         )}
       />
-      {state === "collapsed" && collapsible === "offcanvas" && !peeking && (
-        <div
-          data-slot="sidebar-reveal"
-          aria-hidden="true"
-          className={cn(
-            "fixed inset-y-0 z-20 w-3",
-            side === "left" ? "left-0" : "right-0",
-          )}
-          onPointerEnter={() => setPeek(true)}
-        />
-      )}
       <div
         ref={containerRef}
         data-slot="sidebar-container"
         data-side={side}
+        // A collapsed icon rail opens over the page once the pointer is on it.
+        onPointerEnter={() => setPeek(true)}
         className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
+          "fixed inset-y-0 z-30 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"

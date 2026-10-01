@@ -15,6 +15,7 @@ import {
   DETAIL_MIN_WIDTH,
   TABLE_MIN_WIDTH,
 } from "@/app/lib/detailSplit";
+import { cn } from "@/app/lib/utils";
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -30,6 +31,8 @@ interface DetailSplitProps {
   children: ReactNode;
   /** The detail column's content, or nothing while no row is selected. */
   detail: ReactNode;
+  /** Drop the card frame, for a panel that fills the page edge to edge. */
+  flush?: boolean;
   /** The table panel's narrowest width, for tables wider than the default. */
   tableMinWidth?: number;
 }
@@ -65,10 +68,16 @@ export function DetailPanel({
 export function DetailSplit({
   children,
   detail,
+  flush = false,
   tableMinWidth = TABLE_MIN_WIDTH,
 }: DetailSplitProps): React.JSX.Element {
   return (
-    <ResizablePanelGroup className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
+    <ResizablePanelGroup
+      className={cn(
+        "min-h-0 flex-1 overflow-hidden bg-card",
+        !flush && "rounded-lg border border-border",
+      )}
+    >
       <ResizablePanel
         minSize={tableMinWidth}
         className="min-h-0 min-w-0 overflow-auto"

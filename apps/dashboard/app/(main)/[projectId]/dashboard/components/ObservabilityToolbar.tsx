@@ -86,7 +86,7 @@ export function ObservabilityToolbar({
   useShortcut("table.refresh", () => !refreshDisabled && onRefresh());
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 select-none">
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2 select-none">
       <div className="relative min-w-50 flex-1">
         <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
