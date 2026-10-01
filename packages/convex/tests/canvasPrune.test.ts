@@ -14,79 +14,91 @@ const modules = import.meta.glob("../**/*.ts");
 
 test("keeps an unreferenced sandbox config while an instance holds it", async () => {
   const t = convexTest(schema, modules);
-  const remaining = await t.run(async (ctx): Promise<string[]> => {
-    const now = Date.now();
-    const orgId = await ctx.db.insert("orgs", {
-      name: "beeblast",
-      slug: "beeblast",
-      ownerAuthId: "auth_owner",
-      plan: "free",
-      createdAt: now,
-    });
-    const accountId = await ctx.db.insert("accounts", {
-      orgId: orgId,
-      username: "beeblast-dev",
-      secretHash: "hash",
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
-    const projectId = await ctx.db.insert("projects", {
-      authId: "auth_owner",
-      orgId: orgId,
-      name: "Prune",
-      slug: "prune",
-      updatedAt: now,
-    });
-    const stageId = await ctx.db.insert("stages", {
-      authId: "auth_owner",
-      projectId: projectId,
-      name: "development",
-      kind: "development",
-      isDefault: true,
-      updatedAt: now,
-    });
-    const scope = {
-      accountId: accountId,
-      projectId: projectId,
-      stageId: stageId,
-      managedBy: "dashboard" as const,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const reservedId = await ctx.db.insert("sandboxConfigs", {
-      ...scope,
-      name: "reserved",
-    });
-    await ctx.db.insert("sandboxConfigs", { ...scope, name: "idle" });
-    await ctx.db.insert("workspaceConfigs", {
-      ...scope,
-      name: "ws",
-      config: {},
-    });
-    await ctx.db.insert("sandboxInstances", {
-      accountId: accountId,
-      projectId: projectId,
-      stageId: stageId,
-      provider: "lambda",
-      reservationKey: "reserved-key",
-      sandboxConfigId: reservedId,
-      externalId: "microvm-1",
-      name: "reserved",
-      status: "running",
-      specs: { vcpu: 1, memoryMb: 1024, storageGb: 1 },
-      createdAt: now,
-      lastUsedAt: now,
-    });
-    const account = await ctx.db.get(accountId);
+  const remaining = await t.run(
+    async (ctx): Promise<{ kept: string[]; afterRelease: string[] }> => {
+      const now = Date.now();
+      const orgId = await ctx.db.insert("orgs", {
+        name: "beeblast",
+        slug: "beeblast",
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: now,
+      });
+      const accountId = await ctx.db.insert("accounts", {
+        orgId: orgId,
+        username: "beeblast-dev",
+        secretHash: "hash",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: orgId,
+        name: "Prune",
+        slug: "prune",
+        updatedAt: now,
+      });
+      const stageId = await ctx.db.insert("stages", {
+        authId: "auth_owner",
+        projectId: projectId,
+        name: "development",
+        kind: "development",
+        isDefault: true,
+        updatedAt: now,
+      });
+      const scope = {
+        accountId: accountId,
+        projectId: projectId,
+        stageId: stageId,
+        managedBy: "dashboard" as const,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const reservedId = await ctx.db.insert("sandboxConfigs", {
+        ...scope,
+        name: "reserved",
+      });
+      await ctx.db.insert("sandboxConfigs", { ...scope, name: "idle" });
+      await ctx.db.insert("workspaceConfigs", {
+        ...scope,
+        name: "ws",
+        config: {},
+      });
+      await ctx.db.insert("sandboxInstances", {
+        accountId: accountId,
+        projectId: projectId,
+        stageId: stageId,
+        provider: "lambda",
+        reservationKey: "reserved-key",
+        sandboxConfigId: reservedId,
+        externalId: "microvm-1",
+        name: "reserved",
+        status: "running",
+        specs: { vcpu: 1, memoryMb: 1024, storageGb: 1 },
+        createdAt: now,
+        lastUsedAt: now,
+      });
+      const account = await ctx.db.get(accountId);
 
-    await pruneOrphanedDashboardRows(ctx, account, stageId, []);
+      await pruneOrphanedDashboardRows(ctx, account, stageId, []);
+      const kept = await names();
+      // Once the sweeper releases the instance, the next prune drops the config.
+      for (const row of await ctx.db.query("sandboxInstances").collect()) {
+        await ctx.db.delete(row._id);
+      }
+      await pruneOrphanedDashboardRows(ctx, account, stageId, []);
 
-    const sandboxes = await ctx.db.query("sandboxConfigs").collect();
-    const workspaces = await ctx.db.query("workspaceConfigs").collect();
+      return { kept: kept, afterRelease: await names() };
 
-    return [...sandboxes, ...workspaces].map((row): string => row.name);
-  });
+      async function names(): Promise<string[]> {
+        const sandboxes = await ctx.db.query("sandboxConfigs").collect();
+        const workspaces = await ctx.db.query("workspaceConfigs").collect();
 
-  expect(remaining).toEqual(["reserved"]);
+        return [...sandboxes, ...workspaces].map((row): string => row.name);
+      }
+    },
+  );
+
+  expect(remaining).toEqual({ kept: ["reserved"], afterRelease: [] });
 });

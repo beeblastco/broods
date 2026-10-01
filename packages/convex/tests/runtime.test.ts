@@ -1014,6 +1014,16 @@ describe("sandbox reservation expiry", () => {
       externalId: "sbx-replaced",
       instance: null,
     });
+    // A failed teardown can leave the mirror after the reservation is gone.
+    await t.run(async (ctx): Promise<void> => {
+      for (const row of await ctx.db.query("sandboxReservations").collect()) {
+        await ctx.db.delete(row._id);
+      }
+    });
+    expect(await target()).toEqual({
+      externalId: "sbx-byo",
+      instance: { ownCredentials: true },
+    });
   });
 
   test("deferral moves a row off the head of the expiry page", async () => {

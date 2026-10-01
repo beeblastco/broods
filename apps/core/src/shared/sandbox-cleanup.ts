@@ -131,6 +131,7 @@ export async function releaseReservedSandboxes(
   return released;
 }
 
+/** The executor that releases through `config`'s provider and credentials. */
 function executorFor(
   config: SandboxConfig,
 ):
@@ -240,6 +241,7 @@ async function releaseOnProvider(
   return false;
 }
 
+/** Every sandbox config of the account; a failed list leaves only the platform's credentials. */
 async function sandboxConfigs(
   accountId: string,
 ): Promise<SandboxConfigRecord[]> {

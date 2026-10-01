@@ -698,6 +698,7 @@ export const getSandboxReservation = internalQuery({
  * instance row's record of whose credentials it runs on and which config
  * reserved it. The row is a best-effort mirror, so it is returned only while
  * it still names `externalId`, or the reserved machine when none is given.
+ * With no reservation, the mirror row's own machine is the target.
  * @returns the reserved provider id, or null, and the matching instance row, or null
  */
 export const getSandboxReleaseTarget = internalQuery({
@@ -717,20 +718,26 @@ export const getSandboxReleaseTarget = internalQuery({
           .eq("reservationKey", args.reservationKey),
       )
       .unique();
-    const externalId = args.externalId ?? reservation?.externalId ?? null;
-    if (!externalId) return { externalId: null, instance: null };
-    const instances = await ctx.db
-      .query("sandboxInstances")
-      .withIndex("by_reservationKey", (q) =>
-        q.eq("reservationKey", args.reservationKey),
-      )
-      .collect();
-    const instance = instances.find(
+    const instances = (
+      await ctx.db
+        .query("sandboxInstances")
+        .withIndex("by_reservationKey", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .collect()
+    ).filter(
       (row) =>
-        row.accountId === args.accountId &&
-        row.provider === args.provider &&
-        row.externalId === externalId,
+        row.accountId === args.accountId && row.provider === args.provider,
     );
+    // A mirror row a failed teardown left behind still names its machine.
+    const externalId =
+      args.externalId ??
+      (reservation?.accountId === args.accountId
+        ? reservation.externalId
+        : instances[0]?.externalId) ??
+      null;
+    if (!externalId) return { externalId: null, instance: null };
+    const instance = instances.find((row) => row.externalId === externalId);
 
     return {
       externalId: externalId,
