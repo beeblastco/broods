@@ -67,6 +67,20 @@ describe("user.updated webhook", () => {
 
     expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
   });
+
+  test("replaces the old email fallback when the email changes", async () => {
+    const t = profileNameTest();
+    const userId = await seedUser(t, "user@example.com");
+
+    await t.mutation(internal.auth.authKitEvent, {
+      event: "user.updated",
+      data: { ...workosUser(), email: "new@example.com" },
+    });
+
+    const user = await readUser(t, userId);
+    expect(user?.email).toBe("new@example.com");
+    expect(user?.name).toBe("WorkOS Name");
+  });
 });
 
 async function readUser(
