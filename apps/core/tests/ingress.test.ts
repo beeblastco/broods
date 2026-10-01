@@ -674,6 +674,45 @@ describe("channel senders", (): void => {
     expect(senders).toEqual([]);
   });
 
+  it("runs a queued /compact after the turn, in place of a model turn", async (): Promise<void> => {
+    let taken = false;
+    runtime.mutate = (async (name: string): Promise<unknown> => {
+      if (name === "acceptIngress") {
+        return { outcome: "owner", ownerGeneration: 1 };
+      }
+      if (name !== "takeNextIngress" || taken) return null;
+      taken = true;
+
+      return {
+        ...queued,
+        events: [{ role: "user", content: "/compact keep the deploy" }],
+      };
+    }) as never;
+    const compact = spyOn(
+      Session.prototype,
+      "compactConversation",
+    ).mockResolvedValue(4);
+    const replies: string[] = [];
+    const message = aliceMessage();
+
+    await handleChannelRequest({
+      ...message,
+      channel: {
+        ...message.channel,
+        sendText: async (text: string): Promise<void> => {
+          replies.push(text);
+        },
+      },
+    });
+    await drainInProcessWorkers();
+
+    // Only alice's turn reached the history; the command never did.
+    expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }]);
+    expect(compact).toHaveBeenCalledWith("keep the deploy");
+    expect(replies.at(-1)).toBe("Context compacted. 4 message(s) summarized.");
+    compact.mockRestore();
+  });
+
   it("keeps the sender on an envelope recovered for another worker", async (): Promise<void> => {
     runtime.mutate = (async (name: string): Promise<unknown> =>
       name === "acceptIngress"
@@ -735,6 +774,49 @@ describe("channel commands", (): void => {
 
     expect(clears).toBe(1);
     expect(replies).toEqual(["Context cleared. Starting fresh."]);
+  });
+
+  it("queues /compact behind a running turn and says so", async (): Promise<void> => {
+    const admitted: Record<string, unknown>[] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      if (name !== "acceptIngress") return null;
+      admitted.push(args);
+
+      return { outcome: "queued", status: "queued" };
+    }) as never;
+    const replies: string[] = [];
+
+    await handleChannelRequest({
+      accountId: "acct_1",
+      agentId: "agent_1",
+      eventId: "event-compact",
+      conversationKey: "acct:acct_1:agent:agent_1:discord:C1",
+      // Discord delivers only the option text of a slash command.
+      content: "keep the deploy",
+      events: [{ role: "user", content: "keep the deploy" }],
+      channelName: "discord",
+      commandToken: "/compact",
+      source: { channelId: "C1" },
+      channel: {
+        sendText: async (text: string): Promise<void> => {
+          replies.push(text);
+        },
+        sendTyping: async (): Promise<void> => {},
+        reactToMessage: async (): Promise<void> => {},
+      },
+    });
+
+    expect(admitted).toHaveLength(1);
+    expect(admitted[0]?.requestedMode).toBe("followup");
+    expect(admitted[0]?.events).toEqual([
+      { role: "user", content: "/compact keep the deploy" },
+    ]);
+    expect(replies).toEqual([
+      "/compact queued. It runs when the current turn finishes.",
+    ]);
   });
 });
 

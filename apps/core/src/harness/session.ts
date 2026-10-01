@@ -575,10 +575,11 @@ export class Session {
 
   /**
    * Compacts the stored conversation now, regardless of the agent's compaction
-   * config or context size. Serves the /compact channel command; the caller
-   * holds the fenced clear lease, so no run or queued ingress can interleave
-   * and the whole history folds into the summary. Returns how many messages
-   * were summarized; 0 means there was nothing to compact.
+   * config or context size. Serves the /compact channel command, which waits
+   * in the ingress queue and runs here under the owner lease once the turn
+   * before it has ended, so no run can interleave and the whole history folds
+   * into the summary. Returns how many messages were summarized; 0 means there
+   * was nothing to compact.
    */
   async compactConversation(instructions: string): Promise<number> {
     const entries = await this.loadConversationEntries();

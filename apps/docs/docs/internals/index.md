@@ -159,4 +159,4 @@ Chat commands such as `/new`, `/compact` and `/queue` are handled by core before
 1. Add an entry to the `commands` array in `apps/core/src/shared/commands.ts`.
 2. Give it `aliases`, a `description` and an `execute` function that returns the reply text. Set `discord` metadata if it should register as a Discord slash command, and `showInHelp: false` to keep it out of `/help`.
 3. Use only the channel-agnostic `ChannelActions` interface. Commands must not import channel-specific modules.
-4. A command that touches conversation history must take the conversation lease first, as `/clear` and `/compact` do. See [queue and steer](queue-and-steer.md).
+4. A command that touches conversation history must hold the conversation lease. `/clear` takes it and is refused while busy. `/compact` sets `queued: true`, so it waits in the queue and the drain loop runs it under the lease once the turn before it ends. See [queue and steer](queue-and-steer.md).
