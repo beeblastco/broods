@@ -31,6 +31,7 @@
 
 import type { CanvasNode } from "../canvas";
 import {
+  ARROW_RUN,
   BUS_INSET,
   facingSide,
   LANE_SPACING,
@@ -729,7 +730,8 @@ function gutterRoom(routes: EdgeRoutes, room: LaneRoom): Map<number, number> {
   }
   const gutters = new Map(room.gutters);
   for (const [boundary, lanes] of lanesByGutter) {
-    const needed = Math.max(...lanes) - Math.min(...lanes) + LANE_SPACING * 2;
+    // An arrow's run clear of the box on each side, so no lane lands in a neighbour.
+    const needed = Math.max(...lanes) - Math.min(...lanes) + ARROW_RUN * 2;
     const width =
       columnLeft(boundary, room) -
       columnLeft(boundary - 1, room) -

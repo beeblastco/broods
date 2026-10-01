@@ -8,13 +8,11 @@ import { ProjectHeaderLeft } from "@/app/components/header/ProjectHeaderLeft";
 import { useSidebar } from "@/app/components/ui/sidebar";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Lock } from "lucide-react";
-import { useParams } from "next/navigation";
 
 // Shipped with the header, not behind a second request: the stage selector
 // lives here, and every page's first query waits on the stage it picks.
 
 export function Header(): React.JSX.Element {
-  const params = useParams<{ projectId?: string }>();
   const { role } = useOrgRole();
   const { toggleSidebar } = useSidebar();
 
@@ -45,11 +43,9 @@ export function Header(): React.JSX.Element {
 
       <ProjectHeaderLeft />
 
-      {params.projectId && (
-        <div className="ml-auto">
-          <CommandMenu />
-        </div>
-      )}
+      <div className="ml-auto">
+        <CommandMenu />
+      </div>
     </header>
   );
 }
