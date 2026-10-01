@@ -299,7 +299,7 @@ export async function resolveAgentRuntime(
       const readMount: SandboxConfig | undefined =
         !effectiveSandbox &&
         ref.sandbox !== null &&
-        !record.config.storage.bucket
+        !record.config.storage?.bucket
           ? { provider: "lambda", network: { mode: "deny-all" } }
           : undefined;
       workspaces.push({
