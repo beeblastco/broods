@@ -212,6 +212,15 @@ export interface ReservedSandbox {
 }
 
 /**
+ * The reserved machine, and the instance row's record of whose credentials it
+ * runs on and which config reserved it; null while no row names that machine.
+ */
+export interface SandboxReleaseTarget {
+  externalId: string | null;
+  instance: { ownCredentials: boolean; sandboxConfigId?: string } | null;
+}
+
+/**
  * A release, optionally pinned to the machine the caller already read. Vercel's
  * id is a name derived from the key, shared by every replacement, so the pin is
  * a no-op there.
