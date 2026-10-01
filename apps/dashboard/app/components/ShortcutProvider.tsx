@@ -85,8 +85,9 @@ export function ShortcutProvider({
       if (!shortcut) return;
 
       // A bare key is a command only outside text fields, only outside an open
-      // dialog, where the page underneath is not what you are driving, and only
-      // when it is not the press that activates whatever has focus.
+      // dialog, menu or listbox, where the page underneath is not what you are
+      // driving (Escape there closes the popup, not the panel behind it), and
+      // only when it is not the press that activates whatever has focus.
       //
       // The modifiers say whether this is a chord. The combo text cannot: `+`
       // is both the separator and the key `canvas.zoomIn` binds.
@@ -96,7 +97,7 @@ export function ShortcutProvider({
       if (
         shortcut.scope !== "global" &&
         event.target instanceof HTMLElement &&
-        event.target.closest("[role=dialog]")
+        event.target.closest("[role=dialog], [role=menu], [role=listbox]")
       ) {
         return;
       }

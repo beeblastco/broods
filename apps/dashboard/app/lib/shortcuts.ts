@@ -48,6 +48,12 @@ export const SHORTCUTS = [
   },
   { combos: ["["], id: "nav.prev", label: "Previous section", scope: "global" },
   { combos: ["]"], id: "nav.next", label: "Next section", scope: "global" },
+  {
+    combos: ["mod+b"],
+    id: "sidebar.toggle",
+    label: "Toggle sidebar",
+    scope: "global",
+  },
 
   { combos: ["a"], id: "canvas.addAgent", label: "Add agent", scope: "canvas" },
   {
@@ -110,7 +116,7 @@ export const SHORTCUTS = [
   { combos: ["-"], id: "canvas.zoomOut", label: "Zoom out", scope: "canvas" },
 
   {
-    combos: ["mod+b"],
+    combos: ["escape"],
     id: "panel.toggle",
     label: "Close side panel",
     scope: "panel",

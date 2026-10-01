@@ -33,7 +33,6 @@ export default function CronsPage({
     projectId: typedProjectId,
   });
   const account = useQuery(api.org.orgs.getActiveAccount, {});
-  const project = useQuery(api.project.getById, { projectId: typedProjectId });
 
   const [createOpen, setCreateOpen] = useState(false);
   // A cron runs an agent, so with none in this project the dialog's picker
@@ -48,19 +47,10 @@ export default function CronsPage({
     crons === undefined || agents === undefined || account === undefined;
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-8 pt-9 pb-12">
-      <div className="flex items-center justify-between pb-6">
-        <div>
-          <h2 className="text-xl font-semibold text-foreground">Scheduler</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Scheduled runs for{" "}
-            <span className="font-medium text-foreground">
-              {project?.name ?? "this project"}
-            </span>
-            .
-          </p>
-        </div>
-        {canWrite && (
+    <div className="mx-auto w-full max-w-5xl px-6 pt-6 pb-12">
+      <h1 className="sr-only">Scheduler</h1>
+      {canWrite && (
+        <div className="flex justify-end pb-6">
           <Button
             size="sm"
             className="cursor-pointer disabled:cursor-not-allowed"
@@ -70,8 +60,8 @@ export default function CronsPage({
             <Plus className="size-4 mr-1" />
             New cron job
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading...</p>

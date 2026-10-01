@@ -1,12 +1,13 @@
 "use client";
 
 import { CopilotDock } from "@/app/components/copilot/CopilotDock";
-import { CopilotLauncher } from "@/app/components/copilot/CopilotLauncher";
 import { CopilotProvider } from "@/app/components/copilot/CopilotProvider";
+import { AppSidebar } from "@/app/components/AppSidebar";
 import { Header } from "@/app/components/Header";
 import { PerfReporter } from "@/app/components/PerfReporter";
 import { ShortcutOverlay } from "@/app/components/ShortcutOverlay";
 import { ShortcutProvider } from "@/app/components/ShortcutProvider";
+import { SidebarInset, SidebarProvider } from "@/app/components/ui/sidebar";
 import { TooltipProvider } from "@/app/components/ui/tooltip";
 import {
   clearOnboardingSecret,
@@ -37,10 +38,13 @@ const OnboardingDialog = dynamic(
   { loading: (): null => null },
 );
 
-export default function MainLayout({
+/** The signed-in shell: auth gates, header, sidebar, page and copilot dock. */
+export function MainShell({
   children,
+  defaultSidebarOpen,
 }: Readonly<{
   children: React.ReactNode;
+  defaultSidebarOpen: boolean;
 }>): React.JSX.Element | null {
   // A segment that cannot be a project id is a 404 before anything queries
   // with it: the header, copilot and page all cast it to `Id<"projects">`, and
@@ -134,7 +138,10 @@ export default function MainLayout({
         <TooltipProvider>
           <Suspense>
             <CopilotProvider>
-              <div className="flex h-screen w-screen flex-col bg-background">
+              <SidebarProvider
+                defaultOpen={defaultSidebarOpen}
+                className="h-screen flex-col"
+              >
                 <Header />
                 {onboardingSecret && (
                   <OnboardingDialog
@@ -146,16 +153,16 @@ export default function MainLayout({
                   />
                 )}
                 {/* The dock is a column beside the page, not a sheet over it: what
-                  it is about to change has to stay on screen. */}
-                <div className="relative flex flex-1 overflow-hidden">
-                  <div className="min-w-0 flex-1 overflow-hidden">
+                    it is about to change has to stay on screen. */}
+                <div className="flex min-h-0 flex-1">
+                  <AppSidebar />
+                  <SidebarInset className="min-w-0 overflow-hidden">
                     {children}
-                  </div>
-                  <CopilotLauncher />
+                  </SidebarInset>
                   <CopilotDock />
                 </div>
                 <ShortcutOverlay />
-              </div>
+              </SidebarProvider>
             </CopilotProvider>
           </Suspense>
         </TooltipProvider>
