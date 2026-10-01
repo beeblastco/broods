@@ -444,7 +444,36 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.readMount).toEqual({
       provider: "lambda",
       network: { mode: "deny-all" },
+      storage: { provider: "s3" },
     });
+  });
+
+  it("attaches a bring-your-own bucket's storage to the read-only mount", async () => {
+    const byoStorage = {
+      provider: "s3" as const,
+      bucket: "dev-bucket",
+      prefix: "agents/",
+      region: "eu-west-1",
+      endpoint: "https://s3.eu-west-1.amazonaws.com",
+      auth: {
+        type: "assumeRole" as const,
+        roleArn: "arn:aws:iam::123456789012:role/broods-mount",
+        externalId: "ext_1",
+      },
+    };
+    setStorageForTests({
+      sandboxConfigs: { getById: async () => null },
+      workspaceConfigs: {
+        getById: async () => ({ config: { storage: byoStorage } }),
+      },
+    } as never);
+
+    const resolved = await resolveAgentRuntime(
+      { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
+      { accountId: "acct_1" },
+    );
+
+    expect(resolved.workspaces[0]?.readMount?.storage).toEqual(byoStorage);
   });
 
   it("reads a read-only workspace directly from S3 when the ref opts out with sandbox: null", async () => {
