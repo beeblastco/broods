@@ -214,6 +214,32 @@ describe("routeCanvasEdges", () => {
     );
   });
 
+  it("keeps a full gutter that is clear rather than narrowing it into a blocker", () => {
+    // The neighbour sits below the approach lane, so the full gutter clears
+    // it; the middle of the gap would run through the blocker.
+    const boxes = new Map([
+      ["agent", box(0, 0)],
+      ["blocker", box(420, 200)],
+      ["neighbour", box(240, 420)],
+      ["target", box(430, 432)],
+    ]);
+    const { agent } = routeCanvasEdges(
+      boxes,
+      [{ id: "e", source: "agent", target: "target" }],
+      [],
+    );
+    const points = agentEdgePoints(
+      handlePoint(boxes.get("agent")!, "bottom"),
+      handlePoint(boxes.get("target")!, "top"),
+      agent.get("e")!,
+    );
+
+    expect(agent.get("e")!.gutter).not.toBeNull();
+    expect(crossedBoxIds(points, boxes, new Set(["agent", "target"]))).toEqual(
+      [],
+    );
+  });
+
   it("fans two side edges into one handle so their last legs never share a run", () => {
     const boxes = new Map([
       ["one", box(0, 144)],

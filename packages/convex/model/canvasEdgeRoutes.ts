@@ -246,7 +246,13 @@ export function routeCanvasEdges(
     leg.gutterX = takeLane(
       verticals,
       leg.request.source,
-      gutterBase(leg.target, side, boxes, leg.start.y, leg.end.y),
+      gutterBase(
+        leg.target,
+        side,
+        boxes,
+        leg.start.y,
+        leg.end.y - APPROACH_INSET,
+      ),
       directionOf(side),
       leg.start.y,
       leg.end.y,
@@ -465,10 +471,11 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): T[][] {
 }
 
 /**
- * The gutter lane nearest a top-level box on one side: GUTTER_INSET out, or
- * the middle of the gap when a box beside it, level with the run from `from`
- * down to `to`, stands closer than twice that. A side edge's run ends under
- * boxes not placed yet, so it leaves `to` open and any box below counts.
+ * The gutter lane nearest a top-level box on one side, for a vertical run from
+ * `from` down to `to`: GUTTER_INSET out when that run crosses no box, else the
+ * middle of the gap to the nearest box level with it when that is clear, else
+ * GUTTER_INSET out anyway. A side edge's run ends under boxes not placed yet,
+ * so it leaves `to` open.
  */
 function gutterBase(
   box: LayoutRect,
@@ -477,17 +484,25 @@ function gutterBase(
   from: number,
   to = Infinity,
 ): number {
-  let inset = GUTTER_INSET;
+  const edge = side === "right" ? box.x + box.width : box.x;
+  const direction = directionOf(side);
+  const clear = (x: number): boolean =>
+    ![...boxes.values()].some((other) =>
+      segmentCrosses({ x: x, y: from }, { x: x, y: to }, other),
+    );
+  const full = edge + direction * GUTTER_INSET;
+  if (clear(full)) return full;
+
+  let gap = Infinity;
   for (const other of boxes.values()) {
     if (other.y >= to || other.y + other.height <= from) continue;
-    const gap =
-      side === "right"
-        ? other.x - (box.x + box.width)
-        : box.x - (other.x + other.width);
-    if (gap > 0) inset = Math.min(inset, gap / 2);
+    const distance =
+      side === "right" ? other.x - edge : edge - (other.x + other.width);
+    if (distance > 0) gap = Math.min(gap, distance);
   }
+  const middle = edge + (direction * gap) / 2;
 
-  return side === "right" ? box.x + box.width + inset : box.x - inset;
+  return gap < Infinity && clear(middle) ? middle : full;
 }
 
 function overlaps(a: LayoutRect, b: LayoutRect): boolean {
