@@ -3,6 +3,7 @@
  * Keep executor construction here; provider implementations live beside it.
  */
 
+import { CloudflareSandboxExecutor } from "./cloudflare-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
 import { MachineSandboxExecutor } from "./machine-executor.ts";
@@ -24,6 +25,7 @@ export const SANDBOX_PROVIDERS = [
   "e2b",
   "daytona",
   "vercel",
+  "cloudflare",
   "machine",
 ] as const satisfies readonly SandboxProvider[];
 
@@ -93,6 +95,9 @@ function providerExecutor(config: SandboxExecutorConfig): SandboxExecutor {
   }
   if (provider === "vercel") {
     return new VercelSandboxExecutor(config);
+  }
+  if (provider === "cloudflare") {
+    return new CloudflareSandboxExecutor(config);
   }
   if (provider === "machine") {
     return new MachineSandboxExecutor(config);

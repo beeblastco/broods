@@ -368,6 +368,7 @@ export function runsOnOwnCredentials(config: SandboxConfig): boolean {
       return has("workdirUrl");
     case "machine":
       return true;
+    case "cloudflare":
     case "lambda":
       return false;
   }

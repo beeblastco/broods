@@ -6,27 +6,29 @@ This page covers how core runs sandbox tools on each provider, how reservations 
 
 Every sandbox tool (`bash`, `read`, `write`, `edit`, `glob`, `grep`) compiles to one `run` against the selected provider's executor. There is no per-runtime routing.
 
-| Provider  | Executor              | Compute                                            |
-| --------- | --------------------- | -------------------------------------------------- |
-| `lambda`  | `microvm-executor.ts` | AWS Lambda MicroVM (Firecracker)                   |
-| `sandbox` | `workdir-executor.ts` | Self-hosted workdir (Firecracker)                  |
-| `daytona` | `daytona-executor.ts` | Daytona                                            |
-| `e2b`     | `e2b-executor.ts`     | E2B                                                |
-| `vercel`  | `vercel-executor.ts`  | `@vercel/sandbox`, loaded lazily                   |
-| `machine` | `machine-executor.ts` | The `broods machine` daemon over `/v1/machines/ws` |
+| Provider     | Executor                 | Compute                                                                    |
+| ------------ | ------------------------ | -------------------------------------------------------------------------- |
+| `lambda`     | `microvm-executor.ts`    | AWS Lambda MicroVM (Firecracker)                                           |
+| `sandbox`    | `workdir-executor.ts`    | Self-hosted workdir (Firecracker)                                          |
+| `daytona`    | `daytona-executor.ts`    | Daytona                                                                    |
+| `e2b`        | `e2b-executor.ts`        | E2B                                                                        |
+| `vercel`     | `vercel-executor.ts`     | `@vercel/sandbox`, loaded lazily                                           |
+| `cloudflare` | `cloudflare-executor.ts` | Cloudflare Containers, through the `apps/cloudflare-sandbox` bridge Worker |
+| `machine`    | `machine-executor.ts`    | The `broods machine` daemon over `/v1/machines/ws`                         |
 
 Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 30 s and caps at 600 s, set by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`. `outputLimitBytes` defaults to 64 KiB and caps at 256 KiB, set by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. Every executor truncates stdout and stderr to it. `memoryLimit` caps at 8192 MB on `lambda`. A blocking call also stays inside the request budget, `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`, 10 minutes by default. Background jobs are bound by neither.
 
 ### Capability matrix
 
-| Provider  | S3 workspace mount                                  | Persistent                       | Background jobs                                  |
-| --------- | --------------------------------------------------- | -------------------------------- | ------------------------------------------------ |
-| `sandbox` | `mount-s3`, per run                                 | native pause/resume and standby  | yes, with live logs and stop                     |
-| `lambda`  | `mount-s3` inside the VM from the `/run` hook       | snapshot suspend/resume, 8 h max | yes, in the persistent VM                        |
-| `daytona` | `mount-s3` when `options.mountAwsS3Buckets` is true | native, `autoStopInterval`       | yes, with live logs and stop                     |
-| `e2b`     | not wired, rejected                                 | native pause/resume              | native launch and callback, no live logs or stop |
-| `vercel`  | not wired, rejected                                 | named persistent sandbox         | yes, with live logs and stop                     |
-| `machine` | not supported, rejected                             | no                               | no                                               |
+| Provider     | S3 workspace mount                                  | Persistent                                    | Background jobs                                  |
+| ------------ | --------------------------------------------------- | --------------------------------------------- | ------------------------------------------------ |
+| `sandbox`    | `mount-s3`, per run                                 | native pause/resume and standby               | yes, with live logs and stop                     |
+| `lambda`     | `mount-s3` inside the VM from the `/run` hook       | snapshot suspend/resume, 8 h max              | yes, in the persistent VM                        |
+| `daytona`    | `mount-s3` when `options.mountAwsS3Buckets` is true | native, `autoStopInterval`                    | yes, with live logs and stop                     |
+| `e2b`        | not wired, rejected                                 | native pause/resume                           | native launch and callback, no live logs or stop |
+| `vercel`     | not wired, rejected                                 | named persistent sandbox                      | yes, with live logs and stop                     |
+| `cloudflare` | not wired, rejected                                 | same Container while warm, disk lost on sleep | no                                               |
+| `machine`    | not supported, rejected                             | no                                            | no                                               |
 
 `fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. Validation refuses a fallback equal to `provider`, a `machine` fallback, and any fallback on a `persistent` config.
 
@@ -149,6 +151,24 @@ Credentials fall back to deployment env when a config omits them. Daytona reads 
 - Daytona needs a snapshot with `mount-s3`. Build it with `bun run daytona:s3-snapshot`, from `apps/core/scripts/daytona-s3-snapshot.ts`, which reads `DAYTONA_S3_SNAPSHOT_BASE_IMAGE` and `DAYTONA_S3_SNAPSHOT_NAME`. The executor assumes the `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN` and injects prefix-scoped credentials. Without the role it needs `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `envVars`. The skills bucket is no longer mounted. `load_skill` stages skills into the workspace, and a configured skills bucket only logs a warning. `lifecycle.idleTimeoutSeconds` maps to `autoStopInterval`, and `maxLifetimeSeconds`, or 7 days, to `autoDeleteInterval`, both in minutes. `network` maps to `networkBlockAll`, and domain allowlists are ignored with a warning.
 - E2B maps `lifecycle.idleTimeoutSeconds` to the sandbox timeout with `lifecycle.onTimeout: "pause"`. Background jobs use `commands.run` with `background: true` and disconnect from the handle, so there are no `.fp-jobs` markers and no live logs or stop. E2B cannot enforce egress, so validation requires `allow-all`.
 - Vercel creates a persistent sandbox with `Sandbox.create()` under a new name, a prefix derived from the reservation key plus a random generation, stored as the reservation's `externalId`. The generation keeps a sweeper that took a row from deleting a machine a new run just created under the same key. `onCreate` and `onResume` run as one script guarded by a `.fp-lifecycle-created` marker in the work dir, so `onCreate` runs the first time and `onResume` after that. The Vercel timeout counts from start, not last activity, so the executor maps `idleTimeoutSeconds` onto it and a persistent sandbox stops that long after each wake. `maxLifetimeSeconds` is not enforced.
+
+## Cloudflare
+
+The Container API only answers inside a Durable Object, so `cloudflare-executor.ts` talks to the bridge Worker in `apps/cloudflare-sandbox` over HTTPS with `Authorization: Bearer $CLOUDFLARE_SANDBOX_API_KEY`. The Worker compares a SHA-256 of the header against its `SANDBOX_API_KEY` secret with `timingSafeEqual`. Each sandbox id is one `Sandbox` Durable Object owning one Container booted from the Worker's `Dockerfile`.
+
+| Route                            | Does                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------- |
+| `POST /v1/sandboxes/:id/exec`    | Starts the Container if needed, runs one argv, returns capped stdout and stderr |
+| `GET /v1/sandboxes/:id`          | `{ running }`                                                                   |
+| `DELETE /v1/sandboxes/:id`       | Destroys the Container                                                          |
+| `GET /v1/sandboxes/:id/terminal` | PTY WebSocket, raw bytes both ways, for the dashboard terminal ticket           |
+
+- A Durable Object exists once named, so a persistent reservation is only the claim: the executor claims `sandboxNamePrefix(key)` plus a random suffix, and a run that loses the race uses the winner's id.
+- Ephemeral runs use a fresh `fp-e-<uuid>` id and `DELETE` it afterwards.
+- `lifecycle.idleTimeoutSeconds` becomes `setInactivityTimeout`, reapplied on every exec. A Container that sleeps loses its disk, so `getInstanceInfo` reports it gone rather than suspended, and the next exec starts a fresh one.
+- `network.mode: "allow-all"` starts the Container with `enableInternet: true`; anything else starts it without internet. `restricted` is rejected.
+- `size` maps to the nearest named instance type, `standard-1` to `standard-4`. Custom types need a whole vCPU.
+- There are no background jobs, snapshots or suspend. Harness adapters refuse the provider.
 
 ## Machine
 

@@ -13,6 +13,7 @@ import {
   BudgetExhaustedError,
   planRefusalResponse,
 } from "../harness/plan-limits.ts";
+import { cloudflareConnection } from "../harness/sandbox/cloudflare-executor.ts";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import type { SandboxExecutor } from "../harness/sandbox/types.ts";
 import {
@@ -492,9 +493,13 @@ async function openSandboxTerminal(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
   // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
-  // shell endpoint (SHELL_INGRESS). Other providers keep the bounded `exec`
-  // terminal.
-  if (context.provider !== "sandbox" && context.provider !== "lambda") {
+  // shell endpoint (SHELL_INGRESS); the cloudflare bridge opens a PTY in its
+  // Container. Other providers keep the bounded `exec` terminal.
+  if (
+    context.provider !== "sandbox" &&
+    context.provider !== "lambda" &&
+    context.provider !== "cloudflare"
+  ) {
     return unsupportedSandboxAction(context, "a live terminal");
   }
   const externalId = await getSandboxExternalId(
@@ -546,6 +551,23 @@ async function openSandboxTerminal(
         `MicroVM shell access unavailable (${message}); terminate and re-reserve the instance to enable the live terminal`,
       );
     }
+  } else if (context.provider === "cloudflare") {
+    // A stopped Container lost its disk; the next exec starts a fresh one.
+    if (!(await context.executor.getInstanceInfo?.(context.ref))) {
+      await context.audit("error", {
+        errorMessage: "Container is not running",
+      });
+
+      return errorResponse(
+        409,
+        "The Cloudflare container is not running; run a command to start it",
+      );
+    }
+    const { baseURL, apiKey } = cloudflareConnection();
+    target = {
+      url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal`,
+      authorization: `Bearer ${apiKey}`,
+    };
   } else {
     const { baseUrl, apiKey } = workdirConnection(context.config);
     target = {

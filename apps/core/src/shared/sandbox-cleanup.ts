@@ -4,16 +4,12 @@
  * same provider release path.
  */
 
-import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
-import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
+import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
 } from "../harness/sandbox/instance-store.ts";
-import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import type { ReservedSandbox } from "../harness/sandbox/types.ts";
-import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
-import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
@@ -25,6 +21,7 @@ import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
+  "cloudflare",
   "daytona",
   "e2b",
   "lambda",
@@ -123,7 +120,7 @@ export async function releaseReservedSandboxes(
 }
 
 /**
- * Release reserved sandbox/lambda/daytona/e2b/vercel sandboxes created from a
+ * Release reserved sandbox/lambda/daytona/e2b/vercel/cloudflare sandboxes created from a
  * single config, across all of the account's workspace namespaces.
  */
 export async function releaseSandboxConfigInstances(
@@ -176,17 +173,7 @@ async function releaseFromConfigs(
   for (const config of configs) {
     if (config.provider !== provider) continue;
     try {
-      const executor =
-        provider === "sandbox"
-          ? new WorkdirSandboxExecutor(config)
-          : provider === "lambda"
-            ? new MicrovmSandboxExecutor(config)
-            : provider === "daytona"
-              ? new DaytonaSandboxExecutor(config)
-              : provider === "e2b"
-                ? new E2BSandboxExecutor(config)
-                : new VercelSandboxExecutor(config);
-      await executor.release({
+      await createSandboxExecutor(config).release?.({
         namespace: namespace,
         expectedExternalId: expectedExternalId,
       });
