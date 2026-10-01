@@ -140,8 +140,8 @@ export default function DashboardPage(): React.JSX.Element {
     );
   }
 
-  // Monitoring and tracing are dense, scroll-internally panels that should fill
-  // the viewport width and height; billing stays narrow; usage keeps the chart width.
+  // Monitoring and tracing are dense, scroll-internally panels that fill the
+  // page edge to edge; billing stays narrow; usage keeps the chart width.
   const isObservabilityTab =
     activeTab === "monitoring" || activeTab === "tracing";
   const contentMaxWidth =
@@ -243,9 +243,11 @@ export default function DashboardPage(): React.JSX.Element {
         <h1 className="sr-only">{tab.label}</h1>
         <div
           className={cn(
-            "mx-auto w-full px-6 pt-6",
+            "mx-auto w-full",
             contentMaxWidth,
-            isObservabilityTab ? "flex min-h-0 flex-1 flex-col pb-6" : "pb-12",
+            isObservabilityTab
+              ? "flex min-h-0 flex-1 flex-col"
+              : "px-6 pt-6 pb-12",
           )}
         >
           {renderPanel()}

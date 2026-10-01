@@ -138,7 +138,7 @@ export function MonitoringPanel({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col">
       <ObservabilityToolbar
         search={filter}
         onSearchChange={setFilter}
@@ -161,6 +161,7 @@ export function MonitoringPanel({
       />
 
       <DetailSplit
+        flush
         detail={
           selected && (
             <DetailPanel

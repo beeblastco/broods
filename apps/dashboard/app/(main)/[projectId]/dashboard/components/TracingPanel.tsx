@@ -702,7 +702,7 @@ export function TracingPanel({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col">
       <ObservabilityToolbar
         search={filter}
         onSearchChange={setFilter}
@@ -727,7 +727,7 @@ export function TracingPanel({
       {missingTrace && (
         <p
           aria-live="polite"
-          className="flex shrink-0 items-center gap-2 text-xs text-destructive"
+          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-xs text-destructive"
         >
           <span className="truncate font-mono">
             Trace {missingTrace} is not available
@@ -744,6 +744,7 @@ export function TracingPanel({
       )}
 
       <DetailSplit
+        flush
         tableMinWidth={TRACE_TABLE_MIN_WIDTH}
         detail={
           selectedSpan &&
