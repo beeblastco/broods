@@ -98,6 +98,7 @@ export const updateProfile = mutation({
       throw new Error("User record not found. Please sign in again.");
     }
 
+    const nameEdited = user.nameEdited || args.name !== user.name;
     if (args.accountHandle) {
       const normalizedHandle = args.accountHandle.trim().toLowerCase();
       const existingHandle = await ctx.db
@@ -113,11 +114,13 @@ export const updateProfile = mutation({
 
       await ctx.db.patch(user._id, {
         name: args.name,
+        nameEdited: nameEdited,
         accountHandle: normalizedHandle,
       });
     } else {
       await ctx.db.patch(user._id, {
         name: args.name,
+        nameEdited: nameEdited,
         accountHandle: undefined,
       });
     }
@@ -127,10 +130,9 @@ export const updateProfile = mutation({
 });
 
 /**
- * Refreshes the caller's avatarUrl from the WorkOS client session, and fills
- * their name only while it is still the email fallback `deriveName` writes
- * when the webhook payload had no first or last name, so a name saved through
- * Account settings stays.
+ * Refreshes the caller's name and avatarUrl from the WorkOS client session,
+ * covering webhook payloads that lacked them. Leaves `name` alone once the
+ * user has saved one in Account settings (`nameEdited`).
  */
 export const syncProfile = mutation({
   args: {
@@ -159,7 +161,7 @@ export const syncProfile = mutation({
     if (avatarUrl && avatarUrl !== user.avatarUrl) {
       patch.avatarUrl = avatarUrl;
     }
-    if (name?.trim() && user.name === user.email) {
+    if (name?.trim() && !user.nameEdited && name.trim() !== user.name) {
       patch.name = name.trim();
     }
 

@@ -46,7 +46,7 @@ describe("syncProfile", () => {
 describe("WorkOS user webhooks", () => {
   test("user.created for an existing row keeps a saved name", async () => {
     const t = profileNameTest();
-    const userId = await seedUser(t, "Chosen Name");
+    const userId = await seedUser(t, "Chosen Name", true);
 
     await t.mutation(internal.auth.authKitEvent, {
       event: "user.created",
@@ -58,7 +58,7 @@ describe("WorkOS user webhooks", () => {
 
   test("user.updated keeps a saved name", async () => {
     const t = profileNameTest();
-    const userId = await seedUser(t, "Chosen Name");
+    const userId = await seedUser(t, "Chosen Name", true);
 
     await t.mutation(internal.auth.authKitEvent, {
       event: "user.updated",
@@ -66,6 +66,18 @@ describe("WorkOS user webhooks", () => {
     });
 
     expect((await readUser(t, userId))?.name).toBe("Chosen Name");
+  });
+
+  test("user.updated passes on a WorkOS rename for an unedited name", async () => {
+    const t = profileNameTest();
+    const userId = await seedUser(t, "Old WorkOS Name");
+
+    await t.mutation(internal.auth.authKitEvent, {
+      event: "user.updated",
+      data: workosUser(),
+    });
+
+    expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
   });
 
   test("user.updated replaces the email fallback with the WorkOS name", async () => {
@@ -102,12 +114,17 @@ async function readUser(
   return await t.run(async (ctx) => ctx.db.get(userId));
 }
 
-async function seedUser(t: T, name: string): Promise<Id<"users">> {
+async function seedUser(
+  t: T,
+  name: string,
+  nameEdited?: boolean,
+): Promise<Id<"users">> {
   return await t.run(async (ctx) =>
     ctx.db.insert("users", {
       authId: "auth_user",
       email: "user@example.com",
       name: name,
+      nameEdited: nameEdited,
       avatarUrl: "https://example.com/old.png",
       plan: "free",
     }),

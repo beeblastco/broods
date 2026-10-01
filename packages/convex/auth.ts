@@ -109,10 +109,10 @@ export function deriveName(data: {
   return `${first} ${last}`.trim() || data.email;
 }
 
-/** Name to store on a WorkOS sync: a name saved in Account settings wins over WorkOS; only the email fallback is replaced. */
+/** Name to store on a WorkOS sync: a name saved in Account settings wins over WorkOS. */
 function keptName(
   user: Doc<"users">,
   data: Parameters<typeof deriveName>[0],
 ): string {
-  return user.name === user.email ? deriveName(data) : user.name;
+  return user.nameEdited ? user.name : deriveName(data);
 }
