@@ -84,19 +84,24 @@ export function ShortcutProvider({
       const shortcut = matchShortcut(event, isMac);
       if (!shortcut) return;
 
-      // A bare key is a command only outside text fields, only outside an open
-      // dialog, menu or listbox, where the page underneath is not what you are
-      // driving (Escape there closes the popup, not the panel behind it), and
-      // only when it is not the press that activates whatever has focus.
-      // Escape types nothing, so it works from a text field too, unless the
-      // field spent it first (an inline rename cancelling).
+      // A press something on the page already handled is not a command. A bare
+      // key is a command only outside text fields (except Escape, which types
+      // nothing), only outside an open dialog, menu or listbox, where the page
+      // underneath is not what you are driving (Escape there closes the popup,
+      // not the panel behind it), and only when it is not the press that
+      // activates whatever has focus.
       //
       // The modifiers say whether this is a chord. The combo text cannot: `+`
       // is both the separator and the key `canvas.zoomIn` binds.
       const isChord = event.metaKey || event.ctrlKey || event.altKey;
-      const isEscape = event.key === "Escape";
-      if (isEscape && event.defaultPrevented) return;
-      if (!isChord && !isEscape && isEditableTarget(event.target)) return;
+      if (event.defaultPrevented) return;
+      if (
+        !isChord &&
+        event.key !== "Escape" &&
+        isEditableTarget(event.target)
+      ) {
+        return;
+      }
       if (!isChord && activatesFocusedControl(event)) return;
       if (
         shortcut.scope !== "global" &&

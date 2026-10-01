@@ -242,18 +242,12 @@ export function routeCanvasEdges(
   for (const leg of legs
     .filter((item) => item.blocked)
     .sort((a, b) => a.end.y - b.end.y || a.id.localeCompare(b.id))) {
-    const toLeft = leg.start.x <= leg.end.x;
+    const side = leg.start.x <= leg.end.x ? "left" : "right";
     leg.gutterX = takeLane(
       verticals,
       leg.request.source,
-      gutterBase(
-        leg.target,
-        toLeft ? "left" : "right",
-        boxes,
-        leg.start.y,
-        leg.end.y,
-      ),
-      toLeft ? -1 : 1,
+      gutterBase(leg.target, side, boxes, leg.start.y, leg.end.y),
+      directionOf(side),
       leg.start.y,
       leg.end.y,
       LANE_SPACING,
@@ -473,14 +467,15 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): T[][] {
 /**
  * The gutter lane nearest a top-level box on one side: GUTTER_INSET out, or
  * the middle of the gap when a box beside it, level with the run from `from`
- * down to `to`, stands closer than twice that.
+ * down to `to`, stands closer than twice that. A side edge's run ends under
+ * boxes not placed yet, so it leaves `to` open and any box below counts.
  */
 function gutterBase(
   box: LayoutRect,
   side: SideEnd["side"],
   boxes: ReadonlyMap<string, LayoutRect>,
   from: number,
-  to: number,
+  to = Infinity,
 ): number {
   let inset = GUTTER_INSET;
   for (const other of boxes.values()) {
@@ -631,22 +626,8 @@ function routeSide(
 
   const sourceOuter = boxes.get(edge.source.outerId) ?? edge.source.box;
   const targetOuter = boxes.get(edge.target.outerId) ?? edge.target.box;
-  // The run down to the lane under the boxes is not placed yet, so any box
-  // below a handle counts as beside it.
-  const sourceBase = gutterBase(
-    sourceOuter,
-    edge.source.side,
-    boxes,
-    start.y,
-    Infinity,
-  );
-  const targetBase = gutterBase(
-    targetOuter,
-    edge.target.side,
-    boxes,
-    end.y,
-    Infinity,
-  );
+  const sourceBase = gutterBase(sourceOuter, edge.source.side, boxes, start.y);
+  const targetBase = gutterBase(targetOuter, edge.target.side, boxes, end.y);
   const left = Math.min(sourceBase, targetBase);
   const right = Math.max(sourceBase, targetBase);
   const band: LayoutRect = {

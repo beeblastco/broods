@@ -164,10 +164,10 @@ function Sidebar({
   const { isMobile, state, openMobile, setOpenMobile, peek, setPeek } =
     useSidebar();
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const peeking = peek && state === "collapsed" && collapsible === "offcanvas";
+  const offcanvas = state === "collapsed" && collapsible === "offcanvas";
+  const peeking = peek && offcanvas;
   // Off canvas and not peeking: out of view, so out of the tab order too.
-  const hidden =
-    state === "collapsed" && collapsible === "offcanvas" && !peeking;
+  const hidden = offcanvas && !peek;
 
   // Inert drops focus to the page, so focus inside hands over to the trigger
   // that brings the sidebar back. Before paint, while focus is still inside.

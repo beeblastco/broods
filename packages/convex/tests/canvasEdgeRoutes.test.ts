@@ -177,8 +177,8 @@ describe("routeCanvasEdges", () => {
     const mount = sideEdge("mount", boxes, "source", "right", "target", "left");
     const { side } = routeCanvasEdges(boxes, [], [mount]);
     const points = sideEdgePoints(
-      handlePoint(mount.source.box, "right"),
-      handlePoint(mount.target.box, "left"),
+      handlePoint(mount.source.box, mount.source.side),
+      handlePoint(mount.target.box, mount.target.side),
       side.get("mount")!,
     );
 

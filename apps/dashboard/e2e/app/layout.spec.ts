@@ -54,37 +54,28 @@ test("a hidden sidebar peeks at the left edge and stays hidden across a reload",
   // Off the edge first: the pointer starts at 0,0, where a hidden sidebar peeks.
   await page.mouse.move(800, 400);
   const toggle = page.getByRole("button", { name: "Toggle sidebar" });
-  // Hiding with focus inside hands it to the toggle, not to the page.
-  await container.getByRole("link").first().focus();
+  const link = container.getByRole("link").first();
+  // Hiding with focus inside hands it to the toggle, not to the page, and
+  // takes the hidden links out of the tab order.
+  await link.focus();
   await page.keyboard.press("ControlOrMeta+b");
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
   await expect(container).not.toBeInViewport();
+  await expect(container).toHaveAttribute("inert", "");
   await expect(toggle).toBeFocused();
-  // Out of view is out of the tab order: Tab never lands on a hidden link.
-  for (let press = 0; press < 30; press++) {
-    await page.keyboard.press("Tab");
-    expect(
-      await container.evaluate((node) => node.contains(document.activeElement)),
-    ).toBe(false);
-  }
 
   await page.mouse.move(4, 400);
   await expect(container).toBeInViewport();
   // A peek is the real sidebar, links and all.
-  const link = container.getByRole("link").first();
   await link.focus();
   await expect(link).toBeFocused();
-  // And so does a peek ending.
-  await page.mouse.move(800, 400);
-  await expect(container).not.toBeInViewport();
-  await expect(toggle).toBeFocused();
-  await page.mouse.move(4, 400);
-  await expect(container).toBeInViewport();
   // Moving along the edge, where the reveal strip was, keeps it up.
   await page.mouse.move(8, 440);
   await expect(container).toBeInViewport();
+  // A peek ending hands focus back to the toggle too.
   await page.mouse.move(800, 400);
   await expect(container).not.toBeInViewport();
+  await expect(toggle).toBeFocused();
 
   await page.reload();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");

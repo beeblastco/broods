@@ -144,10 +144,10 @@ function Surfaces(): React.JSX.Element {
   const [liveCanvas, setLiveCanvas] = useState(true);
 
   const { activeIds } = useShortcutRegistry();
-  useShortcut("panel.toggle", () => record("command panel.toggle"));
 
   const record = (entry: string): void => setRan((prev) => [...prev, entry]);
   const run = (action: CopilotAction): void => record(describe(action));
+  useShortcut("panel.toggle", () => record("command panel.toggle"));
 
   const ask = (query: string): void => {
     const trimmed = query.trim();
