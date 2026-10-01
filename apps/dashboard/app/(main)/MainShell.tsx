@@ -89,13 +89,18 @@ export function MainShell({
   // missing, so a failed attempt schedules its own retry.
   useEffect(() => {
     if (currentUser !== null) return;
+    let cancelled = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
     ensureSynced({}).catch((err: unknown) => {
+      if (cancelled) return;
       console.error("Failed to sync user:", err);
       retry = setTimeout(() => setSyncRetry(syncRetry + 1), SYNC_RETRY_MS);
     });
 
-    return () => clearTimeout(retry);
+    return () => {
+      cancelled = true;
+      clearTimeout(retry);
+    };
   }, [currentUser, ensureSynced, syncRetry]);
 
   useEffect(() => {
