@@ -84,61 +84,38 @@ describe("model provider registry", () => {
     },
   );
 
-  it.each([
-    {
-      gatewayId: undefined,
-      url: "https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      gatewayAuth: null,
-    },
-    {
-      gatewayId: "gw",
-      url: "https://gateway.ai.cloudflare.com/v1/acct/gw/compat/chat/completions",
-      gatewayAuth: "Bearer cf-token",
-    },
-  ])(
-    "sends Cloudflare to Workers AI, or to AI Gateway once gatewayId is set (%o)",
-    async ({ gatewayId, url, gatewayAuth }) => {
-      const calls: { url: string; headers: Headers }[] = [];
-      const realFetch = globalThis.fetch;
-      globalThis.fetch = Object.assign(
-        async (
-          input: string | URL | Request,
-          init?: RequestInit,
-        ): Promise<Response> => {
-          calls.push({
-            url: input instanceof Request ? input.url : String(input),
-            headers: new Headers(init?.headers),
-          });
+  // The gateway route is pinned in harness.test.ts, which mocks the
+  // OpenAI-compatible factory for every file after it.
+  it("sends Cloudflare to Workers AI when no gateway is named", async () => {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request): Promise<Response> => {
+        calls.push(input instanceof Request ? input.url : String(input));
 
-          return Response.json({ error: "stop" }, { status: 400 });
+        return Response.json({ error: "stop" }, { status: 400 });
+      },
+      { preconnect: realFetch.preconnect },
+    );
+    try {
+      const { model } = resolveConfiguredModel({
+        model: {
+          provider: "cloudflare",
+          modelId: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
         },
-        { preconnect: realFetch.preconnect },
+        provider: { cloudflare: { apiKey: "cf-token", accountId: "acct" } },
+      });
+      await generateText({ model: model, prompt: "hi", maxRetries: 0 }).catch(
+        () => undefined,
       );
-      try {
-        const { model } = resolveConfiguredModel({
-          model: {
-            provider: "cloudflare",
-            modelId: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-          },
-          provider: {
-            cloudflare: {
-              apiKey: "cf-token",
-              accountId: "acct",
-              gatewayId: gatewayId,
-            },
-          },
-        });
-        await generateText({ model: model, prompt: "hi", maxRetries: 0 }).catch(
-          () => undefined,
-        );
 
-        expect(calls[0]?.url).toBe(url);
-        expect(calls[0]?.headers.get("cf-aig-authorization")).toBe(gatewayAuth);
-      } finally {
-        globalThis.fetch = realFetch;
-      }
-    },
-  );
+      expect(calls[0]).toBe(
+        "https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 
   it("guards an endpoint under a name broods does not know", async () => {
     const { model } = resolveConfiguredModel({

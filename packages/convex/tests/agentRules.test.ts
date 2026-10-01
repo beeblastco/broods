@@ -379,6 +379,20 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
     ).not.toThrow();
+    // Core trims it into the AI Gateway URL.
+    expect(() =>
+      normalizeAgentConfig({ provider: { cloudflare: { gatewayId: 7 } } }),
+    ).toThrow("config.provider.cloudflare.gatewayId must be a string");
+    // An upstream key in a literal header is as secret as an apiKey.
+    expect(
+      redactConfigSecrets({
+        provider: {
+          cloudflare: { headers: { Authorization: "Bearer sk-live" } },
+        },
+      }),
+    ).toEqual({
+      provider: { cloudflare: { headers: { Authorization: "********" } } },
+    });
     // Inherited Object keys are not provider names, however `in` reads them.
     for (const inherited of ["constructor", "__proto__", "toString"]) {
       expect(() =>

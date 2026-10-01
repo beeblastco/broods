@@ -105,6 +105,7 @@ function isSecretConfigKey(key: string): boolean {
     normalized.includes("access_key") ||
     normalized.includes("password") ||
     normalized.includes("passwd") ||
+    normalized === "authorization" ||
     normalized === "apikey" ||
     normalized === "api_key"
   );

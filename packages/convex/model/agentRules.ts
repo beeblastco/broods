@@ -670,6 +670,10 @@ function normalizeProviderSettings(
   const config = value as Record<string, unknown>;
   assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
   assertOptionalString(
+    config.gatewayId,
+    `config.provider.${providerName}.gatewayId`,
+  );
+  assertOptionalString(
     config.base_url,
     `config.provider.${providerName}.base_url`,
   );

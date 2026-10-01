@@ -675,17 +675,20 @@ function createCloudflare({
     return createWorkersAI(settings);
   }
   const path = [settings.accountId, gateway].map(encodeURIComponent).join("/");
-
-  return createOpenAICompatible({
+  const provider = createOpenAICompatible({
     name: "cloudflare",
     baseURL: `${CLOUDFLARE_GATEWAY_BASE_URL}/${path}/compat`,
     headers: {
-      "cf-aig-authorization": `Bearer ${settings.apiKey}`,
       ...headers,
+      "cf-aig-authorization": `Bearer ${settings.apiKey}`,
     },
     fetch: settings.fetch,
     includeUsage: true,
   });
+
+  // A Workers AI id saved before the gateway was named keeps working on it.
+  return (modelId: string): Exclude<LanguageModel, string> =>
+    provider(modelId.startsWith("@cf/") ? `workers-ai/${modelId}` : modelId);
 }
 
 /**
