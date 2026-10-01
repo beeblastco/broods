@@ -1,24 +1,25 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import schema from "../schema";
 
-vi.mock("../auth", () => ({
+vi.mock("../auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../auth")>()),
   authKit: { getAuthUser: async () => ({ id: "auth_user" }) },
 }));
 
 const modules = import.meta.glob("../**/*.ts");
 
-const syncProfileTest = (): TestConvex<typeof schema> =>
+const profileNameTest = (): TestConvex<typeof schema> =>
   convexTest(schema, modules);
 
-type T = ReturnType<typeof syncProfileTest>;
+type T = ReturnType<typeof profileNameTest>;
 
 describe("syncProfile", () => {
   test("keeps a name saved through Account settings", async () => {
-    const t = syncProfileTest();
+    const t = profileNameTest();
     const userId = await seedUser(t, "WorkOS Name");
     await t.mutation(api.user.updateProfile, { name: "Chosen Name" });
 
@@ -33,10 +34,36 @@ describe("syncProfile", () => {
   });
 
   test("fills the name while it is still the email fallback", async () => {
-    const t = syncProfileTest();
+    const t = profileNameTest();
     const userId = await seedUser(t, "user@example.com");
 
     await t.mutation(api.user.syncProfile, { name: "WorkOS Name" });
+
+    expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
+  });
+});
+
+describe("user.updated webhook", () => {
+  test("keeps a name saved through Account settings", async () => {
+    const t = profileNameTest();
+    const userId = await seedUser(t, "Chosen Name");
+
+    await t.mutation(internal.auth.authKitEvent, {
+      event: "user.updated",
+      data: workosUser(),
+    });
+
+    expect((await readUser(t, userId))?.name).toBe("Chosen Name");
+  });
+
+  test("replaces the email fallback with the WorkOS name", async () => {
+    const t = profileNameTest();
+    const userId = await seedUser(t, "user@example.com");
+
+    await t.mutation(internal.auth.authKitEvent, {
+      event: "user.updated",
+      data: workosUser(),
+    });
 
     expect((await readUser(t, userId))?.name).toBe("WorkOS Name");
   });
@@ -59,4 +86,13 @@ async function seedUser(t: T, name: string): Promise<Id<"users">> {
       plan: "free",
     }),
   );
+}
+
+function workosUser(): Record<string, string> {
+  return {
+    id: "auth_user",
+    email: "user@example.com",
+    firstName: "WorkOS",
+    lastName: "Name",
+  };
 }
