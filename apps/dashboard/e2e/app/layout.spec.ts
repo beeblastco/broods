@@ -83,17 +83,23 @@ test("on a phone the sidebar sheet closes once a link moves the page", async ({
   await expect(sheet).toBeHidden();
 });
 
-// Heights down the sidebar's middle where something other than the sidebar is
-// the topmost element.
-async function pointsCoveringSidebar(page: Page): Promise<number[]> {
+// Points on a 16px grid over the sidebar where something other than the
+// sidebar is the topmost element, as "x,y". The `next dev` badge in the
+// corner does not count: builds do not render it.
+async function pointsCoveringSidebar(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const container = document.querySelector('[data-slot="sidebar-container"]');
-    if (!container) return [-1];
+    if (!container) throw new Error("no sidebar container");
     const rect = container.getBoundingClientRect();
-    const covered: number[] = [];
+    const covered: string[] = [];
     for (let y = rect.top + 4; y < rect.bottom; y += 16) {
-      const hit = document.elementFromPoint(rect.left + rect.width / 2, y);
-      if (!hit || !container.contains(hit)) covered.push(Math.round(y));
+      for (let x = rect.left + 4; x < rect.right; x += 16) {
+        const hit = document.elementFromPoint(x, y);
+        if (hit?.tagName === "NEXTJS-PORTAL") continue;
+        if (!hit || !container.contains(hit)) {
+          covered.push(`${Math.round(x)},${Math.round(y)}`);
+        }
+      }
     }
 
     return covered;
