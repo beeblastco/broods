@@ -254,8 +254,13 @@ function Sidebar({
         ref={containerRef}
         data-slot="sidebar-container"
         data-side={side}
-        // A collapsed icon rail opens over the page once the pointer is on it.
-        onPointerEnter={() => setPeek(true)}
+        // A collapsed icon rail opens over the page once a mouse or pen is on
+        // it. Not on touch: no pointer moves away to close it again.
+        onPointerEnter={(event) => {
+          if (state === "collapsed" && event.pointerType !== "touch") {
+            setPeek(true);
+          }
+        }}
         className={cn(
           "fixed inset-y-0 z-30 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
           // Adjust the padding for floating and inset variants.

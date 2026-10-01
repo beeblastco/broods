@@ -63,3 +63,21 @@ test("the rail opens over the page on hover, nothing showing through", async ({
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
 });
+
+// A tap fires pointerenter but no pointer ever moves away, so a peek opened by
+// touch stayed over the page.
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } });
+
+  test("a tap on the rail leaves it closed", async ({ page }) => {
+    await page.goto("/ui-gallery?tab=monitoring");
+    const container = page.locator('[data-slot="sidebar-container"]');
+    await expect(container).toBeInViewport();
+
+    await page.touchscreen.tap(20, 120);
+    await page.touchscreen.tap(700, 400);
+    await expect
+      .poll(() => container.boundingBox())
+      .toMatchObject({ width: RAIL_WIDTH });
+  });
+});
