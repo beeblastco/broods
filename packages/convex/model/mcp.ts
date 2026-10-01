@@ -2,8 +2,9 @@
  * Shared validation for MCP server registrations (#331). One normalizer
  * serves every write path (CLI sync, direct API, dashboard). A `url` makes an "http" row
  * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
- * a "hosted" row served by the mcp-runner Lambda, hashed here so sha256
- * always travels with the bundle. Auth header values may carry ${NAME}
+ * a "hosted" row served by the mcp-runner Lambda (or Cloudflare Dynamic
+ * Workers with `runtime: "cloudflare"`), hashed here so sha256 always travels
+ * with the bundle. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one
  * instead of an inline secret. `oauth` follows the same rule: clientSecret
@@ -63,6 +64,9 @@ export type McpPlacement = { sandbox: string | null; transport: McpTransport };
 
 export type McpTransport = "http" | "hosted" | "machine";
 
+/** Where a hosted bundle runs. Lambda is the default; Cloudflare Dynamic Workers is opt-in. */
+export type McpRuntime = "lambda" | "cloudflare";
+
 /**
  * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
  * at connect time and sends `Authorization: Bearer <token>`, so a server
@@ -81,6 +85,8 @@ export interface McpInput {
   name?: string;
   description?: string;
   transport?: McpTransport;
+  /** Hosted-only: the runtime that serves the bundle. */
+  runtime?: McpRuntime;
   url?: string;
   /** Machine-only: the machine sandbox (by name) whose daemon serves it. */
   sandbox?: string;
@@ -101,17 +107,21 @@ export interface McpInput {
 
 /**
  * Invariants on the row a create or update produces, whichever side brings
- * each field: a machine row names its sandbox, and oauth needs an external row
+ * each field: only a hosted row picks a runtime, a machine row names its sandbox, and oauth needs an external row
  * with an https url (the minted bearer rides every request) and no
  * Authorization header (core mints it itself).
  */
 export function assertMcpRow(row: {
   transport: McpTransport;
+  runtime?: McpRuntime;
   url?: string;
   sandbox?: string;
   headers?: Record<string, string>;
   oauth?: McpOauth;
 }): void {
+  if (row.runtime !== undefined && row.transport !== "hosted") {
+    throw new ClientError("runtime applies only to hosted MCP servers");
+  }
   if (row.transport === "machine" && !row.sandbox) {
     throw new ClientError(
       "a machine MCP server needs the sandbox that serves it",
@@ -212,6 +222,7 @@ export async function normalizeMcpInput(
     input.description = normalizeDescription(record.description);
   }
   normalizeConnection(record, input);
+  normalizeRuntime(record, input);
   // Hash here (async: Convex's runtime only offers web crypto) so every
   // write path gets sha256 with the bundle; a storage-id upload declares its
   // own, which the S3 writer verifies against the bytes.
@@ -453,6 +464,20 @@ function normalizeOauth(
     refreshToken: field("refreshToken", true),
     ...(tokenUrl !== undefined ? { tokenUrl: tokenUrl } : {}),
   };
+}
+
+function normalizeRuntime(
+  record: Record<string, unknown>,
+  input: McpInput,
+): void {
+  if (record.runtime === undefined) return;
+  if (record.runtime !== "lambda" && record.runtime !== "cloudflare") {
+    throw new ClientError("runtime must be lambda or cloudflare");
+  }
+  if (input.transport !== undefined && input.transport !== "hosted") {
+    throw new ClientError("runtime applies only to hosted MCP servers");
+  }
+  input.runtime = record.runtime;
 }
 
 function normalizeUrl(value: unknown): string {

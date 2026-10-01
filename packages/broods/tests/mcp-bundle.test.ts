@@ -56,6 +56,23 @@ test("compileProject rejects a server with neither url nor handler", async () =>
   );
 });
 
+test("a cloudflare server keeps its runtime and cannot bundle Node builtins", async (): Promise<void> => {
+  const servable = await mcpFixture(
+    `runtime: "cloudflare", handler: (request) => new Response("{}"),`,
+  );
+  const { manifest } = await compileProject({ cwd: servable, command: "dev" });
+  const server = manifest.resources.find((entry) => entry.kind === "mcp");
+  expect(server?.config).toMatchObject({ runtime: "cloudflare" });
+
+  const nodeOnly = await mcpFixture(
+    `runtime: "cloudflare", handler: () => new Response(String(execSync("true"))),`,
+    `import { execSync } from "node:child_process";\n`,
+  );
+  await expect(
+    compileProject({ cwd: nodeOnly, command: "dev" }),
+  ).rejects.toThrow("failed to build");
+});
+
 async function mcpFixture(handlerLine: string, prelude = ""): Promise<string> {
   const cwd = await realpath(
     await mkdtemp(join(tmpdir(), "broods-mcp-fixture-")),

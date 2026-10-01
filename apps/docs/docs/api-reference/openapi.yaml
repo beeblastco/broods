@@ -4937,10 +4937,19 @@ components:
           description: >-
             Hosted alternative to url (`transport: hosted`): bundled JavaScript
             module whose default export is a fetch-style MCP handler
-            (createMcpHandler). Max 10 MB inline; the mcp-runner Lambda hosts
-            it, one invoke per batch of requests. Larger bundles (up to 50 MB) go through
+            (createMcpHandler). Max 10 MB inline; the `runtime` hosts it, one
+            invocation per batch of requests. Larger bundles (up to 50 MB) go through
             `POST /v1/mcp/uploads` and are registered with bundleStorageId +
             sha256 instead.
+        runtime:
+          type: string
+          enum: [lambda, cloudflare]
+          description: >-
+            Hosted-only: where the bundle runs. Omit for the Lambda default.
+            `cloudflare` opts into Cloudflare Dynamic Workers, which the
+            operator must enable; the bundle must be Workers-compatible
+            JavaScript (no Node builtins) of at most 10 MiB. Refused with url
+            or sandbox.
         bundleStorageId:
           type: string
           description: >-
@@ -5013,6 +5022,10 @@ components:
         bundle:
           type: string
           description: As on create. Replaces the hosted module.
+        runtime:
+          type: string
+          enum: [lambda, cloudflare]
+          description: As on create. Hosted rows only; switching transport away from hosted clears it.
         bundleStorageId:
           type: string
           description: As on create. Requires `sha256`.
@@ -5058,6 +5071,10 @@ components:
         sha256:
           type: string
           description: Hosted-only; sha256 of the uploaded server bundle.
+        runtime:
+          type: string
+          enum: [lambda, cloudflare]
+          description: Hosted-only; absent means the Lambda default.
         headers:
           type: object
           additionalProperties:

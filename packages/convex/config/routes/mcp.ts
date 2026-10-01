@@ -136,6 +136,7 @@ async function handleMcpCollectionRoute(
       stageId: scope.stageId,
       name: input.name!,
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
+      ...(input.runtime !== undefined ? { runtime: input.runtime } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
       ...(bundleStorageKey !== undefined
@@ -205,6 +206,7 @@ async function patchMcpRoute(
       ? { description: input.description }
       : {}),
     ...(input.transport !== undefined ? { transport: input.transport } : {}),
+    ...(input.runtime !== undefined ? { runtime: input.runtime } : {}),
     ...(input.url !== undefined ? { url: input.url } : {}),
     ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
     ...(bundleStorageKey !== undefined
@@ -291,6 +293,7 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
       ? { description: record.description }
       : {}),
     transport: record.transport,
+    ...(record.runtime !== undefined ? { runtime: record.runtime } : {}),
     ...(record.url !== undefined ? { url: record.url } : {}),
     ...(record.sandbox !== undefined ? { sandbox: record.sandbox } : {}),
     ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),

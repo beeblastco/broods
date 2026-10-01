@@ -201,6 +201,59 @@ describe("hosted MCP metering", () => {
     ]);
   });
 
+  it("sends an opt-in row to the Cloudflare runtime and meters it like Lambda", async (): Promise<void> => {
+    process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
+    process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
+    let reply = (): Response =>
+      new Response(
+        `${JSON.stringify({ t: "final", id: "1", result: ok("cloudflare") })}\n{"t":"end"}\n`,
+      );
+    const bridge = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(async (): Promise<Response> => reply(), {
+        preconnect: (): void => {},
+      }),
+    );
+    const lambda = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      const response = await hostedMcpFetch({
+        ...hostedRecord(),
+        runtime: "cloudflare",
+      })(URL, { method: "POST", body: "{}" });
+      expect(await response.text()).toBe("cloudflare");
+      await Promise.resolve();
+      const [target, init] = bridge.mock.calls[0] ?? [];
+      expect(target).toBe("https://mcp.example.workers.dev/mcp");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer bridge-key",
+      );
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        accountId: "acct_test",
+        expectedSha256: "a".repeat(64),
+      });
+      expect(lambda).not.toHaveBeenCalled();
+
+      reply = (): Response => new Response("Unauthorized", { status: 401 });
+      await expect(
+        hostedMcpFetch({ ...hostedRecord(), runtime: "cloudflare" })(URL, {
+          method: "POST",
+          body: "{}",
+        }),
+      ).rejects.toThrow("HTTP 401");
+      await Promise.resolve();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+
+    expect(recorded).toEqual([
+      {
+        accountId: "acct_test",
+        usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
+      },
+    ]);
+  });
+
   it("charges nothing when no invoke starts", async () => {
     delete process.env.TOOL_RUNNER_FUNCTION_NAME;
     const send = spyOn(LambdaClient.prototype, "send");

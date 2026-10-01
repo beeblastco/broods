@@ -25,6 +25,11 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guides/agents", label: "Agents" },
         { type: "doc", id: "guides/tools", label: "Tools and MCP" },
         {
+          type: "doc",
+          id: "guides/cloudflare-mcp",
+          label: "Cloudflare MCP runtime",
+        },
+        {
           type: "category",
           label: "Sandboxes",
           link: { type: "doc", id: "guides/sandboxes/index" },

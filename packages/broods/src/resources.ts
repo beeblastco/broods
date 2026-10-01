@@ -167,6 +167,9 @@ export type McpHandler =
   | ((request: Request) => Response | Promise<Response>)
   | { fetch(request: Request): Response | Promise<Response> };
 
+/** Where a hosted MCP server runs. Mirrors packages/convex/model/mcp.ts. */
+export type McpRuntime = "lambda" | "cloudflare";
+
 /**
  * MCP server registration (#331): external (`url`), hosted (`handler`), or on
  * a user's computer (`sandbox`). Either way the server's tools are offered as
@@ -176,6 +179,12 @@ export type McpHandler =
  * starting with a letter.
  */
 export interface McpDefinitionConfig {
+  /**
+   * Hosted only: where `handler` runs. Omit for the Lambda default.
+   * `"cloudflare"` opts into Cloudflare Dynamic Workers: Workers-compatible
+   * JavaScript only (no Node builtins), bundles up to 10 MiB.
+   */
+  runtime?: McpRuntime;
   /** External server's MCP endpoint; http(s), no embedded credentials. */
   url?: string;
   /**
@@ -187,7 +196,7 @@ export interface McpDefinitionConfig {
    * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
    * right next to the `defineMcp` call. The CLI bundles the defining module
-   * and the mcp-runner Lambda hosts it, one invoke per batch of requests.
+   * and the selected `runtime` hosts it, one invocation per batch of requests.
    */
   handler?: McpHandler;
   /**

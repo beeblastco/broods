@@ -10,7 +10,12 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
+import {
+  assertMcpRow,
+  type McpOauth,
+  type McpRuntime,
+  type McpTransport,
+} from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
@@ -30,6 +35,7 @@ export const create = internalMutation({
     name: v.string(),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -72,6 +78,7 @@ export const create = internalMutation({
     }
     assertMcpRow({
       transport: transport,
+      runtime: args.runtime,
       url: args.url,
       sandbox: args.sandbox,
       headers: args.headers,
@@ -87,6 +94,7 @@ export const create = internalMutation({
       name: args.name,
       description: args.description,
       transport: transport,
+      runtime: args.runtime,
       url: args.url,
       sandbox: args.sandbox,
       bundleStorageKey: args.bundleStorageKey,
@@ -239,6 +247,7 @@ export const update = internalMutation({
     name: v.optional(v.string()),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -305,6 +314,7 @@ function updatePatch(
     name?: string;
     description?: string;
     transport?: McpTransport;
+    runtime?: McpRuntime;
     url?: string;
     sandbox?: string;
     bundleStorageKey?: string;
@@ -323,6 +333,7 @@ function updatePatch(
       ? { description: args.description }
       : {}),
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
+    ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
     ...(args.bundleStorageKey !== undefined
@@ -341,6 +352,7 @@ function updatePatch(
       : {}),
     ...(args.transport === "http"
       ? {
+          runtime: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,
@@ -352,6 +364,7 @@ function updatePatch(
           url: undefined,
           oauth: undefined,
           headers: undefined,
+          runtime: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,

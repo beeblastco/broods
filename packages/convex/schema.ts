@@ -271,6 +271,8 @@ export const mcpFields = {
   url: v.optional(v.string()),
   /** Machine-only: name of the machine sandbox whose daemon serves it. */
   sandbox: v.optional(v.string()),
+  /** Hosted-only: where the bundle runs. Absent means "lambda"; "cloudflare" is opt-in. */
+  runtime: v.optional(v.union(v.literal("lambda"), v.literal("cloudflare"))),
   /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),

@@ -36,6 +36,7 @@ import {
   type BroodsConfigDefinition,
   type BroodsProjectConfig,
   type McpDefinitionConfig,
+  type McpRuntime,
   type PolicyResource,
   type SandboxResource,
   type WorkspaceResource,
@@ -135,6 +136,8 @@ export default {};
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
+// Workers' script size cap; apps/cloudflare-mcp refuses a bigger bundle.
+const MAX_CLOUDFLARE_MCP_BUNDLE_BYTES = 10 * 1024 * 1024;
 const MAX_BUNDLE_TOTAL_BYTES = 20_000_000;
 const MAX_BUNDLE_FILES = 200;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
@@ -1612,11 +1615,15 @@ async function buildBundleModule(options: {
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
+  /** Cloudflare bundles resolve the Workers export conditions and no Node builtins. */
+  runtime: McpRuntime;
 }): Promise<string> {
   const build = await esbuild({
     entryPoints: [options.entryPoint],
     bundle: true,
-    platform: "node",
+    ...(options.runtime === "cloudflare"
+      ? { platform: "browser", conditions: ["workerd", "worker", "browser"] }
+      : { platform: "node" }),
     format: "esm",
     minify: false,
     write: false,
@@ -1715,14 +1722,19 @@ async function normalizeMcpConfig(
       label: "MCP server bundle",
       manifestPath: manifestPath,
       plugins: [sdkStubPlugin(shimDir)],
+      runtime: config.runtime ?? "lambda",
     });
   } finally {
     await rm(shimDir, { recursive: true, force: true });
   }
   const bundleSize = Buffer.byteLength(bundle);
-  if (bundleSize > MAX_MCP_BUNDLE_BYTES) {
+  const maxBundleBytes =
+    config.runtime === "cloudflare"
+      ? MAX_CLOUDFLARE_MCP_BUNDLE_BYTES
+      : MAX_MCP_BUNDLE_BYTES;
+  if (bundleSize > maxBundleBytes) {
     throw new Error(
-      `MCP server bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_MCP_BUNDLE_BYTES})`,
+      `MCP server bundle ${manifestPath} is too large (${bundleSize} bytes, max ${maxBundleBytes})`,
     );
   }
   await assertServableMcpBundle(manifestPath, bundle);

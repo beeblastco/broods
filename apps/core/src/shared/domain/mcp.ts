@@ -7,12 +7,17 @@
  * Connection and tool registration live in harness/mcp/.
  */
 
-import type { McpOauth, McpTransport } from "@broods/convex/model/mcp";
+import type {
+  McpOauth,
+  McpRuntime,
+  McpTransport,
+} from "@broods/convex/model/mcp";
 
 export { ACCOUNT_ENV_PLACEHOLDER_PATTERN as ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 export {
   authorizationHeaderName,
   type McpOauth,
+  type McpRuntime,
   type McpTransport,
 } from "@broods/convex/model/mcp";
 
@@ -26,6 +31,8 @@ export interface McpRecord {
   name: string;
   description?: string;
   transport: McpTransport;
+  /** Hosted-only: absent or "lambda" runs on the Lambda host, "cloudflare" on Dynamic Workers. */
+  runtime?: McpRuntime;
   /** Present on "http" rows; a "hosted" row's endpoint is the Lambda host. */
   url?: string;
   /** "machine" rows: name of the machine sandbox whose daemon serves the server. */

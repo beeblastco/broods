@@ -1086,6 +1086,11 @@ async function syncMcpResources(
     const patch = {
       name: input.name!,
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
+      // The manifest owns the row, so dropping `runtime` from it switches a
+      // Cloudflare row back to the Lambda default instead of keeping it.
+      ...(input.runtime !== undefined || current?.runtime !== undefined
+        ? { runtime: input.runtime ?? "lambda" }
+        : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
       ...(bundleStorageKey !== undefined
