@@ -88,11 +88,15 @@ export function ShortcutProvider({
       // dialog, menu or listbox, where the page underneath is not what you are
       // driving (Escape there closes the popup, not the panel behind it), and
       // only when it is not the press that activates whatever has focus.
+      // Escape types nothing, so it works from a text field too, unless the
+      // field spent it first (an inline rename cancelling).
       //
       // The modifiers say whether this is a chord. The combo text cannot: `+`
       // is both the separator and the key `canvas.zoomIn` binds.
       const isChord = event.metaKey || event.ctrlKey || event.altKey;
-      if (!isChord && isEditableTarget(event.target)) return;
+      const isEscape = event.key === "Escape";
+      if (isEscape && event.defaultPrevented) return;
+      if (!isChord && !isEscape && isEditableTarget(event.target)) return;
       if (!isChord && activatesFocusedControl(event)) return;
       if (
         shortcut.scope !== "global" &&

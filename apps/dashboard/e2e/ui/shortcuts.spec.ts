@@ -133,6 +133,20 @@ test("a bare key is a command outside a text field and typing inside one", async
   await expect(ran(page)).toHaveCount(1);
 });
 
+test("Escape closes the panel from a text field, unless the field spends it", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+
+  await page.locator('[data-fixture="editable"] input').click();
+  await page.keyboard.press("Escape");
+  await expect(ran(page)).toHaveText(["command panel.toggle"]);
+
+  await page.locator('[data-fixture="consumes-escape"] input').click();
+  await page.keyboard.press("Escape");
+  await expect(ran(page)).toHaveCount(1);
+});
+
 test("+ types in a field instead of zooming the canvas behind it", async ({
   page,
 }) => {
