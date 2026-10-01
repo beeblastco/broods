@@ -67,17 +67,48 @@ test("the rail opens over the page on hover, nothing showing through", async ({
 });
 
 // The rail grows open over 200ms, and a pointer that outran the growing edge
-// once counted as leaving and closed it.
+// once counted as leaving and closed it. One open and close first, so React
+// owns the rail; then a slowed transition keeps the second move inside it.
 test("a fast move into the opening rail keeps it open", async ({ page }) => {
   await page.goto("/ui-gallery?tab=monitoring");
   const container = page.locator('[data-slot="sidebar-container"]');
   await expect(container).toBeInViewport();
-
   await page.mouse.move(20, 400);
-  await page.mouse.move(200, 400);
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: SIDEBAR_WIDTH });
+  await page.mouse.move(800, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
+  await page.addStyleTag({
+    content:
+      '[data-slot="sidebar-container"] { transition-duration: 1000ms !important; }',
+  });
+
+  await page.mouse.move(20, 400);
+  await page.mouse.move(200, 400);
+  expect((await container.boundingBox())?.width).toBeLessThan(SIDEBAR_WIDTH);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+});
+
+// A pointer that left the window straight from the open rail sent no further
+// move, so nothing closed it.
+test("leaving the window from the open rail closes it", async ({ page }) => {
+  await page.goto("/ui-gallery?tab=monitoring");
+  const container = page.locator('[data-slot="sidebar-container"]');
+  await expect(container).toBeInViewport();
+  await page.mouse.move(20, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+
+  await page.mouse.move(-10, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
 });
 
 // A tap fires pointerenter but no pointer ever moves away, so a peek opened by

@@ -177,20 +177,24 @@ function Sidebar({
     document.querySelector<HTMLElement>('[data-sidebar="trigger"]')?.focus();
   }, [hidden]);
 
-  // Close again once the pointer is past the sidebar's width, unless a menu
-  // opened from inside (the account menu) is still up. Measured only once the
-  // width has finished growing, and again when it does, so a pointer that
-  // outruns the opening edge never counts as leaving.
+  // Close again once the pointer is past the sidebar's width or out of the
+  // window, unless a menu opened from inside (the account menu) is still up.
+  // Measured only once the width has finished growing, and again when it does,
+  // so a pointer that outruns the opening edge never counts as leaving.
   React.useEffect(() => {
     const container = containerRef.current;
     if (!peeking || !container) return;
-    let pointerX: number | null = null;
+    // Null until the first move; then the pointer's x, or null once it is out.
+    let pointerX: number | null | undefined;
     const check = (): void => {
-      if (pointerX === null || container.getAnimations().length > 0) return;
+      if (pointerX === undefined || container.getAnimations().length > 0) {
+        return;
+      }
       const inside =
-        side === "left"
+        pointerX !== null &&
+        (side === "left"
           ? pointerX <= container.offsetWidth
-          : pointerX >= window.innerWidth - container.offsetWidth;
+          : pointerX >= window.innerWidth - container.offsetWidth);
       if (inside || container.querySelector("[data-popup-open]")) return;
       setPeek(false);
     };
@@ -198,11 +202,19 @@ function Sidebar({
       pointerX = event.clientX;
       check();
     };
+    // No element to go to: the pointer left the window, with no move after.
+    const onOut = (event: PointerEvent): void => {
+      if (event.relatedTarget) return;
+      pointerX = null;
+      check();
+    };
     document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerout", onOut);
     container.addEventListener("transitionend", check);
 
     return () => {
       document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerout", onOut);
       container.removeEventListener("transitionend", check);
     };
   }, [peeking, setPeek, side]);
