@@ -164,7 +164,19 @@ function Sidebar({
   const { isMobile, state, openMobile, setOpenMobile, peek, setPeek } =
     useSidebar();
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const peeking = peek && state === "collapsed" && collapsible === "offcanvas";
+  const offcanvas = state === "collapsed" && collapsible === "offcanvas";
+  const peeking = peek && offcanvas;
+  // Off canvas and not peeking: out of view, so out of the tab order too.
+  const hidden = offcanvas && !peek;
+
+  // Inert drops focus to the page, so focus inside hands over to the trigger
+  // that brings the sidebar back. Before paint, while focus is still inside.
+  React.useLayoutEffect(() => {
+    if (!hidden || !containerRef.current?.contains(document.activeElement)) {
+      return;
+    }
+    document.querySelector<HTMLElement>('[data-sidebar="trigger"]')?.focus();
+  }, [hidden]);
 
   // Hide again once the pointer moves past the sidebar's width, unless a menu
   // opened from inside (the account menu) is still up. By width, not by what
@@ -250,7 +262,7 @@ function Sidebar({
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
         )}
       />
-      {state === "collapsed" && collapsible === "offcanvas" && !peeking && (
+      {hidden && (
         <div
           data-slot="sidebar-reveal"
           aria-hidden="true"
@@ -263,6 +275,7 @@ function Sidebar({
       )}
       <div
         ref={containerRef}
+        inert={hidden}
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
