@@ -40,7 +40,7 @@ export const MODEL_PROVIDERS = {
   },
   cerebras: { label: "Cerebras", modelPlaceholder: "llama3.1-8b" },
   cloudflare: {
-    label: "Cloudflare Workers AI",
+    label: "Cloudflare",
     modelPlaceholder: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
   },
   cohere: { label: "Cohere", modelPlaceholder: "command-a-03-2025" },

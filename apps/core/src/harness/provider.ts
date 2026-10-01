@@ -76,6 +76,10 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 // shorter than a tokens-per-minute window, so one 429 failed the whole run.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
 
+// Cloudflare AI Gateway's OpenAI-compatible endpoint. It routes any
+// `{provider}/{model}` id, `workers-ai/@cf/...` included.
+const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
+
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
 const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
@@ -118,6 +122,16 @@ const STALE_STORED_ITEM_PATTERN =
 // provider out. The settings each one accepts are read off it, never restated.
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 
+// Workers AI REST credentials, plus the AI Gateway that carries every request
+// once it is named.
+type CloudflareProviderSettings = Extract<
+  Parameters<typeof createWorkersAI>[0],
+  { accountId: string }
+> & {
+  gatewayId?: string;
+  headers?: Record<string, string>;
+};
+
 interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
   // a model instance, which is what middleware can wrap.
@@ -159,7 +173,7 @@ export function modelProviderFactories(): Record<
     baseten: createBaseten,
     bedrock: createAmazonBedrock,
     cerebras: createCerebras,
-    cloudflare: createWorkersAI,
+    cloudflare: createCloudflare,
     cohere: createCohere,
     custom: createOpenAICompatible,
     deepinfra: createDeepInfra,
@@ -642,6 +656,36 @@ function resolveOpenAICompatibleModel(
       ],
     }),
   };
+}
+
+/**
+ * The `cloudflare` provider: Workers AI over REST, or Cloudflare AI Gateway's
+ * OpenAI-compatible endpoint once `gatewayId` is set. On the gateway `apiKey`
+ * is the Cloudflare token sent as `cf-aig-authorization`. An upstream key rides
+ * `headers.Authorization`; without one the gateway's stored key or unified
+ * billing pays.
+ */
+function createCloudflare({
+  gatewayId,
+  headers,
+  ...settings
+}: CloudflareProviderSettings): ModelProviderInstance {
+  const gateway = gatewayId?.trim();
+  if (!gateway) {
+    return createWorkersAI(settings);
+  }
+  const path = [settings.accountId, gateway].map(encodeURIComponent).join("/");
+
+  return createOpenAICompatible({
+    name: "cloudflare",
+    baseURL: `${CLOUDFLARE_GATEWAY_BASE_URL}/${path}/compat`,
+    headers: {
+      "cf-aig-authorization": `Bearer ${settings.apiKey}`,
+      ...headers,
+    },
+    fetch: settings.fetch,
+    includeUsage: true,
+  });
 }
 
 /**

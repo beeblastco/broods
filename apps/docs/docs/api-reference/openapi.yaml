@@ -4684,6 +4684,12 @@ components:
           description: OpenAI-compatible endpoint, required for `custom`. `baseURL` is accepted as an alias; the camel-case `baseUrl` is rejected.
         baseURL:
           type: string
+        gatewayId:
+          type: string
+          description: >-
+            `cloudflare` only. Sends requests through this Cloudflare AI
+            Gateway's OpenAI-compatible endpoint instead of Workers AI, with
+            `apiKey` as the `cf-aig-authorization` token.
         headers:
           type: object
           additionalProperties:
