@@ -50,9 +50,11 @@ test("the rail opens over the page on hover, nothing showing through", async ({
   ]) {
     const covered = await page.evaluate(
       ([px, py]) =>
-        document
-          .elementFromPoint(px, py)
-          ?.closest('[data-slot="sidebar-container"]') !== null,
+        Boolean(
+          document
+            .elementFromPoint(px, py)
+            ?.closest('[data-slot="sidebar-container"]'),
+        ),
       [x, y],
     );
     expect(covered, `${x},${y}`).toBe(true);
@@ -62,6 +64,20 @@ test("the rail opens over the page on hover, nothing showing through", async ({
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
+});
+
+// The rail grows open over 200ms, and a pointer that outran the growing edge
+// once counted as leaving and closed it.
+test("a fast move into the opening rail keeps it open", async ({ page }) => {
+  await page.goto("/ui-gallery?tab=monitoring");
+  const container = page.locator('[data-slot="sidebar-container"]');
+  await expect(container).toBeInViewport();
+
+  await page.mouse.move(20, 400);
+  await page.mouse.move(200, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
 });
 
 // A tap fires pointerenter but no pointer ever moves away, so a peek opened by

@@ -177,24 +177,34 @@ function Sidebar({
     document.querySelector<HTMLElement>('[data-sidebar="trigger"]')?.focus();
   }, [hidden]);
 
-  // Close again once the pointer moves past the sidebar's width, unless a menu
-  // opened from inside (the account menu) is still up. By width, not by what
-  // is under the pointer, so the slide-out never counts as leaving.
+  // Close again once the pointer is past the sidebar's width, unless a menu
+  // opened from inside (the account menu) is still up. Measured only once the
+  // width has finished growing, and again when it does, so a pointer that
+  // outruns the opening edge never counts as leaving.
   React.useEffect(() => {
-    if (!peeking) return;
-    const onMove = (event: PointerEvent): void => {
-      const container = containerRef.current;
-      if (!container) return;
+    const container = containerRef.current;
+    if (!peeking || !container) return;
+    let pointerX: number | null = null;
+    const check = (): void => {
+      if (pointerX === null || container.getAnimations().length > 0) return;
       const inside =
         side === "left"
-          ? event.clientX <= container.offsetWidth
-          : event.clientX >= window.innerWidth - container.offsetWidth;
+          ? pointerX <= container.offsetWidth
+          : pointerX >= window.innerWidth - container.offsetWidth;
       if (inside || container.querySelector("[data-popup-open]")) return;
       setPeek(false);
     };
+    const onMove = (event: PointerEvent): void => {
+      pointerX = event.clientX;
+      check();
+    };
     document.addEventListener("pointermove", onMove);
+    container.addEventListener("transitionend", check);
 
-    return () => document.removeEventListener("pointermove", onMove);
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      container.removeEventListener("transitionend", check);
+    };
   }, [peeking, setPeek, side]);
 
   if (collapsible === "none") {
