@@ -1,7 +1,8 @@
 /**
  * Shared cleanup helpers for persistent sandbox reservations. Account deletion,
  * workspace deletion, channel-scoped cleanup, and the sandbox sweeper all need the
- * same provider release path.
+ * same provider release path: the provider that reserved the machine, which may
+ * no longer be what any config says.
  */
 
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
@@ -9,6 +10,7 @@ import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
+  getSandboxExternalId,
 } from "../harness/sandbox/instance-store.ts";
 import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import type { ReservedSandbox } from "../harness/sandbox/types.ts";
@@ -22,7 +24,6 @@ import type {
 } from "./domain/sandbox-config.ts";
 import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
-import { workspaceNamespace } from "./workspaces.ts";
 
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
   "daytona",
@@ -48,7 +49,7 @@ export async function releaseExpiredSandboxes(
   if (reservations.length === 0) {
     return [];
   }
-  const configs = await persistentSandboxConfigs(accountId);
+  const configs = await sandboxConfigs(accountId);
 
   const released: ReservedSandbox[] = [];
   for (const reservation of reservations) {
@@ -69,11 +70,12 @@ export async function releaseExpiredSandboxes(
       return false;
     });
     if (!taken) continue;
-    const done = await releaseFromConfigs(
+    const done = await releaseOnProvider(
       reservation.provider,
       configs,
       key,
       reservation.externalId,
+      reservation.ownCredentials === true,
     );
     if (!done) {
       // The claim refuses if a run mapped the key meanwhile, which is right:
@@ -106,12 +108,14 @@ export async function releaseReservedSandboxes(
   if (namespaces.length === 0) {
     return 0;
   }
-  const configs = await persistentSandboxConfigs(accountId);
+  const configs = await sandboxConfigs(accountId);
 
   let released = 0;
   for (const namespace of namespaces) {
     for (const provider of RELEASABLE_PROVIDERS) {
-      if (await releaseFromConfigs(provider, configs, namespace)) released++;
+      // No instance row to say whose credentials it ran on, but the row goes
+      // either way, so the platform's are worth the try.
+      if (await releaseOnProvider(provider, configs, namespace)) released++;
       await deleteSandboxInstance(provider, namespace, accountId).catch(
         () => {},
       );
@@ -122,39 +126,11 @@ export async function releaseReservedSandboxes(
   return released;
 }
 
-/**
- * Release reserved sandbox/lambda/daytona/e2b/vercel sandboxes created from a
- * single config, across all of the account's workspace namespaces.
- */
-export async function releaseSandboxConfigInstances(
-  accountId: string,
-  config: SandboxConfig,
-): Promise<number> {
-  if (config.persistent !== true) {
-    return 0;
-  }
-  const workspaceConfigs = await getStorage()
-    .workspaceConfigs.list(accountId)
-    .catch(() => []);
-  let released = 0;
-  for (const workspace of workspaceConfigs) {
-    const namespace = workspaceNamespace(accountId, workspace.workspaceId);
-    if (await releaseFromConfigs(config.provider, [config], namespace)) {
-      released++;
-      await removeSandboxInstance(accountId, namespace);
-    }
-  }
-
-  return released;
-}
-
-async function persistentSandboxConfigs(
-  accountId: string,
-): Promise<SandboxConfig[]> {
+async function sandboxConfigs(accountId: string): Promise<SandboxConfig[]> {
   const configs = await getStorage()
     .sandboxConfigs.list(accountId)
     .catch((error: unknown) => {
-      logWarn("Sandbox config list failed, nothing can be released", {
+      logWarn("Sandbox config list failed, only platform credentials remain", {
         accountId: accountId,
         error: toErrorMessage(error),
       });
@@ -162,33 +138,36 @@ async function persistentSandboxConfigs(
       return [];
     });
 
-  return configs
-    .map((record) => record.config)
-    .filter((config) => config.persistent === true);
+  return configs.map((record) => record.config);
 }
 
-async function releaseFromConfigs(
+/**
+ * Tears down the machine `provider` reserved under `namespace`. Every config of
+ * that provider is tried, persistent or not: turning `persistent` off or
+ * switching provider leaves the machine where it was. Then the platform's own
+ * credentials, unless the machine runs on the tenant's, where a 404 from the
+ * wrong account would read as "already gone".
+ * @returns whether the machine is gone; false when nothing was reserved
+ */
+async function releaseOnProvider(
   provider: SandboxProvider,
   configs: SandboxConfig[],
   namespace: string,
   expectedExternalId?: string,
+  ownCredentials = false,
 ): Promise<boolean> {
-  for (const config of configs) {
-    if (config.provider !== provider) continue;
+  const externalId =
+    expectedExternalId ?? (await getSandboxExternalId(provider, namespace));
+  if (!externalId) {
+    return false;
+  }
+  const candidates = configs.filter((config) => config.provider === provider);
+  if (!ownCredentials) candidates.push({ provider: provider });
+  for (const config of candidates) {
     try {
-      const executor =
-        provider === "sandbox"
-          ? new WorkdirSandboxExecutor(config)
-          : provider === "lambda"
-            ? new MicrovmSandboxExecutor(config)
-            : provider === "daytona"
-              ? new DaytonaSandboxExecutor(config)
-              : provider === "e2b"
-                ? new E2BSandboxExecutor(config)
-                : new VercelSandboxExecutor(config);
-      await executor.release({
+      await executorFor(config).release({
         namespace: namespace,
-        expectedExternalId: expectedExternalId,
+        expectedExternalId: externalId,
       });
 
       return true;
@@ -202,4 +181,26 @@ async function releaseFromConfigs(
   }
 
   return false;
+}
+
+function executorFor(
+  config: SandboxConfig,
+):
+  | DaytonaSandboxExecutor
+  | E2BSandboxExecutor
+  | MicrovmSandboxExecutor
+  | VercelSandboxExecutor
+  | WorkdirSandboxExecutor {
+  switch (config.provider) {
+    case "daytona":
+      return new DaytonaSandboxExecutor(config);
+    case "e2b":
+      return new E2BSandboxExecutor(config);
+    case "lambda":
+      return new MicrovmSandboxExecutor(config);
+    case "sandbox":
+      return new WorkdirSandboxExecutor(config);
+    default:
+      return new VercelSandboxExecutor(config);
+  }
 }

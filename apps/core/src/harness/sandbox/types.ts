@@ -208,6 +208,8 @@ export interface ReservedSandbox {
   externalId: string;
   /** The idle window it was claimed with, so a restore keeps it. */
   ttlSeconds?: number;
+  /** It runs on the tenant's own provider credentials, so the platform's cannot release it. */
+  ownCredentials?: boolean;
 }
 
 /**

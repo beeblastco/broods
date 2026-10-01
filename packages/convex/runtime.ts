@@ -88,6 +88,8 @@ const sandboxReservationSummary = v.object({
   ...reservedSandboxValidator.fields,
   accountId: v.id("accounts"),
   ttlSeconds: v.optional(v.number()),
+  /** Off the instance row: the machine runs on the tenant's own provider credentials. */
+  ownCredentials: v.optional(v.boolean()),
 });
 
 interface SandboxReservationPage {
@@ -734,13 +736,29 @@ export const listExpiredSandboxReservations = internalQuery({
       .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
       .take(args.limit);
 
-    return rows.map((row) => ({
-      accountId: row.accountId,
-      provider: row.provider,
-      reservationKey: row.reservationKey,
-      externalId: row.externalId,
-      ttlSeconds: row.ttlSeconds,
-    }));
+    const expired: Infer<typeof sandboxReservationSummary>[] = [];
+    for (const row of rows) {
+      const instances = await ctx.db
+        .query("sandboxInstances")
+        .withIndex("by_reservationKey", (q) =>
+          q.eq("reservationKey", row.reservationKey),
+        )
+        .collect();
+      const instance = instances.find(
+        (one) =>
+          one.accountId === row.accountId && one.provider === row.provider,
+      );
+      expired.push({
+        accountId: row.accountId,
+        provider: row.provider,
+        reservationKey: row.reservationKey,
+        externalId: row.externalId,
+        ttlSeconds: row.ttlSeconds,
+        ownCredentials: instance?.ownCredentials,
+      });
+    }
+
+    return expired;
   },
 });
 
@@ -816,6 +834,7 @@ export const listOrphanedSandboxInstances = internalQuery({
         provider: row.provider,
         reservationKey: row.reservationKey,
         externalId: row.externalId,
+        ownCredentials: row.ownCredentials,
       });
     }
 

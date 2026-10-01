@@ -10,6 +10,7 @@ import { authKit } from "./auth";
 import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { stableJson } from "./model/objects";
 import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
+import { hasReservation } from "./model/cliSyncResources";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -578,9 +579,12 @@ async function materializeWorkspaceNode(
  * Delete dashboard-owned workspace/sandbox rows in this stage that no
  * canvas node references anymore, making node deletion a real resource delete.
  * CLI-owned (`managedBy: "cli"`) rows are never touched. Code owns their
- * lifecycle and prune removes them via the CLI instead.
+ * lifecycle and prune removes them via the CLI instead. A sandbox config that
+ * still holds a reserved instance is kept, like the CLI prune does, so the
+ * instance never names a config that is gone; the sweeper releases it and a
+ * later save prunes the config.
  */
-async function pruneOrphanedDashboardRows(
+export async function pruneOrphanedDashboardRows(
   ctx: MutationCtx,
   account: Doc<"accounts"> | null,
   stageId: Id<"stages">,
@@ -603,11 +607,20 @@ async function pruneOrphanedDashboardRows(
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
 
-  for (const row of [...workspaces, ...sandboxes]) {
-    if (row.accountId !== account._id) continue;
-    if (row.managedBy === "cli" || row.managedBy === "api") continue;
-    if (referenced.has(row._id)) continue;
-    await ctx.db.delete(row._id);
+  const orphaned = (
+    row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
+  ): boolean =>
+    row.accountId === account._id &&
+    row.managedBy !== "cli" &&
+    row.managedBy !== "api" &&
+    !referenced.has(row._id);
+  for (const row of workspaces) {
+    if (orphaned(row)) await ctx.db.delete(row._id);
+  }
+  for (const row of sandboxes) {
+    if (orphaned(row) && !(await hasReservation(ctx, row._id))) {
+      await ctx.db.delete(row._id);
+    }
   }
 }
 

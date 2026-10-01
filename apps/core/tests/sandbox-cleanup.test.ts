@@ -8,6 +8,7 @@
  */
 
 import { afterAll, beforeEach, expect, it, mock } from "bun:test";
+import type { SandboxConfig } from "../src/shared/domain/sandbox-config.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 
 const e2bKillMock = mock(async (_sandboxId: string) => {});
@@ -54,16 +55,22 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  recordSandboxBurst: mock(async () => true),
   removeSandboxInstance: removeSandboxInstanceMock,
+  sandboxInstanceIsControllable: mock(async () => true),
+  setSandboxInstanceStatus: mock(async () => true),
   upsertSandboxInstance: mock(async () => {}),
 }));
 
 const { releaseExpiredSandboxes, releaseReservedSandboxes } =
   await import("../src/shared/sandbox-cleanup.ts");
 
+const PERSISTENT_E2B: SandboxConfig = { provider: "e2b", persistent: true };
+let accountConfigs: SandboxConfig[] = [PERSISTENT_E2B];
+
 setStorageForTests({
   sandboxConfigs: {
-    list: async () => [{ config: { provider: "e2b", persistent: true } }],
+    list: async () => accountConfigs.map((config) => ({ config: config })),
   },
 } as unknown as Storage);
 
@@ -72,6 +79,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  accountConfigs = [PERSISTENT_E2B];
   e2bKillMock.mockClear();
   claimSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
@@ -79,8 +87,9 @@ beforeEach(() => {
 });
 
 it("takes the row for the id it read before the teardown, and drops the mirror only once the provider confirmed", async () => {
-  e2bKillMock.mockImplementationOnce(async () => {
-    throw new Error("connection reset");
+  // Fails through the config and the platform's credentials alike.
+  e2bKillMock.mockImplementation(async (sandboxId: string) => {
+    if (sandboxId === "sbx-a") throw new Error("connection reset");
   });
   const released = await releaseExpiredSandboxes("acct-1", [
     { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
@@ -96,7 +105,12 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
     ["e2b", "key-a", "acct-1", "sbx-a", true],
     ["e2b", "key-b", "acct-1", "sbx-b", true],
   ]);
-  expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-a", "sbx-b"]);
+  e2bKillMock.mockImplementation(async () => {});
+  expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual([
+    "sbx-a",
+    "sbx-a",
+    "sbx-b",
+  ]);
   // The mirror row is what keeps a failed teardown reachable for the next sweep,
   // so only the confirmed one goes, and only while it still names that machine.
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
@@ -123,8 +137,9 @@ it("leaves a machine alone when a run refreshed its reservation since the listin
 // row take on a disabled account. The machine goes down anyway, by the id the
 // stored row names; the cascade drops the row.
 it("tears down a live reservation when the row take is refused", async () => {
-  getSandboxExternalIdMock.mockImplementationOnce(
-    async (): Promise<string> => "sbx-live",
+  getSandboxExternalIdMock.mockImplementation(
+    async (provider: string): Promise<string | null> =>
+      provider === "e2b" ? "sbx-live" : null,
   );
   deleteSandboxInstanceMock.mockImplementation(async (): Promise<boolean> => {
     throw new Error("Account is not active: acct-1");
@@ -134,10 +149,51 @@ it("tears down a live reservation when the row take is refused", async () => {
   deleteSandboxInstanceMock.mockImplementation(
     async (): Promise<boolean> => true,
   );
+  getSandboxExternalIdMock.mockImplementation(async () => null);
 
   expect(released).toBe(1);
   expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-live"]);
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
     ["acct-1", "key-live", undefined],
+  ]);
+});
+
+// Turning `persistent` off or switching provider leaves the machine where it
+// was, so the release follows the provider the reservation names.
+it("releases through a config that is no longer persistent", async () => {
+  accountConfigs = [{ provider: "e2b", persistent: false }];
+  const released = await releaseExpiredSandboxes("acct-1", [
+    { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+
+  expect(released.map((r) => r.reservationKey)).toEqual(["key-a"]);
+  expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-a"]);
+});
+
+it("falls back to the platform's credentials after a provider switch", async () => {
+  accountConfigs = [{ provider: "lambda", persistent: true }];
+  const released = await releaseExpiredSandboxes("acct-1", [
+    { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+
+  expect(released.map((r) => r.reservationKey)).toEqual(["key-a"]);
+  expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-a"]);
+});
+
+it("never tries the platform's credentials on a machine that runs on the tenant's", async () => {
+  accountConfigs = [{ provider: "lambda", persistent: true }];
+  const released = await releaseExpiredSandboxes("acct-1", [
+    {
+      provider: "e2b",
+      reservationKey: "key-a",
+      externalId: "sbx-a",
+      ownCredentials: true,
+    },
+  ]);
+
+  expect(released).toEqual([]);
+  expect(e2bKillMock).not.toHaveBeenCalled();
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "key-a", "sbx-a", "acct-1"],
   ]);
 });
