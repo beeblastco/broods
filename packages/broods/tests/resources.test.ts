@@ -1523,6 +1523,25 @@ export const myAgent = defineAgent({
   expect(api).not.toContain('"my-agent": { kind: "agent"');
 });
 
+test.each(["paused", null])(
+  "cron compilation preserves an explicit status %s for server validation",
+  async (status): Promise<void> => {
+    const cwd = await fixtureProject(
+      "",
+      `
+import { defineAgent, defineCron } from "${RESOURCES_MODULE}";
+export const agent = defineAgent({ name: "triage", model: { provider: "openai", modelId: "gpt-5-mini" } });
+export const daily = defineCron({ name: "daily", agent: agent, input: "Triage.", scheduleExpression: "rate(1 day)", status: ${JSON.stringify(status)} });
+`,
+    );
+    const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+    expect(
+      manifest.resources.find((resource): boolean => resource.kind === "cron")
+        ?.config,
+    ).toMatchObject({ status: status });
+  },
+);
+
 test("writeGeneratedFiles keys non-agent resources by export alias under api.crons", async () => {
   const cwd = await fixtureProject(
     "",

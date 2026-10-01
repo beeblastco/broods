@@ -176,6 +176,8 @@ Markers are `[+]` create, `[~]` rename, `[*]` update and `[-]` delete. It also w
 ! .env.local and demo-app/development disagree on 1 variable(s): ZALO_WEBHOOK_SECRET. Run `broods env sync` to push the local values.
 ```
 
+A manifest conflict causes up to three sync attempts. If another sync still holds the stage, `dev` reports the failure and keeps watching; save again or rerun after that sync finishes. It does not queue unchanged source for automatic retry.
+
 ## deploy
 
 Syncs the `production` stage once, or the `stages.deploy` stage set with `defineBroods`, and writes its runtime key to `.env.local`.
