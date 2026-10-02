@@ -5,20 +5,16 @@
  * no longer be what any config says.
  */
 
-import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
-import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
+import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
   getSandboxReleaseTarget,
 } from "../harness/sandbox/instance-store.ts";
-import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import type {
   ReservedSandbox,
   SandboxReleaseTarget,
 } from "../harness/sandbox/types.ts";
-import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
-import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
@@ -31,6 +27,7 @@ import { getStorage } from "./storage.ts";
 import { runsOnOwnCredentials } from "./workspaces.ts";
 
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
+  "cloudflare",
   "daytona",
   "e2b",
   "lambda",
@@ -131,29 +128,6 @@ export async function releaseReservedSandboxes(
   return released;
 }
 
-/** The executor that releases through `config`'s provider and credentials. */
-function executorFor(
-  config: SandboxConfig,
-):
-  | DaytonaSandboxExecutor
-  | E2BSandboxExecutor
-  | MicrovmSandboxExecutor
-  | VercelSandboxExecutor
-  | WorkdirSandboxExecutor {
-  switch (config.provider) {
-    case "daytona":
-      return new DaytonaSandboxExecutor(config);
-    case "e2b":
-      return new E2BSandboxExecutor(config);
-    case "lambda":
-      return new MicrovmSandboxExecutor(config);
-    case "sandbox":
-      return new WorkdirSandboxExecutor(config);
-    default:
-      return new VercelSandboxExecutor(config);
-  }
-}
-
 /**
  * The configs to release through, limited to the account that owns the machine:
  * a release reads a 404 as "already gone", so credentials for another account
@@ -223,7 +197,7 @@ async function releaseOnProvider(
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {
     try {
-      await executorFor(config).release({
+      await createSandboxExecutor(config).release?.({
         namespace: namespace,
         expectedExternalId: target.externalId,
       });

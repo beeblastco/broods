@@ -365,6 +365,7 @@ export function runsOnOwnCredentials(config: SandboxConfig): boolean {
       return has("workdirUrl");
     case "machine":
       return true;
+    case "cloudflare":
     case "lambda":
       return false;
   }
@@ -400,9 +401,15 @@ function assertSandboxReachesWorkspace(
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
 ): void {
-  if (sandbox?.provider === "machine") {
+  // The file tools need an S3 mount, and a machine or a Cloudflare Container
+  // has none: they would act on the daemon's or the container's own disk. A
+  // fallback runs the same workspace, so it is held to the same rule.
+  const unmountable = [sandbox?.provider, sandbox?.fallbackProvider].find(
+    (provider) => provider === "machine" || provider === "cloudflare",
+  );
+  if (unmountable) {
     throw new Error(
-      `Workspace "${workspaceName}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
+      `Workspace "${workspaceName}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,
     );
   }
   if (

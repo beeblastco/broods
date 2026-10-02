@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "broods-cloudflare-sandbox",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-30",
+  // Set with `wrangler secret put SANDBOX_API_KEY`; core sends it as CLOUDFLARE_SANDBOX_API_KEY.
+  "secrets": { "required": ["SANDBOX_API_KEY"] },
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "scheduling_policy": "durable_object",
+      "images": { "sandbox": { "dockerfile": "./Dockerfile" } },
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "Sandbox", "name": "SANDBOX" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
+  "observability": { "enabled": true },
+}

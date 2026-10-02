@@ -453,6 +453,33 @@ describe("resolveAgentRuntime", () => {
     );
   });
 
+  it("refuses a workspace whose sandbox falls back to cloudflare", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async () => ({
+          config: {
+            provider: "lambda",
+            fallbackProvider: "cloudflare",
+            permissionMode: "edit",
+          },
+        }),
+      },
+      workspaceConfigs: {
+        getById: async () => ({ config: { storage: { provider: "s3" } } }),
+      },
+    } as never);
+
+    await expect(
+      resolveAgentRuntime(
+        {
+          sandboxes: ["sb_box"],
+          workspaces: [{ name: "notes", workspaceId: "ws_notes" }],
+        },
+        { accountId: "acct_1" },
+      ),
+    ).rejects.toThrow('Workspace "notes" cannot run on a cloudflare sandbox');
+  });
+
   it("resolves a read-only workspace (no agent sandbox, no override) without a sandbox", async () => {
     setStorageForTests({
       sandboxConfigs: { getById: async () => null },
