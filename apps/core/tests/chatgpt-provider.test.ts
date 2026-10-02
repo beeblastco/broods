@@ -97,7 +97,7 @@ beforeEach(() => {
         return true;
       },
     },
-  } as Storage);
+  } as Partial<Storage> as Storage);
   globalThis.fetch = Object.assign(
     async (input: string | URL | Request, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
