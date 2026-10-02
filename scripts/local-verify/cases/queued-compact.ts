@@ -79,14 +79,17 @@ export async function queuedCompact(context: VerifyContext): Promise<void> {
     status.requestedMode === "followup",
     JSON.stringify(status),
   );
-  // Without a model the summary call fails, and the run must say so.
+  // Without a key the summary call fails and the run must say so, unless the
+  // perf stack answers the model in process.
   assertStep(
     context.hasModelKey
       ? "queued /compact summarized the finished turn"
-      : `queued /compact failed with the summary call (${MODEL_KEY_HINT})`,
+      : `queued /compact settled with the summary's outcome (${MODEL_KEY_HINT})`,
     context.hasModelKey
       ? status.status === "completed" && COMPACTED.test(String(status.response))
-      : status.status === "failed",
+      : (status.status === "completed" &&
+          COMPACTED.test(String(status.response))) ||
+          status.status === "failed",
     JSON.stringify(status),
   );
 
@@ -107,11 +110,13 @@ export async function queuedCompact(context: VerifyContext): Promise<void> {
   assertStep(
     context.hasModelKey
       ? "idle /compact answers on the sync stream"
-      : `idle /compact fails on the sync stream (${MODEL_KEY_HINT})`,
+      : `idle /compact settles on the sync stream (${MODEL_KEY_HINT})`,
     context.hasModelKey
       ? !(idle instanceof Error) &&
           (idle.text === "Nothing to compact yet." || COMPACTED.test(idle.text))
-      : idle instanceof Error && idle.message.startsWith("Agent run failed"),
+      : idle instanceof Error
+        ? idle.message.startsWith("Agent run failed")
+        : idle.text.length > 0,
     idle instanceof Error ? idle.message : idle.text,
   );
 }

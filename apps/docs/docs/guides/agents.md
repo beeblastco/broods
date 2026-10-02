@@ -95,7 +95,7 @@ Long conversations are trimmed before each model call. The stored history never 
 ```ts
 session: {
   pruning: { enabled: true },                                    // default on
-  compaction: { enabled: true, maxContextLength: 100_000 },      // default off
+  autoCompaction: { enabled: true, maxContextLength: 500_000 }, // default on, input tokens
 },
 ```
 

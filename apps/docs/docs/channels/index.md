@@ -102,7 +102,7 @@ Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat, Twilio, Me
 | Command                                   | Effect                                                                   |
 | ----------------------------------------- | ------------------------------------------------------------------------ |
 | `/new`, `/clear`                          | clear the conversation. Refused while a turn or queued message is active |
-| `/compact [instructions]`                 | summarize the history now, whatever `session.compaction` says            |
+| `/compact [instructions]`                 | summarize the history now, whatever `session.autoCompaction` says        |
 | `/help`                                   | list commands                                                            |
 | `/steer <text>`                           | join the running turn at its next step. Starts a turn when idle          |
 | `/queue <text>`                           | run the text as its own turn after the current one                       |

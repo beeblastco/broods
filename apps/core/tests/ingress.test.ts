@@ -784,6 +784,113 @@ describe("channel commands", (): void => {
     expect(replies).toEqual(["Context cleared. Starting fresh."]);
   });
 
+  function compactMessage(replies: string[]): ChannelInboundEvent {
+    return {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      eventId: "event-compact",
+      conversationKey: "acct:acct_1:agent:agent_1:telegram:C1",
+      content: "/compact",
+      events: [{ role: "user", content: "/compact" }],
+      channelName: "telegram",
+      commandToken: "/compact",
+      source: { chatId: "C1" },
+      channel: {
+        sendText: async (text: string): Promise<void> => {
+          replies.push(text);
+        },
+        sendTyping: async (): Promise<void> => {},
+        reactToMessage: async (): Promise<void> => {},
+      },
+    };
+  }
+
+  it("compacts right away on an idle conversation and never stores the command", async (): Promise<void> => {
+    const settles: Record<string, unknown>[] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      if (name === "acceptIngress") {
+        return { outcome: "owner", ownerGeneration: 1 };
+      }
+      if (name === "settleIngress") settles.push(args);
+
+      return null;
+    }) as never;
+    const append = spyOn(Session.prototype, "appendIngressEvents");
+    const compact = spyOn(
+      Session.prototype,
+      "compactConversation",
+    ).mockResolvedValue(7);
+    const replies: string[] = [];
+
+    try {
+      await handleChannelRequest(compactMessage(replies));
+      await drainInProcessWorkers();
+    } finally {
+      append.mockRestore();
+      compact.mockRestore();
+    }
+
+    expect(append).not.toHaveBeenCalled();
+    expect(replies).toEqual(["Context compacted. 7 message(s) summarized."]);
+    expect(settles[0]).toMatchObject({ status: "completed" });
+  });
+
+  it("says a failed compaction failed and settles the run as failed", async (): Promise<void> => {
+    const settles: Record<string, unknown>[] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      if (name === "acceptIngress") {
+        return { outcome: "owner", ownerGeneration: 1 };
+      }
+      if (name === "settleIngress") settles.push(args);
+
+      return null;
+    }) as never;
+    const compact = spyOn(
+      Session.prototype,
+      "compactConversation",
+    ).mockRejectedValue(new Error("summary model down"));
+    const replies: string[] = [];
+
+    try {
+      await handleChannelRequest(compactMessage(replies));
+      await drainInProcessWorkers();
+    } finally {
+      compact.mockRestore();
+    }
+
+    expect(replies).toEqual(["Something went wrong. Please try again."]);
+    expect(settles[0]).toMatchObject({
+      status: "failed",
+      error: "summary model down",
+    });
+  });
+
+  it("does not announce an ordinary queued message", async (): Promise<void> => {
+    runtime.mutate = (async (name: string): Promise<unknown> =>
+      name === "acceptIngress"
+        ? { outcome: "queued", status: "queued" }
+        : null) as never;
+    runtime.query = (async (name: string): Promise<unknown> =>
+      name === "listPendingAsyncToolResults" ? [] : null) as never;
+    const replies: string[] = [];
+
+    await handleChannelRequest({
+      ...compactMessage(replies),
+      eventId: "event-hello",
+      content: "hello",
+      events: [{ role: "user", content: "hello" }],
+      commandToken: undefined,
+    });
+
+    expect(replies).toEqual([]);
+  });
+
   it("queues /compact behind a running turn and says so", async (): Promise<void> => {
     const admitted: Record<string, unknown>[] = [];
     runtime.mutate = (async (
@@ -825,6 +932,175 @@ describe("channel commands", (): void => {
     expect(replies).toEqual([
       "/compact queued. It runs when the current turn finishes.",
     ]);
+  });
+});
+
+describe("queued /compact admission", (): void => {
+  async function admittedMode(
+    overrides: Partial<IngressCandidate>,
+  ): Promise<unknown> {
+    let mode: unknown;
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      if (name === "acceptIngress") mode = args.requestedMode;
+
+      return { outcome: "queued", status: "queued" };
+    }) as never;
+    await acceptIngress({ ...candidate(), ...overrides });
+
+    return mode;
+  }
+
+  const compact: IngressCandidate["events"] = [
+    { role: "user", content: "/compact keep the deploy" },
+  ];
+
+  it("waits as a follow-up whatever mode the caller asked for", async (): Promise<void> => {
+    for (const mode of ["steer", "collect", "reject", "followup"] as const) {
+      expect(await admittedMode({ events: compact, requestedMode: mode })).toBe(
+        "followup",
+      );
+    }
+  });
+
+  it("leaves an ordinary message's mode alone", async (): Promise<void> => {
+    expect(await admittedMode({ requestedMode: "steer" })).toBe("steer");
+  });
+
+  it("is a plain message on a channel that takes no commands", async (): Promise<void> => {
+    const delivery = (channel: string): IngressCandidate["delivery"] => ({
+      kind: "channel",
+      channel: channel,
+      source: {},
+    });
+
+    expect(
+      await admittedMode({
+        events: compact,
+        requestedMode: "steer",
+        delivery: delivery("pancake"),
+      }),
+    ).toBe("steer");
+    expect(
+      await admittedMode({
+        events: compact,
+        requestedMode: "steer",
+        delivery: delivery("telegram"),
+      }),
+    ).toBe("followup");
+  });
+
+  it("is a plain message when a file rides with it", async (): Promise<void> => {
+    expect(
+      await admittedMode({
+        events: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "/compact" },
+              { type: "image", image: "https://files.test/a.png" },
+            ],
+          },
+        ],
+        requestedMode: "steer",
+      }),
+    ).toBe("steer");
+  });
+});
+
+describe("queued /compact on an async run", (): void => {
+  afterEach((): void => {
+    mock.restore();
+  });
+
+  function compactEvent(
+    overrides: Partial<DirectInboundEvent> = {},
+  ): DirectInboundEvent {
+    return {
+      ...candidate(),
+      publicEventId: "event-1",
+      publicConversationKey: "conversation-1",
+      events: [{ role: "user", content: "/compact keep the deploy" }],
+      agentConfig: {},
+      ownerGeneration: 1,
+      ...overrides,
+    };
+  }
+
+  it("summarizes instead of running the model and answers with the summary count", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    const takeNext = spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    const append = spyOn(Session.prototype, "appendIngressEvents");
+    const compact = spyOn(
+      Session.prototype,
+      "compactConversation",
+    ).mockResolvedValue(5);
+
+    await handler({ kind: "direct-api-async-worker", event: compactEvent() });
+
+    expect(compact).toHaveBeenCalledWith("keep the deploy");
+    expect(append).not.toHaveBeenCalled();
+    expect(settle.mock.calls[0]?.[0]).toMatchObject({
+      status: "completed",
+      result: "Context compacted. 5 message(s) summarized.",
+      asyncResult: {
+        outcome: {
+          status: "completed",
+          response: "Context compacted. 5 message(s) summarized.",
+        },
+      },
+    });
+    // The queue drains on behind it.
+    expect(takeNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the run with the summary's own error", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(Session.prototype, "compactConversation").mockRejectedValue(
+      new Error("summary model down"),
+    );
+
+    await handler({ kind: "direct-api-async-worker", event: compactEvent() });
+
+    expect(settle.mock.calls[0]?.[0]).toMatchObject({
+      status: "failed",
+      error: "summary model down",
+      asyncResult: {
+        outcome: { status: "failed", error: "summary model down" },
+      },
+    });
+  });
+
+  it("runs the model for a /compact a command-less channel sent", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    const append = spyOn(
+      Session.prototype,
+      "appendIngressEvents",
+    ).mockResolvedValue([]);
+    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      messages: [],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    });
+    const compact = spyOn(Session.prototype, "compactConversation");
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: compactEvent({
+        replyTarget: { channelName: "pancake", source: {} },
+      }),
+    }).catch((): null => null);
+
+    expect(compact).not.toHaveBeenCalled();
+    expect(append).toHaveBeenCalledTimes(1);
   });
 });
 
