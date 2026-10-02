@@ -6,6 +6,7 @@ import {
   executeCommand,
   getDiscordCommandRegistrations,
   parseCommand,
+  queuedCommand,
   resolveChannelCommand,
   resolveDiscordCommand,
   type CommandContext,
@@ -282,6 +283,23 @@ describe("resolveChannelCommand", () => {
     });
   });
 
+  it("queues /compact as a follow-up with the token kept", () => {
+    expect(
+      resolveChannelCommand({
+        content: "/compact keep the deploy decisions",
+        commandToken: "/compact",
+      }),
+    ).toEqual({
+      kind: "rewrite",
+      text: "/compact keep the deploy decisions",
+      requestedMode: "followup",
+    });
+    // A Discord slash command delivers only the option text.
+    expect(
+      resolveChannelCommand({ content: "", commandToken: "/compact" }),
+    ).toEqual({ kind: "rewrite", text: "/compact", requestedMode: "followup" });
+  });
+
   it("replies for bare /steer and /queue with no message", () => {
     expect(
       resolveChannelCommand({ content: "/steer", commandToken: "/steer" }),
@@ -420,39 +438,61 @@ describe("getDiscordCommandRegistrations", () => {
   });
 });
 
-describe("compactConversation via /compact command", () => {
-  it("compacts under the fenced clear lease and reports the summary", async () => {
-    const channel = createMockChannelActions();
-    const compact = mock(async () => 12);
-
-    await executeCommand(
-      "/compact",
-      createCommandContext({
-        channel: channel,
-        text: "/compact",
-        compact: compact,
-      }),
-    );
-
-    expect(compact).toHaveBeenCalledWith({
-      ownerGeneration: 1,
-      instructions: "",
-    });
-    expect(mutationMock).toHaveBeenCalledWith("releaseIngressOwner", {
-      conversationKey: "test-convo",
-      ownerEventId: "event-1",
-      ownerGeneration: 1,
-    });
-    expect(channel.sendText).toHaveBeenCalledWith(
-      "Context compacted. 12 message(s) summarized.",
-    );
+describe("queuedCommand", () => {
+  it("finds a queued /compact envelope", () => {
+    expect(
+      queuedCommand([{ role: "user", content: "/compact keep the deploy" }]),
+    ).toEqual({ commandToken: "/compact", text: "/compact keep the deploy" });
   });
 
-  it("passes command text through as compaction instructions", async () => {
-    const compact = mock(async () => 3);
-    const channel = createMockChannelActions();
+  it("keeps one-turn system events beside the command", () => {
+    expect(
+      queuedCommand([
+        { role: "system", content: "be brief" },
+        { role: "user", content: [{ type: "text", text: "/compact" }] },
+      ]),
+    ).toEqual({ commandToken: "/compact", text: "/compact" });
+  });
 
-    await executeCommand(
+  it("leaves a command sent with a file, or on a channel without commands, as a message", () => {
+    expect(
+      queuedCommand([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "/compact" },
+            { type: "image", image: "https://files.test/a.png" },
+          ],
+        },
+      ]),
+    ).toBeUndefined();
+    expect(
+      queuedCommand([{ role: "user", content: "/compact" }], "pancake"),
+    ).toBeUndefined();
+    expect(
+      queuedCommand([{ role: "user", content: "/compact" }], "telegram"),
+    ).toEqual({ commandToken: "/compact", text: "/compact" });
+  });
+
+  it("ignores ordinary turns and commands that are not queued", () => {
+    expect(queuedCommand([{ role: "user", content: "hello" }])).toBeUndefined();
+    expect(queuedCommand([{ role: "user", content: "/new" }])).toBeUndefined();
+    expect(
+      queuedCommand([
+        { role: "user", content: "/compact" },
+        { role: "user", content: "and this" },
+      ]),
+    ).toBeUndefined();
+  });
+});
+
+describe("compactConversation via /compact command", () => {
+  it("compacts and reports the summary", async () => {
+    const sendText = mock(async (_text: string) => {});
+    const channel = createMockChannelActions({ sendText: sendText });
+    const compact = mock(async (_instructions: string) => 12);
+
+    const result = await executeCommand(
       "/compact",
       createCommandContext({
         channel: channel,
@@ -461,51 +501,27 @@ describe("compactConversation via /compact command", () => {
       }),
     );
 
-    expect(compact).toHaveBeenCalledWith({
-      ownerGeneration: 1,
-      instructions: "keep the deploy decisions",
-    });
+    const reply = "Context compacted. 12 message(s) summarized.";
+    expect(compact).toHaveBeenCalledWith("keep the deploy decisions");
+    expect(result).toEqual({ reply: reply });
+    expect(sendText).toHaveBeenCalledWith(reply);
   });
 
-  it("refuses while a turn or queued message holds the conversation", async () => {
-    runtime.mutate = mock(() => Promise.resolve(null)) as never;
-    const compact = mock(async () => 1);
+  it("reports when there is nothing to compact", async () => {
     const channel = createMockChannelActions();
 
     await executeCommand(
       "/compact",
-      createCommandContext({ channel: channel, compact: compact }),
-    );
-
-    expect(compact).not.toHaveBeenCalled();
-    expect(channel.sendText).toHaveBeenCalledWith(
-      "Cannot compact while a turn or queued message is active. Try again after it finishes.",
-    );
-  });
-
-  it("reports when there is nothing to compact and still releases the lease", async () => {
-    const channel = createMockChannelActions();
-
-    await executeCommand(
-      "/compact",
-      createCommandContext({
-        channel: channel,
-        compact: async () => 0,
-      }),
+      createCommandContext({ channel: channel, compact: async () => 0 }),
     );
 
     expect(channel.sendText).toHaveBeenCalledWith("Nothing to compact yet.");
-    expect(mutationMock).toHaveBeenCalledWith("releaseIngressOwner", {
-      conversationKey: "test-convo",
-      ownerEventId: "event-1",
-      ownerGeneration: 1,
-    });
   });
 
-  it("releases the lease when compaction fails", async () => {
+  it("reports a failed compaction", async () => {
     const channel = createMockChannelActions();
 
-    await executeCommand(
+    const result = await executeCommand(
       "/compact",
       createCommandContext({
         channel: channel,
@@ -513,14 +529,10 @@ describe("compactConversation via /compact command", () => {
       }),
     );
 
-    expect(mutationMock).toHaveBeenCalledWith("releaseIngressOwner", {
-      conversationKey: "test-convo",
-      ownerEventId: "event-1",
-      ownerGeneration: 1,
-    });
     expect(channel.sendText).toHaveBeenCalledWith(
       "Something went wrong. Please try again.",
     );
+    expect(result?.error).toBe("model unavailable");
   });
 });
 

@@ -105,11 +105,36 @@ http.route({
   handler: cliHttp,
 });
 
-// Public config-plane surface: account metadata/rotation,
+// Public config-plane surface: account metadata/rotation, connections,
 // agents, skills, mcp, hooks, workspace files, crons, workspaces, sandbox configs,
 // and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });
 http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
+http.route({
+  path: "/v1/account/connections",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "PUT",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "DELETE",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "POST",
+  handler: configHttp,
+});
 http.route({
   path: "/v1/account/rotate-secret",
   method: "POST",

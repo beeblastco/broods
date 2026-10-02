@@ -94,7 +94,8 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 - An agent turn is deduplicated at admission, by its ingress identity. `claim()` in `runtimeClaims` only guards channel commands such as `/clear` and context-only messages, which never enter the queue.
 - The conversation lease serializes work per conversation, fenced by owner generation. See [queue and steer](queue-and-steer.md).
 - `appendIngressEvents()` persists incoming user, assistant, tool and persisted system messages to `runtimeConversationEvents`.
-- `createTurnContext()` loads history, builds system prompt parts, runs compaction when configured (`compaction.ts`) and prunes model-visible messages (`pruning.ts`).
+- `createTurnContext()` loads history, builds system prompt parts and prunes model-visible messages (`pruning.ts`).
+- `compactConversation()` folds the stored history into a summary (`compaction.ts`). It serves `/compact` and runs in `harness.ts` after a finished turn whose last model call read `session.autoCompaction.maxContextLength` input tokens.
 - `resolvedWorkspaces()`, backed by `resolveAgentRuntime()` in `src/shared/workspaces.ts`, resolves workspace and sandbox records, applies per-workspace overrides and hashes namespaces.
 
 What one turn reads and writes, and in which store:
@@ -117,7 +118,7 @@ sequenceDiagram
     S->>S3: memory/MEMORY.md per workspace (loadMemoryFile)
     S->>S: resolve workspaces, skill and subagent metadata
   end
-  S->>S: system prompt parts, compaction, pruning
+  S->>S: system prompt parts, pruning
   S-->>M: messages + system for streamText
   M->>CVX: persistModelMessages each step, fenced by ownerGeneration
 ```

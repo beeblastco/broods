@@ -41,7 +41,7 @@ const RAW_CONFIG: Readonly<Record<string, unknown>> = {
   },
   session: {
     pruning: { enabled: true },
-    compaction: { enabled: true, maxContextLength: 80_000 },
+    autoCompaction: { enabled: true, maxContextLength: 500_000 },
   },
   channels: {
     slack: {
