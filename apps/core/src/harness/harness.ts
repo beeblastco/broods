@@ -48,6 +48,7 @@ import {
 } from "../shared/domain/agent-config.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
+import { isContextLengthError } from "../shared/model-errors.ts";
 import {
   collectSecretValues,
   logError,
@@ -843,12 +844,17 @@ export async function runAgentLoop(
     modelId: agentConfig.model?.modelId,
   };
   // Once the model has answered with no tool call left, a long context folds
-  // into a summary before the next queued message runs. A harness adapter keeps
-  // its own context, so its turns never compact the stored one.
+  // into a summary before the next queued message runs. A turn the provider
+  // refused for context length folds too, so the next turn fits. A harness
+  // adapter keeps its own context, so its turns never compact the stored one.
   const autoCompact = async (
     lastInputTokens: number | undefined,
+    contextExceeded = false,
   ): Promise<void> => {
-    if (harnessRuntime || !shouldAutoCompact(agentConfig, lastInputTokens)) {
+    if (
+      harnessRuntime ||
+      !shouldAutoCompact(agentConfig, lastInputTokens, contextExceeded)
+    ) {
       return;
     }
     const startedMs = Date.now();
@@ -1800,6 +1806,9 @@ export async function runAgentLoop(
         toolCalls: toLifecycleValue(tools.toolCalls),
       });
       await reply?.onErrorText(errorText).catch(() => {});
+      if (isContextLengthError(errorText)) {
+        await autoCompact(undefined, true);
+      }
     },
     onEnd: async ({
       response,

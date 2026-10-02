@@ -1,5 +1,4 @@
 import { afterAll, beforeEach, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import {
   harnessSteersMidTurn,
   type AiSdkHarnessType,
@@ -174,7 +173,7 @@ async function runHarnessTurn(
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   const { runAgentLoop } = await import("../src/harness/harness.ts");
 
-  await expectAsync(
+  expect(
     runAgentLoop(
       {
         accountId: "acct_test",

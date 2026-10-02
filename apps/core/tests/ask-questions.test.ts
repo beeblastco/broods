@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import {
   rootEventId,
@@ -151,14 +150,14 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    await expectAsync(
+    expect(
       execute({
         questions: [{ ...QUESTION, options: [{ label: "only one" }] }],
       }),
     ).rejects.toThrow("needs 2 to 4 options");
-    await expectAsync(
-      execute({ questions: [QUESTION, QUESTION] }),
-    ).rejects.toThrow("is used twice");
+    expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
+      "is used twice",
+    );
     expect(mutations).toHaveLength(0);
   });
 
@@ -172,7 +171,7 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    await expectAsync(execute({ questions: [QUESTION] })).rejects.toThrow(
+    expect(execute({ questions: [QUESTION] })).rejects.toThrow(
       "blocked by the outbound message hook",
     );
     expect(mutations.at(-1)?.args).toMatchObject({ status: "failed" });

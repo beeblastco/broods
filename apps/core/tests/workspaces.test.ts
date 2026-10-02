@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 import {
   agentSandboxReservation,
@@ -432,7 +431,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    await expectAsync(
+    expect(
       resolveAgentRuntime(
         {
           sandboxes: ["sb_mac"],
@@ -625,7 +624,7 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
 
-    await expectAsync(
+    expect(
       resolveAgentRuntime(
         { sandboxes: ["sb_1", "sb_2"] },
         { accountId: "acct_1", agentId: "ag_1" },
@@ -677,7 +676,7 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
 
-    await expectAsync(
+    expect(
       resolveAgentRuntime({ sandboxes: ["missing"] }, { accountId: "acct_1" }),
     ).rejects.toThrow(/Referenced sandbox not found/);
   });

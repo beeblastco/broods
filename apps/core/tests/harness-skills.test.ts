@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import type { S3ObjectInfo } from "../src/shared/s3.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
@@ -183,7 +182,7 @@ describe("listConfiguredSkillMetadata", () => {
     const { listConfiguredSkillMetadata } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       listConfiguredSkillMetadata("acct_test", {
         skills: { enabled: true, allowed: ["acct_test/missing-skill"] },
       }),
@@ -194,7 +193,7 @@ describe("listConfiguredSkillMetadata", () => {
     const { listConfiguredSkillMetadata } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       listConfiguredSkillMetadata("acct_test", {
         skills: { enabled: true, allowed: ["acct_other/my-skill"] },
       }),
@@ -207,7 +206,7 @@ describe("listConfiguredSkillMetadata", () => {
     const { listConfiguredSkillMetadata } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       listConfiguredSkillMetadata("acct_test", {
         skills: { enabled: true, allowed: ["invalid-path"] },
       }),
@@ -242,7 +241,7 @@ describe("loadConfiguredSkillPrompt", () => {
     const { loadConfiguredSkillPrompt } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       loadConfiguredSkillPrompt(
         ["acct_test/allowed-skill"],
         "acct_test/other-skill",
@@ -509,9 +508,9 @@ describe("loadConfiguredSkillPrompt", () => {
     const { loadConfiguredSkillPrompt } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
-      loadConfiguredSkillPrompt(["invalid"], "invalid"),
-    ).rejects.toThrow("Invalid skill path: invalid");
+    expect(loadConfiguredSkillPrompt(["invalid"], "invalid")).rejects.toThrow(
+      "Invalid skill path: invalid",
+    );
   });
 
   it("throws when skill file does not exist in S3", async () => {
@@ -522,7 +521,7 @@ describe("loadConfiguredSkillPrompt", () => {
     const { loadConfiguredSkillPrompt } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       loadConfiguredSkillPrompt(
         ["acct_test/missing-skill"],
         "acct_test/missing-skill",
@@ -584,7 +583,7 @@ describe("listSkillMetadataForConfig", () => {
     const { listSkillMetadataForConfig } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       listSkillMetadataForConfig("acct_test", ["acct_other/foreign-skill"]),
     ).rejects.toThrow(
       "Skill path belongs to another account: acct_other/foreign-skill",
@@ -595,7 +594,7 @@ describe("listSkillMetadataForConfig", () => {
     const { listSkillMetadataForConfig } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       listSkillMetadataForConfig("acct_test", ["no-slash"]),
     ).rejects.toThrow("Invalid skill path: no-slash");
   });
@@ -631,7 +630,7 @@ describe("listSkillMetadataForConfig", () => {
     const { listSkillMetadataForConfig } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       listSkillMetadataForConfig("acct_test", ["acct_test/nonexistent-skill"]),
     ).rejects.toThrow("Skill not found: acct_test/nonexistent-skill");
   });
@@ -733,7 +732,7 @@ describe("loadConfiguredHarnessSkills", () => {
     });
 
     expect(skills.map((skill) => skill.name)).toEqual(["open-skill"]);
-    await expectAsync(
+    expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: ["acct_test/missing-skill"] },
       }),
@@ -746,7 +745,7 @@ describe("loadConfiguredHarnessSkills", () => {
     const { loadConfiguredHarnessSkills } =
       await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: ["acct_test/oversized-skill"] },
       }),
@@ -814,7 +813,7 @@ describe("loadSkillContent", () => {
   it("throws when skill path is invalid", async () => {
     const { loadSkillContent } = await import("../src/harness/skills.ts");
 
-    await expectAsync(loadSkillContent("not/a/valid/path")).rejects.toThrow(
+    expect(loadSkillContent("not/a/valid/path")).rejects.toThrow(
       "Invalid skill path: not/a/valid/path",
     );
   });
@@ -822,7 +821,7 @@ describe("loadSkillContent", () => {
   it("throws when skill path has too many segments", async () => {
     const { loadSkillContent } = await import("../src/harness/skills.ts");
 
-    await expectAsync(loadSkillContent("acct/skill/extra")).rejects.toThrow(
+    expect(loadSkillContent("acct/skill/extra")).rejects.toThrow(
       "Invalid skill path: acct/skill/extra",
     );
   });
@@ -830,7 +829,7 @@ describe("loadSkillContent", () => {
   it("throws when skill name is invalid", async () => {
     const { loadSkillContent } = await import("../src/harness/skills.ts");
 
-    await expectAsync(loadSkillContent("acct/Invalid-Name")).rejects.toThrow(
+    expect(loadSkillContent("acct/Invalid-Name")).rejects.toThrow(
       "Invalid skill path: acct/Invalid-Name",
     );
   });
@@ -842,9 +841,7 @@ describe("loadSkillContent", () => {
 
     const { loadSkillContent } = await import("../src/harness/skills.ts");
 
-    await expectAsync(
-      loadSkillContent("acct_test/missing-skill"),
-    ).rejects.toThrow();
+    expect(loadSkillContent("acct_test/missing-skill")).rejects.toThrow();
   });
 
   it("throws when skill markdown is malformed", async () => {
@@ -852,7 +849,7 @@ describe("loadSkillContent", () => {
 
     const { loadSkillContent } = await import("../src/harness/skills.ts");
 
-    await expectAsync(loadSkillContent("acct_test/bad-skill")).rejects.toThrow(
+    expect(loadSkillContent("acct_test/bad-skill")).rejects.toThrow(
       "SKILL.md must start with YAML frontmatter",
     );
   });
@@ -864,7 +861,7 @@ describe("loadSkillContent", () => {
 
     const { loadSkillContent } = await import("../src/harness/skills.ts");
 
-    await expectAsync(
+    expect(
       loadSkillContent("acct_test/safe-skill", ["../etc/passwd"]),
     ).rejects.toThrow("Invalid skill file path: ../etc/passwd");
   });

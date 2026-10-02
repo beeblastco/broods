@@ -5,7 +5,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { createHmac } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import type {
@@ -213,7 +212,7 @@ describe("handler", () => {
       async () => new Response(null, { status: 401 }),
     );
 
-    await expectAsync(handler(cloudWatchEvent(payload()))).rejects.toThrow(
+    expect(handler(cloudWatchEvent(payload()))).rejects.toThrow(
       "OTLP push failed with HTTP 401",
     );
   });

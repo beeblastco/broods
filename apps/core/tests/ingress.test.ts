@@ -7,7 +7,6 @@ import {
   mock,
   spyOn,
 } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   dispatchInProcessWorker,
@@ -290,70 +289,6 @@ describe("async turn without model input", (): void => {
       "run_1",
       "Request did not produce pending model input",
     );
-  });
-});
-
-describe("async turn context recovery", (): void => {
-  afterEach((): void => {
-    mock.restore();
-  });
-
-  it("compacts and retries one context-length failure", async (): Promise<void> => {
-    spyOn(runtime, "mutate").mockResolvedValue(null);
-    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
-    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
-    const createTurnContext = spyOn(
-      Session.prototype,
-      "createTurnContext",
-    ).mockResolvedValue({
-      messages: [{ role: "user", content: "hello" }],
-      system: [],
-      ephemeralSystem: [],
-      systemContextSnapshot: { cursor: null, messages: [] },
-    });
-    const compact = spyOn(
-      Session.prototype,
-      "compactConversation",
-    ).mockResolvedValue(4);
-    let attempt = 0;
-    const run = spyOn(harness, "runAgentLoop").mockImplementation((async (
-      _session: unknown,
-      _turn: unknown,
-      _config: unknown,
-      reply: AgentReplyHooks,
-    ) => {
-      attempt += 1;
-      if (attempt === 2) await reply.onFinalText("answer");
-      const failure =
-        attempt === 1 ? "prompt is too long for this context window" : null;
-
-      return {
-        traceId: (): undefined => undefined,
-        consumeStream: async (): Promise<void> => {},
-        questionSummaries: (): PendingQuestionSummary[] => [],
-        didFail: (): boolean => failure !== null,
-        failureText: (): string | null => failure,
-      };
-    }) as never);
-    const event: DirectInboundEvent = {
-      ...candidate(),
-      publicEventId: "event-1",
-      publicConversationKey: "conversation-1",
-      events: [],
-      agentConfig: {},
-      ownerGeneration: 1,
-    };
-
-    await handler({ kind: "direct-api-async-worker", event: event });
-
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(compact).toHaveBeenCalledTimes(1);
-    expect(createTurnContext).toHaveBeenCalledTimes(2);
-    expect(settle.mock.calls[0]?.[0]).toMatchObject({
-      status: "completed",
-      result: "answer",
-    });
   });
 });
 
@@ -1374,13 +1309,13 @@ describe("session messages", (): void => {
       sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
     };
 
-    await expectAsync(
+    expect(
       prepareSessionMessage({
         ...options,
         input: { conversationKey: "tg:source-chat", message: "loop" },
       }),
     ).rejects.toThrow("cannot target the current conversation");
-    await expectAsync(
+    expect(
       prepareSessionMessage({
         ...options,
         input: {
@@ -1399,7 +1334,7 @@ describe("session messages", (): void => {
       return null as T;
     };
 
-    await expectAsync(
+    expect(
       prepareSessionMessage({
         accountId: "acct_test",
         agentId: "agent_test",

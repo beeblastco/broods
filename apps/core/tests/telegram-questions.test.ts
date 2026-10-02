@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import {
   sendChannelFailure,
   type ChannelActions,
@@ -265,13 +264,13 @@ describe("telegram bot api", () => {
   // No fetch stub here on purpose: a request that got out would fail on the
   // network with a different error than the one asserted.
   it("refuses a plain http endpoint before the token leaves", async () => {
-    await expectAsync(
+    expect(
       telegramActions("http://bot-api.example").sendQuestions!(QUESTION_PROMPT),
     ).rejects.toThrow("config.channels.telegram.apiUrl must use https");
   });
 
   it("refuses a base with a query, which would push the token into it", async () => {
-    await expectAsync(
+    expect(
       telegramActions("https://bot-api.example?route=1").sendQuestions!(
         QUESTION_PROMPT,
       ),
@@ -281,7 +280,7 @@ describe("telegram bot api", () => {
   });
 
   it("fails on a redirect instead of carrying the token to the new host", async () => {
-    await expectAsync(
+    expect(
       withTelegramApi(
         () => telegramActions().sendQuestions!(QUESTION_PROMPT),
         () =>

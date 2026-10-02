@@ -6,7 +6,6 @@
 
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
 import { createWorkdirHarnessAgent } from "../src/harness/ai-sdk-harness/index.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
@@ -120,14 +119,14 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
 
       const path = `${session.defaultWorkingDirectory}/broods-harness-live.txt`;
       await session.writeTextFile({ path: path, content: "live-file-content" });
-      await expectAsync(session.readTextFile({ path: path })).resolves.toBe(
+      expect(session.readTextFile({ path: path })).resolves.toBe(
         "live-file-content",
       );
 
       await session.stop();
       const resumed = await sandbox.resumeSession!({ sessionId: session.id });
       cleanup = resumed;
-      await expectAsync(
+      expect(
         resumed.run({ command: "printf 'resumed' && exit 7" }),
       ).resolves.toEqual({ exitCode: 7, stdout: "resumed", stderr: "" });
     } finally {

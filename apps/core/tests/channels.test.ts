@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import type { UserContent } from "ai";
 import type { ChannelImage } from "../src/shared/channels.ts";
 import { ROOT_CONTEXT } from "@opentelemetry/api";
@@ -61,10 +60,10 @@ describe("channelAttachmentBytes", () => {
       name: "x.png",
     });
 
-    await expectAsync(
-      channelAttachmentBytes(image("file:///etc/hosts")),
-    ).rejects.toThrow("only http(s) URLs are supported");
-    await expectAsync(
+    expect(channelAttachmentBytes(image("file:///etc/hosts"))).rejects.toThrow(
+      "only http(s) URLs are supported",
+    );
+    expect(
       channelAttachmentBytes(image("http://169.254.169.254/latest")),
     ).rejects.toThrow(
       "blocked private or metadata address for 169.254.169.254",

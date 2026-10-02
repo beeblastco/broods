@@ -14,7 +14,6 @@ import {
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import {
   attemptRecordingMiddleware,
   dropUnsupportedMediaMiddleware,
@@ -306,7 +305,7 @@ describe("retryWithoutStoredItemsMiddleware", () => {
   });
 
   it("rethrows an unrelated failure instead of paying for a second call", async () => {
-    await expectAsync(
+    expect(
       retryCall(apiCallError("Rate limit reached for gpt-5.6")),
     ).rejects.toThrow("Rate limit reached");
   });
@@ -328,7 +327,7 @@ describe("attemptRecordingMiddleware", () => {
       model: {} as never,
     });
 
-    await expectAsync(failing).rejects.toThrow("resource exhausted");
+    expect(failing).rejects.toThrow("resource exhausted");
     await middleware.wrapStream!({
       doGenerate: async () => ({}) as never,
       doStream: async () => ({ stream: {} as never }),
@@ -410,15 +409,15 @@ describe("dropUnsupportedMediaMiddleware", () => {
   });
 
   it("rethrows an error that is not a refused capability", async () => {
-    await expectAsync(
-      dropCall(apiCallError("Rate limit reached")),
-    ).rejects.toThrow("Rate limit reached");
+    expect(dropCall(apiCallError("Rate limit reached"))).rejects.toThrow(
+      "Rate limit reached",
+    );
   });
 
   // Without this the middleware would pay for a second identical call every
   // time a provider refuses something that is not a file part at all.
   it("rethrows when the prompt carries nothing to drop", async () => {
-    await expectAsync(
+    expect(
       dropCall(refused, [
         { role: "user", content: [{ type: "text", text: "hi" }] },
       ]),

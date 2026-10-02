@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import type { ToolExecuteFunction } from "ai";
 import {
   callMcpTool,
@@ -107,7 +106,7 @@ test("a run round-trips through the daemon socket that claimed the record", asyn
 test("a run with no daemon connected names the command to fix it", async () => {
   core();
 
-  await expectAsync(
+  expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -235,7 +234,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
   });
   const firstClosed = closeOf(first.socket);
 
-  await expectAsync(
+  expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -254,7 +253,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
 test("the computer tool reaches a daemon started with --computer, and names the flag otherwise", async () => {
   const server = core();
   await connectDaemon(server, "my-mac", () => {});
-  await expectAsync(
+  expect(
     runMachineComputerAction(machineExecutorConfig(), { action: "screenshot" }),
   ).rejects.toThrow("broods machine my-mac --computer");
 
@@ -320,9 +319,7 @@ test("with two computers attached, a call reaches the one it names", async () =>
     await execute({ action: "cursor_position", sandbox: "my-mac" }, options),
   ).toEqual({ type: "text", value: "mine on my-mac" });
   // Two screens and no name is ambiguous, so it is refused rather than guessed.
-  await expectAsync(
-    execute({ action: "cursor_position" }, options),
-  ).rejects.toThrow(
+  expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
     "pass sandbox with the computer to act on: my-mac, other-mac",
   );
 });
@@ -342,7 +339,7 @@ test("a name from a longer list is refused once one computer is left", async () 
 
   // An approval replayed after the agent lost a machine still carries the name it
   // was granted for. That must not land on the machine that is left.
-  await expectAsync(
+  expect(
     execute({ action: "cursor_position", sandbox: "other-mac" }, options),
   ).rejects.toThrow("pass sandbox with the computer to act on: my-mac");
   expect(await execute({ action: "cursor_position" }, options)).toEqual({
@@ -355,11 +352,9 @@ test("an MCP row lists and calls through the daemon that serves that server", as
   const server = core();
   const connection = mcpConnection(machineMcpRecord(), undefined);
 
-  await expectAsync(listMcpTools(connection)).rejects.toThrow(
-    "is not connected",
-  );
+  expect(listMcpTools(connection)).rejects.toThrow("is not connected");
   await connectDaemon(server, "my-mac", () => {}, { mcp: ["other"] });
-  await expectAsync(listMcpTools(connection)).rejects.toThrow(
+  expect(listMcpTools(connection)).rejects.toThrow(
     'does not serve MCP server "echo"',
   );
 

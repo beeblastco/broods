@@ -90,7 +90,7 @@ model: {
 
 ## Session history
 
-Long conversations are trimmed before each model call. After a turn reaches the lower of 500k input tokens and 80% of the model's context window, the stored history is summarized. A context-length failure compacts the earlier history and retries the turn once.
+Long conversations are trimmed before each model call. After a turn reaches the lower of 500k input tokens and 80% of the model's context window, the stored history is summarized. A turn that fails on context length compacts the history so the next one fits.
 
 ```ts
 session: {
