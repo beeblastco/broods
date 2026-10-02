@@ -60,15 +60,13 @@ import {
   type LogLevel,
   type ObservabilityLogEntry,
 } from "../observability-contracts.ts";
-import { BroodsAccountClient } from "../account.ts";
+import { BroodsAccountApiError, BroodsAccountClient } from "../account.ts";
 import {
-  CHATGPT_USAGE_URL,
-  CONNECTION_NAME_PATTERN,
   CONNECTION_TYPES,
   CONNECTION_TYPE_NAMES,
   isConnectionType,
 } from "../../../convex/model/connections.ts";
-import { connectInBrowser, listChatGPTModels } from "./connect.ts";
+import { connectInBrowser } from "./connect.ts";
 import {
   hasFlag,
   isPlainObject,
@@ -168,23 +166,14 @@ Subcommands:
   get <name>           Show an agent's model, sandboxes, workspaces, tools and channels
 
 ${GLOBAL_OPTIONS}`,
-  connect: `Usage: broods connect [type] [options]
+  connect: `Usage: broods connect [type]
 
-Signs an external account in through the browser and stores it on your
+Signs an external account in through the browser and keeps it on your
 deployment, so agents act through it. Without a type, lists the account's
 connections. Uses BROODS_ACCOUNT_SECRET when set, otherwise your broods login.
 
 Types:
 ${CONNECTION_TYPE_NAMES.map((type) => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
-
-Options:
-  --name <name>              Connection name (default: the type); an MCP server
-                             uses it as config.mcp.<server>.oauth.connection
-  --scope <scopes>           Scopes to request, space or comma separated
-  --client-id <id>           Your OAuth app's client id (google, microsoft);
-                             BROODS_CLIENT_ID otherwise
-  --client-secret <secret>   Your OAuth app's client secret (google);
-                             BROODS_CLIENT_SECRET otherwise
 
 ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
@@ -216,9 +205,9 @@ Shows local desired state against the remote state of the current stage, and
 warns when the stage's value for an env("NAME") ref no longer matches .env.local.
 
 ${GLOBAL_OPTIONS}`,
-  disconnect: `Usage: broods disconnect <name>
+  disconnect: `Usage: broods disconnect <type>
 
-Forgets a connection and revokes it at the provider.
+Forgets the account's connection of that type and revokes it at the provider.
 
 ${GLOBAL_OPTIONS}`,
   env: `Usage: broods env <set|get|list|rm|sync> [name]
@@ -630,6 +619,19 @@ async function login(args: string[]): Promise<void> {
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
+/** An account API failure's own message, without the method, path and raw JSON around it. */
+function apiErrorMessage(error: unknown): string {
+  if (!(error instanceof BroodsAccountApiError))
+    return error instanceof Error ? error.message : String(error);
+  try {
+    const body = JSON.parse(error.body) as { error?: { message?: string } };
+
+    return body.error?.message ?? error.message;
+  } catch {
+    return error.message;
+  }
+}
+
 /**
  * `broods connect [type]`: with a type, signs that external account in through
  * the browser and stores it under --name (default: the type); without one,
@@ -637,8 +639,9 @@ async function login(args: string[]): Promise<void> {
  */
 async function connectCommand(args: string[]): Promise<void> {
   const [type] = positionalArgs(args);
+  const client = await connectionsClient(args);
   if (type === undefined) {
-    await listConnections(await connectionsClient(args));
+    await listConnections(client);
 
     return;
   }
@@ -648,50 +651,26 @@ async function connectCommand(args: string[]): Promise<void> {
     );
   }
   const meta = CONNECTION_TYPES[type];
-  const name = optionValue(args, "--name") ?? type;
-  // Refused before the browser opens rather than by the server after it.
-  if (meta.fixedName && name !== meta.fixedName) {
-    throw new Error(`A ${type} connection is always named ${meta.fixedName}.`);
-  }
-  if (!CONNECTION_NAME_PATTERN.test(name)) {
-    throw new Error(
-      `Connection names are lowercase letters, digits and dashes: ${name}`,
-    );
-  }
-  const scope = optionValue(args, "--scope");
-  const clientId =
-    optionValue(args, "--client-id") ?? process.env.BROODS_CLIENT_ID;
-  const clientSecret =
-    optionValue(args, "--client-secret") ?? process.env.BROODS_CLIENT_SECRET;
-  const client = await connectionsClient(args);
-  const signIn = await connectInBrowser(
-    type,
-    await client.getConnection(name),
-    {
-      ...(scope ? { scopes: scope.split(/[\s,]+/).filter(Boolean) } : {}),
-      ...(clientId ? { clientId: clientId } : {}),
-      ...(clientSecret ? { clientSecret: clientSecret } : {}),
+  const connection = await connectInBrowser(client, type).catch(
+    (error: unknown) => {
+      throw new Error(apiErrorMessage(error));
     },
   );
-  await client.connect(name, signIn);
   printSuccess(
-    `Connected ${name} (${meta.label})${signIn.email ? ` as ${signIn.email}` : ""}.`,
+    `Connected ${meta.label}${connection.email ? ` as ${connection.email}` : ""}.`,
   );
   if (meta.usableBy === "mcp") {
     console.log(
-      `Use it from an MCP server: config.mcp.<server>.oauth = { connection: "${name}" }`,
+      `Use it from an MCP server: config.mcp.<server>.oauth = { connection: "${type}" }`,
     );
 
     return;
   }
-  console.log('Agents on model.provider "chatgpt" now use your ChatGPT plan.');
-  console.log(`Manage usage: ${CHATGPT_USAGE_URL}`);
-  const models = await listChatGPTModels(signIn.accessToken).catch(() => []);
-  if (models.length === 0) return;
+  console.log(`Agents on model.provider "${type}" now run on it.`);
+  if (meta.usageUrl) console.log(`Manage usage: ${meta.usageUrl}`);
+  if (!connection.models?.length) return;
   console.log("Models (use the id as model.modelId):");
-  for (const model of models) {
-    console.log(`  ${model.slug.padEnd(24)} ${model.displayName}`);
-  }
+  for (const model of connection.models) console.log(`  ${model}`);
 }
 
 /**
@@ -718,15 +697,16 @@ async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
 
 /** `broods disconnect <name>`: forget a connection and revoke it. */
 async function disconnectCommand(args: string[]): Promise<void> {
-  const [name] = positionalArgs(args);
-  if (!name) throw new Error(commandHelp("disconnect"));
-  const deleted = await (await connectionsClient(args)).disconnect(name);
+  const [type] = positionalArgs(args);
+  if (!type || !isConnectionType(type))
+    throw new Error(commandHelp("disconnect"));
+  const deleted = await (await connectionsClient(args)).disconnect(type);
   if (deleted) {
-    printSuccess(`Disconnected ${name}`);
+    printSuccess(`Disconnected ${CONNECTION_TYPES[type].label}`);
 
     return;
   }
-  console.log(`No connection named ${name}.`);
+  console.log(`No ${type} connection.`);
 }
 
 /** The account's connections as a table, then the types it can add. */
@@ -735,11 +715,11 @@ async function listConnections(client: BroodsAccountClient): Promise<void> {
   if (connections.length === 0) {
     console.log("No connections yet.");
   } else {
-    console.log(`${"NAME".padEnd(16)} ${"TYPE".padEnd(14)} ACCOUNT`);
+    console.log(`${"TYPE".padEnd(16)} ACCOUNT`);
   }
   for (const connection of connections) {
     console.log(
-      `${connection.name.padEnd(16)} ${CONNECTION_TYPES[connection.type].label.padEnd(14)} ${connection.email ?? connection.clientId}`,
+      `${CONNECTION_TYPES[connection.type].label.padEnd(16)} ${connection.email ?? connection.clientId}`,
     );
   }
   console.log(

@@ -339,8 +339,8 @@ export interface AgentMcpEntry {
    * Overrides for the row's oauth credentials; values resolved from account
    * env vars at sync, so the row's ${NAME} refs never reach the token
    * endpoint. tokenUrl stays on the row, where registration checked it.
-   * `connection` instead names a `broods connect` connection (`gmail`), whose
-   * token is used as is and refreshed by core.
+   * `connection` instead names a `broods connect` connection type (`google`),
+   * whose token is used as is and refreshed by core.
    */
   oauth?: Partial<Omit<McpOauth, "tokenUrl">> & { connection?: string };
   [key: string]: unknown;

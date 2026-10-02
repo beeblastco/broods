@@ -115,25 +115,18 @@ broods login --dashboard-url https://your-dashboard.example.com
 
 ## connect
 
-Signs an external account in through the browser and stores it on your deployment, so agents act through it. Without a type, lists the account's connections. See [Connections](../guides/connections.md).
+Signs an external account in through the browser and keeps it on your deployment, so agents act through it. There is nothing to pass. Without a type, lists the account's connections. See [Connections](../guides/connections.md).
 
 ```bash
-broods connect [chatgpt | google | microsoft] [--name <name>] [--scope <scopes>] [--client-id <id>] [--client-secret <secret>]
+broods connect [chatgpt | google | microsoft]
 ```
 
 It uses `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` is self-hosted only; the managed service refuses it.
 
-| Option                     | Meaning                                                                                                                                                          |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--name <name>`            | Connection name, default the type. Lowercase letters, digits and dashes. A `chatgpt` connection is always `chatgpt`, and no other connection may take that name. |
-| `--scope <scopes>`         | Scopes to request instead of the type's defaults, space or comma separated.                                                                                      |
-| `--client-id <id>`         | Your OAuth app's client id (`google`, `microsoft`). `BROODS_CLIENT_ID` otherwise.                                                                                |
-| `--client-secret <secret>` | Your OAuth app's client secret (`google`). `BROODS_CLIENT_SECRET` otherwise, which keeps it out of shell history.                                                |
-
 ## disconnect
 
 ```bash
-broods disconnect <name>
+broods disconnect <chatgpt | google | microsoft>
 ```
 
 Forgets the connection and revokes its refresh token at the provider. Microsoft has no revocation endpoint; end the grant in your Microsoft account settings.

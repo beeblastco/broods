@@ -29,8 +29,6 @@ const DASHBOARD_LOGIN_TIMEOUT =
 /** Options whose value is a separate token, so both have to leave a prompt. */
 const VALUE_OPTIONS = new Set([
   "--base-url",
-  "--client-id",
-  "--client-secret",
   "--cwd",
   "--dashboard-url",
   "--stage",
@@ -38,11 +36,9 @@ const VALUE_OPTIONS = new Set([
   "--level",
   "--limit",
   "--mcp",
-  "--name",
   "--project",
   "--region",
   "--sandbox",
-  "--scope",
   "-n",
 ]);
 

@@ -65,7 +65,7 @@ Rules:
 
 ### Servers with expiring OAuth tokens
 
-Some servers, such as Google's Workspace MCP endpoints, only accept short-lived access tokens. The simplest way is a [connection](connections.md): sign the account in once with `broods connect google --name gmail ...` and set `oauth: { connection: "gmail" }` on the agent's MCP entry. Broods sends the connection's token and refreshes it.
+Some servers, such as Google's Workspace MCP endpoints, only accept short-lived access tokens. The simplest way is a [connection](connections.md): sign the account in once with `broods connect google` and set `oauth: { connection: "google" }` on the agent's MCP entry. Broods sends the connection's token and refreshes it.
 
 To manage the refresh token yourself instead, give `oauth` with your own credentials, and Broods mints, caches and refreshes the access tokens:
 

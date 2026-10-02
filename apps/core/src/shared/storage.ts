@@ -266,11 +266,14 @@ export interface StoredConnection {
 
 /** External accounts signed in by `broods connect`. Written by the config plane. */
 interface ConnectionStore {
-  load(accountId: string, name: string): Promise<StoredConnection | null>;
+  load(
+    accountId: string,
+    type: ConnectionType,
+  ): Promise<StoredConnection | null>;
   /** False when the row changed since `loaded` was read: a new sign-in wins. */
   saveRefreshed(
     accountId: string,
-    name: string,
+    type: ConnectionType,
     loaded: StoredConnection,
     refreshed: Pick<
       StoredConnection,

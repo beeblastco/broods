@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 /**
- * `/v1/account/connections`: a sign-in is stored encrypted and read back
- * without its tokens or client secret, each type's rules hold (ChatGPT plan
- * usage, a Google client secret), the managed service refuses ChatGPT only,
- * core's refresh never overwrites a newer sign-in, and a disconnect forgets,
- * then revokes.
+ * `/v1/account/connections`: `start` answers the provider's consent screen on
+ * the right client, a PUT trades the code and stores the connection only after
+ * its ID token verifies and the type's rules hold, the stored tokens never
+ * leave, the managed service refuses ChatGPT, a refresh never overwrites a
+ * newer sign-in, and a disconnect forgets, then revokes.
  */
 
 import { convexTest, type TestConvex } from "convex-test";
@@ -17,36 +17,76 @@ import schema from "../schema";
 const modules = import.meta.glob("../**/*.ts");
 
 const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
+const REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
+const ISSUERS = {
+  chatgpt: "https://auth.openai.com",
+  google: "https://accounts.google.com",
+} as const;
 
 const connectionsTest = (): TestConvex<typeof schema> =>
   convexTest(schema, modules);
 
-const chatgpt = {
-  type: "chatgpt",
-  clientId: "client-1",
-  hostId: "urn:uuid:host-1",
-  email: "user@example.com",
-  scopes: ["openid", "offline_access", "chatgpt.tokens.use.direct"],
-  expiresAt: "2026-10-02T12:00:00.000Z",
-  accessToken: "access-1",
-  refreshToken: "refresh-1",
-};
-
-const google = {
-  type: "google",
-  clientId: "google-client",
-  clientSecret: "google-secret",
-  email: "user@example.com",
-  scopes: ["openid", "https://www.googleapis.com/auth/gmail.modify"],
-  expiresAt: "2026-10-02T12:00:00.000Z",
-  accessToken: "access-g",
-  refreshToken: "refresh-g",
-};
-
 type T = TestConvex<typeof schema>;
 
-beforeEach(() => {
+/** What the stubbed provider answers on the token endpoint. */
+interface ProviderAnswer {
+  issuer: string;
+  audience: string;
+  nonce: string;
+  scope?: string;
+}
+
+let keys: CryptoKeyPair;
+let jwk: JsonWebKey & { kid: string };
+let provider: ProviderAnswer;
+let tokenForms: URLSearchParams[];
+
+beforeEach(async () => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  keys = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  jwk = {
+    ...(await crypto.subtle.exportKey("jwk", keys.publicKey)),
+    kid: "key-1",
+  };
+  provider = {
+    issuer: ISSUERS.chatgpt,
+    audience: "client-issued",
+    nonce: "nonce-1",
+    scope: "openid offline_access chatgpt.tokens.use.direct",
+  };
+  tokenForms = [];
+  vi.stubGlobal(
+    "fetch",
+    async (input: string, init?: RequestInit): Promise<Response> => {
+      if (input.includes("jwks") || input.includes("/certs"))
+        return Response.json({ keys: [jwk] });
+      if (input.endsWith("/models"))
+        return Response.json({
+          models: [
+            { slug: "gpt-5.5", visibility: "list" },
+            { slug: "hidden", visibility: "hide" },
+          ],
+        });
+      tokenForms.push(new URLSearchParams(init?.body as URLSearchParams));
+
+      return Response.json({
+        access_token: "access-1",
+        refresh_token: "refresh-1",
+        id_token: await idToken(),
+        expires_in: 3600,
+        ...(provider.scope ? { scope: provider.scope } : {}),
+      });
+    },
+  );
 });
 
 afterEach(() => {
@@ -55,114 +95,171 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test("a stored sign-in reads back without its tokens or client secret", async () => {
+test("start answers ChatGPT's consent screen on a registering client", async () => {
+  const t = connectionsTest();
+  await seedAccount(t);
+
+  const response = await request(t, "POST", "chatgpt/start", startBody());
+  const body = await response.json();
+  const query = new URL(body.authorizeUrl).searchParams;
+
+  expect(response.status).toBe(200);
+  expect(body.hostId).toMatch(/^urn:uuid:/);
+  expect(query.get("client_id")).toBe("dynamic_agent_client");
+  expect(query.get("agent_name_hint")).toBe("Broods");
+  expect(query.get("ext_agent_host_id")).toBe(body.hostId);
+  expect(query.get("resource")).toBe("https://api.openai.com/v1");
+  expect(query.get("redirect_uri")).toBe(REDIRECT_URI);
+  expect(query.get("code_challenge")).toBe("challenge-1");
+  expect(query.get("code_challenge_method")).toBe("S256");
+});
+
+test("start runs Google on the deployment's own OAuth app", async () => {
+  const t = connectionsTest();
+  await seedAccount(t);
+
+  const missing = await request(t, "POST", "google/start", startBody());
+  vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "google-client");
+  vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "google-secret");
+  const started = await (
+    await request(t, "POST", "google/start", startBody())
+  ).json();
+  const query = new URL(started.authorizeUrl).searchParams;
+
+  expect(missing.status).toBe(503);
+  expect(await missing.text()).toContain("GOOGLE_OAUTH_CLIENT_ID");
+  expect(query.get("client_id")).toBe("google-client");
+  expect(query.get("access_type")).toBe("offline");
+  expect(query.has("ext_agent_host_id")).toBe(false);
+});
+
+test("a redirect off loopback is refused", async () => {
+  const t = connectionsTest();
+  await seedAccount(t);
+
+  const response = await request(t, "POST", "chatgpt/start", {
+    ...startBody(),
+    redirectUri: "https://attacker.example/callback",
+  });
+
+  expect(response.status).toBe(400);
+});
+
+test("a ChatGPT sign-in is stored and reads back without its tokens", async () => {
   const t = connectionsTest();
   const accountId = await seedAccount(t);
 
-  expect((await request(t, "PUT", "chatgpt", chatgpt)).status).toBe(200);
-  expect((await request(t, "PUT", "gmail", google)).status).toBe(200);
-  const one = await (await request(t, "GET", "chatgpt")).json();
+  const response = await request(t, "PUT", "chatgpt", codeBody());
+  const stored = await response.json();
   const all = await (await request(t, "GET")).json();
 
-  expect(one).toEqual({
-    name: "chatgpt",
+  expect(response.status).toBe(200);
+  expect(stored).toMatchObject({
     type: "chatgpt",
-    clientId: "client-1",
+    clientId: "client-issued",
     hostId: "urn:uuid:host-1",
     email: "user@example.com",
-    scopes: chatgpt.scopes,
-    expiresAt: chatgpt.expiresAt,
-    updatedAt: expect.any(String),
+    models: ["gpt-5.5"],
   });
-  expect(all.connections.map((c: { name: string }) => c.name)).toEqual([
-    "chatgpt",
-    "gmail",
-  ]);
-  for (const secret of ["access-1", "refresh-g", "google-secret"]) {
-    expect(JSON.stringify(all)).not.toContain(secret);
-  }
-  const loaded = await t.query(internal.account.connections.load, {
-    accountId: accountId,
-    name: "gmail",
-  });
-  expect(loaded).toMatchObject({
-    accessToken: "access-g",
-    refreshToken: "refresh-g",
-    clientSecret: "google-secret",
-  });
+  expect(tokenForms[0]?.get("code_verifier")).toBe("verifier-1");
+  expect(tokenForms[0]?.get("client_id")).toBe("client-issued");
+  expect(tokenForms[0]?.get("resource")).toBe("https://api.openai.com/v1");
+  expect(JSON.stringify(all)).not.toContain("access-1");
+  expect(
+    await t.query(internal.account.connections.load, {
+      accountId: accountId,
+      type: "chatgpt",
+    }),
+  ).toMatchObject({ accessToken: "access-1", refreshToken: "refresh-1" });
   const rows = await t.run(async (ctx) =>
     ctx.db.query("connections").collect(),
   );
   expect(JSON.stringify(rows)).not.toContain("refresh-1");
 });
 
-test("each type's sign-in rules hold", async () => {
+test("Google keeps the deployment's client secret for refresh", async () => {
+  vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "google-client");
+  vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "google-secret");
+  provider = {
+    issuer: ISSUERS.google,
+    audience: "google-client",
+    nonce: "nonce-1",
+  };
+  const t = connectionsTest();
+  const accountId = await seedAccount(t);
+
+  const response = await request(t, "PUT", "google", {
+    code: "code-1",
+    codeVerifier: "verifier-1",
+    redirectUri: REDIRECT_URI,
+    nonce: "nonce-1",
+  });
+
+  expect(response.status).toBe(200);
+  expect(tokenForms[0]?.get("client_secret")).toBe("google-secret");
+  expect(
+    await t.query(internal.account.connections.load, {
+      accountId: accountId,
+      type: "google",
+    }),
+  ).toMatchObject({ clientSecret: "google-secret" });
+});
+
+test("a sign-in that fails verification or the type's rules stores nothing", async () => {
   const t = connectionsTest();
   await seedAccount(t);
 
-  const noPlanUsage = await request(t, "PUT", "chatgpt", {
-    ...chatgpt,
-    scopes: ["openid", "offline_access"],
-  });
-  const misnamed = await request(t, "PUT", "my-chatgpt", chatgpt);
-  const noSecret = await request(t, "PUT", "gmail", {
-    ...google,
-    clientSecret: undefined,
-  });
-  const badName = await request(t, "PUT", "Gmail_Work", google);
-  const reserved = await request(t, "PUT", "chatgpt", google);
+  provider = { ...provider, nonce: "someone-else" };
+  const wrongNonce = await request(t, "PUT", "chatgpt", codeBody());
+  provider = { ...provider, nonce: "nonce-1", scope: "openid offline_access" };
+  const noPlanUsage = await request(t, "PUT", "chatgpt", codeBody());
 
+  expect(wrongNonce.status).toBe(400);
+  expect(await wrongNonce.text()).toContain("failed verification");
   expect(noPlanUsage.status).toBe(400);
-  expect(misnamed.status).toBe(400);
-  expect(noSecret.status).toBe(400);
-  expect(badName.status).toBe(400);
-  expect(reserved.status).toBe(400);
+  expect(await noPlanUsage.text()).toContain("chatgpt.tokens.use.direct");
   expect(await (await request(t, "GET")).json()).toEqual({ connections: [] });
-  expect((await request(t, "GET", "gmail")).status).toBe(404);
 });
 
-test("the managed service refuses ChatGPT only", async () => {
+test("the managed service refuses ChatGPT before the browser opens", async () => {
   vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
   const t = connectionsTest();
   await seedAccount(t);
 
-  expect((await request(t, "PUT", "chatgpt", chatgpt)).status).toBe(403);
-  expect((await request(t, "PUT", "gmail", google)).status).toBe(200);
+  expect((await request(t, "POST", "chatgpt/start", startBody())).status).toBe(
+    403,
+  );
+  expect((await request(t, "PUT", "chatgpt", codeBody())).status).toBe(403);
 });
 
 test("a refresh never overwrites a newer sign-in", async () => {
   const t = connectionsTest();
   const accountId = await seedAccount(t);
-  await request(t, "PUT", "chatgpt", chatgpt);
-  const ref = { accountId: accountId, name: "chatgpt" };
+  await request(t, "PUT", "chatgpt", codeBody());
+  const ref = { accountId: accountId, type: "chatgpt" as const };
   const loaded = await t.query(internal.account.connections.load, ref);
-  const refreshed = {
+
+  vi.useFakeTimers({ now: loaded!.updatedAt + 1000 });
+  await request(t, "PUT", "chatgpt", codeBody());
+  vi.useRealTimers();
+  const saved = await t.mutation(internal.account.connections.saveRefreshed, {
     ...ref,
     loadedUpdatedAt: loaded!.updatedAt,
     expiresAt: Date.now() + 600_000,
     accessToken: "access-2",
     refreshToken: "refresh-2",
-  };
-
-  vi.useFakeTimers({ now: loaded!.updatedAt + 1000 });
-  await request(t, "PUT", "chatgpt", { ...chatgpt, accessToken: "access-new" });
-  vi.useRealTimers();
-  const saved = await t.mutation(
-    internal.account.connections.saveRefreshed,
-    refreshed,
-  );
+  });
 
   expect(saved).toBe(false);
   expect(
     (await t.query(internal.account.connections.load, ref))?.accessToken,
-  ).toBe("access-new");
+  ).toBe("access-1");
 });
 
 test("a disconnect forgets the connection, then revokes it", async () => {
-  vi.useFakeTimers();
   const t = connectionsTest();
   await seedAccount(t);
-  await request(t, "PUT", "gmail", google);
+  await request(t, "PUT", "chatgpt", codeBody());
   const revoked: Array<{ url: string; form: URLSearchParams }> = [];
   vi.stubGlobal(
     "fetch",
@@ -175,31 +272,80 @@ test("a disconnect forgets the connection, then revokes it", async () => {
       return new Response(null, { status: 200 });
     },
   );
+  vi.useFakeTimers();
 
-  const response = await request(t, "DELETE", "gmail");
-  await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-  expect(await response.json()).toEqual({ deleted: true });
-  expect(revoked).toHaveLength(1);
-  expect(revoked[0]?.url).toBe("https://oauth2.googleapis.com/revoke");
-  expect(revoked[0]?.form.get("token")).toBe("refresh-g");
-  expect(revoked[0]?.form.get("client_secret")).toBe("google-secret");
+  const response = await request(t, "DELETE", "chatgpt");
   const scheduled = await t.run(async (ctx) =>
     ctx.db.system.query("_scheduled_functions").collect(),
   );
-  expect(JSON.stringify(scheduled)).not.toContain("refresh-g");
-  expect(JSON.stringify(scheduled)).not.toContain("google-secret");
-  expect((await request(t, "GET", "gmail")).status).toBe(404);
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  expect(await response.json()).toEqual({ deleted: true });
+  expect(JSON.stringify(scheduled)).not.toContain("refresh-1");
+  expect(revoked).toHaveLength(1);
+  expect(revoked[0]?.url).toBe(
+    "https://auth.openai.com/api/accounts/oauth/revoke",
+  );
+  expect(revoked[0]?.form.get("token")).toBe("refresh-1");
+  expect((await request(t, "GET", "chatgpt")).status).toBe(404);
 });
+
+/** The PUT body `broods connect chatgpt` sends after the redirect. */
+function codeBody(): Record<string, string> {
+  return {
+    code: "code-1",
+    codeVerifier: "verifier-1",
+    redirectUri: REDIRECT_URI,
+    nonce: "nonce-1",
+    clientId: "client-issued",
+    hostId: "urn:uuid:host-1",
+  };
+}
+
+/** An ID token for the current provider answer, signed with the test's key. */
+async function idToken(): Promise<string> {
+  const encode = (value: unknown): string =>
+    btoa(JSON.stringify(value))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  const signingInput = `${encode({ alg: "RS256", kid: "key-1", typ: "JWT" })}.${encode(
+    {
+      iss: provider.issuer,
+      aud: provider.audience,
+      exp: Math.floor(Date.now() / 1000) + 600,
+      nonce: provider.nonce,
+      email: "user@example.com",
+    },
+  )}`;
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    keys.privateKey,
+    new TextEncoder().encode(signingInput),
+  );
+  const bytes = String.fromCharCode(...new Uint8Array(signature));
+
+  return `${signingInput}.${btoa(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+}
+
+/** The start body `broods connect` sends before opening the browser. */
+function startBody(): Record<string, string> {
+  return {
+    redirectUri: REDIRECT_URI,
+    codeChallenge: "challenge-1",
+    state: "state-1",
+    nonce: "nonce-1",
+  };
+}
 
 async function request(
   t: T,
-  method: "GET" | "PUT" | "DELETE",
-  name?: string,
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  path?: string,
   body?: unknown,
 ): Promise<Response> {
   return await t.fetch(
-    `/v1/account/connections${name !== undefined ? `/${name}` : ""}`,
+    `/v1/account/connections${path !== undefined ? `/${path}` : ""}`,
     {
       method: method,
       headers: {

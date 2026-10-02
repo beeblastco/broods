@@ -7,7 +7,6 @@
  */
 
 import type { LanguageModelMiddleware } from "ai";
-import { CHATGPT_CONNECTION_NAME } from "@broods/convex/model/connections";
 import { connectionFetch } from "./connections.ts";
 
 // Request fields plan usage refuses outright: the AI SDK sends some of them
@@ -93,7 +92,7 @@ export function chatgptFetch(
     }
     const response = await connectionFetch(
       accountId,
-      CHATGPT_CONNECTION_NAME,
+      "chatgpt",
       "model",
       modelFetch,
     )(input, { ...init, body: body });

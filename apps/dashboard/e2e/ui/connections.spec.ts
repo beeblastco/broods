@@ -6,11 +6,11 @@ test("lists connections and the command that adds each type", async ({
   await page.goto("/ui-gallery?tab=connections");
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
 
-  for (const name of ["chatgpt", "gmail", "outlook"]) {
-    await expect(page.getByText(name, { exact: true })).toBeVisible();
+  for (const label of ["ChatGPT plan", "Google", "Microsoft"]) {
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
   await expect(
-    page.getByRole("button", { name: "Disconnect gmail" }),
+    page.getByRole("button", { name: "Disconnect Google" }),
   ).toBeVisible();
-  await expect(page.getByText("broods connect chatgpt")).toBeVisible();
+  await expect(page.getByText("broods connect google")).toBeVisible();
 });

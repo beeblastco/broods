@@ -131,6 +131,11 @@ http.route({
   handler: configHttp,
 });
 http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "POST",
+  handler: configHttp,
+});
+http.route({
   path: "/v1/account/rotate-secret",
   method: "POST",
   handler: configHttp,

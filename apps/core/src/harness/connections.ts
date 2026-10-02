@@ -8,8 +8,7 @@
 
 import {
   CONNECTION_TYPES,
-  connectCommand,
-  isConnectionType,
+  type ConnectionType,
   type ConnectionUse,
 } from "@broods/convex/model/connections";
 import { toErrorMessage } from "../shared/errors.ts";
@@ -44,16 +43,22 @@ type Fetch = (
 ) => Promise<Response>;
 
 /**
- * A fetch that sends the connection's access token and, when the provider
+ * A fetch that sends the account's connection token and, when the provider
  * refuses it (401), refreshes once and resends: neither the AI SDK nor the
  * MCP client retries a 401. `use` is who sends it, checked against the type.
  */
 export function connectionFetch(
   accountId: string,
-  name: string,
+  type: ConnectionType,
   use: ConnectionUse,
   baseFetch: Fetch,
 ): Fetch {
+  const meta = CONNECTION_TYPES[type];
+  if (meta.usableBy !== use)
+    throw new Error(
+      `A ${meta.label} connection is not for ${use === "mcp" ? "MCP servers" : "a model provider"}.`,
+    );
+
   return async (input, init): Promise<Response> => {
     const send = async (token: string): Promise<Response> => {
       const headers = new Headers(init?.headers);
@@ -61,14 +66,14 @@ export function connectionFetch(
 
       return await baseFetch(input, { ...init, headers: headers });
     };
-    const token = await accessToken(accountId, name, use);
+    const token = await accessToken(accountId, type);
     const response = await send(token);
     if (response.status !== 401) return response;
-    const key = `${accountId}:${name}`;
+    const key = `${accountId}:${type}`;
     cache.delete(key);
     rejected.set(key, token);
 
-    return await send(await accessToken(accountId, name, use));
+    return await send(await accessToken(accountId, type));
   };
 }
 
@@ -82,34 +87,25 @@ export function resetConnectionsForTests(): void {
 /** The connection's access token, refreshed when it is close to expiry. */
 async function accessToken(
   accountId: string,
-  name: string,
-  use: ConnectionUse,
+  type: ConnectionType,
 ): Promise<string> {
-  const key = `${accountId}:${name}`;
+  const key = `${accountId}:${type}`;
   const cached = cache.get(key);
-  const fresh =
+  if (
     cached &&
     Date.now() - cached.loadedAt < CACHE_TTL_MS &&
-    !expiresSoon(cached.connection);
-  let connection: StoredConnection;
-  if (fresh) {
-    connection = cached.connection;
-  } else {
-    // Joined or registered before any await, so concurrent calls share one refresh.
-    let pending = inFlight.get(key);
-    if (!pending) {
-      pending = loadFresh(accountId, name).finally(() => inFlight.delete(key));
-      inFlight.set(key, pending);
-    }
-    connection = await pending;
+    !expiresSoon(cached.connection)
+  ) {
+    return cached.connection.accessToken;
   }
-  const meta = CONNECTION_TYPES[connection.type];
-  if (meta.usableBy !== use)
-    throw new Error(
-      `${name} is a ${meta.label} connection, which ${use === "mcp" ? "MCP servers" : "a model provider"} cannot use.`,
-    );
+  // Joined or registered before any await, so concurrent calls share one refresh.
+  let pending = inFlight.get(key);
+  if (!pending) {
+    pending = loadFresh(accountId, type).finally(() => inFlight.delete(key));
+    inFlight.set(key, pending);
+  }
 
-  return connection.accessToken;
+  return (await pending).accessToken;
 }
 
 /** Whether a token is inside the refresh margin, so the next call refreshes it. */
@@ -121,19 +117,19 @@ function expiresSoon(connection: StoredConnection): boolean {
 // replaced the token pair since it was cached.
 async function loadFresh(
   accountId: string,
-  name: string,
+  type: ConnectionType,
 ): Promise<StoredConnection> {
-  const key = `${accountId}:${name}`;
-  const stored = await getStorage().connections.load(accountId, name);
+  const key = `${accountId}:${type}`;
+  const stored = await getStorage().connections.load(accountId, type);
   if (!stored) {
     cache.delete(key);
     throw new Error(
-      `This account has no ${name} connection. Run \`${connectCommand(isConnectionType(name) ? name : "<type>", name)}\` to sign in.`,
+      `This account has no ${type} connection. Run \`broods connect ${type}\` to sign in.`,
     );
   }
   const connection =
     expiresSoon(stored) || rejected.get(key) === stored.accessToken
-      ? await refreshAndSave(accountId, name, stored)
+      ? await refreshAndSave(accountId, type, stored)
       : stored;
   rejected.delete(key);
   cache.set(key, { connection: connection, loadedAt: Date.now() });
@@ -144,21 +140,21 @@ async function loadFresh(
 /** Refreshes the stored pair at the type's token endpoint and saves it back. */
 async function refreshAndSave(
   accountId: string,
-  name: string,
+  type: ConnectionType,
   stored: StoredConnection,
 ): Promise<StoredConnection> {
-  const type = CONNECTION_TYPES[stored.type];
+  const meta = CONNECTION_TYPES[type];
   let refreshed: RefreshedToken;
   try {
     refreshed = await refreshTokenGrant(
-      type.tokenUrl,
+      meta.tokenUrl,
       {
         client_id: stored.clientId,
         refresh_token: stored.refreshToken,
         ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
-        ...(type.resource ? { resource: type.resource } : {}),
+        ...(meta.resource ? { resource: meta.resource } : {}),
         // Otherwise no scope: the refreshed grant keeps what the user approved.
-        ...(type.refreshScopes ? { scope: stored.scopes.join(" ") } : {}),
+        ...(meta.refreshScopes ? { scope: stored.scopes.join(" ") } : {}),
       },
       (url, init) =>
         fetch(url, {
@@ -169,11 +165,11 @@ async function refreshAndSave(
   } catch (error) {
     // Another writer may have spent this refresh token and saved its pair:
     // storage moved under us, so start over from it.
-    const latest = await getStorage().connections.load(accountId, name);
+    const latest = await getStorage().connections.load(accountId, type);
     if (latest && latest.updatedAt !== stored.updatedAt)
-      return await loadFresh(accountId, name);
+      return await loadFresh(accountId, type);
     throw new Error(
-      `${type.label} connection ${name} could not refresh: ${toErrorMessage(error)}. Run \`${connectCommand(stored.type, name)}\` to sign in again.`,
+      `${meta.label} connection could not refresh: ${toErrorMessage(error)}. Run \`broods connect ${type}\` to sign in again.`,
     );
   }
   // The refresh token rotates; keep the old one only if none came back.
@@ -184,12 +180,12 @@ async function refreshAndSave(
   };
   const saved = await getStorage().connections.saveRefreshed(
     accountId,
-    name,
+    type,
     stored,
     rotated,
   );
   // A new sign-in or a disconnect landed while this refresh ran; it wins.
-  if (!saved) return await loadFresh(accountId, name);
+  if (!saved) return await loadFresh(accountId, type);
 
   return { ...stored, ...rotated, updatedAt: Date.now() };
 }

@@ -11,7 +11,6 @@ import { api } from "@broods/convex/_generated/api";
 import {
   CONNECTION_TYPE_NAMES,
   CONNECTION_TYPES,
-  connectCommand,
 } from "@broods/convex/model/connections";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -34,7 +33,7 @@ export function ConnectionsPanel(): React.JSX.Element {
     if (!removing) return;
     setIsRemoving(true);
     try {
-      await disconnect({ name: removing.name });
+      await disconnect({ type: removing.type });
       setRemoving(null);
     } finally {
       setIsRemoving(false);
@@ -55,7 +54,7 @@ export function ConnectionsPanel(): React.JSX.Element {
           onOpenChange={(open) => {
             if (!open) setRemoving(null);
           }}
-          resourceName={removing.name}
+          resourceName={CONNECTION_TYPES[removing.type].label}
           resourceType="connection"
           critical={false}
           onConfirm={handleDisconnect}
@@ -89,20 +88,19 @@ export function ConnectionsView({
         <div className="grid gap-2">
           {connections?.map((connection) => (
             <div
-              key={connection.name}
-              className="grid grid-cols-[8rem_7rem_minmax(0,1fr)_auto] items-center gap-2"
+              key={connection.type}
+              className="grid grid-cols-[8rem_minmax(0,1fr)_auto] items-center gap-2"
             >
               <span className="truncate text-sm font-medium text-foreground">
-                {connection.name}
-              </span>
-              <span className="truncate text-xs text-muted-foreground">
                 {CONNECTION_TYPES[connection.type].label}
               </span>
               <span className="truncate text-xs text-muted-foreground">
                 {connection.email ?? connection.clientId}
               </span>
               {canWrite ? (
-                <IconTooltip label={`Disconnect ${connection.name}`}>
+                <IconTooltip
+                  label={`Disconnect ${CONNECTION_TYPES[connection.type].label}`}
+                >
                   <Button
                     variant="ghost"
                     size="icon-xs"
@@ -125,7 +123,7 @@ export function ConnectionsView({
           </Label>
           {CONNECTION_TYPE_NAMES.map((type): React.JSX.Element => {
             const meta = CONNECTION_TYPES[type];
-            const command = connectCommand(type);
+            const command = `broods connect ${type}`;
 
             return (
               <div key={type} className="grid gap-1">

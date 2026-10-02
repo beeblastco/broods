@@ -291,20 +291,6 @@ describe("chatgpt provider", () => {
     expect(saved).toHaveLength(0);
   });
 
-  it("refuses a connection of another type stored under the name", async () => {
-    stored = credential({ type: "google" });
-    const { model } = chatgptModel();
-
-    const error = await generateText({
-      model: model,
-      prompt: "hello",
-      maxRetries: 0,
-    }).catch((caught: unknown) => caught);
-
-    expect(String(error)).toContain("which a model provider cannot use");
-    expect(sent).toHaveLength(0);
-  });
-
   it("asks for a connection when the account has none", async () => {
     stored = null;
     const { model } = chatgptModel();

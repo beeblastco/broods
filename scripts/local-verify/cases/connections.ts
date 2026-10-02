@@ -1,13 +1,14 @@
-import type { Connection } from "../../../packages/convex/model/connections.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
+import type { ConnectionStartResult } from "../../../packages/convex/model/connections.ts";
 import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
 
 /**
  * Connections end to end, short of the providers: a `chatgpt` run with no
- * connection fails asking for one (core reads it through Convex), and a
- * connection stored through the gateway lists and reads back without its
- * tokens or client secret, then disconnects. The provider half needs real
- * accounts, so it is not here; the core and CLI tests cover it against stubs.
+ * connection fails asking for one (core reads it through Convex), `start`
+ * answers ChatGPT's consent screen through the gateway, a type whose OAuth
+ * app the deployment lacks names what to set, and a disconnect with nothing
+ * connected answers false. Signing in needs a real browser and account, so
+ * the code exchange is covered by the Convex tests against a stub.
  */
 export async function connections(context: VerifyContext): Promise<void> {
   const key = `connections-${context.runId}`;
@@ -35,34 +36,40 @@ export async function connections(context: VerifyContext): Promise<void> {
     JSON.stringify(unsigned),
   );
 
-  await context.measure("store a connection", (): Promise<Connection> =>
-    context.account.connect("gmail", {
-      type: "google",
-      clientId: "client-local-verify",
-      clientSecret: "secret-local-verify",
-      email: "verify@example.com",
-      scopes: ["openid", "https://www.googleapis.com/auth/gmail.modify"],
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      accessToken: "access-local-verify",
-      refreshToken: "refresh-local-verify",
-    }),
+  const start = {
+    redirectUri: "http://127.0.0.1:1455/auth/callback",
+    codeChallenge: "verify-challenge",
+    state: key,
+    nonce: key,
+  };
+  const started = await context.measure(
+    "start a chatgpt sign-in",
+    (): Promise<ConnectionStartResult> =>
+      context.account.startConnection("chatgpt", start),
   );
-  const listed = await context.account.listConnections();
-  const one = await context.account.getConnection("gmail");
+  const query = new URL(started.authorizeUrl).searchParams;
   assertStep(
-    "a stored connection lists and reads back without its secrets",
-    listed.some((connection) => connection.name === "gmail") &&
-      one?.type === "google" &&
-      !JSON.stringify(listed).includes("access-local-verify") &&
-      !JSON.stringify(listed).includes("secret-local-verify"),
-    JSON.stringify(listed),
+    "start answers ChatGPT's consent screen on a registering client",
+    query.get("client_id") === "dynamic_agent_client" &&
+      query.get("redirect_uri") === start.redirectUri &&
+      query.get("ext_agent_host_id") === started.hostId,
+    started.authorizeUrl,
   );
 
-  const deleted = await context.account.disconnect("gmail");
+  const missingApp = await context.account
+    .startConnection("google", start)
+    .then(() => "started")
+    .catch((error: unknown) => String(error));
   assertStep(
-    "a disconnect forgets the connection",
-    deleted && (await context.account.getConnection("gmail")) === null,
-    JSON.stringify(await context.account.listConnections()),
+    "a type without the deployment's OAuth app names what to set",
+    missingApp.includes("GOOGLE_OAUTH_CLIENT_ID"),
+    missingApp,
+  );
+
+  assertStep(
+    "a disconnect with nothing connected answers false",
+    !(await context.account.disconnect("google")),
+    "deleted a connection that did not exist",
   );
   await context.account.deleteAgent(agentId);
 }

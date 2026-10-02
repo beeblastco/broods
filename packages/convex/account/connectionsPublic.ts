@@ -9,6 +9,7 @@ import { internal } from "../_generated/api";
 import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { getActiveAccountForUser } from "../org/orgs";
+import { connectionsFields } from "../schema";
 import { statusValidator, type ConnectionStatus } from "./connections";
 
 // A connection lets every agent of the org act as the signed-in account.
@@ -36,7 +37,7 @@ export const list = query({
 
 /** Forget and revoke a connection; org admins only. */
 export const disconnect = mutation({
-  args: { name: v.string() },
+  args: { type: connectionsFields.type },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
     // Check authenticated user
@@ -49,7 +50,7 @@ export const disconnect = mutation({
 
     return await ctx.runMutation(internal.account.connections.disconnect, {
       accountId: account._id,
-      name: args.name,
+      type: args.type,
     });
   },
 });

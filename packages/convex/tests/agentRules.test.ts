@@ -106,19 +106,19 @@ describe("agent rules", () => {
     );
     expect(() =>
       normalizeAgentConfig({
-        mcp: { [serverId]: { oauth: { connection: "gmail", clientId: "x" } } },
+        mcp: { [serverId]: { oauth: { connection: "google", clientId: "x" } } },
       }),
     ).toThrow("cannot be combined with other oauth fields");
     expect(() =>
       normalizeAgentConfig({
         mcp: { [serverId]: { oauth: { connection: "Gmail Work" } } },
       }),
-    ).toThrow("must name a connection");
+    ).toThrow("must be one of google, microsoft");
     expect(() =>
       normalizeAgentConfig({
         mcp: { [serverId]: { oauth: { connection: "chatgpt" } } },
       }),
-    ).toThrow("is for the chatgpt model provider, not MCP servers");
+    ).toThrow("must be one of google, microsoft");
   });
 
   it("validates channel trace settings", () => {

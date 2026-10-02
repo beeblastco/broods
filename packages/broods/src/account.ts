@@ -34,7 +34,9 @@ import type {
 import type { Cron, CronRun, Skill } from "./types.ts";
 import type {
   Connection,
-  ConnectionSignIn,
+  ConnectionCode,
+  ConnectionStart,
+  ConnectionStartResult,
   ConnectionType,
 } from "../../convex/model/connections.ts";
 
@@ -102,7 +104,13 @@ export interface AccountEnvVar {
 }
 
 // The connection wire types live with the server so they cannot drift.
-export type { Connection, ConnectionSignIn, ConnectionType };
+export type {
+  Connection,
+  ConnectionCode,
+  ConnectionStart,
+  ConnectionStartResult,
+  ConnectionType,
+};
 
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {
@@ -606,25 +614,49 @@ export class BroodsAccountClient {
     return result?.connections ?? [];
   }
 
-  /** One connection by name, or null when there is none. */
-  async getConnection(name: string): Promise<Connection | null> {
+  /** The account's connection of one type, or null when there is none. */
+  async getConnection(type: ConnectionType): Promise<Connection | null> {
     return await this.request<Connection>(
       "GET",
-      `/v1/account/connections/${encodeURIComponent(name)}`,
+      `/v1/account/connections/${type}`,
     );
   }
 
-  /** Store a verified sign-in under `name`, replacing what was there. */
-  async connect(name: string, signIn: ConnectionSignIn): Promise<Connection> {
+  /** Starts a sign-in: the provider's consent screen for `broods connect` to open. */
+  async startConnection(
+    type: ConnectionType,
+    start: ConnectionStart,
+  ): Promise<ConnectionStartResult> {
+    const result = await this.request<ConnectionStartResult>(
+      "POST",
+      `/v1/account/connections/${type}/start`,
+      start,
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "POST",
+        `/v1/account/connections/${type}/start`,
+        404,
+        "This deployment has no /v1/account/connections yet",
+      );
+
+    return result;
+  }
+
+  /** Finishes a sign-in with the code the browser brought back; the deployment keeps the tokens. */
+  async connect(
+    type: ConnectionType,
+    code: ConnectionCode,
+  ): Promise<Connection> {
     const result = await this.request<Connection>(
       "PUT",
-      `/v1/account/connections/${encodeURIComponent(name)}`,
-      signIn,
+      `/v1/account/connections/${type}`,
+      code,
     );
     if (!result)
       throw new BroodsAccountApiError(
         "PUT",
-        `/v1/account/connections/${name}`,
+        `/v1/account/connections/${type}`,
         404,
         "This deployment has no /v1/account/connections yet",
       );
@@ -633,10 +665,10 @@ export class BroodsAccountClient {
   }
 
   /** Forget a connection and revoke it at the provider. False when there was none. */
-  async disconnect(name: string): Promise<boolean> {
+  async disconnect(type: ConnectionType): Promise<boolean> {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
-      `/v1/account/connections/${encodeURIComponent(name)}`,
+      `/v1/account/connections/${type}`,
     );
 
     return result?.deleted ?? false;

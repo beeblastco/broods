@@ -64,7 +64,7 @@ On a self-hosted deployment, `chatgpt` runs OpenAI models on your ChatGPT Plus o
 broods connect chatgpt
 ```
 
-The browser asks you to sign in to ChatGPT and allow plan usage. The CLI checks the ID token and the grant, stores the [connection](connections.md) on your deployment, and prints the model ids your plan can use. Name one in the agent, with no `provider.chatgpt` entry:
+The browser asks you to sign in to ChatGPT and allow plan usage. Your deployment checks the ID token and the grant, keeps the [connection](connections.md), and the CLI prints the model ids your plan can use. Name one in the agent, with no `provider.chatgpt` entry:
 
 ```ts
 model: { provider: "chatgpt", modelId: "gpt-5.5" },

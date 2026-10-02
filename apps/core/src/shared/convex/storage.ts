@@ -813,18 +813,18 @@ const machineConnections: Storage["machineConnections"] = {
 };
 
 const connections: Storage["connections"] = {
-  load: async function (accountId, name) {
+  load: async function (accountId, type) {
     return (await getConvexClient().query(internal.account.connections.load, {
       accountId: accountId,
-      name: name,
+      type: type,
     })) as StoredConnection | null;
   },
-  saveRefreshed: async function (accountId, name, loaded, refreshed) {
+  saveRefreshed: async function (accountId, type, loaded, refreshed) {
     return (await getConvexClient().mutation(
       internal.account.connections.saveRefreshed,
       {
         accountId: accountId,
-        name: name,
+        type: type,
         loadedUpdatedAt: loaded.updatedAt,
         ...refreshed,
       },

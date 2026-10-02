@@ -990,8 +990,8 @@ paths:
       summary: List connections
       description: >-
         External accounts the account's agents act through (ChatGPT plan,
-        Google, Microsoft), signed in by `broods connect`. Never returns tokens
-        or client secrets. Accepts the account secret or a CLI login token;
+        Google, Microsoft), one of each type, signed in by `broods connect`.
+        Never returns tokens. Accepts the account secret or a CLI login token;
         role sessions and runtime keys are refused.
       security:
         - BearerAuth: []
@@ -1009,18 +1009,44 @@ paths:
                     items:
                       $ref: "#/components/schemas/Connection"
 
-  /v1/account/connections/{name}:
+  /v1/account/connections/{type}/start:
     parameters:
-      - name: name
-        in: path
+      - $ref: "#/components/parameters/ConnectionTypePath"
+    post:
+      tags:
+        - Connections
+      summary: Start a sign-in
+      description: >-
+        Answers the provider's consent screen for `broods connect` to open.
+        The CLI keeps the PKCE verifier, state and nonce; the redirect must be
+        a loopback address. `google` and `microsoft` run on the deployment's
+        own OAuth app and answer 503 until it is set. The managed service
+        refuses `chatgpt`.
+      security:
+        - BearerAuth: []
+      requestBody:
         required: true
-        description: >-
-          Lowercase letters, digits and dashes. A `chatgpt` connection is
-          named `chatgpt`; an MCP server points at the others with
-          `config.mcp.<server>.oauth.connection`.
-        schema:
-          type: string
-          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionStart"
+      responses:
+        "200":
+          description: The consent screen
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionStartResult"
+        "400":
+          description: A missing field or a redirect off loopback
+        "403":
+          description: A role session or runtime key, or `chatgpt` on the managed service
+        "503":
+          description: The deployment has no OAuth app for this type yet
+
+  /v1/account/connections/{type}:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionTypePath"
     get:
       tags:
         - Connections
@@ -1035,18 +1061,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/Connection"
         "404":
-          description: No connection by that name
+          description: No connection of this type
     put:
       tags:
         - Connections
-      summary: Store a connection
+      summary: Finish a sign-in
       description: >-
-        Stores a verified sign-in under `name`, replacing what was there.
-        `broods connect <type>` runs the browser sign-in and sends this. Core
-        refreshes the access token from then on. A `chatgpt` grant must include
-        `chatgpt.tokens.use.direct`, and the managed service refuses `chatgpt`
-        (plan usage is for self-hosted deployments). `google` needs the
-        developer's `clientSecret`.
+        Trades the code the browser brought back on the type's client, checks
+        the ID token (signature, issuer, audience, expiry, nonce) and the
+        grant, then keeps the connection, replacing the type's previous one.
+        Broods refreshes the access token from then on. A `chatgpt` grant must
+        include `chatgpt.tokens.use.direct`; the answer lists the plan's models.
       security:
         - BearerAuth: []
       requestBody:
@@ -1054,18 +1079,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ConnectionSignIn"
+              $ref: "#/components/schemas/ConnectionCode"
       responses:
         "200":
-          description: Stored
+          description: Connected
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Connection"
         "400":
-          description: A missing field, a bad name, or a type rule not met
+          description: A missing field, a failed exchange or verification, or a grant missing its required scope
         "403":
           description: A role session or runtime key, or `chatgpt` on the managed service
+        "503":
+          description: The deployment has no OAuth app for this type yet
     delete:
       tags:
         - Connections
@@ -3364,6 +3391,12 @@ components:
         example: GET, POST
 
   parameters:
+    ConnectionTypePath:
+      name: type
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ConnectionType"
     PageLimit:
       name: limit
       in: query
@@ -4792,15 +4825,13 @@ components:
 
     Connection:
       type: object
-      required: [name, type, clientId, scopes, expiresAt, updatedAt]
+      required: [type, clientId, scopes, expiresAt, updatedAt]
       properties:
-        name:
-          type: string
         type:
           $ref: "#/components/schemas/ConnectionType"
         clientId:
           type: string
-          description: The OAuth client OpenAI issued, or the developer's own app
+          description: The OAuth client OpenAI issued, or the deployment's own app
         hostId:
           type: string
           description: "`chatgpt` only: this deployment's `ext_agent_host_id`"
@@ -4816,33 +4847,54 @@ components:
         updatedAt:
           type: string
           format: date-time
-
-    ConnectionSignIn:
-      type: object
-      required: [type, clientId, scopes, expiresAt, accessToken, refreshToken]
-      properties:
-        type:
-          $ref: "#/components/schemas/ConnectionType"
-        clientId:
-          type: string
-        clientSecret:
-          type: string
-          description: The developer's OAuth app secret; required for `google`
-        hostId:
-          type: string
-          description: "`chatgpt` only, required: this deployment's `ext_agent_host_id`"
-        email:
-          type: string
-        scopes:
+        models:
           type: array
           items: { type: string }
-        expiresAt:
+          description: Answered by a sign-in only, for types that list models
+
+    ConnectionStart:
+      type: object
+      required: [redirectUri, codeChallenge, state, nonce]
+      properties:
+        redirectUri:
           type: string
-          format: date-time
-        accessToken:
+          description: The CLI's loopback callback
+        codeChallenge:
           type: string
-        refreshToken:
+          description: S256 PKCE challenge; the CLI keeps the verifier
+        state:
           type: string
+        nonce:
+          type: string
+
+    ConnectionStartResult:
+      type: object
+      required: [authorizeUrl]
+      properties:
+        authorizeUrl:
+          type: string
+        hostId:
+          type: string
+          description: "`chatgpt` only: echo it back on the PUT"
+
+    ConnectionCode:
+      type: object
+      required: [code, codeVerifier, redirectUri, nonce]
+      properties:
+        code:
+          type: string
+        codeVerifier:
+          type: string
+        redirectUri:
+          type: string
+        nonce:
+          type: string
+        clientId:
+          type: string
+          description: "`chatgpt` only: the client OpenAI issued on the redirect"
+        hostId:
+          type: string
+          description: "`chatgpt` only: from the start answer"
 
     ProviderSettings:
       type: object

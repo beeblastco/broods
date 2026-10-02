@@ -247,10 +247,10 @@ describe("mcpConnection oauth overlay", () => {
 
   it("takes the token from a named connection instead of the row's oauth", () => {
     const connection = mcpConnection(oauthRecord(), undefined, {
-      connection: "gmail",
+      connection: "google",
     });
 
-    expect(connection.connectionName).toBe("gmail");
+    expect(connection.connectionType).toBe("google");
     expect(connection.oauth).toBeUndefined();
   });
 

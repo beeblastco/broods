@@ -89,6 +89,7 @@ import type * as model_cliSyncManifest from "../model/cliSyncManifest.js";
 import type * as model_cliSyncResources from "../model/cliSyncResources.js";
 import type * as model_clientError from "../model/clientError.js";
 import type * as model_configValues from "../model/configValues.js";
+import type * as model_connectionSignIn from "../model/connectionSignIn.js";
 import type * as model_connections from "../model/connections.js";
 import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_cronSchedules from "../model/cronSchedules.js";
@@ -236,6 +237,7 @@ declare const fullApi: ApiFromModules<{
   "model/cliSyncResources": typeof model_cliSyncResources;
   "model/clientError": typeof model_clientError;
   "model/configValues": typeof model_configValues;
+  "model/connectionSignIn": typeof model_connectionSignIn;
   "model/connections": typeof model_connections;
   "model/cronRules": typeof model_cronRules;
   "model/cronSchedules": typeof model_cronSchedules;

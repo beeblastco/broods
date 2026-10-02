@@ -80,7 +80,7 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     // Authenticates itself too: account secret or CLI login, never a role session.
     const connectionsPath = parseConnectionsPath(pathname);
     if (connectionsPath) {
-      return await handleConnectionsRoute(ctx, req, connectionsPath.name);
+      return await handleConnectionsRoute(ctx, req, connectionsPath);
     }
 
     const accountRoute = parseAccountRoute(pathname);

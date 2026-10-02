@@ -22,13 +22,12 @@ import {
   encryptAgentConfigBlob,
   type EncryptedAgentConfig,
 } from "../model/agentConfigCodec";
-import { CONNECTION_TYPES } from "../model/connections";
+import { CONNECTION_TYPES, type ConnectionType } from "../model/connections";
 import { connectionsFields } from "../schema";
 
 const REVOKE_TIMEOUT_MS = 5_000;
 
 const signInFields = {
-  type: connectionsFields.type,
   clientId: connectionsFields.clientId,
   hostId: connectionsFields.hostId,
   email: connectionsFields.email,
@@ -36,7 +35,7 @@ const signInFields = {
   expiresAt: connectionsFields.expiresAt,
 };
 const statusFields = {
-  name: connectionsFields.name,
+  type: connectionsFields.type,
   ...signInFields,
   updatedAt: connectionsFields.updatedAt,
 };
@@ -48,7 +47,7 @@ const secretFields = {
 };
 const storedValidator = v.object({ ...statusFields, ...secretFields });
 const secretsValidator = v.object(secretFields);
-const ref = { accountId: v.id("accounts"), name: v.string() };
+const ref = { accountId: v.id("accounts"), type: connectionsFields.type };
 
 export type ConnectionStatus = Infer<typeof statusValidator>;
 export type StoredConnection = Infer<typeof storedValidator>;
@@ -61,7 +60,7 @@ export const list = internalQuery({
   handler: async (ctx, args): Promise<ConnectionStatus[]> => {
     const rows = await ctx.db
       .query("connections")
-      .withIndex("by_accountId_and_name", (q) =>
+      .withIndex("by_accountId_and_type", (q) =>
         q.eq("accountId", args.accountId),
       )
       .collect();
@@ -70,12 +69,12 @@ export const list = internalQuery({
   },
 });
 
-/** One connection by name, never its tokens. */
+/** The account's connection of one type, never its tokens. */
 export const status = internalQuery({
   args: ref,
   returns: v.union(v.null(), statusValidator),
   handler: async (ctx, args): Promise<ConnectionStatus | null> => {
-    const row = await findRow(ctx, args.accountId, args.name);
+    const row = await findRow(ctx, args.accountId, args.type);
 
     return row ? statusOf(row) : null;
   },
@@ -86,13 +85,13 @@ export const load = internalQuery({
   args: ref,
   returns: v.union(v.null(), storedValidator),
   handler: async (ctx, args): Promise<StoredConnection | null> => {
-    const row = await findRow(ctx, args.accountId, args.name);
+    const row = await findRow(ctx, args.accountId, args.type);
 
     return row ? await decrypted(row) : null;
   },
 });
 
-/** Store a fresh sign-in under its name, replacing what was there; answers what is stored. */
+/** Store a fresh sign-in, replacing the type's previous one; answers what is stored. */
 export const set = internalMutation({
   args: { ...ref, ...signInFields, ...secretFields },
   returns: statusValidator,
@@ -107,7 +106,7 @@ export const set = internalMutation({
       })),
       updatedAt: Date.now(),
     };
-    const existing = await findRow(ctx, args.accountId, args.name);
+    const existing = await findRow(ctx, args.accountId, args.type);
     if (existing) await ctx.db.replace(existing._id, fields);
     else await ctx.db.insert("connections", fields);
 
@@ -129,7 +128,7 @@ export const saveRefreshed = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const row = await findRow(ctx, args.accountId, args.name);
+    const row = await findRow(ctx, args.accountId, args.type);
     if (!row || row.updatedAt !== args.loadedUpdatedAt) return false;
     const { clientSecret } = await decrypted(row);
     await ctx.db.patch(row._id, {
@@ -151,7 +150,7 @@ export const disconnect = internalMutation({
   args: ref,
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const row = await findRow(ctx, args.accountId, args.name);
+    const row = await findRow(ctx, args.accountId, args.type);
     if (!row) return false;
     await ctx.db.delete(row._id);
     const revokeUrl = CONNECTION_TYPES[row.type].revokeUrl;
@@ -257,16 +256,16 @@ async function encryptSecrets(secrets: {
   );
 }
 
-/** The account's connection by name, if any. */
+/** The account's connection of a type, if any. */
 async function findRow(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
-  name: string,
+  type: ConnectionType,
 ): Promise<Doc<"connections"> | null> {
   return await ctx.db
     .query("connections")
-    .withIndex("by_accountId_and_name", (q) =>
-      q.eq("accountId", accountId).eq("name", name),
+    .withIndex("by_accountId_and_type", (q) =>
+      q.eq("accountId", accountId).eq("type", type),
     )
     .unique();
 }
@@ -276,7 +275,6 @@ function statusOf(
   row: Omit<Doc<"connections">, "_id" | "_creationTime">,
 ): ConnectionStatus {
   return {
-    name: row.name,
     type: row.type,
     clientId: row.clientId,
     ...(row.hostId !== undefined ? { hostId: row.hostId } : {}),

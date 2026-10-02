@@ -1,22 +1,35 @@
 /**
- * Connections (`/v1/account/connections[/{name}]`): external accounts agents
- * act through. `broods connect` does the browser sign-in and PUTs the tokens
- * here; GET answers what is connected, never the tokens; DELETE forgets, then
- * revokes. Refresh is core's, not this route's. The account secret or a
- * `broods login` token may call it; role sessions and runtime keys may not.
+ * Connections (`/v1/account/connections[/{type}[/start]]`): external accounts
+ * agents act through, one of each type. `broods connect` POSTs `start` for the
+ * provider's consent screen, opens it, and PUTs the code the browser brought
+ * back; this route trades it on the deployment's own OAuth app, checks the ID
+ * token and stores the tokens. GET answers what is connected, never the
+ * tokens; DELETE forgets, then revokes. Refresh is core's. The account secret
+ * or a `broods login` token may call it; role sessions and runtime keys may
+ * not.
  */
 
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
+import type { Id } from "../../_generated/dataModel";
 import type { ConnectionStatus } from "../../account/connections";
+import { type ConfigAuditActor } from "../../model/auditEvents";
 import { ClientError } from "../../model/clientError";
 import {
-  CONNECTION_NAME_PATTERN,
-  CONNECTION_TYPE_NAMES,
+  authorizeUrl,
+  exchangeCode,
+  listModels,
+  verifyIdToken,
+  type SignInClient,
+} from "../../model/connectionSignIn";
+import {
+  CHATGPT_DYNAMIC_CLIENT_ID,
   CONNECTION_TYPES,
-  type Connection,
-  type ConnectionSignIn,
   isConnectionType,
+  type Connection,
+  type ConnectionCode,
+  type ConnectionStart,
+  type ConnectionType,
 } from "../../model/connections";
 import { isManagedService } from "../../model/planLimits";
 import { resolveAccountCaller } from "./roles";
@@ -30,12 +43,26 @@ import {
 } from "./shared";
 
 const MAX_FIELD_LENGTH = 16_384;
+// The CLI listens on loopback; the provider redirects nowhere else.
+const LOOPBACK_REDIRECT_PATTERN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//;
 
-/** Serves `/v1/account/connections[/{name}]` after resolving the caller. */
+/** The account and type a connection is stored under. */
+interface ConnectionRef {
+  accountId: Id<"accounts">;
+  type: ConnectionType;
+}
+
+/** `/v1/account/connections`, one type under it, or that type's `start`. */
+export interface ConnectionsPath {
+  type: string | undefined;
+  start: boolean;
+}
+
+/** Serves the connections routes after resolving the caller. */
 export async function handleConnectionsRoute(
   ctx: ActionCtx,
   req: Request,
-  name: string | undefined,
+  path: ConnectionsPath,
 ): Promise<Response> {
   const caller = await resolveAccountCaller(ctx, req);
   if (!caller) return await unauthorizedResponse(ctx, req);
@@ -48,7 +75,7 @@ export async function handleConnectionsRoute(
   }
   const accountId = caller.accountId;
 
-  if (name === undefined) {
+  if (path.type === undefined) {
     if (req.method !== "GET") return methodNotAllowed(["GET"]);
     const rows: ConnectionStatus[] = await ctx.runQuery(
       internal.account.connections.list,
@@ -57,76 +84,88 @@ export async function handleConnectionsRoute(
 
     return json({ connections: rows.map((row) => publicConnection(row)) });
   }
+  const type = path.type;
+  if (!isConnectionType(type)) return jsonError(404, "Unknown connection type");
+  const ref = { accountId: accountId, type: type };
+  const existing: ConnectionStatus | null = await ctx.runQuery(
+    internal.account.connections.status,
+    ref,
+  );
 
-  const ref = { accountId: accountId, name: name };
+  if (path.start) return await startResponse(req, type, existing);
   if (req.method === "GET") {
-    const row: ConnectionStatus | null = await ctx.runQuery(
-      internal.account.connections.status,
-      ref,
-    );
-
-    return row
-      ? json(publicConnection(row))
+    return existing
+      ? json(publicConnection(existing))
       : jsonError(404, "Connection not found");
   }
-  if (req.method === "PUT") {
-    const signIn = readSignIn(name, await parseJsonRequest(req));
-    const selfHostedOnly = CONNECTION_TYPES[signIn.type].selfHostedOnly;
-    if (selfHostedOnly && isManagedService())
-      return jsonError(403, selfHostedOnly);
-    const stored: ConnectionStatus = await ctx.runMutation(
-      internal.account.connections.set,
-      { ...ref, ...signIn, expiresAt: Date.parse(signIn.expiresAt) },
-    );
-    await writeAudit(ctx, {
-      accountId: accountId,
-      actor: caller.actor,
-      action: "updated",
-      resource: { kind: "account", id: accountId, name: `connection:${name}` },
-      summary: `Connection ${name} (${signIn.type}) signed in`,
-    });
-
-    return json(publicConnection(stored));
-  }
-  if (req.method === "DELETE") {
-    const deleted: boolean = await ctx.runMutation(
-      internal.account.connections.disconnect,
-      ref,
-    );
-    if (deleted) {
-      await writeAudit(ctx, {
-        accountId: accountId,
-        actor: caller.actor,
-        action: "deleted",
-        resource: {
-          kind: "account",
-          id: accountId,
-          name: `connection:${name}`,
-        },
-        summary: `Connection ${name} disconnected`,
-      });
-    }
-
-    return json({ deleted: deleted });
-  }
+  if (req.method === "PUT")
+    return await signInResponse(ctx, req, ref, existing, caller.actor);
+  if (req.method === "DELETE")
+    return await disconnectResponse(ctx, ref, caller.actor);
 
   return methodNotAllowed(["GET", "PUT", "DELETE"]);
 }
 
-/** The connection name from `/v1/account/connections/{name}`, or undefined for the collection. */
-export function parseConnectionsPath(pathname: string): {
-  name: string | undefined;
-} | null {
-  if (pathname === "/v1/account/connections") return { name: undefined };
-  const match = pathname.match(/^\/v1\/account\/connections\/([^/]+)$/);
+/** The connections path under `/v1/account`, or null for any other path. */
+export function parseConnectionsPath(pathname: string): ConnectionsPath | null {
+  if (pathname === "/v1/account/connections")
+    return { type: undefined, start: false };
+  const match = pathname.match(
+    /^\/v1\/account\/connections\/([^/]+)(\/start)?$/,
+  );
 
-  return match?.[1] ? { name: decodeURIComponent(match[1]) } : null;
+  return match?.[1]
+    ? { type: decodeURIComponent(match[1]), start: match[2] !== undefined }
+    : null;
+}
+
+/**
+ * The client a code is traded on: the one a registering type was issued on
+ * this sign-in's redirect, or the deployment's own app.
+ */
+function codeClient(
+  type: ConnectionType,
+  existing: ConnectionStatus | null,
+  code: ConnectionCode,
+): SignInClient | Response {
+  if (CONNECTION_TYPES[type].client.kind !== "dynamic")
+    return signInClient(type, existing);
+  if (!code.clientId || !code.hostId)
+    throw new ClientError(`clientId and hostId are required for ${type}`);
+
+  return { clientId: code.clientId, hostId: code.hostId };
+}
+
+/** Forgets the type's connection, then revokes it at the provider. */
+async function disconnectResponse(
+  ctx: ActionCtx,
+  ref: ConnectionRef,
+  actor: ConfigAuditActor,
+): Promise<Response> {
+  const deleted: boolean = await ctx.runMutation(
+    internal.account.connections.disconnect,
+    ref,
+  );
+  if (deleted) {
+    await writeAudit(ctx, {
+      accountId: ref.accountId,
+      actor: actor,
+      action: "deleted",
+      resource: {
+        kind: "account",
+        id: ref.accountId,
+        name: `connection:${ref.type}`,
+      },
+      summary: `Connection ${ref.type} disconnected`,
+    });
+  }
+
+  return json({ deleted: deleted });
 }
 
 /** The API shape of a stored connection, with ISO dates. */
 function publicConnection(row: ConnectionStatus): Connection {
   return {
-    name: row.name,
     type: row.type,
     clientId: row.clientId,
     ...(row.hostId ? { hostId: row.hostId } : {}),
@@ -137,78 +176,189 @@ function publicConnection(row: ConnectionStatus): Connection {
   };
 }
 
-/** Validates a PUT body against the name and the type's own rules. */
-function readSignIn(name: string, body: unknown): ConnectionSignIn {
-  if (!CONNECTION_NAME_PATTERN.test(name))
-    throw new ClientError(
-      "Connection names are lowercase letters, digits and dashes",
-    );
-  // Only typeof checks below, so a non-object body reads as all fields missing.
-  const fields = (body ?? {}) as Partial<
-    Record<keyof ConnectionSignIn, unknown>
-  >;
-  const type = fields.type;
-  if (!isConnectionType(type))
-    throw new ClientError(
-      `type must be one of ${CONNECTION_TYPE_NAMES.join(", ")}`,
-    );
-  const required = (field: keyof ConnectionSignIn): string => {
-    const value = fields[field];
-    if (
-      typeof value !== "string" ||
-      value.length < 1 ||
-      value.length > MAX_FIELD_LENGTH
-    )
-      throw new ClientError(`${field} must be a non-empty string`);
-
-    return value;
-  };
-  const optional = (field: keyof ConnectionSignIn): string | undefined =>
-    fields[field] === undefined ? undefined : required(field);
-  const scopes = fields.scopes;
-  if (
-    !Array.isArray(scopes) ||
-    !scopes.every((scope): scope is string => typeof scope === "string")
-  )
-    throw new ClientError("scopes must be an array of strings");
-  const expiresAt = required("expiresAt");
-  if (Number.isNaN(Date.parse(expiresAt)))
-    throw new ClientError("expiresAt must be an ISO 8601 date");
-  const hostId = optional("hostId");
-  const clientSecret = optional("clientSecret");
-  const email = optional("email");
-  const meta = CONNECTION_TYPES[type];
-  if (meta.fixedName && name !== meta.fixedName)
-    throw new ClientError(
-      `A ${type} connection must be named ${meta.fixedName}`,
-    );
-  // Something reads a fixed name as its own type, so no other type may take it.
-  const owner = CONNECTION_TYPE_NAMES.find(
-    (typeName) => CONNECTION_TYPES[typeName].fixedName === name,
-  );
-  if (owner && owner !== type)
-    throw new ClientError(`${name} is reserved for the ${owner} connection`);
-  // A registered client is attributed to the deployment's host id.
-  if (meta.client === "dynamic" && !hostId)
-    throw new ClientError(`hostId is required for ${type}`);
-  // A grant without the scope the type is for is no use: refuse it here
-  // rather than at the first run.
-  if (meta.requiredScope && !scopes.includes(meta.requiredScope))
-    throw new ClientError(
-      `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
-    );
-  if (meta.needsClientSecret && !clientSecret)
-    throw new ClientError(`clientSecret is required for ${type}`);
+/** Validates a PUT body: the code and PKCE verifier the redirect brought back. */
+function readCode(body: unknown): ConnectionCode {
+  const fields = readFields(body);
+  const clientId =
+    fields.clientId === undefined
+      ? undefined
+      : requireField(fields, "clientId");
+  const hostId =
+    fields.hostId === undefined ? undefined : requireField(fields, "hostId");
 
   return {
-    type: type,
-    clientId: required("clientId"),
-    ...(clientSecret ? { clientSecret: clientSecret } : {}),
+    code: requireField(fields, "code"),
+    codeVerifier: requireField(fields, "codeVerifier"),
+    redirectUri: readRedirectUri(fields),
+    nonce: requireField(fields, "nonce"),
+    ...(clientId ? { clientId: clientId } : {}),
     ...(hostId ? { hostId: hostId } : {}),
-    ...(email ? { email: email } : {}),
-    scopes: scopes,
-    expiresAt: expiresAt,
-    accessToken: required("accessToken"),
-    refreshToken: required("refreshToken"),
   };
+}
+
+/** Only typeof checks follow, so a non-object body reads as all fields missing. */
+function readFields(body: unknown): Partial<Record<string, unknown>> {
+  return (body ?? {}) as Partial<Record<string, unknown>>;
+}
+
+/** The loopback redirect the CLI listens on; no other host may get a code. */
+function readRedirectUri(fields: Partial<Record<string, unknown>>): string {
+  const redirectUri = requireField(fields, "redirectUri");
+  if (!LOOPBACK_REDIRECT_PATTERN.test(redirectUri))
+    throw new ClientError("redirectUri must be a loopback http address");
+
+  return redirectUri;
+}
+
+/** Validates a start body: where to redirect and the PKCE and nonce values. */
+function readStart(body: unknown): ConnectionStart {
+  const fields = readFields(body);
+
+  return {
+    redirectUri: readRedirectUri(fields),
+    codeChallenge: requireField(fields, "codeChallenge"),
+    state: requireField(fields, "state"),
+    nonce: requireField(fields, "nonce"),
+  };
+}
+
+/** A non-empty string field, or a 400. */
+function requireField(
+  fields: Partial<Record<string, unknown>>,
+  field: string,
+): string {
+  const value = fields[field];
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > MAX_FIELD_LENGTH
+  )
+    throw new ClientError(`${field} must be a non-empty string`);
+
+  return value;
+}
+
+/**
+ * The client a sign-in starts on: a registering type keeps the client and
+ * host id it holds (or registers new ones); the others run on the
+ * deployment's own OAuth app, a 503 naming the variables to set when it has
+ * none.
+ */
+function signInClient(
+  type: ConnectionType,
+  existing: ConnectionStatus | null,
+): SignInClient | Response {
+  const meta = CONNECTION_TYPES[type];
+  const email = existing?.email ? { email: existing.email } : {};
+  if (meta.client.kind === "dynamic") {
+    return {
+      clientId: existing?.clientId ?? CHATGPT_DYNAMIC_CLIENT_ID,
+      hostId: existing?.hostId ?? `urn:uuid:${crypto.randomUUID()}`,
+      ...email,
+    };
+  }
+  const { idEnv, secretEnv } = meta.client;
+  const clientId = process.env[idEnv];
+  const clientSecret = secretEnv ? process.env[secretEnv] : undefined;
+  if (!clientId || (secretEnv && !clientSecret)) {
+    return jsonError(
+      503,
+      `This deployment has no ${meta.label} OAuth app yet: set ${secretEnv ? `${idEnv} and ${secretEnv}` : idEnv} on it.`,
+    );
+  }
+
+  return {
+    clientId: clientId,
+    ...(clientSecret ? { clientSecret: clientSecret } : {}),
+    ...email,
+  };
+}
+
+/**
+ * Trades the code the browser brought back on the type's client, checks the
+ * ID token and the grant, then stores the connection.
+ */
+async function signInResponse(
+  ctx: ActionCtx,
+  req: Request,
+  ref: ConnectionRef,
+  existing: ConnectionStatus | null,
+  actor: ConfigAuditActor,
+): Promise<Response> {
+  const meta = CONNECTION_TYPES[ref.type];
+  if (meta.selfHostedOnly && isManagedService())
+    return jsonError(403, meta.selfHostedOnly);
+  const code = readCode(await parseJsonRequest(req));
+  const client = codeClient(ref.type, existing, code);
+  if (client instanceof Response) return client;
+  let stored: ConnectionStatus;
+  let models: string[];
+  try {
+    const tokens = await exchangeCode(ref.type, client, code);
+    const claims = await verifyIdToken(
+      ref.type,
+      tokens.idToken,
+      client.clientId,
+      code.nonce,
+    );
+    // A grant without the scope the type is for is no use: refuse it here
+    // rather than at the first run.
+    if (meta.requiredScope && !tokens.scopes.includes(meta.requiredScope))
+      throw new Error(
+        `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
+      );
+    stored = await ctx.runMutation(internal.account.connections.set, {
+      ...ref,
+      clientId: client.clientId,
+      ...(client.hostId ? { hostId: client.hostId } : {}),
+      ...(client.clientSecret ? { clientSecret: client.clientSecret } : {}),
+      ...(claims.email ? { email: claims.email } : {}),
+      scopes: tokens.scopes,
+      expiresAt: tokens.expiresAt,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    });
+    models = await listModels(ref.type, tokens.accessToken);
+  } catch (error) {
+    return jsonError(
+      400,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  await writeAudit(ctx, {
+    accountId: ref.accountId,
+    actor: actor,
+    action: "updated",
+    resource: {
+      kind: "account",
+      id: ref.accountId,
+      name: `connection:${ref.type}`,
+    },
+    summary: `Connection ${ref.type} signed in`,
+  });
+
+  return json({
+    ...publicConnection(stored),
+    ...(models.length > 0 ? { models: models } : {}),
+  });
+}
+
+/** Answers the provider's consent screen for a sign-in the CLI is starting. */
+async function startResponse(
+  req: Request,
+  type: ConnectionType,
+  existing: ConnectionStatus | null,
+): Promise<Response> {
+  if (req.method !== "POST") return methodNotAllowed(["POST"]);
+  const selfHostedOnly = CONNECTION_TYPES[type].selfHostedOnly;
+  if (selfHostedOnly && isManagedService())
+    return jsonError(403, selfHostedOnly);
+  const start = readStart(await parseJsonRequest(req));
+  const client = signInClient(type, existing);
+  if (client instanceof Response) return client;
+
+  return json({
+    authorizeUrl: authorizeUrl(type, client, start),
+    ...(client.hostId ? { hostId: client.hostId } : {}),
+  });
 }

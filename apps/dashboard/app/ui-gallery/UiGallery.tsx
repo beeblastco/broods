@@ -291,7 +291,6 @@ const subscribeNever = (): (() => void) => () => {};
 /** Connections as the dashboard lists them: one of each type. */
 const CONNECTION_FIXTURES: Connection[] = [
   {
-    name: "chatgpt",
     type: "chatgpt",
     clientId: "oaiapp_fixture",
     hostId: "urn:uuid:fixture",
@@ -301,7 +300,6 @@ const CONNECTION_FIXTURES: Connection[] = [
     updatedAt: 0,
   },
   {
-    name: "gmail",
     type: "google",
     clientId: "1234.apps.googleusercontent.com",
     email: "support@example.com",
@@ -310,7 +308,6 @@ const CONNECTION_FIXTURES: Connection[] = [
     updatedAt: 0,
   },
   {
-    name: "outlook",
     type: "microsoft",
     clientId: "00000000-0000-0000-0000-000000000000",
     scopes: ["openid", "https://graph.microsoft.com/Mail.ReadWrite"],
