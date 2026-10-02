@@ -68,9 +68,9 @@ beforeEach(() => {
   setStorageForTests(machineStorage());
 });
 
-afterEach(() => {
+afterEach(async (): Promise<void> => {
   for (const socket of sockets.splice(0)) socket.close();
-  for (const server of servers.splice(0)) server.stop(true);
+  for (const server of servers.splice(0)) await server.stop(true);
   resetStorageForTests();
 });
 
@@ -106,7 +106,7 @@ test("a run round-trips through the daemon socket that claimed the record", asyn
 test("a run with no daemon connected names the command to fix it", async () => {
   core();
 
-  await expect(
+  expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -234,7 +234,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
   });
   const firstClosed = closeOf(first.socket);
 
-  await expect(
+  expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -253,7 +253,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
 test("the computer tool reaches a daemon started with --computer, and names the flag otherwise", async () => {
   const server = core();
   await connectDaemon(server, "my-mac", () => {});
-  await expect(
+  expect(
     runMachineComputerAction(machineExecutorConfig(), { action: "screenshot" }),
   ).rejects.toThrow("broods machine my-mac --computer");
 
@@ -319,7 +319,7 @@ test("with two computers attached, a call reaches the one it names", async () =>
     await execute({ action: "cursor_position", sandbox: "my-mac" }, options),
   ).toEqual({ type: "text", value: "mine on my-mac" });
   // Two screens and no name is ambiguous, so it is refused rather than guessed.
-  await expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
+  expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
     "pass sandbox with the computer to act on: my-mac, other-mac",
   );
 });
@@ -339,7 +339,7 @@ test("a name from a longer list is refused once one computer is left", async () 
 
   // An approval replayed after the agent lost a machine still carries the name it
   // was granted for. That must not land on the machine that is left.
-  await expect(
+  expect(
     execute({ action: "cursor_position", sandbox: "other-mac" }, options),
   ).rejects.toThrow("pass sandbox with the computer to act on: my-mac");
   expect(await execute({ action: "cursor_position" }, options)).toEqual({
@@ -352,31 +352,39 @@ test("an MCP row lists and calls through the daemon that serves that server", as
   const server = core();
   const connection = mcpConnection(machineMcpRecord(), undefined);
 
-  await expect(listMcpTools(connection)).rejects.toThrow("is not connected");
+  expect(listMcpTools(connection)).rejects.toThrow("is not connected");
   await connectDaemon(server, "my-mac", () => {}, { mcp: ["other"] });
-  await expect(listMcpTools(connection)).rejects.toThrow(
+  expect(listMcpTools(connection)).rejects.toThrow(
     'does not serve MCP server "echo"',
   );
 
   await connectDaemon(server, "my-mac", () => {}, {
     mcp: ["echo"],
-    onMcp: (frame, socket) => {
+    onMcp: (frame, socket): void => {
+      if (frame.type === "mcp-list") {
+        socket.send(
+          JSON.stringify({
+            type: "mcp-tools",
+            id: frame.id,
+            tools: [{ name: "echo", inputSchema: { type: "object" } }],
+          }),
+        );
+
+        return;
+      }
+
+      const text = frame.args.text;
+      if (typeof text !== "string") {
+        throw new Error("Expected MCP echo text to be a string");
+      }
       socket.send(
-        JSON.stringify(
-          frame.type === "mcp-list"
-            ? {
-                type: "mcp-tools",
-                id: frame.id,
-                tools: [{ name: "echo", inputSchema: { type: "object" } }],
-              }
-            : {
-                type: "mcp-result",
-                id: frame.id,
-                result: {
-                  content: [{ type: "text", text: `echo: ${frame.args.text}` }],
-                },
-              },
-        ),
+        JSON.stringify({
+          type: "mcp-result",
+          id: frame.id,
+          result: {
+            content: [{ type: "text", text: `echo: ${text}` }],
+          },
+        }),
       );
     },
   });

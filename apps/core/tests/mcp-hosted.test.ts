@@ -206,7 +206,7 @@ describe("hosted MCP metering", () => {
     const send = spyOn(LambdaClient.prototype, "send");
 
     try {
-      await expect(
+      expect(
         hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" }),
       ).rejects.toThrow("TOOL_RUNNER_FUNCTION_NAME");
       await Promise.resolve();

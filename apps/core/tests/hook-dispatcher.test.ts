@@ -52,7 +52,7 @@ describe("wrapToolsWithHooks", () => {
           : undefined,
       ),
     );
-    await expect(
+    expect(
       (wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
         { cmd: "ls" },
         {},

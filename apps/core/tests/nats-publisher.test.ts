@@ -12,7 +12,7 @@ interface FakeConnection {
 }
 
 // Only the dial is faked; the subject and stream helpers stay real.
-mock.module("nats", (): Record<string, unknown> => ({
+await mock.module("nats", (): Record<string, unknown> => ({
   ...realNats,
   connect: async (options: Record<string, unknown>): Promise<unknown> => {
     let close = (): void => {};

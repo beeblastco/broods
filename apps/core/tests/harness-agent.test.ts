@@ -19,7 +19,7 @@ const streamCalls: HarnessStreamCall[] = [];
 const steeredTexts: string[] = [];
 let steerFailure: Error | null = null;
 
-mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
+await mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   createConfiguredHarnessAgent: () => ({
     agent: {
       stream: async (options: HarnessStreamCall): Promise<never> => {
@@ -42,8 +42,8 @@ mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
 }));
 
 // mock.module is process-wide; restore the real harness for later test files.
-afterAll((): void => {
-  mock.module(
+afterAll(async (): Promise<void> => {
+  await mock.module(
     "../src/harness/ai-sdk-harness/index.ts",
     (): typeof harnessIndex => realHarnessIndex,
   );
@@ -173,7 +173,7 @@ async function runHarnessTurn(
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   const { runAgentLoop } = await import("../src/harness/harness.ts");
 
-  await expect(
+  expect(
     runAgentLoop(
       {
         accountId: "acct_test",

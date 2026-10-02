@@ -42,8 +42,8 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 
-const originalMutate = runtime.mutate;
-const originalQuery = runtime.query;
+const originalMutate = runtime.mutate.bind(runtime);
+const originalQuery = runtime.query.bind(runtime);
 
 afterEach(() => {
   runtime.mutate = originalMutate;
@@ -564,7 +564,13 @@ describe("channel senders", (): void => {
     contributingEventIds: ["event-2"],
     ownerGeneration: 2,
   };
-  const originalAppend = Session.prototype.appendIngressEvents;
+  const originalAppendDescriptor = Object.getOwnPropertyDescriptor(
+    Session.prototype,
+    "appendIngressEvents",
+  );
+  if (!originalAppendDescriptor) {
+    throw new Error("Session.appendIngressEvents descriptor is missing");
+  }
   let senders: unknown[];
 
   beforeEach((): void => {
@@ -583,7 +589,11 @@ describe("channel senders", (): void => {
   });
 
   afterEach((): void => {
-    Session.prototype.appendIngressEvents = originalAppend;
+    Object.defineProperty(
+      Session.prototype,
+      "appendIngressEvents",
+      originalAppendDescriptor,
+    );
   });
 
   function aliceMessage(): ChannelInboundEvent {
@@ -1299,13 +1309,13 @@ describe("session messages", (): void => {
       sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
     };
 
-    await expect(
+    expect(
       prepareSessionMessage({
         ...options,
         input: { conversationKey: "tg:source-chat", message: "loop" },
       }),
     ).rejects.toThrow("cannot target the current conversation");
-    await expect(
+    expect(
       prepareSessionMessage({
         ...options,
         input: {
@@ -1324,7 +1334,7 @@ describe("session messages", (): void => {
       return null as T;
     };
 
-    await expect(
+    expect(
       prepareSessionMessage({
         accountId: "acct_test",
         agentId: "agent_test",

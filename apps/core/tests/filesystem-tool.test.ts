@@ -10,8 +10,8 @@ import type {
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_FETCH = globalThis.fetch;
-const ORIGINAL_RUNTIME_QUERY = runtime.query;
-const ORIGINAL_RUNTIME_MUTATE = runtime.mutate;
+const ORIGINAL_RUNTIME_QUERY = runtime.query.bind(runtime);
+const ORIGINAL_RUNTIME_MUTATE = runtime.mutate.bind(runtime);
 
 // The sandbox now runs as an AWS Lambda MicroVM: control-plane calls go through the
 // SDK client, and the exec request is an HTTPS POST to the VM endpoint. Echo the
@@ -60,7 +60,7 @@ function microvmCommand(type: string) {
   };
 }
 
-mock.module("@aws-sdk/client-lambda-microvms", () => ({
+await mock.module("@aws-sdk/client-lambda-microvms", () => ({
   LambdaMicrovms: class {
     send = microvmSendMock;
   },
@@ -82,7 +82,7 @@ const getSandboxExternalIdMock = mock(
   async (_provider: string, _key: string): Promise<string | null> => null,
 );
 
-mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxReleaseTarget: mock(async () => ({
     externalId: null,
     instance: null,
@@ -103,7 +103,7 @@ const listS3PrefixMock = mock(
     [] as Array<{ key: string; lastModified?: string }>,
 );
 
-mock.module("../src/shared/s3.ts", () => ({
+await mock.module("../src/shared/s3.ts", () => ({
   readS3Text: readS3TextMock,
   listS3Prefix: listS3PrefixMock,
   isMissingS3Error: (error: unknown) =>
@@ -481,7 +481,7 @@ describe("sandbox tool set", () => {
     );
     const bash = await tool("bash", workspaceCtx());
 
-    await expect(bash.execute({ command: "pwd" })).rejects.toThrow(
+    expect(bash.execute({ command: "pwd" })).rejects.toThrow(
       "Sandbox setup failed: invalid namespace",
     );
   });
@@ -546,7 +546,7 @@ describe("sandbox tool set", () => {
 
   it("bash rejects commands using runtimes outside the sandbox allow-list", async () => {
     const bash = await tool("bash", workspaceCtx({ runtimes: ["bash"] }));
-    await expect(bash.execute({ command: "node script.js" })).rejects.toThrow(
+    expect(bash.execute({ command: "node script.js" })).rejects.toThrow(
       "Error: this sandbox does not allow node commands",
     );
     expect(microvmFetchMock).not.toHaveBeenCalled();
@@ -554,12 +554,12 @@ describe("sandbox tool set", () => {
 
   it("bash rejects parent directory traversal", async () => {
     const bash = await tool("bash", workspaceCtx());
-    await expect(bash.execute({ command: "cd .. && ls" })).rejects.toThrow(
+    expect(bash.execute({ command: "cd .. && ls" })).rejects.toThrow(
       "Error: parent directory traversal is not allowed",
     );
-    await expect(
-      bash.execute({ command: "cat ../secrets.env" }),
-    ).rejects.toThrow("Error: parent directory traversal is not allowed");
+    expect(bash.execute({ command: "cat ../secrets.env" })).rejects.toThrow(
+      "Error: parent directory traversal is not allowed",
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
@@ -575,7 +575,7 @@ describe("sandbox tool set", () => {
       // bash reads this as `../secrets.env`, so the escapes must come off first.
       "cat \\.\\./secrets.env",
     ]) {
-      await expect(bash.execute({ command: command })).rejects.toThrow(
+      expect(bash.execute({ command: command })).rejects.toThrow(
         "Error: parent directory traversal is not allowed",
       );
     }
@@ -618,10 +618,8 @@ describe("sandbox tool set", () => {
     const result = bash.execute({
       command: "echo report > /srv/report.txt",
     });
-    await expect(result).rejects.toThrow(
-      "/srv/report.txt is outside the workspace",
-    );
-    await expect(result).rejects.toThrow("./report.txt");
+    expect(result).rejects.toThrow("/srv/report.txt is outside the workspace");
+    expect(result).rejects.toThrow("./report.txt");
 
     for (const command of [
       "cp result.json /opt/result.json",
@@ -638,7 +636,7 @@ describe("sandbox tool set", () => {
       "echo x >| /srv/f",
       "ln -s target /srv/link",
     ]) {
-      await expect(bash.execute({ command: command })).rejects.toThrow(
+      expect(bash.execute({ command: command })).rejects.toThrow(
         "outside the workspace",
       );
     }
@@ -675,18 +673,18 @@ describe("sandbox tool set", () => {
     expect(result).toBeString();
     // Containment is a separate concern from durability, so `..` stays blocked,
     // including embedded, where relaxing the write guard would otherwise expose it.
-    await expect(
+    expect(
       bash.execute({ command: "cat sub/../../../etc/shadow" }),
     ).rejects.toThrow("Error: parent directory traversal is not allowed");
-    await expect(
-      bash.execute({ command: "cat ../secrets.env" }),
-    ).rejects.toThrow("Error: parent directory traversal is not allowed");
+    expect(bash.execute({ command: "cat ../secrets.env" })).rejects.toThrow(
+      "Error: parent directory traversal is not allowed",
+    );
   });
 
   it("bash still guards an own sandbox that is not reserved", async () => {
     // Nothing outside the mount survives the call, so the write is still a loss.
     const bash = await tool("bash", ownSandboxCtx());
-    await expect(
+    expect(
       bash.execute({ command: "echo report > /srv/report.txt" }),
     ).rejects.toThrow("outside the workspace");
   });
@@ -695,7 +693,7 @@ describe("sandbox tool set", () => {
     // The sandbox is the workspace's execution layer, not the agent's machine.
     // Reserved or not, the workspace is all the agent gets to keep.
     const bash = await tool("bash", borrowedSandboxCtx());
-    await expect(
+    expect(
       bash.execute({ command: "echo report > /srv/report.txt" }),
     ).rejects.toThrow("outside the workspace");
   });
@@ -881,7 +879,7 @@ describe("sandbox tool set", () => {
     };
     expect(onOwn.input.imageIdentifier).not.toContain("microvm-image:browser");
 
-    await expect(
+    expect(
       bash.execute({ command: "echo hi", sandbox: "nope" }),
     ).rejects.toThrow("unknown sandbox nope");
   });
@@ -889,7 +887,7 @@ describe("sandbox tool set", () => {
   it("an extra sandbox is approved on its own permissionMode", async () => {
     const ctx = extraSandboxCtx({ permissionMode: "bypass" });
 
-    await expect(
+    expect(
       approvalStatus(
         "bash",
         { command: "ls", sandbox: "browser-sandbox" },
@@ -897,7 +895,7 @@ describe("sandbox tool set", () => {
       ),
     ).resolves.toBeUndefined();
     // A bypassing extra must not lift the gate on the agent's own sandbox.
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls", sandbox: "own-sandbox" }, ctx),
     ).resolves.toBe("user-approval");
   });
@@ -924,13 +922,13 @@ describe("sandbox tool set", () => {
     const ctx = ownSandboxCtx({ permissionMode: "bypass" });
     const bash = await tool("bash", ctx);
 
-    await expect(
+    expect(
       bash.execute({ command: "ls", sandbox: "own-sandbox" }),
     ).rejects.toThrow(
       'sandbox "own-sandbox" is mounted by workspace "notes"; pass workspace "notes" instead',
     );
     expect(microvmFetchMock).not.toHaveBeenCalled();
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls", sandbox: "own-sandbox" }, ctx),
     ).resolves.toBe("user-approval");
   });
@@ -951,10 +949,10 @@ describe("sandbox tool set", () => {
     };
     const bash = await tool("bash", ctx);
 
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls" }, ctx),
     ).resolves.toBeUndefined();
-    await expect(bash.execute({ command: "ls" })).rejects.toThrow(
+    expect(bash.execute({ command: "ls" })).rejects.toThrow(
       "Error: no sandbox available for this command",
     );
     expect(microvmFetchMock).not.toHaveBeenCalled();
@@ -982,10 +980,10 @@ describe("sandbox tool set", () => {
 
     expect(Object.keys(tools)).toEqual(["bash"]);
     // The default bypasses and the other asks, so only the default can skip the gate.
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls" }, ctx),
     ).resolves.toBeUndefined();
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls", sandbox: "own-sandbox" }, ctx),
     ).resolves.toBe("user-approval");
     const bash = await tool("bash", ctx);
@@ -1018,10 +1016,10 @@ describe("sandbox tool set", () => {
       { permissionMode: "bypass" },
     );
     const borrowed = await tool("bash", plain);
-    await expect(
+    expect(
       borrowed.execute({ command: "ls", sandbox: "true" }),
     ).rejects.toThrow("unknown sandbox true");
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls", sandbox: "true" }, plain),
     ).resolves.toBe("user-approval");
 
@@ -1035,10 +1033,10 @@ describe("sandbox tool set", () => {
       ],
     };
     const bash = await tool("bash", ctx);
-    await expect(
-      bash.execute({ command: "ls", sandbox: "nope" }),
-    ).rejects.toThrow("unknown sandbox nope");
-    await expect(
+    expect(bash.execute({ command: "ls", sandbox: "nope" })).rejects.toThrow(
+      "unknown sandbox nope",
+    );
+    expect(
       approvalStatus("bash", { command: "ls", sandbox: "nope" }, ctx),
     ).resolves.toBe("user-approval");
   });
@@ -1047,12 +1045,12 @@ describe("sandbox tool set", () => {
     const bash = await tool("bash", extraSandboxCtx({ persistent: true }));
     // A detached job is tracked by tool call id, so this path needs the options
     // argument the AI SDK passes.
-    const execute = bash.execute as unknown as (
+    const execute = bash.execute.bind(bash) as unknown as (
       input: Record<string, unknown>,
       options: { toolCallId: string },
     ) => Promise<string>;
 
-    await expect(
+    expect(
       execute(
         { command: "sleep 1", sandbox: "browser-sandbox", background: true },
         { toolCallId: "call_1" },
@@ -1140,7 +1138,7 @@ describe("sandbox tool set", () => {
         },
       ],
     } as never);
-    await expect(
+    expect(
       bash.execute({ command: "pwd", workspace: "unknown" }),
     ).rejects.toThrow("unknown workspace unknown");
     expect(microvmFetchMock).not.toHaveBeenCalled();
@@ -1165,7 +1163,7 @@ describe("read-only S3-direct workspace", () => {
       throw Object.assign(new Error("nope"), { name: "NoSuchKey" });
     });
     const read = await tool("read", readonlyCtx());
-    await expect(read.execute({ file_path: "missing.txt" })).rejects.toThrow(
+    expect(read.execute({ file_path: "missing.txt" })).rejects.toThrow(
       "Error: file not found: missing.txt",
     );
   });
@@ -1189,9 +1187,9 @@ describe("read-only S3-direct workspace", () => {
 
   it("does not expose write/edit on a read-only workspace (errors if forced)", async () => {
     const write = await tool("write", readonlyCtx());
-    await expect(
-      write.execute({ file_path: "a.txt", content: "x" }),
-    ).rejects.toThrow("Error: workspace is read-only");
+    expect(write.execute({ file_path: "a.txt", content: "x" })).rejects.toThrow(
+      "Error: workspace is read-only",
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -1217,9 +1215,9 @@ describe("read-only mount workspace (default)", () => {
 
   it("still does not expose write/edit (the mount is read-only)", async () => {
     const write = await tool("write", readonlyMountCtx());
-    await expect(
-      write.execute({ file_path: "a.txt", content: "x" }),
-    ).rejects.toThrow("Error: workspace is read-only");
+    expect(write.execute({ file_path: "a.txt", content: "x" })).rejects.toThrow(
+      "Error: workspace is read-only",
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -1228,27 +1226,27 @@ describe("write/edit approval policy", () => {
   it("a read-only workspace falls through to the clean error instead of prompting", async () => {
     // No sandbox => nothing to approve. Without this, permissionMode defaults to
     // "ask" and the write would prompt for an approval it can never satisfy.
-    await expect(
+    expect(
       approvalStatus(
         "write",
         { file_path: "a.txt", content: "x" },
         readonlyCtx(),
       ),
     ).resolves.toBeUndefined();
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls" }, readonlyCtx()),
     ).resolves.toBeUndefined();
   });
 
   it("a sandbox-backed workspace follows its permissionMode", async () => {
-    await expect(
+    expect(
       approvalStatus(
         "edit",
         { file_path: "a.txt" },
         workspaceCtx({ permissionMode: "ask" }),
       ),
     ).resolves.toBe("user-approval");
-    await expect(
+    expect(
       approvalStatus(
         "edit",
         { file_path: "a.txt" },
@@ -1311,13 +1309,13 @@ describe("write/edit approval policy", () => {
 
     // With no workspace at all the run lands on the default, and the note names it.
     const stateless = await tool("bash", statelessCtx());
-    await expect(
+    expect(
       stateless.execute({ command: "echo hi", workspace: "notes" }),
     ).resolves.toContain("ran on sandbox own-sandbox");
   });
 
   it("the standalone sandbox target follows the agent sandbox's own mode", async () => {
-    await expect(
+    expect(
       approvalStatus(
         "bash",
         { command: "ls", sandbox: "own-sandbox" },
@@ -1325,11 +1323,11 @@ describe("write/edit approval policy", () => {
       ),
     ).resolves.toBe("user-approval");
     const bypass = borrowedSandboxCtx({}, { permissionMode: "bypass" });
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls", sandbox: "own-sandbox" }, bypass),
     ).resolves.toBeUndefined();
     // The workspace keeps its own mode; the agent's bypass does not leak into it.
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls", workspace: "notes" }, bypass),
     ).resolves.toBe("user-approval");
   });
@@ -1342,13 +1340,13 @@ describe("write/edit approval policy", () => {
       { permissionMode: "bypass" },
       { permissionMode: "bypass" },
     );
-    await expect(
+    expect(
       approvalStatus("bash", { command: "ls", sandbox: true }, ctx),
     ).resolves.toBe("user-approval");
     const bash = await tool("bash", ctx);
-    await expect(
-      bash.execute({ command: "ls", sandbox: true }),
-    ).rejects.toThrow("Error: sandbox must be the name of a sandbox");
+    expect(bash.execute({ command: "ls", sandbox: true })).rejects.toThrow(
+      "Error: sandbox must be the name of a sandbox",
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -1423,7 +1421,7 @@ describe("memory tool", () => {
     const memory_save = await memorySave(
       readonlyMountCtx() as unknown as Record<string, unknown>,
     );
-    await expect(
+    expect(
       memory_save.execute({
         title: "x",
         description: "d",
@@ -1444,7 +1442,7 @@ describe("memory tool", () => {
     const memory_save = await memorySave(
       ctx as unknown as Record<string, unknown>,
     );
-    await expect(
+    expect(
       memory_save.execute({
         title: "x",
         description: "d",
@@ -1473,7 +1471,7 @@ describe("memory tool", () => {
     const memory_save = await memorySave(
       workspaceCtx() as unknown as Record<string, unknown>,
     );
-    await expect(
+    expect(
       memory_save.execute({
         title: "   ",
         description: "d",

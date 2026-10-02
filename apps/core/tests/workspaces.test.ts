@@ -431,7 +431,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    await expect(
+    expect(
       resolveAgentRuntime(
         {
           sandboxes: ["sb_mac"],
@@ -624,7 +624,7 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
 
-    await expect(
+    expect(
       resolveAgentRuntime(
         { sandboxes: ["sb_1", "sb_2"] },
         { accountId: "acct_1", agentId: "ag_1" },
@@ -676,7 +676,7 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
 
-    await expect(
+    expect(
       resolveAgentRuntime({ sandboxes: ["missing"] }, { accountId: "acct_1" }),
     ).rejects.toThrow(/Referenced sandbox not found/);
   });

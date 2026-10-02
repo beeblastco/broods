@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { jsonSchema, tool, type UserModelMessage } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
-const originalMutation = runtime.mutate;
+const originalMutation = runtime.mutate.bind(runtime);
 const mutationMock = mock(
   async (name: string, _args: Record<string, unknown>) =>
     name === "createAsyncToolResult" ? true : null,
@@ -127,8 +127,8 @@ describe("AsyncToolCoordinator", () => {
       {},
       { toolCallId: "tool-call-files", messages: [], context: undefined },
     );
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
 
     const resultId = (pending as { resultId: string }).resultId;
     const persisted = {
@@ -255,8 +255,8 @@ describe("AsyncToolCoordinator", () => {
     ]);
 
     finishTool(undefined);
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
 
     expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
       resultId: resultId,
@@ -356,10 +356,8 @@ describe("AsyncToolCoordinator", () => {
       },
     ]);
 
-    await expect(coordinator.waitForIdle()).resolves.toBe("timeout");
-    await expect(
-      coordinator.drainCompletionsAndTimeoutsToParent(),
-    ).resolves.toBe(1);
+    expect(coordinator.waitForIdle()).resolves.toBe("timeout");
+    expect(coordinator.drainCompletionsAndTimeoutsToParent()).resolves.toBe(1);
 
     expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
       resultId: resultId,

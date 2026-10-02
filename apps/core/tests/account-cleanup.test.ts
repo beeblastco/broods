@@ -12,8 +12,8 @@ import {
 } from "../src/shared/storage.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
-const originalRuntimeMutate = runtime.mutate;
-const originalRuntimeQuery = runtime.query;
+const originalRuntimeMutate = runtime.mutate.bind(runtime);
+const originalRuntimeQuery = runtime.query.bind(runtime);
 
 afterEach(() => {
   runtime.mutate = originalRuntimeMutate;
@@ -31,7 +31,7 @@ it("propagates workspace listing failures before destructive cleanup", async () 
     },
   } as never);
 
-  await expect(
+  expect(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",
@@ -81,7 +81,7 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
     };
   }) as never;
 
-  await expect(
+  expect(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",

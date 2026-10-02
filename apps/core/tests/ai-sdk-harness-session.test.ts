@@ -62,7 +62,7 @@ describe("openAiSdkHarnessSession", () => {
 
   it("refuses to bind a conversation to another adapter", async () => {
     const createSession = mock(async () => ({ sessionId: "unused" }));
-    await expect(
+    expect(
       openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,

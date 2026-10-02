@@ -62,7 +62,7 @@ class TerminateMicrovmCommand {
   }
 }
 
-mock.module("@aws-sdk/client-lambda-microvms", () => ({
+await mock.module("@aws-sdk/client-lambda-microvms", () => ({
   LambdaMicrovms: class {
     send = microvmSendMock;
   },
@@ -74,7 +74,7 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   SuspendMicrovmCommand: TerminateMicrovmCommand,
   TerminateMicrovmCommand: TerminateMicrovmCommand,
 }));
-mock.module("e2b", () => ({
+await mock.module("e2b", () => ({
   Sandbox: {
     create: mock(async () => {}),
     connect: mock(async () => {}),
@@ -99,7 +99,7 @@ const getSandboxReleaseTargetMock = mock(
   },
 );
 
-mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
   getSandboxReleaseTarget: getSandboxReleaseTargetMock,
   getSandboxReservationRecord: mock(async () => null),
@@ -107,7 +107,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   saveSandboxInstance: mock(async () => {}),
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
-mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   recordSandboxBurst: mock(async () => true),
   removeSandboxInstance: removeSandboxInstanceMock,
   sandboxInstanceIsControllable: mock(async () => true),

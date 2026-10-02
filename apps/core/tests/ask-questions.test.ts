@@ -45,8 +45,8 @@ interface RecordedMutation {
   args: Record<string, unknown>;
 }
 
-const originalMutate = runtime.mutate;
-const originalQuery = runtime.query;
+const originalMutate = runtime.mutate.bind(runtime);
+const originalQuery = runtime.query.bind(runtime);
 const mutations: RecordedMutation[] = [];
 
 afterEach((): void => {
@@ -150,12 +150,12 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    await expect(
+    expect(
       execute({
         questions: [{ ...QUESTION, options: [{ label: "only one" }] }],
       }),
     ).rejects.toThrow("needs 2 to 4 options");
-    await expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
+    expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
       "is used twice",
     );
     expect(mutations).toHaveLength(0);
@@ -171,7 +171,7 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    await expect(execute({ questions: [QUESTION] })).rejects.toThrow(
+    expect(execute({ questions: [QUESTION] })).rejects.toThrow(
       "blocked by the outbound message hook",
     );
     expect(mutations.at(-1)?.args).toMatchObject({ status: "failed" });

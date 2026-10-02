@@ -225,6 +225,6 @@ describe("logging helpers", () => {
   });
 
   it("allows an explicit OTel flush when exporters are not configured", async () => {
-    await expect(forceFlushOtel()).resolves.toBeUndefined();
+    expect(forceFlushOtel()).resolves.toBeUndefined();
   });
 });

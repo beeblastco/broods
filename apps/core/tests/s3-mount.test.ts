@@ -8,7 +8,7 @@ const assumeRoleSendMock = mock(async () => ({
     SessionToken: "temp-token",
   },
 }));
-mock.module("@aws-sdk/client-sts", () => ({
+await mock.module("@aws-sdk/client-sts", () => ({
   STSClient: class {
     send = assumeRoleSendMock;
   },
@@ -196,7 +196,7 @@ describe("mountRoleArn", () => {
     expect(() =>
       mountRoleArn({ ...storage, auth: { type: "managed" } }),
     ).toThrow(expected);
-    await expect(
+    expect(
       resolveS3ReadTarget({ storage: storage, namespace: NS }),
     ).rejects.toThrow(expected);
     expect(assumeRoleSendMock).not.toHaveBeenCalled();
@@ -278,7 +278,7 @@ describe("resolveS3Mount", () => {
   it("never mints credentials for a prefix that is not a directory", async () => {
     const { assumeScopedMountCredentials } =
       await import("../src/harness/sandbox/s3-mount.ts");
-    await expect(
+    expect(
       assumeScopedMountCredentials({
         roleArn: "arn:aws:iam::2:role/byo",
         bucket: "acme",
