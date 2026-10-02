@@ -6,7 +6,6 @@ import {
   it,
   setSystemTime,
 } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { createHmac } from "node:crypto";
 import type { ChannelAdapter, InboundMessage } from "../src/shared/channels.ts";
 import {
@@ -42,9 +41,9 @@ describe("slack channel adapter", () => {
       "1776988800",
     );
 
-    await expectAsync(adapter.authenticate(request)).resolves.toBe(true);
+    expect(adapter.authenticate(request)).resolves.toBe(true);
 
-    await expectAsync(
+    expect(
       adapter.authenticate({
         ...request,
         headers: {
@@ -848,7 +847,7 @@ describe("slack channel adapter", () => {
       url_private: "https://files.slack.com.attacker.example/steal.png",
     });
 
-    await expectAsync(message.attachments?.[0]?.fetchData?.()).rejects.toThrow(
+    expect(message.attachments?.[0]?.fetchData?.()).rejects.toThrow(
       /refusing to send the Slack token/,
     );
   });

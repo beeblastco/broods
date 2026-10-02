@@ -11,7 +11,6 @@ import {
   it,
   setSystemTime,
 } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import {
   admitRun,
@@ -236,7 +235,7 @@ describe("sandbox start", () => {
       },
     });
 
-    await expectAsync(
+    expect(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 5,

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { formDataText, requestBodyText } from "./helpers/http.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
@@ -466,7 +465,7 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("boom", { status: 500 }));
-    await expectAsync(actions.sendText("hello")).rejects.toThrow(
+    expect(actions.sendText("hello")).rejects.toThrow(
       "Discord interaction API error: 500 boom",
     );
     expect(fetchMock.calls).toHaveLength(1);
@@ -527,7 +526,7 @@ describe("discord channel actions", () => {
 
     fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
     fetchMock.responses.push(new Response("missing access", { status: 403 }));
-    await expectAsync(actions.sendText("hello")).rejects.toThrow(
+    expect(actions.sendText("hello")).rejects.toThrow(
       "Discord API error: 403 missing access",
     );
   });
@@ -549,9 +548,7 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("nope", { status: 403 }));
-    await expectAsync(actions.sendTyping()).rejects.toThrow(
-      "Discord API error: 403 nope",
-    );
+    expect(actions.sendTyping()).rejects.toThrow("Discord API error: 403 nope");
   });
 
   it("skips typing without a channel id and rejects invalid source payloads", async () => {
@@ -939,7 +936,7 @@ describe("slack channel actions", () => {
       }),
     );
     fetchMock.responses.push(new Response("", { status: 500 }));
-    await expectAsync(responseUrlActions.sendText("hello")).rejects.toThrow(
+    expect(responseUrlActions.sendText("hello")).rejects.toThrow(
       "Slack response_url failed (500)",
     );
 
@@ -953,14 +950,14 @@ describe("slack channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "channel_not_found" }, 200),
     );
-    await expectAsync(apiActions.sendText("hello")).rejects.toThrow(
+    expect(apiActions.sendText("hello")).rejects.toThrow(
       "Slack chat.postMessage failed: channel_not_found",
     );
 
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "missing_scope" }, 403),
     );
-    await expectAsync(apiActions.reactToMessage()).rejects.toThrow(
+    expect(apiActions.reactToMessage()).rejects.toThrow(
       "Slack reactions.add returned HTTP 403",
     );
   });
@@ -1060,7 +1057,7 @@ describe("pancake channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ success: false, message: "permission denied" }, 200),
     );
-    await expectAsync(actions.sendText("hello")).rejects.toThrow(
+    expect(actions.sendText("hello")).rejects.toThrow(
       "Pancake send message failed (200): permission denied",
     );
 
@@ -1185,7 +1182,7 @@ describe("zalo channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, description: "permission denied" }, 200),
     );
-    await expectAsync(actions.sendText("hello")).rejects.toThrow(
+    expect(actions.sendText("hello")).rejects.toThrow(
       "Zalo sendMessage failed (200): permission denied",
     );
 

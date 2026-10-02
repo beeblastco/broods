@@ -1,5 +1,4 @@
 import { afterEach, expect, it } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { getFunctionName } from "convex/server";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
@@ -32,7 +31,7 @@ it("propagates workspace listing failures before destructive cleanup", async () 
     },
   } as never);
 
-  await expectAsync(
+  expect(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",
@@ -82,7 +81,7 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
     };
   }) as never;
 
-  await expectAsync(
+  expect(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",

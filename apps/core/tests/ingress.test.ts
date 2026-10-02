@@ -7,7 +7,6 @@ import {
   mock,
   spyOn,
 } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   dispatchInProcessWorker,
@@ -1374,13 +1373,13 @@ describe("session messages", (): void => {
       sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
     };
 
-    await expectAsync(
+    expect(
       prepareSessionMessage({
         ...options,
         input: { conversationKey: "tg:source-chat", message: "loop" },
       }),
     ).rejects.toThrow("cannot target the current conversation");
-    await expectAsync(
+    expect(
       prepareSessionMessage({
         ...options,
         input: {
@@ -1399,7 +1398,7 @@ describe("session messages", (): void => {
       return null as T;
     };
 
-    await expectAsync(
+    expect(
       prepareSessionMessage({
         accountId: "acct_test",
         agentId: "agent_test",

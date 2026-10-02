@@ -11,7 +11,6 @@
 
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
 import { createMicrovmHarnessAgent } from "../src/harness/ai-sdk-harness/index.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
@@ -99,7 +98,7 @@ describe.skipIf(!ENABLED)(
 
       try {
         session = await sandbox.createSession({ identity: identity });
-        await expectAsync(
+        expect(
           session.run({
             command:
               "printf 'hello-microvm:%s' \"$BROODS_LIVE_DEFAULT\" && printf 'to-stderr' >&2",
@@ -115,13 +114,13 @@ describe.skipIf(!ENABLED)(
           path: path,
           content: "live-file-content",
         });
-        await expectAsync(session.readTextFile({ path: path })).resolves.toBe(
+        expect(session.readTextFile({ path: path })).resolves.toBe(
           "live-file-content",
         );
 
         await session.stop();
         session = await sandbox.resumeSession!({ sessionId: session.id });
-        await expectAsync(
+        expect(
           session.run({ command: "printf 'resumed' && exit 7" }),
         ).resolves.toEqual({ exitCode: 7, stdout: "resumed", stderr: "" });
       } finally {

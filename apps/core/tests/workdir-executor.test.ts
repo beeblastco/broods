@@ -7,7 +7,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { requestBodyText } from "./helpers/http.ts";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import type { WorkdirSandboxExecutor as WorkdirExecutor } from "../src/harness/sandbox/workdir-executor.ts";
@@ -661,7 +660,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, mountAwsS3Buckets: true },
     });
 
-    await expectAsync(
+    expect(
       executor.run({ code: "ls", timeoutSeconds: 30, outputLimitBytes: 4096 }),
     ).rejects.toThrow(
       "workdir AWS S3 workspace mount requires a workspace namespace",
@@ -808,7 +807,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, mountAwsS3Buckets: true },
     });
 
-    await expectAsync(
+    expect(
       executor.run({ code: "ls", timeoutSeconds: 30, outputLimitBytes: 4096 }),
     ).rejects.toThrow(
       "workdir AWS S3 workspace mount requires a workspace namespace",
@@ -873,7 +872,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
     });
 
-    await expectAsync(
+    expect(
       executor.run({
         code: "ls",
         namespace: NS,
@@ -909,7 +908,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     try {
-      await expectAsync(
+      expect(
         executor.run({
           code: "ls",
           namespace: NS,
@@ -1279,7 +1278,7 @@ describe("WorkdirSandboxExecutor background jobs", () => {
       provider: "sandbox",
       options: { workdirUrl: BASE },
     });
-    await expectAsync(
+    expect(
       executor.runBackground({
         code: "x",
         timeoutSeconds: 30,
@@ -1357,7 +1356,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
 
-    await expectAsync(
+    expect(
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
@@ -1391,7 +1390,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
 
-    await expectAsync(
+    expect(
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
@@ -1412,7 +1411,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       persistent: true,
       options: { workdirUrl: BASE },
     });
-    await expectAsync(
+    expect(
       executor.resumeHarnessReservation({ reservationKey: "harness:missing" }),
     ).rejects.toThrow("no reserved workdir sandbox");
 
@@ -1487,7 +1486,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
     createRefusal = 503;
-    await expectAsync(
+    expect(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 10,
@@ -1497,7 +1496,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
 
     createRefusal = null;
     execRefusal = 503;
-    await expectAsync(
+    expect(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 10,

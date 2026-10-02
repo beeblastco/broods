@@ -3,7 +3,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
 import { createServer as createHttpServer } from "node:http";
@@ -794,7 +793,7 @@ describe("readAttachmentBytes URL guard", () => {
   it("refuses a host that resolves to a private address", async (): Promise<void> => {
     // The URL comes out of the webhook body, so the sender picks the host. A
     // literal here, but a public name pointed at 127.0.0.1 fails the same check.
-    await expectAsync(
+    expect(
       readAttachmentBytes({ type: "file", url: "http://127.0.0.1/secret" }),
     ).rejects.toThrow(/private or metadata address/);
   });
@@ -893,7 +892,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expectAsync(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({
@@ -912,7 +911,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expectAsync(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -932,7 +931,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expectAsync(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/big.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -967,7 +966,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expectAsync(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/endless.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),

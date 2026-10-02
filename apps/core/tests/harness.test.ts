@@ -7,7 +7,6 @@ import {
   mock,
   spyOn,
 } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type {
@@ -826,7 +825,7 @@ describe("runAgentLoop", () => {
     );
 
     const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
-    await expectAsync(
+    expect(
       prepareStep!({
         responseMessages: [],
         messages: [{ role: "user", content: "original" }],
@@ -1325,9 +1324,7 @@ describe("runAgentLoop", () => {
       },
     );
 
-    await expectAsync(stream.consumeStream()).rejects.toThrow(
-      "stream transport failed",
-    );
+    expect(stream.consumeStream()).rejects.toThrow("stream transport failed");
     expect(stream.didFail()).toBe(true);
     expect(stream.failureText()).toBe("stream transport failed");
     expect(usageWrites[0]?.status).toBe("failed");
@@ -1486,7 +1483,7 @@ describe("runAgentLoop", () => {
       event: unknown,
     ) => Promise<unknown>;
     expect(typeof toolApproval).toBe("function");
-    await expectAsync(
+    expect(
       toolApproval({
         toolCall: {
           type: "tool-call",
@@ -2333,7 +2330,7 @@ describe("runAgentLoop", () => {
     >;
     expect(tools.load_skill).toBeDefined();
     const loadSkillTool = tools.load_skill!;
-    await expectAsync(
+    expect(
       loadSkillTool.execute({
         path: "acct_test/support-flow",
         resources: [],
@@ -3078,7 +3075,7 @@ describe("subagent policy input", () => {
       });
 
       // The mocked model says nothing, so the child task fails once the loop is built.
-      await expectAsync(
+      expect(
         internals.runTask({
           taskId: "subagent_1",
           eventId: "event_child",

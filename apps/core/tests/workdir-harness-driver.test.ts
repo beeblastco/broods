@@ -4,7 +4,6 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import type { Sandbox } from "@mv37/workdir";
 import {
   WorkdirHarnessDriver,
@@ -128,7 +127,7 @@ describe("WorkdirHarnessDriver", () => {
       executor.value as never,
     );
 
-    await expectAsync(
+    expect(
       driver.createSession({ identity: "other-bootstrap" }),
     ).rejects.toThrow("bootstrap identity does not match");
 
@@ -147,7 +146,7 @@ describe("WorkdirHarnessDriver", () => {
     delete options.bootstrapIdentity;
     const driver = new WorkdirHarnessDriver(options, executor.value as never);
 
-    await expectAsync(
+    expect(
       driver.createSession({ identity: "recipe-derived-at-runtime" }),
     ).resolves.toMatchObject({ isFirstCreate: true });
   });
@@ -176,7 +175,7 @@ describe("WorkdirHarnessDriver", () => {
     await launched.promise;
     controller.abort(failure);
 
-    await expectAsync(command).rejects.toBe(failure);
+    expect(command).rejects.toBe(failure);
     await Bun.sleep(0);
     expect(fake.killCalls).toBe(1);
   });
@@ -251,7 +250,7 @@ describe("WorkdirHarnessDriver", () => {
     const waiting = process.wait();
     controller.abort(failure);
 
-    await expectAsync(waiting).rejects.toBe(failure);
+    expect(waiting).rejects.toBe(failure);
     await Bun.sleep(0);
     expect(fake.killCalls).toBe(1);
   });
@@ -271,7 +270,7 @@ describe("WorkdirHarnessDriver", () => {
       executor.value as never,
     );
 
-    await expectAsync(
+    expect(
       driver.createSession({
         identity: "bootstrap-v1",
         abortSignal: controller.signal,

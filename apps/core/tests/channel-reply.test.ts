@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { requestBodyText } from "./helpers/http.ts";
 import { sendChannelReply } from "../src/harness/integrations.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
@@ -66,7 +65,7 @@ describe("sendChannelReply", () => {
 
   it("throws when the channel is not configured for the agent", async () => {
     installFetchMock();
-    await expectAsync(
+    expect(
       sendChannelReply({
         config: {},
         accountId: "acct-1",

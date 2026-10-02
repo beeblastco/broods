@@ -1,6 +1,5 @@
 import { dns } from "bun";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { requestUrl } from "./helpers/http.ts";
 import {
   assertPublicHttpsUrl,
@@ -79,13 +78,13 @@ describe("publicHostFetch", () => {
   });
 
   it("refuses private hostnames and literal private addresses before connecting", async () => {
-    await expectAsync(publicHostFetch("https://localhost/v1")).rejects.toThrow(
+    expect(publicHostFetch("https://localhost/v1")).rejects.toThrow(
       /private address/,
     );
-    await expectAsync(publicHostFetch("https://10.0.0.8/v1")).rejects.toThrow(
+    expect(publicHostFetch("https://10.0.0.8/v1")).rejects.toThrow(
       /private address/,
     );
-    await expectAsync(
+    expect(
       publicHostFetch(new Request("https://169.254.169.254/latest")),
     ).rejects.toThrow(/private address/);
   });
@@ -96,7 +95,7 @@ describe("publicHostFetch", () => {
       { address: "10.0.0.8", family: 4, ttl: 30 },
     ]);
     try {
-      await expectAsync(
+      expect(
         publicHostFetch("https://api.example.com/v1/chat"),
       ).rejects.toThrow(/resolves to a private address/);
     } finally {
@@ -206,7 +205,7 @@ describe("publicHostFetch", () => {
       return new Response("ok");
     }) as typeof fetch;
     try {
-      await expectAsync(
+      expect(
         publicHostFetch("https://api.example.com/v1/chat"),
       ).rejects.toThrow("connection refused");
       await publicHostFetch("https://api.example.com/v1/chat");

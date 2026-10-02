@@ -7,7 +7,6 @@
  */
 
 import { describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { createHash } from "node:crypto";
 import type { ToolSet } from "ai";
 import * as realS3 from "../src/shared/s3.ts";
@@ -114,7 +113,7 @@ describe("code hooks end-to-end (real isolate)", () => {
     };
     const wrapped = wrapToolsWithHooks(tools, dispatcher);
 
-    await expectAsync(
+    expect(
       (wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
         { command: "ls" },
         {},

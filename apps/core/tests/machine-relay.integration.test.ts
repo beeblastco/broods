@@ -1,5 +1,4 @@
 import { afterEach, expect, test } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -118,7 +117,7 @@ test("core's MCP client lists and calls a stdio server on this machine through t
 test("a bad key reaches the daemon as core's 4401 and stops it", async () => {
   setStorageForTests(machineStorage());
 
-  await expectAsync(
+  expect(
     runMachineDaemon({
       credential: async (): Promise<string> => "wrong-key",
       baseUrl: startDoor(coreUrl()),
@@ -137,7 +136,7 @@ test("the daemon exits when another daemon holds the record, and --force takes i
   const holder = await holdRecord(core, "another-desk");
   const lines: string[] = [];
 
-  await expectAsync(
+  expect(
     runMachineDaemon({
       credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
       baseUrl: door,

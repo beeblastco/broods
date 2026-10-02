@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { expectAsync } from "./helpers/async-expect.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   getAsyncAgentResult,
@@ -80,7 +79,7 @@ describe("async agent result persistence", () => {
     };
     queryMock.mockResolvedValueOnce(record as never);
     runtime.query = queryMock as never;
-    await expectAsync(getAsyncAgentResult("event-1")).resolves.toEqual(record);
+    expect(getAsyncAgentResult("event-1")).resolves.toEqual(record);
     expect(queryMock).toHaveBeenCalledWith("getAsyncAgentResult", {
       eventId: "event-1",
     });
@@ -113,9 +112,9 @@ describe("async tool result persistence", () => {
     queryMock.mockResolvedValueOnce(true as never);
     runtime.query = queryMock as never;
     runtime.mutate = mutationMock as never;
-    await expectAsync(
-      verifyAsyncToolCompletionToken("result-1", "token-1"),
-    ).resolves.toBe(true);
+    expect(verifyAsyncToolCompletionToken("result-1", "token-1")).resolves.toBe(
+      true,
+    );
     await settleAsyncToolResultFromCallback({
       resultId: "result-1",
       status: "failed",
@@ -139,7 +138,7 @@ describe("async tool result persistence", () => {
       status: "completed",
     } as never);
     runtime.query = queryMock as never;
-    await expectAsync(getAsyncToolResult("result-1")).resolves.toMatchObject({
+    expect(getAsyncToolResult("result-1")).resolves.toMatchObject({
       status: "completed",
     });
     expect(queryMock).toHaveBeenCalledWith("getAsyncToolResult", {
