@@ -86,6 +86,8 @@ export interface AgentConfig {
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
   scheduler?: AgentSchedulerConfig;
+  /** Registers the `browse` tool, which runs Obscura on the first sandbox. */
+  browser?: { enabled?: boolean };
   /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
   // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
@@ -882,6 +884,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     skills,
     subagent,
     scheduler,
+    browser,
     policies,
     publicAccess,
     allowRunOverrides,
@@ -908,6 +911,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(skills !== undefined ? { skills: skills } : {}),
     ...(subagent !== undefined ? { subagent: subagent } : {}),
     ...(scheduler !== undefined ? { scheduler: scheduler } : {}),
+    ...(browser !== undefined ? { browser: browser } : {}),
     ...(policies !== undefined ? { policies: policies } : {}),
     ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
     ...(allowRunOverrides !== undefined

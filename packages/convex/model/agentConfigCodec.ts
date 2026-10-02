@@ -45,6 +45,7 @@ const NESTED_BRANCHES = [
   "subagent",
   "policy",
   "scheduler",
+  "browser",
   "policies",
 ] as const;
 
