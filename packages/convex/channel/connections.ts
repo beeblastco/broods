@@ -23,10 +23,13 @@
 
 import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
+import { accountCipher, encryptionSecrets } from "../model/accountKeys";
 import {
   channelEndpointBotToken,
   refreshAccountChannelEndpoints,
 } from "../model/channelEndpoints";
+import type { AccountCipher } from "../model/envelope";
 
 const channelConnectionValidator = v.object({
   agentId: v.string(),
@@ -51,20 +54,23 @@ export const listConnections = internalQuery({
   args: { channel: v.string() },
   returns: v.array(channelConnectionValidator),
   handler: async (ctx, args): Promise<ChannelConnection[]> => {
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-      throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read channel bot tokens",
-      );
-    }
-
+    // Without the secret this must throw before reading: an empty answer would
+    // make the forwarder close every socket as "no agents configure it".
+    encryptionSecrets();
     const rows = await ctx.db
       .query("channelEndpoints")
       .withIndex("by_platform", (q) => q.eq("platform", args.channel))
       .collect();
+    // Rows span every account, so each account's keyring is built once.
+    const ciphers = new Map<Id<"accounts">, AccountCipher>();
     const connections: ChannelConnection[] = [];
     for (const row of rows) {
-      const botToken = await channelEndpointBotToken(row, secret);
+      let cipher = ciphers.get(row.accountId);
+      if (!cipher) {
+        cipher = await accountCipher(ctx, row.accountId);
+        ciphers.set(row.accountId, cipher);
+      }
+      const botToken = await channelEndpointBotToken(row, cipher);
       if (!botToken) continue;
       connections.push({
         agentId: row.agentId,

@@ -57,14 +57,6 @@ export function bearerToken(req: Request): string | null {
   return match?.[1]?.trim() || null;
 }
 
-/** Read the account-config encryption secret, failing loudly when unset. */
-export function configEncryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");
-
-  return secret;
-}
-
 /**
  * Fetch an account document by id, treating malformed ids as not found.
  * @param ctx Convex action context

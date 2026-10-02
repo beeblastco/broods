@@ -14,6 +14,7 @@ import type * as account_connections from "../account/connections.js";
 import type * as account_connectionsPublic from "../account/connectionsPublic.js";
 import type * as account_envVars from "../account/envVars.js";
 import type * as account_hooks from "../account/hooks.js";
+import type * as account_keys from "../account/keys.js";
 import type * as account_mcp from "../account/mcp.js";
 import type * as account_roles from "../account/roles.js";
 import type * as account_uploads from "../account/uploads.js";
@@ -162,6 +163,7 @@ declare const fullApi: ApiFromModules<{
   "account/connectionsPublic": typeof account_connectionsPublic;
   "account/envVars": typeof account_envVars;
   "account/hooks": typeof account_hooks;
+  "account/keys": typeof account_keys;
   "account/mcp": typeof account_mcp;
   "account/roles": typeof account_roles;
   "account/uploads": typeof account_uploads;

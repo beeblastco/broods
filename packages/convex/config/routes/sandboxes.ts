@@ -6,14 +6,12 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "../../model/agentConfigCodec";
+import { accountCipherForAction } from "../../model/accountKeys";
 import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
+import type { AccountCipher, EncryptedBlob } from "../../model/envelope";
 import { toPublicSandboxConfigResponse } from "../../model/responses";
 import {
   normalizeCreateSandboxConfigInput,
@@ -21,7 +19,6 @@ import {
   type SandboxConfig,
 } from "../../model/sandboxRules";
 import {
-  configEncryptionSecret,
   json,
   jsonError,
   methodNotAllowed,
@@ -37,6 +34,7 @@ export async function handleSandboxConfigRoute(
   actor: ConfigAuditActor,
   sandboxId?: string,
 ): Promise<Response> {
+  const cipher = await accountCipherForAction(ctx, accountId);
   if (!sandboxId) {
     if (req.method === "GET") {
       return collectionPage("sandboxes", req, {
@@ -47,7 +45,7 @@ export async function handleSandboxConfigRoute(
         item: async (record) =>
           toPublicSandboxConfigResponse(
             record,
-            await decryptSandboxConfig(record),
+            await decryptSandboxConfig(cipher, record),
           ),
         page: (options) =>
           ctx.runQuery(internal.sandbox.configs.listPage, {
@@ -58,7 +56,7 @@ export async function handleSandboxConfigRoute(
     }
     if (req.method === "POST") {
       const input = normalizeCreateSandboxConfigInput(await req.json());
-      const encrypted = await encryptSandboxConfig(input.config);
+      const encrypted = await encryptSandboxConfig(cipher, input.config);
       const createdId: Id<"sandboxConfigs"> = await ctx.runMutation(
         internal.sandbox.configs.create,
         {
@@ -92,7 +90,7 @@ export async function handleSandboxConfigRoute(
       return json(
         toPublicSandboxConfigResponse(
           created,
-          await decryptSandboxConfig(created),
+          await decryptSandboxConfig(cipher, created),
         ),
         201,
       );
@@ -114,7 +112,7 @@ export async function handleSandboxConfigRoute(
       ? json(
           toPublicSandboxConfigResponse(
             record,
-            await decryptSandboxConfig(record),
+            await decryptSandboxConfig(cipher, record),
           ),
         )
       : jsonError(404, "Sandbox not found");
@@ -128,12 +126,12 @@ export async function handleSandboxConfigRoute(
       },
     );
     if (!existing) return jsonError(404, "Sandbox not found");
-    const existingConfig = await decryptSandboxConfig(existing);
+    const existingConfig = await decryptSandboxConfig(cipher, existing);
     const patch = normalizeUpdateSandboxConfigInput(
       existingConfig,
       await req.json(),
     );
-    const encrypted = await encryptSandboxConfig(patch.config);
+    const encrypted = await encryptSandboxConfig(cipher, patch.config);
     await ctx.runMutation(internal.sandbox.configs.update, {
       accountId: accountId,
       sandboxId: sandboxId,
@@ -169,7 +167,7 @@ export async function handleSandboxConfigRoute(
       ? json(
           toPublicSandboxConfigResponse(
             updated,
-            await decryptSandboxConfig(updated),
+            await decryptSandboxConfig(cipher, updated),
           ),
         )
       : jsonError(404, "Sandbox not found");
@@ -210,19 +208,17 @@ export async function handleSandboxConfigRoute(
 }
 
 async function decryptSandboxConfig(
+  cipher: AccountCipher,
   doc: Doc<"sandboxConfigs">,
 ): Promise<SandboxConfig> {
   if (!doc.encryptedConfig || !doc.encryptionIv || !doc.encryptionTag) {
     return { provider: "sandbox", permissionMode: "ask" };
   }
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: doc.encryptedConfig,
-      iv: doc.encryptionIv,
-      tag: doc.encryptionTag,
-    },
-    configEncryptionSecret(),
-  );
+  const decrypted = await cipher.decrypt("sandboxConfigs:encryptedConfig", {
+    ciphertext: doc.encryptedConfig,
+    iv: doc.encryptionIv,
+    tag: doc.encryptionTag,
+  });
 
   return decrypted
     ? (decrypted as unknown as SandboxConfig)
@@ -230,10 +226,11 @@ async function decryptSandboxConfig(
 }
 
 async function encryptSandboxConfig(
+  cipher: AccountCipher,
   config: SandboxConfig,
-): Promise<{ ciphertext: string; iv: string; tag: string }> {
-  return await encryptAgentConfigBlob(
+): Promise<EncryptedBlob> {
+  return await cipher.encrypt(
+    "sandboxConfigs:encryptedConfig",
     config as unknown as Record<string, unknown>,
-    configEncryptionSecret(),
   );
 }

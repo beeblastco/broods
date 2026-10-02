@@ -102,7 +102,7 @@ Deployment environment variables:
 - `ALLOW_PRIVATE_STORAGE_ENDPOINTS`: `true` lets a self-hosted deployment accept
   a private workspace `storage.endpoint`, over `http` or `https`. A public host
   stays `https` only. Set the same value on core.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: AES-GCM secret for agent and sandbox config CRUD.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: derives the KEK that wraps every account's data encryption key (`model/envelope.ts`). Comma-separated list: the first entry wraps, every entry unwraps, so a rotation is "add new first, run `account/keys:rewrapAllKeys`, drop old".
 - `ADMIN_ACCOUNT_SECRET`: admin bearer secret accepted by account admin HTTP
   routes in `config/http.ts`.
 - `BROODS_ACCOUNT_MANAGE_URL` / `SERVICE_AUTH_SECRET`: core's in-cluster URL

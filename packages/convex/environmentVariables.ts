@@ -8,7 +8,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage } from "./model/ownership/stage";
-import { decryptAgentConfigBlob } from "./model/agentConfigCodec";
+import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import {
   assertEnvironmentVariableUnreferenced,
@@ -151,12 +151,16 @@ export const reveal = mutation({
       throw new Error("Variable not found.");
     }
 
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
-      encryptionSecret(),
+    const cipher = await accountCipher(
+      ctx,
+      await requireAccountIdForProject(ctx, projectId),
     );
-    const revealed = decrypted as { value?: unknown } | null;
-    const value = typeof revealed?.value === "string" ? revealed.value : "";
+    const decrypted = await cipher.decrypt("environmentVariables:ciphertext", {
+      ciphertext: variable.ciphertext,
+      iv: variable.iv,
+      tag: variable.tag,
+    });
+    const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: projectId,
@@ -218,17 +222,6 @@ export const set = mutation({
     return written.id;
   },
 });
-
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
-    );
-  }
-
-  return secret;
-}
 
 function maskEnvironmentVariable(variable: {
   _id: Id<"environmentVariables">;

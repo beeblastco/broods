@@ -20,25 +20,38 @@ flowchart TD
 - Sandbox config, including `envVars`, is encrypted at rest.
 - The workspace, skills, tool-bundles and MicroVM artifact buckets block public access. `denyUnlessProjectPrincipal()` in `apps/core/sst.config.ts` denies `s3:*` to every principal except the stage's `sandbox-s3mount`, `microvm-build` and `microvm-execution` roles, the `core-runtime` IAM user the core pods use, the `convex-aws` role the config plane assumes, the GitHub Actions deploy roles, and the account root.
 
-## Config encryption
+## Encryption at rest
 
 ```mermaid
 sequenceDiagram
   participant API as config plane
-  participant Crypto as AES-256-GCM
+  participant Keys as accountKeys
   participant CVX as Convex
   participant Core as core
 
-  API->>Crypto: encrypt with ACCOUNT_CONFIG_ENCRYPTION_SECRET
-  Crypto->>CVX: ciphertext + iv + auth tag
+  API->>Keys: unwrap the account DEK with the KEK
+  API->>CVX: AES-256-GCM(DEK, aad = account:table:field)
   Core->>CVX: load the selected agent
-  Core->>Crypto: decrypt
-  Core->>Core: verify webhooks, call providers
+  Core->>Keys: wrapped keys (cached 5 min)
+  Core->>Core: unwrap, decrypt, verify webhooks, call providers
 ```
 
-- AES-256-GCM encrypts config before the Convex write. The key is the SHA-256 of `ACCOUNT_CONFIG_ENCRYPTION_SECRET` (`src/shared/domain/agent-config.ts`); the config plane writes the same blob with Web Crypto.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is plain runtime env on core and on the Convex deployment, and both must hold the same value. Rotating it needs a re-encryption migration.
-- Core decrypts only when it needs a selected agent's runtime settings.
+Envelope encryption, one codec for both sides (`packages/convex/model/envelope.ts`):
+
+- Every account owns a 32-byte data encryption key (DEK), minted on its first write and stored in `accountKeys` wrapped under the key encryption key (KEK). The KEK is derived from `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; each key row records the `kekId` (first 8 hex of SHA-256 of the secret) it was wrapped under, so a KMS-backed KEK can replace the derived one later without a schema change.
+- A stored blob is AES-256-GCM under the DEK with `${accountId}:${table}:${field}` as additional data, and its `ciphertext` column reads `v2:<keyId>:<base64url>`. A ciphertext cannot be moved to another tenant, row kind or column, and names the key that opens it. The `iv` and `tag` columns are unchanged.
+- Encrypted columns: `agents.encryptedConfig` and `encryptedSourceConfig`, the same two on `sandboxConfigs`, `environmentVariables.ciphertext`, `accountEnvVars.ciphertext`, `agentRuntimeSecrets.ciphertext`, `agentDeployments.apiKeyCiphertext`, `channelEndpoints.tokenCiphertext` and `connections.ciphertext`.
+- `environmentVariables.valueDigest` is HMAC-SHA256 under the DEK, so a dump of the table cannot be brute-forced against short values. The CLI still compares plain SHA-256: `listEnvBySecretHash` computes that per request from the decrypted value.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is plain runtime env on core and on the Convex deployment, and both must hold the same value. It takes a comma-separated list: the first entry wraps new keys, every entry unwraps.
+- Convex builds the keyring once per request (`accountCipher*` in `model/accountKeys.ts`) and never caches it across requests. Core caches unwrapped keys per account for five minutes (`src/shared/convex/account-keys.ts`) and refreshes once when a row names a key it has not seen.
+
+### Rotation runbook
+
+All three run with `bunx convex run` against the deployment, as the deployment admin. None has a UI. Each one is paginated with a self-reschedule and idempotent; call it with no continuation arguments and wait for the scheduled batches to drain.
+
+1. **Legacy rows, once per deployment.** Blobs written before envelope encryption have no `v2:` prefix and still decrypt through the legacy branch in `envelope.ts`. Run `bunx convex run migrations:migrateToEnvelope` on dev and on production; it mints a key for every account that has none and rewrites every legacy blob under it. After both have run, the legacy branch can be deleted.
+2. **Rotate one account's DEK.** `bunx convex run account/keys:rotateAccountKey '{"accountId": "<id>"}'` mints a new key, which every write uses from that moment, rewrites every blob of the account under it table by table, then retires the older keys. A retired key opens nothing, so run it while no config writes from HTTP actions are in flight for that account.
+3. **Rotate the KEK.** Put the new secret first in `ACCOUNT_CONFIG_ENCRYPTION_SECRET` on both core and Convex (`new,old`), deploy, run `bunx convex run account/keys:rewrapAllKeys` until it reports `isDone`, then drop `old` from the list and deploy again. No blob is rewritten; only the wrapped keys change.
 
 Reads recursively redact secret-like field names such as `token`, `secret`, `privateKey` and `apiKey` as `********`, including inside tool config. Sending `********` back in a patch keeps the stored value.
 

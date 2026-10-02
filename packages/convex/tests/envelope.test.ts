@@ -1,0 +1,133 @@
+import { describe, expect, test } from "vitest";
+import {
+  AccountCipher,
+  blobKeyId,
+  createWrappedAccountKey,
+  kekIdOf,
+  rewrapAccountKey,
+  type WrappedAccountKey,
+} from "../model/envelope";
+import { encryptLegacyBlob } from "./legacyBlob";
+
+const ACCOUNT = "acct_one";
+const OTHER_ACCOUNT = "acct_two";
+const SECRETS = ["secret-a"];
+const VALUE = { apiKey: "sk-live-123", nested: { n: 1 } };
+
+async function cipherWith(
+  secrets: string[],
+  keys?: WrappedAccountKey[],
+): Promise<{ cipher: AccountCipher; keys: WrappedAccountKey[] }> {
+  const list = keys ?? [await createWrappedAccountKey(ACCOUNT, secrets)];
+
+  return { cipher: new AccountCipher(ACCOUNT, secrets, list), keys: list };
+}
+
+describe("envelope codec", () => {
+  test("round-trips under the account key and names it in the blob", async () => {
+    const { cipher, keys } = await cipherWith(SECRETS);
+    const blob = await cipher.encrypt("agents:encryptedConfig", VALUE);
+
+    expect(blob.ciphertext.startsWith(`v2:${keys[0]!.keyId}:`)).toBe(true);
+    expect(blobKeyId(blob)).toBe(keys[0]!.keyId);
+    expect(cipher.needsRewrite(blob)).toBe(false);
+    expect(await cipher.decrypt("agents:encryptedConfig", blob)).toEqual(VALUE);
+  });
+
+  test("refuses a blob moved to another column or tenant", async () => {
+    const { cipher, keys } = await cipherWith(SECRETS);
+    const blob = await cipher.encrypt("agents:encryptedConfig", VALUE);
+    const otherTenant = new AccountCipher(OTHER_ACCOUNT, SECRETS, keys);
+
+    expect(
+      await cipher.decrypt("agents:encryptedSourceConfig", blob),
+    ).toBeNull();
+    expect(
+      await otherTenant.decrypt("agents:encryptedConfig", blob),
+    ).toBeNull();
+  });
+
+  test("decrypts a legacy blob and rewrites it as v2", async () => {
+    const legacy = await encryptLegacyBlob(VALUE, "old-secret");
+    const { cipher } = await cipherWith(["new-secret", "old-secret"]);
+
+    expect(blobKeyId(legacy)).toBeNull();
+    expect(cipher.needsRewrite(legacy)).toBe(true);
+    const value = await cipher.decrypt("agents:encryptedConfig", legacy);
+    expect(value).toEqual(VALUE);
+    const rewritten = await cipher.encrypt("agents:encryptedConfig", value!);
+    expect(rewritten.ciphertext.startsWith("v2:")).toBe(true);
+
+    const withoutOld = await cipherWith(["new-secret"]);
+    expect(
+      await withoutOld.cipher.decrypt("agents:encryptedConfig", legacy),
+    ).toBeNull();
+  });
+
+  test("a KEK list unwraps under any entry and rewraps under the first", async () => {
+    const { keys } = await cipherWith(["kek-old"]);
+    const blob = await new AccountCipher(ACCOUNT, ["kek-old"], keys).encrypt(
+      "connections:ciphertext",
+      VALUE,
+    );
+    const rotated = new AccountCipher(ACCOUNT, ["kek-new", "kek-old"], keys);
+    expect(await rotated.decrypt("connections:ciphertext", blob)).toEqual(
+      VALUE,
+    );
+
+    const rewrapped = await rewrapAccountKey(
+      ACCOUNT,
+      ["kek-new", "kek-old"],
+      keys[0]!,
+    );
+    expect(rewrapped.keyId).toBe(keys[0]!.keyId);
+    expect(rewrapped.kekId).toBe(await kekIdOf("kek-new"));
+    expect(
+      await new AccountCipher(ACCOUNT, ["kek-new"], [rewrapped]).decrypt(
+        "connections:ciphertext",
+        blob,
+      ),
+    ).toEqual(VALUE);
+    expect(
+      await new AccountCipher(ACCOUNT, ["kek-old"], [rewrapped]).decrypt(
+        "connections:ciphertext",
+        blob,
+      ),
+    ).toBeNull();
+  });
+
+  test("an older key keeps opening blobs until it is retired", async () => {
+    const oldKey = await createWrappedAccountKey(ACCOUNT, SECRETS);
+    const blob = await new AccountCipher(ACCOUNT, SECRETS, [oldKey]).encrypt(
+      "accountEnvVars:ciphertext",
+      VALUE,
+    );
+    const newKey = await createWrappedAccountKey(ACCOUNT, SECRETS);
+    const live = new AccountCipher(ACCOUNT, SECRETS, [oldKey, newKey]);
+    expect(live.keyId).toBe(newKey.keyId);
+    expect(live.needsRewrite(blob)).toBe(true);
+    expect(await live.decrypt("accountEnvVars:ciphertext", blob)).toEqual(
+      VALUE,
+    );
+
+    const retired = new AccountCipher(ACCOUNT, SECRETS, [
+      { ...oldKey, retiredAt: Date.now() },
+      newKey,
+    ]);
+    expect(retired.hasKey(blob)).toBe(true);
+    expect(await retired.decrypt("accountEnvVars:ciphertext", blob)).toBeNull();
+  });
+
+  test("digests are keyed per account", async () => {
+    const { cipher, keys } = await cipherWith(SECRETS);
+    const other = new AccountCipher(OTHER_ACCOUNT, SECRETS, [
+      await createWrappedAccountKey(OTHER_ACCOUNT, SECRETS),
+    ]);
+
+    expect(await cipher.digest("hunter2")).toBe(await cipher.digest("hunter2"));
+    expect(await cipher.digest("hunter2")).not.toBe(
+      await other.digest("hunter2"),
+    );
+    expect(keys[0]!.wrappedKey).not.toContain(await cipher.digest("hunter2"));
+  });
+});

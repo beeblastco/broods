@@ -442,6 +442,22 @@ export const accountsFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * One account's data encryption keys, each wrapped under the KEK that
+ * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` derives (`model/envelope.ts`). Blobs name
+ * the key they were written under; the newest row without `retiredAt` seals
+ * new blobs, and a retired one no longer opens anything.
+ */
+export const accountKeysFields = {
+  accountId: v.id("accounts"),
+  keyId: v.string(),
+  /** First 8 hex of SHA-256 of the secret that wrapped this key. */
+  kekId: v.string(),
+  wrappedKey: v.string(),
+  createdAt: v.number(),
+  retiredAt: v.optional(v.number()),
+};
+
 /** Agent configuration, stored encrypted so the dashboard cannot read provider secrets. */
 export const agentsFields = {
   accountId: v.id("accounts"),
@@ -737,7 +753,7 @@ export const environmentVariablesFields = {
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
-  /** SHA-256 hex of the plaintext value. */
+  /** HMAC-SHA256 hex of the plaintext under the account key, so `env set` can skip an unchanged value without a guessable hash at rest. */
   valueDigest: v.string(),
   updatedAt: v.number(),
 };
@@ -1397,6 +1413,9 @@ export default defineSchema({
   accounts: defineTable(accountsFields)
     .index("by_orgId", ["orgId"])
     .index("by_secretHash", ["secretHash"]),
+  accountKeys: defineTable(accountKeysFields).index("by_accountId", [
+    "accountId",
+  ]),
   agents: defineTable(agentsFields).index("by_accountId_and_name", [
     "accountId",
     "name",
