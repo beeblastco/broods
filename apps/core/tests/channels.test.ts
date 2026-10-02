@@ -5,6 +5,7 @@ import {
   channelAttachmentBytes,
   chunkChannelText,
   extractText,
+  formatChannelErrorText,
   isAllowedId,
 } from "../src/shared/channels.ts";
 
@@ -64,6 +65,44 @@ describe("channelAttachmentBytes", () => {
       channelAttachmentBytes(image("http://169.254.169.254/latest")),
     ).rejects.toThrow(
       "blocked private or metadata address for 169.254.169.254",
+    );
+  });
+});
+
+describe("formatChannelErrorText", () => {
+  it("names a request over the per-minute token limit and points at /compact", () => {
+    expect(
+      formatChannelErrorText(
+        "Failed after 6 attempts. Last error: AI_APICallError: Request too large for gpt-6-luna in organization org-Pw28 on tokens per min (TPM): Limit 200000, Requested 204097. The input or output tokens must be reduced in order to run successfully. Visit https://platform.openai.com/account/rate-limits to learn more.",
+      ),
+    ).toBe(
+      "⚠️ Request too large for gpt-6-luna on tokens per min (TPM): Limit 200000, Requested 204097. The input or output tokens must be reduced in order to run successfully. Send /compact to shorten the conversation, or /new to start over.",
+    );
+  });
+
+  it("keeps the provider's limit numbers and wait time on a rate limit", () => {
+    expect(
+      formatChannelErrorText(
+        "Rate limit reached for gpt-6-luna in organization org-Pw28 on tokens per min (TPM): Limit 200000, Used 141119, Requested 184355. Please try again in 37.642s. Visit https://platform.openai.com/account/rate-limits to learn more.",
+      ),
+    ).toBe(
+      "⚠️ Rate limit reached for gpt-6-luna on tokens per min (TPM): Limit 200000, Used 141119, Requested 184355. Please try again in 37.642s.",
+    );
+  });
+
+  it("keeps the provider's reason and code on a usage limit", () => {
+    expect(
+      formatChannelErrorText(
+        "Failed after 3 attempts. Last error: Token Plan usage limit reached (2056)",
+      ),
+    ).toBe(
+      "⚠️ Token Plan usage limit reached (2056). Add credits or upgrade the plan with the model provider.",
+    );
+  });
+
+  it("adds a retry hint to a bare rate limit", () => {
+    expect(formatChannelErrorText("Rate limited (429)")).toBe(
+      "⚠️ Rate limited (429). Try again in a moment.",
     );
   });
 });

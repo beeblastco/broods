@@ -433,27 +433,52 @@ export function reachSet(ids: string[] | undefined): Set<string> | null {
   return ids ? new Set(ids) : null;
 }
 
-// Provider/runtime errors reach the chat raw and ugly ("Failed after 3 attempts.
-// Last error: Token Plan usage limit reached … (2056)"). Strip the retry wrapper
-// and map the common conditions to one short, actionable line; otherwise pass the
-// cleaned message through so unexpected errors are still legible.
+// Provider/runtime errors reach the chat wrapped ("Failed after 6 attempts. Last
+// error: AI_APICallError: Request too large for gpt-6-luna in organization …").
+// Keep the provider's own reason so the chat says what actually failed, drop the
+// wrappers, org ids and docs links, and add the one step that fixes it.
 function simplifyErrorText(raw: string): string {
-  const afterRetry = raw.match(/Last error:\s*(.+)$/is);
-  let message = (afterRetry?.[1] ?? raw).trim();
+  const message = (raw.match(/Last error:\s*(.+)$/is)?.[1] ?? raw)
+    .replace(/^AI_\w+:\s*/, "")
+    .replace(/\s+in organization \S+/i, "")
+    .replace(/\s*Visit https?:\/\/\S+[^.]*\.?/gi, "")
+    .trim();
+  if (!message) {
+    return "Something went wrong while generating a reply. Try again.";
+  }
   if (
-    /usage limit|quota|insufficient.*credit|purchase credits|upgrade your (token )?plan/i.test(
+    /request too large|context (length|window)|prompt is too long/i.test(
       message,
     )
   ) {
-    return "Usage limit reached. Add credits or upgrade your plan, then try again.";
+    return withHint(
+      message,
+      "Send /compact to shorten the conversation, or /new to start over.",
+    );
   }
-  if (/rate.?limit|\b429\b|too many requests/i.test(message)) {
-    return "The model is busy right now. Try again in a moment.";
+  if (
+    /usage limit|quota|insufficient.*credit|credit balance|purchase credits|upgrade your (token )?plan/i.test(
+      message,
+    )
+  ) {
+    return withHint(
+      message,
+      "Add credits or upgrade the plan with the model provider.",
+    );
+  }
+  if (/try again in/i.test(message)) {
+    return message;
+  }
+  if (/rate.?limit|\b429\b|too many requests|overloaded/i.test(message)) {
+    return withHint(message, "Try again in a moment.");
   }
   if (/timed? ?out|etimedout|econnreset|network/i.test(message)) {
-    return "The request timed out. Try again.";
+    return withHint(message, "Try again.");
   }
-  message = message.replace(/\s*\(\d{3,}\)\s*$/, "").trim(); // drop trailing provider codes like (2056)
 
-  return message || "Something went wrong while generating a reply. Try again.";
+  return message;
+}
+
+function withHint(message: string, hint: string): string {
+  return `${message.replace(/[\s.]+$/, "")}. ${hint}`;
 }
