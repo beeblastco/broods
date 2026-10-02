@@ -8,8 +8,11 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { ACCOUNT_SECRET_PREFIX, sha256Hex } from "../../model/accountSecrets";
-import { DEPLOYMENT_KEY_PREFIX } from "../../agent/deployments";
+import {
+  ACCOUNT_SECRET_PREFIX,
+  DEPLOYMENT_KEY_PREFIX,
+  sha256Hex,
+} from "../../model/accountSecrets";
 import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import {
   auditDetailsJson,

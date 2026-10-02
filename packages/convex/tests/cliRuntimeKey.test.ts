@@ -142,13 +142,14 @@ describe("stage runtime key wire", () => {
       apiKeyHash: await sha256Hex(deployment!.apiKey),
     });
 
-    expect(scope).toEqual({
+    expect(scope).toMatchObject({
       accountId: seeded.accountId,
       projectId: seeded.projectId,
       stageId: seeded.stageId,
       endpointId: `stage-${seeded.stageId.slice(-8)}`,
       projectSlug: "demo-app",
       stageSlug: "production",
+      account: { _id: seeded.accountId, status: "active" },
     });
   });
 

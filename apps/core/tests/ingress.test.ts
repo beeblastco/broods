@@ -226,7 +226,6 @@ describe("async turn without model input", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
     spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [{ role: "assistant", content: "already answered" }],
       system: [],
@@ -260,7 +259,6 @@ describe("async turn without model input", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     spyOn(ingress, "settleIngress").mockRejectedValue(new Error("convex down"));
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
     spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [],
       system: [],
@@ -519,7 +517,6 @@ describe("async turn that throws after it settles", (): void => {
     }) as never);
     spyOn(runtime, "query").mockResolvedValue(null as never);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
-    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
     spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [{ role: "user", content: "hello" }],
       system: [],
@@ -564,7 +561,7 @@ describe("channel senders", (): void => {
     contributingEventIds: ["event-2"],
     ownerGeneration: 2,
   };
-  const originalAppend = Session.prototype.appendIngressEvents;
+  const originalCreate = Session.prototype.createTurnContext;
   let senders: unknown[];
 
   beforeEach((): void => {
@@ -572,7 +569,7 @@ describe("channel senders", (): void => {
     runtime.query = (async (name: string): Promise<[] | null> =>
       name === "listPendingAsyncToolResults" ? [] : null) as never;
     // Ends each turn before the model runs; only the session's sender matters.
-    Session.prototype.appendIngressEvents = async function (
+    Session.prototype.createTurnContext = async function (
       this: Session,
     ): Promise<never> {
       senders.push(
@@ -583,7 +580,7 @@ describe("channel senders", (): void => {
   });
 
   afterEach((): void => {
-    Session.prototype.appendIngressEvents = originalAppend;
+    Session.prototype.createTurnContext = originalCreate;
   });
 
   function aliceMessage(): ChannelInboundEvent {
@@ -806,7 +803,7 @@ describe("channel commands", (): void => {
   }
 
   it("compacts right away on an idle conversation and never stores the command", async (): Promise<void> => {
-    const settles: Record<string, unknown>[] = [];
+    const settles: unknown[] = [];
     runtime.mutate = (async (
       name: string,
       args: Record<string, unknown>,
@@ -814,11 +811,11 @@ describe("channel commands", (): void => {
       if (name === "acceptIngress") {
         return { outcome: "owner", ownerGeneration: 1 };
       }
-      if (name === "settleIngress") settles.push(args);
+      if (name === "takeNextIngress") settles.push(args.settle);
 
       return null;
     }) as never;
-    const append = spyOn(Session.prototype, "appendIngressEvents");
+    const turn = spyOn(Session.prototype, "createTurnContext");
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
@@ -829,17 +826,17 @@ describe("channel commands", (): void => {
       await handleChannelRequest(compactMessage(replies));
       await drainInProcessWorkers();
     } finally {
-      append.mockRestore();
+      turn.mockRestore();
       compact.mockRestore();
     }
 
-    expect(append).not.toHaveBeenCalled();
+    expect(turn).not.toHaveBeenCalled();
     expect(replies).toEqual(["Context compacted. 7 message(s) summarized."]);
     expect(settles[0]).toMatchObject({ status: "completed" });
   });
 
   it("says a failed compaction failed and settles the run as failed", async (): Promise<void> => {
-    const settles: Record<string, unknown>[] = [];
+    const settles: unknown[] = [];
     runtime.mutate = (async (
       name: string,
       args: Record<string, unknown>,
@@ -847,7 +844,7 @@ describe("channel commands", (): void => {
       if (name === "acceptIngress") {
         return { outcome: "owner", ownerGeneration: 1 };
       }
-      if (name === "settleIngress") settles.push(args);
+      if (name === "takeNextIngress") settles.push(args.settle);
 
       return null;
     }) as never;
@@ -1033,7 +1030,7 @@ describe("queued /compact on an async run", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     const takeNext = spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    const append = spyOn(Session.prototype, "appendIngressEvents");
+    const turn = spyOn(Session.prototype, "createTurnContext");
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
@@ -1042,7 +1039,7 @@ describe("queued /compact on an async run", (): void => {
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
     expect(compact).toHaveBeenCalledWith("keep the deploy");
-    expect(append).not.toHaveBeenCalled();
+    expect(turn).not.toHaveBeenCalled();
     expect(settle.mock.calls[0]?.[0]).toMatchObject({
       status: "completed",
       result: "Context compacted. 5 message(s) summarized.",
@@ -1080,11 +1077,10 @@ describe("queued /compact on an async run", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    const append = spyOn(
+    const turn = spyOn(
       Session.prototype,
-      "appendIngressEvents",
-    ).mockResolvedValue([]);
-    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      "createTurnContext",
+    ).mockResolvedValue({
       messages: [],
       system: [],
       ephemeralSystem: [],
@@ -1100,7 +1096,7 @@ describe("queued /compact on an async run", (): void => {
     }).catch((): null => null);
 
     expect(compact).not.toHaveBeenCalled();
-    expect(append).toHaveBeenCalledTimes(1);
+    expect(turn).toHaveBeenCalledTimes(1);
   });
 });
 

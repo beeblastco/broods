@@ -29,7 +29,8 @@ import {
   insertConfigAuditEvent,
   type ConfigAuditActor,
 } from "../model/auditEvents";
-import { sha256Hex } from "../model/accountSecrets";
+import { accountDoc } from "../account/accounts";
+import { DEPLOYMENT_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
@@ -37,8 +38,6 @@ import {
   sealStageSessionTicket,
   STAGE_SESSION_TICKET_TTL_MS,
 } from "../model/stageSessionTicket";
-
-export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 
 /** A minted stage ticket plus the slugs the gateway's observability path uses. */
 export const stageSessionValidator = v.object({
@@ -181,7 +180,11 @@ export const getByAgentId = internalQuery({
 /** Resolve a runtime API key hash to the account and scope it invokes. */
 export const getByApiKeyHash = internalQuery({
   args: { apiKeyHash: v.string() },
-  returns: v.union(agentDeploymentScopeValidator, v.null()),
+  // The account rides along so core authenticates a runtime key in one call.
+  returns: v.union(
+    v.object({ ...agentDeploymentScopeValidator.fields, account: accountDoc }),
+    v.null(),
+  ),
   handler: async (ctx, { apiKeyHash }) => {
     const deployment = await ctx.db
       .query("agentDeployments")
@@ -199,6 +202,7 @@ export const getByApiKeyHash = internalQuery({
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
       stageSlug: deployment.stageSlug,
+      account: account,
     };
   },
 });

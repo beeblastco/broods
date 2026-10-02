@@ -1,12 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  mock,
-  spyOn,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
@@ -17,7 +9,6 @@ import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
-import * as otel from "../src/shared/otel.ts";
 import {
   setStorageForTests,
   type Storage,
@@ -968,27 +959,22 @@ describe("runAgentLoop", () => {
     expect(writes[0]).toMatchObject({ status: "completed", stepCount: 2 });
   });
 
-  it("settles the usage write before flushing telemetry", async () => {
+  it("closes the stream without waiting for the usage write", async () => {
     const order: string[] = [];
+    const written = Promise.withResolvers<void>();
     const store = usageStorage([]);
     store.taskUsage.record = async function (): Promise<void> {
       await Bun.sleep(30);
       order.push("usage");
+      written.resolve();
     };
     setStorageForTests(store);
-    const flush = spyOn(otel, "forceFlushOtel").mockImplementation(
-      async (): Promise<void> => {
-        order.push("flush");
-      },
-    );
-    try {
-      const stream = await startTwoStepTurn();
-      await stream.consumeStream();
-    } finally {
-      flush.mockRestore();
-    }
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+    order.push("closed");
+    await written.promise;
 
-    expect(order).toEqual(["usage", "flush"]);
+    expect(order).toEqual(["closed", "usage"]);
   });
 
   it("meters the steps an aborted run finished", async () => {

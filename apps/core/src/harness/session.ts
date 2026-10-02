@@ -391,29 +391,8 @@ export class Session {
   async appendIngressEvents(
     events: ConversationIngressEvent[],
   ): Promise<SystemModelMessage[]> {
-    const ephemeralSystem: SystemModelMessage[] = [];
-    const persistedMessages: ModelMessage[] = [];
-
-    for (const event of events) {
-      if (event.role === "system") {
-        const message = systemModelMessageSchema.parse(event);
-
-        if (event.persist === false) {
-          // Direct API system injections are one-turn instructions. They are
-          // returned to the caller and included in the current turn's system
-          // prompt, but never written to Convex.
-          ephemeralSystem.push(message);
-          continue;
-        }
-
-        persistedMessages.push(message);
-        continue;
-      }
-
-      persistedMessages.push(event);
-    }
-
-    await this.persistModelMessages(persistedMessages);
+    const { ephemeralSystem, persisted } = splitIngressEvents(events);
+    await this.persistModelMessages(persisted);
 
     return ephemeralSystem;
   }
@@ -500,52 +479,8 @@ export class Session {
   }
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
-    if (!this.persist) return [];
-    const producer: MessageProducer = {
-      model: modelIdentityFromModelConfig(this.agentConfig),
-      retainsReasoning: retainsReasoningParts(this.agentConfig),
-    };
-    const events = messages.flatMap(
-      (message): { cursor: string; event: StoredConversationEvent }[] => {
-        const event = createStoredEventFromModelMessage(
-          message,
-          this.eventId,
-          producer,
-        );
-
-        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
-      },
-    );
-    if (events.length === 0) return [];
-
-    // A step fits one mutation, but a harness run hands over its whole history
-    // at once and that can pass what Convex accepts in a single call.
-    let batch: typeof events = [];
-    let batchBytes = 0;
-    for (const entry of events) {
-      const entryBytes = Buffer.byteLength(JSON.stringify(entry));
-      if (
-        batch.length > 0 &&
-        (batchBytes + entryBytes > APPEND_EVENT_BYTES ||
-          batch.length >= APPEND_EVENT_COUNT)
-      ) {
-        await this.appendConversationEvents(batch);
-        batch = [];
-        batchBytes = 0;
-      }
-      batch.push(entry);
-      batchBytes += entryBytes;
-    }
-    await this.appendConversationEvents(batch);
-    const systemCursor = events.findLast(
-      (entry): boolean => entry.event.message.role === "system",
-    )?.cursor;
-    if (
-      systemCursor !== undefined &&
-      (this.lastSystemCursor === null || systemCursor > this.lastSystemCursor)
-    ) {
-      this.lastSystemCursor = systemCursor;
-    }
+    const events = this.storedEvents(messages);
+    await this.appendStoredEvents(events);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -620,10 +555,19 @@ export class Session {
     };
   }
 
+  /**
+   * Builds the turn's context. `ingress` is the turn's own input: its write
+   * overlaps the history read, and the appended rows are merged into the
+   * history by cursor, so the result is the same whichever lands first.
+   */
   async createTurnContext(
-    ephemeralSystem: SystemModelMessage[] = [],
+    extraEphemeralSystem: SystemModelMessage[] = [],
+    ingress: ConversationIngressEvent[] = [],
   ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
+    const input = splitIngressEvents(ingress);
+    const ephemeralSystem = [...input.ephemeralSystem, ...extraEphemeralSystem];
+    const appended = this.storedEvents(input.persisted);
     const phases: ContextPreparePhases = {
       historyMs: 0,
       historyRows: 0,
@@ -636,7 +580,8 @@ export class Session {
     // Every load behind the turn starts at once; buildSystemPromptParts below
     // reads the memoized results.
     const [history] = await Promise.all([
-      this.loadTurnHistory(phases),
+      this.loadTurnHistory(phases, appended),
+      this.appendStoredEvents(appended),
       timePhase(phases, "runtimeMs", () => this.ensureResolvedRuntime()),
       timePhase(phases, "memoryMs", () => this.loadMemoryFiles()),
       timePhase(phases, "skillsMs", () => this.loadSkillMetadata()),
@@ -802,6 +747,41 @@ export class Session {
       conversationKey: this.conversationKey,
       events: events,
     });
+  }
+
+  /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
+  private async appendStoredEvents(
+    events: { cursor: string; event: StoredConversationEvent }[],
+  ): Promise<void> {
+    if (events.length === 0) return;
+    // A step fits one mutation, but a harness run hands over its whole history
+    // at once and that can pass what Convex accepts in a single call.
+    let batch: typeof events = [];
+    let batchBytes = 0;
+    for (const entry of events) {
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry));
+      if (
+        batch.length > 0 &&
+        (batchBytes + entryBytes > APPEND_EVENT_BYTES ||
+          batch.length >= APPEND_EVENT_COUNT)
+      ) {
+        await this.appendConversationEvents(batch);
+        batch = [];
+        batchBytes = 0;
+      }
+      batch.push(entry);
+      batchBytes += entryBytes;
+    }
+    await this.appendConversationEvents(batch);
+    const systemCursor = events.findLast(
+      (entry): boolean => entry.event.message.role === "system",
+    )?.cursor;
+    if (
+      systemCursor !== undefined &&
+      (this.lastSystemCursor === null || systemCursor > this.lastSystemCursor)
+    ) {
+      this.lastSystemCursor = systemCursor;
+    }
   }
 
   private async buildSystemPromptParts(
@@ -1106,10 +1086,18 @@ export class Session {
   // same messages, and none of them should have to know how it got there.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
+    appended: { cursor: string; event: StoredConversationEvent }[] = [],
   ): Promise<TurnHistory> {
     const entries = await timePhase(phases, "historyMs", () =>
       this.loadConversationEntries(),
     );
+    // The run holds the lease, so its own appended rows are the newest ones.
+    const read = new Set(entries.map((entry): string => entry.createdAt));
+    for (const row of appended) {
+      if (!read.has(row.cursor)) {
+        entries.push({ createdAt: row.cursor, event: row.event });
+      }
+    }
     phases.historyRows = entries.length;
     const messages = await timePhase(phases, "mediaMs", () =>
       rehydrateStoredMedia(
@@ -1129,6 +1117,29 @@ export class Session {
     this.messageSequence += 1;
 
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
+  }
+
+  /** The rows a persisting session writes for these messages, cursors minted here. */
+  private storedEvents(
+    messages: ModelMessage[],
+  ): { cursor: string; event: StoredConversationEvent }[] {
+    if (!this.persist) return [];
+    const producer: MessageProducer = {
+      model: modelIdentityFromModelConfig(this.agentConfig),
+      retainsReasoning: retainsReasoningParts(this.agentConfig),
+    };
+
+    return messages.flatMap(
+      (message): { cursor: string; event: StoredConversationEvent }[] => {
+        const event = createStoredEventFromModelMessage(
+          message,
+          this.eventId,
+          producer,
+        );
+
+        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
+      },
+    );
   }
 }
 
@@ -1721,6 +1732,31 @@ function sanitizeUserMessage(
         content: [{ type: "text", text: ATTACHMENT_NOT_RETAINED }],
       }
     : null;
+}
+
+/** A turn's input split into one-turn system instructions and the messages to store. */
+function splitIngressEvents(events: ConversationIngressEvent[]): {
+  ephemeralSystem: SystemModelMessage[];
+  persisted: ModelMessage[];
+} {
+  const ephemeralSystem: SystemModelMessage[] = [];
+  const persisted: ModelMessage[] = [];
+  for (const event of events) {
+    if (event.role !== "system") {
+      persisted.push(event);
+      continue;
+    }
+    const message = systemModelMessageSchema.parse(event);
+    // Direct API system injections are one-turn instructions. They join the
+    // current turn's system prompt but are never written to Convex.
+    if (event.persist === false) {
+      ephemeralSystem.push(message);
+    } else {
+      persisted.push(message);
+    }
+  }
+
+  return { ephemeralSystem: ephemeralSystem, persisted: persisted };
 }
 
 /**

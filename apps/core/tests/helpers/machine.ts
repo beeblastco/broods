@@ -162,6 +162,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
               endpointId: "endpoint",
               projectSlug: "demo",
               stageSlug: "development",
+              account: account,
             }
           : null,
       touchLastUsed: async (): Promise<void> => {},

@@ -1,14 +1,14 @@
 {
   "convexCalls": {
-    "sse text turn": 12,
-    "sse bash tool turn": 17
+    "sse text turn": 11,
+    "sse bash tool turn": 16
   },
   "timingsP50Ms": {
     "darwin-arm64": {
-      "sse text turn": 98,
-      "sse bash tool turn": 129.3,
-      "async text run": 79.1,
-      "sse text turn, 10 at once": 235.1
+      "sse text turn": 88.2,
+      "sse bash tool turn": 124.7,
+      "async text run": 57.3,
+      "sse text turn, 10 at once": 241.8
     },
     "linux-x64": {
       "sse text turn": 77,

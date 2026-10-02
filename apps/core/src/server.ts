@@ -21,6 +21,7 @@ import {
 import { drainInFlight, waitUntil } from "./shared/in-flight.ts";
 import { resolveRequestId, withRequestId } from "./shared/request-id.ts";
 import { logError, logInfo } from "./shared/log.ts";
+import { flushObservabilityNats } from "./shared/nats.ts";
 import { forceFlushOtel, initOtel } from "./shared/otel.ts";
 
 const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
@@ -258,7 +259,7 @@ if (import.meta.main) {
         interrupted: interrupted,
       });
     }
-    await forceFlushOtel().catch(() => undefined);
+    await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     process.exit(0);
   };
 

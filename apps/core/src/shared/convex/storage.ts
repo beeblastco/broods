@@ -271,9 +271,10 @@ const agentDeployments: Storage["agentDeployments"] = {
       {
         apiKeyHash: apiKeyHash,
       },
-    )) as AgentDeploymentScope | null;
+    )) as (AgentDeploymentScope & { account: ConvexAccountDoc }) | null;
+    const account = accountFromConvex(doc?.account ?? null);
 
-    return doc;
+    return doc && account ? { ...doc, account: account } : null;
   },
   touchLastUsed: async function (apiKeyHash, usedAt) {
     await getConvexClient().mutation(internal.agent.deployments.touchLastUsed, {

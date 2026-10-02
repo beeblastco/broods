@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import {
   hashAccountSecret,
@@ -9,6 +9,7 @@ import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
 import {
+  getStorage,
   resetStorageForTests,
   setStorageForTests,
   type Storage,
@@ -80,6 +81,7 @@ beforeEach(() => {
               endpointId: "env-endpoint",
               projectSlug: "demo",
               stageSlug: "development",
+              account: ACCOUNT,
             }
           : null,
       touchLastUsed: async () => {},
@@ -151,6 +153,21 @@ describe("resolveBearerAuth", () => {
       stageSlug: "development",
     });
     expect(auth).not.toHaveProperty("stageTicket");
+  });
+
+  it("sends each known prefix to its one lookup, an unknown one to both", async () => {
+    const storage = getStorage();
+    const keyLookup = spyOn(storage.agentDeployments, "getByApiKeyHash");
+    const secretLookup = spyOn(storage.accounts, "getBySecretHash");
+
+    await resolveBearerAuth({ authorization: "Bearer fp_acct_known-secret" });
+    await resolveBearerAuth({ authorization: `Bearer ${DEPLOYMENT_API_KEY}` });
+    expect(secretLookup).toHaveBeenCalledTimes(1);
+    expect(keyLookup).toHaveBeenCalledTimes(1);
+
+    await resolveBearerAuth({ authorization: "Bearer legacy-secret" });
+    expect(secretLookup).toHaveBeenCalledTimes(2);
+    expect(keyLookup).toHaveBeenCalledTimes(2);
   });
 
   it("resolves an fp_sts_ role session to role auth", async () => {

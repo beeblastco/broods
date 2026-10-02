@@ -4,6 +4,8 @@
  */
 
 export const ACCOUNT_SECRET_PREFIX = "fp_acct_";
+/** A stage runtime key, minted by `agent/deployments`. */
+export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 
 /**
  * @returns plaintext secret to show once to the caller

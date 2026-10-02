@@ -6,6 +6,7 @@ import {
   logInfo,
   logWarn,
   redact,
+  redactSerialized,
   redactSensitiveText,
 } from "../src/shared/log.ts";
 import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
@@ -202,6 +203,25 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
     );
+  });
+
+  it("never leaks a secret that straddles a truncated attribute's cut", () => {
+    const secret = "s3cr3t-value-long";
+    // One straddles the cut itself; the other straddles the scrubbed window's
+    // end and is pulled under the cut once the secret before it shrinks.
+    const atCut = `${"x".repeat(45)}${secret}${"y".repeat(100)}`;
+    const atWindow = `${secret}${"z".repeat(34)}${secret}${"y".repeat(100)}`;
+
+    for (const text of [atCut, atWindow]) {
+      const attribute = redactSerialized(text, [secret], 50);
+      const whole = redact(text, [secret]) as string;
+
+      expect(attribute).not.toContain(secret.slice(0, 4));
+      expect(attribute).toBe(`${whole.slice(0, 50)}...[truncated]`);
+    }
+    expect(
+      redactSerialized({ note: 'pa"ss-word', apiKey: "k" }, ['pa"ss-word'], 50),
+    ).toBe('{"note":"[redacted]","apiKey":"[redacted]"}');
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {

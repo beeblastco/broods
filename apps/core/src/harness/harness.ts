@@ -48,28 +48,28 @@ import {
 } from "../shared/domain/agent-config.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
+import { waitUntil } from "../shared/in-flight.ts";
 import {
   collectSecretValues,
   logError,
   logInfo,
   logWarn,
-  redact,
+  redactSerialized,
   redactSensitiveText,
 } from "../shared/log.ts";
 import {
   ensureObservabilityStream,
-  flushObservabilityNats,
   getSharedNatsConn,
   tracesSubject,
 } from "../shared/nats.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
-  forceFlushOtel,
   getObservabilityContext,
   getTracer,
   mintSpanId,
   mintTraceId,
   observabilityAttributes,
+  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
@@ -460,26 +460,12 @@ export async function runAgentLoop(
   });
 
   /** Serializes any value for a span attribute, with run secrets redacted and long text truncated. */
-  const traceAttribute = (value: unknown): string => {
-    const safeValue = redact(
+  const traceAttribute = (value: unknown): string =>
+    redactSerialized(
       value,
       getObservabilityContext()?.secretValues ?? [],
+      MAX_TRACE_ATTRIBUTE_CHARS,
     );
-    let serialized: string;
-    try {
-      serialized =
-        safeValue === undefined
-          ? ""
-          : typeof safeValue === "string"
-            ? safeValue
-            : JSON.stringify(safeValue);
-    } catch {
-      serialized = String(safeValue);
-    }
-    if (serialized.length <= MAX_TRACE_ATTRIBUTE_CHARS) return serialized;
-
-    return `${serialized.slice(0, MAX_TRACE_ATTRIBUTE_CHARS)}...[truncated]`;
-  };
 
   // A bash-only agent's machine status is read here; a harness run reads its own
   // once the session holds the machine, below.
@@ -869,8 +855,8 @@ export async function runAgentLoop(
 
   // Finalize-once guard: usage is written exactly once per task and the root OTel
   // span is ended once. Finalization happens after terminal logs/replies so those
-  // records retain tenant/trace context, then explicitly flushes before returning
-  // to avoid losing buffered telemetry during shutdown or suspension.
+  // records retain tenant/trace context. The usage write runs in the background
+  // and shutdown drains it before flushing the exporters.
   let usageFinalized = false;
   let finishObserved = false;
   let persistedResponseCount = 0;
@@ -1066,49 +1052,52 @@ export async function runAgentLoop(
       // Best-effort: never fail the agent path.
     }
 
-    // Live publish via NATS. Awaited below before the flush so the terminal span's
-    // bytes are queued and drained to the durable stream. Otherwise a fresh
-    // dashboard load can keep a stale "running" copy of an already-finished task.
+    // Live publish via NATS, tracked with the usage write so shutdown drains the
+    // terminal span. Otherwise a fresh dashboard load can keep a stale "running"
+    // copy of an already-finished task.
     const rootPublished = publishSpan(rootSpanRow);
-
     try {
-      const usageRecorded = recordTaskUsage({
-        accountId: session.accountId ?? "",
-        endpointId: session.endpointId,
-        agentId: session.agentId ?? "unknown",
-        conversationKey: session.conversationKey,
-        // One row per model pass: a continuation pass shares the eventId.
-        taskId: `${session.eventId}#${traceId}`,
-        modelProvider: configuredModel.providerName ?? "unknown",
-        modelId: agentConfig.model?.modelId ?? "unknown",
-        finishedAt: endTimeMs,
-        durationMs: durationMs,
-        status: status,
-        inputTokens: taskTokens.inputTokens,
-        outputTokens: taskTokens.outputTokens,
-        reasoningTokens: taskTokens.reasoningTokens,
-        cachedInputTokens: taskTokens.cachedInputTokens,
-        cacheWriteTokens: taskCacheWriteTokens,
-        totalTokens: taskTokens.totalTokens,
-        runtimeKind: "container",
-        runtimeWallMs: durationMs,
-        // The pod is shared by every run, so this is its resident size when the
-        // run ended, not memory the run owned.
-        runtimeMemoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
-        sandboxUsage: [...sandboxUsageByKey.values()],
-        stepCount: stepCount,
-        toolCallCount: toolCallCount,
-        inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
-      });
-      // Wait for the usage write and the terminal span's publish, then flush
-      // the OTLP exporters (Tempo/Loki) AND the live NATS connection so the
-      // durable OBSERVABILITY stream captures every span/log, a failed usage
-      // write's included, before the container freezes.
-      await Promise.allSettled([usageRecorded, rootPublished]);
-      await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
+      // Off the turn's tail: the stream closes, takeNext and the channel reply
+      // go out without waiting. Its own scope keeps this run's context, so a
+      // failed write still logs with the tenant scope. Shutdown drains it.
+      const usageRecorded = runWithObservabilityScope(
+        () =>
+          recordTaskUsage({
+            accountId: session.accountId ?? "",
+            endpointId: session.endpointId,
+            agentId: session.agentId ?? "unknown",
+            conversationKey: session.conversationKey,
+            // One row per model pass: a continuation pass shares the eventId.
+            taskId: `${session.eventId}#${traceId}`,
+            modelProvider: configuredModel.providerName ?? "unknown",
+            modelId: agentConfig.model?.modelId ?? "unknown",
+            finishedAt: endTimeMs,
+            durationMs: durationMs,
+            status: status,
+            inputTokens: taskTokens.inputTokens,
+            outputTokens: taskTokens.outputTokens,
+            reasoningTokens: taskTokens.reasoningTokens,
+            cachedInputTokens: taskTokens.cachedInputTokens,
+            cacheWriteTokens: taskCacheWriteTokens,
+            totalTokens: taskTokens.totalTokens,
+            runtimeKind: "container",
+            runtimeWallMs: durationMs,
+            // The pod is shared by every run, so this is its resident size when the
+            // run ended, not memory the run owned.
+            runtimeMemoryMb: Math.round(
+              process.memoryUsage().rss / 1024 / 1024,
+            ),
+            sandboxUsage: [...sandboxUsageByKey.values()],
+            stepCount: stepCount,
+            toolCallCount: toolCallCount,
+            inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
+          }),
+        context,
+      );
+      waitUntil(Promise.allSettled([usageRecorded, rootPublished]));
     } finally {
       // The container process is reused, so never retain one task's tenant,
-      // trace, or secret values after its exporters have flushed.
+      // trace, or secret values past the run.
       setObservabilityContext(parentObservabilityContext);
     }
   };
@@ -2691,7 +2680,7 @@ function rootSpanStatus(
 
 /**
  * Publishes a span row to the dashboard's live trace stream over NATS. Best-effort:
- * the terminal span awaits it before the flush, other callers ignore it.
+ * the terminal span is tracked for shutdown, other callers ignore it.
  */
 function publishSpan(row: ObservabilitySpanRow): Promise<void> {
   const connPromise = getSharedNatsConn();

@@ -1688,23 +1688,26 @@ async function runChannelTurns(
 
   try {
     for (;;) {
-      // A thrown turn must still settle its envelope terminally before the
-      // queue drains on; otherwise accepted work is stranded in processing.
+      // The turn's outcome, settled in the same mutation that takes the next
+      // message. A thrown turn still settles failed; otherwise accepted work
+      // is stranded in processing.
+      let settlement: IngressSettlement | undefined;
       try {
         const command = queuedCommand(incoming, event.channelName);
         if (command) {
-          const { status, ...settlement } = outcomeSettlement(
+          settlement = outcomeSettlement(
             await commandOutcome(session, command),
           );
-          await session.settleIngress(status, settlement);
         } else {
-          const ephemeralSystem = await session.appendIngressEvents(incoming);
-          ephemeralSystem.push(...incomingEphemeral);
-          const turnContext = await session.createTurnContext(ephemeralSystem);
+          const turnContext = await session.createTurnContext(
+            incomingEphemeral,
+            incoming,
+          );
           if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-            await session.settleIngress("failed", {
+            settlement = {
+              status: "failed",
               error: "Request did not produce pending model input",
-            });
+            };
           } else {
             let terminal: "completed" | "failed" | null = null;
             let finalResult: JSONValue | undefined;
@@ -1804,14 +1807,15 @@ async function runChannelTurns(
             if (awaitingInput) {
               // Settled in the hook; the answer resumes the conversation.
             } else if (terminal === "failed") {
-              await session.settleIngress("failed", {
+              settlement = {
+                status: "failed",
                 error: result.failureText ?? AGENT_PROCESSING_FAILED,
-              });
+              };
             } else if (terminal === "completed") {
-              await session.settleIngress(
-                "completed",
-                finalResult !== undefined ? { result: finalResult } : {},
-              );
+              settlement = {
+                status: "completed",
+                ...(finalResult !== undefined ? { result: finalResult } : {}),
+              };
             }
           }
         }
@@ -1821,14 +1825,13 @@ async function runChannelTurns(
           conversationKey: session.conversationKey,
           error: err instanceof Error ? err.message : String(err),
         });
-        await session
-          .settleIngress("failed", {
-            error: err instanceof Error ? err.message : "Channel turn failed",
-          })
-          .catch(() => {});
+        settlement = {
+          status: "failed",
+          error: err instanceof Error ? err.message : "Channel turn failed",
+        };
       }
 
-      const next = await session.takeNextIngress();
+      const next = await session.takeNextIngress(settlement);
       if (!next) {
         await session.releaseConversationLease();
         released = true;
@@ -2004,11 +2007,10 @@ async function prepareDirectTurn(
 ): Promise<DirectTurn | null> {
   const session = directSession(event);
   try {
-    const ephemeralSystem = await session.appendIngressEvents(event.events);
-    if (event.ephemeralSystem) {
-      ephemeralSystem.push(...event.ephemeralSystem);
-    }
-    const turnContext = await session.createTurnContext(ephemeralSystem);
+    const turnContext = await session.createTurnContext(
+      event.ephemeralSystem,
+      event.events,
+    );
 
     return { session: session, turnContext: turnContext };
   } catch (err) {
