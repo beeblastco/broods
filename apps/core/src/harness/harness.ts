@@ -292,9 +292,8 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
 // Every consumer reads through this so a run is finalized, and aborted when
 // the consumer stops early, no matter how the read loop exits. A consumer that
 // drains the stream itself when it gives up passes false: the run has to
-// survive the early exit for that drain to finish it. Raw provider chunks are
-// dropped: the Claude Code harness forwards whole upstream messages as `raw`
-// parts, which the SSE and NATS contract does not carry.
+// survive the early exit for that drain to finish it. `raw` parts never leave
+// this reader; the Claude Code harness forwards whole upstream messages as them.
 export async function* readAgentFullStream(
   stream: Pick<AgentLoopStream, "stream" | "ensureFinalized">,
   abortOnEarlyExit = true,
