@@ -1,7 +1,11 @@
 /** Channel-agnostic bot commands. */
 
 import type { ModelMessage, UserContent } from "ai";
-import { extractText, type ChannelActions } from "./channels.ts";
+import {
+  extractText,
+  supportsInlineCommands,
+  type ChannelActions,
+} from "./channels.ts";
 import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
 
@@ -355,23 +359,6 @@ export function resolveChannelCommand({
   return text
     ? { kind: "rewrite", text: text, requestedMode: requestedMode }
     : { kind: "reply", commandToken: commandToken };
-}
-
-/** Whether a channel reads chat commands at all; others pass `/text` on as is. */
-export function supportsInlineCommands(channelName: string): boolean {
-  return (
-    channelName === "discord" ||
-    channelName === "gchat" ||
-    channelName === "instagram" ||
-    channelName === "matrix" ||
-    channelName === "messenger" ||
-    channelName === "slack" ||
-    channelName === "teams" ||
-    channelName === "telegram" ||
-    channelName === "twilio" ||
-    channelName === "whatsapp" ||
-    channelName === "zalo"
-  );
 }
 
 export function resolveDiscordCommand(

@@ -1187,7 +1187,7 @@ async function handleAsyncWorkerRequest(
                 session!,
                 event,
                 formatChannelFinalText(
-                  formatChannelErrorText(error),
+                  formatChannelErrorText(error, event.replyTarget?.channelName),
                   traceId,
                   event,
                   event.replyTarget?.channelName,
@@ -1642,6 +1642,7 @@ export async function handleChannelRequest(
                   event.channel,
                   formatChannelErrorText(
                     err instanceof Error ? err.message : String(err),
+                    event.channelName,
                   ),
                 ).catch((): void => {});
                 throw err;
@@ -1768,7 +1769,7 @@ async function runChannelTurns(
                     hooks,
                     event.channelName,
                     formatChannelFinalText(
-                      formatChannelErrorText(error),
+                      formatChannelErrorText(error, event.channelName),
                       traceId,
                       event,
                       event.channelName,

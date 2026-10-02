@@ -34,8 +34,9 @@ import {
   extractText,
   formatChannelErrorText,
   reachSet,
+  supportsInlineCommands,
 } from "../shared/channels.ts";
-import { parseCommand, supportsInlineCommands } from "../shared/commands.ts";
+import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
 import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
@@ -1792,7 +1793,7 @@ async function processChannelMessage(
       error: error,
     });
     await event.channel
-      .sendText(formatChannelErrorText(error))
+      .sendText(formatChannelErrorText(error, event.channelName))
       .catch((sendErr) => {
         logError("Failed to send channel error message", {
           channel: event.channelName,
