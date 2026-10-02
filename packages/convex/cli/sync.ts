@@ -953,6 +953,7 @@ export const validateManifestForStage = internalQuery({
       args.manifest.resources,
       envValues,
       externalIds.mcp,
+      args.manifest.stage,
     );
 
     return null;
@@ -988,7 +989,7 @@ export const syncManifestBySecretHash = internalMutation({
       projectDoc._id,
       stageDoc._id,
     );
-    assertEnvRefsResolved(manifest.resources, envValues);
+    assertEnvRefsResolved(manifest.resources, envValues, manifest.stage);
     const workspaceIds = await syncWorkspaceResources(
       ctx,
       account._id,

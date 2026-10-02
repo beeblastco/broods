@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { subscribeObservabilityLogs } from "../src/observability-client.ts";
 import type {
   ObservabilityLogEntry,
@@ -89,6 +89,43 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
 
   controller.abort();
   await stream.return(undefined);
+});
+
+// The tail used to retry a dead gateway forever without a word.
+test("reports each reconnect and gives up after a minute down", async () => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const attempts: string[] = [];
+  const stream = subscribeObservabilityLogs(
+    {
+      baseUrl: "https://app.example",
+      credential: async (): Promise<string> => "secret-key",
+      project: "demo",
+      stage: "development",
+    },
+    {
+      onReconnect: (attempt: number, reason: string): void => {
+        attempts.push(`${attempt}: ${reason}`);
+      },
+    },
+  );
+  const result = stream.next();
+  await Bun.sleep(0);
+  FakeObservabilitySocket.instances[0]!.close(1006, "gateway down");
+  await Bun.sleep(0);
+  expect(attempts).toEqual(["1: Observability WebSocket closed: gateway down"]);
+
+  setSystemTime(new Date(Date.now() + 61_000));
+  try {
+    await Bun.sleep(550);
+    FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
+
+    await expect(result).rejects.toThrow(
+      "Gave up reconnecting to the live logs after 60 s. Last error: Observability WebSocket closed: gateway down",
+    );
+    expect(attempts).toHaveLength(1);
+  } finally {
+    setSystemTime();
+  }
 });
 
 test("requests live-only logs when no backfill is requested", async () => {

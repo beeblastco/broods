@@ -44,6 +44,7 @@ import {
   BroodsSyncClient,
   ManifestConflictError,
   type RemoteManifestResponse,
+  RouteNotMountedError,
 } from "../sync.ts";
 import {
   BroodsClient,
@@ -78,6 +79,7 @@ import {
   formatContext,
   formatNext,
   formatTarget,
+  formatWarning,
   printDeploymentTarget,
   printDiffEntries,
   printEnvSync,
@@ -1278,6 +1280,7 @@ async function streamDevLogs(
       backfill: 0,
       minLevel: minLevel,
       signal: signal,
+      onReconnect: printReconnect,
     })) {
       console.log(formatObservabilityEntry(entry));
     }
@@ -1472,9 +1475,10 @@ async function getOnboardingContextOrFallback(
   try {
     return await client.getOnboarding();
   } catch (error) {
-    if (!auth.org) throw error;
+    // Only an older server falls back; a 401 or a network error is the answer.
+    if (!(error instanceof RouteNotMountedError) || !auth.org) throw error;
     printWarning(
-      "CLI onboarding endpoint is not available yet; using the org from the current login.",
+      "This broods server cannot list your orgs yet; using the org from your login.",
     );
 
     return {
@@ -2200,7 +2204,7 @@ async function syncEnvFromLocal(
   if (unresolved.length > 0) {
     printWarning(
       `${unresolved.length} referenced variable(s) with no value here or on ${target}: ` +
-        `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME>\`.`,
+        `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME> --stage ${manifest.stage}\`.`,
     );
   }
 }
@@ -2303,6 +2307,15 @@ function levelHint(minLevel: LogLevel): string {
   return minLevel === "WARN" ? " (--all for INFO too)" : "";
 }
 
+/** The `onReconnect` of every live tail: stderr, so `logs --json` stays parseable. */
+function printReconnect(attempt: number, reason: string): void {
+  console.error(
+    formatWarning(`Reconnecting to live logs (attempt ${attempt}): ${reason}`, {
+      stream: "stderr",
+    }),
+  );
+}
+
 /**
  * Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`.
  * A sandbox line is raw guest output, so terminal escapes are dropped before
@@ -2338,6 +2351,7 @@ async function streamLogs(args: string[]): Promise<void> {
       backfill: 0,
       minLevel: minLevel,
       signal: controller.signal,
+      onReconnect: printReconnect,
     })) {
       console.log(formatObservabilityEntry(entry));
     }
@@ -2462,6 +2476,7 @@ async function logs(args: string[]): Promise<void> {
       minLevel: minLevel,
       ...(sandboxId ? { sandboxId: sandboxId } : {}),
       signal: controller.signal,
+      onReconnect: printReconnect,
     })) {
       if (jsonMode) {
         console.log(JSON.stringify(entry));

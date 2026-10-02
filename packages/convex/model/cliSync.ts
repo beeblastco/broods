@@ -55,11 +55,13 @@ export function asObject(value: unknown): Record<string, unknown> {
 
 /**
  * Rejects a manifest whose `env("NAME")` has no value stored for the stage,
- * which would otherwise reach the runtime as a literal `${NAME}`.
+ * which would otherwise reach the runtime as a literal `${NAME}`. `stage` names
+ * the stage in the suggested commands.
  */
 export function assertEnvRefsResolved(
   resources: CliResource[],
   envValues: Record<string, string>,
+  stage: string,
 ): void {
   // Reuses the rewrite walker so collection cannot drift from substitution.
   const referenced = new Set<string>();
@@ -70,10 +72,12 @@ export function assertEnvRefsResolved(
     .filter((name) => envValues[name] === undefined)
     .sort();
   if (missing.length === 0) return;
+  // `broods env` defaults to the dev stage, so the commands must name this one.
+  const flag = `--stage ${stage}`;
 
   throw new ClientError(
     `env() references ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
-      "Set each one with `broods env set <NAME>` (or put it in .env.local and run `broods dev`), then sync again.",
+      `Set each one with \`broods env set <NAME> ${flag}\`, or put them in .env.local and run \`broods env sync ${flag}\`, then sync again.`,
   );
 }
 

@@ -268,9 +268,10 @@ export function assertManifestResources(
   resources: CliResource[],
   envValues: Record<string, string>,
   mcpIds: Record<string, string>,
+  stage: string,
 ): void {
   assertSupportedWorkspaceSandboxMounts(resources);
-  assertEnvRefsResolved(resources, envValues);
+  assertEnvRefsResolved(resources, envValues, stage);
   const ids = {
     workspaces: placeholderIds(namesOf(resources, "workspace")),
     sandboxes: placeholderIds(namesOf(resources, "sandbox")),
