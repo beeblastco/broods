@@ -172,6 +172,31 @@ describe("chatgpt provider", () => {
     expect(JSON.parse(sent[0]?.body ?? "{}").stream).toBe(true);
   });
 
+  it("answers a non-streaming call from an incomplete stream", async () => {
+    const incomplete = { ...completed, status: "incomplete" };
+    responseEvents.splice(-1, 1, {
+      type: "response.incomplete",
+      response: incomplete,
+    });
+    const { model } = resolveConfiguredModel(
+      { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
+      ACCOUNT_ID,
+    );
+
+    const result = await generateText({
+      model: model,
+      prompt: "hello",
+    }).finally(() =>
+      responseEvents.splice(-1, 1, {
+        type: "response.completed",
+        response: completed,
+      }),
+    );
+
+    expect(result.text).toBe("hi");
+    expect(sent).toHaveLength(1);
+  });
+
   it("refreshes an expiring token once and saves the rotated pair", async () => {
     stored = credential({ expiresAt: Date.now() + 10_000 });
     const { model } = resolveConfiguredModel(

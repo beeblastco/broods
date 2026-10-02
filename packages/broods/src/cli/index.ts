@@ -661,7 +661,12 @@ async function loginChatGPT(args: string[]): Promise<void> {
         }
       : undefined,
   );
-  await client.connectChatGPT(signIn);
+  const stored = await client.connectChatGPT(signIn);
+  if (!stored.connected) {
+    throw new Error(
+      "The deployment did not store the ChatGPT sign-in: its config plane has no /v1/account/chatgpt yet. Deploy this version, then sign in again.",
+    );
+  }
   printSuccess(
     `Connected ChatGPT${signIn.email ? ` as ${signIn.email}` : ""}. Agents on provider "chatgpt" now use your ChatGPT plan.`,
   );

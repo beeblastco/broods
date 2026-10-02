@@ -15,7 +15,7 @@ const realFetch = globalThis.fetch;
 const realLog = console.log;
 
 let tokenForm: URLSearchParams | undefined;
-let grantedScope: string;
+let grantedScope: string | undefined;
 let idTokenClaims: (nonce: string) => Record<string, unknown>;
 
 beforeEach(() => {
@@ -86,6 +86,14 @@ describe("signInWithChatGPT", () => {
     const error = await runSignIn().catch((caught: unknown) => caught);
 
     expect(String(error)).toContain("failed verification");
+  });
+
+  it("reads an omitted scope as the scopes it asked for", async () => {
+    grantedScope = undefined;
+
+    const { signIn } = await runSignIn();
+
+    expect(signIn.scopes).toContain("chatgpt.tokens.use.direct");
   });
 
   it("refuses a sign-in that did not allow plan usage", async () => {

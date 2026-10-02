@@ -17,6 +17,7 @@ import {
   decryptAgentConfigBlob,
   encryptAgentConfigBlob,
 } from "../model/agentConfigCodec";
+import { configEncryptionSecret } from "../config/routes/shared";
 import { providerCredentialsFields } from "../schema";
 
 const providerValidator = providerCredentialsFields.provider;
@@ -37,8 +38,10 @@ const tokenFields = {
   accessToken: v.string(),
   refreshToken: v.string(),
 };
+const credentialValidator = v.object({ ...statusFields, ...tokenFields });
 
 export type ProviderCredentialStatus = Infer<typeof statusValidator>;
+export type StoredProviderCredential = Infer<typeof credentialValidator>;
 
 /** What the sign-in holds, never its tokens. Null when the account has none. */
 export const status = internalQuery({
@@ -54,13 +57,13 @@ export const status = internalQuery({
 /** The decrypted sign-in, for core's model calls and for revocation. */
 export const load = internalQuery({
   args: { accountId: v.id("accounts"), provider: providerValidator },
-  returns: v.union(v.null(), v.object({ ...statusFields, ...tokenFields })),
-  handler: async (ctx, args) => {
+  returns: v.union(v.null(), credentialValidator),
+  handler: async (ctx, args): Promise<StoredProviderCredential | null> => {
     const row = await findRow(ctx, args.accountId, args.provider);
     if (!row) return null;
     const tokens = await decryptAgentConfigBlob(
       { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
-      encryptionSecret(),
+      configEncryptionSecret(),
     );
     if (
       typeof tokens?.accessToken !== "string" ||
@@ -136,20 +139,13 @@ export const saveRefreshed = internalMutation({
   },
 });
 
-/**
- * Forget the sign-in logout loaded. False when there was none, or when a new
- * sign-in replaced it since, so a slow logout never deletes the newer one.
- */
+/** Forget the sign-in. False when there was none. */
 export const remove = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    provider: providerValidator,
-    loadedUpdatedAt: v.number(),
-  },
+  args: { accountId: v.id("accounts"), provider: providerValidator },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
     const row = await findRow(ctx, args.accountId, args.provider);
-    if (!row || row.updatedAt !== args.loadedUpdatedAt) return false;
+    if (!row) return false;
     await ctx.db.delete(row._id);
 
     return true;
@@ -186,13 +182,6 @@ async function encryptTokens(
 ): Promise<{ ciphertext: string; iv: string; tag: string }> {
   return await encryptAgentConfigBlob(
     { accessToken: accessToken, refreshToken: refreshToken },
-    encryptionSecret(),
+    configEncryptionSecret(),
   );
-}
-
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");
-
-  return secret;
 }

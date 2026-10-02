@@ -610,9 +610,9 @@ mock.module("ai", () => ({
   streamText: streamTextMock,
 }));
 
-afterAll(() => {
-  mock.module("ai", () => realAi);
-  mock.module("@ai-sdk/openai", () => realOpenAI);
+afterAll(async () => {
+  await mock.module("ai", () => realAi);
+  await mock.module("@ai-sdk/openai", () => realOpenAI);
 });
 
 beforeEach(() => {

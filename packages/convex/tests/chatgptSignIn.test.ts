@@ -2,8 +2,7 @@
 /**
  * `/v1/account/chatgpt`: a sign-in is stored encrypted and read back without
  * its tokens, only a grant that allows plan usage is accepted, the managed
- * service refuses it, and neither core's refresh nor a logout touches a newer
- * sign-in.
+ * service refuses it, and core's refresh never overwrites a newer sign-in.
  */
 
 import { convexTest } from "convex-test";
@@ -120,28 +119,6 @@ test("a refresh never overwrites a newer sign-in", async () => {
   );
 
   expect(saved).toBe(false);
-  expect(
-    (await t.query(internal.account.providerCredentials.load, ref))
-      ?.accessToken,
-  ).toBe("access-new");
-});
-
-test("a logout never removes a newer sign-in", async () => {
-  const t = signInTest();
-  const accountId = await seedAccount(t);
-  await request(t, "PUT", signIn);
-  const ref = { accountId: accountId, provider: "chatgpt" as const };
-  const loaded = await t.query(internal.account.providerCredentials.load, ref);
-
-  vi.useFakeTimers({ now: loaded!.updatedAt + 1000 });
-  await request(t, "PUT", { ...signIn, accessToken: "access-new" });
-  vi.useRealTimers();
-  const removed = await t.mutation(
-    internal.account.providerCredentials.remove,
-    { ...ref, loadedUpdatedAt: loaded!.updatedAt },
-  );
-
-  expect(removed).toBe(false);
   expect(
     (await t.query(internal.account.providerCredentials.load, ref))
       ?.accessToken,

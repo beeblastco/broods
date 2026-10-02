@@ -254,7 +254,7 @@ function parseTokenResponse(text: string): TokenResponse {
 
 /**
  * Reads a Responses event stream to its end and answers what the
- * non-streaming endpoint would have: the completed response object, or the
+ * non-streaming endpoint would have: the completed (or incomplete) response, or the
  * failure as a 400 the SDK reports with OpenAI's own message.
  */
 async function completedResponse(response: Response): Promise<Response> {
@@ -268,7 +268,11 @@ async function completedResponse(response: Response): Promise<Response> {
       response?: { error?: unknown };
       error?: unknown;
     };
-    if (event.type === "response.completed") {
+    // An incomplete response is still an answer; the SDK reads its status.
+    if (
+      event.type === "response.completed" ||
+      event.type === "response.incomplete"
+    ) {
       return Response.json(event.response);
     }
     if (event.type === "response.failed" || event.type === "error") {

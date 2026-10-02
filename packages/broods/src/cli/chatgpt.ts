@@ -55,6 +55,12 @@ interface TokenResponse {
   error_description?: string;
 }
 
+/** A successful code exchange: both tokens are present. */
+interface IssuedTokens extends TokenResponse {
+  access_token: string;
+  refresh_token: string;
+}
+
 interface IdTokenClaims {
   iss?: string;
   aud?: string | string[];
@@ -124,7 +130,8 @@ export async function signInWithChatGPT(
       callback.clientId,
       nonce,
     );
-    const scopes = token.scope?.split(" ") ?? [];
+    // No scope in the response means the requested scope was granted (RFC 6749 5.1).
+    const scopes = token.scope?.split(" ") ?? [...CHATGPT_SCOPES];
     if (!scopes.includes(CHATGPT_DIRECT_SCOPE)) {
       throw new Error(
         "Signed in, but ChatGPT plan usage was not allowed. Run `broods login chatgpt` again and allow it, or check that your plan is eligible (ChatGPT Plus or Pro).",
@@ -139,8 +146,8 @@ export async function signInWithChatGPT(
       expiresAt: new Date(
         Date.now() + (token.expires_in ?? 3600) * 1000,
       ).toISOString(),
-      accessToken: token.access_token!,
-      refreshToken: token.refresh_token!,
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
     };
   } finally {
     close();
@@ -200,7 +207,7 @@ async function exchangeCode(
   callback: AuthorizationCallback,
   verifier: string,
   redirectUri: string,
-): Promise<TokenResponse> {
+): Promise<IssuedTokens> {
   const response = await fetch(CHATGPT_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -220,7 +227,11 @@ async function exchangeCode(
     );
   }
 
-  return token;
+  return {
+    ...token,
+    access_token: token.access_token,
+    refresh_token: token.refresh_token,
+  };
 }
 
 /**

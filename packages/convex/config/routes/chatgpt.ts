@@ -89,11 +89,7 @@ export async function handleChatGPTRoute(
     );
     if (!credential) return json({ deleted: false });
     await revoke(credential.clientId, credential.refreshToken);
-    const deleted = await ctx.runMutation(
-      internal.account.providerCredentials.remove,
-      { ...ref, loadedUpdatedAt: credential.updatedAt },
-    );
-    if (!deleted) return json({ deleted: false });
+    await ctx.runMutation(internal.account.providerCredentials.remove, ref);
     await writeAudit(ctx, {
       accountId: accountId,
       actor: actor,
