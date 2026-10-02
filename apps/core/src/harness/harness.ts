@@ -292,9 +292,10 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
 // Every consumer reads through this so a run is finalized, and aborted when
 // the consumer stops early, no matter how the read loop exits. A consumer that
 // drains the stream itself when it gives up passes false: the run has to
-// survive the early exit for that drain to finish it.
+// survive the early exit for that drain to finish it. `raw` parts never leave
+// this reader; the Claude Code harness forwards whole upstream messages as them.
 export async function* readAgentFullStream(
-  stream: AgentLoopStream,
+  stream: Pick<AgentLoopStream, "stream" | "ensureFinalized">,
   abortOnEarlyExit = true,
 ): AsyncIterable<unknown> {
   const reader = stream.stream.getReader();
@@ -306,6 +307,7 @@ export async function* readAgentFullStream(
         drained = true;
         break;
       }
+      if (value.type === "raw") continue;
       yield value;
     }
   } finally {
