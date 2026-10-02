@@ -221,7 +221,7 @@ describe("reconcile", () => {
     globalThis.fetch = (async (
       input: string | URL | Request,
     ): Promise<Response> => {
-      const url = String(input);
+      const url = input instanceof Request ? input.url : input.toString();
       // Matched on the parsed host, not a prefix: `startsWith` would also accept
       // `https://discord.com.example.test`, which is the substring-sanitisation
       // shape worth never writing, test or not.
@@ -309,7 +309,7 @@ function delivering(): {
   globalThis.fetch = (async (
     input: string | URL | Request,
   ): Promise<Response> => {
-    const url = String(input);
+    const url = input instanceof Request ? input.url : input.toString();
     if (new URL(url).hostname === "discord.com") {
       lookups.push(url);
 

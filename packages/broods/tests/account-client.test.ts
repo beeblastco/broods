@@ -22,7 +22,7 @@ function mockClient(responses: Array<{ status: number; body: unknown }>): {
     accountSecret: "secret-1",
     fetch: async (input, init) => {
       calls.push({
-        url: String(input),
+        url: requestUrl(input),
         method: init?.method ?? "GET",
         headers: (init?.headers ?? {}) as Record<string, string>,
         ...(typeof init?.body === "string" ? { body: init.body } : {}),
@@ -34,6 +34,11 @@ function mockClient(responses: Array<{ status: number; body: unknown }>): {
   });
 
   return { client: client, calls: calls };
+}
+
+/** Extracts a URL string from a fetch input without default object stringification. */
+function requestUrl(input: RequestInfo | URL): string {
+  return input instanceof Request ? input.url : input.toString();
 }
 
 test("sends bearer auth and strips the trailing slash from baseUrl", async () => {
@@ -329,7 +334,7 @@ test("a sessionToken is accepted as the bearer instead of the account secret", a
     sessionToken: "fp_sts_session-1",
     fetch: async (input, init) => {
       calls.push({
-        url: String(input),
+        url: requestUrl(input),
         method: init?.method ?? "GET",
         headers: (init?.headers ?? {}) as Record<string, string>,
       });

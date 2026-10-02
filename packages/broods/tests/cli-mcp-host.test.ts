@@ -12,7 +12,7 @@ const servers: Bun.Server<undefined>[] = [];
 
 afterEach(async () => {
   for (const host of hosts.splice(0)) await host.stop();
-  for (const server of servers.splice(0)) server.stop(true);
+  for (const server of servers.splice(0)) await server.stop(true);
 });
 
 test("the host reads a .mcp.json, spawns the server on first use, lists and calls", async () => {
@@ -26,9 +26,7 @@ test("the host reads a .mcp.json, spawns the server on first use, lists and call
   expect(
     (await host.callTool("echo", "echo", { text: "pong" })).content,
   ).toEqual([{ type: "text", text: "echo: pong" }]);
-  await expect(host.listTools("nope")).rejects.toThrow(
-    'no MCP server named "nope"',
-  );
+  expect(host.listTools("nope")).rejects.toThrow('no MCP server named "nope"');
 });
 
 test("a bad file fails before any server runs", () => {
@@ -62,7 +60,7 @@ test("a daemon started with --mcp advertises its servers and answers both frames
   });
   servers.push(core.server);
 
-  await expect(
+  expect(
     runMachineDaemon({
       credential: async (): Promise<string> => "key",
       baseUrl: core.url,

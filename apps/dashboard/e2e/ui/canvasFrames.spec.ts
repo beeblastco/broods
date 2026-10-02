@@ -277,7 +277,10 @@ test("mount, inherited and runs-on edges end on the two resources they join, wit
             Math.abs(point.x - (box.x + box.width)) <= HANDLE_SLACK),
       ),
     );
-    expect([...boxAt].sort(), `${id} ends`).toEqual([0, 1]);
+    expect(
+      [...boxAt].sort((a, b) => a - b),
+      `${id} ends`,
+    ).toEqual([0, 1]);
   }
 });
 

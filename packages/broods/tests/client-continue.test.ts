@@ -15,7 +15,10 @@ function mockClient(
     baseUrl: "https://gateway.example.com",
     apiKey: "key-1",
     fetch: async (input, init): Promise<Response> => {
-      calls.push({ url: String(input), body: String(init?.body) });
+      calls.push({
+        url: input instanceof Request ? input.url : input.toString(),
+        body: typeof init?.body === "string" ? init.body : "",
+      });
 
       return new Response(JSON.stringify(payload), { status: status });
     },
@@ -69,7 +72,7 @@ test("continue surfaces a non-202 answer as an error", async () => {
     error: { message: "Conversation not found" },
   });
 
-  await expect(
+  expect(
     client.continue({ agentId: "agent_1", conversationKey: "chat_1" }),
   ).rejects.toThrow("Continue failed: 404");
 });
