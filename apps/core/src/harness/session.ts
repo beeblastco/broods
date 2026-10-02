@@ -45,7 +45,6 @@ import {
   rehydrateStoredMedia,
 } from "./channel-media.ts";
 import {
-  compactSessionContext,
   isCompactionSummaryMessage,
   summarizeConversation,
 } from "./compaction.ts";
@@ -120,14 +119,10 @@ export interface TurnContextSnapshot {
 }
 
 export interface TurnContextTimings {
-  // createTurnContext up to where compaction starts, or to the end when no
-  // summary is written: load, project, system prompt, prune.
+  // The whole of createTurnContext: load, project, system prompt, prune.
   prepareStartedMs: number;
   prepareEndedMs: number;
   phases: ContextPreparePhases;
-  // Present only when compaction actually produced a summary this turn. Starts
-  // where prepare ends and covers the summary call, its write and the rebuild.
-  compaction?: { startedMs: number; endedMs: number };
 }
 
 // Each prepare load's own wall time. The loads overlap, so these do not add up
@@ -574,11 +569,9 @@ export class Session {
   }
 
   /**
-   * Compacts the stored conversation now, regardless of the agent's compaction
-   * config or context size. Serves the /compact channel command; the caller
-   * holds the fenced clear lease, so no run or queued ingress can interleave
-   * and the whole history folds into the summary. Returns how many messages
-   * were summarized; 0 means there was nothing to compact.
+   * Folds the stored history into a summary under the owner lease. Serves
+   * /compact and the harness auto-compaction after a finished turn. Returns
+   * how many messages were summarized; 0 means there was nothing to compact.
    */
   async compactConversation(instructions: string): Promise<number> {
     const entries = await this.loadConversationEntries();
@@ -590,7 +583,8 @@ export class Session {
       activeEntries,
       modelIdentityFromModelConfig(this.agentConfig),
     );
-    if (hasPendingToolApprovalResponse(messages)) {
+    // Nothing said since the last summary leaves nothing to fold in.
+    if (messages.length === 0 || hasPendingToolApprovalResponse(messages)) {
       return 0;
     }
     const summary = await summarizeConversation({
@@ -658,59 +652,6 @@ export class Session {
       systemContextSnapshot.messages,
       ephemeralSystem,
     );
-
-    const compactionStartedMs = Date.now();
-    const compactionSummary = await compactSessionContext({
-      accountId: this.accountId,
-      conversationKey: this.conversationKey,
-      system: system,
-      // Compaction feeds these to a model, so envelope fields must not leak.
-      messages: stripEnvelopeFieldsFromMessages(messages),
-      agentConfig: this.agentConfig,
-    }).catch((error) => {
-      logError(
-        "Session context compaction failed; continuing without compaction",
-        {
-          conversationKey: this.conversationKey,
-          eventId: this.eventId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-
-      return null;
-    });
-
-    if (compactionSummary) {
-      const [summaryCursor] = await this.persistModelMessages([
-        compactionSummary,
-      ]);
-      const compactedSystemContextSnapshot = {
-        cursor: summaryCursor ?? systemContextSnapshot.cursor,
-        messages: [compactionSummary],
-      };
-      // Approval responses need their matching assistant request in model history.
-      // Keep that pending pair outside the compacted summary so the AI SDK can resume it.
-      messages = selectPostCompactionPendingMessages(messages);
-
-      return {
-        messages: pruneSessionMessages(messages, this.agentConfig),
-        system: await this.buildSystemPromptParts(
-          compactedSystemContextSnapshot.messages,
-          ephemeralSystem,
-        ),
-        ephemeralSystem: ephemeralSystem,
-        systemContextSnapshot: compactedSystemContextSnapshot,
-        timings: {
-          prepareStartedMs: prepareStartedMs,
-          prepareEndedMs: compactionStartedMs,
-          phases: phases,
-          compaction: {
-            startedMs: compactionStartedMs,
-            endedMs: Date.now(),
-          },
-        },
-      };
-    }
 
     const prunedMessageCount = messages.length;
     messages = pruneSessionMessages(messages, this.agentConfig);
@@ -1300,44 +1241,6 @@ export async function ingestChannelAttachments(
         ? appendToLatestUserEvent(events, parts.turn)
         : events,
   };
-}
-
-// After compaction, the messages that must survive into the resumed turn: a
-// trailing user message, or a tool-approval response plus the assistant message
-// carrying the tool call it answers.
-export function selectPostCompactionPendingMessages(
-  messages: ModelMessage[],
-): ModelMessage[] {
-  const lastMessage = messages.at(-1);
-  if (lastMessage?.role === "user") {
-    return [lastMessage];
-  }
-
-  if (!isToolApprovalResponseMessage(lastMessage)) {
-    return [];
-  }
-
-  const approvalIds = new Set(
-    lastMessage.content
-      .filter((part) => part.type === "tool-approval-response")
-      .map((part) => part.approvalId),
-  );
-  // The approval response references only approvalId; the prior assistant message
-  // carries the tool call details needed to execute or deny the tool on resume.
-  const approvalRequestMessages = messages.filter(
-    (message): message is AssistantModelMessage =>
-      message.role === "assistant" &&
-      typeof message.content !== "string" &&
-      message.content.some(
-        (part) =>
-          part.type === "tool-approval-request" &&
-          approvalIds.has(part.approvalId),
-      ),
-  );
-
-  return approvalRequestMessages.length > 0
-    ? [...approvalRequestMessages, lastMessage]
-    : [lastMessage];
 }
 
 // Projection attaches metadata/createdAt for hook payloads; model calls must

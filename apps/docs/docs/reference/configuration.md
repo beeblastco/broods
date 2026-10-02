@@ -69,7 +69,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                        |
 | `skills`            | `enabled`, `allowed` skill resources                                                                   |
 | `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                   |
-| `session`           | `pruning.enabled`, `compaction.enabled`, `compaction.maxContextLength`                                 |
+| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
 | `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
 | `policies`          | Policies that gate the agent. Each carries its own mode                                                |
 | `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                               |

@@ -98,6 +98,7 @@ import {
   type SandboxUsage,
 } from "./sandbox/live-status.ts";
 import { configString } from "./sandbox/utils.ts";
+import { shouldAutoCompact } from "./compaction.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import {
@@ -601,8 +602,8 @@ export async function runAgentLoop(
   };
 
   // Cold start is charged to the first run in this execution environment; later
-  // (warm) runs consume nothing. Context prepare and compaction come from the
-  // turn context the handler assembled before this loop began.
+  // (warm) runs consume nothing. Context prepare comes from the turn context
+  // the handler assembled before this loop began.
   const coldStart = consumeColdStart(runStartedAt);
   if (coldStart) {
     emitPhaseSpan(
@@ -637,14 +638,6 @@ export async function runAgentLoop(
       durationMs: prepareEndedMs - prepareStartedMs,
       ...phases,
     });
-    if (turnContext.timings.compaction) {
-      emitPhaseSpan(
-        "phase.compaction",
-        "Compaction",
-        turnContext.timings.compaction.startedMs,
-        turnContext.timings.compaction.endedMs,
-      );
-    }
   }
 
   const configuredApprovals = new Map<string, true>();
@@ -849,6 +842,32 @@ export async function runAgentLoop(
     eventId: session.eventId,
     modelProvider: configuredModel.providerName,
     modelId: agentConfig.model?.modelId,
+  };
+  // Once the model has answered with no tool call left, a long context folds
+  // into a summary before the next queued message runs. A harness adapter keeps
+  // its own context, so its turns never compact the stored one.
+  const autoCompact = async (
+    lastInputTokens: number | undefined,
+  ): Promise<void> => {
+    if (harnessRuntime || !shouldAutoCompact(agentConfig, lastInputTokens)) {
+      return;
+    }
+    const startedMs = Date.now();
+    let compacted = 0;
+    try {
+      compacted = await session.compactConversation("");
+    } catch (err) {
+      logError("Auto-compaction failed; the turn keeps its full history", {
+        ...logContext,
+        error: errorMessage(err),
+      });
+    }
+    if (compacted > 0) {
+      emitPhaseSpan("phase.compaction", "Compaction", startedMs, Date.now(), {
+        "compaction.message_count": compacted,
+        "compaction.input_tokens": lastInputTokens ?? 0,
+      });
+    }
   };
 
   // Finalize-once guard: usage is written exactly once per task and the root OTel
@@ -1948,6 +1967,7 @@ export async function runAgentLoop(
             toolCalls: toLifecycleValue(tools.toolCalls),
             response: toLifecycleValue(finalResponse),
           });
+          await autoCompact(steps.at(-1)?.usage.inputTokens);
 
           return;
         }
@@ -1963,6 +1983,7 @@ export async function runAgentLoop(
           toolCalls: toLifecycleValue(tools.toolCalls),
           response: toLifecycleValue(finalResponse),
         });
+        await autoCompact(steps.at(-1)?.usage.inputTokens);
       } catch (err) {
         const errorText = errorMessage(err);
         const tools = summarizeToolsUsed(toolCallSummaries);
