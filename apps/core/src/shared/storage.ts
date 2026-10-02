@@ -315,7 +315,28 @@ interface TaskUsageStore {
   record(input: TaskUsageInput): Promise<void>;
 }
 
+/**
+ * One row core appends to the account's hash-chained audit ledger: a run
+ * starting or finishing, or an enforced policy denying a tool. `details`
+ * must hold ids, names and counts only, never tool input or secrets.
+ */
+export interface AuditLedgerInput {
+  accountId: string;
+  agentId?: string;
+  traceId?: string;
+  action: "run.started" | "run.completed" | "tool.denied";
+  resource: { kind: "run" | "tool"; id?: string; name?: string };
+  summary: string;
+  details?: Record<string, JSONValue | undefined>;
+}
+
+/** Appends to the audit ledger. Best-effort: a failed write is logged, never thrown. */
+interface AuditLedgerStore {
+  append(input: AuditLedgerInput): Promise<void>;
+}
+
 export interface Storage {
+  auditLedger: AuditLedgerStore;
   accounts: AccountStore;
   agents: AgentStore;
   budgets: BudgetStore;

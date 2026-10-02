@@ -12,7 +12,11 @@ import {
   evaluateChannelInvoke,
   policyDecisionLogMessage,
 } from "../src/harness/policy.ts";
-import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
+import {
+  setStorageForTests,
+  type AuditLedgerInput,
+  type Storage,
+} from "../src/shared/storage.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
 let policyMode: "enforce" | "audit" = "enforce";
@@ -33,9 +37,16 @@ function policyRecord() {
   };
 }
 
+const auditWrites: AuditLedgerInput[] = [];
+
 setStorageForTests({
   agentPolicies: {
     getById: async () => policyRecord(),
+  },
+  auditLedger: {
+    append: async (input: AuditLedgerInput): Promise<void> => {
+      auditWrites.push(input);
+    },
   },
 } as unknown as Storage);
 
@@ -160,6 +171,7 @@ describe("agent policy enforce mode", () => {
   });
 
   it("acts on a denial the policy engine returned", async () => {
+    auditWrites.length = 0;
     const approval = await createPolicyToolApproval(
       agentConfig(),
       { accountId: "acct_1", agentId: "agent_1" },
@@ -168,11 +180,27 @@ describe("agent policy enforce mode", () => {
     expect(approval).toBeDefined();
     const status = await approval!(toolCallEvent);
     expect(decisionType(status)).toBe("denied");
+    // An enforced denial is an account event: it lands on the audit ledger
+    // with the tool and the rule, never the tool input.
+    expect(auditWrites).toHaveLength(1);
+    expect(auditWrites[0]).toMatchObject({
+      accountId: "acct_1",
+      agentId: "agent_1",
+      action: "tool.denied",
+      resource: { kind: "tool", name: "bash" },
+      details: {
+        action: "workspace.exec",
+        toolCallId: "call_1",
+        reason: "Denied by policy rule deny-bash",
+      },
+    });
+    expect(JSON.stringify(auditWrites[0])).not.toContain("rm -rf");
   });
 
   // An auditing policy is downgraded by the rego, not here: the harness must
   // pass that verdict straight through rather than second-guessing it.
   it("approves the verdict an auditing policy produced", async () => {
+    auditWrites.length = 0;
     policyMode = "audit";
     opaResult = {
       allow: true,
@@ -192,6 +220,7 @@ describe("agent policy enforce mode", () => {
       expect(approval).toBeDefined();
       const status = await approval!(toolCallEvent);
       expect(decisionType(status)).toBe("approved");
+      expect(auditWrites).toHaveLength(0);
     } finally {
       policyMode = "enforce";
       opaResult = ENFORCED_DENIAL;

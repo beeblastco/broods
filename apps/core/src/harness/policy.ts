@@ -27,7 +27,9 @@ import type {
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
 import { COMPUTER_READ_ACTIONS } from "../shared/machine-socket.ts";
+import { getObservabilityContext } from "../shared/otel.ts";
 import { getStorage } from "../shared/storage.ts";
+import { recordAuditEvent } from "../shared/telemetry.ts";
 import type {
   ResolvedAgentSandbox,
   ResolvedWorkspace,
@@ -177,8 +179,9 @@ export async function createPolicyToolApproval(
   } = {},
 ): Promise<RuntimeToolApproval | undefined> {
   if (!isPolicyEnabled(agentConfig) || !baseInput.accountId) return undefined;
+  const accountId = baseInput.accountId;
   const documents = await loadPolicyDocuments(
-    baseInput.accountId,
+    accountId,
     agentConfig.policies ?? [],
   );
   const mode: PolicyMode = enforcingMode(documents);
@@ -250,6 +253,31 @@ export async function createPolicyToolApproval(
           logInfo(message, data);
         } else {
           logWarn(message, data);
+        }
+        // Only a denial that stopped the tool reaches the ledger; an audited
+        // policy's would-deny is a log line, not an account event. The log
+        // message carries the input preview, so the row gets its own summary.
+        if (event.decision.type === "denied" && event.enforced) {
+          void recordAuditEvent({
+            accountId: accountId,
+            agentId: baseInput.agentId,
+            traceId: getObservabilityContext()?.traceId,
+            action: "tool.denied",
+            resource: { kind: "tool", name: event.toolCall.toolName },
+            summary: `Policy denied ${event.toolCall.toolName} (${policyInput.action})${reason ? `: ${reason}` : ""}`,
+            details: {
+              action: policyInput.action,
+              toolCallId: event.toolCall.toolCallId,
+              reason: reason,
+              mcpId: policyInput.mcpId,
+              workspaceId: policyInput.workspaceId,
+              filePath: policyInput.filePath,
+              skillPath: policyInput.skillPath,
+              subagentId: policyInput.subagentId,
+              channelId: baseInput.channelId,
+              userId: baseInput.userId,
+            },
+          });
         }
       },
     },

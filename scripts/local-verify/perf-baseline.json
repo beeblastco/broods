@@ -1,7 +1,7 @@
 {
   "convexCalls": {
-    "sse text turn": 12,
-    "sse bash tool turn": 17
+    "sse text turn": 14,
+    "sse bash tool turn": 19
   },
   "timingsP50Ms": {
     "darwin-arm64": {

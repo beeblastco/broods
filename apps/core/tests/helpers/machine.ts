@@ -132,6 +132,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
     .digest("hex");
 
   return {
+    auditLedger: { append: async (): Promise<void> => {} },
     roleSessions: {
       resolveByTokenHash: async (hash: string) =>
         hash === readOnlyRoleHash
