@@ -49,7 +49,6 @@ import {
   type RequestContext,
 } from "../shared/http.ts";
 import { logDebug, logError, logInfo, logWarn } from "../shared/log.ts";
-import { isContextLengthError } from "../shared/model-errors.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
   getObservabilityContext,
@@ -1358,10 +1357,8 @@ async function handleNatsWorkerRequest(
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
         consumeStream: (stream) =>
-          pipeAgentStream(
-            stream,
-            (chunk): Promise<void> => fencedPublisher.publish(chunk),
-            true,
+          pipeAgentStream(stream, (chunk): Promise<void> =>
+            fencedPublisher.publish(chunk),
           ),
         onLoopErrorText: async (error) => {
           fencedPublisher
@@ -1730,7 +1727,7 @@ async function runChannelTurns(
                         // and hands the reply back as text, so the run keeps
                         // going and the drain below finishes it.
                         const streamedResult = await event.channel.stream!(
-                          readAgentFullStreamWithoutErrors(stream, false),
+                          readAgentFullStream(stream, false),
                         );
                         streamed = Boolean(streamedResult);
                         if (!streamed) await stream.consumeStream();
@@ -2819,27 +2816,15 @@ function createDirectContinuationSseBody(
             agentConfig: event.agentConfig,
             consumeStream: async (stream): Promise<void> => {
               try {
-                await pipeAgentStream(
-                  stream,
-                  async (chunk): Promise<void> => {
-                    await checkOwner(chunk);
-                    controller.enqueue(
-                      textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-                    );
-                  },
-                  true,
-                );
+                await pipeAgentStream(stream, async (chunk): Promise<void> => {
+                  await checkOwner(chunk);
+                  controller.enqueue(
+                    textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+                  );
+                });
               } finally {
                 streamFailureText = stream.failureText();
               }
-            },
-            onLoopErrorText: async (error): Promise<void> => {
-              await session.assertCurrentOwner();
-              controller.enqueue(
-                textEncoder.encode(
-                  `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
-                ),
-              );
             },
             onHeartbeat: async (pendingCount) => {
               await session.assertCurrentOwner();
@@ -2996,7 +2981,6 @@ async function runParentContinuationLoop(options: {
   let turnContext = options.initialTurnContext;
   let finalResponse: JSONValue | undefined;
   let traceId: string | undefined;
-  let contextRecoveryAttempted = false;
 
   // One hook dispatcher for the whole parent request: every loop iteration and
   // the subagent-finish fire-points share a single ctx.state and one storage load.
@@ -3018,9 +3002,9 @@ async function runParentContinuationLoop(options: {
         onFinalText: async (response) => {
           finalResponse = response;
         },
-        // Error delivery waits until the loop knows whether compaction can
-        // recover this attempt. Streaming callers suppress the raw error part.
-        onErrorText: async (): Promise<void> => {},
+        onErrorText: async (error) => {
+          await options.onLoopErrorText?.(error);
+        },
         onApprovalRequired: async (approvalSummaries) => {
           approvals = approvalSummaries;
           await options.onApprovalRequired?.(approvalSummaries);
@@ -3050,7 +3034,12 @@ async function runParentContinuationLoop(options: {
     traceId = stream.traceId();
 
     await options.consumeStream(stream);
-    if (approvals.length > 0 || stream.questionSummaries().length > 0) {
+    // Only a clean pass leads to another pass that can answer a subagent.
+    if (
+      approvals.length > 0 ||
+      stream.questionSummaries().length > 0 ||
+      stream.didFail()
+    ) {
       options.subagentCoordinator.closeQuestions();
     }
     if (approvals.length > 0) {
@@ -3099,44 +3088,10 @@ async function runParentContinuationLoop(options: {
         }),
       );
     }
-    const failureText = stream.failureText();
-    if (
-      stream.didFail() &&
-      !contextRecoveryAttempted &&
-      failureText !== null &&
-      isContextLengthError(failureText)
-    ) {
-      contextRecoveryAttempted = true;
-      const compacted = await options.session
-        .compactConversation("", true)
-        .catch((error: unknown): number => {
-          logWarn("Context-limit recovery compaction failed", {
-            eventId: options.session.eventId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-
-          return 0;
-        });
-      if (compacted > 0) {
-        turnContext = await options.session.createTurnContext();
-        if (isRunnableModelInput(turnContext.messages.at(-1))) {
-          finalResponse = undefined;
-          logInfo("Retrying turn after context-limit compaction", {
-            eventId: options.session.eventId,
-            compactedMessageCount: compacted,
-          });
-
-          continue;
-        }
-      }
-    }
     if (stream.didFail()) {
-      options.subagentCoordinator.closeQuestions();
-      await options.onLoopErrorText?.(failureText ?? AGENT_PROCESSING_FAILED);
-
       return {
         didFail: true,
-        failureText: failureText,
+        failureText: stream.failureText(),
         ...(finalResponse !== undefined
           ? { finalResponse: finalResponse }
           : {}),
@@ -3344,35 +3299,22 @@ async function waitAndDrainAsyncWork(
 async function pipeAgentStream(
   stream: AgentLoopStream,
   send: (chunk: Record<string, unknown>) => Promise<void>,
-  suppressErrors = false,
 ): Promise<void> {
   let emittedErrorChunk = false;
   for await (const value of readAgentFullStream(stream)) {
     if (isErrorStreamChunk(value)) {
       emittedErrorChunk = true;
-      if (suppressErrors) continue;
     }
     await send(value as Record<string, unknown>);
   }
 
   const failureText = stream.failureText();
-  if (failureText && !emittedErrorChunk && !suppressErrors) {
+  if (failureText && !emittedErrorChunk) {
     await send({ type: "error", error: failureText });
   }
   const finalResponse = stream.finalResponse();
   if (stream.hasStructuredOutput() && finalResponse !== undefined) {
     await send({ type: "structured-output", output: finalResponse });
-  }
-}
-
-// Holds model error chunks until the parent loop decides whether it can recover
-// the attempt by compacting and retrying.
-async function* readAgentFullStreamWithoutErrors(
-  stream: AgentLoopStream,
-  abortOnEarlyExit = true,
-): AsyncIterable<unknown> {
-  for await (const value of readAgentFullStream(stream, abortOnEarlyExit)) {
-    if (!isErrorStreamChunk(value)) yield value;
   }
 }
 

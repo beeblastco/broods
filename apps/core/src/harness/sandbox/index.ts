@@ -98,5 +98,7 @@ function providerExecutor(config: SandboxExecutorConfig): SandboxExecutor {
     return new MachineSandboxExecutor(config);
   }
 
-  throw new Error("Unsupported sandbox provider");
+  throw new Error(
+    `sandbox provider ${JSON.stringify(provider)} is not supported`,
+  );
 }
