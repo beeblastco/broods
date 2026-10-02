@@ -123,6 +123,8 @@ Install `@modelcontextprotocol/server` in your project. The CLI bundles the file
 
 See the runnable [`mcp-connect` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect).
 
+For a worked hosted server, see [Cloudflare Browser Run](cloudflare-browser.md).
+
 ### Run a server on your computer
 
 A server in your `.mcp.json`, such as a Blender or filesystem server, can run on your machine and serve cloud agents. Name the machine sandbox instead of a URL. See [Machine](sandboxes/machine.md).

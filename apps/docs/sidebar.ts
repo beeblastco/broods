@@ -26,6 +26,11 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guides/tools", label: "Tools and MCP" },
         { type: "doc", id: "guides/connections", label: "Connections" },
         {
+          type: "doc",
+          id: "guides/cloudflare-browser",
+          label: "Cloudflare Browser Run",
+        },
+        {
           type: "category",
           label: "Sandboxes",
           link: { type: "doc", id: "guides/sandboxes/index" },
