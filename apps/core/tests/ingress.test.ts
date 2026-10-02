@@ -217,6 +217,92 @@ describe("settling with takeNext", (): void => {
   });
 });
 
+describe("step boundary", (): void => {
+  it("stores the step, renews and claims steers in one fenced mutation that proves ownership", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    const steering: AppliedIngress = {
+      eventId: "event-1",
+      events: [{ role: "user", content: "new direction" }],
+      delivery: { kind: "async" },
+      requestedMode: "steer",
+      appliedMode: "steer",
+      appliedToEventId: "event-1",
+      contributingEventIds: ["steer-1"],
+      ownerGeneration: 1,
+    };
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: steering };
+    }) as typeof runtime.mutate;
+    const reads = mock(async (): Promise<boolean> => true);
+    runtime.query = reads as unknown as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+
+    const boundary = await session.stepBoundary([
+      { role: "assistant", content: "step answer" },
+    ]);
+    await session.assertRecentOwner();
+
+    expect(boundary).toEqual({ renewal: "renewed", steering: steering });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("stepIngressBoundary");
+    expect(calls[0]?.[1]).toMatchObject({
+      conversationKey: candidate().conversationKey,
+      ownerEventId: "event-1",
+      ownerGeneration: 1,
+      leaseTtlMs: 15 * 60 * 1000,
+      events: [
+        {
+          event: {
+            message: { role: "assistant", content: "step answer" },
+          },
+        },
+      ],
+    });
+    // The renewed boundary answered the owner check: no read.
+    expect(reads).not.toHaveBeenCalled();
+  });
+
+  it("sends no rows on a step with nothing new, and a stale boundary proves nothing", async (): Promise<void> => {
+    const calls: Record<string, unknown>[] = [];
+    runtime.mutate = (async (
+      _name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push(args);
+
+      return { renewal: "stale", steering: null };
+    }) as typeof runtime.mutate;
+    const reads = mock(async (): Promise<boolean> => false);
+    runtime.query = reads as unknown as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+
+    expect(await session.stepBoundary([])).toEqual({
+      renewal: "stale",
+      steering: null,
+    });
+    expect(calls[0]).not.toHaveProperty("events");
+    await expect(session.assertRecentOwner()).rejects.toThrow(
+      "Stale conversation owner generation",
+    );
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("async turn without model input", (): void => {
   afterEach((): void => {
     mock.restore();

@@ -41,6 +41,9 @@ structure Envelope where
 inductive Step where
   /-- `promoteQueuedGroup` and `applySteering`: queued to processing. -/
   | promote (generation appliedTo : Nat)
+  /-- `stepBoundary`: the steer claim, behind the fence and the stop check of the
+  same transaction that stores the step and renews the lease. -/
+  | stepBoundary (ownerEventId generation : Nat)
   /-- `settleAppliedEnvelopes`, reached through `settle` and `takeNext`. -/
   | settle (ownerEventId generation : Nat) (outcome : Outcome)
   /-- `expireQueuedEnvelopes`. -/
@@ -72,11 +75,32 @@ def Coord.live (c : Coord) (now : Nat) : Bool :=
 def requireOwner (c : Coord) (ownerEventId generation now : Nat) : Bool :=
   c.ownerEventId == some ownerEventId && c.ownerGeneration == generation && c.live now
 
+/-- `stepBoundary` goes past its fence and stop check: only then does it renew the
+lease and claim steers. A stale owner writes nothing; a stopped one keeps the
+step's rows and claims nothing. -/
+def boundaryProceeds (c : Coord) (ownerEventId generation now : Nat) : Bool :=
+  requireOwner c ownerEventId generation now && c.stopRequestedGeneration != some generation
+
+/-- `renewHeldLease`: keeps the lease while more than 9/10 of the TTL remains, else
+extends it to `now + ttl`. Scaled by 10 to stay in `Nat`. -/
+def Coord.renew (c : Coord) (now ttl : Nat) : Coord :=
+  match c.leaseExpiresAt with
+  | some t => if 10 * now + 9 * ttl < 10 * t then c else { c with leaseExpiresAt := some (now + ttl) }
+  | none => { c with leaseExpiresAt := some (now + ttl) }
+
+/-- `stepBoundary`'s coordinator write. -/
+def Coord.stepBoundary (c : Coord) (ownerEventId generation now ttl : Nat) : Coord :=
+  if boundaryProceeds c ownerEventId generation now then c.renew now ttl else c
+
 /-- The effect of one step on one envelope at time `now`. -/
 def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
   | .promote g to, e =>
     if e.status == .queued && decide (now < e.expiresAt) then
       { e with status := .processing, ownerGeneration := some g, appliedToEventId := some to }
+    else e
+  | .stepBoundary owner g, e =>
+    if boundaryProceeds c owner g now && e.status == .queued && decide (now < e.expiresAt) then
+      { e with status := .processing, ownerGeneration := some g, appliedToEventId := some owner }
     else e
   | .settle owner g o, e =>
     if requireOwner c owner g now && (e.eventId == owner || e.appliedToEventId == some owner) &&

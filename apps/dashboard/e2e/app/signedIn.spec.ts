@@ -14,7 +14,10 @@ import {
 
 test.skip(!hasProbe(), MISSING_PROBE);
 
-test("the home route opens the caller's project", async ({ page }) => {
+// @rollout: the pull request run serves this build against the dev backend,
+// which may not have the Convex functions the home route calls until the
+// merge deploys them. e2e-dashboard.yaml runs it after the rollout.
+test("the home route opens the caller's project @rollout", async ({ page }) => {
   await page.goto("/");
   await page.waitForURL(new RegExp(`/${readProjectId()}(\\?|$)`));
   await expect(page.locator(CANVAS_READY)).toBeVisible();

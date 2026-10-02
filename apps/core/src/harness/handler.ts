@@ -177,10 +177,10 @@ const MAX_PENDING_WORKER_RUNS = 1000;
 // inside the TTL until a slot starts the run.
 const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
-// ownership on this clock. A frame the client acts on checks exactly: a stale
-// run must not land one in a stream the next owner is writing to. `waiting` is
-// the heartbeat: it fires on a timer, not per token, so exact costs nothing.
-const OWNER_CHECK_INTERVAL_MS = 2_000;
+// ownership on the session's OWNER_CHECK_INTERVAL_MS clock. A frame the client
+// acts on checks exactly: a stale run must not land one in a stream the next
+// owner is writing to. `waiting` is the heartbeat: it fires on a timer, not per
+// token, so exact costs nothing.
 const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "done",
   "error",
@@ -340,23 +340,17 @@ export async function handler(
 
 /**
  * One per stream. The returned check runs before each frame goes out: exact
- * for `OWNER_CHECK_EXACT_FRAME_TYPES`, at most once per interval for the rest.
+ * for `OWNER_CHECK_EXACT_FRAME_TYPES`; for the rest, only when the session's
+ * last ownership proof (a read or a fenced write) is older than the interval.
  */
 export function ownerCheckForStream(
-  session: Pick<Session, "assertCurrentOwner">,
+  session: Pick<Session, "assertCurrentOwner" | "assertRecentOwner">,
 ): (frame: Record<string, unknown>) => Promise<void> {
-  // performance.now() cannot step backwards the way Date.now() can.
-  let checkedAt = Number.NEGATIVE_INFINITY;
-
   return async (frame): Promise<void> => {
     const exact =
       typeof frame.type === "string" &&
       OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type);
-    if (!exact && performance.now() - checkedAt < OWNER_CHECK_INTERVAL_MS) {
-      return;
-    }
-    await session.assertCurrentOwner();
-    checkedAt = performance.now();
+    await (exact ? session.assertCurrentOwner() : session.assertRecentOwner());
   };
 }
 

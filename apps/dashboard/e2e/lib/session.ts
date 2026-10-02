@@ -65,8 +65,18 @@ export async function resolveProjectId(page: Page): Promise<string> {
   for (let visit = 0; visit < 3; visit++) {
     const match = new URL(page.url()).pathname.match(PROJECT_PATH);
     if (match) return match[1];
-    await page.goto("/");
-    await page.waitForURL((url) => url.pathname !== "/", {
+    // The projects page needs only queries every backend has. The home route
+    // creates the first project for a fresh account, but on a pull request
+    // this build runs against the dev backend, which may lack the functions
+    // that route calls until the merge deploys them.
+    await page.goto("/projects");
+    const card = page.getByRole("button", { name: /^Open / }).first();
+    if (await card.isVisible({ timeout: AUTH_TIMEOUT_MS }).catch(() => false)) {
+      await card.click();
+    } else {
+      await page.goto("/");
+    }
+    await page.waitForURL((url) => PROJECT_PATH.test(url.pathname), {
       timeout: AUTH_TIMEOUT_MS,
     });
   }

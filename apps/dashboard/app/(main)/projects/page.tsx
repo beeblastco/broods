@@ -86,6 +86,7 @@ export default function ProjectsPage(): React.JSX.Element {
               <button
                 key={project._id}
                 type="button"
+                aria-label={`Open ${project.name}`}
                 onClick={() => openProject(project._id)}
                 onMouseEnter={() => prefetchProject(project._id)}
                 onFocus={() => prefetchProject(project._id)}

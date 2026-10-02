@@ -358,7 +358,10 @@ jobs:
           cd apps/dashboard
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
           cp -r public .next/standalone/apps/dashboard/public
-          bunx playwright test --project=app --project=perf
+          # @rollout tests need Convex functions this build calls that the dev
+          # backend only has after the merge; e2e-dashboard.yaml runs them
+          # after the rollout.
+          bunx playwright test --project=app --project=perf --grep-invert @rollout
 
       - name: Upload traces of a failed signed-in run
         if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}

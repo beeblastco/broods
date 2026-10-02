@@ -1204,27 +1204,21 @@ export async function runAgentLoop(
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
-      // Steering waits for both: a steer claimed by a turn that then stops or
-      // fails would be settled with it and never run.
-      const [renewal, persisted] = await Promise.allSettled([
-        session.renewConversationLease(),
-        session.persistModelMessages(
-          responseMessages.slice(persistedResponseCount),
-        ),
-      ]);
-      if (renewal.status === "rejected") throw renewal.reason;
-      if (renewal.value === "stopped") {
+      // One mutation stores the step, renews the lease and claims steers, so a
+      // steer is never claimed by a turn whose step failed to store or stopped.
+      const { renewal, steering } = await session.stepBoundary(
+        responseMessages.slice(persistedResponseCount),
+      );
+      if (renewal === "stopped") {
         throw new Error(USER_STOP_MESSAGE);
       }
-      if (renewal.value === "stale") {
+      if (renewal === "stale") {
         throw new Error(
           "Conversation ownership changed before the next model step",
         );
       }
-      if (persisted.status === "rejected") throw persisted.reason;
       persistedResponseCount = responseMessages.length;
       options.subagentWatch?.confirmDelivered();
-      const steering = await session.applySteeringIngress();
       let stepMessages = messages;
       if (steering) {
         const steeringEvents = steering.events as ConversationIngressEvent[];
