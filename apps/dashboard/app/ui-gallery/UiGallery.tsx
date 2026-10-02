@@ -1,6 +1,7 @@
 "use client";
 
 import { RuntimeKeyView } from "@/app/(main)/[projectId]/dashboard/components/RuntimeKeyDialog";
+import { ConnectionsView } from "@/app/(main)/settings/connections/components/ConnectionsPanel";
 import {
   CANVAS_EDGE_TYPES,
   CANVAS_NODE_TYPES,
@@ -284,6 +285,37 @@ const CONVEX_SERVER_ERROR = new Error(
 
 const subscribeNever = (): (() => void) => () => {};
 
+/** Connections as the dashboard lists them: one of each type. */
+const CONNECTION_FIXTURES = [
+  {
+    name: "chatgpt",
+    type: "chatgpt" as const,
+    clientId: "oaiapp_fixture",
+    hostId: "urn:uuid:fixture",
+    email: "owner@example.com",
+    scopes: ["openid", "chatgpt.tokens.use.direct"],
+    expiresAt: 0,
+    updatedAt: 0,
+  },
+  {
+    name: "gmail",
+    type: "google" as const,
+    clientId: "1234.apps.googleusercontent.com",
+    email: "support@example.com",
+    scopes: ["openid", "https://www.googleapis.com/auth/gmail.modify"],
+    expiresAt: 0,
+    updatedAt: 0,
+  },
+  {
+    name: "outlook",
+    type: "microsoft" as const,
+    clientId: "00000000-0000-0000-0000-000000000000",
+    scopes: ["openid", "https://graph.microsoft.com/Mail.ReadWrite"],
+    expiresAt: 0,
+    updatedAt: 0,
+  },
+];
+
 export function UiGallery(): React.JSX.Element {
   const [level, setLevel] = useState("INFO");
   const [search, setSearch] = useState("");
@@ -301,6 +333,21 @@ export function UiGallery(): React.JSX.Element {
     () => false,
   );
   const dashboardTab = useSearchParams().get("tab");
+
+  if (dashboardTab === "connections") {
+    return (
+      <main
+        data-hydrated={hydrated ? "true" : undefined}
+        className="mx-auto w-full max-w-2xl px-6 pt-6 pb-12"
+      >
+        <ConnectionsView
+          connections={CONNECTION_FIXTURES}
+          canWrite={true}
+          onDisconnect={() => {}}
+        />
+      </main>
+    );
+  }
 
   if (dashboardTab === "credential-copy") {
     return (

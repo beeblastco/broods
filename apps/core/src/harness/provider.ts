@@ -192,7 +192,7 @@ export function modelProviderFactories(): Record<
 
 /**
  * The agent's model, ready to wrap. `accountId` is only read by `chatgpt`,
- * whose credential is the account's ChatGPT sign-in, not a config setting.
+ * whose credential is the account's `chatgpt` connection, not a config setting.
  */
 export function resolveConfiguredModel(
   agentConfig: AgentConfig,
@@ -234,7 +234,7 @@ export function resolveConfiguredModel(
 
 /**
  * OpenAI on the account's ChatGPT plan. The API key is a placeholder the fetch
- * replaces with the sign-in's access token on every request; the endpoint is
+ * replaces with the connection's access token on every request; the endpoint is
  * OpenAI's own, so no tenant setting reaches it.
  */
 function resolveChatGPTModel(

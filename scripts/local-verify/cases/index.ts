@@ -1,7 +1,7 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
 import { autoCompaction } from "./auto-compaction.ts";
-import { chatgptSignIn } from "./chatgpt-sign-in.ts";
+import { connections } from "./connections.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
@@ -25,5 +25,5 @@ export const verifyCases: readonly VerifyCase[] = [
   manifestSync,
   workToolWebhooks,
   webhookHandshake,
-  chatgptSignIn,
+  connections,
 ];

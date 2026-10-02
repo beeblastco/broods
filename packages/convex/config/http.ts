@@ -24,7 +24,10 @@ import {
   handleAgentConfigRoute,
 } from "./routes/agents";
 import { handleChannelRecordRoute } from "./routes/channels";
-import { handleChatGPTRoute } from "./routes/chatgpt";
+import {
+  handleConnectionsRoute,
+  parseConnectionsPath,
+} from "./routes/connections";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
@@ -74,9 +77,10 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
       return await handleAssumeRoleRoute(ctx, req);
     }
 
-    // Authenticates itself too: only the account secret, never a role session.
-    if (pathname === "/v1/account/chatgpt") {
-      return await handleChatGPTRoute(ctx, req);
+    // Authenticates itself too: account secret or CLI login, never a role session.
+    const connectionsPath = parseConnectionsPath(pathname);
+    if (connectionsPath) {
+      return await handleConnectionsRoute(ctx, req, connectionsPath.name);
     }
 
     const accountRoute = parseAccountRoute(pathname);

@@ -752,23 +752,29 @@ export const accountEnvVarsFields = {
 };
 
 /**
- * An OAuth sign-in that stands in for a model provider's API key: today only
- * `chatgpt` (Sign in with ChatGPT). One per account and provider. Core
- * refreshes it in process and writes the rotated tokens back; the tokens are
- * encrypted with the agent-config codec and never leave through the API.
+ * A connection: an external account (ChatGPT plan, Google, Microsoft) signed
+ * in once per account by `broods connect` and named so agents can point at it.
+ * Core refreshes it in process and writes the rotated tokens back. Tokens and
+ * the developer's client secret are encrypted with the agent-config codec and
+ * never leave through the API.
  */
-export const providerCredentialsFields = {
+export const connectionsFields = {
   accountId: v.id("accounts"),
-  provider: v.literal("chatgpt"),
-  /** OAuth client OpenAI issued at the first sign-in; a reauthorization reuses it. */
+  name: v.string(),
+  type: v.union(
+    v.literal("chatgpt"),
+    v.literal("google"),
+    v.literal("microsoft"),
+  ),
+  /** OAuth client: the one OpenAI issued, or the developer's own app. */
   clientId: v.string(),
-  /** `ext_agent_host_id` of this deployment, kept across sign-ins. */
-  hostId: v.string(),
+  /** `chatgpt` only: `ext_agent_host_id` of this deployment, kept across sign-ins. */
+  hostId: v.optional(v.string()),
   email: v.optional(v.string()),
   scopes: v.array(v.string()),
   /** Access-token expiry, epoch ms. */
   expiresAt: v.number(),
-  /** Encrypted `{ accessToken, refreshToken }`. */
+  /** Encrypted `{ accessToken, refreshToken, clientSecret? }`. */
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
@@ -1468,10 +1474,10 @@ export default defineSchema({
     "by_accountId_and_name",
     ["accountId", "name"],
   ),
-  providerCredentials: defineTable(providerCredentialsFields).index(
-    "by_accountId_and_provider",
-    ["accountId", "provider"],
-  ),
+  connections: defineTable(connectionsFields).index("by_accountId_and_name", [
+    "accountId",
+    "name",
+  ]),
   environmentVariableReveals: defineTable(environmentVariableRevealsFields)
     .index("by_stageId", ["stageId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])

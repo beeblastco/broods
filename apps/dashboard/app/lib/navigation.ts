@@ -11,6 +11,7 @@ import {
   FolderOpen,
   LayoutDashboard,
   Network,
+  Plug,
   Settings,
   UserRound,
   type LucideIcon,
@@ -118,6 +119,13 @@ export const ACCOUNT_NAV_ITEMS: readonly NavItem[] = [
     keywords: ["projects"],
     label: "Projects",
     segment: "/projects",
+    tabs: [],
+  },
+  {
+    icon: Plug,
+    keywords: ["connections", "chatgpt", "gmail", "outlook", "google", "oauth"],
+    label: "Connections",
+    segment: "/settings/connections",
     tabs: [],
   },
   {

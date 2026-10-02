@@ -33,6 +33,7 @@ import {
   runMachineMcpList,
 } from "../sandbox/machine-executor.ts";
 import { publicHostFetch } from "../../shared/http.ts";
+import { connectionAccessToken } from "../connections.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -58,6 +59,8 @@ export interface McpConnection {
   headers: Record<string, string>;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
+  /** A `broods connect` connection the Authorization header comes from instead. */
+  connection?: string;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
   uncached?: boolean;
 }
@@ -221,8 +224,9 @@ export function mcpConnection(
       );
     }
   }
-  const oauth = resolveOauth(record, configOauth);
-  if (oauth) {
+  const connection = configOauth?.connection;
+  const oauth = connection ? undefined : resolveOauth(record, configOauth);
+  if (oauth || connection) {
     const authorization = authorizationHeaderName(headers);
     if (authorization !== undefined) {
       throw new Error(
@@ -235,6 +239,7 @@ export function mcpConnection(
     record: record,
     headers: headers,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
+    ...(connection ? { connection: connection } : {}),
   };
 }
 
@@ -256,7 +261,7 @@ function cacheKeyFor(connection: McpConnection): string {
     a < b ? -1 : 1,
   );
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? connection.connection ?? null)}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -289,11 +294,16 @@ async function connectClient(
     // Minted (or served from the token cache) per connect: clients are
     // per-operation, so every request carries a token outside its refresh
     // margin instead of a static header that expires mid-conversation.
-    const headers = connection.oauth
-      ? {
-          ...connection.headers,
-          Authorization: `Bearer ${await mcpAccessToken(connection.record.name, connection.oauth)}`,
-        }
+    const accessToken = connection.connection
+      ? await connectionAccessToken(
+          connection.record.accountId,
+          connection.connection,
+        )
+      : connection.oauth
+        ? await mcpAccessToken(connection.record.name, connection.oauth)
+        : undefined;
+    const headers = accessToken
+      ? { ...connection.headers, Authorization: `Bearer ${accessToken}` }
       : connection.headers;
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),

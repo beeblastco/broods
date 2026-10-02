@@ -33,9 +33,10 @@ import type {
 } from "./contracts.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
 import type {
-  ChatGPTConnection,
-  ChatGPTSignIn,
-} from "../../convex/model/chatgpt.ts";
+  Connection,
+  ConnectionSignIn,
+  ConnectionType,
+} from "../../convex/model/connections.ts";
 
 /**
  * Managed gateway host, matching the OpenAPI `servers` entry and
@@ -100,8 +101,8 @@ export interface AccountEnvVar {
   updatedAt: string;
 }
 
-// The ChatGPT sign-in wire types live with the server so they cannot drift.
-export type { ChatGPTConnection, ChatGPTSignIn };
+// The connection wire types live with the server so they cannot drift.
+export type { Connection, ConnectionSignIn, ConnectionType };
 
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {
@@ -595,31 +596,47 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** What ChatGPT sign-in the account holds, if any. Requires the account secret. */
-  async getChatGPTConnection(): Promise<ChatGPTConnection> {
-    return (
-      (await this.request<ChatGPTConnection>("GET", "/v1/account/chatgpt")) ?? {
-        connected: false,
-      }
+  /** The account's connections (`broods connect`), never their tokens. */
+  async listConnections(): Promise<Connection[]> {
+    const result = await this.request<{ connections: Connection[] }>(
+      "GET",
+      "/v1/account/connections",
+    );
+
+    return result?.connections ?? [];
+  }
+
+  /** One connection by name, or null when there is none. */
+  async getConnection(name: string): Promise<Connection | null> {
+    return await this.request<Connection>(
+      "GET",
+      `/v1/account/connections/${encodeURIComponent(name)}`,
     );
   }
 
-  /** Store a verified ChatGPT sign-in, replacing the previous one. Refused on the managed service. */
-  async connectChatGPT(signIn: ChatGPTSignIn): Promise<ChatGPTConnection> {
-    const result = await this.request<ChatGPTConnection>(
+  /** Store a verified sign-in under `name`, replacing what was there. */
+  async connect(name: string, signIn: ConnectionSignIn): Promise<Connection> {
+    const result = await this.request<Connection>(
       "PUT",
-      "/v1/account/chatgpt",
+      `/v1/account/connections/${encodeURIComponent(name)}`,
       signIn,
     );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "PUT",
+        `/v1/account/connections/${name}`,
+        404,
+        "This deployment has no /v1/account/connections yet",
+      );
 
-    return result ?? { connected: false };
+    return result;
   }
 
-  /** Revoke the ChatGPT sign-in at OpenAI and forget it. False when there was none. */
-  async disconnectChatGPT(): Promise<boolean> {
+  /** Forget a connection and revoke it at the provider. False when there was none. */
+  async disconnect(name: string): Promise<boolean> {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
-      "/v1/account/chatgpt",
+      `/v1/account/connections/${encodeURIComponent(name)}`,
     );
 
     return result?.deleted ?? false;

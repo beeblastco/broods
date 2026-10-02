@@ -121,7 +121,7 @@ model: {
 
 ### Model providers
 
-Every Vercel AI SDK language model provider works, plus any OpenAI-compatible endpoint through `custom`. Each needs an `apiKey`, and other settings pass through to the provider's AI SDK factory. `chatgpt` is the exception: it runs on the account's ChatGPT sign-in and takes no settings. The provider keys and the `bedrock`, `vertex`, `custom` and `chatgpt` specifics are in [Agents](../guides/agents.md). When a `custom` server reports no reasoning token count, Broods estimates it.
+Every Vercel AI SDK language model provider works, plus any OpenAI-compatible endpoint through `custom`. Each needs an `apiKey`, and other settings pass through to the provider's AI SDK factory. `chatgpt` is the exception: it runs on the account's `chatgpt` [connection](../guides/connections.md) and takes no settings. The provider keys and the `bedrock`, `vertex`, `custom` and `chatgpt` specifics are in [Agents](../guides/agents.md). When a `custom` server reports no reasoning token count, Broods estimates it.
 
 ### tools and mcp
 

@@ -8,7 +8,7 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { ACCOUNT_SECRET_PREFIX, sha256Hex } from "../../model/accountSecrets";
+import { sha256Hex } from "../../model/accountSecrets";
 import { DEPLOYMENT_KEY_PREFIX } from "../../agent/deployments";
 import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import {
@@ -33,7 +33,7 @@ import {
   writeAudit,
 } from "./shared";
 
-type AssumeRoleCaller = {
+export type AccountCaller = {
   accountId: Id<"accounts">;
   actor: ConfigAuditActor;
   deploymentScope?: { projectId: Id<"projects">; stageId: Id<"stages"> };
@@ -47,7 +47,7 @@ export async function handleAssumeRoleRoute(
   req: Request,
 ): Promise<Response> {
   if (req.method !== "POST") return methodNotAllowed(["POST"]);
-  const caller = await resolveAssumeRoleCaller(ctx, req);
+  const caller = await resolveAccountCaller(ctx, req);
   if (!caller) return await unauthorizedResponse(ctx, req);
   const input = normalizeAssumeRoleInput(await parseJsonRequest(req));
 
@@ -208,30 +208,18 @@ export async function handleRoleRoute(
 }
 
 /**
- * Resolve the assume-role caller by token prefix: account secret, CLI login
- * token, or stage runtime key. fp_sts_ sessions may not chain into new
- * sessions, and no other credential kind is accepted.
+ * Resolve an account-level caller: CLI login token or stage runtime key by
+ * prefix, else an account secret by hash. Assume-role and connections use
+ * it; fp_sts_ sessions resolve to nothing, so a role session never mints
+ * sessions or reads connections.
  */
-async function resolveAssumeRoleCaller(
+export async function resolveAccountCaller(
   ctx: ActionCtx,
   req: Request,
-): Promise<AssumeRoleCaller | null> {
+): Promise<AccountCaller | null> {
   const token = bearerToken(req);
   if (!token) return null;
   const tokenHash = await sha256Hex(token);
-
-  if (token.startsWith(ACCOUNT_SECRET_PREFIX)) {
-    const account: Doc<"accounts"> | null = await ctx.runQuery(
-      internal.account.accounts.getBySecretHash,
-      { secretHash: tokenHash },
-    );
-    if (!account || account.status !== "active") return null;
-
-    return {
-      accountId: account._id,
-      actor: { kind: "apiAccountSecret", id: account._id },
-    };
-  }
 
   if (token.startsWith(CLI_TOKEN_PREFIX)) {
     const resolved: { accountId: Id<"accounts"> } | null =
@@ -263,5 +251,16 @@ async function resolveAssumeRoleCaller(
     };
   }
 
-  return null;
+  // Last, like every config-plane route: an account secret by its hash,
+  // whatever its prefix. A role session's hash never matches one.
+  const account: Doc<"accounts"> | null = await ctx.runQuery(
+    internal.account.accounts.getBySecretHash,
+    { secretHash: tokenHash },
+  );
+  if (!account || account.status !== "active") return null;
+
+  return {
+    accountId: account._id,
+    actor: { kind: "apiAccountSecret", id: account._id },
+  };
 }

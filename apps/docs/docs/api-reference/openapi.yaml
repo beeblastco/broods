@@ -38,6 +38,11 @@ tags:
     description: Account-owned agent configuration.
   - name: Environment Variables
     description: Write-only account-scoped secrets referenced by dynamic agent configs.
+  - name: Connections
+    description: >-
+      External accounts (ChatGPT plan, Google, Microsoft) signed in once by
+      `broods connect` and refreshed by Broods, for model providers and MCP
+      servers.
   - name: Skills
     description: Account-owned skill package management.
   - name: Cron Jobs
@@ -978,34 +983,70 @@ paths:
                       updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: fp_acct_new...
 
-  /v1/account/chatgpt:
+  /v1/account/connections:
     get:
       tags:
-        - Accounts
-      summary: Get the ChatGPT sign-in
+        - Connections
+      summary: List connections
       description: >-
-        The Sign in with ChatGPT login the `chatgpt` model provider runs on.
-        Never returns the tokens. Requires the account secret; role sessions
-        are refused.
+        External accounts the account's agents act through (ChatGPT plan,
+        Google, Microsoft), signed in by `broods connect`. Never returns tokens
+        or client secrets. Accepts the account secret or a CLI login token;
+        role sessions and runtime keys are refused.
       security:
         - BearerAuth: []
       responses:
         "200":
-          description: "The connection, or `{ connected: false }`"
+          description: The account's connections
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatGPTConnection"
+                type: object
+                required: [connections]
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Connection"
+
+  /v1/account/connections/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: >-
+          Lowercase letters, digits and dashes. A `chatgpt` connection is
+          named `chatgpt`; an MCP server points at the others with
+          `config.mcp.<server>.oauth.connection`.
+        schema:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+    get:
+      tags:
+        - Connections
+      summary: Get a connection
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "404":
+          description: No connection by that name
     put:
       tags:
-        - Accounts
-      summary: Store a ChatGPT sign-in
+        - Connections
+      summary: Store a connection
       description: >-
-        Stores a verified sign-in, replacing the previous one. `broods login
-        chatgpt` runs the browser sign-in and sends this. The grant must
-        include `chatgpt.tokens.use.direct`. Core refreshes the access token
-        from then on. The managed service answers 403: plan usage is for
-        self-hosted deployments.
+        Stores a verified sign-in under `name`, replacing what was there.
+        `broods connect <type>` runs the browser sign-in and sends this. Core
+        refreshes the access token from then on. A `chatgpt` grant must include
+        `chatgpt.tokens.use.direct`, and the managed service refuses `chatgpt`
+        (plan usage is for self-hosted deployments). `google` needs the
+        developer's `clientSecret`.
       security:
         - BearerAuth: []
       requestBody:
@@ -1013,46 +1054,25 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                [clientId, hostId, scopes, expiresAt, accessToken, refreshToken]
-              properties:
-                clientId:
-                  type: string
-                  description: OAuth client OpenAI issued at sign-in
-                hostId:
-                  type: string
-                  description: This deployment's `ext_agent_host_id`
-                email:
-                  type: string
-                scopes:
-                  type: array
-                  items: { type: string }
-                expiresAt:
-                  type: string
-                  format: date-time
-                accessToken:
-                  type: string
-                refreshToken:
-                  type: string
+              $ref: "#/components/schemas/ConnectionSignIn"
       responses:
         "200":
           description: Stored
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatGPTConnection"
+                $ref: "#/components/schemas/Connection"
         "400":
-          description: Missing field, or plan usage was not granted
+          description: A missing field, a bad name, or a type rule not met
         "403":
-          description: A role session, or the managed service
+          description: A role session or runtime key, or `chatgpt` on the managed service
     delete:
       tags:
-        - Accounts
-      summary: Disconnect ChatGPT
+        - Connections
+      summary: Disconnect
       description: >-
-        Revokes the refresh token at OpenAI (best effort) and deletes the
-        sign-in.
+        Deletes the connection, then revokes the refresh token at the provider
+        (best effort; Microsoft has no revocation endpoint).
       security:
         - BearerAuth: []
       responses:
@@ -4723,8 +4743,8 @@ components:
         Constructor settings for the Vercel AI SDK provider, keyed by provider
         name. The provider named by `model.provider` must have an entry here,
         and that entry must carry its `apiKey`, except `chatgpt`, which runs on
-        the account's ChatGPT sign-in (`/v1/account/chatgpt`) and needs no
-        entry. Everything else is handed to
+        the account's `chatgpt` connection (`/v1/account/connections`) and
+        needs no entry. Everything else is handed to
         that provider's AI SDK factory unchanged, so whatever the factory
         accepts is accepted here. Secret-like fields are encrypted at rest and
         redacted from reads.
@@ -4763,16 +4783,27 @@ components:
       additionalProperties:
         $ref: "#/components/schemas/ProviderSettings"
 
-    ChatGPTConnection:
+    ConnectionType:
+      type: string
+      enum: [chatgpt, google, microsoft]
+      description: >-
+        `chatgpt` backs the `chatgpt` model provider; `google` and `microsoft`
+        back MCP servers (Gmail, Outlook).
+
+    Connection:
       type: object
-      required: [connected]
+      required: [name, type, clientId, scopes, expiresAt, updatedAt]
       properties:
-        connected:
-          type: boolean
+        name:
+          type: string
+        type:
+          $ref: "#/components/schemas/ConnectionType"
         clientId:
           type: string
+          description: The OAuth client OpenAI issued, or the developer's own app
         hostId:
           type: string
+          description: "`chatgpt` only: this deployment's `ext_agent_host_id`"
         email:
           type: string
         scopes:
@@ -4785,6 +4816,33 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    ConnectionSignIn:
+      type: object
+      required: [type, clientId, scopes, expiresAt, accessToken, refreshToken]
+      properties:
+        type:
+          $ref: "#/components/schemas/ConnectionType"
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+          description: The developer's OAuth app secret; required for `google`
+        hostId:
+          type: string
+          description: "`chatgpt` only, required: this deployment's `ext_agent_host_id`"
+        email:
+          type: string
+        scopes:
+          type: array
+          items: { type: string }
+        expiresAt:
+          type: string
+          format: date-time
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
 
     ProviderSettings:
       type: object
@@ -4815,8 +4873,8 @@ components:
           type: string
           description: >-
             Provider constructor key matching `provider` config. `chatgpt` runs
-            on the account's ChatGPT sign-in instead and needs no `provider`
-            entry.
+            on the account's `chatgpt` connection instead and needs no
+            `provider` entry.
         modelId:
           type: string
           description: Provider-specific model identifier

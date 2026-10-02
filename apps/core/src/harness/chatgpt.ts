@@ -1,24 +1,16 @@
 /**
  * The `chatgpt` model provider's runtime half: OpenAI's Responses API on the
- * account's Sign in with ChatGPT login instead of an API key. This file owns
- * the login's access token (load, refresh, save the rotated pair back) and
- * shapes each request into what plan usage accepts. `provider.ts` builds the
- * model; the CLI does the browser sign-in; the config plane stores it.
+ * account's `chatgpt` connection (Sign in with ChatGPT) instead of an API
+ * key. This file shapes each request into what plan usage accepts;
+ * `connections.ts` owns the access token and `provider.ts` builds the model.
  * https://developers.openai.com/siwc/token-sharing-open-source
  */
 
 import type { LanguageModelMiddleware } from "ai";
-import {
-  CHATGPT_RESOURCE,
-  CHATGPT_TOKEN_URL,
-} from "@broods/convex/model/chatgpt";
-import { getStorage, type ProviderCredential } from "../shared/storage.ts";
-import { REFRESH_MARGIN_MS, refreshTokenGrant } from "./mcp/oauth.ts";
+import { connectionAccessToken, rejectConnectionToken } from "./connections.ts";
 
-/** Re-read the stored login this often, so a new `broods login chatgpt` lands. */
-const CACHE_TTL_MS = 5 * 60_000;
-/** A stalled refresh fails rather than hold every run waiting on it. */
-const REFRESH_TIMEOUT_MS = 15_000;
+/** The connection `broods connect chatgpt` stores; the provider reads it by name. */
+const CONNECTION_NAME = "chatgpt";
 
 // Request fields plan usage refuses outright: the AI SDK sends some of them
 // from ordinary call settings (`temperature`, `maxOutputTokens`) and the rest
@@ -43,23 +35,11 @@ const UNSUPPORTED_REQUEST_FIELDS = [
   "user",
 ] as const;
 
-const REAUTHORIZE_HINT = "Run `broods login chatgpt` to sign in again.";
-
-interface CachedCredential {
-  credential: ProviderCredential;
-  loadedAt: number;
-}
-
 /** The slice of a Responses request body this file reads or rewrites. */
 interface ResponsesRequestBody {
   stream?: boolean;
   [field: string]: unknown;
 }
-
-// Core runs one replica, so an in-flight promise per account is all the
-// serialization a rotating refresh token needs: two runs never spend it twice.
-const cache = new Map<string, CachedCredential>();
-const inFlight = new Map<string, Promise<ProviderCredential>>();
 
 /**
  * Plan usage stores nothing and answers system messages only as developer
@@ -98,9 +78,9 @@ export function chatgptFetch(
     if (!accountId) {
       throw new Error("The chatgpt provider runs only inside an account");
     }
-    const credential = await currentCredential(accountId);
+    const accessToken = await connectionAccessToken(accountId, CONNECTION_NAME);
     const headers = new Headers(init?.headers);
-    headers.set("Authorization", `Bearer ${credential.accessToken}`);
+    headers.set("Authorization", `Bearer ${accessToken}`);
     let body = init?.body;
     let wantsJson = false;
     if (typeof body === "string") {
@@ -114,8 +94,9 @@ export function chatgptFetch(
       headers: headers,
       body: body,
     });
-    // A revoked or replaced sign-in: the next call re-reads the stored one.
-    if (response.status === 401) cache.delete(accountId);
+    if (response.status === 401) {
+      rejectConnectionToken(accountId, CONNECTION_NAME, accessToken);
+    }
 
     return wantsJson && response.ok
       ? await completedResponse(response)
@@ -123,92 +104,6 @@ export function chatgptFetch(
   };
 
   return Object.assign(request, { preconnect: fetch.preconnect });
-}
-
-/** Forget cached logins; tests only. */
-export function resetChatGPTCredentialsForTests(): void {
-  cache.clear();
-  inFlight.clear();
-}
-
-async function currentCredential(
-  accountId: string,
-): Promise<ProviderCredential> {
-  const cached = cache.get(accountId);
-  if (
-    cached &&
-    Date.now() - cached.loadedAt < CACHE_TTL_MS &&
-    !expiresSoon(cached.credential)
-  ) {
-    return cached.credential;
-  }
-  const pending = inFlight.get(accountId);
-  if (pending) return await pending;
-
-  const next = loadFresh(accountId).finally(() => inFlight.delete(accountId));
-  inFlight.set(accountId, next);
-
-  return await next;
-}
-
-// Always re-read before refreshing: a new sign-in or another refresh may have
-// replaced the token pair since it was cached.
-async function loadFresh(accountId: string): Promise<ProviderCredential> {
-  const stored = await getStorage().providerCredentials.load(
-    accountId,
-    "chatgpt",
-  );
-  if (!stored) {
-    cache.delete(accountId);
-    throw new Error(`This account has no ChatGPT sign-in. ${REAUTHORIZE_HINT}`);
-  }
-  const credential = expiresSoon(stored)
-    ? await refreshAndSave(accountId, stored)
-    : stored;
-  cache.set(accountId, { credential: credential, loadedAt: Date.now() });
-
-  return credential;
-}
-
-async function refreshAndSave(
-  accountId: string,
-  stored: ProviderCredential,
-): Promise<ProviderCredential> {
-  // No scope: the refreshed grant keeps exactly what the user approved.
-  const refreshed = await refreshTokenGrant(
-    CHATGPT_TOKEN_URL,
-    {
-      client_id: stored.clientId,
-      refresh_token: stored.refreshToken,
-      resource: CHATGPT_RESOURCE,
-    },
-    (url, init) =>
-      fetch(url, { ...init, signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }),
-  ).catch((error: unknown) => {
-    throw new Error(
-      `ChatGPT sign-in refresh failed: ${error instanceof Error ? error.message : String(error)}. ${REAUTHORIZE_HINT}`,
-    );
-  });
-  // The refresh token rotates; keep the old one only if none came back.
-  const rotated = {
-    accessToken: refreshed.accessToken,
-    refreshToken: refreshed.refreshToken ?? stored.refreshToken,
-    expiresAt: refreshed.expiresAt,
-  };
-  const saved = await getStorage().providerCredentials.saveRefreshed(
-    accountId,
-    "chatgpt",
-    stored,
-    rotated,
-  );
-  // A new sign-in or a logout landed while this refresh ran; it wins.
-  if (!saved) return await loadFresh(accountId);
-
-  return { ...stored, ...rotated, updatedAt: Date.now() };
-}
-
-function expiresSoon(credential: ProviderCredential): boolean {
-  return credential.expiresAt - Date.now() < REFRESH_MARGIN_MS;
 }
 
 /**

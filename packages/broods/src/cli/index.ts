@@ -61,8 +61,13 @@ import {
   type ObservabilityLogEntry,
 } from "../observability-contracts.ts";
 import { BroodsAccountClient } from "../account.ts";
-import { CHATGPT_USAGE_URL } from "../../../convex/model/chatgpt.ts";
-import { listChatGPTModels, signInWithChatGPT } from "./chatgpt.ts";
+import {
+  CHATGPT_USAGE_URL,
+  CONNECTION_TYPES,
+  CONNECTION_TYPE_NAMES,
+  isConnectionType,
+} from "../../../convex/model/connections.ts";
+import { connectInBrowser, listChatGPTModels } from "./connect.ts";
 import {
   hasFlag,
   isPlainObject,
@@ -130,7 +135,7 @@ const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage
   Inspect   agent  whoami
-  Account   login  org  project
+  Account   login  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
 // Help printed to a terminal is colored for stdout; help embedded in an error
@@ -162,6 +167,23 @@ Subcommands:
   get <name>           Show an agent's model, sandboxes, workspaces, tools and channels
 
 ${GLOBAL_OPTIONS}`,
+  connect: `Usage: broods connect [type] [options]
+
+Signs an external account in through the browser and stores it on your
+deployment, so agents act through it. Without a type, lists the account's
+connections. Uses BROODS_ACCOUNT_SECRET when set, otherwise your broods login.
+
+Types:
+${CONNECTION_TYPE_NAMES.map((type) => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
+
+Options:
+  --name <name>              Connection name (default: the type); an MCP server
+                             uses it as config.mcp.<server>.oauth.connection
+  --scope <scopes>           Scopes to request, space or comma separated
+  --client-id <id>           Your OAuth app's client id (google, microsoft)
+  --client-secret <secret>   Your OAuth app's client secret (google)
+
+${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
 
 Syncs Production once and writes BROODS_API_KEY to .env.local. Ignores
@@ -183,6 +205,11 @@ Options:
   --level <lvl>         Minimum level for the log tail DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Tail INFO and up (DEBUG is dashboard-only)
   --region <region>     Service region for a new project (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  disconnect: `Usage: broods disconnect <name>
+
+Forgets a connection and revokes it at the provider.
 
 ${GLOBAL_OPTIONS}`,
   diff: `Usage: broods diff [options]
@@ -218,16 +245,9 @@ Options:
 
 ${GLOBAL_OPTIONS}`,
   login: `Usage: broods login [options]
-       broods login chatgpt [--status | --logout] [--base-url <url>]
 
 Authenticates through the dashboard and stores the token in
 ~/.broods/config.json.
-
-\`broods login chatgpt\` signs in with ChatGPT in the browser and stores the
-sign-in on your deployment, so agents with model.provider "chatgpt" run on your
-ChatGPT plan instead of an API key. It needs the account secret
-(BROODS_ACCOUNT_SECRET) and a self-hosted deployment; the managed service
-refuses it. --status shows the connection, --logout revokes it.
 
 Options:
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
@@ -390,6 +410,14 @@ async function main(): Promise<void> {
       return;
     case "login":
       await login(args);
+
+      return;
+    case "connect":
+      await connectCommand(args);
+
+      return;
+    case "disconnect":
+      await disconnectCommand(args);
 
       return;
     case "whoami":
@@ -569,11 +597,6 @@ async function init(args: string[]): Promise<void> {
 }
 
 async function login(args: string[]): Promise<void> {
-  if (positionalArgs(args)[0] === "chatgpt") {
-    await loginChatGPT(args);
-
-    return;
-  }
   const runtime = loadBroodsRuntimeConfig();
   const dashboardUrl =
     optionValue(args, "--dashboard-url") ??
@@ -605,57 +628,59 @@ async function login(args: string[]): Promise<void> {
 }
 
 /**
- * Sign in with ChatGPT for the deployment the account secret belongs to. The
- * deployment keeps its own host id across sign-ins, and a reauthorization
- * reuses the OAuth client OpenAI issued the first time.
+ * `broods connect [type]`: with a type, signs that external account in through
+ * the browser and stores it under --name (default: the type); without one,
+ * lists the account's connections.
  */
-async function loginChatGPT(args: string[]): Promise<void> {
-  loadBroodsRuntimeConfig();
-  // The route refuses role sessions, so a BROODS_SESSION_TOKEN must not win.
-  const accountSecret = process.env.BROODS_ACCOUNT_SECRET;
-  if (!accountSecret) {
-    throw new Error(
-      "broods login chatgpt stores the sign-in with your account secret: set BROODS_ACCOUNT_SECRET (and BROODS_BASE_URL for a self-hosted gateway).",
-    );
-  }
-  const baseUrl = optionValue(args, "--base-url");
-  const client = new BroodsAccountClient({
-    accountSecret: accountSecret,
-    ...(baseUrl ? { baseUrl: baseUrl } : {}),
-  });
-  const current = await client.getChatGPTConnection();
-  if (hasFlag(args, "--status")) {
-    if (!current.connected) {
-      console.log("ChatGPT: not connected. Run `broods login chatgpt`.");
-
-      return;
+async function connectCommand(args: string[]): Promise<void> {
+  const client = await connectionsClient(args);
+  const [type] = positionalArgs(args);
+  if (type === undefined) {
+    const connections = await client.listConnections();
+    if (connections.length === 0) {
+      console.log("No connections yet.");
+    }
+    for (const connection of connections) {
+      console.log(
+        `${connection.name.padEnd(16)} ${connection.type.padEnd(10)} ${connection.email ?? ""}`,
+      );
     }
     console.log(
-      `ChatGPT: connected${current.email ? ` as ${current.email}` : ""}`,
-    );
-    console.log(`Manage usage: ${CHATGPT_USAGE_URL}`);
-
-    return;
-  }
-  if (hasFlag(args, "--logout")) {
-    const deleted = await client.disconnectChatGPT();
-    printSuccess(
-      deleted ? "Disconnected ChatGPT" : "ChatGPT was not connected",
+      `\nConnect one: broods connect <${CONNECTION_TYPE_NAMES.join("|")}>`,
     );
 
     return;
   }
-
-  const signIn = await signInWithChatGPT(current);
-  const stored = await client.connectChatGPT(signIn);
-  if (!stored.connected) {
+  if (!isConnectionType(type)) {
     throw new Error(
-      "The deployment did not store the ChatGPT sign-in: its config plane has no /v1/account/chatgpt yet. Deploy this version, then sign in again.",
+      `Unknown connection type ${type}.\n\n${commandHelp("connect")}`,
     );
   }
-  printSuccess(
-    `Connected ChatGPT${signIn.email ? ` as ${signIn.email}` : ""}. Agents on provider "chatgpt" now use your ChatGPT plan.`,
+  const name = optionValue(args, "--name") ?? type;
+  const scope = optionValue(args, "--scope");
+  const clientId = optionValue(args, "--client-id");
+  const clientSecret = optionValue(args, "--client-secret");
+  const signIn = await connectInBrowser(
+    type,
+    await client.getConnection(name),
+    {
+      ...(scope ? { scopes: scope.split(/[\s,]+/).filter(Boolean) } : {}),
+      ...(clientId ? { clientId: clientId } : {}),
+      ...(clientSecret ? { clientSecret: clientSecret } : {}),
+    },
   );
+  await client.connect(name, signIn);
+  printSuccess(
+    `Connected ${name} (${CONNECTION_TYPES[type].label})${signIn.email ? ` as ${signIn.email}` : ""}.`,
+  );
+  if (type !== "chatgpt") {
+    console.log(
+      `Use it from an MCP server: config.mcp.<server>.oauth = { connection: "${name}" }`,
+    );
+
+    return;
+  }
+  console.log('Agents on model.provider "chatgpt" now use your ChatGPT plan.');
   console.log(`Manage usage: ${CHATGPT_USAGE_URL}`);
   const models = await listChatGPTModels(signIn.accessToken).catch(() => []);
   if (models.length === 0) return;
@@ -663,6 +688,41 @@ async function loginChatGPT(args: string[]): Promise<void> {
   for (const model of models) {
     console.log(`  ${model.slug.padEnd(24)} ${model.displayName}`);
   }
+}
+
+/**
+ * The account client connections run on: the account secret when set, else
+ * the `broods login` token. Role sessions are refused by the route itself.
+ */
+async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
+  loadBroodsRuntimeConfig();
+  const baseUrl = optionValue(args, "--base-url");
+  const accountSecret = process.env.BROODS_ACCOUNT_SECRET;
+  if (accountSecret) {
+    return new BroodsAccountClient({
+      accountSecret: accountSecret,
+      ...(baseUrl ? { baseUrl: baseUrl } : {}),
+    });
+  }
+  const auth = await requireAuth(baseUrl);
+
+  return new BroodsAccountClient({
+    accountSecret: auth.token,
+    baseUrl: baseUrl ?? auth.baseUrl,
+  });
+}
+
+/** `broods disconnect <name>`: forget a connection and revoke it. */
+async function disconnectCommand(args: string[]): Promise<void> {
+  const [name] = positionalArgs(args);
+  if (!name) throw new Error(commandHelp("disconnect"));
+  const deleted = await (await connectionsClient(args)).disconnect(name);
+  if (deleted) {
+    printSuccess(`Disconnected ${name}`);
+
+    return;
+  }
+  console.log(`No connection named ${name}.`);
 }
 
 /**

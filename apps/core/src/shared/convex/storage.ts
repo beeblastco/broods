@@ -38,8 +38,8 @@ import type {
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type {
   AgentDeploymentScope,
-  ProviderCredential,
   Storage,
+  StoredConnection,
 } from "../storage.ts";
 import { budgets } from "./budgets.ts";
 import { getConvexClient } from "./client.ts";
@@ -812,19 +812,19 @@ const machineConnections: Storage["machineConnections"] = {
   },
 };
 
-const providerCredentials: Storage["providerCredentials"] = {
-  load: async function (accountId, provider) {
-    return (await getConvexClient().query(
-      internal.account.providerCredentials.load,
-      { accountId: accountId, provider: provider },
-    )) as ProviderCredential | null;
+const connections: Storage["connections"] = {
+  load: async function (accountId, name) {
+    return (await getConvexClient().query(internal.account.connections.load, {
+      accountId: accountId,
+      name: name,
+    })) as StoredConnection | null;
   },
-  saveRefreshed: async function (accountId, provider, loaded, refreshed) {
+  saveRefreshed: async function (accountId, name, loaded, refreshed) {
     return (await getConvexClient().mutation(
-      internal.account.providerCredentials.saveRefreshed,
+      internal.account.connections.saveRefreshed,
       {
         accountId: accountId,
-        provider: provider,
+        name: name,
         loadedUpdatedAt: loaded.updatedAt,
         ...refreshed,
       },
@@ -856,7 +856,7 @@ export const convexStorage: Storage = {
   accountHooks: accountHooks,
   machineConnections: machineConnections,
   mcp: mcp,
-  providerCredentials: providerCredentials,
+  connections: connections,
   roleSessions: roleSessions,
   taskUsage: taskUsage,
 };

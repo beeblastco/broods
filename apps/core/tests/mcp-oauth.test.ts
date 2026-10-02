@@ -245,6 +245,15 @@ describe("mcpConnection oauth overlay", () => {
     ).toThrow(/sets both an Authorization header and oauth/);
   });
 
+  it("takes the token from a named connection instead of the row's oauth", () => {
+    const connection = mcpConnection(oauthRecord(), undefined, {
+      connection: "gmail",
+    });
+
+    expect(connection.connection).toBe("gmail");
+    expect(connection.oauth).toBeUndefined();
+  });
+
   it("leaves connections without oauth untouched", () => {
     const record = oauthRecord({ oauth: undefined });
     const connection = mcpConnection(record, { "X-Extra": "1" });

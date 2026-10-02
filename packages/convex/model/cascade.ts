@@ -45,10 +45,8 @@ const accountScopedReads: ReadonlyArray<
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
-      .query("providerCredentials")
-      .withIndex("by_accountId_and_provider", (q) =>
-        q.eq("accountId", accountId),
-      )
+      .query("connections")
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db

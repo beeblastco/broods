@@ -7,6 +7,7 @@ import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { McpRecord } from "./domain/mcp.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import type { ConnectionType } from "@broods/convex/model/connections";
 import type { UsageQuantities } from "@broods/convex/model/pricing";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
@@ -248,30 +249,31 @@ interface AgentPolicyStore {
   getById(accountId: string, policyId: string): Promise<PolicyRecord | null>;
 }
 
-/** A provider sign-in that stands in for an API key; `chatgpt` is the only one. */
-export interface ProviderCredential {
+/** A connection with its secrets, as core refreshes and uses it. */
+export interface StoredConnection {
+  type: ConnectionType;
+  clientId: string;
+  /** The developer's OAuth app secret, for types whose refresh needs it. */
+  clientSecret?: string;
+  scopes: string[];
   accessToken: string;
   refreshToken: string;
-  clientId: string;
   /** Access-token expiry, epoch ms. */
   expiresAt: number;
   /** The row version a refresh must still match to save over it. */
   updatedAt: number;
 }
 
-/** OAuth sign-ins that back a model provider. Written by the config plane. */
-interface ProviderCredentialStore {
-  load(
-    accountId: string,
-    provider: "chatgpt",
-  ): Promise<ProviderCredential | null>;
+/** External accounts signed in by `broods connect`. Written by the config plane. */
+interface ConnectionStore {
+  load(accountId: string, name: string): Promise<StoredConnection | null>;
   /** False when the row changed since `loaded` was read: a new sign-in wins. */
   saveRefreshed(
     accountId: string,
-    provider: "chatgpt",
-    loaded: ProviderCredential,
+    name: string,
+    loaded: StoredConnection,
     refreshed: Pick<
-      ProviderCredential,
+      StoredConnection,
       "accessToken" | "refreshToken" | "expiresAt"
     >,
   ): Promise<boolean>;
@@ -325,7 +327,7 @@ export interface Storage {
   machineConnections: MachineConnectionStore;
   mcp: McpStore;
   agentPolicies: AgentPolicyStore;
-  providerCredentials: ProviderCredentialStore;
+  connections: ConnectionStore;
   roleSessions: RoleSessionStore;
   taskUsage: TaskUsageStore;
 }

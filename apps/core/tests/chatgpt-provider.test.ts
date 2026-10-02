@@ -6,11 +6,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { generateText, streamText } from "ai";
-import { resetChatGPTCredentialsForTests } from "../src/harness/chatgpt.ts";
+import { resetConnectionsForTests } from "../src/harness/connections.ts";
 import { resolveConfiguredModel } from "../src/harness/provider.ts";
 import {
   setStorageForTests,
-  type ProviderCredential,
+  type StoredConnection,
   type Storage,
 } from "../src/shared/storage.ts";
 
@@ -72,13 +72,15 @@ interface SentRequest {
 }
 
 let sent: SentRequest[];
-let saved: Array<Parameters<Storage["providerCredentials"]["saveRefreshed"]>>;
-let stored: ProviderCredential | null;
+let saved: Array<Parameters<Storage["connections"]["saveRefreshed"]>>;
+let stored: StoredConnection | null;
 let tokenResponse: Response;
+let refuseNextInference: boolean;
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   sent = [];
+  refuseNextInference = false;
   saved = [];
   stored = credential({ expiresAt: Date.now() + 3_600_000 });
   tokenResponse = Response.json({
@@ -87,9 +89,9 @@ beforeEach(() => {
     expires_in: 600,
     scope: "openid chatgpt.tokens.use.direct",
   });
-  resetChatGPTCredentialsForTests();
+  resetConnectionsForTests();
   setStorageForTests({
-    providerCredentials: {
+    connections: {
       load: async () => stored,
       saveRefreshed: async (...args) => {
         saved.push(args);
@@ -112,6 +114,14 @@ beforeEach(() => {
               : "",
       });
       if (url.startsWith("https://auth.openai.com/")) return tokenResponse;
+      if (refuseNextInference) {
+        refuseNextInference = false;
+
+        return Response.json(
+          { error: { message: "expired" } },
+          { status: 401 },
+        );
+      }
 
       return new Response(
         responseEvents
@@ -222,6 +232,22 @@ describe("chatgpt provider", () => {
     ).toEqual(["Bearer access-2", "Bearer access-2"]);
   });
 
+  it("refreshes once the plan refuses a token before its expiry", async () => {
+    refuseNextInference = true;
+    const { model } = chatgptModel();
+
+    await generateText({ model: model, prompt: "one", maxRetries: 0 }).catch(
+      () => undefined,
+    );
+    await generateText({ model: model, prompt: "two" });
+
+    const refreshes = sent.filter((request) =>
+      request.url.startsWith("https://auth.openai.com/"),
+    );
+    expect(refreshes).toHaveLength(1);
+    expect(sent.at(-1)?.headers.get("authorization")).toBe("Bearer access-2");
+  });
+
   it("asks for a new sign-in when the refresh token is spent", async () => {
     stored = credential({ expiresAt: Date.now() });
     tokenResponse = Response.json({ error: "invalid_grant" }, { status: 400 });
@@ -234,7 +260,7 @@ describe("chatgpt provider", () => {
     }).catch((caught: unknown) => caught);
 
     expect(String(error)).toContain("invalid_grant");
-    expect(String(error)).toContain("broods login chatgpt");
+    expect(String(error)).toContain("broods connect chatgpt");
     expect(saved).toHaveLength(0);
   });
 
@@ -248,7 +274,8 @@ describe("chatgpt provider", () => {
       maxRetries: 0,
     }).catch((caught: unknown) => caught);
 
-    expect(String(error)).toContain("no ChatGPT sign-in");
+    expect(String(error)).toContain("no chatgpt connection");
+    expect(String(error)).toContain("broods connect chatgpt");
   });
 });
 
@@ -259,10 +286,10 @@ function chatgptModel(): ReturnType<typeof resolveConfiguredModel> {
   );
 }
 
-function credential(
-  overrides: Partial<ProviderCredential>,
-): ProviderCredential {
+function credential(overrides: Partial<StoredConnection>): StoredConnection {
   return {
+    type: "chatgpt",
+    scopes: ["chatgpt.tokens.use.direct"],
     accessToken: "access-1",
     refreshToken: "refresh-1",
     clientId: "client-1",
