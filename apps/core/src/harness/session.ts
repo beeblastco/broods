@@ -588,6 +588,7 @@ export class Session {
       return 0;
     }
     const summary = await summarizeConversation({
+      accountId: this.accountId,
       conversationKey: this.conversationKey,
       priorSummaries: systemContextSnapshot.messages.filter(
         isCompactionSummaryMessage,

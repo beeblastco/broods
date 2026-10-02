@@ -4,20 +4,22 @@
  * Authorization header cannot hold: this module mints an access token per
  * oauth config, caches it in-process, and re-mints with a safety margin
  * before expiry. client.ts stamps the minted token onto the connection's
- * Authorization header at connect time.
+ * Authorization header at connect time. `refreshTokenGrant` is the grant
+ * itself, which `connections.ts` also refreshes every connection with.
  */
 
 import type { McpOauth } from "../../shared/domain/mcp.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 
 export const DEFAULT_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-/** Google returns 3600; a response without expires_in gets the same lease. */
+/** Google and OpenAI return 3600; a response without expires_in gets the same lease. */
 const DEFAULT_EXPIRES_IN_SECONDS = 3600;
 const MAX_ERROR_BODY_LENGTH = 512;
 const MAX_TOKEN_CACHE_ENTRIES = 256;
 /** Re-mint this long before expiry, so a sent token is never on its last seconds. */
-const REFRESH_MARGIN_MS = 60_000;
+export const REFRESH_MARGIN_MS = 60_000;
 
 const tokenCache = new Map<string, Promise<MintedToken>>();
 
@@ -32,7 +34,16 @@ interface MintedToken {
 /** The token endpoint's JSON body, untrusted until checked. */
 interface TokenResponse {
   access_token?: unknown;
+  refresh_token?: unknown;
   expires_in?: unknown;
+}
+
+/** A refresh-token grant's answer. `refreshToken` only when the server rotated it. */
+export interface RefreshedToken {
+  accessToken: string;
+  refreshToken?: string;
+  /** The token's real expiry, epoch ms. */
+  expiresAt: number;
 }
 
 /** Tests only (via setMcpForTests): drop every cached token. */
@@ -81,34 +92,26 @@ export async function mcpAccessToken(
   return (await mint).accessToken;
 }
 
-/** One form-encoded POST to the token endpoint; errors name the server. */
-async function mintAccessToken(
-  serverName: string,
-  oauth: ResolvedMcpOauth,
-): Promise<MintedToken> {
-  const failure = (detail: string): Error =>
-    new Error(
-      `MCP server ${serverName}: OAuth token refresh against ${oauth.tokenUrl} failed: ${detail}`,
-    );
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    client_id: oauth.clientId,
-    client_secret: oauth.clientSecret,
-    refresh_token: oauth.refreshToken,
+/**
+ * One form-encoded grant_type=refresh_token POST, shared by MCP oauth and
+ * `connections.ts`. Throws the endpoint's reason; callers say who failed.
+ */
+export async function refreshTokenGrant(
+  tokenUrl: string,
+  form: Record<string, string>,
+  fetchToken: (url: string, init: RequestInit) => Promise<Response>,
+): Promise<RefreshedToken> {
+  const response = await fetchToken(tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      ...form,
+    }).toString(),
   });
-  let response: Response;
-  try {
-    response = await publicHostFetch(oauth.tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-  } catch (error) {
-    throw failure(error instanceof Error ? error.message : String(error));
-  }
   const text = await response.text();
   if (!response.ok) {
-    throw failure(
+    throw new Error(
       `status ${response.status} ${text.slice(0, MAX_ERROR_BODY_LENGTH)}`,
     );
   }
@@ -116,10 +119,10 @@ async function mintAccessToken(
   try {
     parsed = JSON.parse(text) as TokenResponse;
   } catch {
-    throw failure("token endpoint returned non-JSON");
+    throw new Error("token endpoint returned non-JSON");
   }
   if (typeof parsed.access_token !== "string" || parsed.access_token === "") {
-    throw failure("token response carries no access_token");
+    throw new Error("token response carries no access_token");
   }
   const expiresInSeconds =
     typeof parsed.expires_in === "number" && parsed.expires_in > 0
@@ -128,6 +131,36 @@ async function mintAccessToken(
 
   return {
     accessToken: parsed.access_token,
-    expiresAt: Date.now() + expiresInSeconds * 1000 - REFRESH_MARGIN_MS,
+    ...(typeof parsed.refresh_token === "string" && parsed.refresh_token
+      ? { refreshToken: parsed.refresh_token }
+      : {}),
+    expiresAt: Date.now() + expiresInSeconds * 1000,
   };
+}
+
+/** One form-encoded POST to the token endpoint; errors name the server. */
+async function mintAccessToken(
+  serverName: string,
+  oauth: ResolvedMcpOauth,
+): Promise<MintedToken> {
+  try {
+    const token = await refreshTokenGrant(
+      oauth.tokenUrl,
+      {
+        client_id: oauth.clientId,
+        client_secret: oauth.clientSecret,
+        refresh_token: oauth.refreshToken,
+      },
+      publicHostFetch,
+    );
+
+    return {
+      accessToken: token.accessToken,
+      expiresAt: token.expiresAt - REFRESH_MARGIN_MS,
+    };
+  } catch (error) {
+    throw new Error(
+      `MCP server ${serverName}: OAuth token refresh against ${oauth.tokenUrl} failed: ${toErrorMessage(error)}`,
+    );
+  }
 }

@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -19,6 +20,7 @@ import type {
 import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
@@ -36,6 +38,9 @@ import type {
 
 // mock.module("ai") below patches the namespace binding, so hold the real one.
 const realStreamText = actualAi.streamText;
+// Copied before the mocks patch them; afterAll hands them back to later files.
+const realAi = { ...actualAi };
+const realOpenAI = { ...actualOpenAI };
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
@@ -610,6 +615,11 @@ mock.module("ai", () => ({
   ...actualAi,
   streamText: streamTextMock,
 }));
+
+afterAll(async () => {
+  await mock.module("ai", () => realAi);
+  await mock.module("@ai-sdk/openai", () => realOpenAI);
+});
 
 beforeEach(() => {
   setStorageForTests(usageStorage([]));
@@ -3140,6 +3150,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     accountHooks: null as never,
     machineConnections: null as never,
     mcp: null as never,
+    connections: null as never,
     roleSessions: null as never,
     taskUsage: {
       record: async function (input) {

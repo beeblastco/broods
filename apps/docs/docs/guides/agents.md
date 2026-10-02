@@ -41,9 +41,9 @@ The full field list is in [Configuration](../reference/configuration.md).
 | Google Generative AI  | `google`      | xAI Grok          | `xai`        |
 | Groq                  | `groq`        | Z.ai GLM          | `zai`        |
 | Hugging Face          | `huggingface` | OpenAI-compatible | `custom`     |
-| LLM Gateway           | `llmgateway`  |                   |              |
+| LLM Gateway           | `llmgateway`  | ChatGPT plan      | `chatgpt`    |
 
-Each provider needs an `apiKey`. Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. Any setting whose name ends in `url`, like `baseURL` or OpenRouter's `baseUrl`, must be a public https URL. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work. `cloudflare` takes `accountId`. `ollama` goes to Ollama Cloud unless `baseURL` points at a public Ollama host.
+Each provider needs an `apiKey`, except `chatgpt`, which runs on your ChatGPT plan through a [connection](connections.md) (below). Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. Any setting whose name ends in `url`, like `baseURL` or OpenRouter's `baseUrl`, must be a public https URL. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work. `cloudflare` takes `accountId`. `ollama` goes to Ollama Cloud unless `baseURL` points at a public Ollama host.
 
 For a self-hosted or third-party OpenAI-compatible endpoint, use `custom`:
 
@@ -55,6 +55,26 @@ model: { provider: "custom", modelId: "gpt-oss-120b" },
 ```
 
 `base_url` and `baseURL` both work. `baseUrl` fails the sync with an error. For vLLM-style servers, Broods folds several system messages into one and turns cumulative reasoning chunks into increments, so thinking text is not duplicated.
+
+### ChatGPT plan
+
+On a self-hosted deployment, `chatgpt` runs OpenAI models on your ChatGPT Plus or Pro plan instead of an API key, through [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source). Connect it once per account, from the machine with your browser:
+
+```bash
+broods connect chatgpt
+```
+
+The browser asks you to sign in to ChatGPT and allow plan usage. Your deployment checks the ID token and the grant, keeps the [connection](connections.md), and the CLI prints the model ids your plan can use. Name one in the agent, with no `provider.chatgpt` entry:
+
+```ts
+model: { provider: "chatgpt", modelId: "gpt-5.5" },
+```
+
+- The connection belongs to the account, so every agent in it shares it. Broods refreshes the token before it expires. `broods connect` lists it, and `broods disconnect chatgpt` revokes it at OpenAI.
+- Plan usage only takes stateless, streamed Responses requests. Broods sends `store: false`, sends system prompts as developer messages, and drops `temperature`, `topP`, `maxOutputTokens` and the other settings plan usage refuses. Function tools work. OpenAI's hosted tools (file search, code interpreter, image generation, hosted MCP) do not.
+- Requests count against your ChatGPT plan. Review and limit them at [ChatGPT Settings → Usage](https://chatgpt.com/settings/usage). When the plan's limit is reached, runs fail until it resets.
+- `config.harness` does not run on `chatgpt`.
+- OpenAI offers plan usage to open-source and self-hosted tools. Paid hosted services need OpenAI's approval, so the managed service at `gateway.broods.app` refuses `broods connect chatgpt`. Use `openai` with an API key there.
 
 ## Reasoning
 

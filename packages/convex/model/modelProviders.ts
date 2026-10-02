@@ -22,7 +22,8 @@ export interface ModelProviderMeta {
 /**
  * Every Vercel AI SDK provider that ships language models, the community
  * providers on the same spec that take an API key (`cloudflare`, `llmgateway`,
- * `ollama`, `openrouter`), and `custom` (any OpenAI-compatible endpoint).
+ * `ollama`, `openrouter`), `custom` (any OpenAI-compatible endpoint), and
+ * `chatgpt` (OpenAI on a Sign in with ChatGPT login instead of an API key).
  * Image-, speech- and transcription-only providers are deliberately absent:
  * they cannot back `config.model`.
  */
@@ -39,6 +40,7 @@ export const MODEL_PROVIDERS = {
     modelPlaceholder: "anthropic.claude-sonnet-4-5-20250929-v1:0",
   },
   cerebras: { label: "Cerebras", modelPlaceholder: "llama3.1-8b" },
+  chatgpt: { label: "ChatGPT plan", modelPlaceholder: "gpt-5.5" },
   cloudflare: {
     label: "Cloudflare Workers AI",
     modelPlaceholder: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
