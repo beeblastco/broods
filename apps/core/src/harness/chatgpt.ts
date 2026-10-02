@@ -7,10 +7,8 @@
  */
 
 import type { LanguageModelMiddleware } from "ai";
+import { CHATGPT_CONNECTION_NAME } from "@broods/convex/model/connections";
 import { connectionAccessToken, rejectConnectionToken } from "./connections.ts";
-
-/** The connection `broods connect chatgpt` stores; the provider reads it by name. */
-const CONNECTION_NAME = "chatgpt";
 
 // Request fields plan usage refuses outright: the AI SDK sends some of them
 // from ordinary call settings (`temperature`, `maxOutputTokens`) and the rest
@@ -78,7 +76,10 @@ export function chatgptFetch(
     if (!accountId) {
       throw new Error("The chatgpt provider runs only inside an account");
     }
-    const accessToken = await connectionAccessToken(accountId, CONNECTION_NAME);
+    const accessToken = await connectionAccessToken(
+      accountId,
+      CHATGPT_CONNECTION_NAME,
+    );
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${accessToken}`);
     let body = init?.body;
@@ -95,7 +96,7 @@ export function chatgptFetch(
       body: body,
     });
     if (response.status === 401) {
-      rejectConnectionToken(accountId, CONNECTION_NAME, accessToken);
+      rejectConnectionToken(accountId, CHATGPT_CONNECTION_NAME, accessToken);
     }
 
     return wantsJson && response.ok

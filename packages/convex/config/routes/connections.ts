@@ -8,11 +8,9 @@
 
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
 import type { ConnectionStatus } from "../../account/connections";
 import { ClientError } from "../../model/clientError";
 import {
-  CHATGPT_DIRECT_SCOPE,
   CHATGPT_MANAGED_SERVICE_REFUSAL,
   CONNECTION_NAME_PATTERN,
   CONNECTION_TYPE_NAMES,
@@ -62,7 +60,10 @@ export async function handleConnectionsRoute(
 
   const ref = { accountId: accountId, name: name };
   if (req.method === "GET") {
-    const row = await findConnection(ctx, ref);
+    const row: ConnectionStatus | null = await ctx.runQuery(
+      internal.account.connections.status,
+      ref,
+    );
 
     return row
       ? json(publicConnection(row))
@@ -70,13 +71,12 @@ export async function handleConnectionsRoute(
   }
   if (req.method === "PUT") {
     const signIn = readSignIn(name, await parseJsonRequest(req));
-    if (signIn.type === "chatgpt" && isManagedService())
+    if (CONNECTION_TYPES[signIn.type].selfHostedOnly && isManagedService())
       return jsonError(403, CHATGPT_MANAGED_SERVICE_REFUSAL);
-    await ctx.runMutation(internal.account.connections.set, {
-      ...ref,
-      ...signIn,
-      expiresAt: Date.parse(signIn.expiresAt),
-    });
+    const stored: ConnectionStatus = await ctx.runMutation(
+      internal.account.connections.set,
+      { ...ref, ...signIn, expiresAt: Date.parse(signIn.expiresAt) },
+    );
     await writeAudit(ctx, {
       accountId: accountId,
       actor: caller.actor,
@@ -84,11 +84,8 @@ export async function handleConnectionsRoute(
       resource: { kind: "account", id: accountId, name: `connection:${name}` },
       summary: `Connection ${name} (${signIn.type}) signed in`,
     });
-    const stored = await findConnection(ctx, ref);
 
-    return stored
-      ? json(publicConnection(stored))
-      : jsonError(500, "Connection was not stored");
+    return json(publicConnection(stored));
   }
   if (req.method === "DELETE") {
     const deleted: boolean = await ctx.runMutation(
@@ -123,18 +120,6 @@ export function parseConnectionsPath(pathname: string): {
   const match = pathname.match(/^\/v1\/account\/connections\/([^/]+)$/);
 
   return match?.[1] ? { name: decodeURIComponent(match[1]) } : null;
-}
-
-async function findConnection(
-  ctx: ActionCtx,
-  ref: { accountId: Id<"accounts">; name: string },
-): Promise<ConnectionStatus | null> {
-  const rows: ConnectionStatus[] = await ctx.runQuery(
-    internal.account.connections.list,
-    { accountId: ref.accountId },
-  );
-
-  return rows.find((row) => row.name === ref.name) ?? null;
 }
 
 function publicConnection(row: ConnectionStatus): Connection {
@@ -189,19 +174,21 @@ function readSignIn(name: string, body: unknown): ConnectionSignIn {
   const hostId = optional("hostId");
   const clientSecret = optional("clientSecret");
   const email = optional("email");
-  if (type === "chatgpt") {
-    // The model provider reads the connection by this name.
-    if (name !== "chatgpt")
-      throw new ClientError("A chatgpt connection must be named chatgpt");
-    if (!hostId) throw new ClientError("hostId is required for chatgpt");
-    // Identity alone is no use to a model provider: refuse it here rather
-    // than at the first run.
-    if (!scopes.includes(CHATGPT_DIRECT_SCOPE))
-      throw new ClientError(
-        `The sign-in was not granted ${CHATGPT_DIRECT_SCOPE}; allow ChatGPT plan usage when signing in`,
-      );
-  }
-  if (CONNECTION_TYPES[type].needsClientSecret && !clientSecret)
+  const meta = CONNECTION_TYPES[type];
+  if (meta.fixedName && name !== meta.fixedName)
+    throw new ClientError(
+      `A ${type} connection must be named ${meta.fixedName}`,
+    );
+  // A registered client is attributed to the deployment's host id.
+  if (meta.client === "dynamic" && !hostId)
+    throw new ClientError(`hostId is required for ${type}`);
+  // A grant without the scope the type is for is no use: refuse it here
+  // rather than at the first run.
+  if (meta.requiredScope && !scopes.includes(meta.requiredScope))
+    throw new ClientError(
+      `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
+    );
+  if (meta.needsClientSecret && !clientSecret)
     throw new ClientError(`clientSecret is required for ${type}`);
 
   return {

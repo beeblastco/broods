@@ -2,14 +2,14 @@
  * A connection's live access token: loaded from the config plane, refreshed
  * before it expires (or once the provider refused it), and the rotated pair
  * saved back. The `chatgpt` model provider and MCP servers with
- * `oauth.connection` call `connectionAccessToken`; a 401 from either calls
- * `rejectConnectionToken`. `broods connect` signs in; the config plane stores.
+ * `oauth.connection` call `connectionAccessToken`; the model provider also
+ * calls `rejectConnectionToken` on a 401. `broods connect` signs in; the
+ * config plane stores.
  */
 
 import {
-  CHATGPT_RESOURCE,
-  CONNECTION_TYPE_NAMES,
   CONNECTION_TYPES,
+  isConnectionType,
 } from "@broods/convex/model/connections";
 import { getStorage, type StoredConnection } from "../shared/storage.ts";
 import { REFRESH_MARGIN_MS, refreshTokenGrant } from "./mcp/oauth.ts";
@@ -73,12 +73,10 @@ export function resetConnectionsForTests(): void {
 }
 
 /** The command that signs this connection in again. */
-function connectCommand(name: string, type: string | undefined): string {
-  if (type === undefined)
-    return CONNECTION_TYPE_NAMES.some((typeName) => typeName === name)
-      ? `broods connect ${name}`
-      : `broods connect <type> --name ${name}`;
-
+function connectCommand(
+  name: string,
+  type: string = isConnectionType(name) ? name : "<type>",
+): string {
   return name === type
     ? `broods connect ${type}`
     : `broods connect ${type} --name ${name}`;
@@ -99,7 +97,7 @@ async function loadFresh(
   if (!stored) {
     cache.delete(key);
     throw new Error(
-      `This account has no ${name} connection. Run \`${connectCommand(name, undefined)}\` to sign in.`,
+      `This account has no ${name} connection. Run \`${connectCommand(name)}\` to sign in.`,
     );
   }
   const connection =
@@ -124,12 +122,9 @@ async function refreshAndSave(
       client_id: stored.clientId,
       refresh_token: stored.refreshToken,
       ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
-      // ChatGPT mints for one API; Microsoft wants the scopes on every refresh.
+      ...(type.resource ? { resource: type.resource } : {}),
       // Otherwise no scope: the refreshed grant keeps what the user approved.
-      ...(stored.type === "chatgpt" ? { resource: CHATGPT_RESOURCE } : {}),
-      ...(stored.type === "microsoft"
-        ? { scope: stored.scopes.join(" ") }
-        : {}),
+      ...(type.refreshScopes ? { scope: stored.scopes.join(" ") } : {}),
     },
     (url, init) =>
       fetch(url, { ...init, signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }),

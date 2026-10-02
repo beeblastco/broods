@@ -26,15 +26,18 @@ import { connectionsFields } from "../schema";
 
 const REVOKE_TIMEOUT_MS = 5_000;
 
-const statusFields = {
-  name: v.string(),
+const signInFields = {
   type: connectionsFields.type,
-  clientId: v.string(),
-  hostId: v.optional(v.string()),
-  email: v.optional(v.string()),
-  scopes: v.array(v.string()),
-  expiresAt: v.number(),
-  updatedAt: v.number(),
+  clientId: connectionsFields.clientId,
+  hostId: connectionsFields.hostId,
+  email: connectionsFields.email,
+  scopes: connectionsFields.scopes,
+  expiresAt: connectionsFields.expiresAt,
+};
+const statusFields = {
+  name: connectionsFields.name,
+  ...signInFields,
+  updatedAt: connectionsFields.updatedAt,
 };
 const statusValidator = v.object(statusFields);
 const secretFields = {
@@ -64,6 +67,17 @@ export const list = internalQuery({
   },
 });
 
+/** One connection by name, never its tokens. */
+export const status = internalQuery({
+  args: ref,
+  returns: v.union(v.null(), statusValidator),
+  handler: async (ctx, args): Promise<ConnectionStatus | null> => {
+    const row = await findRow(ctx, args.accountId, args.name);
+
+    return row ? statusOf(row) : null;
+  },
+});
+
 /** The decrypted connection, for core's refresh and calls. */
 export const load = internalQuery({
   args: ref,
@@ -75,20 +89,11 @@ export const load = internalQuery({
   },
 });
 
-/** Store a fresh sign-in under its name, replacing what was there. */
+/** Store a fresh sign-in under its name, replacing what was there; answers what is stored. */
 export const set = internalMutation({
-  args: {
-    ...ref,
-    type: connectionsFields.type,
-    clientId: v.string(),
-    hostId: v.optional(v.string()),
-    email: v.optional(v.string()),
-    scopes: v.array(v.string()),
-    expiresAt: v.number(),
-    ...secretFields,
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  args: { ...ref, ...signInFields, ...secretFields },
+  returns: statusValidator,
+  handler: async (ctx, args): Promise<ConnectionStatus> => {
     const { accessToken, refreshToken, clientSecret, ...metadata } = args;
     const fields = {
       ...metadata,
@@ -100,13 +105,12 @@ export const set = internalMutation({
       updatedAt: Date.now(),
     };
     const existing = await findRow(ctx, args.accountId, args.name);
-    if (existing) {
-      await ctx.db.replace(existing._id, fields);
-    } else {
-      await ctx.db.insert("connections", fields);
-    }
+    if (existing) await ctx.db.replace(existing._id, fields);
+    const id = existing?._id ?? (await ctx.db.insert("connections", fields));
+    const stored = await ctx.db.get(id);
+    if (!stored) throw new Error(`Connection ${args.name} was not stored`);
 
-    return null;
+    return statusOf(stored);
   },
 });
 
@@ -148,11 +152,12 @@ export const disconnect = internalMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const row = await findRow(ctx, args.accountId, args.name);
     if (!row) return false;
-    const stored = await decrypted(row);
     await ctx.db.delete(row._id);
-    if (CONNECTION_TYPES[row.type].revokeUrl) {
+    const revokeUrl = CONNECTION_TYPES[row.type].revokeUrl;
+    if (revokeUrl) {
+      const stored = await decrypted(row);
       await ctx.scheduler.runAfter(0, internal.account.connections.revoke, {
-        type: row.type,
+        revokeUrl: revokeUrl,
         clientId: row.clientId,
         refreshToken: stored.refreshToken,
         ...(stored.clientSecret ? { clientSecret: stored.clientSecret } : {}),
@@ -169,17 +174,15 @@ export const disconnect = internalMutation({
  */
 export const revoke = internalAction({
   args: {
-    type: connectionsFields.type,
+    revokeUrl: v.string(),
     clientId: v.string(),
     clientSecret: v.optional(v.string()),
     refreshToken: v.string(),
   },
   returns: v.null(),
   handler: async (_ctx, args): Promise<null> => {
-    const revokeUrl = CONNECTION_TYPES[args.type].revokeUrl;
-    if (!revokeUrl) return null;
     try {
-      const response = await fetch(revokeUrl, {
+      const response = await fetch(args.revokeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -192,11 +195,11 @@ export const revoke = internalAction({
       });
       if (!response.ok) {
         console.warn(
-          `${args.type} token revocation failed: HTTP ${response.status}`,
+          `Token revocation at ${args.revokeUrl} failed: HTTP ${response.status}`,
         );
       }
     } catch (error) {
-      console.warn(`${args.type} token revocation failed`, error);
+      console.warn(`Token revocation at ${args.revokeUrl} failed`, error);
     }
 
     return null;

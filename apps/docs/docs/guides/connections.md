@@ -4,8 +4,8 @@ A connection is an external account your agents act through: your ChatGPT plan, 
 
 ```bash
 broods connect chatgpt                    # run agents on your ChatGPT plan
-broods connect google --name gmail \
-  --client-id 1234.apps.googleusercontent.com --client-secret "$GOOGLE_SECRET"
+BROODS_CLIENT_ID=1234.apps.googleusercontent.com BROODS_CLIENT_SECRET=... \
+  broods connect google --name gmail       # Gmail on your Google OAuth app
 broods connect                            # list connections
 broods disconnect gmail                   # forget and revoke
 ```
@@ -16,7 +16,7 @@ broods disconnect gmail                   # forget and revoke
 | `google`    | Gmail, Calendar, Drive MCP servers                | Yours: client id and secret  |
 | `microsoft` | Outlook mail and calendar MCP servers             | Yours: client id             |
 
-`broods connect` uses `BROODS_ACCOUNT_SECRET` when it is set, otherwise your `broods login`. The dashboard lists the account's connections under **Connections**, where an org admin can disconnect one.
+The dashboard lists the account's connections under **Connections**, where an org admin can disconnect one. Every option is in the [CLI reference](../reference/cli.md#connect).
 
 ## ChatGPT plan
 
@@ -57,12 +57,5 @@ The default scopes are identity plus mail (`gmail.modify`, `Mail.ReadWrite`). Pa
 
 - The browser redirect comes back to `http://127.0.0.1:1455/auth/callback`, or another free port when 1455 is busy. The CLI checks the ID token's signature, issuer, audience, expiry and nonce before anything is stored.
 - Tokens and your client secret are encrypted at rest and never returned by the API or the dashboard.
-- Signing in again under the same name replaces the connection. A ChatGPT reconnect keeps its OAuth client and host id; an own-app reconnect reuses the client id.
+- Signing in again under the same name replaces the connection. A ChatGPT reconnect keeps its OAuth client and host id; an own-app reconnect takes the client id and secret again.
 - `broods disconnect` forgets the connection, then revokes the refresh token at the provider. Microsoft has no revocation endpoint; end the grant in your Microsoft account settings.
-
-| Option             | Meaning                                                                                                              |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `--name <name>`    | Connection name, default the type. Lowercase letters, digits and dashes. A `chatgpt` connection is always `chatgpt`. |
-| `--scope <scopes>` | Scopes to request instead of the type's defaults.                                                                    |
-| `--client-id`      | Your OAuth app's client id (`google`, `microsoft`).                                                                  |
-| `--client-secret`  | Your OAuth app's client secret (`google`).                                                                           |

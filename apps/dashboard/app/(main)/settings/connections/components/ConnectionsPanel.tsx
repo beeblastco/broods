@@ -22,14 +22,6 @@ export type Connection = FunctionReturnType<
   typeof api.account.connectionsPublic.list
 >[number];
 
-/** What a developer runs to add each type; the own-app types need their client. */
-const CONNECT_COMMANDS: Record<ConnectionType, string> = {
-  chatgpt: "broods connect chatgpt",
-  google:
-    "broods connect google --name gmail --client-id <id> --client-secret <secret>",
-  microsoft: "broods connect microsoft --name outlook --client-id <id>",
-};
-
 /** The account's connections, and the command that adds each type. */
 export function ConnectionsPanel(): React.JSX.Element {
   const { canWrite } = useOrgRole();
@@ -137,12 +129,10 @@ export function ConnectionsView({
                 {CONNECTION_TYPES[type].description}
               </span>
               <CopyRow
-                value={CONNECT_COMMANDS[type]}
+                value={connectCommand(type)}
                 className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
               >
-                <span className="flex-1 truncate">
-                  {CONNECT_COMMANDS[type]}
-                </span>
+                <span className="flex-1 truncate">{connectCommand(type)}</span>
               </CopyRow>
             </div>
           ))}
@@ -150,4 +140,12 @@ export function ConnectionsView({
       </div>
     </Section>
   );
+}
+
+/** What a developer runs to add a type; an own-app type needs its client. */
+function connectCommand(type: ConnectionType): string {
+  const meta = CONNECTION_TYPES[type];
+  if (meta.client !== "own") return `broods connect ${type}`;
+
+  return `broods connect ${type} --name <name> --client-id <id>${meta.needsClientSecret ? " --client-secret <secret>" : ""}`;
 }

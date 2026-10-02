@@ -63,6 +63,7 @@ import {
 import { BroodsAccountClient } from "../account.ts";
 import {
   CHATGPT_USAGE_URL,
+  CONNECTION_NAME_PATTERN,
   CONNECTION_TYPES,
   CONNECTION_TYPE_NAMES,
   isConnectionType,
@@ -180,8 +181,10 @@ Options:
   --name <name>              Connection name (default: the type); an MCP server
                              uses it as config.mcp.<server>.oauth.connection
   --scope <scopes>           Scopes to request, space or comma separated
-  --client-id <id>           Your OAuth app's client id (google, microsoft)
-  --client-secret <secret>   Your OAuth app's client secret (google)
+  --client-id <id>           Your OAuth app's client id (google, microsoft);
+                             BROODS_CLIENT_ID otherwise
+  --client-secret <secret>   Your OAuth app's client secret (google);
+                             BROODS_CLIENT_SECRET otherwise
 
 ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
@@ -633,21 +636,9 @@ async function login(args: string[]): Promise<void> {
  * lists the account's connections.
  */
 async function connectCommand(args: string[]): Promise<void> {
-  const client = await connectionsClient(args);
   const [type] = positionalArgs(args);
   if (type === undefined) {
-    const connections = await client.listConnections();
-    if (connections.length === 0) {
-      console.log("No connections yet.");
-    }
-    for (const connection of connections) {
-      console.log(
-        `${connection.name.padEnd(16)} ${connection.type.padEnd(10)} ${connection.email ?? ""}`,
-      );
-    }
-    console.log(
-      `\nConnect one: broods connect <${CONNECTION_TYPE_NAMES.join("|")}>`,
-    );
+    await listConnections(await connectionsClient(args));
 
     return;
   }
@@ -656,10 +647,23 @@ async function connectCommand(args: string[]): Promise<void> {
       `Unknown connection type ${type}.\n\n${commandHelp("connect")}`,
     );
   }
-  const name = optionValue(args, "--name") ?? type;
+  const meta = CONNECTION_TYPES[type];
+  const name = optionValue(args, "--name") ?? meta.fixedName ?? type;
+  // Refused before the browser opens rather than by the server after it.
+  if (meta.fixedName && name !== meta.fixedName) {
+    throw new Error(`A ${type} connection is always named ${meta.fixedName}.`);
+  }
+  if (!CONNECTION_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Connection names are lowercase letters, digits and dashes: ${name}`,
+    );
+  }
   const scope = optionValue(args, "--scope");
-  const clientId = optionValue(args, "--client-id");
-  const clientSecret = optionValue(args, "--client-secret");
+  const clientId =
+    optionValue(args, "--client-id") ?? process.env.BROODS_CLIENT_ID;
+  const clientSecret =
+    optionValue(args, "--client-secret") ?? process.env.BROODS_CLIENT_SECRET;
+  const client = await connectionsClient(args);
   const signIn = await connectInBrowser(
     type,
     await client.getConnection(name),
@@ -671,7 +675,7 @@ async function connectCommand(args: string[]): Promise<void> {
   );
   await client.connect(name, signIn);
   printSuccess(
-    `Connected ${name} (${CONNECTION_TYPES[type].label})${signIn.email ? ` as ${signIn.email}` : ""}.`,
+    `Connected ${name} (${meta.label})${signIn.email ? ` as ${signIn.email}` : ""}.`,
   );
   if (type !== "chatgpt") {
     console.log(
@@ -704,11 +708,11 @@ async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
       ...(baseUrl ? { baseUrl: baseUrl } : {}),
     });
   }
-  const auth = await requireAuth(baseUrl);
+  const login = await requireAuth(baseUrl);
 
   return new BroodsAccountClient({
-    accountSecret: auth.token,
-    baseUrl: baseUrl ?? auth.baseUrl,
+    accountSecret: login.token,
+    baseUrl: baseUrl ?? login.baseUrl,
   });
 }
 
@@ -723,6 +727,24 @@ async function disconnectCommand(args: string[]): Promise<void> {
     return;
   }
   console.log(`No connection named ${name}.`);
+}
+
+/** The account's connections as a table, then the types it can add. */
+async function listConnections(client: BroodsAccountClient): Promise<void> {
+  const connections = await client.listConnections();
+  if (connections.length === 0) {
+    console.log("No connections yet.");
+  } else {
+    console.log(`${"NAME".padEnd(16)} ${"TYPE".padEnd(14)} ACCOUNT`);
+  }
+  for (const connection of connections) {
+    console.log(
+      `${connection.name.padEnd(16)} ${CONNECTION_TYPES[connection.type].label.padEnd(14)} ${connection.email ?? connection.clientId}`,
+    );
+  }
+  console.log(
+    `\nConnect one: broods connect <${CONNECTION_TYPE_NAMES.join("|")}>`,
+  );
 }
 
 /**

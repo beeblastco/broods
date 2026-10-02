@@ -122,7 +122,9 @@ describe("connectInBrowser", () => {
 
     const error = await runSignIn("chatgpt").catch((caught: unknown) => caught);
 
-    expect(String(error)).toContain("plan usage was not allowed");
+    expect(String(error)).toContain(
+      "chatgpt.tokens.use.direct was not granted",
+    );
   });
 });
 

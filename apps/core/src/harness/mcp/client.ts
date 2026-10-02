@@ -60,7 +60,7 @@ export interface McpConnection {
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
   /** A `broods connect` connection the Authorization header comes from instead. */
-  connection?: string;
+  connectionName?: string;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
   uncached?: boolean;
 }
@@ -239,7 +239,7 @@ export function mcpConnection(
     record: record,
     headers: headers,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
-    ...(connection ? { connection: connection } : {}),
+    ...(connection ? { connectionName: connection } : {}),
   };
 }
 
@@ -261,7 +261,7 @@ function cacheKeyFor(connection: McpConnection): string {
     a < b ? -1 : 1,
   );
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? connection.connection ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? connection.connectionName ?? null)}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -294,10 +294,10 @@ async function connectClient(
     // Minted (or served from the token cache) per connect: clients are
     // per-operation, so every request carries a token outside its refresh
     // margin instead of a static header that expires mid-conversation.
-    const accessToken = connection.connection
+    const accessToken = connection.connectionName
       ? await connectionAccessToken(
           connection.record.accountId,
-          connection.connection,
+          connection.connectionName,
         )
       : connection.oauth
         ? await mcpAccessToken(connection.record.name, connection.oauth)

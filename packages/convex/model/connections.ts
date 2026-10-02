@@ -36,10 +36,23 @@ export interface ConnectionTypeMeta {
   defaultScopes: readonly string[];
   /** Extra authorize parameters the provider needs to issue a refresh token. */
   authorizeParams?: Readonly<Record<string, string>>;
-  /** `chatgpt` registers its own client; the others run on the developer's OAuth app. */
+  /**
+   * `dynamic` registers a client at the first sign-in (Sign in with ChatGPT,
+   * with a deployment host id); `own` runs on the developer's OAuth app.
+   */
   client: "dynamic" | "own";
   /** Whether the developer's OAuth app secret rides every refresh. */
   needsClientSecret: boolean;
+  /** The API tokens are minted for, sent on every authorize and token request. */
+  resource?: string;
+  /** The provider wants the granted scopes repeated on every refresh. */
+  refreshScopes?: boolean;
+  /** A grant without this scope is refused before it is stored. */
+  requiredScope?: string;
+  /** The managed service refuses this type; self-hosted deployments only. */
+  selfHostedOnly?: boolean;
+  /** The one name this type is stored under, because something reads it by name. */
+  fixedName?: string;
 }
 
 /** A verified sign-in for `PUT /v1/account/connections/{name}`; `broods connect` builds it. */
@@ -75,6 +88,9 @@ export const CHATGPT_RESOURCE = "https://api.openai.com/v1";
 
 /** The first ChatGPT sign-in registers a client; OpenAI answers with its real id. */
 export const CHATGPT_DYNAMIC_CLIENT_ID = "dynamic_agent_client";
+
+/** The `chatgpt` model provider reads the connection stored under this name. */
+export const CHATGPT_CONNECTION_NAME = "chatgpt";
 
 /** The grant that lets requests draw on the user's ChatGPT plan. */
 export const CHATGPT_DIRECT_SCOPE = "chatgpt.tokens.use.direct";
@@ -116,6 +132,10 @@ export const CONNECTION_TYPES: Readonly<
     ],
     client: "dynamic",
     needsClientSecret: false,
+    resource: CHATGPT_RESOURCE,
+    requiredScope: CHATGPT_DIRECT_SCOPE,
+    selfHostedOnly: true,
+    fixedName: CHATGPT_CONNECTION_NAME,
   },
   google: {
     label: "Google",
@@ -150,5 +170,6 @@ export const CONNECTION_TYPES: Readonly<
     ],
     client: "own",
     needsClientSecret: false,
+    refreshScopes: true,
   },
 };

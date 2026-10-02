@@ -250,7 +250,7 @@ describe("mcpConnection oauth overlay", () => {
       connection: "gmail",
     });
 
-    expect(connection.connection).toBe("gmail");
+    expect(connection.connectionName).toBe("gmail");
     expect(connection.oauth).toBeUndefined();
   });
 

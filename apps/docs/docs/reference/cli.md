@@ -123,13 +123,20 @@ broods connect [chatgpt | google | microsoft] [--name <name>] [--scope <scopes>]
 
 It uses `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` is self-hosted only; the managed service refuses it.
 
+| Option                     | Meaning                                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--name <name>`            | Connection name, default the type. Lowercase letters, digits and dashes. A `chatgpt` connection is always `chatgpt`. |
+| `--scope <scopes>`         | Scopes to request instead of the type's defaults, space or comma separated.                                          |
+| `--client-id <id>`         | Your OAuth app's client id (`google`, `microsoft`). `BROODS_CLIENT_ID` otherwise.                                    |
+| `--client-secret <secret>` | Your OAuth app's client secret (`google`). `BROODS_CLIENT_SECRET` otherwise, which keeps it out of shell history.    |
+
 ## disconnect
 
 ```bash
 broods disconnect <name>
 ```
 
-Forgets the connection and revokes its refresh token at the provider.
+Forgets the connection and revokes its refresh token at the provider. Microsoft has no revocation endpoint; end the grant in your Microsoft account settings.
 
 ## whoami
 

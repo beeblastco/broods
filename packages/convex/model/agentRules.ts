@@ -19,6 +19,7 @@ import {
   type AccountModelProviderName,
 } from "./modelProviders";
 import { ClientError } from "./clientError";
+import { CONNECTION_NAME_PATTERN } from "./connections";
 
 export type AgentStatus = "active" | "disabled";
 export type { AccountModelProviderName } from "./modelProviders";
@@ -966,6 +967,18 @@ function normalizeMcpConfig(value: unknown): void {
       throw new ClientError(
         `config.mcp.${serverId}.oauth must be an object of string values`,
       );
+    }
+    const connection = config.oauth?.connection;
+    if (connection !== undefined) {
+      // A connection brings its own tokens; mixed-in credentials would be ignored.
+      if (Object.keys(config.oauth ?? {}).length > 1)
+        throw new ClientError(
+          `config.mcp.${serverId}.oauth.connection cannot be combined with other oauth fields`,
+        );
+      if (!CONNECTION_NAME_PATTERN.test(connection))
+        throw new ClientError(
+          `config.mcp.${serverId}.oauth.connection must name a connection (lowercase letters, digits and dashes)`,
+        );
     }
   }
 }

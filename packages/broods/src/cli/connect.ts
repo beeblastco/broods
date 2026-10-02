@@ -8,7 +8,6 @@
 
 import { createHash, randomBytes, randomUUID, webcrypto } from "node:crypto";
 import {
-  CHATGPT_DIRECT_SCOPE,
   CHATGPT_DYNAMIC_CLIENT_ID,
   CHATGPT_RESOURCE,
   CONNECTION_TYPES,
@@ -136,7 +135,7 @@ export async function connectInBrowser(
       code_verifier: verifier,
       redirect_uri: redirectUri,
       ...(issued.clientSecret ? { client_secret: issued.clientSecret } : {}),
-      ...(issued.hostId ? { resource: CHATGPT_RESOURCE } : {}),
+      ...(meta.resource ? { resource: meta.resource } : {}),
     });
     const claims = await verifyIdToken(
       type,
@@ -183,6 +182,7 @@ function authorizeQuery(
   client: SignInClient,
   fields: Record<string, string>,
 ): URLSearchParams {
+  const meta = CONNECTION_TYPES[type];
   const registering = client.clientId === CHATGPT_DYNAMIC_CLIENT_ID;
 
   return new URLSearchParams({
@@ -190,11 +190,10 @@ function authorizeQuery(
     response_type: "code",
     code_challenge_method: "S256",
     ...fields,
-    ...CONNECTION_TYPES[type].authorizeParams,
+    ...meta.authorizeParams,
+    ...(meta.resource ? { resource: meta.resource } : {}),
     ...(registering ? { agent_name_hint: AGENT_NAME } : {}),
-    ...(client.hostId
-      ? { ext_agent_host_id: client.hostId, resource: CHATGPT_RESOURCE }
-      : {}),
+    ...(client.hostId ? { ext_agent_host_id: client.hostId } : {}),
   });
 }
 
@@ -242,8 +241,9 @@ function readAuthorizationCallback(
 }
 
 /**
- * ChatGPT keeps the client OpenAI issued and its host id; the other types run
- * on the developer's own OAuth app, passed once and reused on reconnect.
+ * A registering type keeps the client it was issued and its host id when the
+ * name already holds one of its kind; an own-app type runs on the client the
+ * developer passes (or sets in BROODS_CLIENT_ID / BROODS_CLIENT_SECRET).
  */
 function resolveClient(
   type: ConnectionType,
@@ -251,24 +251,27 @@ function resolveClient(
   options: ConnectOptions,
 ): SignInClient {
   const meta = CONNECTION_TYPES[type];
-  if (type === "chatgpt") {
+  if (meta.client === "dynamic") {
+    const previous = current?.type === type ? current : null;
+
     return {
-      clientId: current?.clientId ?? CHATGPT_DYNAMIC_CLIENT_ID,
-      hostId: current?.hostId ?? `urn:uuid:${randomUUID()}`,
+      clientId: previous?.clientId ?? CHATGPT_DYNAMIC_CLIENT_ID,
+      hostId: previous?.hostId ?? `urn:uuid:${randomUUID()}`,
     };
   }
-  const clientId = options.clientId ?? current?.clientId;
-  if (!clientId) {
+  if (!options.clientId) {
     throw new Error(
-      `${meta.label} runs on your own OAuth app: pass --client-id${meta.needsClientSecret ? " and --client-secret" : ""}.`,
+      `${meta.label} runs on your own OAuth app: pass --client-id${meta.needsClientSecret ? " and --client-secret" : ""}, or set BROODS_CLIENT_ID${meta.needsClientSecret ? " and BROODS_CLIENT_SECRET" : ""}.`,
     );
   }
   if (meta.needsClientSecret && !options.clientSecret) {
-    throw new Error(`${meta.label} needs your OAuth app's --client-secret.`);
+    throw new Error(
+      `${meta.label} needs your OAuth app's --client-secret (or BROODS_CLIENT_SECRET).`,
+    );
   }
 
   return {
-    clientId: clientId,
+    clientId: options.clientId,
     ...(options.clientSecret ? { clientSecret: options.clientSecret } : {}),
   };
 }
@@ -283,9 +286,10 @@ function signInFrom(
 ): ConnectionSignIn {
   // No scope in the response means the requested scope was granted (RFC 6749 5.1).
   const scopes = token.scope?.split(" ") ?? requested;
-  if (type === "chatgpt" && !scopes.includes(CHATGPT_DIRECT_SCOPE)) {
+  const required = CONNECTION_TYPES[type].requiredScope;
+  if (required && !scopes.includes(required)) {
     throw new Error(
-      "Signed in, but ChatGPT plan usage was not allowed. Run `broods connect chatgpt` again and allow it, or check that your plan is eligible (ChatGPT Plus or Pro).",
+      `Signed in, but ${required} was not granted. Run \`broods connect ${type}\` again and allow it.`,
     );
   }
   const email = claims.email ?? claims.preferred_username;

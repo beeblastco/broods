@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { CONNECTION_TYPE_NAMES } from "./model/connections";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -761,11 +762,7 @@ export const accountEnvVarsFields = {
 export const connectionsFields = {
   accountId: v.id("accounts"),
   name: v.string(),
-  type: v.union(
-    v.literal("chatgpt"),
-    v.literal("google"),
-    v.literal("microsoft"),
-  ),
+  type: v.union(...CONNECTION_TYPE_NAMES.map((name) => v.literal(name))),
   /** OAuth client: the one OpenAI issued, or the developer's own app. */
   clientId: v.string(),
   /** `chatgpt` only: `ext_agent_host_id` of this deployment, kept across sign-ins. */
