@@ -949,6 +949,37 @@ describe("runAgentLoop", () => {
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
   });
 
+  it("drops raw provider chunks so consumers only see stream parts", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const parts = [
+      { type: "raw", rawValue: { type: "tool_progress" } },
+      { type: "text-delta", id: "t1", text: "hi" },
+      { type: "raw", rawValue: { type: "message_stop" } },
+      { type: "finish", finishReason: "stop" },
+    ];
+    let finalized: boolean | undefined;
+    const stream = {
+      stream: new ReadableStream({
+        start: (controller): void => {
+          for (const part of parts) controller.enqueue(part);
+          controller.close();
+        },
+      }),
+      ensureFinalized: async (drained: boolean): Promise<void> => {
+        finalized = drained;
+      },
+    } as unknown as AgentLoopStream;
+
+    const seen: unknown[] = [];
+    for await (const chunk of readAgentFullStream(stream)) seen.push(chunk);
+
+    expect(seen.map((chunk) => (chunk as { type: string }).type)).toEqual([
+      "text-delta",
+      "finish",
+    ]);
+    expect(finalized).toBe(true);
+  });
+
   it("keeps a finished run completed when the reader leaves during onEnd", async () => {
     const writes: TaskUsageInput[] = [];
     setStorageForTests(usageStorage(writes));
