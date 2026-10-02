@@ -9,7 +9,13 @@ import {
 } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
-import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
+import type {
+  LanguageModel,
+  ModelMessage,
+  SystemModelMessage,
+  TextStreamPart,
+  ToolSet,
+} from "ai";
 import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
@@ -947,6 +953,25 @@ describe("runAgentLoop", () => {
 
     expect(stream.didFail()).toBe(false);
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+  });
+
+  it("drops raw provider chunks so consumers only see stream parts", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const parts: TextStreamPart<ToolSet>[] = [
+      { type: "raw", rawValue: { type: "tool_progress" } },
+      { type: "text-delta", id: "t1", text: "hi" },
+      { type: "raw", rawValue: { type: "message_stop" } },
+      { type: "text-end", id: "t1" },
+    ];
+    const stream = {
+      stream: actualAi.simulateReadableStream({ chunks: parts }),
+      ensureFinalized: async (): Promise<void> => {},
+    };
+
+    const seen: unknown[] = [];
+    for await (const chunk of readAgentFullStream(stream)) seen.push(chunk);
+
+    expect(seen).toEqual([parts[1], parts[3]]);
   });
 
   it("keeps a finished run completed when the reader leaves during onEnd", async () => {
