@@ -2833,7 +2833,7 @@ describe("auto-compaction after a turn", () => {
   async function runCompactingTurn(options: {
     scenario: "real-two-step" | "approval-request";
     autoCompaction: { enabled?: boolean; maxContextLength?: number };
-    compactAfterTurn?: () => Promise<number>;
+    compactConversation?: () => Promise<number>;
   }): Promise<{ stream: AgentLoopStream; order: string[] }> {
     installHarnessEnv();
     streamTextScenario = options.scenario;
@@ -2862,10 +2862,10 @@ describe("auto-compaction after a turn", () => {
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
         }),
-        compactAfterTurn: async (): Promise<number> => {
+        compactConversation: async (): Promise<number> => {
           order.push("compact");
 
-          return (options.compactAfterTurn ?? (async () => 4))();
+          return (options.compactConversation ?? (async () => 4))();
         },
       } as never,
       {
@@ -2940,7 +2940,8 @@ describe("auto-compaction after a turn", () => {
     const { stream, order } = await runCompactingTurn({
       scenario: "real-two-step",
       autoCompaction: { maxContextLength: 10 },
-      compactAfterTurn: () => Promise.reject(new Error("summary model down")),
+      compactConversation: () =>
+        Promise.reject(new Error("summary model down")),
     });
 
     expect(stream.didFail()).toBe(false);

@@ -22,7 +22,6 @@ import {
   executeCommand,
   queuedCommand,
   resolveChannelCommand,
-  type CommandResult,
   type QueuedCommand,
 } from "../shared/commands.ts";
 import {
@@ -1999,6 +1998,7 @@ async function handleStatusRequest(
   });
 }
 
+/** Appends a direct run's input and builds its turn context; settles and drains on failure. */
 async function prepareDirectTurn(
   event: DirectInboundEvent,
 ): Promise<DirectTurn | null> {
@@ -3143,7 +3143,9 @@ async function runParentContinuationLoop(options: {
 async function runCommandTurn(options: {
   event: DirectInboundEvent;
   command: QueuedCommand;
-  send: (chunk: TextStreamPart<ToolSet>) => Promise<void>;
+  send: (
+    chunk: TextStreamPart<ToolSet> | { type: "error"; error: string },
+  ) => Promise<void>;
 }): Promise<AsyncAgentOutcome> {
   const { event } = options;
   const session = directSession(event);
@@ -3156,6 +3158,11 @@ async function runCommandTurn(options: {
       await options.send(chunk);
     },
   );
+  if (outcome.status === "failed") {
+    await options
+      .send({ type: "error", error: outcome.error })
+      .catch((): void => {});
+  }
   // Settled in the hand-off mutation, which retries the settle on its own
   // when the hand-off throws.
   const transferred = await dispatchNextIngress(
@@ -3179,8 +3186,9 @@ async function runCommandTurn(options: {
 }
 
 /**
- * A queued command's run outcome: its reply, sent to the session's channel
- * and through `send` when given. Never throws; a failed send fails the run.
+ * Runs a command the queue held until the turn before it ended, in place of a
+ * model turn and under the session's lease. Its reply goes to the session's
+ * channel and through `send` when given. Never throws; a failure fails the run.
  */
 async function commandOutcome(
   session: Session,
@@ -3188,7 +3196,16 @@ async function commandOutcome(
   send?: (chunk: TextStreamPart<ToolSet>) => Promise<void>,
 ): Promise<AsyncAgentOutcome> {
   try {
-    const result = await runQueuedCommand(session, command);
+    const result = await executeCommand(command.commandToken, {
+      conversationKey: session.conversationKey,
+      channel: session.channelActions,
+      accountId: session.accountId,
+      agentId: session.agentId,
+      eventId: session.eventId,
+      text: command.text,
+      compact: (instructions: string): Promise<number> =>
+        session.compactConversation(instructions),
+    });
     const reply = result?.reply ?? "";
     if (send) {
       await send({ type: "text-start", id: session.eventId });
@@ -3205,27 +3222,6 @@ async function commandOutcome(
       error: err instanceof Error ? err.message : "Queued command failed",
     };
   }
-}
-
-/**
- * Runs a command the queue held until the turn before it ended, in place of a
- * model turn and under the session's lease. Resolves with what it answered,
- * which it also sends when the session has a channel.
- */
-async function runQueuedCommand(
-  session: Session,
-  command: QueuedCommand,
-): Promise<CommandResult | undefined> {
-  return executeCommand(command.commandToken, {
-    conversationKey: session.conversationKey,
-    channel: session.channelActions,
-    accountId: session.accountId,
-    agentId: session.agentId,
-    eventId: session.eventId,
-    text: command.text,
-    compact: (instructions: string): Promise<number> =>
-      session.compactConversation(instructions),
-  });
 }
 
 /**
@@ -3354,14 +3350,11 @@ function commandSseResponse(
             );
           } catch {}
         };
-        const outcome = await runCommandTurn({
+        await runCommandTurn({
           event: event,
           command: command,
           send: async (chunk): Promise<void> => send(chunk),
         });
-        if (outcome.status === "failed") {
-          send({ type: "error", error: outcome.error });
-        }
         try {
           controller.close();
         } catch {}

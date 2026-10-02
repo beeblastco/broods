@@ -599,8 +599,8 @@ export async function runAgentLoop(
   };
 
   // Cold start is charged to the first run in this execution environment; later
-  // (warm) runs consume nothing. Context prepare and compaction come from the
-  // turn context the handler assembled before this loop began.
+  // (warm) runs consume nothing. Context prepare comes from the turn context
+  // the handler assembled before this loop began.
   const coldStart = consumeColdStart(runStartedAt);
   if (coldStart) {
     emitPhaseSpan(
@@ -852,7 +852,7 @@ export async function runAgentLoop(
     const startedMs = Date.now();
     let compacted = 0;
     try {
-      compacted = await session.compactAfterTurn();
+      compacted = await session.compactConversation("");
     } catch (err) {
       logError("Auto-compaction failed; the turn keeps its full history", {
         ...logContext,

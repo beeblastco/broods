@@ -90,7 +90,7 @@ model: {
 
 ## Session history
 
-Long conversations are trimmed before each model call. The stored history never changes.
+Long conversations are trimmed before each model call. After a turn whose last model call read 500k input tokens, the stored history is summarized.
 
 ```ts
 session: {

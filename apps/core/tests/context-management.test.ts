@@ -1011,7 +1011,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactAfterTurn()).toBe(3);
+      expect(await session.compactConversation("")).toBe(3);
       expect(generateTextMock).toHaveBeenCalledTimes(1);
       expect(writes).toContain("appendConversationEvent");
     } finally {
@@ -1031,7 +1031,7 @@ describe("auto-compaction after a turn", () => {
       persist: false,
     });
 
-    expect(await ephemeral.compactAfterTurn()).toBe(0);
+    expect(await ephemeral.compactConversation("")).toBe(0);
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
@@ -1054,7 +1054,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactAfterTurn()).toBe(0);
+      expect(await session.compactConversation("")).toBe(0);
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();
@@ -1116,7 +1116,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactAfterTurn()).toBe(0);
+      expect(await session.compactConversation("")).toBe(0);
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();

@@ -99,15 +99,15 @@ A connection that declares no channel and no `allowedChannelIds` fails `broods d
 
 Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route these commands to Broods instead of the agent. GitHub, Linear and Pancake pass slash text to the agent as normal input.
 
-| Command                                   | Effect                                                                   |
-| ----------------------------------------- | ------------------------------------------------------------------------ |
-| `/new`, `/clear`                          | clear the conversation. Refused while a turn or queued message is active |
-| `/compact [instructions]`                 | summarize the history now, whatever `session.autoCompaction` says        |
-| `/help`                                   | list commands                                                            |
-| `/steer <text>`                           | join the running turn at its next step. Starts a turn when idle          |
-| `/queue <text>`                           | run the text as its own turn after the current one                       |
-| `/queue steer\|followup\|collect\|reject` | set the default mode for this conversation                               |
-| `/stop`, `/cancel`                        | stop the running turn after its current step                             |
+| Command                                   | Effect                                                                               |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `/new`, `/clear`                          | clear the conversation. Refused while a turn or queued message is active             |
+| `/compact [instructions]`                 | summarize the history after the running turn, whatever `session.autoCompaction` says |
+| `/help`                                   | list commands                                                                        |
+| `/steer <text>`                           | join the running turn at its next step. Starts a turn when idle                      |
+| `/queue <text>`                           | run the text as its own turn after the current one                                   |
+| `/queue steer\|followup\|collect\|reject` | set the default mode for this conversation                                           |
+| `/stop`, `/cancel`                        | stop the running turn after its current step                                         |
 
 An ordinary message sent while the agent is busy steers the running turn. See [Conversations](../guides/conversations.md).
 

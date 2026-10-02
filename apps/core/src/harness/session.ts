@@ -569,23 +569,9 @@ export class Session {
   }
 
   /**
-   * Auto-compaction once a finished turn crossed the agent's threshold, which
-   * the harness checks with `shouldAutoCompact`. A conversation that is never
-   * stored has nothing to compact. Returns how many messages were summarized.
-   */
-  async compactAfterTurn(): Promise<number> {
-    if (!this.persist) return 0;
-
-    return this.compactConversation("");
-  }
-
-  /**
-   * Compacts the stored conversation now, regardless of the agent's
-   * auto-compaction config or context size. Serves the /compact command, which
-   * waits in the ingress queue and runs here under the owner lease once the
-   * turn before it has ended, so no run can interleave and the whole history
-   * folds into the summary. Returns how many messages were summarized; 0 means there
-   * was nothing to compact.
+   * Folds the stored history into a summary under the owner lease. Serves
+   * /compact and the harness auto-compaction after a finished turn. Returns
+   * how many messages were summarized; 0 means there was nothing to compact.
    */
   async compactConversation(instructions: string): Promise<number> {
     const entries = await this.loadConversationEntries();
