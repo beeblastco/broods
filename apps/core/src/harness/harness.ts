@@ -296,9 +296,7 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
 // dropped: the Claude Code harness forwards whole upstream messages as `raw`
 // parts, which the SSE and NATS contract does not carry.
 export async function* readAgentFullStream(
-  stream: Pick<AgentLoopStream, "ensureFinalized"> & {
-    stream: ReadableStream<TextStreamPart<ToolSet>>;
-  },
+  stream: Pick<AgentLoopStream, "stream" | "ensureFinalized">,
   abortOnEarlyExit = true,
 ): AsyncIterable<unknown> {
   const reader = stream.stream.getReader();

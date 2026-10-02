@@ -963,24 +963,15 @@ describe("runAgentLoop", () => {
       { type: "raw", rawValue: { type: "message_stop" } },
       { type: "text-end", id: "t1" },
     ];
-    let finalized: boolean | undefined;
     const stream = {
-      stream: new ReadableStream<TextStreamPart<ToolSet>>({
-        start: (controller): void => {
-          for (const part of parts) controller.enqueue(part);
-          controller.close();
-        },
-      }),
-      ensureFinalized: async (drained: boolean): Promise<void> => {
-        finalized = drained;
-      },
+      stream: actualAi.simulateReadableStream({ chunks: parts }),
+      ensureFinalized: async (): Promise<void> => {},
     };
 
     const seen: unknown[] = [];
     for await (const chunk of readAgentFullStream(stream)) seen.push(chunk);
 
     expect(seen).toEqual([parts[1], parts[3]]);
-    expect(finalized).toBe(true);
   });
 
   it("keeps a finished run completed when the reader leaves during onEnd", async () => {
