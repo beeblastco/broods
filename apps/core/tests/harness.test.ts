@@ -9,7 +9,13 @@ import {
 } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
-import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
+import type {
+  LanguageModel,
+  ModelMessage,
+  SystemModelMessage,
+  TextStreamPart,
+  ToolSet,
+} from "ai";
 import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
@@ -951,15 +957,15 @@ describe("runAgentLoop", () => {
 
   it("drops raw provider chunks so consumers only see stream parts", async () => {
     const { readAgentFullStream } = await import("../src/harness/harness.ts");
-    const parts = [
+    const parts: TextStreamPart<ToolSet>[] = [
       { type: "raw", rawValue: { type: "tool_progress" } },
       { type: "text-delta", id: "t1", text: "hi" },
       { type: "raw", rawValue: { type: "message_stop" } },
-      { type: "finish", finishReason: "stop" },
+      { type: "text-end", id: "t1" },
     ];
     let finalized: boolean | undefined;
     const stream = {
-      stream: new ReadableStream({
+      stream: new ReadableStream<TextStreamPart<ToolSet>>({
         start: (controller): void => {
           for (const part of parts) controller.enqueue(part);
           controller.close();
@@ -968,15 +974,12 @@ describe("runAgentLoop", () => {
       ensureFinalized: async (drained: boolean): Promise<void> => {
         finalized = drained;
       },
-    } as unknown as AgentLoopStream;
+    };
 
     const seen: unknown[] = [];
     for await (const chunk of readAgentFullStream(stream)) seen.push(chunk);
 
-    expect(seen.map((chunk) => (chunk as { type: string }).type)).toEqual([
-      "text-delta",
-      "finish",
-    ]);
+    expect(seen).toEqual([parts[1], parts[3]]);
     expect(finalized).toBe(true);
   });
 
