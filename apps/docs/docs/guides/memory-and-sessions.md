@@ -79,7 +79,7 @@ export const myAgent = defineAgent({
 - A tool call with no result, such as an approval nobody answered, is always left out of what the model sees.
 - The effective threshold is the lower of `maxContextLength` and 80% of the configured model's known context window. Unknown and custom models use a conservative 128k window.
 - Auto-compaction runs only after a turn has finished, once the model answered with no tool call left, never between tool steps. It runs before the next queued message, so that message starts from the summary. A turn that stops on a tool approval or a question does not compact.
-- If a model rejects a turn because its context is too long, Broods compacts the earlier history, preserves the current turn and retries once.
+- If a model rejects a turn because its context is too long, the turn fails with that error and Broods compacts the history, so the next message fits.
 - Compaction stores a summary and folds earlier summaries into the next one. The summary reads earlier summaries and the newest whole messages that fit the model window.
 - On Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram, `/compact [instructions]` compacts on demand, whatever the config says. Sent mid-turn, it waits until the model finishes the turn and stops calling tools. The instructions steer what the summary keeps. `/new` and `/clear` start over.
 

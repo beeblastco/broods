@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  describe,
-  expect,
-  it,
-  mock,
-  spyOn,
-} from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
 import type {
   Session,
@@ -1008,6 +1000,30 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(config, 102_400)).toBe(true);
   });
 
+  it("prefers the configured provider's window over a smaller one", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    // xai serves grok-4.3 with a 1M window; another catalog provider lists 20k.
+    const config = {
+      model: { provider: "xai" as const, modelId: "grok-4.3" },
+    };
+
+    expect(shouldAutoCompact(config, 499_999)).toBe(false);
+    expect(shouldAutoCompact(config, 500_000)).toBe(true);
+  });
+
+  it("compacts a turn refused for context length unless turned off", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+
+    expect(shouldAutoCompact({}, undefined, true)).toBe(true);
+    expect(
+      shouldAutoCompact(
+        { session: { autoCompaction: { enabled: false } } },
+        undefined,
+        true,
+      ),
+    ).toBe(false);
+  });
+
   it("never compacts when the provider reported no input tokens", async () => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
@@ -1035,50 +1051,6 @@ describe("auto-compaction after a turn", () => {
       expect(writes).toContain("appendConversationEvent");
     } finally {
       runtime.mutate = originalMutate;
-      history.restore();
-    }
-  });
-
-  it("preserves the current turn when recovering from a context error", async () => {
-    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const history = await stubHistory([
-      {
-        cursor: "1",
-        event: {
-          version: 1,
-          sourceEventId: "event",
-          message: { role: "user", content: "old request" },
-        },
-      },
-      {
-        cursor: "2",
-        event: {
-          version: 1,
-          sourceEventId: "event",
-          message: { role: "assistant", content: "old answer" },
-        },
-      },
-      {
-        cursor: "3",
-        event: {
-          version: 1,
-          sourceEventId: "event",
-          message: { role: "user", content: "current request" },
-        },
-      },
-    ]);
-    const session = await newSession(compactingAgentConfig);
-    const persist = spyOn(session, "persistModelMessages").mockResolvedValue(
-      [],
-    );
-    try {
-      expect(await session.compactConversation("", true)).toBe(2);
-      expect(persist.mock.calls[0]?.[0]).toEqual([
-        expect.objectContaining({ role: "system" }),
-        { role: "user", content: "current request" },
-      ]);
-    } finally {
-      persist.mockRestore();
       history.restore();
     }
   });

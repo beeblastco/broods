@@ -37,16 +37,20 @@ export interface SummarizeConversationInput {
 }
 
 /**
- * Whether a finished turn auto-compacts: on unless the agent turns it off, once
- * the turn's last model call reaches the configured ceiling or 80% of the
- * model's context window, whichever comes first.
+ * Whether a turn auto-compacts: on unless the agent turns it off, once the
+ * turn's last model call reaches the configured ceiling or 80% of the model's
+ * context window, whichever comes first, or when the provider refused the turn
+ * for context length.
  */
 export function shouldAutoCompact(
   agentConfig: AgentConfig,
   lastInputTokens: number | undefined,
+  contextExceeded = false,
 ): boolean {
   const config = agentConfig.session?.autoCompaction;
-  if (config?.enabled === false || lastInputTokens === undefined) return false;
+  if (config?.enabled === false) return false;
+  if (contextExceeded) return true;
+  if (lastInputTokens === undefined) return false;
   const configuredMax =
     config?.maxContextLength ?? DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH;
   const modelMax = Math.floor(
@@ -167,8 +171,9 @@ function stringifyMessageContent(content: ModelMessage["content"]): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
 
-// Resolves provider-routed IDs against the shared model catalog and chooses the
-// smallest matching provider window so the compaction threshold stays safe.
+// Resolves provider-routed IDs against the shared model catalog. The configured
+// provider's own window wins; otherwise the smallest window among the matching
+// provider IDs, then among all providers, keeps the threshold safe.
 function modelContextLength(agentConfig: AgentConfig): number {
   const modelId = agentConfig.model?.modelId;
   if (!modelId) return DEFAULT_MODEL_CONTEXT_LENGTH;
@@ -185,11 +190,16 @@ function modelContextLength(agentConfig: AgentConfig): number {
       ),
   );
   if (!model) return DEFAULT_MODEL_CONTEXT_LENGTH;
+  const configuredProvider = model.providers.filter(
+    (provider): boolean => provider.providerId === agentConfig.model?.provider,
+  );
   const exactMappings = model.providers.filter((provider): boolean =>
     identifiers.includes(provider.externalId),
   );
   const contextLengths = (
-    exactMappings.length > 0 ? exactMappings : model.providers
+    [configuredProvider, exactMappings].find(
+      (candidates): boolean => candidates.length > 0,
+    ) ?? model.providers
   )
     .map((provider): number | undefined => provider.contextSize)
     .filter(
