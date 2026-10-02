@@ -508,7 +508,8 @@ function mediaAttachment(
   connection: MatrixConnection,
   content: Record<string, unknown>,
 ): Attachment | null {
-  const type = MEDIA_MSGTYPES[String(content.msgtype)];
+  const msgtype = typeof content.msgtype === "string" ? content.msgtype : "";
+  const type = MEDIA_MSGTYPES[msgtype];
   const file = content.file as Partial<EncryptedFile> | undefined;
   const mxcUrl = typeof content.url === "string" ? content.url : file?.url;
   if (!type || !mxcUrl) {
@@ -526,7 +527,9 @@ function mediaAttachment(
   const name =
     typeof content.filename === "string"
       ? content.filename
-      : String(content.body ?? "attachment");
+      : typeof content.body === "string"
+        ? content.body
+        : "attachment";
 
   return {
     fetchData: (): Promise<Buffer> => downloadMedia(connection, location),
@@ -554,7 +557,8 @@ function mentionPattern(mentionText: string): RegExp {
  */
 function messageText(content: Record<string, unknown>): string {
   const body = typeof content.body === "string" ? content.body : "";
-  if (content.msgtype && MEDIA_MSGTYPES[String(content.msgtype)]) {
+  const msgtype = typeof content.msgtype === "string" ? content.msgtype : "";
+  if (MEDIA_MSGTYPES[msgtype]) {
     return typeof content.filename === "string" && content.filename !== body
       ? body.trim()
       : "";

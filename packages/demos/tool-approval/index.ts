@@ -2,11 +2,18 @@
  * Example: tool approval flow via declarative broods resources.
  */
 
-import type { ToolApprovalRequestOutput, ToolSet } from "ai";
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-type ToolApprovalRequestChunk = ToolApprovalRequestOutput<ToolSet>;
+interface ToolApprovalRequestChunk {
+  type: "tool-approval-request";
+  approvalId: string;
+  toolCall: {
+    type: "tool-call";
+    toolCallId: string;
+    toolName: string;
+  };
+}
 
 const client = new BroodsClient();
 

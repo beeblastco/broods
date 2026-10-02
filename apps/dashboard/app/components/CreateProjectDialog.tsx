@@ -86,6 +86,8 @@ export function CreateProjectDialog({
       });
       handleOpenChange(false);
       router.push(`/${id}`);
+    } catch (error) {
+      console.error("Failed to create project", error);
     } finally {
       setIsCreating(false);
     }
@@ -101,7 +103,7 @@ export function CreateProjectDialog({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            handleCreate();
+            void handleCreate();
           }}
         >
           <div className="grid gap-3 py-4">

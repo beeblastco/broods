@@ -104,14 +104,23 @@ export function toLifecycleValue(value: unknown): JSONValue | undefined {
   if (value === undefined) {
     return undefined;
   }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "function") {
+    return `[function ${value.name || "anonymous"}]`;
+  }
+  if (typeof value === "symbol") {
+    return value.description ?? "symbol";
+  }
 
   try {
     const serialized = JSON.stringify(value);
 
     return serialized === undefined
-      ? String(value)
+      ? undefined
       : (JSON.parse(serialized) as JSONValue);
   } catch {
-    return String(value);
+    return "[unserializable value]";
   }
 }

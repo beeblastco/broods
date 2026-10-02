@@ -517,7 +517,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const handleUpdateOutputFormat = useCallback(
     (outputFormat: Record<string, unknown> | null) => {
       if (agentConfigId) {
-        updateConfig({ configId: agentConfigId, outputFormat: outputFormat });
+        void updateConfig({
+          configId: agentConfigId,
+          outputFormat: outputFormat,
+        }).catch((error: unknown): void => {
+          console.error("Failed to update output format", error);
+        });
       }
     },
     [agentConfigId, updateConfig],

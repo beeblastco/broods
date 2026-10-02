@@ -530,7 +530,7 @@ export async function runAgentLoop(
       : {}),
   };
   otelRootSpan.setAttributes(rootRunningAttributes);
-  publishSpan({
+  void publishSpan({
     traceId: traceId,
     spanId: rootSpanId,
     name: rootSpanName,
@@ -576,7 +576,7 @@ export async function runAgentLoop(
       );
       const spanContext = phaseSpan.spanContext();
       phaseSpan.end(endMs);
-      publishSpan({
+      void publishSpan({
         traceId: /[^0]/.test(spanContext.traceId)
           ? spanContext.traceId
           : traceId,
@@ -968,7 +968,7 @@ export async function runAgentLoop(
       }
       if (extraAttributes) tracked.otelSpan.setAttributes(extraAttributes);
       tracked.otelSpan.end(endTimeMs);
-      publishSpan({
+      void publishSpan({
         traceId: tracked.traceId,
         spanId: tracked.spanId,
         parentSpanId: tracked.parentSpanId,
@@ -1153,7 +1153,7 @@ export async function runAgentLoop(
     "agent.tool_count": Object.keys(tools).length,
   };
   otelRootSpan.setAttributes(rootRunningAttributes);
-  publishSpan({
+  void publishSpan({
     traceId: traceId,
     spanId: rootSpanId,
     name: rootSpanName,
@@ -1336,7 +1336,7 @@ export async function runAgentLoop(
         attributes,
       );
       stepSpans.set(stepNumber, tracked);
-      publishSpan({
+      void publishSpan({
         traceId: tracked.traceId,
         spanId: tracked.spanId,
         parentSpanId: tracked.parentSpanId,
@@ -1378,7 +1378,7 @@ export async function runAgentLoop(
       );
       toolSpans.set(toolCall.toolCallId, tracked);
       toolStepNumbers.set(toolCall.toolCallId, stepNumber);
-      publishSpan({
+      void publishSpan({
         traceId: tracked.traceId,
         spanId: tracked.spanId,
         parentSpanId: tracked.parentSpanId,
@@ -1494,7 +1494,7 @@ export async function runAgentLoop(
         },
         ...(errorText ? { error: errorText } : {}),
       };
-      publishSpan(toolSpanRow);
+      void publishSpan(toolSpanRow);
       toolSpans.delete(toolCall.toolCallId);
 
       recordToolCallSummary(toolCallSummaries, toolCall, {
@@ -1731,7 +1731,7 @@ export async function runAgentLoop(
         tracked.otelSpan.setAttributes(attributes);
         tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
         tracked.otelSpan.end(stepEndMs);
-        publishSpan({
+        void publishSpan({
           traceId: tracked.traceId,
           spanId: tracked.spanId,
           parentSpanId: tracked.parentSpanId,
@@ -1753,7 +1753,7 @@ export async function runAgentLoop(
       const liveRoleCpu = sandboxCpuRoleAttributes();
       if (Object.keys(liveRoleCpu).length > 0) {
         // A running span has no known end; keep end == start, as above.
-        publishSpan({
+        void publishSpan({
           traceId: traceId,
           spanId: rootSpanId,
           name: rootSpanName,

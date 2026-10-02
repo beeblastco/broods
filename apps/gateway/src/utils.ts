@@ -33,12 +33,19 @@ export function errorText(
 }
 
 export function json(payload: unknown, init: ResponseInit = {}): Response {
+  const headers: Record<string, string> =
+    init.headers instanceof Headers || Array.isArray(init.headers)
+      ? Object.fromEntries(new Headers(init.headers).entries())
+      : { ...init.headers };
+  if (
+    !Object.keys(headers).some((name) => name.toLowerCase() === "content-type")
+  ) {
+    headers["Content-Type"] = "application/json";
+  }
+
   return new Response(JSON.stringify(payload), {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
+    headers: headers,
   });
 }
 

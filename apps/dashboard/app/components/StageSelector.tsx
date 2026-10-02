@@ -180,6 +180,8 @@ export function StageSelector(): React.JSX.Element | null {
       setNewName("");
       setCreateMode("empty");
       setDuplicateFromId(null);
+    } catch (error) {
+      console.error("Failed to create stage", error);
     } finally {
       setIsCreating(false);
     }
@@ -283,7 +285,7 @@ export function StageSelector(): React.JSX.Element | null {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleCreate();
+              void handleCreate();
             }}
           >
             <div className="grid gap-4 py-4">
