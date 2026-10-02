@@ -22,8 +22,8 @@ import {
   accountIdForProject,
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
@@ -622,7 +622,7 @@ function maskRuntimeVariables<
  */
 async function recordAgentConfigAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: {
     projectId: Id<"projects">;
     stageId: Id<"stages">;
@@ -637,7 +637,7 @@ async function recordAgentConfigAudit(
   const accountId = await accountIdForProject(ctx, input.projectId);
   if (!accountId) return;
 
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: input.projectId,
     stageId: input.stageId,

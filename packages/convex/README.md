@@ -36,8 +36,8 @@ blobs. Core encrypts before writing; the dashboard never reads the plaintext.
 Environment variables are the exception: their values can be revealed on demand
 by the stage owner (`environmentVariables.reveal` / CLI `env get`), and
 each reveal is recorded in the `environmentVariableReveals` audit table. Config
-mutations write account-visible rows to `configAuditEvents`, which the dashboard
-reads reactively.
+mutations append rows to the hash-chained `auditEvents` ledger, which the config plane
+serves and exports (`GET /v1/audit`).
 Stage runtime API keys are also stored AES-GCM encrypted alongside their
 authentication hash. Owners can recover them through the dashboard or CLI login
 without rotating.

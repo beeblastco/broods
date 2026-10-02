@@ -438,6 +438,8 @@ export const accountsFields = {
   description: v.optional(v.string()),
   secretHash: v.string(),
   status: v.union(v.literal("active"), v.literal("disabled")),
+  /** Days an exported audit ledger row is kept before pruning; 90 when unset. */
+  auditRetentionDays: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -800,7 +802,7 @@ export const environmentVariableRevealsFields = {
   revealedAt: v.number(),
 };
 
-export const configAuditActorKindValidator = v.union(
+export const auditActorKindValidator = v.union(
   v.literal("dashboardUser"),
   v.literal("apiAccountSecret"),
   v.literal("admin"),
@@ -808,9 +810,10 @@ export const configAuditActorKindValidator = v.union(
   v.literal("cli"),
   v.literal("deployKey"),
   v.literal("role"),
+  v.literal("agent"),
 );
 
-export const configAuditResourceKindValidator = v.union(
+export const auditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("agent"),
   v.literal("skill"),
@@ -827,31 +830,69 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("deployment"),
   v.literal("webhook"),
   v.literal("manifest"),
+  v.literal("run"),
+  v.literal("tool"),
+  v.literal("auditSink"),
   v.literal("unknown"),
 );
 
 /**
- * Account-visible audit feed for configuration mutations. Details are capped
- * before insert and must never carry plaintext secrets or config blobs.
+ * The account's hash-chained audit ledger: config mutations, run lifecycle and
+ * enforced tool denials. `seq` is per-account and gapless at append time, and
+ * `hash` covers the row plus `prevHash`, so a row cannot be edited or removed
+ * from the middle without `verifyChain` noticing. Details are capped before
+ * insert and must never carry plaintext secrets or config blobs.
  */
-export const configAuditEventsFields = {
+export const auditEventsFields = {
   accountId: v.id("accounts"),
-  projectId: v.optional(v.id("projects")),
-  stageId: v.optional(v.id("stages")),
+  seq: v.number(),
+  /** Hash of the previous row, "" on the genesis row. */
+  prevHash: v.string(),
+  /** sha256 hex over the canonical JSON of the hashed fields (`model/auditEvents.ts`). */
+  hash: v.string(),
+  at: v.number(),
   actor: v.object({
-    kind: configAuditActorKindValidator,
+    kind: auditActorKindValidator,
     id: v.optional(v.string()),
     email: v.optional(v.string()),
     name: v.optional(v.string()),
+    agentId: v.optional(v.string()),
   }),
   action: v.string(),
   resource: v.object({
-    kind: configAuditResourceKindValidator,
+    kind: auditResourceKindValidator,
     id: v.optional(v.string()),
     name: v.optional(v.string()),
   }),
   summary: v.string(),
   detailsJson: v.optional(v.string()),
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+  traceId: v.optional(v.string()),
+};
+
+/** One row per account: the ledger tip, so an append is one read and one patch. */
+export const auditChainHeadsFields = {
+  accountId: v.id("accounts"),
+  seq: v.number(),
+  hash: v.string(),
+};
+
+/**
+ * Where the ledger is exported to. One webhook per account; the signing secret
+ * is stored with the agent-config codec and never read back.
+ */
+export const auditSinksFields = {
+  accountId: v.id("accounts"),
+  kind: v.literal("webhook"),
+  url: v.string(),
+  encryptedSecret: v.string(),
+  secretIv: v.string(),
+  secretTag: v.string(),
+  /** Highest `seq` the sink acknowledged; the prune watermark. */
+  exportedSeq: v.number(),
+  lastError: v.optional(v.string()),
+  updatedAt: v.number(),
 };
 
 export const configHttpAuthFailuresFields = {
@@ -1477,10 +1518,15 @@ export default defineSchema({
     .index("by_stageId", ["stageId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])
     .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
-  configAuditEvents: defineTable(configAuditEventsFields).index(
-    "by_accountId",
-    ["accountId"],
-  ),
+  auditEvents: defineTable(auditEventsFields)
+    .index("by_accountId_and_seq", ["accountId", "seq"])
+    .index("by_accountId_and_at", ["accountId", "at"]),
+  auditChainHeads: defineTable(auditChainHeadsFields).index("by_accountId", [
+    "accountId",
+  ]),
+  auditSinks: defineTable(auditSinksFields).index("by_accountId", [
+    "accountId",
+  ]),
   configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
     .index("by_key", ["key"])
     .index("by_updatedAt", ["updatedAt"]),

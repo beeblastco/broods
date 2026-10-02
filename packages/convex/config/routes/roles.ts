@@ -11,10 +11,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import { sha256Hex } from "../../model/accountSecrets";
 import { DEPLOYMENT_KEY_PREFIX } from "../../agent/deployments";
 import { CLI_TOKEN_PREFIX } from "../../cli/auth";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { toPublicRoleResponse } from "../../model/responses";
 import {
   createRoleSessionToken,
@@ -35,7 +32,7 @@ import {
 
 type AccountCaller = {
   accountId: Id<"accounts">;
-  actor: ConfigAuditActor;
+  actor: AuditActor;
   deploymentScope?: { projectId: Id<"projects">; stageId: Id<"stages"> };
 };
 
@@ -100,7 +97,7 @@ export async function handleRoleRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   roleId?: string,
 ): Promise<Response> {
   if (!roleId) {

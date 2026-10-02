@@ -13,7 +13,7 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import type { ConnectionStatus } from "../../account/connections";
-import { type ConfigAuditActor } from "../../model/auditEvents";
+import { type AuditActor } from "../../model/auditEvents";
 import { ClientError } from "../../model/clientError";
 import {
   authorizeUrl,
@@ -131,7 +131,7 @@ export function parseConnectionsPath(pathname: string): ConnectionsPath | null {
 async function disconnectResponse(
   ctx: ActionCtx,
   ref: ConnectionRef,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   const deleted: boolean = await ctx.runMutation(
     internal.account.connections.disconnect,
@@ -230,7 +230,7 @@ async function signInResponse(
   req: Request,
   ref: ConnectionRef,
   existing: ConnectionStatus | null,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   const meta = CONNECTION_TYPES[ref.type];
   const code = readCode(await parseJsonRequest(req));
