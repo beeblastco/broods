@@ -25,6 +25,7 @@ import { defineAgent, defineMcp } from "broods";
 import { z } from "zod";
 
 const BROWSER_RUN_URL = "https://api.cloudflare.com/client/v4/accounts";
+const MARKDOWN_RESPONSE = z.object({ result: z.string() });
 
 export const browser = defineMcp({
   name: "browser",
@@ -41,7 +42,7 @@ export const browser = defineMcp({
         const response = await quickAction(requestInfo, "markdown", {
           url: url,
         });
-        const { result } = (await response.json()) as { result: string };
+        const { result } = MARKDOWN_RESPONSE.parse(await response.json());
 
         return { content: [{ type: "text", text: result }] };
       },
