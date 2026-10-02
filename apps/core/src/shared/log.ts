@@ -154,6 +154,19 @@ export function redact(
   return out;
 }
 
+/**
+ * Deep-redact a value against the sensitive env values plus the current run's
+ * secrets, the list every log line is scrubbed with; `extra` adds a caller's
+ * own. For what leaves the process or outlives the run: stream frames, stored
+ * tool rows.
+ */
+export function redactWithRunSecrets(
+  value: unknown,
+  extra: readonly string[] = [],
+): unknown {
+  return redact(value, [...runSecretValues(), ...extra]);
+}
+
 /** Redact a free-form string using sensitive env values plus task-local secrets. */
 export function redactSensitiveText(
   value: string,
@@ -195,7 +208,7 @@ function emit(
   const ctx = getObservabilityContext();
   const ts = Date.now();
   const service = process.env.SERVICE_NAME ?? "broods-core";
-  const secretValues = [...sensitiveEnvValues(), ...(ctx?.secretValues ?? [])];
+  const secretValues = runSecretValues();
 
   const redactedMessage = redactString(message, secretValues);
   const redactedData = data
@@ -313,6 +326,14 @@ function redactString(value: string, secretValues: readonly string[]): string {
   redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
 
   return redacted;
+}
+
+/** The sensitive env values plus whatever the observability context holds for this run. */
+function runSecretValues(): string[] {
+  return [
+    ...sensitiveEnvValues(),
+    ...(getObservabilityContext()?.secretValues ?? []),
+  ];
 }
 
 function sensitiveEnvValues(): string[] {

@@ -151,8 +151,7 @@ describe("handleScheduledCron", () => {
     });
     // The envelope carries the rows to rebuild from, never the config itself.
     expect(admitted[0]?.configRef).toEqual({
-      agentUpdatedAt: AGENT.updatedAt,
-      channel: {},
+      channel: { channelName: "slack" },
     });
     expect(admitted[0]).not.toHaveProperty("agentConfig");
     expect(failures).toEqual([
@@ -274,8 +273,10 @@ describe("background job continuation", () => {
 
     expect(response.status).toBe(202);
     expect(admitted[0]?.configRef).toEqual({
-      agentUpdatedAt: AGENT.updatedAt,
-      channel: { channelRecordId: CHANNEL_RECORD.channelRecordId },
+      channel: {
+        channelName: "slack",
+        channelRecordId: CHANNEL_RECORD.channelRecordId,
+      },
     });
     expect(admitted[0]).not.toHaveProperty("agentConfig");
   });

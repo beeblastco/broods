@@ -20,6 +20,7 @@ import {
   writeAsyncAgentResult,
 } from "./runtime";
 import {
+  channelTargetRefsFields,
   ingressConfigRefValidator,
   ingressModeValidator,
   ingressStatusValidator,
@@ -104,10 +105,7 @@ const recoveredIngressValidator = v.object({
 const channelTargetFields = {
   channelName: v.string(),
   source: v.record(v.string(), v.any()),
-  // The agent whose channel credentials verified the delivery, when it is not
-  // the agent that runs the conversation.
-  credentialAgentId: v.optional(v.string()),
-  channelRecordId: v.optional(v.string()),
+  ...channelTargetRefsFields,
 };
 
 const channelTargetValidator = v.object(channelTargetFields);

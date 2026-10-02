@@ -3,8 +3,7 @@
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
-import { redact } from "../shared/log.ts";
-import { getObservabilityContext } from "../shared/otel.ts";
+import { redactWithRunSecrets } from "../shared/log.ts";
 import type { ReservedSandbox } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
@@ -157,15 +156,6 @@ export function settleAsyncToolResultFromCallback(options: {
         }),
   });
 }
-/**
- * A tool input or result as it may be stored: scrubbed against the run's
- * resolved secrets, which the run sets on its observability context. The row
- * outlives the run and feeds the parent conversation and the dashboard.
- */
-function redactWithRunSecrets(value: unknown): unknown {
-  return redact(value, getObservabilityContext()?.secretValues);
-}
-
 /** Checks a callback's completion token against the row; the handler calls it before settling. */
 export function verifyAsyncToolCompletionToken(
   resultId: string,

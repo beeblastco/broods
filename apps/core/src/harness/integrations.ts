@@ -327,7 +327,6 @@ export interface ChannelInboundEvent {
   // The rows this turn's config came from, pinned so a later re-entry into the
   // session rebuilds it instead of reading a stored copy.
   channelTarget?: ChannelTargetRefs;
-  configRef?: IngressConfigRef;
   channel: ChannelActions;
   channelFactory?: (source: Record<string, unknown>) => ChannelActions;
   commandToken?: string;
@@ -1538,14 +1537,6 @@ async function acceptChannelTurn(
     return undefined;
   }
 
-  const channelTarget: ChannelTargetRefs = {
-    ...(target.agent.agentId !== agent.agentId
-      ? { credentialAgentId: agent.agentId }
-      : {}),
-    ...(target.record
-      ? { channelRecordId: target.record.channelRecordId }
-      : {}),
-  };
   // Admission runs before the ack, so a delivery the provider saw acked is
   // durably queued; the agent run goes to the worker pool. Its own scope,
   // because it can outlive this request, whose finally restores the context.
@@ -1574,7 +1565,14 @@ async function acceptChannelTurn(
             channelName: message.channelName,
             ...(identity ? { identity: identity } : {}),
             source: source,
-            channelTarget: channelTarget,
+            channelTarget: {
+              ...(target.agent.agentId !== agent.agentId
+                ? { credentialAgentId: agent.agentId }
+                : {}),
+              ...(target.record
+                ? { channelRecordId: target.record.channelRecordId }
+                : {}),
+            },
             channel: channel,
             channelFactory: (replySource): ChannelActions =>
               adapter.actions({ ...message, source: replySource }),
@@ -1582,10 +1580,6 @@ async function acceptChannelTurn(
             accountId: account.accountId,
             agentId: target.agent.agentId,
             agentConfig: targetConfig,
-            configRef: {
-              agentUpdatedAt: target.agent.updatedAt,
-              channel: channelTarget,
-            },
             ...(targetDeployment
               ? {
                   endpointId: targetDeployment.endpointId,
@@ -2190,7 +2184,7 @@ async function parseDirectPayload(
       toRuntimeAgentConfig(agent.config),
       overrides,
     ),
-    configRef: { agentUpdatedAt: agent.updatedAt, model: overrides?.model },
+    configRef: { model: overrides?.model },
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
     runId: createRunId(),

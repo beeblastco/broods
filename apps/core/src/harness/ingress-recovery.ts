@@ -46,7 +46,8 @@ function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
   return {
     accountId: entry.accountId,
     agentId: entry.agentId,
-    // Rebuilt from the envelope ref at dispatch; nothing to fall back on.
+    // Rebuilt from the envelope ref at dispatch; only a ref-less subagent
+    // control would run on this, and none is recovered in practice.
     agentConfig: {},
     conversationKey: entry.conversationKey,
     publicConversationKey: publicConversationKeyFromScoped(

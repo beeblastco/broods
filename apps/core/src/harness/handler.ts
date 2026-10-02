@@ -40,6 +40,7 @@ import {
   getHarnessPublicUrl,
   positiveIntegerEnv,
 } from "../shared/env.ts";
+import { toErrorMessage } from "../shared/errors.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -108,6 +109,7 @@ import {
   outcomeSettlement,
   prepareSessionMessage,
   renewIngressOwner,
+  takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
   type IngressConfigRef,
@@ -642,7 +644,6 @@ async function continueAfterAsyncToolSettlement(
     agentId: scope.agentId,
     publicConversationKey: publicConversationKey,
     agentConfig: toRuntimeAgentConfig(agent.config),
-    configRef: { agentUpdatedAt: agent.updatedAt },
   });
 
   const continuationEvent: DirectInboundEvent = {
@@ -1564,7 +1565,9 @@ export async function handleChannelRequest(
       ...(event.identity ? { identity: event.identity } : {}),
       source: event.source,
     },
-    configRef: event.configRef,
+    configRef: {
+      channel: { channelName: event.channelName, ...event.channelTarget },
+    },
     channelTarget: event.channelTarget,
   });
   const scope: IngressDispatchScope = {
@@ -1649,18 +1652,22 @@ export async function handleChannelRequest(
       (context): Promise<void> =>
         runWithObservabilityScope(
           (): Promise<void> =>
-            runChannelTurns(event, session, ingested.turnEvents, context).catch(
-              async (err: unknown): Promise<never> => {
-                await sendChannelFailure(
-                  event.channel,
-                  formatChannelErrorText(
-                    err instanceof Error ? err.message : String(err),
-                    event.channelName,
-                  ),
-                ).catch((): void => {});
-                throw err;
-              },
-            ),
+            runChannelTurns(
+              event,
+              scope,
+              session,
+              ingested.turnEvents,
+              context,
+            ).catch(async (err: unknown): Promise<never> => {
+              await sendChannelFailure(
+                event.channel,
+                formatChannelErrorText(
+                  err instanceof Error ? err.message : String(err),
+                  event.channelName,
+                ),
+              ).catch((): void => {});
+              throw err;
+            }),
           observability,
         ),
       {
@@ -1687,6 +1694,7 @@ export async function handleChannelRequest(
  */
 async function runChannelTurns(
   event: ChannelInboundEvent,
+  scope: IngressDispatchScope,
   owned: Session,
   incoming: ConversationIngressEvent[],
   context: RequestContext,
@@ -1844,43 +1852,27 @@ async function runChannelTurns(
 
       // The envelope stores no config: its ref rebuilds one from the live
       // rows, so a key rotated while it waited applies to this turn. One whose
-      // config cannot load fails here, and the queue drains on past it.
+      // config cannot load is failed as the queue moves on past it.
       let next = await session.takeNextIngress();
       while (next) {
-        const source =
-          next.delivery.kind === "channel"
-            ? (next.delivery.source ?? event.source)
-            : event.source;
-        // The queued sender, never the first one: policy reads userId and
-        // roles from here, and the envelope is the only place the sender
-        // survived.
-        const identity =
-          next.delivery.kind === "channel" ? next.delivery.identity : undefined;
-        const loaded = await loadQueuedChannelConfig(event, next);
-        activeConfig = loaded.agentConfig;
-        session = new Session({
-          eventId: next.eventId,
-          conversationKey: event.conversationKey,
-          accountId: event.accountId,
-          agentId: event.agentId,
-          agentConfig: activeConfig,
-          delivery: {
-            kind: "channel",
-            channelName: event.channelName,
-            ...(identity ? { identity: identity } : {}),
-            source: source,
-          },
-          endpointId: event.endpointId,
-          projectSlug: event.projectSlug,
-          stageSlug: event.stageSlug,
-          ownerGeneration: next.ownerGeneration,
-          channelActions: event.channelFactory?.(source) ?? event.channel,
-        });
-        if (!loaded.error) break;
-        await session
-          .settleIngress("failed", { error: loaded.error })
-          .catch(() => {});
-        next = await session.takeNextIngress();
+        try {
+          activeConfig = await loadAppliedIngressConfig({
+            accountId: scope.accountId,
+            agentId: scope.agentId,
+            configRef: next.configRef,
+            fallback: scope.agentConfig,
+          });
+          break;
+        } catch (err) {
+          next = await takeNextIngress(
+            {
+              conversationKey: event.conversationKey,
+              ownerEventId: next.eventId,
+              ownerGeneration: next.ownerGeneration,
+            },
+            { status: "failed", error: toErrorMessage(err) },
+          );
+        }
       }
       if (!next) {
         await session.releaseConversationLease();
@@ -1888,6 +1880,32 @@ async function runChannelTurns(
 
         return;
       }
+      const source =
+        next.delivery.kind === "channel"
+          ? (next.delivery.source ?? event.source)
+          : event.source;
+      // The queued sender, never the first one: policy reads userId and roles
+      // from here, and the envelope is the only place the sender survived.
+      const identity =
+        next.delivery.kind === "channel" ? next.delivery.identity : undefined;
+      session = new Session({
+        eventId: next.eventId,
+        conversationKey: event.conversationKey,
+        accountId: event.accountId,
+        agentId: event.agentId,
+        agentConfig: activeConfig,
+        delivery: {
+          kind: "channel",
+          channelName: event.channelName,
+          ...(identity ? { identity: identity } : {}),
+          source: source,
+        },
+        endpointId: event.endpointId,
+        projectSlug: event.projectSlug,
+        stageSlug: event.stageSlug,
+        ownerGeneration: next.ownerGeneration,
+        channelActions: event.channelFactory?.(source) ?? event.channel,
+      });
       incoming = next.events as ConversationIngressEvent[];
       incomingEphemeral = next.ephemeralSystem ?? [];
     }
@@ -1895,36 +1913,6 @@ async function runChannelTurns(
     if (!released) {
       await session.releaseConversationLease().catch(() => {});
     }
-  }
-}
-
-/**
- * The config a queued channel follow-up runs on, rebuilt from its envelope ref.
- * An envelope without one runs on the live turn's config. A load that fails
- * comes back as the error to settle it with, beside a config the settling
- * session is still built on.
- */
-async function loadQueuedChannelConfig(
-  event: ChannelInboundEvent,
-  next: AppliedIngress,
-): Promise<{ agentConfig: AgentConfig; error?: string }> {
-  const fallback = event.agentConfig ?? {};
-  if (!next.configRef || !event.accountId || !event.agentId) {
-    return { agentConfig: fallback };
-  }
-  try {
-    return {
-      agentConfig: await loadAppliedIngressConfig({
-        accountId: event.accountId,
-        agentId: event.agentId,
-        applied: next,
-      }),
-    };
-  } catch (err) {
-    return {
-      agentConfig: fallback,
-      error: err instanceof Error ? err.message : String(err),
-    };
   }
 }
 
@@ -2333,15 +2321,13 @@ export async function dispatchAppliedIngress(
       : {}),
   };
   try {
-    // A ref-less envelope (a subagent control) runs on its dispatch scope's
-    // config. An agent deleted while the envelope waited fails it here.
-    if (next.configRef) {
-      event.agentConfig = await loadAppliedIngressConfig({
-        accountId: base.accountId,
-        agentId: base.agentId,
-        applied: next,
-      });
-    }
+    // An agent deleted while the envelope waited fails it here.
+    event.agentConfig = await loadAppliedIngressConfig({
+      accountId: base.accountId,
+      agentId: base.agentId,
+      configRef: next.configRef,
+      fallback: base.agentConfig,
+    });
     if (delivery.kind === "websocket") {
       await invokeNatsWorker(event);
     } else {
@@ -2739,7 +2725,6 @@ async function createCronDirectEvent(
     agentId: job.agentId,
     publicConversationKey: publicConversationKey,
     agentConfig: toRuntimeAgentConfig(agent.config),
-    configRef: { agentUpdatedAt: agent.updatedAt },
   });
 
   return {
@@ -2807,7 +2792,7 @@ async function resolveReentryTarget(options: {
         agentId: options.agentId,
         target: channelTarget,
       })
-    : { agentConfig: options.agentConfig, configRef: options.configRef };
+    : { agentConfig: options.agentConfig, configRef: options.configRef ?? {} };
 
   return {
     ...runConfig,

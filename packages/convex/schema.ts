@@ -983,6 +983,15 @@ export const ingressStatusValidator = v.union(
   v.literal("failed"),
   v.literal("expired"),
 );
+/**
+ * The rows a channel session's config is narrowed by. `credentialAgentId` is
+ * the agent whose channel credentials verified the delivery, when it is not
+ * the agent that runs the conversation.
+ */
+export const channelTargetRefsFields = {
+  credentialAgentId: v.optional(v.string()),
+  channelRecordId: v.optional(v.string()),
+};
 /** Fenced ownership and FIFO counters for one runtime conversation. */
 export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
@@ -995,8 +1004,7 @@ export const runtimeConversationCoordinatorsFields = {
     v.object({
       channelName: v.string(),
       source: v.record(v.string(), v.any()),
-      credentialAgentId: v.optional(v.string()),
-      channelRecordId: v.optional(v.string()),
+      ...channelTargetRefsFields,
       agentConfig: v.optional(v.any()),
     }),
   ),
@@ -1010,24 +1018,19 @@ export const runtimeConversationCoordinatorsFields = {
   queuedBytes: v.number(),
   updatedAt: v.number(),
 };
-/** One accepted transport-neutral ingress item in the conversation FIFO. */
 /**
  * What an envelope keeps to rebuild its run config at dispatch, never the
- * resolved config: the agent row version it was admitted against, the
- * request's own model override (call settings only), and for a channel turn
- * the rows its config was narrowed by.
+ * resolved config: the request's own model override (call settings only), and
+ * for a channel session the channel and rows its config is narrowed by.
  */
 export const ingressConfigRefValidator = v.object({
-  agentUpdatedAt: v.string(),
   model: v.optional(v.record(v.string(), v.any())),
   channel: v.optional(
-    v.object({
-      credentialAgentId: v.optional(v.string()),
-      channelRecordId: v.optional(v.string()),
-    }),
+    v.object({ channelName: v.string(), ...channelTargetRefsFields }),
   ),
 });
 
+/** One accepted transport-neutral ingress item in the conversation FIFO. */
 export const runtimeIngressEnvelopesFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),

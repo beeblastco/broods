@@ -96,21 +96,24 @@ export interface ChannelTargetRefs {
  * Where a channel session replies, as Convex keeps it. Never the config: that
  * holds decrypted secrets, so core rebuilds it with `loadChannelSessionConfig`.
  */
-export interface ConversationDispatchTarget extends ChannelTargetRefs {
-  channelName: string;
+export interface ConversationDispatchTarget extends IngressChannelRef {
   source: Record<string, unknown>;
+}
+
+/** The channel and rows a channel session's config is narrowed by. */
+export interface IngressChannelRef extends ChannelTargetRefs {
+  channelName: string;
 }
 
 /**
  * What an envelope keeps to rebuild its run config when it is dispatched,
- * instead of the resolved config with its decrypted secrets: the agent row
- * version it was admitted against, the request's own model override, and for
- * a channel turn the rows its config was narrowed by.
+ * instead of the resolved config with its decrypted secrets: the request's
+ * own model override, and for a channel session the channel and rows its
+ * config is narrowed by. `{}` is the agent's own config as it is now.
  */
 export interface IngressConfigRef {
-  agentUpdatedAt: string;
   model?: RunOverrides["model"];
-  channel?: ChannelTargetRefs;
+  channel?: IngressChannelRef;
 }
 
 /** A run's resolved config beside the ref its envelope stores to rebuild it. */
@@ -197,8 +200,8 @@ export interface IngressCandidate {
   delivery: IngressDelivery;
   // Per-request execution context persisted with the envelope so a queued
   // request runs under its own config/overrides, never a previous owner's.
-  // Absent on a subagent child, which is never queued and runs on the config
-  // its dispatch scope already holds.
+  // Absent on a subagent control, which runs on the config its dispatch scope
+  // already holds.
   configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
   // Set on a turn a channel delivered: pins this conversation's channel target
@@ -412,7 +415,7 @@ export async function interruptLiveOwners(error: string): Promise<number> {
 export async function loadChannelSessionConfig(options: {
   accountId: string;
   agentId: string;
-  target: ConversationDispatchTarget;
+  target: IngressChannelRef;
 }): Promise<IngressRunConfig> {
   const { accountId, target } = options;
   const storage = getStorage();
@@ -451,8 +454,8 @@ export async function loadChannelSessionConfig(options: {
       (credentialHolder ?? agent).config,
     ),
     configRef: {
-      agentUpdatedAt: agent.updatedAt,
       channel: {
+        channelName: target.channelName,
         ...(target.credentialAgentId
           ? { credentialAgentId: target.credentialAgentId }
           : {}),
@@ -466,31 +469,29 @@ export async function loadChannelSessionConfig(options: {
 
 /**
  * The config a dispatched envelope runs on, rebuilt from the live rows the way
- * its admission built it: the channel session's narrowed config for a channel
- * turn, the agent's own config plus the request's model override otherwise.
- * One agent read per dispatch; nothing else in the dispatched run loads it.
- * Throws when the agent is gone or the channel session no longer binds to it,
- * and the caller fails the envelope with that reason.
+ * its admission built it: the channel session's narrowed config when the ref
+ * names one, the agent's own config plus the request's model override
+ * otherwise. One agent read per dispatch; nothing else in the dispatched run
+ * loads it. An envelope with no ref (a subagent control) runs on `fallback`,
+ * the config its dispatch scope already holds. Throws when the agent is gone
+ * or the channel session no longer binds to it, and the caller fails the
+ * envelope with that reason.
  */
 export async function loadAppliedIngressConfig(options: {
   accountId: string;
   agentId: string;
-  applied: Pick<AppliedIngress, "configRef" | "delivery">;
+  configRef: IngressConfigRef | undefined;
+  fallback: AgentConfig;
 }): Promise<AgentConfig> {
-  const { accountId, agentId, applied } = options;
-  const configRef = applied.configRef;
+  const { accountId, agentId, configRef } = options;
   if (!configRef) {
-    throw new Error("Queued envelope carries no config ref");
+    return options.fallback;
   }
-  if (configRef.channel && applied.delivery.kind === "channel") {
+  if (configRef.channel) {
     const loaded = await loadChannelSessionConfig({
       accountId: accountId,
       agentId: agentId,
-      target: {
-        ...configRef.channel,
-        channelName: applied.delivery.channel,
-        source: applied.delivery.source ?? {},
-      },
+      target: configRef.channel,
     });
 
     return loaded.agentConfig;

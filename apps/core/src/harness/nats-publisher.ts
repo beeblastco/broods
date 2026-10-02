@@ -5,8 +5,7 @@
  */
 
 import { headers as natsHeaders } from "nats.ws";
-import { logError, redact } from "../shared/log.ts";
-import { getObservabilityContext } from "../shared/otel.ts";
+import { logError, redactWithRunSecrets } from "../shared/log.ts";
 import {
   ensureResponseStream,
   getSharedNatsConn,
@@ -30,17 +29,16 @@ const TRUNCATED_FRAME_KEPT_FIELDS = [
   "toolName",
   "eventId",
 ] as const;
-// The fields that carry model text, tool input and tool output. Only these are
-// scrubbed before publish; ids, names and the frame type stay as they are.
-const REDACTED_FRAME_FIELDS = [
-  "text",
-  "delta",
-  "input",
-  "output",
-  "error",
-  "approvals",
-  "questions",
-] as const;
+// The frame's structure: never scrubbed, so a generated id that happens to
+// contain a secret substring still matches its stream. Every other field is.
+const STRUCTURAL_FRAME_FIELDS = new Set([
+  "type",
+  "id",
+  "toolCallId",
+  "toolName",
+  "approvalId",
+  "eventId",
+]);
 
 export class LiveNatsPublisher implements NatsPublisher {
   private connectionPromise: Promise<NatsConnection> | null = null;
@@ -140,20 +138,18 @@ export class LiveNatsPublisher implements NatsPublisher {
   }
 
   /**
-   * The frame with its payload fields scrubbed against the run's secrets. The
-   * run adds its sandbox and workspace secrets to the observability context
-   * once it starts, so those are read at publish time.
+   * The frame with everything but its structure scrubbed against the run's
+   * secrets. The run adds its sandbox and workspace secrets to the
+   * observability context once it starts, so those are read at publish time.
    */
   private redactPayload(
     data: Record<string, unknown>,
   ): Record<string, unknown> {
-    const secretValues = [
-      ...this.secretValues,
-      ...(getObservabilityContext()?.secretValues ?? []),
-    ];
-    const safe: Record<string, unknown> = { ...data };
-    for (const field of REDACTED_FRAME_FIELDS) {
-      if (field in safe) safe[field] = redact(safe[field], secretValues);
+    const safe: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(data)) {
+      safe[field] = STRUCTURAL_FRAME_FIELDS.has(field)
+        ? value
+        : redactWithRunSecrets(value, this.secretValues);
     }
 
     return safe;

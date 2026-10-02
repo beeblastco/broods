@@ -13,6 +13,7 @@
  * at connect time.
  */
 
+import { createHash } from "node:crypto";
 import {
   Client,
   isCallToolResult,
@@ -40,7 +41,6 @@ import {
   mcpAccessToken,
   type ResolvedMcpOauth,
 } from "./oauth.ts";
-import { createHash } from "node:crypto";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 

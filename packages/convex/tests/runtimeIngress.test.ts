@@ -1620,7 +1620,7 @@ describe("runtime ingress", () => {
         eventId: "queued-context",
         mode: "followup",
       }),
-      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.9 } },
+      configRef: { model: { temperature: 0.9 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
 
@@ -1633,7 +1633,7 @@ describe("runtime ingress", () => {
     expect(next).toMatchObject({
       eventId: "queued-context",
       ownerGeneration: 2,
-      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.9 } },
+      configRef: { model: { temperature: 0.9 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
     expect(next).not.toHaveProperty("agentConfig");

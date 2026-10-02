@@ -108,8 +108,7 @@ describe("ingress admission payloads", () => {
     await acceptIngress({
       ...candidate(),
       configRef: {
-        agentUpdatedAt: "2026-08-01T00:00:00.000Z",
-        channel: { channelRecordId: "rec_1" },
+        channel: { channelName: "telegram", channelRecordId: "rec_1" },
       },
       channelTarget: { channelRecordId: "rec_1" },
       delivery: {
@@ -127,8 +126,7 @@ describe("ingress admission payloads", () => {
       source: { chatId: "chat-1" },
     });
     expect(call?.configRef).toEqual({
-      agentUpdatedAt: "2026-08-01T00:00:00.000Z",
-      channel: { channelRecordId: "rec_1" },
+      channel: { channelName: "telegram", channelRecordId: "rec_1" },
     });
     expect(call).not.toHaveProperty("agentConfig");
     // The sender rides on the envelope so a queued turn is policed as its own
@@ -150,20 +148,17 @@ describe("ingress admission payloads", () => {
 
     await acceptIngress({
       ...candidate(),
-      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.1 } },
+      configRef: { model: { temperature: 0.1 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
     await acceptIngress({
       ...candidate(),
-      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.9 } },
+      configRef: { model: { temperature: 0.9 } },
     });
     await acceptIngress(candidate());
 
     const [first, second, third] = calls;
-    expect(first!.configRef).toEqual({
-      agentUpdatedAt: "v1",
-      model: { temperature: 0.1 },
-    });
+    expect(first!.configRef).toEqual({ model: { temperature: 0.1 } });
     expect(first!.ephemeralSystem).toEqual([
       { role: "system", content: "one-turn override" },
     ]);
@@ -1218,10 +1213,8 @@ describe("applied ingress config", (): void => {
     const config = await loadAppliedIngressConfig({
       accountId: "acct_test",
       agentId: "agent_test",
-      applied: {
-        configRef: { agentUpdatedAt: "v1", model: { temperature: 0.7 } },
-        delivery: candidate().delivery,
-      },
+      configRef: { model: { temperature: 0.7 } },
+      fallback: {},
     });
 
     expect(config.model).toEqual({
@@ -1248,17 +1241,10 @@ describe("applied ingress config", (): void => {
     const config = await loadAppliedIngressConfig({
       accountId: "acct_test",
       agentId: "agent_test",
-      applied: {
-        configRef: {
-          agentUpdatedAt: "v1",
-          channel: { channelRecordId: "rec_1" },
-        },
-        delivery: {
-          kind: "channel",
-          channel: "telegram",
-          source: { chatId: "target-chat" },
-        },
+      configRef: {
+        channel: { channelName: "telegram", channelRecordId: "rec_1" },
       },
+      fallback: {},
     });
 
     expect(config.channels).toEqual({ telegram: { botToken: "rotated" } });
@@ -1273,12 +1259,32 @@ describe("applied ingress config", (): void => {
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
-        applied: {
-          configRef: { agentUpdatedAt: "v1" },
-          delivery: candidate().delivery,
-        },
+        configRef: {},
+        fallback: {},
       }),
     ).rejects.toThrow("Agent not found: agent_test");
+  });
+
+  it("runs a ref-less envelope on its dispatch scope's config without a read", async (): Promise<void> => {
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<never> => {
+          throw new Error("must not read");
+        },
+      },
+    } as never);
+    const fallback: AgentConfig = {
+      model: { provider: "openai", modelId: "gpt-5" },
+    };
+
+    await expect(
+      loadAppliedIngressConfig({
+        accountId: "acct_test",
+        agentId: "agent_test",
+        configRef: undefined,
+        fallback: fallback,
+      }),
+    ).resolves.toBe(fallback);
   });
 });
 
@@ -1326,7 +1332,7 @@ describe("session messages", (): void => {
     expect(prepared.agentConfig).toEqual(agentConfig);
     expect(prepared.candidate).not.toHaveProperty("agentConfig");
     expect(prepared.candidate).toMatchObject({
-      configRef: { agentUpdatedAt: "2026-08-01T00:00:00.000Z", channel: {} },
+      configRef: { channel: { channelName: "telegram" } },
       conversationKey: "acct:acct_test:agent:agent_test:tg:target-chat",
       delivery: {
         kind: "channel",
