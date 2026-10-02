@@ -180,6 +180,61 @@ export interface AccountRole {
   updatedAt: string;
 }
 
+/**
+ * One row of the account's hash-chained audit ledger, as `GET /v1/audit`
+ * serves it. `hash` is sha256 over the canonical JSON of the hashed fields
+ * (everything but `hash`, `projectId`, `stageId` and `traceId`), with
+ * `prevHash` linking it to the row before.
+ */
+export interface AuditEvent {
+  accountId: string;
+  seq: number;
+  prevHash: string;
+  hash: string;
+  /** Unix ms. */
+  at: number;
+  actor: {
+    kind: string;
+    id?: string;
+    email?: string;
+    name?: string;
+    agentId?: string;
+  };
+  action: string;
+  resource: { kind: string; id?: string; name?: string };
+  summary: string;
+  detailsJson?: string;
+  projectId?: string;
+  stageId?: string;
+  traceId?: string;
+}
+
+/** A page of ledger rows plus the chain head to compare the last row against. */
+export interface AuditPage {
+  events: AuditEvent[];
+  /** Pass as `since` to read the rows after this page. */
+  nextSince: number;
+  head: { seq: number; hash: string } | null;
+}
+
+/** Result of `GET /v1/audit/verify`: the chain recomputed over the checked range. */
+export interface AuditVerification {
+  ok: boolean;
+  brokenAtSeq?: number;
+  checkedFrom?: number;
+  checkedTo?: number;
+}
+
+/** The account's audit export target. The signing secret never comes back. */
+export interface AuditSink {
+  kind: "webhook";
+  url: string;
+  /** Highest seq the receiver acknowledged. */
+  exportedSeq: number;
+  lastError?: string;
+  updatedAt: string;
+}
+
 /** Short-lived role session minted by `POST /v1/account/assume-role`. */
 export interface AssumeRoleResult {
   /** `fp_sts_` bearer token; pass it as `sessionToken` to a new client. */
@@ -1200,6 +1255,81 @@ export class BroodsAccountClient {
 
     return result?.deleted ?? false;
   }
+
+  /** The audit ledger: rows since a seq, chain verification, and the webhook sink. */
+  readonly audit = {
+    /** Rows with `seq > since`, oldest first, at most `limit` (default 100, max 500). */
+    list: async (
+      options: { since?: number; limit?: number } = {},
+    ): Promise<AuditPage> => {
+      const query = new URLSearchParams();
+      if (options.since !== undefined)
+        query.set("since", String(options.since));
+      if (options.limit !== undefined)
+        query.set("limit", String(options.limit));
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+      const result = await this.request<AuditPage>("GET", `/v1/audit${suffix}`);
+      if (!result)
+        throw new BroodsAccountApiError("GET", "/v1/audit", 404, "Not found");
+
+      return result;
+    },
+    /** Recompute the chain over `[fromSeq, toSeq]`, the whole kept ledger by default. */
+    verify: async (
+      options: { fromSeq?: number; toSeq?: number } = {},
+    ): Promise<AuditVerification> => {
+      const query = new URLSearchParams();
+      if (options.fromSeq !== undefined)
+        query.set("fromSeq", String(options.fromSeq));
+      if (options.toSeq !== undefined)
+        query.set("toSeq", String(options.toSeq));
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+      const result = await this.request<AuditVerification>(
+        "GET",
+        `/v1/audit/verify${suffix}`,
+      );
+      if (!result)
+        throw new BroodsAccountApiError(
+          "GET",
+          "/v1/audit/verify",
+          404,
+          "Not found",
+        );
+
+      return result;
+    },
+    getSink: async (): Promise<AuditSink | null> => {
+      return await this.request<AuditSink>("GET", "/v1/audit/sink");
+    },
+    /** Set the one webhook sink. `url` must be public https; `secret` signs each batch. */
+    setSink: async (input: {
+      url: string;
+      secret: string;
+    }): Promise<AuditSink> => {
+      const result = await this.request<AuditSink>(
+        "PUT",
+        "/v1/audit/sink",
+        input,
+      );
+      if (!result)
+        throw new BroodsAccountApiError(
+          "PUT",
+          "/v1/audit/sink",
+          404,
+          "Not found",
+        );
+
+      return result;
+    },
+    deleteSink: async (): Promise<boolean> => {
+      const result = await this.request<{ deleted: boolean }>(
+        "DELETE",
+        "/v1/audit/sink",
+      );
+
+      return result?.deleted ?? false;
+    },
+  };
 
   async listChannels(): Promise<AccountChannel[]> {
     const result = await this.request<{ channels: AccountChannel[] }>(
