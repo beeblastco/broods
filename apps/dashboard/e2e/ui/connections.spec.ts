@@ -17,8 +17,11 @@ test("lists each connection type, signed in or ready to connect", async ({
   await expect(
     connected.getByRole("button", { name: "Disconnect ChatGPT plan" }),
   ).toBeVisible();
+  await expect(
+    connected.getByRole("button", { name: "Connect", exact: true }),
+  ).toHaveCount(0);
 
-  await empty.getByRole("button", { name: "Connect" }).click();
+  await empty.getByRole("button", { name: "Connect", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Connect ChatGPT plan")).toBeVisible();
   await expect(dialog.getByText("broods connect chatgpt")).toBeVisible();

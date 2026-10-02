@@ -126,7 +126,8 @@ export function ConnectionsView({
                     : meta.description}
                 </p>
               </div>
-              {connection ? (
+              {/* Nothing while loading, so a connected type never flashes Connect. */}
+              {connections === undefined ? null : connection ? (
                 canWrite && (
                   <IconTooltip label={`Disconnect ${meta.label}`}>
                     <Button
@@ -144,10 +145,7 @@ export function ConnectionsView({
                 <Button
                   variant="outline"
                   size="xs"
-                  className={
-                    connections ? "cursor-pointer" : "cursor-not-allowed"
-                  }
-                  disabled={!connections}
+                  className="cursor-pointer"
                   onClick={() => setConnecting(type)}
                 >
                   Connect
