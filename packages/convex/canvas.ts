@@ -377,8 +377,13 @@ async function materializeRuntimeNodes(
     }
 
     const data = asRecord(node.data);
-    const name =
-      String(data.mountName ?? data.label ?? node.type).trim() || node.type;
+    const rawName =
+      typeof data.mountName === "string"
+        ? data.mountName
+        : typeof data.label === "string"
+          ? data.label
+          : node.type;
+    const name = rawName.trim() || node.type;
     const description =
       typeof data.description === "string" ? data.description : undefined;
     const resourceId =
@@ -655,9 +660,21 @@ function resourceFieldsChanged(
   next: Record<string, unknown>,
   previous: Record<string, unknown>,
 ): boolean {
+  const nextName =
+    typeof next.mountName === "string"
+      ? next.mountName
+      : typeof next.label === "string"
+        ? next.label
+        : "";
+  const previousName =
+    typeof previous.mountName === "string"
+      ? previous.mountName
+      : typeof previous.label === "string"
+        ? previous.label
+        : "";
+
   return (
-    String(next.mountName ?? next.label ?? "").trim() !==
-      String(previous.mountName ?? previous.label ?? "").trim() ||
+    nextName.trim() !== previousName.trim() ||
     stableJson(next.description ?? null) !==
       stableJson(previous.description ?? null) ||
     stableJson(next.config ?? null) !== stableJson(previous.config ?? null)

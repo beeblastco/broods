@@ -30,6 +30,7 @@ import {
 } from "@/app/components/ui/select";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { useStage } from "@/app/hooks/useStage";
+import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -107,6 +108,7 @@ export function StageSelector(): React.JSX.Element | null {
     null,
   );
   const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [isInitializingProduction, setIsInitializingProduction] =
     useState(false);
 
@@ -166,6 +168,7 @@ export function StageSelector(): React.JSX.Element | null {
   async function handleCreate(): Promise<void> {
     if (!newName.trim() || !projectId) return;
     setIsCreating(true);
+    setCreateError(null);
     try {
       const newId = await createStage({
         projectId: projectId,
@@ -180,6 +183,8 @@ export function StageSelector(): React.JSX.Element | null {
       setNewName("");
       setCreateMode("empty");
       setDuplicateFromId(null);
+    } catch (error) {
+      setCreateError(toErrorMessage(error));
     } finally {
       setIsCreating(false);
     }
@@ -283,7 +288,7 @@ export function StageSelector(): React.JSX.Element | null {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleCreate();
+              void handleCreate();
             }}
           >
             <div className="grid gap-4 py-4">
@@ -366,6 +371,10 @@ export function StageSelector(): React.JSX.Element | null {
                     </SelectContent>
                   </Select>
                 </div>
+              )}
+
+              {createError && (
+                <p className="text-xs text-destructive">{createError}</p>
               )}
             </div>
 

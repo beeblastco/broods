@@ -25,7 +25,7 @@ export default function HomePage(): React.JSX.Element {
     if (!currentUser || started.current === attempt) return;
 
     started.current = attempt;
-    (async () => {
+    void (async () => {
       try {
         const orgId = await getOrCreateOrg({});
 

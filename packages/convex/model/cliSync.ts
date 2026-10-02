@@ -130,8 +130,14 @@ export function assertSupportedWorkspaceSandboxMounts(
       if (!sandboxName) continue;
       const sandbox = sandboxes.get(sandboxName);
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
+      const workspaceName =
+        typeof workspace.name === "string"
+          ? workspace.name
+          : typeof workspace.workspaceId === "string"
+            ? workspace.workspaceId
+            : "<unknown>";
       throw new ClientError(
-        `Agent "${agent.name}" workspace "${String(workspace.name ?? workspace.workspaceId ?? "<unknown>")}" uses sandbox "${sandbox.name}" ` +
+        `Agent "${agent.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" ` +
           `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with ` +
           `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
       );

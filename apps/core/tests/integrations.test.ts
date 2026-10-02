@@ -1258,6 +1258,46 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("accepts a numeric idempotency key and rejects other non-strings", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const handlers = createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+
+        return { statusCode: 202, body: "{}" };
+      },
+    });
+    const numeric = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "numeric-key",
+          conversationKey: "alpha",
+          idempotencyKey: 42,
+          events: [{ role: "user", content: "hello" }],
+        },
+        { authorization: "Bearer secret" },
+      ),
+      handlers,
+    );
+    const object = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "object-key",
+          conversationKey: "alpha",
+          idempotencyKey: { id: 42 },
+          events: [{ role: "user", content: "hello" }],
+        },
+        { authorization: "Bearer secret" },
+      ),
+      handlers,
+    );
+
+    expect(numeric.statusCode).toBe(202);
+    expect(handledEvents[0]?.idempotencyKey).toBe("42");
+    expect(object.statusCode).toBe(400);
+    expect(handledEvents).toHaveLength(1);
+  });
+
   it("passes top-level system as ephemeral AI SDK system messages", async () => {
     const handledEvents: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(

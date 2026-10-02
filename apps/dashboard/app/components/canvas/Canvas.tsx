@@ -832,7 +832,11 @@ function CanvasInner({
       // async), so center the whole architecture once the first real layout arrives.
       if (!didInitialFit.current) {
         didInitialFit.current = true;
-        if (canvasLayout.nodes.length > 0) fitView(FIT_VIEW_OPTIONS);
+        if (canvasLayout.nodes.length > 0) {
+          void fitView(FIT_VIEW_OPTIONS).catch((error: unknown): void => {
+            console.error("Failed to fit the canvas view", error);
+          });
+        }
         // The cold-load milestone: navigation start to the first frame that
         // has the real architecture on it. LCP stops at the header, so this
         // is the number that tracks the whole auth-to-canvas chain.
@@ -932,9 +936,15 @@ function CanvasInner({
     const id = window.setTimeout(() => {
       const width = node.measured?.width ?? node.width ?? 0;
       const height = node.measured?.height ?? node.height ?? 0;
-      setCenter(node.position.x + width / 2, node.position.y + height / 2, {
-        zoom: getZoom(),
-        duration: 200,
+      void setCenter(
+        node.position.x + width / 2,
+        node.position.y + height / 2,
+        {
+          zoom: getZoom(),
+          duration: 200,
+        },
+      ).catch((error: unknown): void => {
+        console.error("Failed to center the selected canvas node", error);
       });
       if (!selectedNode) lastFocusedNode.current = null;
     }, 220);

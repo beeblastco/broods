@@ -46,10 +46,11 @@ export function SkillConfigTab({
       <BranchEditor
         title="Skills"
         value={skills}
-        onSave={(v) => {
+        onSave={(v): Promise<void> => {
           const clean = { ...(v as Record<string, unknown>) };
           delete clean.publish;
-          updateBranch(
+
+          return updateBranch(
             ["skills"],
             Object.keys(clean).length > 0 ? clean : undefined,
           );

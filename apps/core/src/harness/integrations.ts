@@ -1209,7 +1209,8 @@ async function receiveChannelWebhook(
   context: HttpRoutingContext,
 ): Promise<ChannelReceipt> {
   const { adapter, agent } = receiver;
-  const waitUntil = context.waitUntil;
+  const waitUntil = (promise: Promise<unknown>): void =>
+    context.waitUntil(promise);
   const deployment = await context.deploymentLoader(
     account.accountId,
     agent.agentId,
@@ -1372,7 +1373,8 @@ async function acceptChannelTurn(
   deployment: AgentDeploymentScope | null,
   context: HttpRoutingContext,
 ): Promise<(() => Promise<void>) | undefined> {
-  const waitUntil = context.waitUntil;
+  const waitUntil = (promise: Promise<unknown>): void =>
+    context.waitUntil(promise);
   if (result.kind === "context") {
     const { message, ack } = result;
     const response = ack ?? { statusCode: 200 };
@@ -2165,13 +2167,18 @@ async function parseDirectPayload(
   // Steer is the default: a busy conversation absorbs the request at the next
   // step boundary (or FIFO-follows up); callers opt into reject explicitly.
   const requestedMode = parseIngressMode(record.mode) ?? "steer";
+  const rawIdempotencyKey = record.idempotencyKey;
+  if (
+    rawIdempotencyKey !== undefined &&
+    typeof rawIdempotencyKey !== "string" &&
+    typeof rawIdempotencyKey !== "number"
+  ) {
+    throw new Error("idempotencyKey must be a string or number");
+  }
   const idempotencyKey =
-    record.idempotencyKey === undefined
+    rawIdempotencyKey === undefined
       ? rawEventId
-      : normalizeDirectIdentifier(
-          "idempotencyKey",
-          String(record.idempotencyKey),
-        );
+      : normalizeDirectIdentifier("idempotencyKey", String(rawIdempotencyKey));
 
   return {
     accountId: account.accountId,

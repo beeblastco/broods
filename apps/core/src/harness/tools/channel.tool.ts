@@ -259,7 +259,7 @@ export function sendReactionsTool(context: ChannelToolContext): ToolSet {
 
 export function sendStickerTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
-  const sendSticker = actions.sendSticker;
+  const sendSticker = actions.sendSticker?.bind(actions);
   if (!sendSticker) {
     return {};
   }

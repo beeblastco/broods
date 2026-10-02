@@ -473,7 +473,7 @@ async function validateAgentSkillPaths(
         "unauthorized",
       );
     }
-    const skill: unknown | null = await ctx.runAction(internal.aws.skills.get, {
+    const skill = await ctx.runAction(internal.aws.skills.get, {
       accountId: accountId,
       skillName: parts[1],
     });

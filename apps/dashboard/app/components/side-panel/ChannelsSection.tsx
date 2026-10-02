@@ -592,6 +592,7 @@ export function ChannelsSection({
             </div>
             {channel.fields.map((field) => {
               const stored = formatFieldValue(
+                field.type,
                 readAt(
                   (channels[channel.kind] as ChannelConfig) ?? {},
                   field.path ?? [field.key],
@@ -672,10 +673,14 @@ export function ChannelsSection({
   );
 }
 
-function formatFieldValue(value: unknown): string {
-  if (Array.isArray(value)) return value.join(", ");
+function formatFieldValue(type: FieldType, value: unknown): string {
+  if (type === "stringList" && Array.isArray(value)) {
+    return value
+      .filter((entry): entry is string => typeof entry === "string")
+      .join(", ");
+  }
 
-  return value == null ? "" : String(value);
+  return typeof value === "string" ? value : "";
 }
 
 /** Serialize a raw input string to the field's stored type, or `undefined` when empty. */
