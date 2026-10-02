@@ -37,7 +37,7 @@ const ERROR_HINTS: [RegExp, string | null][] = [
     /rate.?limit|\b429\b|too many requests|overloaded/i,
     "Try again in a moment.",
   ],
-  [/timed? ?out|etimedout|econnreset/i, "Try again."],
+  [/\btimed? ?out\b|\betimedout\b|\beconnreset\b/i, "Try again."],
 ];
 
 // Channels whose plain messages are parsed for slash commands like /new.

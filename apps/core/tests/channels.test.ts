@@ -1,10 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
 import type { ChannelImage } from "../src/shared/channels.ts";
-import {
-  runWithObservabilityScope,
-  type ObservabilityContext,
-} from "../src/shared/otel.ts";
+import { ROOT_CONTEXT } from "@opentelemetry/api";
+import { runWithObservabilityScope } from "../src/shared/otel.ts";
 import {
   channelAttachmentBytes,
   chunkChannelText,
@@ -140,7 +138,7 @@ describe("formatChannelErrorText", () => {
       agentId: "a",
       conversationKey: "c",
       traceId: "t",
-      otelContext: {} as ObservabilityContext["otelContext"],
+      otelContext: ROOT_CONTEXT,
       secretValues: ["tenant-secret-XYZ123"],
     };
 
@@ -149,7 +147,13 @@ describe("formatChannelErrorText", () => {
         () => formatChannelErrorText("Bad token tenant-secret-XYZ123"),
         scope,
       ),
-    ).not.toContain("tenant-secret-XYZ123");
+    ).toBe("⚠️ Bad token [redacted]");
+  });
+
+  it("leaves a word that only contains 'timeout' letters alone", () => {
+    expect(formatChannelErrorText("Invalid runtime output schema")).toBe(
+      "⚠️ Invalid runtime output schema",
+    );
   });
 
   it("adds a retry hint to a bare rate limit", () => {
