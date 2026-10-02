@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
   isToolUIPart,
   readUIMessageStream,
@@ -250,17 +250,20 @@ test("redirected output streams plain text without terminal escapes", async () =
       ),
   });
   const written: string[] = [];
-  const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string) => {
-    written.push(String(chunk));
+  const write = spyOn(process.stdout, "write").mockImplementation(function (
+    chunk: string | Uint8Array,
+  ): boolean {
+    written.push(
+      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+    );
 
     return true;
-  }) as typeof process.stdout.write;
+  });
 
   try {
     await streamAgentText({ client: client, agent: AGENT, prompt: "capital?" });
   } finally {
-    process.stdout.write = write;
+    write.mockRestore();
   }
 
   expect(written.join("")).toBe("Paris is the capital.\n");
