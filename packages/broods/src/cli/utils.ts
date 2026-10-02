@@ -481,12 +481,11 @@ const DASHBOARD_LOGIN_TIMEOUT =
  */
 export async function waitWithTimeout<T>(
   promise: Promise<T>,
-  ms: number = LOGIN_TIMEOUT_MS,
   message: string = DASHBOARD_LOGIN_TIMEOUT,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer = setTimeout(() => reject(new Error(message)), LOGIN_TIMEOUT_MS);
   });
   try {
     return await Promise.race([promise, timeout]);

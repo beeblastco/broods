@@ -17,7 +17,7 @@ import {
   CHATGPT_SCOPES,
   CHATGPT_TOKEN_URL,
 } from "../../../convex/model/chatgpt.ts";
-import type { ChatGPTSignIn } from "../account.ts";
+import type { ChatGPTConnection, ChatGPTSignIn } from "../account.ts";
 import { openBrowser, waitForCallback, waitWithTimeout } from "./utils.ts";
 
 /** The name users see on OpenAI's consent screen and in ChatGPT settings. */
@@ -29,13 +29,7 @@ const CALLBACK_PATH = "/auth/callback";
 const SIGN_IN_TIMEOUT =
   "Timed out waiting for the ChatGPT sign-in to finish in the browser.";
 
-/** Who to sign in again, from the deployment's current connection. */
-export interface ChatGPTReauthorization {
-  clientId: string;
-  email?: string;
-}
-
-export interface ChatGPTModel {
+interface ChatGPTModel {
   slug: string;
   displayName: string;
 }
@@ -75,14 +69,15 @@ interface Jwk extends webcrypto.JsonWebKey {
 
 /**
  * Opens the browser on OpenAI's consent screen and returns the verified
- * sign-in. `hostId` is the deployment's, so usage is attributed to where the
- * model calls run; a reauthorization reuses the client OpenAI issued before.
+ * sign-in. A deployment keeps its host id, so usage is attributed to where the
+ * model calls run, and a reauthorization reuses the client OpenAI issued.
  */
 export async function signInWithChatGPT(
-  hostId: string,
-  previous?: ChatGPTReauthorization,
+  current: ChatGPTConnection,
   open: (url: string) => void = openBrowser,
 ): Promise<ChatGPTSignIn> {
+  const previous = current.connected ? current : undefined;
+  const hostId = previous?.hostId ?? `urn:uuid:${randomUUID()}`;
   const state = randomUUID();
   const nonce = randomUUID();
   const verifier = randomBytes(32).toString("base64url");
@@ -119,11 +114,7 @@ export async function signInWithChatGPT(
     }).toString()}`;
     open(authorizeUrl);
     console.log(`Opening ${authorizeUrl}`);
-    const callback = await waitWithTimeout(
-      code.promise,
-      undefined,
-      SIGN_IN_TIMEOUT,
-    );
+    const callback = await waitWithTimeout(code.promise, SIGN_IN_TIMEOUT);
     const token = await exchangeCode(callback, verifier, redirectUri);
     const claims = await verifyIdToken(
       token.id_token,
@@ -178,11 +169,6 @@ export async function listChatGPTModels(
       slug: model.slug,
       displayName: model.display_name ?? model.slug,
     }));
-}
-
-/** A new `ext_agent_host_id`, for a deployment that has never signed in. */
-export function newChatGPTHostId(): string {
-  return `urn:uuid:${randomUUID()}`;
 }
 
 function readAuthorizationCallback(

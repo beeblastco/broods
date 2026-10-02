@@ -161,10 +161,7 @@ describe("chatgpt provider", () => {
   });
 
   it("answers a non-streaming call from the completed stream", async () => {
-    const { model } = resolveConfiguredModel(
-      { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
-      ACCOUNT_ID,
-    );
+    const { model } = chatgptModel();
 
     const result = await generateText({ model: model, prompt: "hello" });
 
@@ -178,10 +175,7 @@ describe("chatgpt provider", () => {
       type: "response.incomplete",
       response: incomplete,
     });
-    const { model } = resolveConfiguredModel(
-      { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
-      ACCOUNT_ID,
-    );
+    const { model } = chatgptModel();
 
     const result = await generateText({
       model: model,
@@ -199,10 +193,7 @@ describe("chatgpt provider", () => {
 
   it("refreshes an expiring token once and saves the rotated pair", async () => {
     stored = credential({ expiresAt: Date.now() + 10_000 });
-    const { model } = resolveConfiguredModel(
-      { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
-      ACCOUNT_ID,
-    );
+    const { model } = chatgptModel();
 
     await Promise.all([
       generateText({ model: model, prompt: "one" }),
@@ -234,10 +225,7 @@ describe("chatgpt provider", () => {
   it("asks for a new sign-in when the refresh token is spent", async () => {
     stored = credential({ expiresAt: Date.now() });
     tokenResponse = Response.json({ error: "invalid_grant" }, { status: 400 });
-    const { model } = resolveConfiguredModel(
-      { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
-      ACCOUNT_ID,
-    );
+    const { model } = chatgptModel();
 
     const error = await generateText({
       model: model,
@@ -252,10 +240,7 @@ describe("chatgpt provider", () => {
 
   it("asks for a sign-in when the account has none", async () => {
     stored = null;
-    const { model } = resolveConfiguredModel(
-      { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
-      ACCOUNT_ID,
-    );
+    const { model } = chatgptModel();
 
     const error = await generateText({
       model: model,
@@ -267,6 +252,13 @@ describe("chatgpt provider", () => {
   });
 });
 
+function chatgptModel(): ReturnType<typeof resolveConfiguredModel> {
+  return resolveConfiguredModel(
+    { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
+    ACCOUNT_ID,
+  );
+}
+
 function credential(
   overrides: Partial<ProviderCredential>,
 ): ProviderCredential {
@@ -274,7 +266,6 @@ function credential(
     accessToken: "access-1",
     refreshToken: "refresh-1",
     clientId: "client-1",
-    scopes: ["chatgpt.tokens.use.direct"],
     expiresAt: Date.now() + 3_600_000,
     updatedAt: 1,
     ...overrides,

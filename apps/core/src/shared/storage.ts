@@ -253,7 +253,6 @@ export interface ProviderCredential {
   accessToken: string;
   refreshToken: string;
   clientId: string;
-  scopes: string[];
   /** Access-token expiry, epoch ms. */
   expiresAt: number;
   /** The row version a refresh must still match to save over it. */
@@ -273,7 +272,7 @@ interface ProviderCredentialStore {
     loaded: ProviderCredential,
     refreshed: Pick<
       ProviderCredential,
-      "accessToken" | "refreshToken" | "scopes" | "expiresAt"
+      "accessToken" | "refreshToken" | "expiresAt"
     >,
   ): Promise<boolean>;
 }

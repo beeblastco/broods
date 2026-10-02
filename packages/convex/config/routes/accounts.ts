@@ -25,10 +25,12 @@ import {
   writeAudit,
 } from "./shared";
 import { ClientError } from "../../model/clientError";
+import { handleChatGPTRoute } from "./chatgpt";
 
 type AccountHttpRoute =
   | { kind: "self" }
   | { kind: "selfRotate" }
+  | { kind: "selfChatGPT" }
   | { kind: "adminList" }
   | { kind: "adminRecord"; accountId: string }
   | { kind: "adminRotate"; accountId: string }
@@ -50,19 +52,30 @@ export async function handleAccountRoute(
   req: Request,
   route: AccountHttpRoute,
 ): Promise<Response> {
-  if (route.kind === "self" || route.kind === "selfRotate") {
+  if (
+    route.kind === "self" ||
+    route.kind === "selfRotate" ||
+    route.kind === "selfChatGPT"
+  ) {
     const accountAuth = await requireSelfAccount(ctx, req);
     if (accountAuth instanceof Response) return accountAuth;
     const account = accountAuth.account;
     const actor = auditActorForAuth(accountAuth);
 
     if (accountAuth.kind === "role") {
-      // Rotating the master secret from a session would be privilege
-      // escalation, so no role policy can grant it.
+      // Rotating the master secret, or reading and replacing the ChatGPT
+      // sign-in, from a session would be privilege escalation, so no role
+      // policy can grant it.
       if (route.kind === "selfRotate") {
         return jsonError(
           403,
           "Role sessions may not rotate the account secret",
+        );
+      }
+      if (route.kind === "selfChatGPT") {
+        return jsonError(
+          403,
+          "The ChatGPT sign-in requires the account secret",
         );
       }
       const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
@@ -85,6 +98,9 @@ export async function handleAccountRoute(
 
       return methodNotAllowed(["GET", "PATCH"]);
     }
+
+    if (route.kind === "selfChatGPT")
+      return await handleChatGPTRoute(ctx, req, account._id, actor);
 
     if (req.method === "POST")
       return await rotateAccountSecretResponse(ctx, account._id, actor);
@@ -147,6 +163,7 @@ export async function handleAccountRoute(
 export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
   if (pathname === "/v1/account") return { kind: "self" };
   if (pathname === "/v1/account/rotate-secret") return { kind: "selfRotate" };
+  if (pathname === "/v1/account/chatgpt") return { kind: "selfChatGPT" };
   if (pathname === "/v1/accounts") return { kind: "adminList" };
   if (!pathname.startsWith("/v1/accounts/")) return null;
 

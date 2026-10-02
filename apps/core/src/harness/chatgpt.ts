@@ -13,16 +13,12 @@ import {
   CHATGPT_TOKEN_URL,
 } from "@broods/convex/model/chatgpt";
 import { getStorage, type ProviderCredential } from "../shared/storage.ts";
+import { REFRESH_MARGIN_MS, refreshTokenGrant } from "./mcp/oauth.ts";
 
-/** Refresh this long before expiry, so a sent token is never on its last seconds. */
-const REFRESH_MARGIN_MS = 60_000;
 /** Re-read the stored login this often, so a new `broods login chatgpt` lands. */
 const CACHE_TTL_MS = 5 * 60_000;
-/** A token response without expires_in gets an hour, the shortest OpenAI issues. */
-const DEFAULT_EXPIRES_IN_SECONDS = 3600;
 /** A stalled refresh fails rather than hold every run waiting on it. */
 const REFRESH_TIMEOUT_MS = 15_000;
-const MAX_ERROR_BODY_LENGTH = 512;
 
 // Request fields plan usage refuses outright: the AI SDK sends some of them
 // from ordinary call settings (`temperature`, `maxOutputTokens`) and the rest
@@ -54,19 +50,9 @@ interface CachedCredential {
   loadedAt: number;
 }
 
-interface TokenResponse {
-  access_token?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  scope?: string;
-  error?: string;
-  error_description?: string;
-}
-
 /** The slice of a Responses request body this file reads or rewrites. */
 interface ResponsesRequestBody {
   stream?: boolean;
-  store?: boolean;
   [field: string]: unknown;
 }
 
@@ -121,7 +107,7 @@ export function chatgptFetch(
       const parsed = JSON.parse(body) as ResponsesRequestBody;
       for (const field of UNSUPPORTED_REQUEST_FIELDS) delete parsed[field];
       wantsJson = parsed.stream !== true;
-      body = JSON.stringify({ ...parsed, store: false, stream: true });
+      body = JSON.stringify({ ...parsed, stream: true });
     }
     const response = await modelFetch(input, {
       ...init,
@@ -188,68 +174,41 @@ async function refreshAndSave(
   accountId: string,
   stored: ProviderCredential,
 ): Promise<ProviderCredential> {
-  const response = await fetch(CHATGPT_TOKEN_URL, {
-    method: "POST",
-    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    // No scope: the refreshed grant keeps exactly what the user approved.
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
+  // No scope: the refreshed grant keeps exactly what the user approved.
+  const refreshed = await refreshTokenGrant(
+    CHATGPT_TOKEN_URL,
+    {
       client_id: stored.clientId,
       refresh_token: stored.refreshToken,
       resource: CHATGPT_RESOURCE,
-    }),
-  });
-  const text = await response.text();
-  const token = parseTokenResponse(text);
-  if (!response.ok || typeof token.access_token !== "string") {
-    const reason = token.error ?? `HTTP ${response.status}`;
+    },
+    (url, init) =>
+      fetch(url, { ...init, signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }),
+  ).catch((error: unknown) => {
     throw new Error(
-      `ChatGPT sign-in refresh failed (${reason}): ${text.slice(0, MAX_ERROR_BODY_LENGTH)}. ${REAUTHORIZE_HINT}`,
+      `ChatGPT sign-in refresh failed: ${error instanceof Error ? error.message : String(error)}. ${REAUTHORIZE_HINT}`,
     );
-  }
-  const refreshed = {
-    accessToken: token.access_token,
-    // The refresh token rotates; keep the old one only if none came back.
-    refreshToken: token.refresh_token ?? stored.refreshToken,
-    scopes: token.scope ? token.scope.split(" ") : stored.scopes,
-    expiresAt:
-      Date.now() + (token.expires_in ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000,
+  });
+  // The refresh token rotates; keep the old one only if none came back.
+  const rotated = {
+    accessToken: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken ?? stored.refreshToken,
+    expiresAt: refreshed.expiresAt,
   };
   const saved = await getStorage().providerCredentials.saveRefreshed(
     accountId,
     "chatgpt",
     stored,
-    refreshed,
+    rotated,
   );
-  if (!saved) {
-    // A new sign-in or a logout landed while this refresh ran; it wins.
-    const latest = await getStorage().providerCredentials.load(
-      accountId,
-      "chatgpt",
-    );
-    if (!latest) {
-      throw new Error(
-        `This account has no ChatGPT sign-in. ${REAUTHORIZE_HINT}`,
-      );
-    }
+  // A new sign-in or a logout landed while this refresh ran; it wins.
+  if (!saved) return await loadFresh(accountId);
 
-    return latest;
-  }
-
-  return { ...stored, ...refreshed, updatedAt: Date.now() };
+  return { ...stored, ...rotated, updatedAt: Date.now() };
 }
 
 function expiresSoon(credential: ProviderCredential): boolean {
   return credential.expiresAt - Date.now() < REFRESH_MARGIN_MS;
-}
-
-function parseTokenResponse(text: string): TokenResponse {
-  try {
-    return JSON.parse(text) as TokenResponse;
-  } catch {
-    return {};
-  }
 }
 
 /**

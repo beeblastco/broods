@@ -53,7 +53,6 @@ test("a stored sign-in reads back without its tokens", async () => {
     hostId: "urn:uuid:host-1",
     email: "user@example.com",
     scopes: signIn.scopes,
-    planUsage: true,
     expiresAt: signIn.expiresAt,
     updatedAt: expect.any(String),
   });
@@ -104,7 +103,6 @@ test("a refresh never overwrites a newer sign-in", async () => {
   const refreshed = {
     ...ref,
     loadedUpdatedAt: loaded!.updatedAt,
-    scopes: signIn.scopes,
     expiresAt: Date.now() + 600_000,
     accessToken: "access-2",
     refreshToken: "refresh-2",

@@ -24,7 +24,6 @@ import {
   handleAgentConfigRoute,
 } from "./routes/agents";
 import { handleChannelRecordRoute } from "./routes/channels";
-import { handleChatGPTRoute } from "./routes/chatgpt";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
@@ -57,10 +56,9 @@ type ConfigRoute =
   | { kind: "agents"; agentId?: string }
   | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
   | { kind: "env"; name?: string }
-  | { kind: "chatgpt" }
   | { kind: "roles"; roleId?: string };
 
-type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" | "chatgpt" }>;
+type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   // Only a role is scoped below the account, so every other caller already
@@ -99,19 +97,6 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
       }
 
       return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);
-    }
-
-    // Like roles: no role policy names this login, so only the master
-    // credential may read or replace it.
-    if (route.kind === "chatgpt") {
-      if (accountAuth.kind !== "account") {
-        return jsonError(
-          403,
-          "The ChatGPT sign-in requires the account secret",
-        );
-      }
-
-      return await handleChatGPTRoute(ctx, req, account._id, actor);
     }
 
     if (accountAuth.kind === "role") {
@@ -325,8 +310,6 @@ function parseAgentRoute(pathname: string): ConfigRoute | null {
 
 /** Match the flat collection-or-item routes with no nested subresources. */
 function parseCollectionRoute(pathname: string): ConfigRoute | null {
-  if (pathname === "/v1/account/chatgpt") return { kind: "chatgpt" };
-
   const env = pathname.match(/^\/v1\/env(?:\/([^/]+))?$/);
   if (env)
     return {

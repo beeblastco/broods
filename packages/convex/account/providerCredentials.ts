@@ -120,7 +120,6 @@ export const saveRefreshed = internalMutation({
     accountId: v.id("accounts"),
     provider: providerValidator,
     loadedUpdatedAt: v.number(),
-    scopes: v.array(v.string()),
     expiresAt: v.number(),
     ...tokenFields,
   },
@@ -130,7 +129,6 @@ export const saveRefreshed = internalMutation({
     if (!row || row.updatedAt !== args.loadedUpdatedAt) return false;
     await ctx.db.patch(row._id, {
       ...(await encryptTokens(args.accessToken, args.refreshToken)),
-      scopes: args.scopes,
       expiresAt: args.expiresAt,
       updatedAt: Date.now(),
     });

@@ -26,18 +26,23 @@ const PROVIDER_REQUIRED_SETTINGS: Partial<
   custom: { base_url: "https://llm.example.com/v1" },
 };
 
+// `chatgpt` runs on the account's sign-in, not an API key or a factory.
+const API_KEY_PROVIDER_NAMES = ACCOUNT_MODEL_PROVIDER_NAMES.filter(
+  (name) => name !== "chatgpt",
+);
+
 describe("model provider registry", () => {
-  it("has a live AI SDK factory for every supported provider name", () => {
+  it("has a live AI SDK factory for every API-key provider name", () => {
     const factories = modelProviderFactories();
     expect(Object.keys(factories).sort()).toEqual(
-      [...ACCOUNT_MODEL_PROVIDER_NAMES].sort(),
+      [...API_KEY_PROVIDER_NAMES].sort(),
     );
-    for (const name of ACCOUNT_MODEL_PROVIDER_NAMES) {
+    for (const name of API_KEY_PROVIDER_NAMES) {
       expect(typeof factories[name]).toBe("function");
     }
   });
 
-  it.each(ACCOUNT_MODEL_PROVIDER_NAMES)(
+  it.each(API_KEY_PROVIDER_NAMES)(
     "builds a %s model from an API key and its own required settings",
     (name) => {
       const resolved = resolveConfiguredModel({

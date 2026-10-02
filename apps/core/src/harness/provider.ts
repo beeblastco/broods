@@ -150,7 +150,7 @@ export type ModelOutputSpec =
 // factory. Built per call so each is read off its live binding, keeping it
 // mockable.
 export function modelProviderFactories(): Record<
-  AccountModelProviderName,
+  Exclude<AccountModelProviderName, "chatgpt">,
   ModelProviderFactory
 > {
   return {
@@ -160,8 +160,6 @@ export function modelProviderFactories(): Record<
     baseten: createBaseten,
     bedrock: createAmazonBedrock,
     cerebras: createCerebras,
-    // Built by resolveChatGPTModel, never from config.provider settings.
-    chatgpt: createOpenAI,
     cloudflare: createWorkersAI,
     cohere: createCohere,
     custom: createOpenAICompatible,

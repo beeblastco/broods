@@ -14,6 +14,8 @@ import {
   CHATGPT_DIRECT_SCOPE,
   CHATGPT_DISCOVERY_URL,
   CHATGPT_MANAGED_SERVICE_REFUSAL,
+  type ChatGPTConnection,
+  type ChatGPTSignIn,
 } from "../../model/chatgpt";
 import { ClientError } from "../../model/clientError";
 import { isManagedService } from "../../model/planLimits";
@@ -26,18 +28,6 @@ import {
 } from "./shared";
 
 const REVOKE_TIMEOUT_MS = 5_000;
-
-/** What `broods login chatgpt` sends after a verified sign-in. */
-interface ChatGPTSignIn {
-  clientId: string;
-  hostId: string;
-  email?: string;
-  scopes: string[];
-  /** ISO 8601 access-token expiry. */
-  expiresAt: string;
-  accessToken: string;
-  refreshToken: string;
-}
 
 export async function handleChatGPTRoute(
   ctx: ActionCtx,
@@ -60,13 +50,8 @@ export async function handleChatGPTRoute(
     const signIn = readSignIn(await parseJsonRequest(req));
     await ctx.runMutation(internal.account.providerCredentials.set, {
       ...ref,
-      clientId: signIn.clientId,
-      hostId: signIn.hostId,
-      ...(signIn.email ? { email: signIn.email } : {}),
-      scopes: signIn.scopes,
+      ...signIn,
       expiresAt: Date.parse(signIn.expiresAt),
-      accessToken: signIn.accessToken,
-      refreshToken: signIn.refreshToken,
     });
     await writeAudit(ctx, {
       accountId: accountId,
@@ -104,20 +89,6 @@ export async function handleChatGPTRoute(
   return methodNotAllowed(["GET", "PUT", "DELETE"]);
 }
 
-/** The public shape; `broods` mirrors it as `ChatGPTConnection`. */
-type ChatGPTConnection =
-  | { connected: false }
-  | {
-      connected: true;
-      clientId: string;
-      hostId: string;
-      email?: string;
-      scopes: string[];
-      planUsage: boolean;
-      expiresAt: string;
-      updatedAt: string;
-    };
-
 function publicStatus(
   status: ProviderCredentialStatus | null,
 ): ChatGPTConnection {
@@ -129,7 +100,6 @@ function publicStatus(
     hostId: status.hostId,
     ...(status.email ? { email: status.email } : {}),
     scopes: status.scopes,
-    planUsage: status.scopes.includes(CHATGPT_DIRECT_SCOPE),
     expiresAt: new Date(status.expiresAt).toISOString(),
     updatedAt: new Date(status.updatedAt).toISOString(),
   };

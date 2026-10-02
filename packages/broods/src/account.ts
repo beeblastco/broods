@@ -32,6 +32,10 @@ import type {
   WorkspaceConfig,
 } from "./contracts.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
+import type {
+  ChatGPTConnection,
+  ChatGPTSignIn,
+} from "../../convex/model/chatgpt.ts";
 
 /**
  * Managed gateway host, matching the OpenAPI `servers` entry and
@@ -96,38 +100,8 @@ export interface AccountEnvVar {
   updatedAt: string;
 }
 
-/**
- * The account's Sign in with ChatGPT login, which the `chatgpt` model provider
- * runs on. Never carries the tokens.
- */
-export type ChatGPTConnection =
-  | { connected: false }
-  | {
-      connected: true;
-      /** OAuth client OpenAI issued at the first sign-in. */
-      clientId: string;
-      /** This deployment's `ext_agent_host_id`. */
-      hostId: string;
-      email?: string;
-      scopes: string[];
-      /** True when the sign-in may draw on the user's ChatGPT plan. */
-      planUsage: boolean;
-      /** ISO 8601 access-token expiry; core refreshes before it. */
-      expiresAt: string;
-      updatedAt: string;
-    };
-
-/** A verified sign-in for `PUT /v1/account/chatgpt`; `broods login chatgpt` builds it. */
-export interface ChatGPTSignIn {
-  clientId: string;
-  hostId: string;
-  email?: string;
-  scopes: string[];
-  /** ISO 8601 access-token expiry. */
-  expiresAt: string;
-  accessToken: string;
-  refreshToken: string;
-}
+// The ChatGPT sign-in wire types live with the server so they cannot drift.
+export type { ChatGPTConnection, ChatGPTSignIn };
 
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {

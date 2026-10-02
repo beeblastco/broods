@@ -4778,9 +4778,6 @@ components:
         scopes:
           type: array
           items: { type: string }
-        planUsage:
-          type: boolean
-          description: True when the grant allows drawing on the ChatGPT plan
         expiresAt:
           type: string
           format: date-time

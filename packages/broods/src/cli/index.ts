@@ -62,12 +62,7 @@ import {
 } from "../observability-contracts.ts";
 import { BroodsAccountClient } from "../account.ts";
 import { CHATGPT_USAGE_URL } from "../../../convex/model/chatgpt.ts";
-import {
-  listChatGPTModels,
-  newChatGPTHostId,
-  signInWithChatGPT,
-  type ChatGPTModel,
-} from "./chatgpt.ts";
+import { listChatGPTModels, signInWithChatGPT } from "./chatgpt.ts";
 import {
   hasFlag,
   isPlainObject,
@@ -638,7 +633,6 @@ async function loginChatGPT(args: string[]): Promise<void> {
     console.log(
       `ChatGPT: connected${current.email ? ` as ${current.email}` : ""}`,
     );
-    console.log(`Plan usage: ${current.planUsage ? "allowed" : "not allowed"}`);
     console.log(`Manage usage: ${CHATGPT_USAGE_URL}`);
 
     return;
@@ -652,15 +646,7 @@ async function loginChatGPT(args: string[]): Promise<void> {
     return;
   }
 
-  const signIn = await signInWithChatGPT(
-    current.connected ? current.hostId : newChatGPTHostId(),
-    current.connected
-      ? {
-          clientId: current.clientId,
-          ...(current.email ? { email: current.email } : {}),
-        }
-      : undefined,
-  );
+  const signIn = await signInWithChatGPT(current);
   const stored = await client.connectChatGPT(signIn);
   if (!stored.connected) {
     throw new Error(
@@ -671,9 +657,7 @@ async function loginChatGPT(args: string[]): Promise<void> {
     `Connected ChatGPT${signIn.email ? ` as ${signIn.email}` : ""}. Agents on provider "chatgpt" now use your ChatGPT plan.`,
   );
   console.log(`Manage usage: ${CHATGPT_USAGE_URL}`);
-  const models = await listChatGPTModels(signIn.accessToken).catch(
-    (): ChatGPTModel[] => [],
-  );
+  const models = await listChatGPTModels(signIn.accessToken).catch(() => []);
   if (models.length === 0) return;
   console.log("Models (use the id as model.modelId):");
   for (const model of models) {

@@ -43,7 +43,7 @@ describe("signInWithChatGPT", () => {
 
     expect(authorize.get("client_id")).toBe("dynamic_agent_client");
     expect(authorize.get("agent_name_hint")).toBe("Broods");
-    expect(authorize.get("ext_agent_host_id")).toBe("urn:uuid:host");
+    expect(authorize.get("ext_agent_host_id")).toMatch(/^urn:uuid:/);
     expect(authorize.get("scope")).toBe(
       "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
     );
@@ -57,7 +57,6 @@ describe("signInWithChatGPT", () => {
     expect(tokenForm?.get("code_verifier")).toBeTruthy();
     expect(signIn).toMatchObject({
       clientId: "client-issued",
-      hostId: "urn:uuid:host",
       email: "user@example.com",
       accessToken: "access-1",
       refreshToken: "refresh-1",
@@ -66,10 +65,16 @@ describe("signInWithChatGPT", () => {
 
   it("reauthorizes on the client OpenAI issued before", async () => {
     const { authorize } = await runSignIn({
+      connected: true,
       clientId: "client-issued",
+      hostId: "urn:uuid:host",
       email: "user@example.com",
+      scopes: [],
+      expiresAt: "2026-10-02T12:00:00.000Z",
+      updatedAt: "2026-10-02T11:00:00.000Z",
     });
 
+    expect(authorize.get("ext_agent_host_id")).toBe("urn:uuid:host");
     expect(authorize.get("client_id")).toBe("client-issued");
     expect(authorize.get("login_hint")).toBe("user@example.com");
     expect(authorize.has("agent_name_hint")).toBe(false);
@@ -107,7 +112,7 @@ describe("signInWithChatGPT", () => {
 
 /** Plays OpenAI: answers discovery, JWKS and the token endpoint, and redirects the "browser" back. */
 async function runSignIn(
-  previous?: Parameters<typeof signInWithChatGPT>[1],
+  current: Parameters<typeof signInWithChatGPT>[0] = { connected: false },
 ): Promise<{
   signIn: Awaited<ReturnType<typeof signInWithChatGPT>>;
   authorize: URLSearchParams;
@@ -146,7 +151,7 @@ async function runSignIn(
     void realFetch(callback);
   };
 
-  const signIn = await signInWithChatGPT("urn:uuid:host", previous, open);
+  const signIn = await signInWithChatGPT(current, open);
 
   return { signIn: signIn, authorize: authorize };
 }

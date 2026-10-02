@@ -1,4 +1,4 @@
-import type { ChatGPTConnection } from "../../../packages/broods/src/account.ts";
+import type { ChatGPTConnection } from "../../../packages/convex/model/chatgpt.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
 
@@ -50,10 +50,9 @@ export async function chatgptSignIn(context: VerifyContext): Promise<void> {
   );
   const status = await context.account.getChatGPTConnection();
   assertStep(
-    "a stored sign-in reads back connected, with plan usage, without tokens",
+    "a stored sign-in reads back connected, without tokens",
     stored.connected &&
       status.connected &&
-      status.planUsage &&
       status.clientId === "client-local-verify" &&
       !JSON.stringify(status).includes("access-local-verify") &&
       !JSON.stringify(status).includes("refresh-local-verify"),

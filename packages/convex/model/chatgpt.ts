@@ -28,6 +28,28 @@ export const CHATGPT_SCOPES = [
   CHATGPT_DIRECT_SCOPE,
 ] as const;
 
+/** A verified sign-in for `PUT /v1/account/chatgpt`; `broods login chatgpt` builds it. */
+export interface ChatGPTSignIn {
+  /** OAuth client OpenAI issued at the first sign-in. */
+  clientId: string;
+  /** The deployment's `ext_agent_host_id`, kept across sign-ins. */
+  hostId: string;
+  email?: string;
+  scopes: string[];
+  /** ISO 8601 access-token expiry. */
+  expiresAt: string;
+  accessToken: string;
+  refreshToken: string;
+}
+
+/** The account's sign-in as `/v1/account/chatgpt` answers it: never the tokens. */
+export type ChatGPTConnection =
+  | { connected: false }
+  | ({ connected: true; updatedAt: string } & Omit<
+      ChatGPTSignIn,
+      "accessToken" | "refreshToken"
+    >);
+
 /** Where a user reviews and limits what apps draw from their plan. */
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
 
