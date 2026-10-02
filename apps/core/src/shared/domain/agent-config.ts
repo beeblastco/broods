@@ -267,8 +267,9 @@ export interface AgentSessionPruningConfig {
 
 /**
  * Compaction after a finished turn, on unless `enabled: false`. It runs once
- * the turn's last model call read `maxContextLength` input tokens or more
- * (default 500000). `/compact` works whatever this says.
+ * the turn's last model call reaches the lower of `maxContextLength` (default
+ * 500000) and 80% of the model's context window. `/compact` works whatever
+ * this says.
  */
 export interface AgentSessionAutoCompactionConfig {
   enabled?: boolean;
