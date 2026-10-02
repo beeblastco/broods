@@ -71,7 +71,9 @@ export async function resolveProjectId(page: Page): Promise<string> {
     // that route calls until the merge deploys them.
     await page.goto("/projects");
     const card = page.getByRole("button", { name: /^Open / }).first();
-    if (await card.isVisible({ timeout: AUTH_TIMEOUT_MS }).catch(() => false)) {
+    const empty = page.getByText("No projects yet");
+    await card.or(empty).first().waitFor({ timeout: AUTH_TIMEOUT_MS });
+    if (await card.isVisible()) {
       await card.click();
     } else {
       await page.goto("/");
