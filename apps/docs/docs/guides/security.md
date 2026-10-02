@@ -85,7 +85,7 @@ For the CLI's MCP server, prefer a role session in `BROODS_SESSION_TOKEN` over t
 ## Code you upload
 
 - [Code hooks](hooks.md) run in an isolated V8 sandbox with no file system, no imports, and network only through a `fetch` that blocks private and metadata addresses.
-- Hosted MCP servers run outside the Broods core, isolated per account, with nothing but log-writing permissions. Treat anything the server can reach as reachable by its code.
+- Hosted MCP servers run outside the Broods core in a child process per bundle, with nothing but log-writing permissions. The child is containment, not a trust boundary: accounts can share a warm runner environment until per-account isolation is switched on, so treat anything the server can reach as reachable by its code and keep secrets out of the bundle.
 - Sandbox commands start with a clean environment. Only the `envVars` you declare reach them. Workspace mounts use short-lived credentials limited to that workspace's own files.
 
 ## Outbound URLs
