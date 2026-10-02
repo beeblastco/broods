@@ -1680,6 +1680,12 @@ paths:
                         enum: [tiny, xsmall, small, medium, large],
                         description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (MicroVM bakes size into the image; daytona/e2b/vercel size themselves). Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
                       }
+                    image:
+                      {
+                        type: string,
+                        enum: [browser, obscura],
+                        description: "Platform MicroVM image variant to boot instead of the default (lambda only). `obscura` adds the Obscura headless browser (markdown/text/link dumps, screenshots, CDP and MCP servers); `browser` adds headless Chromium for pixel-exact rendering. Cannot be set with `snapshot` or `fallbackProvider`.",
+                      }
                     snapshot:
                       {
                         type: string,

@@ -7,6 +7,7 @@ import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
+import { sandboxImage } from "./sandbox-image.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
@@ -21,6 +22,7 @@ export const verifyCases: readonly VerifyCase[] = [
   autoCompaction,
   machineSandbox,
   ownBucketSandbox,
+  sandboxImage,
   trailingSlash,
   manifestSync,
   workToolWebhooks,

@@ -686,6 +686,29 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("boots an image variant as the default image's sibling at its latest version", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    process.env.MICROVM_IMAGE_VERSION = "3";
+    try {
+      await createSandboxExecutor({ provider: "lambda", image: "obscura" }).run(
+        {
+          code: "echo ok",
+          timeoutSeconds: 30,
+          outputLimitBytes: 4096,
+        },
+      );
+    } finally {
+      delete process.env.MICROVM_IMAGE_VERSION;
+    }
+
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
+    expect(microvmRunInput()).not.toHaveProperty("imageVersion");
+  });
+
   it("refuses a snapshot pin outside the platform image account and ignores image options", async () => {
     const {
       createSandboxExecutor,

@@ -547,8 +547,22 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // so a `snapshot` pin may only name another image in the same AWS account and
   // region as the runtime default, and MICROVM_IMAGE_VERSION only versions that
   // default. Anything else would boot a foreign image under the platform role.
+  // An `image` variant is the default's sibling `<name>-<variant>`, which the
+  // sandbox image workflow publishes next to it.
   #image(): { imageIdentifier: string; imageVersion?: string } {
     const fallback = optionalEnv("MICROVM_IMAGE_IDENTIFIER");
+    if (this.#config.image) {
+      const variant = fallback
+        ? microvmImageVariant(fallback, this.#config.image)
+        : undefined;
+      if (!variant) {
+        throw new Error(
+          "config.image needs MICROVM_IMAGE_IDENTIFIER to be a MicroVM image ARN in the harness runtime.",
+        );
+      }
+
+      return { imageIdentifier: variant };
+    }
     const pinned = configString(this.#config.snapshot);
     if (!pinned) {
       if (!fallback) {
@@ -1544,6 +1558,16 @@ function microvmImageScope(arn: string): string | undefined {
   if (parts[5] !== "microvm-image" || parts.length < 7) return undefined;
 
   return parts.slice(0, 6).join(":");
+}
+
+// `arn:aws:lambda:<region>:<account>:microvm-image:<name>[:...]` → the same ARN
+// for `<name>-<variant>`, dropping any version qualifier of the default.
+function microvmImageVariant(arn: string, variant: string): string | undefined {
+  const scope = microvmImageScope(arn);
+  const name = arn.split(":")[6];
+  if (!scope || !name) return undefined;
+
+  return `${scope}:${name}-${variant}`;
 }
 
 function microvmLocalNamespace(namespace: string): string {
