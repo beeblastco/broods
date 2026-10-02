@@ -48,7 +48,13 @@ import {
   type CoreRequest,
   type RequestContext,
 } from "../shared/http.ts";
-import { logDebug, logError, logInfo, logWarn } from "../shared/log.ts";
+import {
+  collectSecretValues,
+  logDebug,
+  logError,
+  logInfo,
+  logWarn,
+} from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
   getObservabilityContext,
@@ -1285,13 +1291,16 @@ async function handleNatsWorkerRequest(
     throw new Error("NATS worker requires NATS_URL");
   }
 
-  const publisher = new LiveNatsPublisher({
-    accountId: event.accountId,
-    agentId: event.agentId,
-    conversationKey: event.publicConversationKey,
-    eventId: event.publicEventId,
-    connectionId: connectionId,
-  });
+  const publisher = new LiveNatsPublisher(
+    {
+      accountId: event.accountId,
+      agentId: event.agentId,
+      conversationKey: event.publicConversationKey,
+      eventId: event.publicEventId,
+      connectionId: connectionId,
+    },
+    collectSecretValues(event.agentConfig),
+  );
 
   const command = queuedCommand(event.events);
   if (command) {

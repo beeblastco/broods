@@ -14,7 +14,7 @@ import {
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
-import { logError, logInfo } from "../shared/log.ts";
+import { collectSecretValues, logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
   getObservabilityContext,
@@ -1324,13 +1324,16 @@ function createSubagentPublisher(
     return undefined;
   }
 
-  return new LiveNatsPublisher({
-    accountId: requireParentAccountId(parentSession),
-    agentId: task.agentId,
-    conversationKey: task.publicConversationKey,
-    eventId: task.taskId,
-    connectionId: task.taskId,
-  });
+  return new LiveNatsPublisher(
+    {
+      accountId: requireParentAccountId(parentSession),
+      agentId: task.agentId,
+      conversationKey: task.publicConversationKey,
+      eventId: task.taskId,
+      connectionId: task.taskId,
+    },
+    collectSecretValues(task.agentConfig),
+  );
 }
 
 function requireParentAccountId(session: Session): string {

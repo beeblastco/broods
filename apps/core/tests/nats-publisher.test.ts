@@ -108,4 +108,63 @@ describe("LiveNatsPublisher", (): void => {
     ]);
     expect(frames[1]!.sequence).toBe(2);
   });
+
+  it("scrubs the run's secrets from text and tool payloads, not from frame structure", async (): Promise<void> => {
+    const publisher = new LiveNatsPublisher(
+      {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        conversationKey: "conversation-1",
+        eventId: "event-1",
+        connectionId: "socket-1",
+      },
+      ["hdr-secret-abc123"],
+    );
+
+    await publisher.publish({
+      type: "text-delta",
+      id: "text-1",
+      text: "the key is hdr-secret-abc123",
+    });
+    await publisher.publish({
+      type: "tool-call",
+      toolCallId: "call-hdr-secret-abc123",
+      toolName: "bash",
+      input: { command: "echo hdr-secret-abc123", token: "t" },
+    });
+    await publisher.publish({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "bash",
+      output: { stdout: "hdr-secret-abc123\n", exitCode: 0 },
+    });
+    await publisher.close();
+
+    // The dial is memoized across tests, so only this run's frames count.
+    const frames = connections
+      .at(-1)!
+      .published.slice(-3)
+      .map((message): Record<string, unknown> =>
+        JSON.parse(new TextDecoder().decode(message.data)),
+      );
+    expect(frames.map((frame): unknown => frame.data)).toEqual([
+      { type: "text-delta", id: "text-1", text: "the key is [redacted]" },
+      {
+        type: "tool-call",
+        // Structural: left alone even when it carries the value.
+        toolCallId: "call-hdr-secret-abc123",
+        toolName: "bash",
+        input: {
+          command: "echo [redacted]",
+          token: "[redacted]",
+        },
+      },
+      {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "bash",
+        output: { stdout: "[redacted]\n", exitCode: 0 },
+      },
+    ]);
+  });
 });

@@ -3,6 +3,8 @@
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
+import { redact } from "../shared/log.ts";
+import { getObservabilityContext } from "../shared/otel.ts";
 import type { ReservedSandbox } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
@@ -69,6 +71,7 @@ export function createDetachedAsyncToolResult(options: {
 
   return runtime.mutate("createAsyncToolResult", {
     ...row,
+    input: redactWithRunSecrets(options.input),
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
   });
 }
@@ -83,7 +86,10 @@ export function createPendingAsyncToolResult(options: {
   delivery?: AsyncToolDelivery;
   completionToken?: string;
 }): Promise<boolean> {
-  return runtime.mutate("createAsyncToolResult", options);
+  return runtime.mutate("createAsyncToolResult", {
+    ...options,
+    input: redactWithRunSecrets(options.input),
+  });
 }
 /** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
@@ -99,7 +105,7 @@ export async function markAsyncToolResultCompleted(options: {
   await runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: "completed",
-    response: options.response,
+    response: redactWithRunSecrets(options.response),
     onlyWhenProcessing: true,
   });
 }
@@ -111,7 +117,7 @@ export async function markAsyncToolResultFailed(options: {
   await runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: "failed",
-    error: options.error,
+    error: redactWithRunSecrets(options.error),
     onlyWhenProcessing: true,
   });
 }
@@ -143,10 +149,23 @@ export function settleAsyncToolResultFromCallback(options: {
     status: options.status,
     onlyWhenProcessing: true,
     ...(options.status === "completed"
-      ? { response: options.response }
-      : { error: options.error ?? "Async tool call failed" }),
+      ? { response: redactWithRunSecrets(options.response) }
+      : {
+          error: redactWithRunSecrets(
+            options.error ?? "Async tool call failed",
+          ),
+        }),
   });
 }
+/**
+ * A tool input or result as it may be stored: scrubbed against the run's
+ * resolved secrets, which the run sets on its observability context. The row
+ * outlives the run and feeds the parent conversation and the dashboard.
+ */
+function redactWithRunSecrets(value: unknown): unknown {
+  return redact(value, getObservabilityContext()?.secretValues);
+}
+
 /** Checks a callback's completion token against the row; the handler calls it before settling. */
 export function verifyAsyncToolCompletionToken(
   resultId: string,
