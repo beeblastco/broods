@@ -223,7 +223,7 @@ describe("step boundary", (): void => {
     const steering: AppliedIngress = {
       eventId: "event-1",
       events: [{ role: "user", content: "new direction" }],
-      delivery: { kind: "async" },
+      delivery: candidate().delivery,
       requestedMode: "steer",
       appliedMode: "steer",
       appliedToEventId: "event-1",

@@ -72,7 +72,7 @@ stateDiagram-v2
   running --> failed: accept with mode reject answers rejected
   running --> running: update_subagent steer, applied at the next step
   running --> stopping: stop_subagent, stopOwner
-  stopping --> failed: renewOwner answers stopped at the next step
+  stopping --> failed: stepBoundary answers stopped at the next step
   stopping --> completed: no further step, stop never seen
   running --> completed: settle completed, result injected
   running --> failed: settle failed, error injected
@@ -100,7 +100,7 @@ sequenceDiagram
   alt child still owns its generation
     CX-->>T: queued
     T-->>P: status queued
-    Ch->>CX: applySteering at the next step, or takeNext after settle
+    Ch->>CX: stepBoundary at the next step, or takeNext after settle
   else child settled, or another task owns the conversation
     CX-->>T: not_running, no envelope written
     T-->>P: status not_running
@@ -111,7 +111,7 @@ sequenceDiagram
     CX-->>T: stopped true
     T-->>P: status stopping
     alt child has another step
-      Ch->>CX: renewOwner answers stopped
+      Ch->>CX: stepBoundary answers stopped
       Ch->>CX: settle failed, stoppedByUser
     else child was on its last step
       Ch->>CX: settle completed, result injected

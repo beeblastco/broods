@@ -7,6 +7,7 @@ import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { sdkClient } from "./sdk-client.ts";
+import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { workToolWebhooks } from "./work-tool-webhooks.ts";
@@ -17,6 +18,7 @@ export const verifyCases: readonly VerifyCase[] = [
   sdkClient,
   queuedFollowup,
   queuedCompact,
+  steerAtBoundary,
   autoCompaction,
   machineSandbox,
   ownBucketSandbox,
