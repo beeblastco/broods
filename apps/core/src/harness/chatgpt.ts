@@ -20,6 +20,8 @@ const REFRESH_MARGIN_MS = 60_000;
 const CACHE_TTL_MS = 5 * 60_000;
 /** A token response without expires_in gets an hour, the shortest OpenAI issues. */
 const DEFAULT_EXPIRES_IN_SECONDS = 3600;
+/** A stalled refresh fails rather than hold every run waiting on it. */
+const REFRESH_TIMEOUT_MS = 15_000;
 const MAX_ERROR_BODY_LENGTH = 512;
 
 // Request fields plan usage refuses outright: the AI SDK sends some of them
@@ -188,6 +190,7 @@ async function refreshAndSave(
 ): Promise<ProviderCredential> {
   const response = await fetch(CHATGPT_TOKEN_URL, {
     method: "POST",
+    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     // No scope: the refreshed grant keeps exactly what the user approved.
     body: new URLSearchParams({
