@@ -753,24 +753,23 @@ export const accountEnvVarsFields = {
 };
 
 /**
- * A connection: an external account (ChatGPT plan, Google, Microsoft) signed
- * in once per account by `broods connect`, one of each type.
- * Core refreshes it in process and writes the rotated tokens back. Tokens and
- * the developer's client secret are encrypted with the agent-config codec and
- * never leave through the API.
+ * A connection: an external account (today the ChatGPT plan) signed in once
+ * per account by `broods connect`, one of each type.
+ * Core refreshes it in process and writes the rotated tokens back. Tokens are
+ * encrypted with the agent-config codec and never leave through the API.
  */
 export const connectionsFields = {
   accountId: v.id("accounts"),
   type: v.union(...CONNECTION_TYPE_NAMES.map((name) => v.literal(name))),
-  /** OAuth client: the one OpenAI issued, or the deployment's own app. */
+  /** The OAuth client OpenAI issued at the first sign-in. */
   clientId: v.string(),
-  /** `chatgpt` only: `ext_agent_host_id` of this deployment, kept across sign-ins. */
-  hostId: v.optional(v.string()),
+  /** `ext_agent_host_id` of this deployment, kept across sign-ins. */
+  hostId: v.string(),
   email: v.optional(v.string()),
   scopes: v.array(v.string()),
   /** Access-token expiry, epoch ms. */
   expiresAt: v.number(),
-  /** Encrypted `{ accessToken, refreshToken, clientSecret? }`. */
+  /** Encrypted `{ accessToken, refreshToken }`. */
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),

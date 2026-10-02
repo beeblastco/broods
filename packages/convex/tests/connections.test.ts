@@ -18,10 +18,7 @@ const modules = import.meta.glob("../**/*.ts");
 
 const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
 const REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
-const ISSUERS = {
-  chatgpt: "https://auth.openai.com",
-  google: "https://accounts.google.com",
-} as const;
+const ISSUER = "https://auth.openai.com";
 
 const connectionsTest = (): TestConvex<typeof schema> =>
   convexTest(schema, modules);
@@ -58,7 +55,7 @@ beforeEach(async () => {
     kid: "key-1",
   };
   provider = {
-    issuer: ISSUERS.chatgpt,
+    issuer: ISSUER,
     audience: "client-issued",
     nonce: "nonce-1",
     scope: "openid offline_access chatgpt.tokens.use.direct",
@@ -67,8 +64,7 @@ beforeEach(async () => {
   vi.stubGlobal(
     "fetch",
     async (input: string, init?: RequestInit): Promise<Response> => {
-      if (input.includes("jwks") || input.includes("/certs"))
-        return Response.json({ keys: [jwk] });
+      if (input.endsWith("/jwks.json")) return Response.json({ keys: [jwk] });
       if (input.endsWith("/models"))
         return Response.json({
           models: [
@@ -114,25 +110,6 @@ test("start answers ChatGPT's consent screen on a registering client", async () 
   expect(query.get("code_challenge_method")).toBe("S256");
 });
 
-test("start runs Google on the deployment's own OAuth app", async () => {
-  const t = connectionsTest();
-  await seedAccount(t);
-
-  const missing = await request(t, "POST", "google/start", startBody());
-  vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "google-client");
-  vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "google-secret");
-  const started = await (
-    await request(t, "POST", "google/start", startBody())
-  ).json();
-  const query = new URL(started.authorizeUrl).searchParams;
-
-  expect(missing.status).toBe(503);
-  expect(await missing.text()).toContain("GOOGLE_OAUTH_CLIENT_ID");
-  expect(query.get("client_id")).toBe("google-client");
-  expect(query.get("access_type")).toBe("offline");
-  expect(query.has("ext_agent_host_id")).toBe(false);
-});
-
 test("a redirect off loopback is refused", async () => {
   const t = connectionsTest();
   await seedAccount(t);
@@ -175,34 +152,6 @@ test("a ChatGPT sign-in is stored and reads back without its tokens", async () =
     ctx.db.query("connections").collect(),
   );
   expect(JSON.stringify(rows)).not.toContain("refresh-1");
-});
-
-test("Google keeps the deployment's client secret for refresh", async () => {
-  vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "google-client");
-  vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "google-secret");
-  provider = {
-    issuer: ISSUERS.google,
-    audience: "google-client",
-    nonce: "nonce-1",
-  };
-  const t = connectionsTest();
-  const accountId = await seedAccount(t);
-
-  const response = await request(t, "PUT", "google", {
-    code: "code-1",
-    codeVerifier: "verifier-1",
-    redirectUri: REDIRECT_URI,
-    nonce: "nonce-1",
-  });
-
-  expect(response.status).toBe(200);
-  expect(tokenForms[0]?.get("client_secret")).toBe("google-secret");
-  expect(
-    await t.query(internal.account.connections.load, {
-      accountId: accountId,
-      type: "google",
-    }),
-  ).toMatchObject({ clientSecret: "google-secret" });
 });
 
 test("a sign-in that fails verification or the type's rules stores nothing", async () => {

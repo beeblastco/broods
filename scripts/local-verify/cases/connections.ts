@@ -5,9 +5,8 @@ import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
 /**
  * Connections end to end, short of the providers: a `chatgpt` run with no
  * connection fails asking for one (core reads it through Convex), `start`
- * answers ChatGPT's consent screen through the gateway, a type whose OAuth
- * app the deployment lacks names what to set, and a disconnect with nothing
- * connected answers false. Signing in needs a real browser and account, so
+ * answers ChatGPT's consent screen through the gateway, and a disconnect
+ * with nothing connected answers false. Signing in needs a real browser and account, so
  * the code exchange is covered by the Convex tests against a stub.
  */
 export async function connections(context: VerifyContext): Promise<void> {
@@ -56,19 +55,9 @@ export async function connections(context: VerifyContext): Promise<void> {
     started.authorizeUrl,
   );
 
-  const missingApp = await context.account
-    .startConnection("google", start)
-    .then(() => "started")
-    .catch((error: unknown) => String(error));
-  assertStep(
-    "a type without the deployment's OAuth app names what to set",
-    missingApp.includes("GOOGLE_OAUTH_CLIENT_ID"),
-    missingApp,
-  );
-
   assertStep(
     "a disconnect with nothing connected answers false",
-    !(await context.account.disconnect("google")),
+    !(await context.account.disconnect("chatgpt")),
     "deleted a connection that did not exist",
   );
   await context.account.deleteAgent(agentId);

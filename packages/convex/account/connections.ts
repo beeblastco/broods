@@ -2,8 +2,8 @@
  * Internal storage for connections: external accounts signed in by `broods
  * connect`. The config plane writes a fresh sign-in, core loads it per call
  * and saves each rotated refresh back, and a disconnect forgets it, then
- * revokes at the provider. Tokens and the client secret are encrypted with the
- * agent-config codec; only metadata leaves through `list`.
+ * revokes at the provider. Tokens are encrypted with the agent-config codec;
+ * only metadata leaves through `list`.
  */
 
 import { v, type Infer } from "convex/values";
@@ -43,7 +43,6 @@ export const statusValidator = v.object(statusFields);
 const secretFields = {
   accessToken: v.string(),
   refreshToken: v.string(),
-  clientSecret: v.optional(v.string()),
 };
 const storedValidator = v.object({ ...statusFields, ...secretFields });
 const secretsValidator = v.object(secretFields);
@@ -96,13 +95,12 @@ export const set = internalMutation({
   args: { ...ref, ...signInFields, ...secretFields },
   returns: statusValidator,
   handler: async (ctx, args): Promise<ConnectionStatus> => {
-    const { accessToken, refreshToken, clientSecret, ...metadata } = args;
+    const { accessToken, refreshToken, ...metadata } = args;
     const fields = {
       ...metadata,
       ...(await encryptSecrets({
         accessToken: accessToken,
         refreshToken: refreshToken,
-        clientSecret: clientSecret,
       })),
       updatedAt: Date.now(),
     };
@@ -130,12 +128,10 @@ export const saveRefreshed = internalMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const row = await findRow(ctx, args.accountId, args.type);
     if (!row || row.updatedAt !== args.loadedUpdatedAt) return false;
-    const { clientSecret } = await decrypted(row);
     await ctx.db.patch(row._id, {
       ...(await encryptSecrets({
         accessToken: args.accessToken,
         refreshToken: args.refreshToken,
-        clientSecret: clientSecret,
       })),
       expiresAt: args.expiresAt,
       updatedAt: Date.now(),
@@ -192,9 +188,6 @@ export const revoke = internalAction({
           token: secrets.refreshToken,
           token_type_hint: "refresh_token",
           client_id: args.clientId,
-          ...(secrets.clientSecret
-            ? { client_secret: secrets.clientSecret }
-            : {}),
         }),
         signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
       });
@@ -211,12 +204,12 @@ export const revoke = internalAction({
   },
 });
 
-/** The row with its tokens and client secret decrypted. */
+/** The row with its tokens decrypted. */
 async function decrypted(row: Doc<"connections">): Promise<StoredConnection> {
   return { ...statusOf(row), ...(await decryptSecrets(row)) };
 }
 
-/** The tokens and client secret out of a row's encrypted blob. */
+/** The tokens out of a row's encrypted blob. */
 async function decryptSecrets(
   blob: EncryptedAgentConfig,
 ): Promise<ConnectionSecrets> {
@@ -234,23 +227,17 @@ async function decryptSecrets(
   return {
     accessToken: secrets.accessToken,
     refreshToken: secrets.refreshToken,
-    ...(typeof secrets.clientSecret === "string"
-      ? { clientSecret: secrets.clientSecret }
-      : {}),
   };
 }
 
-/** The tokens and client secret as one encrypted blob for the row. */
-async function encryptSecrets(secrets: {
-  accessToken: string;
-  refreshToken: string;
-  clientSecret: string | undefined;
-}): Promise<EncryptedAgentConfig> {
+/** The tokens as one encrypted blob for the row. */
+async function encryptSecrets(
+  secrets: ConnectionSecrets,
+): Promise<EncryptedAgentConfig> {
   return await encryptAgentConfigBlob(
     {
       accessToken: secrets.accessToken,
       refreshToken: secrets.refreshToken,
-      ...(secrets.clientSecret ? { clientSecret: secrets.clientSecret } : {}),
     },
     configEncryptionSecret(),
   );
@@ -277,7 +264,7 @@ function statusOf(
   return {
     type: row.type,
     clientId: row.clientId,
-    ...(row.hostId !== undefined ? { hostId: row.hostId } : {}),
+    hostId: row.hostId,
     ...(row.email !== undefined ? { email: row.email } : {}),
     scopes: row.scopes,
     expiresAt: row.expiresAt,

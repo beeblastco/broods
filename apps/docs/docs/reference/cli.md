@@ -118,7 +118,7 @@ broods login --dashboard-url https://your-dashboard.example.com
 Signs an external account in through the browser and keeps it on your deployment, so agents act through it. There is nothing to pass. Without a type, lists the account's connections. See [Connections](../guides/connections.md).
 
 ```bash
-broods connect [chatgpt | google | microsoft]
+broods connect [chatgpt]
 ```
 
 It uses `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` is self-hosted only; the managed service refuses it.
@@ -126,10 +126,10 @@ It uses `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgp
 ## disconnect
 
 ```bash
-broods disconnect <chatgpt | google | microsoft>
+broods disconnect <chatgpt>
 ```
 
-Forgets the connection and revokes its refresh token at the provider. Microsoft has no revocation endpoint; end the grant in your Microsoft account settings.
+Forgets the connection and revokes its refresh token at the provider.
 
 ## whoami
 

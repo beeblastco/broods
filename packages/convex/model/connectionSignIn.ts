@@ -31,11 +31,10 @@ export interface IdTokenClaims {
   email?: string;
 }
 
-/** The OAuth client a sign-in runs on, and ChatGPT's host id. */
+/** The OAuth client a sign-in runs on, and the deployment's host id. */
 export interface SignInClient {
   clientId: string;
-  clientSecret?: string;
-  hostId?: string;
+  hostId: string;
   /** Who signed in last time, so the consent screen can preselect them. */
   email?: string;
 }
@@ -56,8 +55,6 @@ interface RawIdTokenClaims {
   exp?: number;
   nonce?: string;
   email?: string;
-  /** Microsoft's sign-in name, when the email claim is not configured. */
-  preferred_username?: string;
 }
 
 interface Jwk extends JsonWebKey {
@@ -81,12 +78,11 @@ export function authorizeUrl(
     code_challenge_method: "S256",
     code_challenge: start.codeChallenge,
     ...(client.email ? { login_hint: client.email } : {}),
-    ...meta.authorizeParams,
     ...(meta.resource ? { resource: meta.resource } : {}),
     ...(client.clientId === CHATGPT_DYNAMIC_CLIENT_ID
       ? { agent_name_hint: CHATGPT_AGENT_NAME }
       : {}),
-    ...(client.hostId ? { ext_agent_host_id: client.hostId } : {}),
+    ext_agent_host_id: client.hostId,
   });
 
   return `${meta.authorizeUrl}?${query.toString()}`;
@@ -108,7 +104,6 @@ export async function exchangeCode(
       code: code.code,
       code_verifier: code.codeVerifier,
       redirect_uri: code.redirectUri,
-      ...(client.clientSecret ? { client_secret: client.clientSecret } : {}),
       ...(meta.resource ? { resource: meta.resource } : {}),
     }),
     signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
@@ -222,9 +217,8 @@ export async function verifyIdToken(
   ) {
     throw new Error(`${meta.label} ID token failed verification.`);
   }
-  const email = claims.email ?? claims.preferred_username;
 
-  return email ? { email: email } : {};
+  return claims.email ? { email: claims.email } : {};
 }
 
 /** Base64url bytes, as JWT segments and signatures are encoded. */

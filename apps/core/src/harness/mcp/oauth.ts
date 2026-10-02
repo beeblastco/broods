@@ -8,12 +8,11 @@
  * itself, which `connections.ts` also refreshes every connection with.
  */
 
-import { CONNECTION_TYPES } from "@broods/convex/model/connections";
 import type { McpOauth } from "../../shared/domain/mcp.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 
-export const DEFAULT_OAUTH_TOKEN_URL = CONNECTION_TYPES.google.tokenUrl;
+export const DEFAULT_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 /** Google and OpenAI return 3600; a response without expires_in gets the same lease. */
 const DEFAULT_EXPIRES_IN_SECONDS = 3600;

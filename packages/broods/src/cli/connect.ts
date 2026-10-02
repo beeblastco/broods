@@ -2,8 +2,8 @@
  * `broods connect <type>`: the browser half of a connection. Providers only
  * redirect to a loopback address, so the sign-in runs here, on the machine
  * with the browser: the deployment answers its consent screen, the browser
- * signs in, and the code goes back to the deployment, which trades it on its
- * own OAuth app and keeps the tokens. Nothing to pass, nothing to store here.
+ * signs in, and the code goes back to the deployment, which trades it and
+ * keeps the tokens. Nothing to pass, nothing to store here.
  */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -21,8 +21,8 @@ const CALLBACK_PATH = "/auth/callback";
 
 interface AuthorizationCallback {
   code: string;
-  /** A registering type (ChatGPT) answers with the client it was issued. */
-  clientId: string | undefined;
+  /** The client OpenAI registered for this sign-in. */
+  clientId: string;
 }
 
 /**
@@ -67,15 +67,15 @@ export async function connectInBrowser(
       codeVerifier: verifier,
       redirectUri: redirectUri,
       nonce: nonce,
-      ...(callback.clientId ? { clientId: callback.clientId } : {}),
-      ...(start.hostId ? { hostId: start.hostId } : {}),
+      clientId: callback.clientId,
+      hostId: start.hostId,
     });
   } finally {
     close();
   }
 }
 
-/** The loopback redirect: the code, and the client a registering type was issued. */
+/** The loopback redirect: the code, and the client OpenAI issued. */
 function readAuthorizationCallback(
   params: URLSearchParams,
 ): AuthorizationCallback {
@@ -86,7 +86,9 @@ function readAuthorizationCallback(
     );
   }
   const code = params.get("code");
-  if (!code) throw new Error("Sign-in callback carried no code.");
+  const clientId = params.get("client_id");
+  if (!code || !clientId)
+    throw new Error("Sign-in callback carried no code or client id.");
 
-  return { code: code, clientId: params.get("client_id") ?? undefined };
+  return { code: code, clientId: clientId };
 }

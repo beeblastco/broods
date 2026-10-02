@@ -11,6 +11,7 @@ import type {
   Connection,
   ConnectionCode,
   ConnectionStart,
+  ConnectionStartResult,
   ConnectionType,
 } from "../src/account.ts";
 import { connectInBrowser } from "../src/cli/connect.ts";
@@ -19,13 +20,11 @@ const realLog = console.log;
 
 let starts: ConnectionStart[];
 let codes: ConnectionCode[];
-let hostId: string | undefined;
 let redirectParams: Record<string, string>;
 
 beforeEach(() => {
   starts = [];
   codes = [];
-  hostId = "urn:uuid:host-1";
   redirectParams = { code: "code-1", client_id: "client-issued" };
   console.log = (): void => {};
 });
@@ -58,20 +57,12 @@ describe("connectInBrowser", () => {
     expect(connection.type).toBe("chatgpt");
   });
 
-  it("sends no client or host id for a type the deployment's app runs", async () => {
-    hostId = undefined;
-    redirectParams = { code: "code-1" };
-
-    await runConnect("google");
-
-    expect(codes[0]).not.toHaveProperty("clientId");
-    expect(codes[0]).not.toHaveProperty("hostId");
-  });
-
   it("fails when the provider refuses the sign-in", async () => {
     redirectParams = { error: "access_denied" };
 
-    const error = await runConnect("google").catch((caught: unknown) => caught);
+    const error = await runConnect("chatgpt").catch(
+      (caught: unknown) => caught,
+    );
 
     expect(String(error)).toContain("Sign-in failed: access_denied");
     expect(codes).toHaveLength(0);
@@ -86,14 +77,14 @@ async function runConnect(type: ConnectionType): Promise<Connection> {
     startConnection: async (
       _type: ConnectionType,
       start: ConnectionStart,
-    ): Promise<{ authorizeUrl: string; hostId?: string }> => {
+    ): Promise<ConnectionStartResult> => {
       starts.push(start);
       redirectUri = start.redirectUri;
       state = start.state;
 
       return {
         authorizeUrl: "https://provider.example/authorize",
-        ...(hostId ? { hostId: hostId } : {}),
+        hostId: "urn:uuid:host-1",
       };
     },
     connect: async (
@@ -104,7 +95,8 @@ async function runConnect(type: ConnectionType): Promise<Connection> {
 
       return {
         type: connectType,
-        clientId: code.clientId ?? "deployment-client",
+        clientId: code.clientId,
+        hostId: code.hostId,
         scopes: [],
         expiresAt: "2026-10-02T12:00:00.000Z",
         updatedAt: "2026-10-02T11:00:00.000Z",

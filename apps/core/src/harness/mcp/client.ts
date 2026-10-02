@@ -33,11 +33,6 @@ import {
   runMachineMcpList,
 } from "../sandbox/machine-executor.ts";
 import { publicHostFetch } from "../../shared/http.ts";
-import {
-  isConnectionType,
-  type ConnectionType,
-} from "@broods/convex/model/connections";
-import { connectionFetch } from "../connections.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -63,8 +58,6 @@ export interface McpConnection {
   headers: Record<string, string>;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
-  /** A `broods connect` connection the Authorization header comes from instead. */
-  connectionType?: ConnectionType;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
   uncached?: boolean;
 }
@@ -209,9 +202,8 @@ export async function listMcpTools(
 
 /**
  * Build the connection for a server row: row headers and oauth overlaid with
- * the agent config's (those resolved their ${NAME} refs at sync), or
- * `oauth.connection` naming a connection whose token replaces the row's oauth.
- * A value still carrying a placeholder never reaches the wire.
+ * the agent config's (those resolved their ${NAME} refs at sync). A value
+ * still carrying a placeholder never reaches the wire.
  */
 export function mcpConnection(
   record: McpRecord,
@@ -229,14 +221,8 @@ export function mcpConnection(
       );
     }
   }
-  const connection = configOauth?.connection;
-  if (connection !== undefined && !isConnectionType(connection)) {
-    throw new Error(
-      `config.mcp.${record.serverId} oauth.connection ${connection} is not a connection type`,
-    );
-  }
-  const oauth = connection ? undefined : resolveOauth(record, configOauth);
-  if (oauth || connection) {
+  const oauth = resolveOauth(record, configOauth);
+  if (oauth) {
     const authorization = authorizationHeaderName(headers);
     if (authorization !== undefined) {
       throw new Error(
@@ -249,7 +235,6 @@ export function mcpConnection(
     record: record,
     headers: headers,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
-    ...(connection ? { connectionType: connection } : {}),
   };
 }
 
@@ -271,7 +256,7 @@ function cacheKeyFor(connection: McpConnection): string {
     a < b ? -1 : 1,
   );
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? connection.connectionType ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -304,29 +289,21 @@ async function connectClient(
     // Minted (or served from the token cache) per connect: clients are
     // per-operation, so every request carries a token outside its refresh
     // margin instead of a static header that expires mid-conversation.
-    const accessToken = connection.oauth
-      ? await mcpAccessToken(connection.record.name, connection.oauth)
-      : undefined;
-    const headers = accessToken
-      ? { ...connection.headers, Authorization: `Bearer ${accessToken}` }
+    const headers = connection.oauth
+      ? {
+          ...connection.headers,
+          Authorization: `Bearer ${await mcpAccessToken(connection.record.name, connection.oauth)}`,
+        }
       : connection.headers;
-    // A tenant url is dialed from inside the cluster, so it gets the same
-    // resolve, refuse-private and pin treatment as a model endpoint.
-    const baseFetch = hosted
-      ? hostedMcpFetch(connection.record, onCpuUsec)
-      : publicHostFetch;
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {
         requestInit: { headers: headers },
-        fetch: connection.connectionType
-          ? connectionFetch(
-              connection.record.accountId,
-              connection.connectionType,
-              "mcp",
-              baseFetch,
-            )
-          : baseFetch,
+        // A tenant url is dialed from inside the cluster, so it gets the same
+        // resolve, refuse-private and pin treatment as a model endpoint.
+        fetch: hosted
+          ? hostedMcpFetch(connection.record, onCpuUsec)
+          : publicHostFetch,
       },
     );
     const client = new Client(CLIENT_INFO, {

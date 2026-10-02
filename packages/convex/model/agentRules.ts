@@ -19,11 +19,6 @@ import {
   type AccountModelProviderName,
 } from "./modelProviders";
 import { ClientError } from "./clientError";
-import {
-  CONNECTION_TYPE_NAMES,
-  CONNECTION_TYPES,
-  isConnectionType,
-} from "./connections";
 
 export type AgentStatus = "active" | "disabled";
 export type { AccountModelProviderName } from "./modelProviders";
@@ -971,23 +966,6 @@ function normalizeMcpConfig(value: unknown): void {
       throw new ClientError(
         `config.mcp.${serverId}.oauth must be an object of string values`,
       );
-    }
-    const connection = config.oauth?.connection;
-    if (connection !== undefined) {
-      // A connection brings its own tokens; mixed-in credentials would be ignored.
-      if (Object.keys(config.oauth ?? {}).length > 1)
-        throw new ClientError(
-          `config.mcp.${serverId}.oauth.connection cannot be combined with other oauth fields`,
-        );
-      // Only a type that MCP servers may use: a model plan's token never
-      // goes to another host.
-      if (
-        !isConnectionType(connection) ||
-        CONNECTION_TYPES[connection].usableBy !== "mcp"
-      )
-        throw new ClientError(
-          `config.mcp.${serverId}.oauth.connection must be one of ${CONNECTION_TYPE_NAMES.filter((type) => CONNECTION_TYPES[type].usableBy === "mcp").join(", ")}`,
-        );
     }
   }
 }

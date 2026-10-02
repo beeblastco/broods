@@ -253,8 +253,6 @@ interface AgentPolicyStore {
 export interface StoredConnection {
   type: ConnectionType;
   clientId: string;
-  /** The developer's OAuth app secret, for types whose refresh needs it. */
-  clientSecret?: string;
   scopes: string[];
   accessToken: string;
   refreshToken: string;

@@ -659,13 +659,6 @@ async function connectCommand(args: string[]): Promise<void> {
   printSuccess(
     `Connected ${meta.label}${connection.email ? ` as ${connection.email}` : ""}.`,
   );
-  if (meta.usableBy === "mcp") {
-    console.log(
-      `Use it from an MCP server: config.mcp.<server>.oauth = { connection: "${type}" }`,
-    );
-
-    return;
-  }
   console.log(`Agents on model.provider "${type}" now run on it.`);
   if (meta.usageUrl) console.log(`Manage usage: ${meta.usageUrl}`);
   if (!connection.models?.length) return;

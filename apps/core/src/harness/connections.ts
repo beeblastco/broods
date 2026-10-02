@@ -1,15 +1,13 @@
 /**
  * A connection's live access token: loaded from the config plane, refreshed
  * before it expires (or once the provider refused it), and the rotated pair
- * saved back. The `chatgpt` model provider and MCP servers with
- * `oauth.connection` dial through `connectionFetch`. `broods connect` signs
- * in; the config plane stores.
+ * saved back. The `chatgpt` model provider dials through `connectionFetch`.
+ * `broods connect` signs in; the config plane stores.
  */
 
 import {
   CONNECTION_TYPES,
   type ConnectionType,
-  type ConnectionUse,
 } from "@broods/convex/model/connections";
 import { toErrorMessage } from "../shared/errors.ts";
 import { getStorage, type StoredConnection } from "../shared/storage.ts";
@@ -36,7 +34,7 @@ interface CachedConnection {
   loadedAt: number;
 }
 
-/** The fetch shape both the AI SDK and the MCP transport dial through. */
+/** The fetch shape the AI SDK dials through. */
 type Fetch = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -44,21 +42,14 @@ type Fetch = (
 
 /**
  * A fetch that sends the account's connection token and, when the provider
- * refuses it (401), refreshes once and resends: neither the AI SDK nor the
- * MCP client retries a 401. `use` is who sends it, checked against the type.
+ * refuses it (401), refreshes once and resends: the AI SDK does not retry
+ * a 401.
  */
 export function connectionFetch(
   accountId: string,
   type: ConnectionType,
-  use: ConnectionUse,
   baseFetch: Fetch,
 ): Fetch {
-  const meta = CONNECTION_TYPES[type];
-  if (meta.usableBy !== use)
-    throw new Error(
-      `A ${meta.label} connection is not for ${use === "mcp" ? "MCP servers" : "a model provider"}.`,
-    );
-
   return async (input, init): Promise<Response> => {
     const send = async (token: string): Promise<Response> => {
       const headers = new Headers(init?.headers);
@@ -151,10 +142,8 @@ async function refreshAndSave(
       {
         client_id: stored.clientId,
         refresh_token: stored.refreshToken,
-        ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
+        // No scope: the refreshed grant keeps what the user approved.
         ...(meta.resource ? { resource: meta.resource } : {}),
-        // Otherwise no scope: the refreshed grant keeps what the user approved.
-        ...(meta.refreshScopes ? { scope: stored.scopes.join(" ") } : {}),
       },
       (url, init) =>
         fetch(url, {

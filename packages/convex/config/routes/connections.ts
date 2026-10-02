@@ -2,7 +2,7 @@
  * Connections (`/v1/account/connections[/{type}[/start]]`): external accounts
  * agents act through, one of each type. `broods connect` POSTs `start` for the
  * provider's consent screen, opens it, and PUTs the code the browser brought
- * back; this route trades it on the deployment's own OAuth app, checks the ID
+ * back; this route trades it on the client OpenAI issued, checks the ID
  * token and stores the tokens. GET answers what is connected, never the
  * tokens; DELETE forgets, then revokes. Refresh is core's. The account secret
  * or a `broods login` token may call it; role sessions and runtime keys may
@@ -119,23 +119,6 @@ export function parseConnectionsPath(pathname: string): ConnectionsPath | null {
     : null;
 }
 
-/**
- * The client a code is traded on: the one a registering type was issued on
- * this sign-in's redirect, or the deployment's own app.
- */
-function codeClient(
-  type: ConnectionType,
-  existing: ConnectionStatus | null,
-  code: ConnectionCode,
-): SignInClient | Response {
-  if (CONNECTION_TYPES[type].client.kind !== "dynamic")
-    return signInClient(type, existing);
-  if (!code.clientId || !code.hostId)
-    throw new ClientError(`clientId and hostId are required for ${type}`);
-
-  return { clientId: code.clientId, hostId: code.hostId };
-}
-
 /** Forgets the type's connection, then revokes it at the provider. */
 async function disconnectResponse(
   ctx: ActionCtx,
@@ -168,7 +151,7 @@ function publicConnection(row: ConnectionStatus): Connection {
   return {
     type: row.type,
     clientId: row.clientId,
-    ...(row.hostId ? { hostId: row.hostId } : {}),
+    hostId: row.hostId,
     ...(row.email ? { email: row.email } : {}),
     scopes: row.scopes,
     expiresAt: new Date(row.expiresAt).toISOString(),
@@ -179,20 +162,14 @@ function publicConnection(row: ConnectionStatus): Connection {
 /** Validates a PUT body: the code and PKCE verifier the redirect brought back. */
 function readCode(body: unknown): ConnectionCode {
   const fields = readFields(body);
-  const clientId =
-    fields.clientId === undefined
-      ? undefined
-      : requireField(fields, "clientId");
-  const hostId =
-    fields.hostId === undefined ? undefined : requireField(fields, "hostId");
 
   return {
     code: requireField(fields, "code"),
     codeVerifier: requireField(fields, "codeVerifier"),
     redirectUri: readRedirectUri(fields),
     nonce: requireField(fields, "nonce"),
-    ...(clientId ? { clientId: clientId } : {}),
-    ...(hostId ? { hostId: hostId } : {}),
+    clientId: requireField(fields, "clientId"),
+    hostId: requireField(fields, "hostId"),
   };
 }
 
@@ -238,39 +215,12 @@ function requireField(
   return value;
 }
 
-/**
- * The client a sign-in starts on: a registering type keeps the client and
- * host id it holds (or registers new ones); the others run on the
- * deployment's own OAuth app, a 503 naming the variables to set when it has
- * none.
- */
-function signInClient(
-  type: ConnectionType,
-  existing: ConnectionStatus | null,
-): SignInClient | Response {
-  const meta = CONNECTION_TYPES[type];
-  const email = existing?.email ? { email: existing.email } : {};
-  if (meta.client.kind === "dynamic") {
-    return {
-      clientId: existing?.clientId ?? CHATGPT_DYNAMIC_CLIENT_ID,
-      hostId: existing?.hostId ?? `urn:uuid:${crypto.randomUUID()}`,
-      ...email,
-    };
-  }
-  const { idEnv, secretEnv } = meta.client;
-  const clientId = process.env[idEnv];
-  const clientSecret = secretEnv ? process.env[secretEnv] : undefined;
-  if (!clientId || (secretEnv && !clientSecret)) {
-    return jsonError(
-      503,
-      `This deployment has no ${meta.label} OAuth app yet: set ${secretEnv ? `${idEnv} and ${secretEnv}` : idEnv} on it.`,
-    );
-  }
-
+/** The client a sign-in starts on: the one the type was issued, or a new registration. */
+function signInClient(existing: ConnectionStatus | null): SignInClient {
   return {
-    clientId: clientId,
-    ...(clientSecret ? { clientSecret: clientSecret } : {}),
-    ...email,
+    clientId: existing?.clientId ?? CHATGPT_DYNAMIC_CLIENT_ID,
+    hostId: existing?.hostId ?? `urn:uuid:${crypto.randomUUID()}`,
+    ...(existing?.email ? { email: existing.email } : {}),
   };
 }
 
@@ -289,8 +239,8 @@ async function signInResponse(
   if (meta.selfHostedOnly && isManagedService())
     return jsonError(403, meta.selfHostedOnly);
   const code = readCode(await parseJsonRequest(req));
-  const client = codeClient(ref.type, existing, code);
-  if (client instanceof Response) return client;
+  // OpenAI issued the client on this sign-in's redirect.
+  const client = { clientId: code.clientId, hostId: code.hostId };
   let stored: ConnectionStatus;
   let models: string[];
   try {
@@ -310,8 +260,7 @@ async function signInResponse(
     stored = await ctx.runMutation(internal.account.connections.set, {
       ...ref,
       clientId: client.clientId,
-      ...(client.hostId ? { hostId: client.hostId } : {}),
-      ...(client.clientSecret ? { clientSecret: client.clientSecret } : {}),
+      hostId: client.hostId,
       ...(claims.email ? { email: claims.email } : {}),
       scopes: tokens.scopes,
       expiresAt: tokens.expiresAt,
@@ -354,11 +303,10 @@ async function startResponse(
   if (selfHostedOnly && isManagedService())
     return jsonError(403, selfHostedOnly);
   const start = readStart(await parseJsonRequest(req));
-  const client = signInClient(type, existing);
-  if (client instanceof Response) return client;
+  const client = signInClient(existing);
 
   return json({
     authorizeUrl: authorizeUrl(type, client, start),
-    ...(client.hostId ? { hostId: client.hostId } : {}),
+    hostId: client.hostId,
   });
 }

@@ -40,9 +40,8 @@ tags:
     description: Write-only account-scoped secrets referenced by dynamic agent configs.
   - name: Connections
     description: >-
-      External accounts (ChatGPT plan, Google, Microsoft) signed in once by
-      `broods connect` and refreshed by Broods, for model providers and MCP
-      servers.
+      External accounts signed in once by `broods connect` and refreshed by
+      Broods. Today the ChatGPT plan, for the `chatgpt` model provider.
   - name: Skills
     description: Account-owned skill package management.
   - name: Cron Jobs
@@ -989,8 +988,8 @@ paths:
         - Connections
       summary: List connections
       description: >-
-        External accounts the account's agents act through (ChatGPT plan,
-        Google, Microsoft), one of each type, signed in by `broods connect`.
+        External accounts the account's agents act through, one of each type,
+        signed in by `broods connect`.
         Never returns tokens. Accepts the account secret or a CLI login token;
         role sessions and runtime keys are refused.
       security:
@@ -1019,9 +1018,7 @@ paths:
       description: >-
         Answers the provider's consent screen for `broods connect` to open.
         The CLI keeps the PKCE verifier, state and nonce; the redirect must be
-        a loopback address. `google` and `microsoft` run on the deployment's
-        own OAuth app and answer 503 until it is set. The managed service
-        refuses `chatgpt`.
+        a loopback address. The managed service refuses `chatgpt`.
       security:
         - BearerAuth: []
       requestBody:
@@ -1041,8 +1038,6 @@ paths:
           description: A missing field or a redirect off loopback
         "403":
           description: A role session or runtime key, or `chatgpt` on the managed service
-        "503":
-          description: The deployment has no OAuth app for this type yet
 
   /v1/account/connections/{type}:
     parameters:
@@ -1067,7 +1062,7 @@ paths:
         - Connections
       summary: Finish a sign-in
       description: >-
-        Trades the code the browser brought back on the type's client, checks
+        Trades the code the browser brought back on the client OpenAI issued, checks
         the ID token (signature, issuer, audience, expiry, nonce) and the
         grant, then keeps the connection, replacing the type's previous one.
         Broods refreshes the access token from then on. A `chatgpt` grant must
@@ -1091,15 +1086,13 @@ paths:
           description: A missing field, a failed exchange or verification, or a grant missing its required scope
         "403":
           description: A role session or runtime key, or `chatgpt` on the managed service
-        "503":
-          description: The deployment has no OAuth app for this type yet
     delete:
       tags:
         - Connections
       summary: Disconnect
       description: >-
         Deletes the connection, then revokes the refresh token at the provider
-        (best effort; Microsoft has no revocation endpoint).
+        (best effort).
       security:
         - BearerAuth: []
       responses:
@@ -4818,23 +4811,21 @@ components:
 
     ConnectionType:
       type: string
-      enum: [chatgpt, google, microsoft]
-      description: >-
-        `chatgpt` backs the `chatgpt` model provider; `google` and `microsoft`
-        back MCP servers (Gmail, Outlook).
+      enum: [chatgpt]
+      description: "`chatgpt` backs the `chatgpt` model provider."
 
     Connection:
       type: object
-      required: [type, clientId, scopes, expiresAt, updatedAt]
+      required: [type, clientId, hostId, scopes, expiresAt, updatedAt]
       properties:
         type:
           $ref: "#/components/schemas/ConnectionType"
         clientId:
           type: string
-          description: The OAuth client OpenAI issued, or the deployment's own app
+          description: The OAuth client OpenAI issued
         hostId:
           type: string
-          description: "`chatgpt` only: this deployment's `ext_agent_host_id`"
+          description: This deployment's `ext_agent_host_id`, kept across sign-ins
         email:
           type: string
         scopes:
@@ -4850,7 +4841,7 @@ components:
         models:
           type: array
           items: { type: string }
-          description: Answered by a sign-in only, for types that list models
+          description: Answered by a sign-in only
 
     ConnectionStart:
       type: object
@@ -4869,17 +4860,17 @@ components:
 
     ConnectionStartResult:
       type: object
-      required: [authorizeUrl]
+      required: [authorizeUrl, hostId]
       properties:
         authorizeUrl:
           type: string
         hostId:
           type: string
-          description: "`chatgpt` only: echo it back on the PUT"
+          description: Echo it back on the PUT
 
     ConnectionCode:
       type: object
-      required: [code, codeVerifier, redirectUri, nonce]
+      required: [code, codeVerifier, redirectUri, nonce, clientId, hostId]
       properties:
         code:
           type: string
@@ -4891,10 +4882,10 @@ components:
           type: string
         clientId:
           type: string
-          description: "`chatgpt` only: the client OpenAI issued on the redirect"
+          description: The client OpenAI issued on the redirect
         hostId:
           type: string
-          description: "`chatgpt` only: from the start answer"
+          description: From the start answer
 
     ProviderSettings:
       type: object

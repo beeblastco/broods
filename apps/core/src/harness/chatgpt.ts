@@ -93,7 +93,6 @@ export function chatgptFetch(
     const response = await connectionFetch(
       accountId,
       "chatgpt",
-      "model",
       modelFetch,
     )(input, { ...init, body: body });
 

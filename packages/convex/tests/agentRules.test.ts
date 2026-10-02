@@ -104,21 +104,6 @@ describe("agent rules", () => {
     ).toThrow(
       `config.mcp.${serverId}.oauth must be an object of string values`,
     );
-    expect(() =>
-      normalizeAgentConfig({
-        mcp: { [serverId]: { oauth: { connection: "google", clientId: "x" } } },
-      }),
-    ).toThrow("cannot be combined with other oauth fields");
-    expect(() =>
-      normalizeAgentConfig({
-        mcp: { [serverId]: { oauth: { connection: "Gmail Work" } } },
-      }),
-    ).toThrow("must be one of google, microsoft");
-    expect(() =>
-      normalizeAgentConfig({
-        mcp: { [serverId]: { oauth: { connection: "chatgpt" } } },
-      }),
-    ).toThrow("must be one of google, microsoft");
   });
 
   it("validates channel trace settings", () => {
