@@ -1265,21 +1265,29 @@ describe("conversation summary", () => {
     expect(options?.messages[0]?.content).toContain("new assistant content");
   });
 
-  it("keeps the summary request inside the model's context window", async () => {
+  it("drops the oldest whole messages to fit the model's context window", async () => {
     const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
 
     await summarizeConversation({
       conversationKey: "conversation",
-      priorSummaries: [],
+      priorSummaries: [
+        {
+          role: "system",
+          content:
+            "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
+        },
+      ],
       messages: [
         { role: "user", content: `oldest-${"x".repeat(20_000)}` },
-        { role: "assistant", content: "newest-context" },
+        { role: "assistant", content: `middle-${"y".repeat(10_000)}` },
+        { role: "user", content: "newest-context" },
       ],
       agentConfig: {
         provider: { google: { apiKey: "google-key" } },
         model: { provider: "google", modelId: "gpt-3.5-turbo" },
       },
+      instructions: "keep the deploy decisions",
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as
@@ -1287,8 +1295,13 @@ describe("conversation summary", () => {
       | undefined;
     const content = options?.messages[0]?.content ?? "";
     expect(content.length).toBeLessThanOrEqual(13_108);
+    expect(content).toContain("Earlier summary.");
     expect(content).not.toContain("oldest-");
-    expect(content).toContain("newest-context");
+    expect(content).toContain(
+      `Message 3 (assistant):\nmiddle-${"y".repeat(10_000)}`,
+    );
+    expect(content).toContain("Message 4 (user):\nnewest-context");
+    expect(content).toEndWith("keep the deploy decisions");
   });
 
   it("strips reasoning before building the summary request", async () => {
