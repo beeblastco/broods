@@ -72,7 +72,7 @@ import {
   observabilityAttributes,
   setObservabilityContext,
 } from "../shared/otel.ts";
-import { recordAuditEvent, recordTaskUsage } from "../shared/telemetry.ts";
+import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import type { RunSessionMessageDispatch } from "./ingress.ts";
 import type { DispatchAppliedIngress } from "./integrations.ts";
@@ -1105,32 +1105,11 @@ export async function runAgentLoop(
         toolCallCount: toolCallCount,
         inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
       });
-      // The started row must land before the completed one links after it.
-      await auditStarted;
-      const auditRecorded = recordAuditEvent({
-        accountId: session.accountId ?? "",
-        agentId: session.agentId,
-        traceId: traceId,
-        action: "run.completed",
-        resource: { kind: "run", id: session.eventId, name: rootSpanName },
-        summary: `Run ${status} after ${durationMs}ms`,
-        details: {
-          status: status,
-          durationMs: durationMs,
-          stepCount: stepCount,
-          toolCallCount: toolCallCount,
-          inputTokens: taskTokens.inputTokens,
-          outputTokens: taskTokens.outputTokens,
-          totalTokens: taskTokens.totalTokens,
-          ...(waitingOn ? { waitingOn: waitingOn } : {}),
-          ...(sanitizedError ? { error: sanitizedError.message } : {}),
-        },
-      });
       // Wait for the usage write and the terminal span's publish, then flush
       // the OTLP exporters (Tempo/Loki) AND the live NATS connection so the
       // durable OBSERVABILITY stream captures every span/log, a failed usage
       // write's included, before the container freezes.
-      await Promise.allSettled([usageRecorded, auditRecorded, rootPublished]);
+      await Promise.allSettled([usageRecorded, rootPublished]);
       await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     } finally {
       // The container process is reused, so never retain one task's tenant,
@@ -1139,23 +1118,6 @@ export async function runAgentLoop(
     }
   };
 
-  // Not awaited here: the run must not wait on the ledger write, and
-  // `finalizeUsage` waits on it before appending the completed row.
-  const auditStarted = recordAuditEvent({
-    accountId: session.accountId ?? "",
-    agentId: session.agentId,
-    traceId: traceId,
-    action: "run.started",
-    resource: { kind: "run", id: session.eventId, name: rootSpanName },
-    summary: `Run started (${rootSpanKind})`,
-    details: {
-      trigger: rootSpanKind,
-      conversationKey: session.conversationKey,
-      modelProvider: configuredModel.providerName,
-      modelId: agentConfig.model?.modelId,
-      messageCount: turnContext.messages.length,
-    },
-  });
   await lifecycle.emit("agent.started", {
     modelProvider: configuredModel.providerName,
     modelId: agentConfig.model?.modelId,

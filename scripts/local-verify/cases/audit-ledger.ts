@@ -32,9 +32,8 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
   );
   if (context.hasModelKey) {
     assertStep(
-      "audit ledger holds the run lifecycle",
-      actions.includes("run:run.started") &&
-        actions.includes("run:run.completed"),
+      "audit ledger holds the finished run",
+      actions.includes("run:run.completed"),
       JSON.stringify(actions),
     );
   }

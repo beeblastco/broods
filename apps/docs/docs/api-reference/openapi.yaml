@@ -4883,8 +4883,8 @@ components:
           type: string
           description: >-
             Config rows use `created`, `updated`, `deleted` and the like against
-            `resource.kind`; runtime rows use `run.started`, `run.completed`
-            and `tool.denied`.
+            `resource.kind`; runtime rows use `run.completed` and
+            `tool.denied`.
         resource:
           type: object
           required: [kind]

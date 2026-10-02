@@ -52,6 +52,63 @@ describe("chain", () => {
     ).toEqual({ ok: true, checkedFrom: 1, checkedTo: 2 });
   });
 
+  test("the usage write appends the run's completed row in the same mutation", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    const usage = {
+      accountId: accountId,
+      endpointId: "ep-1",
+      agentId: "agent-1",
+      conversationKey: "conv-1",
+      taskId: "evt-1#trace-1",
+      modelProvider: "anthropic",
+      modelId: "claude-test",
+      finishedAt: 1_700_000_001_000,
+      durationMs: 1000,
+      status: "completed" as const,
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 5,
+      cachedInputTokens: 10,
+      cacheWriteTokens: 2,
+      totalTokens: 137,
+      runtimeKind: "container",
+      runtimeWallMs: 1000,
+      runtimeMemoryMb: 512,
+      sandboxUsage: [],
+      stepCount: 3,
+      toolCallCount: 1,
+      inputPreview: "rm -rf /",
+    };
+    await t.mutation(internal.usage.recordTaskUsage, usage);
+    // A retried write is deduplicated by taskId and appends nothing.
+    await t.mutation(internal.usage.recordTaskUsage, usage);
+
+    const rows = await allRows(t, accountId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      seq: 1,
+      traceId: "trace-1",
+      actor: { kind: "agent", agentId: "agent-1" },
+      action: "run.completed",
+      resource: { kind: "run", id: "evt-1" },
+      summary: "Run completed after 1000ms",
+    });
+    expect(JSON.parse(rows[0]!.detailsJson ?? "{}")).toEqual({
+      status: "completed",
+      startedAt: 1_700_000_000_000,
+      durationMs: 1000,
+      modelProvider: "anthropic",
+      modelId: "claude-test",
+      stepCount: 3,
+      toolCallCount: 1,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 137,
+    });
+    expect(rows[0]?.detailsJson).not.toContain("rm -rf");
+  });
+
   test("a row edited in place is reported at its seq", async () => {
     const t = ledgerTest();
     const accountId = await seedAccount(t);

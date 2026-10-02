@@ -316,16 +316,18 @@ interface TaskUsageStore {
 }
 
 /**
- * One row core appends to the account's hash-chained audit ledger: a run
- * starting or finishing, or an enforced policy denying a tool. `details`
- * must hold ids, names and counts only, never tool input or secrets.
+ * One row core appends to the account's hash-chained audit ledger off the
+ * happy path: an enforced policy denying a tool. A run's own `run.completed`
+ * row rides the usage write (`internal.usage.recordTaskUsage`) instead, so
+ * the per-turn path gains no Convex call. `details` must hold ids, names
+ * and counts only, never tool input or secrets.
  */
 export interface AuditLedgerInput {
   accountId: string;
   agentId?: string;
   traceId?: string;
-  action: "run.started" | "run.completed" | "tool.denied";
-  resource: { kind: "run" | "tool"; id?: string; name?: string };
+  action: "tool.denied";
+  resource: { kind: "tool"; name: string };
   summary: string;
   details?: Record<string, JSONValue | undefined>;
 }

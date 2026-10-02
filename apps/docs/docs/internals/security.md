@@ -130,7 +130,7 @@ Core checks user-supplied URLs before it sends credentials to them. That covers 
 
 ## Audit ledger
 
-Every account has one append-only ledger in Convex (`auditEvents`, written only through `appendAuditEvent` in `packages/convex/model/auditEvents.ts`). It holds config mutations from the config plane, dashboard and CLI sync, plus three runtime rows core appends through its storage adapter: `run.started`, `run.completed` (status, duration, token totals) and `tool.denied` when an enforcing policy stops a tool. Rows never carry tool input, config blobs or secrets; `detailsJson` is capped at 8 KB.
+Every account has one append-only ledger in Convex (`auditEvents`, written only through `appendAuditEvent` in `packages/convex/model/auditEvents.ts`). It holds config mutations from the config plane, dashboard and CLI sync, plus two runtime rows: `run.completed` and `tool.denied`. A run is audited once, when it finishes: the usage write (`internal.usage.recordTaskUsage`) appends the `run.completed` row (status, `startedAt`, duration, step and tool counts, token totals) in the same mutation, so the per-turn Convex call budget is unchanged. There is no `run.started` row, and a run that the pod abandons at shutdown (`interruptLiveOwners` settles its ingress as `failed`) writes neither a usage row nor a ledger row; the settle mutation runs on every run so it cannot append one without a flag telling it the run was cut off. `tool.denied` is appended by core when an enforcing policy stops a tool. Rows never carry tool input, config blobs or secrets; `detailsJson` is capped at 8 KB.
 
 ```mermaid
 flowchart LR

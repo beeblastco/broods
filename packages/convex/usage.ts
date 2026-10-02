@@ -10,6 +10,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalMutation, type MutationCtx } from "./_generated/server";
+import { appendAuditEvent, auditDetailsJson } from "./model/auditEvents";
 
 const TASK_USAGE_PRUNE_BATCH_SIZE = 100;
 const TASK_USAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -67,9 +68,11 @@ export const pruneExpiredTaskUsage = internalMutation({
 });
 
 /**
- * Record one finished agent task: insert a `taskUsage` row and fold its
+ * Record one finished agent task: insert a `taskUsage` row, fold its
  * token/compute counts into the 5-minute, hour, and day `usageRollups`
- * buckets. Deduplicated by `(accountId, taskId)` so a retried write never
+ * buckets, and append the run's `run.completed` audit row in the same
+ * transaction, so the per-turn path pays one mutation for both.
+ * Deduplicated by `(accountId, taskId)` so a retried write never
  * double-counts without allowing one tenant's task identifier to suppress
  * another tenant's usage.
  */
@@ -185,6 +188,30 @@ export const recordTaskUsage = internalMutation({
         counters: counters,
       });
     }
+
+    // `taskId` is `${eventId}#${traceId}`: the run is the resource, the trace
+    // the correlation key. Tool input and the prompt preview stay off the row.
+    const [eventId = "", traceId = ""] = args.taskId.split("#");
+    await appendAuditEvent(ctx.db, {
+      accountId: args.accountId,
+      ...(traceId ? { traceId: traceId } : {}),
+      actor: { kind: "agent", agentId: args.agentId },
+      action: "run.completed",
+      resource: { kind: "run", id: eventId },
+      summary: `Run ${args.status} after ${args.durationMs}ms`,
+      detailsJson: auditDetailsJson({
+        status: args.status,
+        startedAt: args.finishedAt - args.durationMs,
+        durationMs: args.durationMs,
+        modelProvider: args.modelProvider,
+        modelId: args.modelId,
+        stepCount: args.stepCount,
+        toolCallCount: args.toolCallCount,
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        totalTokens: args.totalTokens,
+      }),
+    });
 
     return null;
   },
