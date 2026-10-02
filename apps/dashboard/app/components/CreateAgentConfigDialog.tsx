@@ -23,6 +23,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   MODEL_PROVIDERS,
+  providerApiKeyEnvName,
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
@@ -156,6 +157,10 @@ export function CreateAgentConfigDialog({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                Reads its key from the stage variable{" "}
+                <code>{providerApiKeyEnvName(provider)}</code>.
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="agent-model">Model ID</Label>

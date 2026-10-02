@@ -101,3 +101,14 @@ export function isAccountModelProviderName(
 ): value is AccountModelProviderName {
   return Object.hasOwn(MODEL_PROVIDERS, value);
 }
+
+/**
+ * The stage variable a provider's `apiKey` reads by default, `OPENAI_API_KEY`
+ * as in the CLI starter's `env("OPENAI_API_KEY")`. A dashboard-created agent
+ * stores the same `${NAME}` ref, and the dashboard names it in its hints.
+ */
+export function providerApiKeyEnvName(
+  provider: AccountModelProviderName,
+): string {
+  return `${provider.toUpperCase()}_API_KEY`;
+}

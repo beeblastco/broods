@@ -10,6 +10,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { action } from "../_generated/server";
+import { ClientError } from "../model/clientError";
 
 const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 
@@ -27,15 +28,16 @@ export const provision = action({
       orgId: args.orgId,
     });
     if (!org) {
-      throw new Error("Org not found or admin role required");
+      throw new ClientError("Org not found or admin role required");
     }
 
     const existing = await ctx.runQuery(internal.account.accounts.getByOrgId, {
       orgId: args.orgId,
     });
     if (existing) {
-      throw new Error(
+      throw new ClientError(
         "Account already provisioned for this org; use rotate to issue a new secret",
+        "conflict",
       );
     }
 

@@ -28,9 +28,11 @@ import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   MODEL_PROVIDERS,
+  providerApiKeyEnvName,
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import {
@@ -46,6 +48,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState } from "react";
 
 /**
@@ -70,7 +73,6 @@ type OutputFormatConfig = {
 };
 
 export type AgentProvider = AccountModelProviderName;
-type RuntimeVariable = { key: string; value: string };
 
 const providerOptions: Array<{ value: AgentProvider; label: string }> =
   ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => ({
@@ -111,7 +113,6 @@ export function DetailsTab({
   onRotateKey,
   isSavingKey,
   selectedProvider,
-  runtimeVariables,
   onSaveModelSettings,
   onUpdateToolConfig,
   onUpdateChannelConfig,
@@ -132,7 +133,6 @@ export function DetailsTab({
   onRotateKey?: () => Promise<boolean>;
   isSavingKey?: boolean;
   selectedProvider: AgentProvider;
-  runtimeVariables: RuntimeVariable[];
   onSaveModelSettings?: (next: {
     provider: AgentProvider;
     modelId: string;
@@ -245,13 +245,28 @@ export function DetailsTab({
   const displayOutputSchemaText = hasEditedOutputSchema
     ? outputSchemaText
     : schemaFromConfigText;
-  const hasOpenAiApiKeyVariable = runtimeVariables.some((entry) => {
-    const normalized = entry.key.trim().toUpperCase();
-
-    return normalized === "OPENAI_API_KEY" || normalized === "API_KEY";
-  });
-  const openAiVariableRequired =
-    editProvider === "openai" && !hasOpenAiApiKeyVariable;
+  // The provider key is a `${NAME}` ref to a stage variable (or, before one is
+  // written, the default name); warn until the stage has that variable.
+  const stageVariables = useQuery(
+    api.environmentVariables.list,
+    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  );
+  const apiKey = agentConfig
+    ? readAgentBranch<Record<string, { apiKey?: unknown } | undefined>>(
+        agentConfig as unknown as FlatAgentConfig,
+        "provider",
+      )[editProvider]?.apiKey
+    : undefined;
+  const keyVariable =
+    apiKey === undefined
+      ? providerApiKeyEnvName(editProvider)
+      : typeof apiKey === "string"
+        ? ACCOUNT_ENV_PLACEHOLDER_PATTERN.exec(apiKey)?.[1]
+        : undefined;
+  const keyVariableMissing =
+    keyVariable !== undefined &&
+    stageVariables !== undefined &&
+    !stageVariables.some((variable) => variable.name === keyVariable);
 
   function buildOutputFormatPayload(
     schema: Record<string, unknown>,
@@ -460,10 +475,16 @@ export function DetailsTab({
                 }}
               />
             )}
-            {openAiVariableRequired && (
+            {keyVariableMissing && (
               <p className="text-xs text-destructive">
-                Add <code>OPENAI_API_KEY</code> in the Variables tab before
-                running the agent.
+                Set <code>{keyVariable}</code> in{" "}
+                <Link
+                  href={`/${projectId}/settings?tab=variables&stage=${stageId}`}
+                  className="cursor-pointer underline underline-offset-4"
+                >
+                  Environment variables
+                </Link>{" "}
+                before running the agent.
               </p>
             )}
           </div>

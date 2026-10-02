@@ -5,6 +5,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
+import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
 import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
@@ -132,6 +133,56 @@ describe("agent row ownership", () => {
       },
     ]);
     expect(links.page[0].agentAccountId).not.toBe(accountId);
+  });
+});
+
+describe("provider key", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("a dashboard agent reads its key from the stage variable, set before or after", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = refsTest();
+    const { projectId, stageId } = await seed(t, []);
+
+    const configId = await t.mutation(api.agent.config.create, {
+      projectId: projectId,
+      stageId: stageId,
+      name: "keyed",
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+    const created = await docOf(t, configId);
+    expect(created?.extraConfig).toEqual({
+      provider: { anthropic: { apiKey: "${ANTHROPIC_API_KEY}" } },
+    });
+    expect(created?.runtimeVariables).toEqual([
+      { key: "ANTHROPIC_API_KEY", value: "" },
+    ]);
+
+    await t.mutation(api.environmentVariables.set, {
+      projectId: projectId,
+      stageId: stageId,
+      name: "ANTHROPIC_API_KEY",
+      value: "sk-ant-test",
+    });
+
+    const agent = await docOf(
+      t,
+      (await docOf(t, configId))?.agentId as Id<"agents">,
+    );
+    const resolved = await decryptAgentConfigBlob(
+      {
+        ciphertext: agent?.encryptedConfig ?? "",
+        iv: agent?.encryptionIv ?? "",
+        tag: agent?.encryptionTag ?? "",
+      },
+      "test-config-secret",
+    );
+    expect(resolved?.provider).toEqual({
+      anthropic: { apiKey: "sk-ant-test" },
+    });
   });
 });
 

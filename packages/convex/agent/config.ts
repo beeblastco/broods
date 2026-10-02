@@ -6,7 +6,10 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import type { CanvasNode } from "../canvas";
-import { toNestedAgentConfig } from "../model/agentConfigCodec";
+import {
+  collectEnvPlaceholderNames,
+  toNestedAgentConfig,
+} from "../model/agentConfigCodec";
 import {
   assertAgentRuntimeRefs,
   mergeCanvasSandboxes,
@@ -29,7 +32,11 @@ import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import { saveAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
 import { redactConfigSecrets } from "../model/configValues";
-import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
+import { loadEnvironmentVariableValues } from "../model/environmentValues";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  providerApiKeyEnvName,
+} from "../model/modelProviders";
 import { agentConfigsFields } from "../schema";
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
@@ -97,7 +104,8 @@ export const create = mutation({
 
     const now = Date.now();
     const trimmedName = name.trim();
-    if (provider === "custom" && !customBaseUrl?.trim()) {
+    const baseUrl = customBaseUrl?.trim();
+    if (provider === "custom" && !baseUrl) {
       throw new Error("customBaseUrl is required for the custom provider");
     }
     const configId = await ctx.db.insert("agentConfigs", {
@@ -110,13 +118,17 @@ export const create = mutation({
       provider: provider,
       modelId: modelId?.trim() || "gpt-4.1-mini",
       systemPrompt: systemPrompt?.trim() || undefined,
-      ...(provider === "custom" && customBaseUrl?.trim()
+      // The key is a `${NAME}` ref to a stage variable, as the CLI starter's
+      // env("OPENAI_API_KEY"); bindStageEnvRefs resolves it below.
+      ...(provider
         ? {
             extraConfig: {
               provider: {
-                custom: {
-                  base_url: customBaseUrl.trim(),
-                  baseURL: customBaseUrl.trim(),
+                [provider]: {
+                  apiKey: `\${${providerApiKeyEnvName(provider)}}`,
+                  ...(provider === "custom"
+                    ? { base_url: baseUrl, baseURL: baseUrl }
+                    : {}),
                 },
               },
             },
@@ -126,6 +138,7 @@ export const create = mutation({
       searchToolEnabled: false,
       updatedAt: now,
     });
+    await bindStageEnvRefs(ctx, configId);
 
     await ctx.db.patch(projectId, { updatedAt: now });
 
@@ -327,6 +340,9 @@ export const update = mutation({
     }
 
     await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
+    if (updates.runtimeVariables === undefined) {
+      await bindStageEnvRefs(ctx, configId);
+    }
 
     // Keep the broods `agents` row aligned; this also provisions
     // the runtime row when an org account was created after the config.
@@ -571,6 +587,36 @@ async function assertAgentConfigAdmin(
   if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
     throw new Error(AGENT_ADMIN_REQUIRED);
   }
+}
+
+/**
+ * Binds every `${NAME}` the config references to the stage variable of that
+ * name, as a CLI sync does, so setting the variable later re-resolves the
+ * agent. A name the stage lacks keeps the agent's earlier value, else empty.
+ */
+async function bindStageEnvRefs(
+  ctx: MutationCtx,
+  configId: Id<"agentConfigs">,
+): Promise<void> {
+  const config = await ctx.db.get(configId);
+  if (!config) return;
+  const names = [...collectEnvPlaceholderNames(config)].sort();
+  if (names.length === 0) return;
+
+  const values = await loadEnvironmentVariableValues(
+    ctx,
+    config.projectId,
+    config.stageId,
+  );
+  const runtimeVariables = await saveAgentRuntimeSecrets(
+    ctx,
+    configId,
+    names.map((name) => ({
+      key: name,
+      value: values[name] ?? MASKED_RUNTIME_VARIABLE_VALUE,
+    })),
+  );
+  await ctx.db.patch(configId, { runtimeVariables: runtimeVariables });
 }
 
 /** Returns true when the caller may read a project-scoped agent config. */

@@ -57,15 +57,12 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
-import {
-  isRuntimeVariable,
-  type RuntimeVariable,
-} from "@/app/lib/runtimeVariables";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import { reportPerf } from "@/app/lib/perfReport";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { providerApiKeyEnvName } from "@broods/convex/model/modelProviders";
 import type { Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
@@ -298,16 +295,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
     return inferProviderFromModelId(agentConfig.modelId ?? "");
   }, [agentConfig]);
-  const runtimeVariables = useMemo<RuntimeVariable[]>(
-    () =>
-      Array.isArray(agentConfig?.runtimeVariables)
-        ? agentConfig.runtimeVariables.filter(
-            (value: unknown): value is RuntimeVariable =>
-              isRuntimeVariable(value),
-          )
-        : [],
-    [agentConfig],
-  );
   const headerStatus = useMemo<HeaderStatusBadge | null>(() => {
     if (isAgent) {
       const config = agentStatusConfig[healthStatus];
@@ -465,16 +452,19 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       ? (toNestedAgentConfig(agentConfig) as Record<string, unknown>)
       : {};
     const currentProvider = isPlainObject(base.provider) ? base.provider : {};
-    const nextProviderConfig = { ...currentProvider };
-    if (next.provider === "custom") {
-      nextProviderConfig.custom = {
-        ...(isPlainObject(currentProvider.custom)
-          ? currentProvider.custom
+    const chosen = currentProvider[next.provider];
+    // A provider picked here without a key yet reads the same `${NAME}` stage
+    // variable a newly created agent does.
+    const nextProviderConfig = {
+      ...currentProvider,
+      [next.provider]: {
+        apiKey: `\${${providerApiKeyEnvName(next.provider)}}`,
+        ...(isPlainObject(chosen) ? chosen : {}),
+        ...(next.provider === "custom"
+          ? { base_url: next.customBaseUrl, baseURL: next.customBaseUrl }
           : {}),
-        base_url: next.customBaseUrl,
-        baseURL: next.customBaseUrl,
-      };
-    }
+      },
+    };
     const patch = fromNestedAgentConfig({
       ...base,
       model: {
@@ -804,7 +794,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onRotateKey={handleRotateKey}
                 isSavingKey={isSavingKey}
                 selectedProvider={selectedProvider}
-                runtimeVariables={runtimeVariables}
                 onSaveModelSettings={handleSaveModelSettings}
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}
