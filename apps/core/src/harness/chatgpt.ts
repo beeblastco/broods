@@ -126,6 +126,8 @@ export function chatgptFetch(
       headers: headers,
       body: body,
     });
+    // A revoked or replaced sign-in: the next call re-reads the stored one.
+    if (response.status === 401) cache.delete(accountId);
 
     return wantsJson && response.ok
       ? await completedResponse(response)
@@ -197,7 +199,7 @@ async function refreshAndSave(
   });
   const text = await response.text();
   const token = parseTokenResponse(text);
-  if (!response.ok || !token.access_token) {
+  if (!response.ok || typeof token.access_token !== "string") {
     const reason = token.error ?? `HTTP ${response.status}`;
     throw new Error(
       `ChatGPT sign-in refresh failed (${reason}): ${text.slice(0, MAX_ERROR_BODY_LENGTH)}. ${REAUTHORIZE_HINT}`,
@@ -218,12 +220,18 @@ async function refreshAndSave(
     refreshed,
   );
   if (!saved) {
-    // A new sign-in landed while this refresh ran; it is the newer grant.
+    // A new sign-in or a logout landed while this refresh ran; it wins.
     const latest = await getStorage().providerCredentials.load(
       accountId,
       "chatgpt",
     );
-    if (latest) return latest;
+    if (!latest) {
+      throw new Error(
+        `This account has no ChatGPT sign-in. ${REAUTHORIZE_HINT}`,
+      );
+    }
+
+    return latest;
   }
 
   return { ...stored, ...refreshed, updatedAt: Date.now() };

@@ -136,13 +136,20 @@ export const saveRefreshed = internalMutation({
   },
 });
 
-/** Forget the sign-in. False when there was none. */
+/**
+ * Forget the sign-in logout loaded. False when there was none, or when a new
+ * sign-in replaced it since, so a slow logout never deletes the newer one.
+ */
 export const remove = internalMutation({
-  args: { accountId: v.id("accounts"), provider: providerValidator },
+  args: {
+    accountId: v.id("accounts"),
+    provider: providerValidator,
+    loadedUpdatedAt: v.number(),
+  },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
     const row = await findRow(ctx, args.accountId, args.provider);
-    if (!row) return false;
+    if (!row || row.updatedAt !== args.loadedUpdatedAt) return false;
     await ctx.db.delete(row._id);
 
     return true;

@@ -89,7 +89,11 @@ export async function handleChatGPTRoute(
     );
     if (!credential) return json({ deleted: false });
     await revoke(credential.clientId, credential.refreshToken);
-    await ctx.runMutation(internal.account.providerCredentials.remove, ref);
+    const deleted = await ctx.runMutation(
+      internal.account.providerCredentials.remove,
+      { ...ref, loadedUpdatedAt: credential.updatedAt },
+    );
+    if (!deleted) return json({ deleted: false });
     await writeAudit(ctx, {
       accountId: accountId,
       actor: actor,
@@ -188,7 +192,7 @@ async function revoke(clientId: string, refreshToken: string): Promise<void> {
       revocation_endpoint?: string;
     };
     if (!endpoint) return;
-    await fetch(endpoint, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -198,6 +202,9 @@ async function revoke(clientId: string, refreshToken: string): Promise<void> {
       }),
       signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
     });
+    if (!response.ok) {
+      console.warn(`ChatGPT token revocation failed: HTTP ${response.status}`);
+    }
   } catch (error) {
     console.warn("ChatGPT token revocation failed", error);
   }

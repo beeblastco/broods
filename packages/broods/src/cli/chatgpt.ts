@@ -12,6 +12,7 @@ import {
   CHATGPT_DIRECT_SCOPE,
   CHATGPT_DISCOVERY_URL,
   CHATGPT_DYNAMIC_CLIENT_ID,
+  CHATGPT_ISSUER,
   CHATGPT_RESOURCE,
   CHATGPT_SCOPES,
   CHATGPT_TOKEN_URL,
@@ -242,7 +243,6 @@ async function verifyIdToken(
     throw new Error(`ChatGPT ID token uses unsupported alg ${header.alg}.`);
   }
   const discovery = (await (await fetch(CHATGPT_DISCOVERY_URL)).json()) as {
-    issuer: string;
     jwks_uri: string;
   };
   const { keys } = (await (await fetch(discovery.jwks_uri)).json()) as {
@@ -263,9 +263,10 @@ async function verifyIdToken(
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (
     !signed ||
-    claims.iss !== discovery.issuer ||
+    claims.iss !== CHATGPT_ISSUER ||
     !audiences.includes(clientId) ||
-    (claims.exp ?? 0) * 1000 < Date.now() ||
+    typeof claims.exp !== "number" ||
+    claims.exp * 1000 < Date.now() ||
     claims.nonce !== nonce
   ) {
     throw new Error("ChatGPT ID token failed verification.");

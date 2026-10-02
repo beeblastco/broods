@@ -60,7 +60,7 @@ import {
   type LogLevel,
   type ObservabilityLogEntry,
 } from "../observability-contracts.ts";
-import { BroodsAccountClient, resolveEnvCredential } from "../account.ts";
+import { BroodsAccountClient } from "../account.ts";
 import { CHATGPT_USAGE_URL } from "../../../convex/model/chatgpt.ts";
 import {
   listChatGPTModels,
@@ -616,13 +616,18 @@ async function login(args: string[]): Promise<void> {
  */
 async function loginChatGPT(args: string[]): Promise<void> {
   loadBroodsRuntimeConfig();
-  if (!resolveEnvCredential()) {
+  // The route refuses role sessions, so a BROODS_SESSION_TOKEN must not win.
+  const accountSecret = process.env.BROODS_ACCOUNT_SECRET;
+  if (!accountSecret) {
     throw new Error(
       "broods login chatgpt stores the sign-in with your account secret: set BROODS_ACCOUNT_SECRET (and BROODS_BASE_URL for a self-hosted gateway).",
     );
   }
   const baseUrl = optionValue(args, "--base-url");
-  const client = new BroodsAccountClient(baseUrl ? { baseUrl: baseUrl } : {});
+  const client = new BroodsAccountClient({
+    accountSecret: accountSecret,
+    ...(baseUrl ? { baseUrl: baseUrl } : {}),
+  });
   const current = await client.getChatGPTConnection();
   if (hasFlag(args, "--status")) {
     if (!current.connected) {
