@@ -1011,6 +1011,23 @@ export const runtimeConversationCoordinatorsFields = {
   updatedAt: v.number(),
 };
 /** One accepted transport-neutral ingress item in the conversation FIFO. */
+/**
+ * What an envelope keeps to rebuild its run config at dispatch, never the
+ * resolved config: the agent row version it was admitted against, the
+ * request's own model override (call settings only), and for a channel turn
+ * the rows its config was narrowed by.
+ */
+export const ingressConfigRefValidator = v.object({
+  agentUpdatedAt: v.string(),
+  model: v.optional(v.record(v.string(), v.any())),
+  channel: v.optional(
+    v.object({
+      credentialAgentId: v.optional(v.string()),
+      channelRecordId: v.optional(v.string()),
+    }),
+  ),
+});
+
 export const runtimeIngressEnvelopesFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
@@ -1031,7 +1048,11 @@ export const runtimeIngressEnvelopesFields = {
   requestedMode: ingressModeValidator,
   ownerTaskId: v.optional(v.string()),
   // Per-request execution context so a queued envelope runs with its own
-  // resolved config and one-turn system, never the previous owner's.
+  // config and one-turn system, never the previous owner's. The config itself
+  // is rebuilt from the ref at dispatch; it never sits here with its secrets.
+  configRef: v.optional(ingressConfigRefValidator),
+  // Written by a core pod from before this rollout, never read. Cleared on
+  // every terminal patch; remove once no live envelope predates the rollout.
   agentConfig: v.optional(v.any()),
   ephemeralSystem: v.optional(v.array(v.any())),
   appliedMode: v.optional(ingressModeValidator),

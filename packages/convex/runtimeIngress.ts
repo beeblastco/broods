@@ -19,7 +19,11 @@ import {
   conversationEventsFromArgs,
   writeAsyncAgentResult,
 } from "./runtime";
-import { ingressModeValidator, ingressStatusValidator } from "./schema";
+import {
+  ingressConfigRefValidator,
+  ingressModeValidator,
+  ingressStatusValidator,
+} from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 
 const CLEAR_BATCH_SIZE = 100;
@@ -46,6 +50,7 @@ const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
 // table for the whole status retention window.
 const RELEASED_PAYLOAD = {
   events: [],
+  configRef: undefined,
   agentConfig: undefined,
   ephemeralSystem: undefined,
 };
@@ -60,7 +65,7 @@ const appliedEnvelopeValidator = v.object({
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
-  agentConfig: v.optional(v.any()),
+  configRef: v.optional(ingressConfigRefValidator),
   ephemeralSystem: v.optional(v.array(v.any())),
 });
 
@@ -174,6 +179,9 @@ export const accept = internalMutation({
     events: v.array(v.any()),
     delivery: v.any(),
     requestedMode: ingressModeValidator,
+    configRef: v.optional(ingressConfigRefValidator),
+    // Still sent by a core pod from before this rollout. Accepted and dropped
+    // so Convex can deploy first; remove once core has rolled.
     agentConfig: v.optional(v.any()),
     channelTarget: v.optional(admittedChannelTargetValidator),
     ephemeralSystem: v.optional(v.array(v.any())),
@@ -991,7 +999,7 @@ function buildAdmissionEnvelope(
     delivery: unknown;
     requestedMode: Infer<typeof ingressModeValidator>;
     ownerTaskId?: string;
-    agentConfig?: unknown;
+    configRef?: Infer<typeof ingressConfigRefValidator>;
     ephemeralSystem?: unknown[];
     sizeBytes: number;
     envelopeTtlMs: number;
@@ -1017,9 +1025,7 @@ function buildAdmissionEnvelope(
     ...(args.ownerTaskId !== undefined
       ? { ownerTaskId: args.ownerTaskId }
       : {}),
-    ...(args.agentConfig !== undefined
-      ? { agentConfig: args.agentConfig }
-      : {}),
+    ...(args.configRef !== undefined ? { configRef: args.configRef } : {}),
     ...(args.ephemeralSystem !== undefined
       ? { ephemeralSystem: args.ephemeralSystem }
       : {}),
@@ -1393,7 +1399,7 @@ async function promoteQueuedGroup(
   appliedToEventId: string;
   contributingEventIds: string[];
   ownerGeneration: number;
-  agentConfig?: unknown;
+  configRef?: Infer<typeof ingressConfigRefValidator>;
   ephemeralSystem?: unknown[];
 } | null> {
   const { coordinator, queue, now } = options;
@@ -1463,9 +1469,7 @@ async function promoteQueuedGroup(
     appliedToEventId: appliedToEventId,
     contributingEventIds: eventIds,
     ownerGeneration: options.ownerGeneration,
-    ...(first.agentConfig !== undefined
-      ? { agentConfig: first.agentConfig }
-      : {}),
+    ...(first.configRef !== undefined ? { configRef: first.configRef } : {}),
     ...(first.ephemeralSystem !== undefined
       ? { ephemeralSystem: first.ephemeralSystem }
       : {}),

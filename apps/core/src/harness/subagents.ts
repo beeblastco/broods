@@ -926,7 +926,6 @@ export class SubagentCoordinator {
           eventId: next.eventId,
           resuming: true,
           inheritedContext: false,
-          ...(next.agentConfig ? { agentConfig: next.agentConfig } : {}),
         },
         subagentParent,
         publisher,
@@ -1010,7 +1009,6 @@ export class SubagentCoordinator {
         publicConversationKey: task.publicConversationKey,
         statusUrl: subagentStatusPath(task),
       },
-      agentConfig: task.agentConfig,
     });
     if (
       admission.outcome !== "owner" ||

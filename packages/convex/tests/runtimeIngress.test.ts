@@ -1620,7 +1620,7 @@ describe("runtime ingress", () => {
         eventId: "queued-context",
         mode: "followup",
       }),
-      agentConfig: { model: { temperature: 0.9 } },
+      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.9 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
 
@@ -1633,9 +1633,37 @@ describe("runtime ingress", () => {
     expect(next).toMatchObject({
       eventId: "queued-context",
       ownerGeneration: 2,
-      agentConfig: { model: { temperature: 0.9 } },
+      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.9 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
+    expect(next).not.toHaveProperty("agentConfig");
+  });
+
+  test("drops the resolved config an older core pod still sends", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtimeIngress.accept, {
+      ...admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "old-core",
+        mode: "followup",
+      }),
+      agentConfig: { provider: { apiKey: "sk-live" } },
+    });
+
+    const stored = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+            q.eq("conversationKey", conversationKey),
+          )
+          .unique(),
+    );
+    expect(stored).not.toHaveProperty("agentConfig");
+    expect(stored).not.toHaveProperty("configRef");
   });
 
   test("settles the owner and more than one drain batch of steering contributors", async () => {

@@ -3,7 +3,6 @@ import type { ModelMessage } from "ai";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { ConversationDispatchTarget } from "../src/harness/ingress.ts";
-import { toChannelRuntimeAgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import type { ChannelRecord } from "../src/shared/domain/channel-record.ts";
 import type { CronRecord, CronRunRecord } from "../src/shared/domain/cron.ts";
@@ -150,10 +149,12 @@ describe("handleScheduledCron", () => {
       channel: "slack",
       source: CHANNEL_TARGET.source,
     });
-    // Rebuilt from the live agent row, never a copy the coordinator kept.
-    expect(admitted[0]?.agentConfig).toEqual(
-      toChannelRuntimeAgentConfig(AGENT.config, "slack"),
-    );
+    // The envelope carries the rows to rebuild from, never the config itself.
+    expect(admitted[0]?.configRef).toEqual({
+      agentUpdatedAt: AGENT.updatedAt,
+      channel: {},
+    });
+    expect(admitted[0]).not.toHaveProperty("agentConfig");
     expect(failures).toEqual([
       "Cron conversation is already processing another turn",
     ]);
@@ -272,10 +273,11 @@ describe("background job continuation", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(admitted[0]?.agentConfig).toMatchObject({
-      channels: { slack: { botToken: "current-token" } },
-      denyTools: ["bash"],
+    expect(admitted[0]?.configRef).toEqual({
+      agentUpdatedAt: AGENT.updatedAt,
+      channel: { channelRecordId: CHANNEL_RECORD.channelRecordId },
     });
+    expect(admitted[0]).not.toHaveProperty("agentConfig");
   });
 });
 

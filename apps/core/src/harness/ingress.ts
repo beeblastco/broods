@@ -8,7 +8,12 @@
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { queuedCommand } from "../shared/commands.ts";
-import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import {
+  applyRunOverrides,
+  toRuntimeAgentConfig,
+  type AgentConfig,
+  type RunOverrides,
+} from "../shared/domain/agent-config.ts";
 import {
   channelRuntimeAgentConfig,
   resolveChannelAgentId,
@@ -96,6 +101,24 @@ export interface ConversationDispatchTarget extends ChannelTargetRefs {
   source: Record<string, unknown>;
 }
 
+/**
+ * What an envelope keeps to rebuild its run config when it is dispatched,
+ * instead of the resolved config with its decrypted secrets: the agent row
+ * version it was admitted against, the request's own model override, and for
+ * a channel turn the rows its config was narrowed by.
+ */
+export interface IngressConfigRef {
+  agentUpdatedAt: string;
+  model?: RunOverrides["model"];
+  channel?: ChannelTargetRefs;
+}
+
+/** A run's resolved config beside the ref its envelope stores to rebuild it. */
+export interface IngressRunConfig {
+  agentConfig: AgentConfig;
+  configRef: IngressConfigRef;
+}
+
 export interface SessionMessageInput {
   conversationKey: string;
   message: string;
@@ -107,11 +130,14 @@ export interface SessionMessageResult {
 }
 
 export interface PreparedSessionMessage {
-  candidate: Omit<IngressCandidate, "agentConfig" | "delivery" | "events"> & {
-    agentConfig: AgentConfig;
+  candidate: Omit<IngressCandidate, "configRef" | "delivery" | "events"> & {
+    configRef: IngressConfigRef;
     delivery: Extract<IngressDelivery, { kind: "channel" }>;
     events: UserModelMessage[];
   };
+  // The target session's config, for the owner run; the candidate only
+  // carries the ref to rebuild it.
+  agentConfig: AgentConfig;
   publicEventId: string;
   publicConversationKey: string;
 }
@@ -171,7 +197,9 @@ export interface IngressCandidate {
   delivery: IngressDelivery;
   // Per-request execution context persisted with the envelope so a queued
   // request runs under its own config/overrides, never a previous owner's.
-  agentConfig?: AgentConfig;
+  // Absent on a subagent child, which is never queued and runs on the config
+  // its dispatch scope already holds.
+  configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
   // Set on a turn a channel delivered: pins this conversation's channel target
   // so a later cron or inter-session message can reach it.
@@ -187,7 +215,7 @@ export interface AppliedIngress {
   appliedToEventId: string;
   contributingEventIds: string[];
   ownerGeneration: number;
-  agentConfig?: AgentConfig;
+  configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
 }
 
@@ -244,8 +272,8 @@ export async function acceptIngress(
     : input;
   const serializedPayload = JSON.stringify({
     events: candidate.events,
-    ...(candidate.agentConfig !== undefined
-      ? { agentConfig: candidate.agentConfig }
+    ...(candidate.configRef !== undefined
+      ? { configRef: candidate.configRef }
       : {}),
     ...(candidate.ephemeralSystem !== undefined
       ? { ephemeralSystem: candidate.ephemeralSystem }
@@ -261,7 +289,7 @@ export async function acceptIngress(
       activeOwnerOnly: candidate.activeOwnerOnly,
       expectedOwnerTaskId: candidate.expectedOwnerTaskId,
       ownerTaskId: candidate.ownerTaskId,
-      agentConfig: candidate.agentConfig,
+      configRef: candidate.configRef,
       ephemeralSystem: candidate.ephemeralSystem,
     }),
   );
@@ -385,7 +413,7 @@ export async function loadChannelSessionConfig(options: {
   accountId: string;
   agentId: string;
   target: ConversationDispatchTarget;
-}): Promise<AgentConfig> {
+}): Promise<IngressRunConfig> {
   const { accountId, target } = options;
   const storage = getStorage();
   const [agent, credentialHolder, record] = await Promise.all([
@@ -413,13 +441,68 @@ export async function loadChannelSessionConfig(options: {
     throw new Error("Channel session is no longer bound to this agent");
   }
 
-  return channelRuntimeAgentConfig(
-    {
-      agent: agent,
-      ...(activeRecord ? { record: activeRecord } : {}),
+  return {
+    agentConfig: channelRuntimeAgentConfig(
+      {
+        agent: agent,
+        ...(activeRecord ? { record: activeRecord } : {}),
+      },
+      target.channelName,
+      (credentialHolder ?? agent).config,
+    ),
+    configRef: {
+      agentUpdatedAt: agent.updatedAt,
+      channel: {
+        ...(target.credentialAgentId
+          ? { credentialAgentId: target.credentialAgentId }
+          : {}),
+        ...(target.channelRecordId
+          ? { channelRecordId: target.channelRecordId }
+          : {}),
+      },
     },
-    target.channelName,
-    (credentialHolder ?? agent).config,
+  };
+}
+
+/**
+ * The config a dispatched envelope runs on, rebuilt from the live rows the way
+ * its admission built it: the channel session's narrowed config for a channel
+ * turn, the agent's own config plus the request's model override otherwise.
+ * One agent read per dispatch; nothing else in the dispatched run loads it.
+ * Throws when the agent is gone or the channel session no longer binds to it,
+ * and the caller fails the envelope with that reason.
+ */
+export async function loadAppliedIngressConfig(options: {
+  accountId: string;
+  agentId: string;
+  applied: Pick<AppliedIngress, "configRef" | "delivery">;
+}): Promise<AgentConfig> {
+  const { accountId, agentId, applied } = options;
+  const configRef = applied.configRef;
+  if (!configRef) {
+    throw new Error("Queued envelope carries no config ref");
+  }
+  if (configRef.channel && applied.delivery.kind === "channel") {
+    const loaded = await loadChannelSessionConfig({
+      accountId: accountId,
+      agentId: agentId,
+      target: {
+        ...configRef.channel,
+        channelName: applied.delivery.channel,
+        source: applied.delivery.source ?? {},
+      },
+    });
+
+    return loaded.agentConfig;
+  }
+  const agent = await getStorage().agents.getById(accountId, agentId);
+  if (!agent) {
+    throw new Error(`Agent not found: ${agentId}`);
+  }
+
+  return applyRunOverrides(
+    toRuntimeAgentConfig(agent.config),
+    configRef.model ? { model: configRef.model } : undefined,
   );
 }
 
@@ -470,7 +553,7 @@ export async function prepareSessionMessage(options: {
     options.agentId,
   );
 
-  const agentConfig = await loadChannelSessionConfig({
+  const { agentConfig, configRef } = await loadChannelSessionConfig({
     accountId: options.accountId,
     agentId: options.agentId,
     target: target,
@@ -480,7 +563,7 @@ export async function prepareSessionMessage(options: {
     candidate: {
       accountId: options.accountId,
       agentId: options.agentId,
-      agentConfig: agentConfig,
+      configRef: configRef,
       eventId: eventId,
       runId: createRunId(),
       conversationKey: conversationKey,
@@ -502,6 +585,7 @@ export async function prepareSessionMessage(options: {
         source: target.source,
       },
     },
+    agentConfig: agentConfig,
     publicEventId: publicEventId,
     publicConversationKey: publicConversationKey,
   };

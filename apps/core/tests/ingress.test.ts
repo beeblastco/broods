@@ -17,6 +17,7 @@ import {
 import {
   acceptIngress,
   interruptLiveOwners,
+  loadAppliedIngressConfig,
   prepareSessionMessage,
   releaseIngressOwner,
   takeNextIngress,
@@ -104,11 +105,12 @@ describe("ingress admission payloads", () => {
 
       return { outcome: "owner", ownerGeneration: 1 };
     }) as never;
-    const agentConfig = { channels: { telegram: { botToken: "secret" } } };
-
     await acceptIngress({
       ...candidate(),
-      agentConfig: agentConfig,
+      configRef: {
+        agentUpdatedAt: "2026-08-01T00:00:00.000Z",
+        channel: { channelRecordId: "rec_1" },
+      },
       channelTarget: { channelRecordId: "rec_1" },
       delivery: {
         kind: "channel",
@@ -124,6 +126,11 @@ describe("ingress admission payloads", () => {
       channelName: "telegram",
       source: { chatId: "chat-1" },
     });
+    expect(call?.configRef).toEqual({
+      agentUpdatedAt: "2026-08-01T00:00:00.000Z",
+      channel: { channelRecordId: "rec_1" },
+    });
+    expect(call).not.toHaveProperty("agentConfig");
     // The sender rides on the envelope so a queued turn is policed as its own
     // author, not as whoever owned the run when it was queued.
     expect(call?.delivery).toEqual(
@@ -143,17 +150,20 @@ describe("ingress admission payloads", () => {
 
     await acceptIngress({
       ...candidate(),
-      agentConfig: { model: { temperature: 0.1 } },
+      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.1 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
     await acceptIngress({
       ...candidate(),
-      agentConfig: { model: { temperature: 0.9 } },
+      configRef: { agentUpdatedAt: "v1", model: { temperature: 0.9 } },
     });
     await acceptIngress(candidate());
 
     const [first, second, third] = calls;
-    expect(first!.agentConfig).toEqual({ model: { temperature: 0.1 } });
+    expect(first!.configRef).toEqual({
+      agentUpdatedAt: "v1",
+      model: { temperature: 0.1 },
+    });
     expect(first!.ephemeralSystem).toEqual([
       { role: "system", content: "one-turn override" },
     ]);
@@ -1185,6 +1195,93 @@ describe("live owners at shutdown", (): void => {
   });
 });
 
+describe("applied ingress config", (): void => {
+  afterEach((): void => {
+    resetStorageForTests();
+  });
+
+  it("rebuilds a direct envelope from the live agent with its model override, in one read", async (): Promise<void> => {
+    const reads: string[] = [];
+    setStorageForTests({
+      agents: {
+        getById: async (_accountId: string, agentId: string) => {
+          reads.push(agentId);
+
+          return agentRecord({
+            model: { provider: "openai", modelId: "gpt-5", temperature: 0 },
+            provider: { openai: { apiKey: "sk-live" } },
+          });
+        },
+      },
+    } as never);
+
+    const config = await loadAppliedIngressConfig({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      applied: {
+        configRef: { agentUpdatedAt: "v1", model: { temperature: 0.7 } },
+        delivery: candidate().delivery,
+      },
+    });
+
+    expect(config.model).toEqual({
+      provider: "openai",
+      modelId: "gpt-5",
+      temperature: 0.7,
+    });
+    expect(config.provider).toEqual({ openai: { apiKey: "sk-live" } });
+    expect(reads).toEqual(["agent_test"]);
+  });
+
+  it("rebuilds a channel envelope through its pinned record", async (): Promise<void> => {
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<AgentRecord> =>
+          agentRecord({ channels: { telegram: { botToken: "rotated" } } }),
+      },
+      channelRecords: {
+        getById: async (): Promise<ChannelRecord> =>
+          channelRecord("agent_test"),
+      },
+    } as never);
+
+    const config = await loadAppliedIngressConfig({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      applied: {
+        configRef: {
+          agentUpdatedAt: "v1",
+          channel: { channelRecordId: "rec_1" },
+        },
+        delivery: {
+          kind: "channel",
+          channel: "telegram",
+          source: { chatId: "target-chat" },
+        },
+      },
+    });
+
+    expect(config.channels).toEqual({ telegram: { botToken: "rotated" } });
+  });
+
+  it("fails clearly when the agent was deleted while the envelope waited", async (): Promise<void> => {
+    setStorageForTests({
+      agents: { getById: async (): Promise<null> => null },
+    } as never);
+
+    await expect(
+      loadAppliedIngressConfig({
+        accountId: "acct_test",
+        agentId: "agent_test",
+        applied: {
+          configRef: { agentUpdatedAt: "v1" },
+          delivery: candidate().delivery,
+        },
+      }),
+    ).rejects.toThrow("Agent not found: agent_test");
+  });
+});
+
 describe("session messages", (): void => {
   afterEach((): void => {
     resetStorageForTests();
@@ -1226,8 +1323,10 @@ describe("session messages", (): void => {
       agentId: "agent_test",
       conversationKey: "acct:acct_test:agent:agent_test:tg:target-chat",
     });
+    expect(prepared.agentConfig).toEqual(agentConfig);
+    expect(prepared.candidate).not.toHaveProperty("agentConfig");
     expect(prepared.candidate).toMatchObject({
-      agentConfig: agentConfig,
+      configRef: { agentUpdatedAt: "2026-08-01T00:00:00.000Z", channel: {} },
       conversationKey: "acct:acct_test:agent:agent_test:tg:target-chat",
       delivery: {
         kind: "channel",
