@@ -203,7 +203,7 @@ test("attaches virtual and private child streams through durable parent deployme
         });
       }
       const taskId = decodeURIComponent(
-        new URL(String(input)).pathname.slice("/v1/runs/".length),
+        new URL(requestUrl(input)).pathname.slice("/v1/runs/".length),
       );
 
       return new Response(
@@ -268,7 +268,7 @@ test("an attach polls core by run id, with no agent in the query", async () => {
   const runId = "run_44444444444444444444444444444444";
   const polled: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    polled.push(String(input));
+    polled.push(requestUrl(input));
 
     return new Response(
       JSON.stringify({
@@ -1305,7 +1305,7 @@ test("a started turn streams from its own start and polls core in-cluster", asyn
         { status: 202 },
       );
     }
-    polled.push(String(input));
+    polled.push(requestUrl(input));
 
     return Response.json({ eventId: "direct-task", status: "completed" });
   }) as unknown as typeof fetch;
@@ -1557,8 +1557,8 @@ test("routes a runtime key to the matching core upstream", async () => {
     "runtime-key",
     ["https://dev.example", "https://prod.example"],
     async (input) => {
-      calls.push(String(input));
-      if (new URL(String(input)).origin === "https://dev.example")
+      calls.push(requestUrl(input));
+      if (new URL(requestUrl(input)).origin === "https://dev.example")
         return new Response("unauthorized", { status: 401 });
 
       return Response.json({
@@ -1611,7 +1611,7 @@ test("proxyHttp strips hop-by-hop headers and preserves method query and body", 
   const calls: Array<{ input: string; init?: RequestInit }> = [];
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ input: String(input), init: init });
+    calls.push({ input: requestUrl(input), init: init });
 
     return new Response("ok", { status: 200 });
   }) as typeof fetch;
@@ -1688,7 +1688,7 @@ test("proxyHttp falls through to the next upstream only on 401", async () => {
   const calls: string[] = [];
 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    calls.push(String(input));
+    calls.push(requestUrl(input));
 
     return calls.length === 1
       ? new Response("unauthorized", { status: 401 })
@@ -1851,7 +1851,7 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
   // Loki answers newest first. The backfill sees B and A; every poll sees C
   // and B again, and a guest line that looks like a core record stays text.
   globalThis.fetch = (async (input) => {
-    const url = new URL(String(input));
+    const url = new URL(requestUrl(input));
     expect(url.searchParams.get("query")).toContain(
       `sandbox_id="${sandboxId}"`,
     );
@@ -2000,7 +2000,7 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   const ownTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
   const otherTraceId = "5bf92f3577b34da6a3ce929d0e0e4736";
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
-    const url = String(input);
+    const url = requestUrl(input);
     const traceId = url.endsWith(otherTraceId) ? otherTraceId : ownTraceId;
 
     return json({
@@ -2048,7 +2048,7 @@ test("fetchTempoBackfill shares trace lookups across backfills", async () => {
   const lookups: string[] = [];
   const tempo = tempoFetch(tempoSearchHits(3));
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (!url.includes("/api/search")) lookups.push(url);
 
     return tempo(input);
@@ -2080,7 +2080,7 @@ test("fetchTempoBackfill asks Tempo again after a failed or expired lookup", asy
   // until its lifetime ends, then read from Tempo again.
   const lookups: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search"))
       return json({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
     const traceId = url.slice(url.lastIndexOf("/") + 1);
@@ -2155,7 +2155,7 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
   // chunk keeps the good row and reports the one failure, so the caller sends
   // the recovered trace with an error rather than an empty, error-free list.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search"))
       return json({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
     if (url.includes("/api/traces/aaa"))
@@ -2186,7 +2186,7 @@ test("fetchTempoBackfill hands traces over newest first, a chunk at a time", asy
   const searchHits = tempoSearchHits(25);
   const fetched: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search")) return json({ traces: searchHits });
     const traceId = url.slice(url.lastIndexOf("/") + 1);
     fetched.push(traceId);
@@ -2220,7 +2220,7 @@ test("fetchTempoBackfill drops spans from other scopes in a matched trace", asyn
   // Tempo's search is tag-scoped, but a matched trace's detail can carry spans
   // from another scope (here a "prod" batch). Only the in-scope span may leave.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search"))
       return json({ traces: [{ traceID: "aaa" }] });
 
@@ -2249,7 +2249,7 @@ test("a traces backfill streams newest-first pieces, one trace each, and a closi
   const { socket, sent } = observabilitySocket();
   const searchHits = tempoSearchHits(25);
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search")) return json({ traces: searchHits });
     const traceId = url.slice(url.lastIndexOf("/") + 1);
 
@@ -2296,7 +2296,7 @@ test("a traces backfill closes with the count of lookups Tempo could not serve",
   process.env.TEMPO_URL = "http://tempo.example";
   const { socket, sent } = observabilitySocket();
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search"))
       return json({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
     if (url.includes("/api/traces/aaa"))
@@ -2347,7 +2347,7 @@ test("an unsubscribe cancels the traces backfill still streaming for it", async 
   const searchHits = tempoSearchHits(25);
   let lookups = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search")) return json({ traces: searchHits });
     lookups += 1;
     await Bun.sleep(10);
@@ -2559,7 +2559,7 @@ async function backfillStepHours(
   const { socket, sent } = observabilitySocket();
   const hours: number[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const start = BigInt(new URL(String(input)).searchParams.get("start")!);
+    const start = BigInt(new URL(requestUrl(input)).searchParams.get("start")!);
     hours.push(
       Math.round(
         Number((BigInt(Date.now()) * 1_000_000n - start) / 1_000_000n) /
@@ -2711,7 +2711,7 @@ test("a traces backfill stops asking Tempo once the socket is gone", async () =>
   const searchHits = tempoSearchHits(25);
   let lookups = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search")) return json({ traces: searchHits });
     lookups += 1;
     // The tab closes while the first chunk is in flight.
@@ -3308,7 +3308,7 @@ test("proxyHttp never replays a POST to the next upstream after a network error"
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
-    calls.push(String(input));
+    calls.push(requestUrl(input));
     throw new Error("connection reset");
   }) as unknown as typeof fetch;
 
@@ -3504,10 +3504,15 @@ function countingNats(): {
   return { nats: nats, opened: (): number => opened, stopped: stopped };
 }
 
+/** Extracts a URL string from a fetch input without default object stringification. */
+function requestUrl(input: RequestInfo | URL): string {
+  return input instanceof Request ? input.url : input.toString();
+}
+
 /** Tempo answering a search with `hits`, then every by-id lookup with one root span. */
 function tempoFetch(hits: ReturnType<typeof tempoSearchHits>): typeof fetch {
   return (async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("/api/search")) return json({ traces: hits });
 
     return json({
@@ -3769,7 +3774,7 @@ test("a client that offers no subprotocol still upgrades", async () => {
     });
     expect(response.status).toBe(101);
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });
 

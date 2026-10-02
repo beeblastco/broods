@@ -30,8 +30,10 @@ test("compileProject bundles a servable hosted MCP server", async () => {
 test("compileProject rejects a handler that is not fetch-style", async () => {
   const cwd = await mcpFixture(`handler: 42,`);
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    "default export must be a fetch handler",
+  await Promise.resolve(
+    expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+      "default export must be a fetch handler",
+    ),
   );
 });
 
@@ -43,16 +45,20 @@ test("compileProject rejects a server that crashes on import", async () => {
     `throw new Error("boom at import");\n`,
   );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    "boom at import",
+  await Promise.resolve(
+    expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+      "boom at import",
+    ),
   );
 });
 
 test("compileProject rejects a server with neither url nor handler", async () => {
   const cwd = await mcpFixture("");
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    "needs url (external), handler (hosted) or sandbox (on a machine)",
+  await Promise.resolve(
+    expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+      "needs url (external), handler (hosted) or sandbox (on a machine)",
+    ),
   );
 });
 

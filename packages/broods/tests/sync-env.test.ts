@@ -10,7 +10,7 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
     baseUrl: "https://convex.example.com",
     token: "tok",
     fetch: async (input, init) => {
-      const url = String(input);
+      const url = requestUrl(input);
       calls.push({ url: url, method: (init?.method ?? "GET").toUpperCase() });
 
       return handler(url, init ?? {});
@@ -18,6 +18,11 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
   });
 
   return { client: client, calls: calls };
+}
+
+/** Extracts a URL string from a fetch input without default object stringification. */
+function requestUrl(input: RequestInfo | URL): string {
+  return input instanceof Request ? input.url : input.toString();
 }
 
 test("listEnv GETs the env collection and returns variable names", async () => {
@@ -124,9 +129,11 @@ test("removeEnv DELETEs the named env var", async () => {
 test("removeEnv throws on a non-ok response", async () => {
   const { client } = clientWith(() => new Response("nope", { status: 500 }));
 
-  await expect(
-    client.removeEnv("demo-app", "development", "X"),
-  ).rejects.toThrow("Remove environment variable failed");
+  await Promise.resolve(
+    expect(client.removeEnv("demo-app", "development", "X")).rejects.toThrow(
+      "Remove environment variable failed",
+    ),
+  );
 });
 
 // The backend keys the manifest route off the stage segment and rejects a
@@ -143,7 +150,10 @@ test("putManifest PUTs to the stage manifest route and sends manifest.stage", as
     baseUrl: "https://convex.example.com",
     token: "tok",
     fetch: async (input, init) => {
-      sent = { url: String(input), body: String(init?.body ?? "") };
+      sent = {
+        url: requestUrl(input),
+        body: typeof init?.body === "string" ? init.body : "",
+      };
 
       return new Response(
         JSON.stringify({ manifest: manifest, ids: {}, deployment: null }),

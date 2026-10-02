@@ -23,7 +23,7 @@ test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL"
   process.env.BROODS_TOKEN = "tok";
   process.env.BROODS_BASE_URL = "https://convex.example.com/";
 
-  const auth = await readStoredAuth();
+  const auth = readStoredAuth();
 
   expect(auth).toMatchObject({
     baseUrl: "https://convex.example.com",
@@ -37,7 +37,7 @@ test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from en
   process.env.BROODS_TOKEN = "env-only-token-sentinel";
   process.env.BROODS_DASHBOARD_URL = "https://dashboard.example.com";
 
-  const auth = await readStoredAuth();
+  const auth = readStoredAuth();
 
   // A dev machine may hold real stored-file auth, so assert the env pair
   // alone never authenticates rather than expecting null outright.

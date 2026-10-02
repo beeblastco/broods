@@ -262,7 +262,9 @@ test("a path on neither upstream is a 404", async () => {
 test("core routes only in-cluster callers use are a 404 at the public door", async () => {
   const forwarded: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    forwarded.push(new URL(String(input)).pathname);
+    forwarded.push(
+      new URL(input instanceof Request ? input.url : input.toString()).pathname,
+    );
 
     return new Response(null, { status: 204 });
   }) as typeof fetch;

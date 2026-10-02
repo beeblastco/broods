@@ -12,7 +12,7 @@ const servers: Bun.Server<undefined>[] = [];
 
 afterEach(async () => {
   for (const host of hosts.splice(0)) await host.stop();
-  for (const server of servers.splice(0)) server.stop(true);
+  for (const server of servers.splice(0)) await server.stop(true);
 });
 
 test("the host reads a .mcp.json, spawns the server on first use, lists and calls", async () => {
@@ -26,8 +26,10 @@ test("the host reads a .mcp.json, spawns the server on first use, lists and call
   expect(
     (await host.callTool("echo", "echo", { text: "pong" })).content,
   ).toEqual([{ type: "text", text: "echo: pong" }]);
-  await expect(host.listTools("nope")).rejects.toThrow(
-    'no MCP server named "nope"',
+  await Promise.resolve(
+    expect(host.listTools("nope")).rejects.toThrow(
+      'no MCP server named "nope"',
+    ),
   );
 });
 
@@ -62,17 +64,19 @@ test("a daemon started with --mcp advertises its servers and answers both frames
   });
   servers.push(core.server);
 
-  await expect(
-    runMachineDaemon({
-      credential: async (): Promise<string> => "key",
-      baseUrl: core.url,
-      cwd: process.cwd(),
-      log: () => {},
-      mcpFile: mcpFile(),
-      sandbox: "my-mac",
-      signal: new AbortController().signal,
-    }),
-  ).rejects.toThrow("Replaced by a newer connection");
+  await Promise.resolve(
+    expect(
+      runMachineDaemon({
+        credential: async (): Promise<string> => "key",
+        baseUrl: core.url,
+        cwd: process.cwd(),
+        log: () => {},
+        mcpFile: mcpFile(),
+        sandbox: "my-mac",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Replaced by a newer connection"),
+  );
 
   expect(core.received[0]).toMatchObject({ type: "hello", mcp: ["echo"] });
   expect(core.received[1]).toMatchObject({

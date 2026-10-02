@@ -24,8 +24,13 @@ test("client streams directly from core with apiKey auth", async () => {
   const client = new BroodsClient({
     apiKey: "test-key",
     fetch: async (input, init) => {
-      urls.push(String(input));
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      urls.push(requestUrl(input));
+      bodies.push(
+        JSON.parse(typeof init?.body === "string" ? init.body : "") as Record<
+          string,
+          unknown
+        >,
+      );
       expect(init?.headers).toMatchObject({
         Accept: "text/event-stream",
         Authorization: "Bearer test-key",
@@ -71,16 +76,18 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
       ),
   });
 
-  await expect(
-    client.run({
-      agentId: "agent_1",
-      eventId: "steer-2",
-      conversationKey: "conversation-1",
-      mode: "steer",
-      idempotencyKey: "operation-2",
-      input: "change direction",
-    }),
-  ).rejects.toBeInstanceOf(IngressAcceptedError);
+  await Promise.resolve(
+    expect(
+      client.run({
+        agentId: "agent_1",
+        eventId: "steer-2",
+        conversationKey: "conversation-1",
+        mode: "steer",
+        idempotencyKey: "operation-2",
+        input: "change direction",
+      }),
+    ).rejects.toBeInstanceOf(IngressAcceptedError),
+  );
 });
 
 test("client accepts host as a shorthand for https baseUrl", async () => {
@@ -89,7 +96,7 @@ test("client accepts host as a shorthand for https baseUrl", async () => {
     host: "core.example",
     apiKey: "test-key",
     fetch: async (input) => {
-      urls.push(String(input));
+      urls.push(requestUrl(input));
 
       return new Response(
         'data: {"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":0,"outputTokens":0,"totalTokens":0}}\n\n',
@@ -194,9 +201,10 @@ test("client starts async runs and exposes the run id for polling", async () => 
     apiKey: "runtime-key",
     fetch: async (input, init) => {
       calls.push({
-        url: String(input),
+        url: requestUrl(input),
         method: init?.method,
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        body:
+          typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
       });
 
       // Start and poll share the /v1/runs prefix, so dispatch on method.
@@ -250,8 +258,9 @@ test("client starts async runs through generated scoped agent references", async
     apiKey: "runtime-key",
     fetch: async (input, init) => {
       calls.push({
-        url: String(input),
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        url: requestUrl(input),
+        body:
+          typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
       });
 
       return Response.json(
@@ -306,9 +315,11 @@ test("runAsync rejects an accepted answer without a runId", async () => {
       ),
   });
 
-  await expect(
-    client.runAsync({ agentId: "agent_1", input: "hello" }),
-  ).rejects.toThrow("Async response missing runId");
+  await Promise.resolve(
+    expect(
+      client.runAsync({ agentId: "agent_1", input: "hello" }),
+    ).rejects.toThrow("Async response missing runId"),
+  );
 });
 
 test("client passes typed run overrides through async run bodies", async () => {
@@ -317,7 +328,9 @@ test("client passes typed run overrides through async run bodies", async () => {
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (_input, init) => {
-      bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+      bodies.push(
+        typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      );
 
       return Response.json(
         {
@@ -372,7 +385,9 @@ test("client defaults async conversation key to the generated event id", async (
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (_input, init) => {
-      bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+      bodies.push(
+        typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      );
 
       return Response.json(
         {
@@ -415,18 +430,22 @@ test("client rejects misrouted async SSE responses without dumping stream intern
       ),
   });
 
-  await expect(
-    client.runAsync({
-      agentId: "agent_1",
-      input: "hello",
-    }),
-  ).rejects.toThrow("server returned an SSE stream");
-  await expect(
-    client.runAsync({
-      agentId: "agent_1",
-      input: "hello",
-    }),
-  ).rejects.not.toThrow("secret conversation");
+  await Promise.resolve(
+    expect(
+      client.runAsync({
+        agentId: "agent_1",
+        input: "hello",
+      }),
+    ).rejects.toThrow("server returned an SSE stream"),
+  );
+  await Promise.resolve(
+    expect(
+      client.runAsync({
+        agentId: "agent_1",
+        input: "hello",
+      }),
+    ).rejects.not.toThrow("secret conversation"),
+  );
 });
 
 test("client polls async status by run id", async () => {
@@ -435,7 +454,7 @@ test("client polls async status by run id", async () => {
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
     fetch: async (input) => {
-      urls.push(String(input));
+      urls.push(requestUrl(input));
 
       return Response.json({ status: "completed", response: { ok: true } });
     },
@@ -450,3 +469,8 @@ test("client polls async status by run id", async () => {
     "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   ]);
 });
+
+/** Extracts a URL string from a fetch input without default object stringification. */
+function requestUrl(input: RequestInfo | URL): string {
+  return input instanceof Request ? input.url : input.toString();
+}

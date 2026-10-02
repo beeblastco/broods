@@ -8,7 +8,7 @@ function stubChannel(body: unknown, status = 200): { requests: string[] } {
   globalThis.fetch = (async (
     input: string | URL | Request,
   ): Promise<Response> => {
-    requests.push(String(input));
+    requests.push(input instanceof Request ? input.url : input.toString());
 
     return status === 200
       ? Response.json(body)
@@ -58,7 +58,9 @@ describe("thread directory", () => {
     const stub = stubChannel(null, 429);
     const directory = new ThreadDirectory("token-a");
 
-    await expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 429");
+    await Promise.resolve(
+      expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 429"),
+    );
     expect(stub.requests).toHaveLength(2);
   });
 
@@ -66,7 +68,9 @@ describe("thread directory", () => {
     const stub = stubChannel(null, 403);
     const directory = new ThreadDirectory("token-a");
 
-    await expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 403");
+    await Promise.resolve(
+      expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 403"),
+    );
     expect(stub.requests).toHaveLength(1);
   });
 

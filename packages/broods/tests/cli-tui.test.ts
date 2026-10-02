@@ -56,7 +56,9 @@ function testTransport(responses: Response[]): {
   const client = new BroodsClient({
     apiKey: "test-key",
     fetch: async (_input, init) => {
-      bodies.push(JSON.parse(String(init?.body)) as RunBody);
+      bodies.push(
+        JSON.parse(typeof init?.body === "string" ? init.body : "") as RunBody,
+      );
 
       return responses[bodies.length - 1] ?? sse();
     },
@@ -248,7 +250,7 @@ test("redirected output streams plain text without terminal escapes", async () =
       ),
   });
   const written: string[] = [];
-  const write = process.stdout.write;
+  const write = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: string) => {
     written.push(String(chunk));
 
@@ -284,7 +286,9 @@ test("a failed run is re-sent, not silently dropped from the conversation", asyn
   const client = new BroodsClient({
     apiKey: "test-key",
     fetch: async (_input, init) => {
-      bodies.push(JSON.parse(String(init?.body)) as RunBody);
+      bodies.push(
+        JSON.parse(typeof init?.body === "string" ? init.body : "") as RunBody,
+      );
       if (bodies.length === 1) return new Response("nope", { status: 503 });
 
       return sse({ type: "finish", finishReason: "stop" });

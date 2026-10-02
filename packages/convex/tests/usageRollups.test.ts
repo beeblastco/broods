@@ -98,7 +98,7 @@ test("recordTaskUsage folds each sample into 5m, hour, and day buckets", async (
   expect(
     byGrain("5m")
       .map((row) => row.bucketStart)
-      .sort(),
+      .sort((a, b) => a - b),
   ).toEqual([Date.UTC(2026, 0, 15, 13, 5), Date.UTC(2026, 0, 15, 13, 15)]);
   expect(byGrain("hour")).toMatchObject([
     {

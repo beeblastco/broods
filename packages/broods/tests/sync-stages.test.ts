@@ -10,7 +10,7 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
     baseUrl: "https://convex.example.com",
     token: "tok",
     fetch: async (input, init) => {
-      const url = String(input);
+      const url = input instanceof Request ? input.url : input.toString();
       calls.push({
         url: url,
         method: (init?.method ?? "GET").toUpperCase(),
@@ -97,8 +97,10 @@ test("createStage surfaces the server error message", async () => {
       }),
   );
 
-  await expect(client.createStage("demo-app", "staging")).rejects.toThrow(
-    /Stage Staging already exists/,
+  await Promise.resolve(
+    expect(client.createStage("demo-app", "staging")).rejects.toThrow(
+      /Stage Staging already exists/,
+    ),
   );
 });
 
@@ -110,8 +112,10 @@ test("listStages rejects a non-JSON 404 as a missing stages route", async () => 
     () => new Response("Not Found", { status: 404 }),
   );
 
-  await expect(client.listStages("demo-app")).rejects.toThrow(
-    /no \/v1\/account\/stages route yet/,
+  await Promise.resolve(
+    expect(client.listStages("demo-app")).rejects.toThrow(
+      /no \/v1\/account\/stages route yet/,
+    ),
   );
 });
 
@@ -127,8 +131,10 @@ test("listStages surfaces a JSON 404 as a normal request failure", async () => {
       ),
   );
 
-  await expect(client.listStages("demo-app")).rejects.toThrow(
-    /Project demo-app was not found/,
+  await Promise.resolve(
+    expect(client.listStages("demo-app")).rejects.toThrow(
+      /Project demo-app was not found/,
+    ),
   );
 });
 
@@ -141,7 +147,9 @@ test("a 401 tells the user to log in again", async () => {
       }),
   );
 
-  await expect(client.listStages("demo-app")).rejects.toThrow(
-    "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
+  await Promise.resolve(
+    expect(client.listStages("demo-app")).rejects.toThrow(
+      "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
+    ),
   );
 });

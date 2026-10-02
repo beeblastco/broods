@@ -102,9 +102,11 @@ describe("forwarding a room message", () => {
   it("survives a webhook rejecting the delivery", async () => {
     captureFetch(500);
 
-    await expect(
-      forwardRoomEvent(event, "token-a", TARGETS),
-    ).resolves.toBeUndefined();
+    await Promise.resolve(
+      expect(
+        forwardRoomEvent(event, "token-a", TARGETS),
+      ).resolves.toBeUndefined(),
+    );
   });
 });
 
@@ -115,9 +117,9 @@ function captureFetch(status = 200): Capture[] {
     init?: RequestInit,
   ): Promise<Response> => {
     calls.push({
-      body: JSON.parse(String(init?.body)),
+      body: JSON.parse(typeof init?.body === "string" ? init.body : ""),
       headers: (init?.headers ?? {}) as Record<string, string>,
-      url: String(input),
+      url: input instanceof Request ? input.url : input.toString(),
     });
 
     return new Response("", { status: status });

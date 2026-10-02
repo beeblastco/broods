@@ -36,11 +36,11 @@ function recordingClient(): { client: BroodsSyncClient; sent: SentRequest[] } {
     baseUrl: "https://convex.example.com",
     token: "tok",
     fetch: async (input, init) => {
-      const url = String(input);
+      const url = input instanceof Request ? input.url : input.toString();
       sent.push({
         url: url,
         method: (init?.method ?? "GET").toUpperCase(),
-        body: String(init?.body ?? ""),
+        body: typeof init?.body === "string" ? init.body : "",
       });
       if (url.endsWith("/mcp-bundle-uploads")) {
         return new Response(

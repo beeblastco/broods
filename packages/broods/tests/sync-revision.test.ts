@@ -44,8 +44,10 @@ test("a manifest conflict is its own error, another 409 is not", async () => {
     ),
   );
 
-  await expect(conflict.putManifest(MANIFEST, false, false, 5)).rejects.toThrow(
-    ManifestConflictError,
+  await Promise.resolve(
+    expect(conflict.putManifest(MANIFEST, false, false, 5)).rejects.toThrow(
+      ManifestConflictError,
+    ),
   );
   const error = await nameClash
     .putManifest(MANIFEST, false)

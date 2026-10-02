@@ -9,9 +9,9 @@ const macOnly = test.skipIf(process.platform !== "darwin");
 const drivers: DesktopDriver[] = [];
 const servers: Bun.Server<undefined>[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const driver of drivers.splice(0)) driver.stop();
-  for (const server of servers.splice(0)) server.stop(true);
+  for (const server of servers.splice(0)) await server.stop(true);
 });
 
 macOnly(
@@ -60,17 +60,19 @@ macOnly(
     );
     servers.push(core.server);
 
-    await expect(
-      runMachineDaemon({
-        credential: async (): Promise<string> => "key",
-        baseUrl: core.url,
-        computer: true,
-        cwd: process.cwd(),
-        log: () => {},
-        sandbox: "my-mac",
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("Replaced by a newer connection");
+    await Promise.resolve(
+      expect(
+        runMachineDaemon({
+          credential: async (): Promise<string> => "key",
+          baseUrl: core.url,
+          computer: true,
+          cwd: process.cwd(),
+          log: () => {},
+          sandbox: "my-mac",
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow("Replaced by a newer connection"),
+    );
 
     expect(core.received[0]).toMatchObject({ type: "hello", computer: true });
     expect(core.received[1]).toMatchObject({
