@@ -58,6 +58,10 @@ export class SandboxCapacityError extends Error {}
  */
 export class SandboxGoneError extends Error {}
 
+// Past the exec server's own `timeout_ms`: it answers `timed_out` itself, so
+// the client deadline only covers a server that never answers.
+export const EXEC_GRACE_MS = 15_000;
+
 // A `SandboxExecResponse` (the lambda-sandbox image's and a custom server's
 // answer) as a run result, with the output held to the request's limit.
 export function execRunResult(
@@ -84,6 +88,21 @@ export function execRunResult(
       ? { cpuUsec: response.cpu_usec }
       : {}),
   };
+}
+
+// The body of a 2xx exec answer as the contract. The shape is the server's
+// word; only "is a JSON object" is checked here, like every provider SDK answer.
+export function parseExecResponse(
+  bodyText: string,
+  label: string,
+): SandboxExecResponse {
+  if (!bodyText) throw new Error(`${label} returned an empty response`);
+  const parsed: unknown = JSON.parse(bodyText);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error(`${label} response must be a JSON object`);
+  }
+
+  return parsed as SandboxExecResponse;
 }
 
 export function configString(value: unknown): string | undefined {

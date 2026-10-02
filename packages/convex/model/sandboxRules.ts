@@ -7,20 +7,19 @@
 import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
+import {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+  type SandboxProvider,
+} from "./sandboxProviders";
 import { assertStorageEndpoint } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
-// The one list core's executor registry, the Convex validator and the SDK
-// derive from. `custom` is an account's own server on the exec contract.
-export const SANDBOX_PROVIDERS = [
-  "sandbox",
-  "lambda",
-  "e2b",
-  "daytona",
-  "vercel",
-  "machine",
-  "custom",
-] as const;
+export {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+  type SandboxProvider,
+} from "./sandboxProviders";
 
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
 export const SANDBOX_PERMISSION_MODES = ["edit", "ask", "bypass"] as const;
@@ -54,8 +53,6 @@ const LAMBDA_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
   "workspaceRoot",
 ]);
-
-export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
 
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
 
@@ -191,7 +188,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
   // A machine is one computer, and a custom server's endpoint lives in
   // `options`, which does not carry over to the fallback.
-  if (fallbackProvider === "machine" || fallbackProvider === "custom") {
+  if (fallbackProvider && STATELESS_SANDBOX_PROVIDERS.has(fallbackProvider)) {
     throw new ClientError(
       `config.fallbackProvider cannot be ${fallbackProvider}`,
     );
@@ -304,14 +301,14 @@ function assertEnvVarsAndOptions(
     validateProviderOptions(provider, config.options);
   }
   if (provider === "custom") {
-    assertCustomOptions(config.options);
+    assertCustomOptions(config.options ?? {});
   }
 }
 
 // A custom server is reached by one URL and nothing else, so the endpoint is
 // the one required option. A `${NAME}` token is fine; a placeholder URL is not.
-function assertCustomOptions(options: unknown): void {
-  if (!isPlainObject(options) || typeof options.endpoint !== "string") {
+function assertCustomOptions(options: Record<string, unknown>): void {
+  if (typeof options.endpoint !== "string") {
     throw new ClientError(
       "config.options.endpoint is required for the custom provider: the https URL of your sandbox server",
     );
@@ -422,13 +419,12 @@ function assertRuntimes(value: unknown): void {
   }
 }
 
-// A machine is the user's computer and a custom server is one POST per run:
-// neither is sized, snapshotted or reserved by Broods.
+// A stateless provider is never sized, snapshotted or reserved by Broods.
 function assertStatelessProviderFields(
   config: Record<string, unknown>,
   provider: SandboxProvider,
 ): void {
-  if (provider !== "machine" && provider !== "custom") return;
+  if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
   for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
     if (config[field] !== undefined) {
       throw new ClientError(

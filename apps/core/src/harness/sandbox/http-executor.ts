@@ -6,15 +6,11 @@
  * workspace mount, lifecycle or background job here.
  */
 
-import type {
-  SandboxExecRequest,
-  SandboxExecResponse,
-} from "../../shared/domain/sandbox-config.ts";
+import type { SandboxExecRequest } from "../../shared/domain/sandbox-config.ts";
 import {
   assertPublicHttpsUrl,
   type PinnedFetchTransport,
 } from "../../shared/http.ts";
-import { isPlainObject } from "../../shared/object.ts";
 import { guardedFetch } from "../isolate/runner/pinned-fetch.mjs";
 import type {
   SandboxExecutor,
@@ -24,15 +20,14 @@ import type {
 } from "./types.ts";
 import {
   configString,
+  EXEC_GRACE_MS,
   execRunResult,
   mergeSandboxEnv,
+  parseExecResponse,
   stringRecord,
 } from "./utils.ts";
 
 const PROVIDER = "custom" as const;
-// The server enforces `timeout_ms` itself and answers `timed_out`; the client
-// deadline only covers a server that never answers.
-const EXEC_GRACE_MS = 15_000;
 
 /** Test seams: the pinned fetch's injectable options and a shorter client grace. */
 export interface HttpSandboxExecutorSeams {
@@ -44,8 +39,6 @@ export class HttpSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
   readonly #seams: HttpSandboxExecutorSeams;
 
-  // Production passes no seams, so the socket opens to the validated address
-  // and TLS verifies against the system roots.
   constructor(
     config: SandboxExecutorConfig,
     seams: HttpSandboxExecutorSeams = {},
@@ -56,9 +49,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+    const options = this.#config.options ?? {};
     const endpoint = configString(options.endpoint);
     if (!endpoint) {
       throw new Error("custom sandbox needs options.endpoint");
@@ -82,9 +73,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
       {
         method: "POST",
         headers: {
-          ...(isPlainObject(options.headers)
-            ? stringRecord(options.headers)
-            : {}),
+          ...stringRecord(options.headers),
           "content-type": "application/json",
           ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
@@ -101,16 +90,10 @@ export class HttpSandboxExecutor implements SandboxExecutor {
         `custom sandbox exec failed (${response.status}): ${response.bodyText}`,
       );
     }
-    const parsed: unknown = response.bodyText
-      ? JSON.parse(response.bodyText)
-      : null;
-    if (!isPlainObject(parsed)) {
-      throw new Error("custom sandbox exec response must be a JSON object");
-    }
 
     return execRunResult(
       request,
-      parsed as unknown as SandboxExecResponse,
+      parseExecResponse(response.bodyText, "custom sandbox exec"),
       PROVIDER,
       startedAt,
     );

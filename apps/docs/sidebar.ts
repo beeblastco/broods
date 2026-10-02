@@ -47,7 +47,7 @@ const sidebars: SidebarsConfig = {
             },
             {
               type: "doc",
-              id: "guides/custom-sandbox-provider",
+              id: "guides/sandboxes/custom",
               label: "Your own server",
             },
           ],

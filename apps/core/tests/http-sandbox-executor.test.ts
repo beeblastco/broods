@@ -6,7 +6,6 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { createServer as createHttpsServer, type Server } from "node:https";
 import {
   HttpSandboxExecutor,
   type HttpSandboxExecutorSeams,
@@ -16,7 +15,7 @@ import type {
   SandboxRunRequest,
 } from "../src/harness/sandbox/types.ts";
 import type { SandboxExecResponse } from "../src/shared/domain/sandbox-config.ts";
-import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
+import { loopbackTransport, withLoopbackTlsServer } from "./helpers/tls.ts";
 
 interface Received {
   body: string;
@@ -155,21 +154,7 @@ function run(overrides: Partial<SandboxRunRequest> = {}): SandboxRunRequest {
 }
 
 function seams(): HttpSandboxExecutorSeams {
-  return {
-    transport: {
-      allowAddresses: ["127.0.0.1"],
-      ca: TLS_CERT,
-      lookup: async (
-        hostname: string,
-      ): Promise<{ address: string; family: number }[]> => {
-        if (hostname !== "public.test") {
-          throw new Error(`no test DNS entry for ${hostname}`);
-        }
-
-        return [{ address: "127.0.0.1", family: 4 }];
-      },
-    },
-  };
+  return { transport: loopbackTransport() };
 }
 
 // A null answer never responds, so the client deadline is what ends the call.
@@ -179,8 +164,7 @@ async function withExecServer(
   test: (endpoint: string, received: Received[]) => Promise<void>,
 ): Promise<void> {
   const received: Received[] = [];
-  const server: Server = createHttpsServer(
-    { cert: TLS_CERT, key: TLS_KEY },
+  await withLoopbackTlsServer(
     (request, response) => {
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -202,16 +186,6 @@ async function withExecServer(
         response.end(JSON.stringify(answer));
       });
     },
+    (origin) => test(`${origin}/`, received),
   );
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address !== "object") {
-    throw new Error("test server has no port");
-  }
-  try {
-    await test(`https://public.test:${address.port}/`, received);
-  } finally {
-    server.closeAllConnections();
-    server.close();
-  }
 }

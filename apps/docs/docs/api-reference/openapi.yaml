@@ -1663,7 +1663,7 @@ paths:
                             custom,
                           ],
                         default: sandbox,
-                        description: "Compute backend. Defaults to sandbox (the workdir backend). On the hosted platform no per-sandbox options are needed; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec): stateless, never persistent, never backs a workspace, and runs on your compute, so it is never metered or budgeted.",
+                        description: "Compute backend. Defaults to sandbox (the workdir backend). On the hosted platform no per-sandbox options are needed; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec), stateless and on your compute, so never metered; see the Your own server guide for what it refuses.",
                       }
                     network:
                       type: object

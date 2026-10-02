@@ -453,17 +453,13 @@ describe("createSandboxExecutor", () => {
     ).toBe("WorkdirSandboxExecutor");
   });
 
-  it("throws on a provider nobody registered, and takes a registered one", () => {
+  it("throws on a stored provider this build does not know", () => {
     const {
       createSandboxExecutor,
-      registerSandboxProvider,
     } = require("../src/harness/sandbox/index.ts");
     expect(() => createSandboxExecutor({ provider: "nope" })).toThrow(
       "sandbox provider nope is not supported",
     );
-    const executor = { run: async () => ({ ok: true }) };
-    registerSandboxProvider("nope", () => executor);
-    expect(createSandboxExecutor({ provider: "nope" })).toBe(executor);
   });
 
   it("runs a MicroVM and mounts the workspace via the run-hook payload when a namespace is present", async () => {

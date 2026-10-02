@@ -8,6 +8,7 @@
  * workspaceId read and write the SAME files.
  */
 
+import { STATELESS_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxRules";
 import type {
   ChannelPartition,
   AgentConfig,
@@ -393,16 +394,16 @@ export function workspaceNamespacesForAccount(
   );
 }
 
-// The file tools need the workspace's S3 mount. A machine has none (they would act
-// on the daemon's own disk), a custom server is never handed mount credentials,
-// and a MicroVM network other than allow-all only routes to the managed bucket,
-// so it can never mount a bucket the workspace names itself.
+// The file tools need the workspace's S3 mount. A stateless provider has none (a
+// machine's would act on the daemon's own disk, a custom server is never handed
+// mount credentials), and a MicroVM network other than allow-all only routes to
+// the managed bucket, so it can never mount a bucket the workspace names itself.
 function assertSandboxReachesWorkspace(
   workspaceName: string,
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
 ): void {
-  if (sandbox?.provider === "machine" || sandbox?.provider === "custom") {
+  if (sandbox && STATELESS_SANDBOX_PROVIDERS.has(sandbox.provider)) {
     throw new Error(
       `Workspace "${workspaceName}" cannot run on a ${sandbox.provider} sandbox; give it its own sandbox or set sandbox: null`,
     );

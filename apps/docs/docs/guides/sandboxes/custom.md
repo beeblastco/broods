@@ -125,4 +125,4 @@ This runs commands as the server's own user with no isolation. It is a starting 
 
 The same contract is what the `lambda` provider speaks to its MicroVM image. That server, [lambda-sanbdox](https://github.com/beeblastco/lambda-sanbdox), is written in Rust and adds what a shared box needs: a fresh working directory per request, a cleared process environment, output capture with truncation, exact CPU accounting and the `python` and `node` runtimes. Run its container on your own hosts and point `options.endpoint` at it.
 
-To add a provider to Broods itself rather than run one over HTTP, see [Sandbox internals](../internals/sandboxes.md#contribute-a-provider).
+To add a provider to Broods itself rather than run one over HTTP, see [Sandbox internals](../../internals/sandboxes.md#contribute-a-provider).

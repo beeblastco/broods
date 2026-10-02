@@ -247,7 +247,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `outputLimitBytes`     | 65536      | Output kept per call                                                                                                           |
 | `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey` |
 
-`custom` runs `bash` on your own server through one HTTP contract: `options.endpoint` (public https, required), `options.token` (sent as a bearer) and `options.headers`. It is stateless, so `persistent`, `size`, `snapshot` and `memoryLimit` are rejected, it cannot back a workspace or be a `fallbackProvider`, and `network.mode` must be `allow-all`. See [Custom sandbox provider](../guides/custom-sandbox-provider.md).
+`custom` runs `bash` on your own server through one HTTP contract, named by `options.endpoint`; what it accepts and refuses is on [Your own server](../guides/sandboxes/custom.md).
 
 ```ts
 export const lambdaSandbox = defineSandbox({

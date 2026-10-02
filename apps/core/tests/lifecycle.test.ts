@@ -6,9 +6,7 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { createServer as createHttpsServer, type Server } from "node:https";
-import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
-import type { PinnedFetchTransport } from "../src/shared/http.ts";
+import { loopbackTransport, withLoopbackTlsServer } from "./helpers/tls.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
@@ -147,7 +145,7 @@ describe("createAgentLifecycleEmitter", () => {
             ],
           },
         },
-        transport(),
+        loopbackTransport(),
       );
 
       await emitter.emit("agent.started", {
@@ -193,7 +191,7 @@ describe("createAgentLifecycleEmitter", () => {
             ],
           },
         },
-        transport(),
+        loopbackTransport(),
       );
 
       await emitter.emit("agent.started", {});
@@ -213,7 +211,7 @@ describe("createAgentLifecycleEmitter", () => {
             webhooks: [{ enabled: true, url: url("/hook"), secret: "secret" }],
           },
         },
-        transport(),
+        loopbackTransport(),
       );
 
       await emitter.emit("tool.call.started", { stepNumber: 1 });
@@ -235,7 +233,7 @@ describe("createAgentLifecycleEmitter", () => {
               ],
             },
           },
-          transport(),
+          loopbackTransport(),
         );
 
         // A rejected delivery must not propagate out of emit.
@@ -256,7 +254,7 @@ describe("createAgentLifecycleEmitter", () => {
             webhooks: [{ enabled: true, url: url("/hook"), secret: "secret" }],
           },
         },
-        transport(),
+        loopbackTransport(),
       );
 
       await emitter.emit("agent.started", {});
@@ -279,7 +277,7 @@ describe("createAgentLifecycleEmitter", () => {
           fireWebhook(
             { url: url("/hook"), secret: "secret" },
             { type: "agent.started" },
-            transport(),
+            loopbackTransport(),
           ),
         ).rejects.toThrow(/redirect limit exceeded/);
       },
@@ -313,7 +311,7 @@ describe("createAgentLifecycleEmitter", () => {
             webhooks: [{ enabled: true, url: url("/hook"), secret: "secret" }],
           },
         },
-        transport(),
+        loopbackTransport(),
       );
 
       await emitter.emit("agent.started", {});
@@ -359,31 +357,12 @@ describe("toLifecycleValue", () => {
   });
 });
 
-// Only loopback is exempted; every other address still meets the real denylist,
-// so these tests exercise the same guard production runs.
-function transport(): PinnedFetchTransport {
-  return {
-    allowAddresses: ["127.0.0.1"],
-    ca: TLS_CERT,
-    lookup: async (
-      hostname: string,
-    ): Promise<{ address: string; family: number }[]> => {
-      if (hostname !== "public.test") {
-        throw new Error(`no test DNS entry for ${hostname}`);
-      }
-
-      return [{ address: "127.0.0.1", family: 4 }];
-    },
-  };
-}
-
 async function withWebhookServer(
   run: (url: (path: string) => string, deliveries: Delivery[]) => Promise<void>,
   options: { location?: string; status?: number } = {},
 ): Promise<void> {
   const deliveries: Delivery[] = [];
-  const server: Server = createHttpsServer(
-    { cert: TLS_CERT, key: TLS_KEY },
+  await withLoopbackTlsServer(
     (request, response) => {
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -402,19 +381,6 @@ async function withWebhookServer(
         response.end();
       });
     },
+    (origin) => run((path) => `${origin}${path}`, deliveries),
   );
-
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address !== "object") {
-    throw new Error("test server has no port");
-  }
-  try {
-    await run(
-      (path) => `https://public.test:${address.port}${path}`,
-      deliveries,
-    );
-  } finally {
-    server.close();
-  }
 }

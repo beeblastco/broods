@@ -114,7 +114,6 @@ import type * as model_roleRules from "../model/roleRules.js";
 import type * as model_s3 from "../model/s3.js";
 import type * as model_sandboxConfigSync from "../model/sandboxConfigSync.js";
 import type * as model_sandboxDisplayConfig from "../model/sandboxDisplayConfig.js";
-import type * as model_sandboxExec from "../model/sandboxExec.js";
 import type * as model_sandboxRules from "../model/sandboxRules.js";
 import type * as model_serviceBridge from "../model/serviceBridge.js";
 import type * as model_skillRules from "../model/skillRules.js";
@@ -263,7 +262,6 @@ declare const fullApi: ApiFromModules<{
   "model/s3": typeof model_s3;
   "model/sandboxConfigSync": typeof model_sandboxConfigSync;
   "model/sandboxDisplayConfig": typeof model_sandboxDisplayConfig;
-  "model/sandboxExec": typeof model_sandboxExec;
   "model/sandboxRules": typeof model_sandboxRules;
   "model/serviceBridge": typeof model_serviceBridge;
   "model/skillRules": typeof model_skillRules;

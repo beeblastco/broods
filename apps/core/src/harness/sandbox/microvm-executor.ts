@@ -80,8 +80,10 @@ import type {
 } from "./types.ts";
 import {
   configString,
+  EXEC_GRACE_MS,
   execRunResult,
   mergeSandboxEnv,
+  parseExecResponse,
   SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
@@ -107,9 +109,6 @@ const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // warm VM answers in well under this; anything slower is a restore the authoritative
 // path handles with the full budget, or a VM that is gone.
 const CACHED_WARMUP_BUDGET_MS = 1_200;
-// Past the guest's own timeout: it answers timed_out itself, the signal only
-// covers a proxy that never answers.
-const EXEC_GRACE_MS = 15_000;
 // The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",
@@ -1151,13 +1150,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         `MicroVM exec failed (${res.status}): ${text || res.statusText}`,
       );
     }
-    if (!text) throw new Error("MicroVM exec returned an empty response");
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error("MicroVM exec response must be an object");
-    }
 
-    return { retry: false, response: parsed as SandboxExecResponse };
+    return { retry: false, response: parseExecResponse(text, "MicroVM exec") };
   }
 
   async #authToken(

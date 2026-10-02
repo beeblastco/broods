@@ -1,7 +1,8 @@
 /**
  * Sandbox provider registry and executor construction. A provider is one
- * executor file beside this one plus one `registerSandboxProvider` call below;
- * the config plane's `SANDBOX_PROVIDERS` is what names it.
+ * executor file beside this one plus one entry in `EXECUTORS` below; the
+ * config plane's `SANDBOX_PROVIDERS` is what names it, and the record's key
+ * type fails the build when the two drift.
  */
 
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
@@ -20,11 +21,22 @@ import type {
 import { VercelSandboxExecutor } from "./vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "./workdir-executor.ts";
 
+// The explicit imports are what pull each executor into the compiled binary,
+// like the tool registry in tools/index.ts. "lambda" is the AWS Lambda MicroVM
+// backend (the old 4-stage invoke model is gone).
 type SandboxExecutorFactory = (
   config: SandboxExecutorConfig,
 ) => SandboxExecutor;
 
-const factories = new Map<SandboxProvider, SandboxExecutorFactory>();
+const EXECUTORS: Record<SandboxProvider, SandboxExecutorFactory> = {
+  custom: (config) => new HttpSandboxExecutor(config),
+  daytona: (config) => new DaytonaSandboxExecutor(config),
+  e2b: (config) => new E2BSandboxExecutor(config),
+  lambda: (config) => new MicrovmSandboxExecutor(config),
+  machine: (config) => new MachineSandboxExecutor(config),
+  sandbox: (config) => new WorkdirSandboxExecutor(config),
+  vercel: (config) => new VercelSandboxExecutor(config),
+};
 
 /**
  * The executor for a sandbox config. When the config names its account and
@@ -73,47 +85,19 @@ export function createSandboxExecutor(
   return executor;
 }
 
-/** Names a provider's executor factory; a later call for the same name replaces it. */
-export function registerSandboxProvider(
-  name: SandboxProvider,
-  factory: SandboxExecutorFactory,
-): void {
-  factories.set(name, factory);
-}
-
-function providerExecutor(config: SandboxExecutorConfig): SandboxExecutor {
-  // provider is required and always resolved by normalizeSandboxConfig; never
-  // silently default here so a misconfigured config fails loudly.
-  const factory = factories.get(config.provider);
+/**
+ * The bare executor for a config's provider, with no budget check: what
+ * cleanup releases through. A stored config may still name a provider this
+ * build does not know, so it fails loudly rather than defaulting.
+ */
+export function providerExecutor(
+  config: SandboxExecutorConfig,
+): SandboxExecutor {
+  const factory: SandboxExecutorFactory | undefined =
+    EXECUTORS[config.provider];
   if (!factory) {
     throw new Error(`sandbox provider ${config.provider} is not supported`);
   }
 
   return factory(config);
 }
-
-// Built-ins register at module load. The explicit imports above are what pull
-// each executor into the compiled binary, like the tool registry in tools/index.ts.
-// "lambda" is the AWS Lambda MicroVM backend (the old 4-stage invoke model is gone).
-registerSandboxProvider("custom", (config) => new HttpSandboxExecutor(config));
-registerSandboxProvider(
-  "daytona",
-  (config) => new DaytonaSandboxExecutor(config),
-);
-registerSandboxProvider("e2b", (config) => new E2BSandboxExecutor(config));
-registerSandboxProvider(
-  "lambda",
-  (config) => new MicrovmSandboxExecutor(config),
-);
-registerSandboxProvider(
-  "machine",
-  (config) => new MachineSandboxExecutor(config),
-);
-registerSandboxProvider(
-  "sandbox",
-  (config) => new WorkdirSandboxExecutor(config),
-);
-registerSandboxProvider(
-  "vercel",
-  (config) => new VercelSandboxExecutor(config),
-);
