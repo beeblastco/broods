@@ -1,5 +1,7 @@
 import { dns } from "bun";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
+import { requestUrl } from "./helpers/http.ts";
 import {
   assertPublicHttpsUrl,
   publicHostFetch,
@@ -77,13 +79,13 @@ describe("publicHostFetch", () => {
   });
 
   it("refuses private hostnames and literal private addresses before connecting", async () => {
-    await expect(publicHostFetch("https://localhost/v1")).rejects.toThrow(
+    await expectAsync(publicHostFetch("https://localhost/v1")).rejects.toThrow(
       /private address/,
     );
-    await expect(publicHostFetch("https://10.0.0.8/v1")).rejects.toThrow(
+    await expectAsync(publicHostFetch("https://10.0.0.8/v1")).rejects.toThrow(
       /private address/,
     );
-    await expect(
+    await expectAsync(
       publicHostFetch(new Request("https://169.254.169.254/latest")),
     ).rejects.toThrow(/private address/);
   });
@@ -94,7 +96,7 @@ describe("publicHostFetch", () => {
       { address: "10.0.0.8", family: 4, ttl: 30 },
     ]);
     try {
-      await expect(
+      await expectAsync(
         publicHostFetch("https://api.example.com/v1/chat"),
       ).rejects.toThrow(/resolves to a private address/);
     } finally {
@@ -108,7 +110,7 @@ describe("publicHostFetch", () => {
     ]);
     const calls: Array<{ url: string; init: BunFetchRequestInit }> = [];
     globalThis.fetch = (async (input, init) => {
-      calls.push({ url: String(input), init: init ?? {} });
+      calls.push({ url: requestUrl(input), init: init ?? {} });
 
       return new Response("ok");
     }) as typeof fetch;
@@ -138,7 +140,7 @@ describe("publicHostFetch", () => {
     ]);
     const calls: Array<{ url: string; init: BunFetchRequestInit }> = [];
     globalThis.fetch = (async (input, init) => {
-      calls.push({ url: String(input), init: init ?? {} });
+      calls.push({ url: requestUrl(input), init: init ?? {} });
 
       return new Response("ok");
     }) as typeof fetch;
@@ -169,7 +171,7 @@ describe("publicHostFetch", () => {
     ]);
     const urls: string[] = [];
     globalThis.fetch = (async (input) => {
-      urls.push(String(input));
+      urls.push(requestUrl(input));
 
       return new Response("ok");
     }) as typeof fetch;
@@ -196,7 +198,7 @@ describe("publicHostFetch", () => {
       ]);
     const urls: string[] = [];
     globalThis.fetch = (async (input) => {
-      urls.push(String(input));
+      urls.push(requestUrl(input));
       if (urls.length === 1) {
         throw new Error("connection refused");
       }
@@ -204,7 +206,7 @@ describe("publicHostFetch", () => {
       return new Response("ok");
     }) as typeof fetch;
     try {
-      await expect(
+      await expectAsync(
         publicHostFetch("https://api.example.com/v1/chat"),
       ).rejects.toThrow("connection refused");
       await publicHostFetch("https://api.example.com/v1/chat");

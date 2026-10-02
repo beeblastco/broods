@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
+import { requestBodyText } from "./helpers/http.ts";
 import type {
   SandboxExecutorConfig,
   SandboxRunRequest,
@@ -71,15 +73,18 @@ function vercelSandbox(name = "vercel-sandbox") {
     delete: vercelDeleteMock,
   };
 }
-const vercelCreateMock = mock(async (options: Record<string, unknown>) =>
-  vercelSandbox(String(options.name ?? "ephemeral")),
+const vercelCreateMock = mock(
+  async (options: Record<string, unknown> & { name?: string }) =>
+    vercelSandbox(options.name ?? "ephemeral"),
 );
-const vercelGetMock = mock(async (options: Record<string, unknown>) => {
-  const sandbox = vercelSandbox(String(options.name ?? "stored"));
-  if (typeof options.onResume === "function") await options.onResume(sandbox);
+const vercelGetMock = mock(
+  async (options: Record<string, unknown> & { name?: string }) => {
+    const sandbox = vercelSandbox(options.name ?? "stored");
+    if (typeof options.onResume === "function") await options.onResume(sandbox);
 
-  return sandbox;
-});
+    return sandbox;
+  },
+);
 function vercelCommandIncludes(text: string): boolean {
   return vercelRunCommandMock.mock.calls.some((call) => {
     const params = call[0] as { args?: string[] } | undefined;
@@ -253,7 +258,7 @@ const logStreamPattern = (
   new RegExp(
     `^${accountId}/${project}/${stage}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/[0-9a-f]{16})?$`,
   );
-mock.module("e2b", () => ({
+await mock.module("e2b", () => ({
   Sandbox: {
     create: e2bCreateMock,
     connect: e2bConnectMock,
@@ -261,7 +266,7 @@ mock.module("e2b", () => ({
   },
 }));
 
-mock.module("@daytona/sdk", () => ({
+await mock.module("@daytona/sdk", () => ({
   Daytona: class {
     constructor(options: Record<string, unknown>) {
       daytonaClientOptionsSeen.push(options);
@@ -276,14 +281,14 @@ mock.module("@daytona/sdk", () => ({
   },
 }));
 
-mock.module("@vercel/sandbox", () => ({
+await mock.module("@vercel/sandbox", () => ({
   Sandbox: {
     create: vercelCreateMock,
     get: vercelGetMock,
   },
 }));
 
-mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxReleaseTarget: mock(async () => ({
     externalId: null,
     instance: null,
@@ -295,13 +300,13 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 
-mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   recordSandboxBurst: recordSandboxBurstMock,
   removeSandboxInstance: removeSandboxInstanceMock,
   upsertSandboxInstance: upsertSandboxInstanceMock,
 }));
 
-mock.module("@aws-sdk/client-lambda-microvms", () => ({
+await mock.module("@aws-sdk/client-lambda-microvms", () => ({
   LambdaMicrovms: class {
     send = microvmSendMock;
   },
@@ -316,7 +321,7 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   ResumeMicrovmCommand: microvmCommand("ResumeMicrovm"),
 }));
 
-mock.module("@aws-sdk/client-sts", () => ({
+await mock.module("@aws-sdk/client-sts", () => ({
   STSClient: class {
     send = stsSendMock;
   },
@@ -695,7 +700,7 @@ describe("createSandboxExecutor", () => {
       "arn:aws:lambda:eu-west-1:123456789012:microvm-image:curated",
       "img_curated_python",
     ]) {
-      await expect(
+      await expectAsync(
         createSandboxExecutor({
           provider: "lambda",
           snapshot: snapshot,
@@ -769,7 +774,7 @@ describe("createSandboxExecutor", () => {
     });
     microvmExecPayload = { ...microvmExecPayload, truncated: true };
 
-    await expect(
+    await expectAsync(
       executor.runHarnessCommand({
         microvmId: created.microvmId,
         endpoint: created.endpoint,
@@ -1146,11 +1151,11 @@ describe("createSandboxExecutor", () => {
       _url: string,
       init?: RequestInit,
     ): Promise<Response> => {
-      posted.push(String(init?.body));
+      posted.push(requestBodyText(init?.body));
       throw new DOMException("", "TimeoutError");
     }) as unknown as typeof fetch;
 
-    await expect(executor.run(request)).rejects.toThrow(DOMException);
+    await expectAsync(executor.run(request)).rejects.toThrow(DOMException);
     expect(
       posted.filter((body): boolean => body.includes("sleep infinity")),
     ).toHaveLength(1);
@@ -1180,12 +1185,12 @@ describe("createSandboxExecutor", () => {
       _url: string,
       init?: RequestInit,
     ): Promise<Response> => {
-      posted.push(String(init?.body));
+      posted.push(requestBodyText(init?.body));
 
       return new Response("", { status: 504 });
     }) as unknown as typeof fetch;
 
-    await expect(executor.run(request)).rejects.toThrow(
+    await expectAsync(executor.run(request)).rejects.toThrow(
       "MicroVM exec failed (504)",
     );
     expect(
@@ -1274,7 +1279,7 @@ describe("createSandboxExecutor", () => {
       persistent: true,
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo ok",
         namespace: ns,
@@ -1346,7 +1351,7 @@ describe("createSandboxExecutor", () => {
       persistent: true,
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo ok",
         namespace: ns,
@@ -1378,7 +1383,7 @@ describe("createSandboxExecutor", () => {
       persistent: true,
     });
 
-    await expect(
+    await expectAsync(
       executor.getInstanceInfo({ namespace: NS }),
     ).resolves.toBeNull();
   });
@@ -1401,7 +1406,7 @@ describe("createSandboxExecutor", () => {
       onCreate: "exit 22",
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo ok",
         namespace: ns,
@@ -1510,7 +1515,7 @@ describe("createSandboxExecutor", () => {
       },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -1532,7 +1537,7 @@ describe("createSandboxExecutor", () => {
       network: { mode: "restricted" },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -1721,7 +1726,7 @@ describe("createSandboxExecutor", () => {
       options: { apiUrl: "https://tenant-daytona.example.com" },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -1740,7 +1745,7 @@ describe("createSandboxExecutor", () => {
       options: { apiUrl: "https://169.254.169.254", apiKey: "tenant-key" },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -1789,7 +1794,7 @@ describe("createSandboxExecutor", () => {
       },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo hi",
         workspaceRoot: "/mnt/workspaces",
@@ -2191,7 +2196,7 @@ describe("MicroVM capacity refusal", () => {
       });
     });
 
-    await expect(
+    await expectAsync(
       createSandboxExecutor({ provider: "lambda" }).run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -2212,7 +2217,7 @@ describe("MicroVM capacity refusal", () => {
       });
     });
 
-    await expect(
+    await expectAsync(
       createSandboxExecutor({ provider: "lambda" }).run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -2277,7 +2282,7 @@ describe("MicroVM capacity refusal", () => {
     try {
       // The account's own Daytona key skips the budget; the MicroVM fallback
       // runs on the platform's AWS account, so it does not.
-      await expect(
+      await expectAsync(
         runSandbox(
           {
             provider: "daytona",
@@ -2368,7 +2373,7 @@ describe("persistent acquire teardown", () => {
         options: options,
       });
 
-      await expect(
+      await expectAsync(
         executor.run({
           code: "echo ok",
           namespace: NS,

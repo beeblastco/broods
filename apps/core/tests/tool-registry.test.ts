@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import type { ToolApprovalStatus, ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
@@ -149,7 +150,7 @@ describe("createTools", () => {
       {},
     );
 
-    await expect(
+    await expectAsync(
       channelToolExecute(tools["send-images"], {
         urls: ["file:///etc/hosts"],
       }),
@@ -232,7 +233,7 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual(["bash", "urlContext"]);
-    await expect(approvalStatus("bash", {}, context)).resolves.toBe(
+    await expectAsync(approvalStatus("bash", {}, context)).resolves.toBe(
       "user-approval",
     );
     expect(approvalRequirements.has("urlContext")).toBe(true);
@@ -261,7 +262,7 @@ describe("createTools", () => {
 
     // Custom tools are sunset (#331 phase 3): a stale Convex-id key left in
     // config.tools is now just an unsupported tool, not a lookup.
-    await expect(
+    await expectAsync(
       createTools(createToolContext() as never, {
         tools: { qs78zwc4z4q5ysxm74fgrhd13s88xxt: { enabled: true } },
       }),
@@ -297,7 +298,7 @@ describe("createTools", () => {
   it("rejects a config.tools key the configured provider does not ship", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    await expect(
+    await expectAsync(
       createTools(createToolContext(), { tools: { notAProviderTool: {} } }),
     ).rejects.toThrow(
       /config\.tools\.notAProviderTool is not a provider-defined tool/,
@@ -311,7 +312,7 @@ describe("createTools", () => {
     const tools = await createTools(context, {});
 
     expect(Object.keys(tools).sort()).toEqual(["bash"]);
-    await expect(approvalStatus("bash", {}, context)).resolves.toBe(
+    await expectAsync(approvalStatus("bash", {}, context)).resolves.toBe(
       "user-approval",
     );
   });
@@ -336,7 +337,9 @@ describe("createTools", () => {
     ]);
     // bypass mode auto-approves everything.
     for (const name of Object.keys(tools)) {
-      await expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
+      await expectAsync(
+        approvalStatus(name, {}, context),
+      ).resolves.toBeUndefined();
     }
   });
 
@@ -380,21 +383,27 @@ describe("createTools", () => {
     );
     await createTools(context, {});
 
-    await expect(approvalStatus("write", {}, context)).resolves.toBe(
+    await expectAsync(approvalStatus("write", {}, context)).resolves.toBe(
       "user-approval",
     );
-    await expect(approvalStatus("edit", {}, context)).resolves.toBe(
+    await expectAsync(approvalStatus("edit", {}, context)).resolves.toBe(
       "user-approval",
     );
-    await expect(approvalStatus("memory_save", {}, context)).resolves.toBe(
+    await expectAsync(approvalStatus("memory_save", {}, context)).resolves.toBe(
       "user-approval",
     );
-    await expect(approvalStatus("bash", {}, context)).resolves.toBe(
+    await expectAsync(approvalStatus("bash", {}, context)).resolves.toBe(
       "user-approval",
     );
-    await expect(approvalStatus("read", {}, context)).resolves.toBeUndefined();
-    await expect(approvalStatus("glob", {}, context)).resolves.toBeUndefined();
-    await expect(approvalStatus("grep", {}, context)).resolves.toBeUndefined();
+    await expectAsync(
+      approvalStatus("read", {}, context),
+    ).resolves.toBeUndefined();
+    await expectAsync(
+      approvalStatus("glob", {}, context),
+    ).resolves.toBeUndefined();
+    await expectAsync(
+      approvalStatus("grep", {}, context),
+    ).resolves.toBeUndefined();
   });
 
   it("exposes only read/glob for a read-only workspace (no sandbox)", async () => {
@@ -465,7 +474,7 @@ describe("createTools", () => {
     // so omitting workspace does NOT prompt. It falls straight through to a clean
     // read-only error.
     expect(await needsApproval(tools.write)).toBe(false);
-    await expect(
+    await expectAsync(
       (
         tools.write as unknown as { execute(i: unknown): Promise<unknown> }
       ).execute({
@@ -727,7 +736,7 @@ describe("createTools", () => {
       runSubagentSchema.jsonSchema.properties.tasks.items.properties
         .conversationKey?.description,
     ).toContain("Existing subagent conversation key");
-    await expect(
+    await expectAsync(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -837,7 +846,7 @@ describe("createTools", () => {
   it("rejects a provider tool the configured provider does not ship", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    await expect(
+    await expectAsync(
       createTools(
         Object.assign({}, createToolContext(undefined, "openai"), {
           modelProvider: { tools: { webSearch: mock(() => ({})) } },
@@ -856,7 +865,7 @@ describe("createTools", () => {
   it("rejects configured tools without a registered factory", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    await expect(
+    await expectAsync(
       createTools(createToolContext(), {
         tools: {
           bash: { enabled: true },
@@ -948,7 +957,7 @@ describe("createTools", () => {
       scheduleExpression: "at(2027-01-01T09:00:00)",
     });
 
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.schedule, {
         name: "broken",
         instructions: "Never mind.",
@@ -1040,19 +1049,19 @@ describe("createTools", () => {
       status: "paused",
     });
 
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_other",
         name: "stolen",
       }),
     ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
         schedule: "every monday",
       }),
     ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.update_schedule, { cronId: "cron_mine" }),
     ).rejects.toThrow("Pass at least one of name, instructions, schedule");
     expect(update).toHaveBeenCalledTimes(1);
@@ -1080,7 +1089,7 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_elsewhere",
         instructions: "Post everything here instead.",
@@ -1126,16 +1135,16 @@ describe("createTools", () => {
 
     // The model can emit anything: inputSchema is a hint, so an absent required
     // field must not reach the tool body as a TypeError.
-    await expect(channelToolExecute(tools.update_schedule, {})).rejects.toThrow(
-      "cronId is required",
-    );
-    await expect(
+    await expectAsync(
+      channelToolExecute(tools.update_schedule, {}),
+    ).rejects.toThrow("cronId is required");
+    await expectAsync(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
         status: "cancelled",
       }),
     ).rejects.toThrow("status must be active or paused");
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
         timezone: "Asia/Ho Chi Minh",
@@ -1170,12 +1179,12 @@ describe("createTools", () => {
     ).toBe("Cancelled scheduled task 'daily-standup' (cron_mine).");
     expect(remove).toHaveBeenCalledWith("acct_test", "cron_mine");
 
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.cancel_schedule, {
         cronId: "cron_other",
       }),
     ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
-    await expect(
+    await expectAsync(
       channelToolExecute(tools.cancel_schedule, { cronId: "nope" }),
     ).rejects.toThrow("No scheduled task nope belongs to this agent");
     expect(remove).toHaveBeenCalledTimes(1);
@@ -1272,7 +1281,7 @@ describe("connected MCP servers", () => {
     const tools = await createTools(createToolContext(), {
       mcp: { [serverId]: {} },
     });
-    await expect(
+    await expectAsync(
       (tools.search__query as unknown as ChannelTestTool).execute(
         {},
         {} as never,
@@ -1293,7 +1302,7 @@ describe("connected MCP servers", () => {
       },
     });
 
-    await expect(
+    await expectAsync(
       createTools(createToolContext(), { mcp: { [serverId]: {} } }),
     ).rejects.toThrow("still carries a ${NAME} ref");
   });
@@ -1302,7 +1311,7 @@ describe("connected MCP servers", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setStorageForTests(storageWithMcp(mcpRecord()));
 
-    await expect(
+    await expectAsync(
       createTools(createToolContext(), {
         mcp: { k57unknown0000000000000000000000: {} },
       }),

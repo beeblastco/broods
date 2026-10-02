@@ -39,7 +39,7 @@ const APPROVALS = [
   },
 ];
 
-const originalQuery = runtime.query;
+const originalQuery = runtime.query.bind(runtime);
 let ingressRow: Record<string, unknown> | null;
 let asyncRow: Record<string, unknown> | null;
 

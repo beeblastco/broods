@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import { createHash } from "node:crypto";
 import type { ToolSet } from "ai";
 import * as realS3 from "../src/shared/s3.ts";
@@ -55,7 +56,7 @@ if (runnerPath) {
   // is real. mock.module is process-global in bun test, so keep it behind the
   // runner gate. When the suite is skipped the override must not leak into
   // other test files that mock the same module.
-  mock.module("../src/shared/s3.ts", () => ({
+  await mock.module("../src/shared/s3.ts", () => ({
     ...realS3,
     readS3Bytes: async () =>
       new TextEncoder().encode(HOOK_BUNDLE) as Uint8Array,
@@ -113,7 +114,7 @@ describe("code hooks end-to-end (real isolate)", () => {
     };
     const wrapped = wrapToolsWithHooks(tools, dispatcher);
 
-    await expect(
+    await expectAsync(
       (wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
         { command: "ls" },
         {},

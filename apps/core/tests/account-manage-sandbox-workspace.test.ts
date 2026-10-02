@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
-import { coreRequest, responseJson } from "./helpers/http.ts";
+import { coreRequest, requestBodyText, responseJson } from "./helpers/http.ts";
 import { resetPlanLimitsForTests } from "../src/harness/plan-limits.ts";
 import {
   resetStorageForTests,
@@ -46,7 +46,7 @@ const fetchMock = mock(
     const path = String(url).replace(/^https?:\/\/[^/]+/, "");
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body
-      ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+      ? (JSON.parse(requestBodyText(init.body)) as Record<string, unknown>)
       : undefined;
     fetchCalls.push({ method: method, path: path, body: body });
 
@@ -96,7 +96,7 @@ const deleteSandboxInstanceMock = mock(
   ) => {},
 );
 
-mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxReleaseTarget: mock(async () => ({
     externalId: null,
     instance: null,
@@ -113,7 +113,8 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 let registryOwnsReservation = true;
 // This month's metered cost the fake budget store reports against a €5 budget.
 let budgetUsedPercent = 0;
-mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  recordSandboxBurst: mock(async (): Promise<boolean> => true),
   sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
   setSandboxInstanceStatus: mock(async () => {}),
   removeSandboxInstance: mock(async () => {}),
@@ -149,7 +150,7 @@ function microvmCommand(type: string) {
     }
   };
 }
-mock.module("@aws-sdk/client-lambda-microvms", () => ({
+await mock.module("@aws-sdk/client-lambda-microvms", () => ({
   LambdaMicrovms: class {
     send = microvmSendMock;
   },

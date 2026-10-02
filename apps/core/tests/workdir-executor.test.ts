@@ -7,6 +7,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
+import { requestBodyText } from "./helpers/http.ts";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import type { WorkdirSandboxExecutor as WorkdirExecutor } from "../src/harness/sandbox/workdir-executor.ts";
 
@@ -75,7 +77,7 @@ const fetchMock = mock(
     const path = full.replace(/^https?:\/\/[^/]+/, "");
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body
-      ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+      ? (JSON.parse(requestBodyText(init.body)) as Record<string, unknown>)
       : undefined;
     fetchCalls.push({
       method: method,
@@ -167,7 +169,7 @@ const getSandboxReservationRecordMock = mock(
       : { externalId: storedSandboxExternalId, claimedAt: storedReservedAt },
 );
 
-mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxReleaseTarget: mock(async () => ({
     externalId: null,
     instance: null,
@@ -181,7 +183,8 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 // mock.module replaces the whole module, so every export the executor's own imports
 // reach for has to be here. The sandbox index pulls the microvm executor in too, and
 // a missing name is a SyntaxError at import time, not an undefined at call time.
-mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  recordSandboxBurst: mock(async (): Promise<boolean> => true),
   upsertSandboxInstance: upsertSandboxInstanceMock,
   setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
@@ -198,7 +201,7 @@ const assumeRoleSendMock = mock(async () => ({
     SessionToken: "temp-token",
   },
 }));
-mock.module("@aws-sdk/client-sts", () => ({
+await mock.module("@aws-sdk/client-sts", () => ({
   STSClient: class {
     send = assumeRoleSendMock;
   },
@@ -658,7 +661,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, mountAwsS3Buckets: true },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({ code: "ls", timeoutSeconds: 30, outputLimitBytes: 4096 }),
     ).rejects.toThrow(
       "workdir AWS S3 workspace mount requires a workspace namespace",
@@ -805,7 +808,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, mountAwsS3Buckets: true },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({ code: "ls", timeoutSeconds: 30, outputLimitBytes: 4096 }),
     ).rejects.toThrow(
       "workdir AWS S3 workspace mount requires a workspace namespace",
@@ -870,7 +873,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
     });
 
-    await expect(
+    await expectAsync(
       executor.run({
         code: "ls",
         namespace: NS,
@@ -906,7 +909,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     try {
-      await expect(
+      await expectAsync(
         executor.run({
           code: "ls",
           namespace: NS,
@@ -1276,7 +1279,7 @@ describe("WorkdirSandboxExecutor background jobs", () => {
       provider: "sandbox",
       options: { workdirUrl: BASE },
     });
-    await expect(
+    await expectAsync(
       executor.runBackground({
         code: "x",
         timeoutSeconds: 30,
@@ -1354,7 +1357,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
 
-    await expect(
+    await expectAsync(
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
@@ -1388,7 +1391,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
 
-    await expect(
+    await expectAsync(
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
@@ -1409,7 +1412,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       persistent: true,
       options: { workdirUrl: BASE },
     });
-    await expect(
+    await expectAsync(
       executor.resumeHarnessReservation({ reservationKey: "harness:missing" }),
     ).rejects.toThrow("no reserved workdir sandbox");
 
@@ -1484,7 +1487,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
     createRefusal = 503;
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 10,
@@ -1494,7 +1497,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
 
     createRefusal = null;
     execRefusal = 503;
-    await expect(
+    await expectAsync(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 10,

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
+import { formDataText, requestBodyText } from "./helpers/http.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 import { createSlackChannel } from "../src/shared/slack-channel.ts";
@@ -56,20 +58,24 @@ describe("telegram channel actions", () => {
     expect(toUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendPhoto",
     );
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
-      chat_id: "123",
-      photo: "https://cdn.example.com/chart.png",
-      caption: "A useful chart",
-      message_thread_id: 7,
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body))).toEqual(
+      {
+        chat_id: "123",
+        photo: "https://cdn.example.com/chart.png",
+        caption: "A useful chart",
+        message_thread_id: 7,
+      },
+    );
     expect(toUrl(fetchMock.calls[1]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendSticker",
     );
-    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
-      chat_id: 123,
-      sticker: "telegram-file-id",
-      message_thread_id: 7,
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body))).toEqual(
+      {
+        chat_id: 123,
+        sticker: "telegram-file-id",
+        message_thread_id: 7,
+      },
+    );
   });
 
   it("sends a batch of Telegram pictures as albums of ten", async (): Promise<void> => {
@@ -160,7 +166,9 @@ describe("telegram channel actions", () => {
     expect(toUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendDocument",
     );
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)),
+    ).toMatchObject({
       chat_id: "123",
       document: "https://gateway.test/media/token",
       caption: "công bố sản phẩm",
@@ -193,7 +201,6 @@ describe("telegram channel actions", () => {
     );
 
     await actions.sendText("hello **telegram**");
-    expect(actions.stream).toBeDefined();
     if (!actions.stream) {
       throw new Error("Expected Telegram actions to support SDK streaming");
     }
@@ -210,11 +217,15 @@ describe("telegram channel actions", () => {
     expect(toUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessage",
     );
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)),
+    ).toMatchObject({
       chat_id: "123",
     });
     expect(
-      JSON.stringify(JSON.parse(String(fetchMock.calls[0]!.init?.body))),
+      JSON.stringify(
+        JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)),
+      ),
     ).toContain("telegram");
 
     expect(messageId).toBe("123:51");
@@ -227,7 +238,9 @@ describe("telegram channel actions", () => {
     expect(toUrl(fetchMock.calls[3]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessage",
     );
-    expect(JSON.parse(String(fetchMock.calls[3]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[3]!.init?.body)),
+    ).toMatchObject({
       chat_id: "123",
       rich_message: {
         markdown: "stream done",
@@ -237,7 +250,9 @@ describe("telegram channel actions", () => {
     expect(toUrl(fetchMock.calls[4]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendChatAction",
     );
-    expect(JSON.parse(String(fetchMock.calls[4]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[4]!.init?.body)),
+    ).toMatchObject({
       chat_id: "123",
       action: "typing",
     });
@@ -245,7 +260,9 @@ describe("telegram channel actions", () => {
     expect(toUrl(fetchMock.calls[5]!.input)).toBe(
       "https://api.telegram.org/botbot-token/setMessageReaction",
     );
-    expect(JSON.parse(String(fetchMock.calls[5]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[5]!.init?.body)),
+    ).toMatchObject({
       chat_id: "123",
       message_id: 42,
       reaction: [{ type: "emoji", emoji: ":heart:" }],
@@ -348,7 +365,7 @@ describe("discord channel actions", () => {
     const body = fetchMock.calls[0]!.init?.body;
     expect(body).toBeInstanceOf(FormData);
     const form = body as FormData;
-    expect(JSON.parse(String(form.get("payload_json"))).content).toBe(
+    expect(JSON.parse(formDataText(form, "payload_json")).content).toBe(
       "here you go",
     );
     const upload = form.get("files[0]");
@@ -422,7 +439,7 @@ describe("discord channel actions", () => {
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("PATCH");
     expect(
-      JSON.parse(String(fetchMock.calls[0]!.init?.body)).content,
+      JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)).content,
     ).toHaveLength(2000);
 
     expect(toUrl(fetchMock.calls[1]!.input)).toBe(
@@ -449,7 +466,7 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("boom", { status: 500 }));
-    await expect(actions.sendText("hello")).rejects.toThrow(
+    await expectAsync(actions.sendText("hello")).rejects.toThrow(
       "Discord interaction API error: 500 boom",
     );
     expect(fetchMock.calls).toHaveLength(1);
@@ -485,7 +502,9 @@ describe("discord channel actions", () => {
     expect(fetchMock.calls[1]!.init?.headers).toMatchObject({
       Authorization: "Bot bot-token",
     });
-    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body)),
+    ).toMatchObject({
       content: "job done",
     });
   });
@@ -508,7 +527,7 @@ describe("discord channel actions", () => {
 
     fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
     fetchMock.responses.push(new Response("missing access", { status: 403 }));
-    await expect(actions.sendText("hello")).rejects.toThrow(
+    await expectAsync(actions.sendText("hello")).rejects.toThrow(
       "Discord API error: 403 missing access",
     );
   });
@@ -530,7 +549,7 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("nope", { status: 403 }));
-    await expect(actions.sendTyping()).rejects.toThrow(
+    await expectAsync(actions.sendTyping()).rejects.toThrow(
       "Discord API error: 403 nope",
     );
   });
@@ -632,7 +651,7 @@ describe("slack channel actions", () => {
     );
     expect(complete).toBeDefined();
     const body = Object.fromEntries(
-      new URLSearchParams(String(complete!.init?.body)),
+      new URLSearchParams(requestBodyText(complete!.init?.body)),
     );
     expect(body.channel_id).toBe("C1");
     expect(body.thread_ts).toBe("1713916800.000001");
@@ -673,7 +692,7 @@ describe("slack channel actions", () => {
 
     expect(fetchMock.calls).toHaveLength(3);
     const imageBody = Object.fromEntries(
-      new URLSearchParams(String(fetchMock.calls[0]!.init?.body)),
+      new URLSearchParams(requestBodyText(fetchMock.calls[0]!.init?.body)),
     );
     expect(imageBody).toMatchObject({
       channel: "C1",
@@ -693,7 +712,7 @@ describe("slack channel actions", () => {
     ]);
     expect(
       Object.fromEntries(
-        new URLSearchParams(String(fetchMock.calls[1]!.init?.body)),
+        new URLSearchParams(requestBodyText(fetchMock.calls[1]!.init?.body)),
       ),
     ).toMatchObject({
       channel: "C1",
@@ -701,7 +720,7 @@ describe("slack channel actions", () => {
       thread_ts: "1713916800.000001",
     });
     const stickerBody = Object.fromEntries(
-      new URLSearchParams(String(fetchMock.calls[2]!.init?.body)),
+      new URLSearchParams(requestBodyText(fetchMock.calls[2]!.init?.body)),
     );
     expect(stickerBody).toMatchObject({
       channel: "C1",
@@ -741,10 +760,12 @@ describe("slack channel actions", () => {
       "https://hooks.slack.test/response",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
-      text: "```\nName  | Value\n------|------\nAlpha | Beta\n```",
-      response_type: "in_channel",
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body))).toEqual(
+      {
+        text: "```\nName  | Value\n------|------\nAlpha | Beta\n```",
+        response_type: "in_channel",
+      },
+    );
   });
 
   it("keeps Slack image and sticker tools on the slash-command response URL", async (): Promise<void> => {
@@ -780,7 +801,9 @@ describe("slack channel actions", () => {
       responseUrl,
       responseUrl,
     ]);
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)),
+    ).toMatchObject({
       text: "Chart",
       response_type: "in_channel",
       blocks: [
@@ -795,11 +818,15 @@ describe("slack channel actions", () => {
         },
       ],
     });
-    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
-      text: ":party_parrot:",
-      response_type: "in_channel",
-    });
-    expect(JSON.parse(String(fetchMock.calls[2]!.init?.body))).toMatchObject({
+    expect(JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body))).toEqual(
+      {
+        text: ":party_parrot:",
+        response_type: "in_channel",
+      },
+    );
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[2]!.init?.body)),
+    ).toMatchObject({
       response_type: "in_channel",
       blocks: [
         {
@@ -847,7 +874,7 @@ describe("slack channel actions", () => {
     });
     expect(
       Object.fromEntries(
-        new URLSearchParams(String(fetchMock.calls[0]!.init?.body)),
+        new URLSearchParams(requestBodyText(fetchMock.calls[0]!.init?.body)),
       ),
     ).toMatchObject({
       channel: "C1",
@@ -858,11 +885,13 @@ describe("slack channel actions", () => {
     expect(toUrl(fetchMock.calls[1]!.input)).toBe(
       "https://slack.com/api/reactions.add",
     );
-    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
-      channel: "C1",
-      timestamp: "1713916800.000002",
-      name: "heart",
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body))).toEqual(
+      {
+        channel: "C1",
+        timestamp: "1713916800.000002",
+        name: "heart",
+      },
+    );
   });
 
   it("skips Slack reactions without a message timestamp and rejects invalid source payloads", async () => {
@@ -910,7 +939,7 @@ describe("slack channel actions", () => {
       }),
     );
     fetchMock.responses.push(new Response("", { status: 500 }));
-    await expect(responseUrlActions.sendText("hello")).rejects.toThrow(
+    await expectAsync(responseUrlActions.sendText("hello")).rejects.toThrow(
       "Slack response_url failed (500)",
     );
 
@@ -924,14 +953,14 @@ describe("slack channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "channel_not_found" }, 200),
     );
-    await expect(apiActions.sendText("hello")).rejects.toThrow(
+    await expectAsync(apiActions.sendText("hello")).rejects.toThrow(
       "Slack chat.postMessage failed: channel_not_found",
     );
 
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "missing_scope" }, 403),
     );
-    await expect(apiActions.reactToMessage()).rejects.toThrow(
+    await expectAsync(apiActions.reactToMessage()).rejects.toThrow(
       "Slack reactions.add returned HTTP 403",
     );
   });
@@ -970,11 +999,13 @@ describe("pancake channel actions", () => {
     expect(fetchMock.calls[0]!.init?.headers).toEqual({
       "Content-Type": "application/json",
     });
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
-      action: "reply_inbox",
-      message: "hello inbox",
-      sender_id: "sender-1",
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body))).toEqual(
+      {
+        action: "reply_inbox",
+        message: "hello inbox",
+        sender_id: "sender-1",
+      },
+    );
   });
 
   it("sends comment replies with the source message id", async () => {
@@ -999,11 +1030,13 @@ describe("pancake channel actions", () => {
     await actions.sendText("hello comment");
 
     expect(fetchMock.calls).toHaveLength(1);
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
-      action: "reply_comment",
-      message_id: "comment-1",
-      message: "hello comment",
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body))).toEqual(
+      {
+        action: "reply_comment",
+        message_id: "comment-1",
+        message: "hello comment",
+      },
+    );
   });
 
   it("throws on Pancake API failures and rejects invalid source payloads", async () => {
@@ -1027,7 +1060,7 @@ describe("pancake channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ success: false, message: "permission denied" }, 200),
     );
-    await expect(actions.sendText("hello")).rejects.toThrow(
+    await expectAsync(actions.sendText("hello")).rejects.toThrow(
       "Pancake send message failed (200): permission denied",
     );
 
@@ -1078,21 +1111,27 @@ describe("zalo channel actions", () => {
       "Content-Type": "application/json",
     });
     expect(fetchMock.calls[0]!.init?.signal).toBeInstanceOf(AbortSignal);
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
-      chat_id: "chat-1",
-      text: "a".repeat(2000),
-    });
-    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
-      chat_id: "chat-1",
-      text: "b",
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body))).toEqual(
+      {
+        chat_id: "chat-1",
+        text: "a".repeat(2000),
+      },
+    );
+    expect(JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body))).toEqual(
+      {
+        chat_id: "chat-1",
+        text: "b",
+      },
+    );
     expect(toUrl(fetchMock.calls[2]!.input)).toBe(
       "https://bot-api.zaloplatforms.com/botbot-token/sendChatAction",
     );
-    expect(JSON.parse(String(fetchMock.calls[2]!.init?.body))).toEqual({
-      chat_id: "chat-1",
-      action: "typing",
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[2]!.init?.body))).toEqual(
+      {
+        chat_id: "chat-1",
+        action: "typing",
+      },
+    );
   });
 
   it("keeps supplementary Unicode characters intact across text chunks", async () => {
@@ -1114,14 +1153,18 @@ describe("zalo channel actions", () => {
     await actions.sendText(`${"a".repeat(1999)}😀b`);
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
-      chat_id: "chat-1",
-      text: "a".repeat(1999),
-    });
-    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
-      chat_id: "chat-1",
-      text: "😀b",
-    });
+    expect(JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body))).toEqual(
+      {
+        chat_id: "chat-1",
+        text: "a".repeat(1999),
+      },
+    );
+    expect(JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body))).toEqual(
+      {
+        chat_id: "chat-1",
+        text: "😀b",
+      },
+    );
   });
 
   it("throws on Zalo API failures and rejects invalid source payloads", async () => {
@@ -1142,7 +1185,7 @@ describe("zalo channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, description: "permission denied" }, 200),
     );
-    await expect(actions.sendText("hello")).rejects.toThrow(
+    await expectAsync(actions.sendText("hello")).rejects.toThrow(
       "Zalo sendMessage failed (200): permission denied",
     );
 
@@ -1252,7 +1295,7 @@ function telegramMediaGroup(body: RequestInit["body"]): {
     throw new Error("Expected sendMediaGroup to post FormData");
   }
 
-  return { media: JSON.parse(String(body.get("media"))) };
+  return { media: JSON.parse(formDataText(body, "media")) };
 }
 
 function telegramMessageResponse(messageId: number, text: string): Response {

@@ -71,8 +71,8 @@ const server = Bun.serve({
 process.env.OPA_BASE_URL = `http://127.0.0.1:${server.port}`;
 process.env.OPA_API_TOKEN = "test-opa-token";
 
-afterAll(() => {
-  server.stop(true);
+afterAll(async (): Promise<void> => {
+  await server.stop(true);
   setStorageForTests(null);
   delete process.env.OPA_BASE_URL;
   delete process.env.OPA_API_TOKEN;
@@ -96,7 +96,7 @@ const toolCallEvent = {
 async function withUnreachableOpa(run: () => Promise<void>): Promise<void> {
   const closed = Bun.serve({ port: 0, fetch: () => new Response("") });
   const closedPort = closed.port;
-  closed.stop(true);
+  await closed.stop(true);
   const previous = process.env.OPA_BASE_URL;
   process.env.OPA_BASE_URL = `http://127.0.0.1:${closedPort}`;
   try {
@@ -414,7 +414,7 @@ describe("agent.invoke gate", () => {
   it("fails closed when OPA is unreachable", async () => {
     const closed = Bun.serve({ port: 0, fetch: () => new Response("") });
     const closedPort = closed.port;
-    closed.stop(true);
+    await closed.stop(true);
     const previous = process.env.OPA_BASE_URL;
     process.env.OPA_BASE_URL = `http://127.0.0.1:${closedPort}`;
     try {

@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,9 +48,9 @@ const ECHO_SERVER = join(
 const servers: Bun.Server<unknown>[] = [];
 const controllers: AbortController[] = [];
 
-afterEach(() => {
+afterEach(async (): Promise<void> => {
   for (const controller of controllers.splice(0)) controller.abort();
-  for (const server of servers.splice(0)) server.stop(true);
+  for (const server of servers.splice(0)) await server.stop(true);
   resetStorageForTests();
 });
 
@@ -117,7 +118,7 @@ test("core's MCP client lists and calls a stdio server on this machine through t
 test("a bad key reaches the daemon as core's 4401 and stops it", async () => {
   setStorageForTests(machineStorage());
 
-  await expect(
+  await expectAsync(
     runMachineDaemon({
       credential: async (): Promise<string> => "wrong-key",
       baseUrl: startDoor(coreUrl()),
@@ -136,7 +137,7 @@ test("the daemon exits when another daemon holds the record, and --force takes i
   const holder = await holdRecord(core, "another-desk");
   const lines: string[] = [];
 
-  await expect(
+  await expectAsync(
     runMachineDaemon({
       credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
       baseUrl: door,
@@ -171,7 +172,7 @@ test("the daemon exits when another daemon holds the record, and --force takes i
 test("an unreachable core is a reconnect, not a refusal", async () => {
   const gone = Bun.serve({ port: 0, fetch: () => new Response("gone") });
   const goneUrl = `http://127.0.0.1:${gone.port}`;
-  gone.stop(true);
+  await gone.stop(true);
   const lines: string[] = [];
   const controller = daemonController();
   const daemon = runMachineDaemon({

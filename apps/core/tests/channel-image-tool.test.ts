@@ -7,6 +7,7 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { ChannelFile, ChannelImage } from "../src/shared/channels.ts";
@@ -16,7 +17,7 @@ import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const s3ObjectExistsMock = mock(async (_bucket: string, _key: string) => true);
 
-mock.module("../src/shared/s3.ts", () => ({
+await mock.module("../src/shared/s3.ts", () => ({
   s3ObjectExists: s3ObjectExistsMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).
   headS3Object: mock(async () => ({
@@ -124,9 +125,9 @@ describe("sendImagesTool", () => {
     const tools = sendImagesTool({
       ...context,
       actions: {
-        sendText: context.actions.sendText,
-        sendTyping: context.actions.sendTyping,
-        reactToMessage: context.actions.reactToMessage,
+        sendText: context.actions.sendText.bind(context.actions),
+        sendTyping: context.actions.sendTyping.bind(context.actions),
+        reactToMessage: context.actions.reactToMessage.bind(context.actions),
         sendFiles: async function (files): Promise<void> {
           sent = files;
         },
@@ -207,7 +208,9 @@ describe("sendImagesTool", () => {
 
     const sent = execute(tools["send-images"], { file_paths: ["missing.png"] });
 
-    await expect(sent).rejects.toThrow("Error: file not found: missing.png");
+    await expectAsync(sent).rejects.toThrow(
+      "Error: file not found: missing.png",
+    );
     expect(sendImages).not.toHaveBeenCalled();
   });
 
@@ -222,7 +225,9 @@ describe("sendImagesTool", () => {
       urls: ["https://example.com/other.png"],
     });
 
-    await expect(sent).rejects.toThrow("takes file_paths or urls, not both");
+    await expectAsync(sent).rejects.toThrow(
+      "takes file_paths or urls, not both",
+    );
     expect(sendImages).not.toHaveBeenCalled();
   });
 
@@ -234,7 +239,9 @@ describe("sendImagesTool", () => {
 
     const sent = execute(tools["send-images"], { caption: "no image" });
 
-    await expect(sent).rejects.toThrow("send-images needs either file_paths");
+    await expectAsync(sent).rejects.toThrow(
+      "send-images needs either file_paths",
+    );
     expect(sendImages).not.toHaveBeenCalled();
   });
 
@@ -404,7 +411,9 @@ describe("sendFilesTool", () => {
 
     const sent = execute(tools["send-files"], { file_paths: ["missing.pdf"] });
 
-    await expect(sent).rejects.toThrow("Error: file not found: missing.pdf");
+    await expectAsync(sent).rejects.toThrow(
+      "Error: file not found: missing.pdf",
+    );
     expect(sendText).not.toHaveBeenCalled();
   });
 

@@ -13,6 +13,7 @@ import {
   type InvokeWithResponseStreamResponseEvent,
 } from "@aws-sdk/client-lambda";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import {
   resetStorageForTests,
@@ -206,7 +207,7 @@ describe("hosted MCP metering", () => {
     const send = spyOn(LambdaClient.prototype, "send");
 
     try {
-      await expect(
+      await expectAsync(
         hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" }),
       ).rejects.toThrow("TOOL_RUNNER_FUNCTION_NAME");
       await Promise.resolve();

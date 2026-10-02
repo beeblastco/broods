@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import * as ai from "ai";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";
@@ -47,12 +48,12 @@ interface CoordinatorInternals {
     string,
     Omit<TestCompletion, "status" | "response" | "error">
   >;
-  completeTask(completion: TestCompletion): Promise<void>;
-  completeSuccessfulRun(
+  completeTask: (completion: TestCompletion) => Promise<void>;
+  completeSuccessfulRun: (
     childSession: unknown,
     task: unknown,
     finalResponse: unknown,
-  ): Promise<void>;
+  ) => Promise<void>;
   createChildTurnContext(
     childSession: unknown,
     task: unknown,
@@ -87,7 +88,7 @@ interface CoordinatorInternals {
 
 describe("SubagentCoordinator", () => {
   it("persists attach identities before returning the early dispatch result", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     const timeline: string[] = [];
     runtime.mutate = mock(async (name: string) => {
       timeline.push(`persist:${name}`);
@@ -128,7 +129,7 @@ describe("SubagentCoordinator", () => {
         "lifecycle:subagent.task.started",
         "run:child",
       ]);
-      await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+      await expectAsync(coordinator.waitForIdle()).resolves.toBe("idle");
     } finally {
       runtime.mutate = originalMutation;
     }
@@ -180,7 +181,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expectAsync(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisherFactory).not.toHaveBeenCalled();
     expect(publisher.timeline).toEqual([]);
   });
@@ -253,7 +254,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expectAsync(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisher.events.map((event) => event.type)).toEqual([
       "reasoning-delta",
       "text-delta",
@@ -289,7 +290,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expectAsync(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisher.events).toEqual([
       { type: "error", error: "child failed" },
       { type: "done" },
@@ -323,7 +324,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expectAsync(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisher.events).toEqual([
       { type: "error", error: "provider failed" },
       { type: "done" },
@@ -354,7 +355,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expectAsync(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(internals.completeTask).not.toHaveBeenCalled();
     expect(publisher.publish).toHaveBeenCalledTimes(2);
     expect(publisher.close).toHaveBeenCalledTimes(1);
@@ -390,10 +391,10 @@ describe("SubagentCoordinator", () => {
       internals.notifyCompletion();
     }, 15);
 
-    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expectAsync(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(coordinator.pendingCount).toBe(0);
 
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(2);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(2);
     const messages = persistModelMessages.mock.calls.flatMap(
       ([batch]): UserModelMessage[] => batch,
     );
@@ -427,7 +428,7 @@ describe("SubagentCoordinator", () => {
     const timedAt = Date.now();
     await coordinator.waitForSettled("subagent_2", 20);
     expect(Date.now() - timedAt).toBeLessThan(500);
-    await expect(
+    await expectAsync(
       coordinator.waitForSettled("unknown", 5_000),
     ).resolves.toBeUndefined();
   });
@@ -470,7 +471,7 @@ describe("SubagentCoordinator", () => {
     coordinator.markDelivered(completion("subagent_1", "").eventId);
     coordinator.confirmDelivered();
 
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messages).toHaveLength(1);
     expect(messageText(messages[0])).toContain("second result");
@@ -500,7 +501,7 @@ describe("SubagentCoordinator", () => {
     coordinator.markDelivered(completion("subagent_1", "").eventId);
     coordinator.confirmDelivered();
 
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     expect(messageText(persistModelMessages.mock.calls[0]?.[0]?.[0])).toContain(
       "hook summary",
     );
@@ -526,7 +527,7 @@ describe("SubagentCoordinator", () => {
 
     coordinator.markDelivered(completion("subagent_1", "").eventId);
 
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(1);
   });
 
   it("skips a read result that finishes queueing after the read", async () => {
@@ -556,7 +557,7 @@ describe("SubagentCoordinator", () => {
       eventId: "event_subagent_1_followup",
     });
 
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messageText(messages[0])).toContain("follow-up result");
   });
@@ -586,14 +587,14 @@ describe("SubagentCoordinator", () => {
     });
 
     const answer = coordinator.askParent("subagent_1", "Which account?");
-    await expect(coordinator.waitForIdle()).resolves.toBe("question");
+    await expectAsync(coordinator.waitForIdle()).resolves.toBe("question");
     const [question] = await coordinator.takeParentMessages();
     expect(messageText(question)).toContain("Which account?");
     expect(messageText(question)).toContain("taskId: subagent_1");
     expect(persistModelMessages).toHaveBeenCalledTimes(1);
 
     expect(coordinator.answerQuestion("subagent_1", "BeeBlast")).toBe(true);
-    await expect(answer).resolves.toBe("BeeBlast");
+    await expectAsync(answer).resolves.toBe("BeeBlast");
     expect(coordinator.answerQuestion("subagent_1", "again")).toBe(false);
   });
 
@@ -617,14 +618,14 @@ describe("SubagentCoordinator", () => {
     const stop = new AbortController();
     const stopped = coordinator.askParent("subagent_1", "Which?", stop.signal);
     stop.abort();
-    await expect(stopped).resolves.toBeNull();
+    await expectAsync(stopped).resolves.toBeNull();
     expect(coordinator.answerQuestion("subagent_1", "late")).toBe(false);
 
     const open = coordinator.askParent("subagent_2", "Which?");
     coordinator.closeQuestions();
-    await expect(open).resolves.toBeNull();
-    await expect(coordinator.takeParentMessages()).resolves.toEqual([]);
-    await expect(
+    await expectAsync(open).resolves.toBeNull();
+    await expectAsync(coordinator.takeParentMessages()).resolves.toEqual([]);
+    await expectAsync(
       coordinator.askParent("subagent_2", "Again?"),
     ).resolves.toBeNull();
   });
@@ -644,10 +645,12 @@ describe("SubagentCoordinator", () => {
       conversationKey: "child",
     });
 
-    await expect(
+    await expectAsync(
       coordinator.askParent("subagent_1", "Which account?"),
     ).resolves.toBeNull();
-    await expect(coordinator.askParent("unknown", "Hi?")).resolves.toBeNull();
+    await expectAsync(
+      coordinator.askParent("unknown", "Hi?"),
+    ).resolves.toBeNull();
   });
 
   it("stops waiting once the outcome is recorded, before follow-ups drain", async () => {
@@ -694,10 +697,10 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.completions.push(completion("subagent_1", "finished"));
 
-    await expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
+    await expectAsync(coordinator.drainCompletionsToParent()).rejects.toThrow(
       "convex down",
     );
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     expect(messageText(persistModelMessages.mock.calls[1]?.[0]?.[0])).toContain(
       "finished",
     );
@@ -725,10 +728,10 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_1", "first"));
     internals.completions.push(completion("subagent_2", "second"));
 
-    await expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
+    await expectAsync(coordinator.drainCompletionsToParent()).rejects.toThrow(
       "convex down",
     );
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     expect(messageText(persistModelMessages.mock.calls[2]?.[0]?.[0])).toContain(
       "second",
     );
@@ -744,7 +747,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.pending.set("subagent_1", new Promise<void>(() => {}));
 
-    await expect(
+    await expectAsync(
       coordinator.waitForIdle({
         onHeartbeat: async (): Promise<void> => {
           throw new Error("ownership lost");
@@ -782,12 +785,12 @@ describe("SubagentCoordinator", () => {
       conversationKey: "subagent-subagent_2",
     });
 
-    await expect(
+    await expectAsync(
       coordinator.waitForIdle({ onHeartbeat: onHeartbeat }),
     ).resolves.toBe("timeout");
     expect(onHeartbeat).toHaveBeenCalledWith(1);
 
-    await expect(
+    await expectAsync(
       coordinator.drainCompletionsAndTimeoutsToParent(),
     ).resolves.toBe(2);
     expect(persistModelMessages).toHaveBeenCalledTimes(1);
@@ -822,7 +825,7 @@ describe("SubagentCoordinator", () => {
 
     internals.completions.push(completion("subagent_1", { answer: "done" }));
 
-    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expectAsync(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messageText(messages[0])).toContain('{"answer":"done"}');
   });
@@ -876,7 +879,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("admits a persistent child conversation to own a fencing generation", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     const candidates: Record<string, unknown>[] = [];
     runtime.mutate = mock(
       async (name: string, args: Record<string, unknown>) => {
@@ -922,7 +925,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("settles and hands off an admitted child when turn context creation fails", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     const mutations: string[] = [];
     runtime.mutate = mock(async (name: string) => {
       mutations.push(name);
@@ -943,9 +946,9 @@ describe("SubagentCoordinator", () => {
     });
 
     try {
-      await expect(internals.runTask(persistentChildTask())).rejects.toThrow(
-        "turn context failed",
-      );
+      await expectAsync(
+        internals.runTask(persistentChildTask()),
+      ).rejects.toThrow("turn context failed");
       expect(mutations).toContain("settleIngress");
       expect(mutations).toContain("takeNextIngress");
       expect(mutations).not.toContain("releaseIngressOwner");
@@ -955,7 +958,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("preserves the original child failure when queued draining also fails", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     runtime.mutate = mock(async () => null) as never;
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
@@ -974,16 +977,16 @@ describe("SubagentCoordinator", () => {
     });
 
     try {
-      await expect(internals.runTask(persistentChildTask())).rejects.toThrow(
-        "provider failed",
-      );
+      await expectAsync(
+        internals.runTask(persistentChildTask()),
+      ).rejects.toThrow("provider failed");
     } finally {
       runtime.mutate = originalMutation;
     }
   });
 
   it("settles a completed child's envelope and row together, and keeps the row when that settle and the drain fail", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     const mutations: string[] = [];
     runtime.mutate = mock(async (name: string) => {
       mutations.push(name);
@@ -1012,7 +1015,7 @@ describe("SubagentCoordinator", () => {
     const task = persistentChildTask();
 
     try {
-      await expect(
+      await expectAsync(
         internals.completeSuccessfulRun(
           { settleIngress: settleIngress } as never,
           task,
@@ -1036,7 +1039,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("keeps a completed child completed when its finish hook and webhook fail", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     const mutations: string[] = [];
     runtime.mutate = mock(async (name: string) => {
       mutations.push(name);
@@ -1067,7 +1070,7 @@ describe("SubagentCoordinator", () => {
     try {
       // Rejecting here would reach runTask's failure path, which marks the
       // already durable completed result failed and erases its response.
-      await expect(
+      await expectAsync(
         internals.completeTask({
           taskId: "subagent~task_1",
           eventId: "acct:account_1:agent:agent_child:api:subagent~task_1",
@@ -1128,7 +1131,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("records a queued child failure against its own event", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     const updates: Record<string, unknown>[] = [];
     runtime.mutate = mock(
       async (name: string, args: Record<string, unknown>) => {
@@ -1151,7 +1154,7 @@ describe("SubagentCoordinator", () => {
     });
 
     try {
-      await expect(
+      await expectAsync(
         internals.drainChildConversation(
           {
             takeNextIngress: async () => ({
@@ -1176,7 +1179,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("keeps a stopped child's progress out of the parent transcript", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     runtime.mutate = mock(async () => true) as never;
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
@@ -1326,7 +1329,7 @@ describe("SubagentCoordinator", () => {
   });
 
   it("refuses to run a persistent child whose conversation is busy", async () => {
-    const originalMutation = runtime.mutate;
+    const originalMutation = runtime.mutate.bind(runtime);
     runtime.mutate = mock(async () => ({ outcome: "rejected" })) as never;
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
@@ -1338,7 +1341,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     try {
-      await expect(
+      await expectAsync(
         internals.admitChildConversation(persistentChildTask(), {
           role: "user",
           content: [{ type: "text", text: "research" }],
@@ -1350,8 +1353,8 @@ describe("SubagentCoordinator", () => {
   });
 
   it("runs an ephemeral child through its first step without storing it", async () => {
-    const originalMutation = runtime.mutate;
-    const originalQuery = runtime.query;
+    const originalMutation = runtime.mutate.bind(runtime);
+    const originalQuery = runtime.query.bind(runtime);
     const mutations: string[] = [];
     const queries: string[] = [];
     runtime.mutate = mock(async (name: string) => {
@@ -1403,7 +1406,7 @@ describe("SubagentCoordinator", () => {
         },
       };
     });
-    mock.module("ai", () => ({ ...ai, streamText: streamText }));
+    await mock.module("ai", () => ({ ...ai, streamText: streamText }));
     const { Session } = await import("../src/harness/session.ts");
     const renew = spyOn(Session.prototype, "renewConversationLease");
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
@@ -1431,7 +1434,10 @@ describe("SubagentCoordinator", () => {
       expect(queries).not.toContain("listConversationEvents");
     } finally {
       renew.mockRestore();
-      mock.module("ai", () => ({ ...ai, streamText: previousStreamText }));
+      await mock.module("ai", () => ({
+        ...ai,
+        streamText: previousStreamText,
+      }));
       globalThis.fetch = originalFetch;
       setStorageForTests(null);
       runtime.mutate = originalMutation;
@@ -1458,7 +1464,7 @@ describe("SubagentCoordinator", () => {
     );
     const internals = coordinator as unknown as CoordinatorInternals;
 
-    await expect(
+    await expectAsync(
       internals.resolveTask(
         {
           prompt: "continue",

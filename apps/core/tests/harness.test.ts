@@ -7,6 +7,7 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type {
@@ -573,40 +574,40 @@ const streamTextMock = mock(
   },
 );
 
-mock.module("@ai-sdk/google", () => ({
+await mock.module("@ai-sdk/google", () => ({
   createGoogle: createGoogleMock,
   createGoogleGenerativeAI: createGoogleMock,
 }));
 
-mock.module("@ai-sdk/openai", () => ({
+await mock.module("@ai-sdk/openai", () => ({
   createOpenAI: createOpenAIMock,
 }));
 
 // Keep the real named exports: the openai-compatible provider packages
 // (togetherai, cerebras, ...) import OpenAICompatibleChatLanguageModel from
 // this module, and a mock that drops them breaks every import of provider.ts.
-mock.module("@ai-sdk/openai-compatible", () => ({
+await mock.module("@ai-sdk/openai-compatible", () => ({
   ...actualOpenAICompatible,
   createOpenAICompatible: createOpenAICompatibleMock,
 }));
 
-mock.module("@ai-sdk/anthropic", () => ({
+await mock.module("@ai-sdk/anthropic", () => ({
   createAnthropic: createAnthropicMock,
 }));
 
-mock.module("@ai-sdk/amazon-bedrock", () => ({
+await mock.module("@ai-sdk/amazon-bedrock", () => ({
   createAmazonBedrock: createBedrockMock,
 }));
 
-mock.module("@ai-sdk/gateway", () => ({
+await mock.module("@ai-sdk/gateway", () => ({
   createGateway: createGatewayMock,
 }));
 
-mock.module("@ai-sdk/minimax", () => ({
+await mock.module("@ai-sdk/minimax", () => ({
   createMiniMax: createMinimaxMock,
 }));
 
-mock.module("ai", () => ({
+await mock.module("ai", () => ({
   ...actualAi,
   streamText: streamTextMock,
 }));
@@ -825,7 +826,7 @@ describe("runAgentLoop", () => {
     );
 
     const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
-    await expect(
+    await expectAsync(
       prepareStep!({
         responseMessages: [],
         messages: [{ role: "user", content: "original" }],
@@ -1324,7 +1325,7 @@ describe("runAgentLoop", () => {
       },
     );
 
-    await expect(stream.consumeStream()).rejects.toThrow(
+    await expectAsync(stream.consumeStream()).rejects.toThrow(
       "stream transport failed",
     );
     expect(stream.didFail()).toBe(true);
@@ -1485,7 +1486,7 @@ describe("runAgentLoop", () => {
       event: unknown,
     ) => Promise<unknown>;
     expect(typeof toolApproval).toBe("function");
-    await expect(
+    await expectAsync(
       toolApproval({
         toolCall: {
           type: "tool-call",
@@ -2332,7 +2333,7 @@ describe("runAgentLoop", () => {
     >;
     expect(tools.load_skill).toBeDefined();
     const loadSkillTool = tools.load_skill!;
-    await expect(
+    await expectAsync(
       loadSkillTool.execute({
         path: "acct_test/support-flow",
         resources: [],
@@ -3077,7 +3078,7 @@ describe("subagent policy input", () => {
       });
 
       // The mocked model says nothing, so the child task fails once the loop is built.
-      await expect(
+      await expectAsync(
         internals.runTask({
           taskId: "subagent_1",
           eventId: "event_child",
@@ -3119,7 +3120,7 @@ describe("subagent policy input", () => {
         userRoles: ["guest"],
       });
     } finally {
-      opa.stop(true);
+      await opa.stop(true);
       if (priorOpaBaseUrl === undefined) delete process.env.OPA_BASE_URL;
       else process.env.OPA_BASE_URL = priorOpaBaseUrl;
     }

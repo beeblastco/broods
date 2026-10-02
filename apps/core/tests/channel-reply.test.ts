@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
+import { requestBodyText } from "./helpers/http.ts";
 import { sendChannelReply } from "../src/harness/integrations.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
@@ -54,7 +56,9 @@ describe("sendChannelReply", () => {
     expect(toUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-xyz/sendRichMessage",
     );
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+    expect(
+      JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)),
+    ).toMatchObject({
       chat_id: "555",
       rich_message: { markdown: "background job done" },
     });
@@ -62,7 +66,7 @@ describe("sendChannelReply", () => {
 
   it("throws when the channel is not configured for the agent", async () => {
     installFetchMock();
-    await expect(
+    await expectAsync(
       sendChannelReply({
         config: {},
         accountId: "acct-1",

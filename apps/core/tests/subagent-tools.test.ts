@@ -1,4 +1,5 @@
 import { afterEach, expect, it, mock, spyOn } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import type { UserModelMessage } from "ai";
 import type { Session } from "../src/harness/session.ts";
 import type { SubagentWatch } from "../src/harness/tools/utils.ts";
@@ -17,8 +18,8 @@ const PARENT_EVENT_ID = scopedDirectEventId(
   "parent-event",
 );
 
-const originalQuery = runtime.query;
-const originalMutate = runtime.mutate;
+const originalQuery = runtime.query.bind(runtime);
+const originalMutate = runtime.mutate.bind(runtime);
 
 afterEach(() => {
   runtime.query = originalQuery;
@@ -56,13 +57,13 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
   }) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  await expect(
+  await expectAsync(
     execute(tools.get_subagent_status, {
       taskId: taskId,
       agentId: AGENT_ID,
     }),
   ).resolves.toEqual({ status: "processing" });
-  await expect(
+  await expectAsync(
     execute(tools.update_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -70,7 +71,7 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
       message: "change direction",
     }),
   ).resolves.toEqual({ mode: "steer", status: "queued" });
-  await expect(
+  await expectAsync(
     execute(tools.update_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -78,7 +79,7 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
       message: "then summarize",
     }),
   ).resolves.toEqual({ mode: "continue", status: "queued" });
-  await expect(
+  await expectAsync(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -131,7 +132,7 @@ it("waits for a running subagent before answering its status", async () => {
     }),
   });
 
-  await expect(
+  await expectAsync(
     execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
   ).resolves.toEqual({ status: "completed", response: "done" });
   expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
@@ -158,7 +159,7 @@ it("does not wait on a task paired with the wrong agent", async () => {
     watch: watchWith({ waitForSettled: waitForSettled }),
   });
 
-  await expect(
+  await expectAsync(
     execute(tools.get_subagent_status, { taskId: taskId, agentId: AGENT_ID }),
   ).rejects.toThrow("no subagent task found");
   expect(waitForSettled).not.toHaveBeenCalled();
@@ -215,7 +216,7 @@ it("does not take ownership when a child finishes during an update", async () =>
   runtime.mutate = mock(async () => ({ outcome: "not_running" })) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  await expect(
+  await expectAsync(
     execute(tools.update_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -267,7 +268,7 @@ it("dispatches recovered queued work while rejecting a late update", async () =>
   );
   const tools = await subagentTools(PARENT_EVENT_ID, dispatchAppliedIngress);
 
-  await expect(
+  await expectAsync(
     execute(tools.update_subagent, {
       taskId: taskId,
       agentId: agentId,
@@ -303,7 +304,7 @@ it("reports a late stop as not running without trusting stale task status", asyn
   })) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  await expect(
+  await expectAsync(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -320,7 +321,7 @@ it("rejects another parent's task before reading durable state", async () => {
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   for (const tool of Object.values(tools)) {
-    await expect(
+    await expectAsync(
       execute(tool, {
         taskId: foreignTaskId,
         agentId: AGENT_ID,
@@ -350,7 +351,7 @@ it("rejects a sibling task and an agent mismatch as not found", async () => {
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   for (const tool of Object.values(tools)) {
-    await expect(
+    await expectAsync(
       execute(tool, {
         taskId: taskId,
         agentId: "agent_sibling",
@@ -378,7 +379,7 @@ it("rejects a durable record with a mismatched account", async () => {
   })) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  await expect(
+  await expectAsync(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -415,7 +416,7 @@ it("answers a child's open question with a steer instead of queuing it", async (
     }),
   });
 
-  await expect(
+  await expectAsync(
     execute(tools.update_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -433,10 +434,10 @@ it("returns the parent's answer to ask_parent, or a note when none comes", async
   const answered = askParent(async (question) => `yes to: ${question}`);
   const unanswered = askParent(async () => null);
 
-  await expect(
+  await expectAsync(
     execute(answered.ask_parent, { question: "Use staging?" }),
   ).resolves.toEqual({ answer: "yes to: Use staging?" });
-  await expect(
+  await expectAsync(
     execute(unanswered.ask_parent, { question: "Use staging?" }),
   ).resolves.toMatchObject({ answer: null });
 });

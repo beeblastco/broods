@@ -15,7 +15,7 @@ import {
   type ChannelRecord,
 } from "../src/shared/domain/channel-record.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
-import { coreRequest } from "./helpers/http.ts";
+import { coreRequest, requestBodyText } from "./helpers/http.ts";
 
 // The invoke gate reads assigned policy documents; without a stub the routing
 // tests would reach the real Convex client. Scoped to this file, because bun shares the
@@ -821,7 +821,9 @@ async function route(options: {
       // key, which is the whole assertion for `inline`.
       if (new URL(url).pathname.endsWith("/chat.postMessage")) {
         slackPosts.push(
-          Object.fromEntries(new URLSearchParams(String(body)).entries()),
+          Object.fromEntries(
+            new URLSearchParams(requestBodyText(body)).entries(),
+          ),
         );
       }
 
@@ -892,7 +894,7 @@ async function route(options: {
     // A throwing router call must not leave the fetch stub installed, the env
     // pointing at a stopped port, or the server leaked into the rest of the run.
     globalThis.fetch = originalFetch;
-    opa.stop(true);
+    await opa.stop(true);
     if (previousOpaUrl === undefined) {
       delete process.env.OPA_BASE_URL;
     } else {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 
 let lastAssumeRoleInput: Record<string, unknown> | undefined;
 const assumeRoleSendMock = mock(async () => ({
@@ -8,7 +9,7 @@ const assumeRoleSendMock = mock(async () => ({
     SessionToken: "temp-token",
   },
 }));
-mock.module("@aws-sdk/client-sts", () => ({
+await mock.module("@aws-sdk/client-sts", () => ({
   STSClient: class {
     send = assumeRoleSendMock;
   },
@@ -196,7 +197,7 @@ describe("mountRoleArn", () => {
     expect(() =>
       mountRoleArn({ ...storage, auth: { type: "managed" } }),
     ).toThrow(expected);
-    await expect(
+    await expectAsync(
       resolveS3ReadTarget({ storage: storage, namespace: NS }),
     ).rejects.toThrow(expected);
     expect(assumeRoleSendMock).not.toHaveBeenCalled();
@@ -278,7 +279,7 @@ describe("resolveS3Mount", () => {
   it("never mints credentials for a prefix that is not a directory", async () => {
     const { assumeScopedMountCredentials } =
       await import("../src/harness/sandbox/s3-mount.ts");
-    await expect(
+    await expectAsync(
       assumeScopedMountCredentials({
         roleArn: "arn:aws:iam::2:role/byo",
         bucket: "acme",

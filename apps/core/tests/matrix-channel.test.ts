@@ -18,7 +18,7 @@ import {
   type MatrixForwardedEvent,
 } from "../src/shared/matrix-wire.ts";
 import { channelScopeKeyFromConversation } from "../src/shared/runtime-keys.ts";
-import { stubPublicDns } from "./helpers/http.ts";
+import { requestUrl, stubPublicDns } from "./helpers/http.ts";
 
 const API_URL = "https://matrix.example.org";
 // Where the homeserver name resolves: media calls are pinned to it.
@@ -231,7 +231,7 @@ describe("matrix channel adapter", () => {
       input: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
-      requested.push(String(input));
+      requested.push(requestUrl(input));
       redirects.push(init?.redirect);
 
       return new Response(encrypted.ciphertext);
@@ -440,7 +440,7 @@ function captureForwarder(): CapturedCall[] {
       // Forwarder calls carry JSON; a media upload carries the bytes.
       body: typeof body === "string" ? JSON.parse(body) : body,
       token: new Headers(init?.headers).get(MATRIX_ACCESS_TOKEN_HEADER),
-      url: String(input),
+      url: requestUrl(input),
     });
 
     return Response.json({
@@ -544,7 +544,7 @@ function holdForwarder(): HeldForwarder {
     calls.push({
       body: typeof body === "string" ? JSON.parse(body) : body,
       token: new Headers(init?.headers).get(MATRIX_ACCESS_TOKEN_HEADER),
-      url: String(input),
+      url: requestUrl(input),
     });
     await new Promise<void>((resolve): void => {
       waiting.push(resolve);

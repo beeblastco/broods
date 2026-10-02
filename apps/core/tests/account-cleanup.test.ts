@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import { getFunctionName } from "convex/server";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
@@ -12,8 +13,8 @@ import {
 } from "../src/shared/storage.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
-const originalRuntimeMutate = runtime.mutate;
-const originalRuntimeQuery = runtime.query;
+const originalRuntimeMutate = runtime.mutate.bind(runtime);
+const originalRuntimeQuery = runtime.query.bind(runtime);
 
 afterEach(() => {
   runtime.mutate = originalRuntimeMutate;
@@ -31,7 +32,7 @@ it("propagates workspace listing failures before destructive cleanup", async () 
     },
   } as never);
 
-  await expect(
+  await expectAsync(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",
@@ -81,7 +82,7 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
     };
   }) as never;
 
-  await expect(
+  await expectAsync(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",

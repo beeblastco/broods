@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import {
   harnessReservationKey,
   openAiSdkHarnessSession,
@@ -62,7 +63,7 @@ describe("openAiSdkHarnessSession", () => {
 
   it("refuses to bind a conversation to another adapter", async () => {
     const createSession = mock(async () => ({ sessionId: "unused" }));
-    await expect(
+    await expectAsync(
       openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,

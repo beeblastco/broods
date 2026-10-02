@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import {
   sendChannelFailure,
   type ChannelActions,
   type ChannelRequest,
 } from "../src/shared/channels.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
-import { stubPublicDns } from "./helpers/http.ts";
+import { requestBodyText, requestUrl, stubPublicDns } from "./helpers/http.ts";
 
 const STATUS_ID = "async_tool_2f1c9a9e-8d2f-4a7b-9c3d-0e1f2a3b4c5d";
 const WEBHOOK_SECRET = "secret";
@@ -264,13 +265,13 @@ describe("telegram bot api", () => {
   // No fetch stub here on purpose: a request that got out would fail on the
   // network with a different error than the one asserted.
   it("refuses a plain http endpoint before the token leaves", async () => {
-    await expect(
+    await expectAsync(
       telegramActions("http://bot-api.example").sendQuestions!(QUESTION_PROMPT),
     ).rejects.toThrow("config.channels.telegram.apiUrl must use https");
   });
 
   it("refuses a base with a query, which would push the token into it", async () => {
-    await expect(
+    await expectAsync(
       telegramActions("https://bot-api.example?route=1").sendQuestions!(
         QUESTION_PROMPT,
       ),
@@ -280,7 +281,7 @@ describe("telegram bot api", () => {
   });
 
   it("fails on a redirect instead of carrying the token to the new host", async () => {
-    await expect(
+    await expectAsync(
       withTelegramApi(
         () => telegramActions().sendQuestions!(QUESTION_PROMPT),
         () =>
@@ -329,9 +330,9 @@ async function withTelegramApi(
     init?: Parameters<typeof fetch>[1],
   ): Promise<Response> => {
     calls.push({
-      url: String(input),
+      url: requestUrl(input),
       init: init,
-      body: JSON.parse(String(init?.body)) as unknown,
+      body: JSON.parse(requestBodyText(init?.body)) as unknown,
     });
 
     return respond();

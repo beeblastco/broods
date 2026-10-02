@@ -46,19 +46,19 @@ const getAgentMock = mock(async (_accountId: string, agentId: string) => ({
   updatedAt: "2026-01-01T00:00:00.000Z",
 }));
 
-mock.module("@ai-sdk/google", () => ({
+await mock.module("@ai-sdk/google", () => ({
   createGoogle: createGoogleMock,
   createGoogleGenerativeAI: createGoogleMock,
 }));
 
-mock.module("ai", () => ({
+await mock.module("ai", () => ({
   ...actualAi,
   generateText: generateTextMock,
 }));
 
 // Spread the real module first: mock.module is process-global, so any export
 // omitted here disappears for every test file that loads after this one.
-mock.module("../src/shared/s3.ts", () => ({
+await mock.module("../src/shared/s3.ts", () => ({
   ...realS3,
   isMissingS3Error: (error: unknown) =>
     typeof error === "object" &&
@@ -630,7 +630,7 @@ describe("stored item persistence", () => {
   it("writes a two-message step in one fenced mutation", async () => {
     const { Session } = await import("../src/harness/session.ts");
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const originalMutate = runtime.mutate;
+    const originalMutate = runtime.mutate.bind(runtime);
     const mutate = mock(
       async (_name: string, _args: Record<string, unknown>) => null,
     );
@@ -687,7 +687,7 @@ describe("stored item persistence", () => {
   it("splits a history too big for one mutation into ordered writes", async () => {
     const { Session } = await import("../src/harness/session.ts");
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const originalMutate = runtime.mutate;
+    const originalMutate = runtime.mutate.bind(runtime);
     const mutate = mock(
       async (_name: string, _args: Record<string, unknown>) => null,
     );
@@ -927,8 +927,8 @@ describe("context prepare", () => {
   it("re-reads history before a step only after the session writes a system row", async () => {
     const history = await stubHistory(userRows(2));
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const stubbedQuery = runtime.query;
-    const originalMutate = runtime.mutate;
+    const stubbedQuery = runtime.query.bind(runtime);
+    const originalMutate = runtime.mutate.bind(runtime);
     const reads: string[] = [];
     runtime.query = (async (name: string, args: Record<string, unknown>) => {
       reads.push(name);
@@ -1020,7 +1020,7 @@ describe("auto-compaction after a turn", () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const history = await stubHistory(userRows(3));
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const originalMutate = runtime.mutate;
+    const originalMutate = runtime.mutate.bind(runtime);
     const writes: string[] = [];
     runtime.mutate = (async (name: string) => {
       writes.push(name);

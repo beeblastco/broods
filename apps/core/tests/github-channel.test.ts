@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
+import { requestUrl } from "./helpers/http.ts";
 
 describe("github channel adapter", () => {
   const originalFetch = globalThis.fetch;
@@ -458,7 +459,10 @@ describe("github channel adapter", () => {
     ]);
     expect(parsed.message.events).toHaveLength(2);
     expect(parsed.message.events?.[0]?.role).toBe("system");
-    const context = String(parsed.message.events?.[0]?.content ?? "");
+    const context = parsed.message.events?.[0]?.content;
+    if (typeof context !== "string") {
+      throw new Error("Expected GitHub thread context to be text");
+    }
     expect(context).toContain("<github_thread_context>");
     expect(context).toContain("Title: Existing outage");
     expect(context).toContain("Original issue body");
@@ -567,7 +571,10 @@ describe("github channel adapter", () => {
       "https://api.github.com/repos/owner/repo/issues/10/comments?per_page=100",
       "https://api.github.com/repos/owner/repo/pulls/10/comments?per_page=100",
     ]);
-    const context = String(parsed.message.events?.[0]?.content ?? "");
+    const context = parsed.message.events?.[0]?.content;
+    if (typeof context !== "string") {
+      throw new Error("Expected GitHub thread context to be text");
+    }
     expect(context).toContain("Thread: Pull request #10");
     expect(context).toContain("PR conversation note");
     expect(context).toContain("review comment on src/retry.ts:14");
@@ -972,11 +979,11 @@ function createFetchMock(
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const response = responses.shift();
     if (!response) {
-      throw new Error(`Unexpected fetch: ${String(input)}`);
+      throw new Error(`Unexpected fetch: ${requestUrl(input)}`);
     }
 
     calls.push({
-      url: String(input),
+      url: requestUrl(input),
       method: init?.method ?? "GET",
       headers: normalizeHeaders(init?.headers),
       jsonBody:

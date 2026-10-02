@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import { booleanEnv, optionalEnv, requireEnv } from "../src/shared/env.ts";
 import {
   collectSecretValues,
@@ -225,6 +226,6 @@ describe("logging helpers", () => {
   });
 
   it("allows an explicit OTel flush when exporters are not configured", async () => {
-    await expect(forceFlushOtel()).resolves.toBeUndefined();
+    await expectAsync(forceFlushOtel()).resolves.toBeUndefined();
   });
 });

@@ -19,7 +19,7 @@ const releaseMock = mock(
 );
 
 // mock.module replaces the whole module, so every export its importers need is here.
-mock.module("../src/shared/sandbox-cleanup.ts", () => ({
+await mock.module("../src/shared/sandbox-cleanup.ts", () => ({
   releaseExpiredSandboxes: releaseMock,
   releaseReservedSandboxes: mock(async () => 0),
 }));
@@ -27,8 +27,8 @@ mock.module("../src/shared/sandbox-cleanup.ts", () => ({
 const { sweepExpiredSandboxes } =
   await import("../src/shared/sandbox-sweeper.ts");
 
-const originalQuery = runtime.query;
-const originalMutate = runtime.mutate;
+const originalQuery = runtime.query.bind(runtime);
+const originalMutate = runtime.mutate.bind(runtime);
 
 interface MutateCall {
   name: string;

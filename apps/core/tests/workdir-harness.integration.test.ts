@@ -6,6 +6,7 @@
 
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
 import { createWorkdirHarnessAgent } from "../src/harness/ai-sdk-harness/index.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
@@ -17,8 +18,8 @@ const KEY = process.env.WORKDIR_TEST_KEY ?? "";
 const URL = process.env.WORKDIR_TEST_URL;
 const originalWorkdirApiKey = process.env.WORKDIR_API_KEY;
 const originalWorkdirUrl = process.env.WORKDIR_URL;
-const originalMutation = runtime.mutate;
-const originalQuery = runtime.query;
+const originalMutation = runtime.mutate.bind(runtime);
+const originalQuery = runtime.query.bind(runtime);
 const reservations = new Map<string, string>();
 const mutationMock = mock(
   async (name: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -119,14 +120,14 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
 
       const path = `${session.defaultWorkingDirectory}/broods-harness-live.txt`;
       await session.writeTextFile({ path: path, content: "live-file-content" });
-      await expect(session.readTextFile({ path: path })).resolves.toBe(
+      await expectAsync(session.readTextFile({ path: path })).resolves.toBe(
         "live-file-content",
       );
 
       await session.stop();
       const resumed = await sandbox.resumeSession!({ sessionId: session.id });
       cleanup = resumed;
-      await expect(
+      await expectAsync(
         resumed.run({ command: "printf 'resumed' && exit 7" }),
       ).resolves.toEqual({ exitCode: 7, stdout: "resumed", stderr: "" });
     } finally {

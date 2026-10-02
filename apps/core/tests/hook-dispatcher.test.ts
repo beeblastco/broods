@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import type { ToolSet } from "ai";
 import type { AgentHookEventName } from "../src/shared/domain/agent-config.ts";
 import type { HookDispatcher } from "../src/harness/hook-dispatcher.ts";
@@ -52,7 +53,7 @@ describe("wrapToolsWithHooks", () => {
           : undefined,
       ),
     );
-    await expect(
+    await expectAsync(
       (wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
         { cmd: "ls" },
         {},

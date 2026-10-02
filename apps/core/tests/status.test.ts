@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   getAsyncAgentResult,
@@ -11,8 +12,8 @@ import {
   verifyAsyncToolCompletionToken,
 } from "../src/harness/async-tool-result.ts";
 
-const originalQuery = runtime.query;
-const originalMutation = runtime.mutate;
+const originalQuery = runtime.query.bind(runtime);
+const originalMutation = runtime.mutate.bind(runtime);
 const queryMock = mock(
   async (_name: string, _args: Record<string, unknown>): Promise<unknown> =>
     null,
@@ -79,7 +80,7 @@ describe("async agent result persistence", () => {
     };
     queryMock.mockResolvedValueOnce(record as never);
     runtime.query = queryMock as never;
-    await expect(getAsyncAgentResult("event-1")).resolves.toEqual(record);
+    await expectAsync(getAsyncAgentResult("event-1")).resolves.toEqual(record);
     expect(queryMock).toHaveBeenCalledWith("getAsyncAgentResult", {
       eventId: "event-1",
     });
@@ -112,7 +113,7 @@ describe("async tool result persistence", () => {
     queryMock.mockResolvedValueOnce(true as never);
     runtime.query = queryMock as never;
     runtime.mutate = mutationMock as never;
-    await expect(
+    await expectAsync(
       verifyAsyncToolCompletionToken("result-1", "token-1"),
     ).resolves.toBe(true);
     await settleAsyncToolResultFromCallback({
@@ -138,7 +139,7 @@ describe("async tool result persistence", () => {
       status: "completed",
     } as never);
     runtime.query = queryMock as never;
-    await expect(getAsyncToolResult("result-1")).resolves.toMatchObject({
+    await expectAsync(getAsyncToolResult("result-1")).resolves.toMatchObject({
       status: "completed",
     });
     expect(queryMock).toHaveBeenCalledWith("getAsyncToolResult", {

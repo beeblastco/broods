@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  type Mock,
+} from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import {
@@ -12,7 +20,11 @@ import {
   type CommandContext,
 } from "../src/shared/commands.ts";
 
-const originalMutation = runtime.mutate;
+const originalMutation = runtime.mutate.bind(runtime);
+
+type MockChannelActions = Omit<ChannelActions, "sendText"> & {
+  sendText: Mock<ChannelActions["sendText"]>;
+};
 
 let mutationMock = mock((_name: string) => Promise.resolve<unknown>(null));
 
@@ -35,8 +47,8 @@ afterEach(() => {
 });
 
 function createMockChannelActions(
-  overrides: Partial<ChannelActions> = {},
-): ChannelActions {
+  overrides: Partial<MockChannelActions> = {},
+): MockChannelActions {
   return {
     sendText: mock(async () => {}),
     sendTyping: mock(async () => {}),

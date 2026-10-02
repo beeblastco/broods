@@ -122,7 +122,7 @@ async function invokeSequence(
 
     return { runs: result.runs, bundleFetches: bundleFetches };
   } finally {
-    server.stop(true);
+    await server.stop(true);
     await rm(dir, { recursive: true, force: true });
   }
 }

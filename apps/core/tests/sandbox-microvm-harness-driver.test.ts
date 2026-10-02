@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { expectAsync } from "./helpers/async-expect.ts";
 import {
   MicrovmHarnessDriver,
   type MicrovmHarnessDriverOptions,
@@ -63,7 +64,7 @@ describe("MicrovmHarnessDriver", () => {
     expect(portUrl).not.toContain("microvm-1");
     expect(portUrl).not.toContain("secret-token");
     expect(executor.authRequests).toHaveLength(0);
-    await expect(
+    await expectAsync(
       created.session.getPortUrl!({ port: 4_321, protocol: "http" }),
     ).rejects.toThrow("supports WebSocket ports only");
 
@@ -124,7 +125,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.files.set("/workspace/shot.png", new Uint8Array(300_000)),
     );
 
-    await expect(
+    await expectAsync(
       session.readFile({ path: "/workspace/shot.png" }),
     ).rejects.toThrow("changed while it was being read");
   });
@@ -136,7 +137,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    await expect(
+    await expectAsync(
       driver.createSession({ identity: "other-bootstrap" }),
     ).rejects.toThrow("bootstrap identity does not match");
 
@@ -160,7 +161,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    await expect(
+    await expectAsync(
       driver.createSession({
         identity: "bootstrap-v1",
         abortSignal: controller.signal,
