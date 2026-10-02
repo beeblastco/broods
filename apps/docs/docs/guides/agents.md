@@ -90,12 +90,12 @@ model: {
 
 ## Session history
 
-Long conversations are trimmed before each model call. After a turn whose last model call read 500k input tokens, the stored history is summarized.
+Long conversations are trimmed before each model call. After a turn reaches the lower of 500k input tokens and 80% of the model's context window, the stored history is summarized. A context-length failure compacts the earlier history and retries the turn once.
 
 ```ts
 session: {
   pruning: { enabled: true },                                    // default on
-  autoCompaction: { enabled: true, maxContextLength: 500_000 }, // default on, input tokens
+  autoCompaction: { enabled: true, maxContextLength: 500_000 }, // default on, token ceiling
 },
 ```
 

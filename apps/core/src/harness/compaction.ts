@@ -4,6 +4,7 @@
  * stays in session.ts.
  */
 
+import { models, type ModelDefinition } from "@llmgateway/models";
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../shared/.generated/compaction-prompt.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
@@ -17,8 +18,15 @@ import { stripReasoningFromMessages } from "./pruning.ts";
 
 // Input tokens of a turn's last model call that start an auto-compaction.
 const DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH = 500_000;
+// Leave room for the model's answer, tool definitions, and provider framing.
+const AUTO_COMPACTION_CONTEXT_FRACTION = 0.8;
+// Unknown and custom models assume a conservative 128k window.
+const DEFAULT_MODEL_CONTEXT_LENGTH = 128_000;
+// Character count is a conservative token ceiling for multilingual/code input.
+const MAX_COMPACTION_INPUT_CHARACTERS = 100_000;
 const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
+const MODEL_CATALOG: readonly ModelDefinition[] = models;
 
 export interface SummarizeConversationInput {
   conversationKey: string;
@@ -31,7 +39,8 @@ export interface SummarizeConversationInput {
 
 /**
  * Whether a finished turn auto-compacts: on unless the agent turns it off, once
- * the turn's last model call read `maxContextLength` input tokens or more.
+ * the turn's last model call reaches the configured ceiling or 80% of the
+ * model's context window, whichever comes first.
  */
 export function shouldAutoCompact(
   agentConfig: AgentConfig,
@@ -39,11 +48,13 @@ export function shouldAutoCompact(
 ): boolean {
   const config = agentConfig.session?.autoCompaction;
   if (config?.enabled === false || lastInputTokens === undefined) return false;
-
-  return (
-    lastInputTokens >=
-    (config?.maxContextLength ?? DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH)
+  const configuredMax =
+    config?.maxContextLength ?? DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH;
+  const modelMax = Math.floor(
+    modelContextLength(agentConfig) * AUTO_COMPACTION_CONTEXT_FRACTION,
   );
+
+  return lastInputTokens >= Math.min(configuredMax, modelMax);
 }
 
 export function isCompactionSummaryMessage(
@@ -71,6 +82,10 @@ export async function summarizeConversation(
   const configuredModel = resolveConfiguredModel(input.agentConfig);
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const startedAt = Date.now();
+  const request = fitCompactionRequest(
+    formatCompactionRequest(compactableContext, input.instructions),
+    input.agentConfig,
+  );
   const result = await generateText({
     ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
@@ -83,10 +98,7 @@ export async function summarizeConversation(
     messages: [
       {
         role: "user",
-        content: formatCompactionRequest(
-          compactableContext,
-          input.instructions,
-        ),
+        content: request,
       },
     ],
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
@@ -108,6 +120,22 @@ function createCompactionSummaryMessage(summary: string): SystemModelMessage {
     role: "system",
     content: `${COMPACTION_MARKER}\nThe following is a compacted summary of earlier conversation history. Treat it as context for this conversation and prefer newer explicit messages when they conflict.\n\n${summary.trim()}\n${COMPACTION_MARKER_END}`,
   };
+}
+
+// The summary keeps the newest context when the stored history is itself too
+// large for the model. One character per token is deliberately conservative.
+function fitCompactionRequest(
+  request: string,
+  agentConfig: AgentConfig,
+): string {
+  const limit = Math.min(
+    MAX_COMPACTION_INPUT_CHARACTERS,
+    Math.floor(
+      modelContextLength(agentConfig) * AUTO_COMPACTION_CONTEXT_FRACTION,
+    ),
+  );
+
+  return request.length <= limit ? request : request.slice(-limit);
 }
 
 // Per-call data rides the user message; the system prompt stays the static
@@ -134,4 +162,39 @@ function formatMessagesForCompaction(messages: ModelMessage[]): string {
 
 function stringifyMessageContent(content: ModelMessage["content"]): string {
   return typeof content === "string" ? content : JSON.stringify(content);
+}
+
+// Resolves provider-routed IDs against the shared model catalog and chooses the
+// smallest matching provider window so the compaction threshold stays safe.
+function modelContextLength(agentConfig: AgentConfig): number {
+  const modelId = agentConfig.model?.modelId;
+  if (!modelId) return DEFAULT_MODEL_CONTEXT_LENGTH;
+  const identifiers = [modelId, modelId.split("/").at(-1) ?? modelId];
+  const model = MODEL_CATALOG.find(
+    (candidate): boolean =>
+      identifiers.includes(candidate.id) ||
+      ("aliases" in candidate &&
+        candidate.aliases?.some((alias): boolean =>
+          identifiers.includes(alias),
+        )) ||
+      candidate.providers.some((provider): boolean =>
+        identifiers.includes(provider.externalId),
+      ),
+  );
+  if (!model) return DEFAULT_MODEL_CONTEXT_LENGTH;
+  const exactMappings = model.providers.filter((provider): boolean =>
+    identifiers.includes(provider.externalId),
+  );
+  const contextLengths = (
+    exactMappings.length > 0 ? exactMappings : model.providers
+  )
+    .map((provider): number | undefined => provider.contextSize)
+    .filter(
+      (contextLength): contextLength is number =>
+        contextLength !== undefined && contextLength > 0,
+    );
+
+  return contextLengths.length > 0
+    ? Math.min(...contextLengths)
+    : DEFAULT_MODEL_CONTEXT_LENGTH;
 }

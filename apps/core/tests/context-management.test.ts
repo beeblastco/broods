@@ -1,4 +1,12 @@
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import * as actualAi from "ai";
 import type {
   Session,
@@ -971,11 +979,11 @@ describe("context prepare", () => {
 });
 
 describe("auto-compaction threshold", () => {
-  it("is on by default and starts at 500000 input tokens", async () => {
+  it("is on by default and uses a conservative window for unknown models", async () => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
-    expect(shouldAutoCompact({}, 499_999)).toBe(false);
-    expect(shouldAutoCompact({}, 500_000)).toBe(true);
+    expect(shouldAutoCompact({}, 102_399)).toBe(false);
+    expect(shouldAutoCompact({}, 102_400)).toBe(true);
     expect(shouldAutoCompact({ session: {} }, 2_000_000)).toBe(true);
   });
 
@@ -987,6 +995,17 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(off, 10_000_000)).toBe(false);
     expect(shouldAutoCompact(low, 999)).toBe(false);
     expect(shouldAutoCompact(low, 1_000)).toBe(true);
+  });
+
+  it("caps the configured threshold below a known model's context window", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    const config = {
+      model: { provider: "openai" as const, modelId: "gpt-4-turbo" },
+      session: { autoCompaction: { maxContextLength: 500_000 } },
+    };
+
+    expect(shouldAutoCompact(config, 102_399)).toBe(false);
+    expect(shouldAutoCompact(config, 102_400)).toBe(true);
   });
 
   it("never compacts when the provider reported no input tokens", async () => {
@@ -1016,6 +1035,50 @@ describe("auto-compaction after a turn", () => {
       expect(writes).toContain("appendConversationEvent");
     } finally {
       runtime.mutate = originalMutate;
+      history.restore();
+    }
+  });
+
+  it("preserves the current turn when recovering from a context error", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const history = await stubHistory([
+      {
+        cursor: "1",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: { role: "user", content: "old request" },
+        },
+      },
+      {
+        cursor: "2",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: { role: "assistant", content: "old answer" },
+        },
+      },
+      {
+        cursor: "3",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: { role: "user", content: "current request" },
+        },
+      },
+    ]);
+    const session = await newSession(compactingAgentConfig);
+    const persist = spyOn(session, "persistModelMessages").mockResolvedValue(
+      [],
+    );
+    try {
+      expect(await session.compactConversation("", true)).toBe(2);
+      expect(persist.mock.calls[0]?.[0]).toEqual([
+        expect.objectContaining({ role: "system" }),
+        { role: "user", content: "current request" },
+      ]);
+    } finally {
+      persist.mockRestore();
       history.restore();
     }
   });
@@ -1202,6 +1265,32 @@ describe("conversation summary", () => {
     expect(options?.messages[0]?.content).toContain("new assistant content");
   });
 
+  it("keeps the summary request inside the model's context window", async () => {
+    const { summarizeConversation } =
+      await import("../src/harness/compaction.ts");
+
+    await summarizeConversation({
+      conversationKey: "conversation",
+      priorSummaries: [],
+      messages: [
+        { role: "user", content: `oldest-${"x".repeat(20_000)}` },
+        { role: "assistant", content: "newest-context" },
+      ],
+      agentConfig: {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gpt-3.5-turbo" },
+      },
+    });
+
+    const options = generateTextMock.mock.calls[0]?.[0] as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    const content = options?.messages[0]?.content ?? "";
+    expect(content.length).toBeLessThanOrEqual(13_108);
+    expect(content).not.toContain("oldest-");
+    expect(content).toContain("newest-context");
+  });
+
   it("strips reasoning before building the summary request", async () => {
     const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
@@ -1270,7 +1359,7 @@ async function stubHistory(
   page: StoredConversationEventPage["page"],
 ): Promise<{ restore: () => void }> {
   const { runtime } = await import("../src/shared/convex/runtime.ts");
-  const originalQuery = runtime.query;
+  const originalQuery = runtime.query.bind(runtime);
   runtime.query = (async (name: string) =>
     name === "listConversationEvents"
       ? { page: page, isDone: true, continueCursor: null }

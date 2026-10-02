@@ -570,21 +570,37 @@ export class Session {
 
   /**
    * Folds the stored history into a summary under the owner lease. Serves
-   * /compact and the harness auto-compaction after a finished turn. Returns
-   * how many messages were summarized; 0 means there was nothing to compact.
+   * /compact and the harness auto-compaction after a finished turn. Recovery
+   * can preserve the current user turn so the harness can retry it. Returns how
+   * many messages were summarized; 0 means there was nothing to compact.
    */
-  async compactConversation(instructions: string): Promise<number> {
+  async compactConversation(
+    instructions: string,
+    preserveCurrentTurn = false,
+  ): Promise<number> {
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
     const systemContextSnapshot = createSystemContextSnapshot(entries);
     // Stored media stays as its persisted reference parts: the summarizer only
     // needs the text around them, not the rehydrated bytes.
-    const messages = projectEntriesToMessages(
-      activeEntries,
-      modelIdentityFromModelConfig(this.agentConfig),
+    const messages = stripEnvelopeFieldsFromMessages(
+      projectEntriesToMessages(
+        activeEntries,
+        modelIdentityFromModelConfig(this.agentConfig),
+      ),
     );
     // Nothing said since the last summary leaves nothing to fold in.
     if (messages.length === 0 || hasPendingToolApprovalResponse(messages)) {
+      return 0;
+    }
+    const currentTurnStart = preserveCurrentTurn
+      ? messages.findLastIndex((message): boolean => message.role === "user")
+      : -1;
+    const compactableMessages =
+      currentTurnStart === -1 ? messages : messages.slice(0, currentTurnStart);
+    const preservedMessages =
+      currentTurnStart === -1 ? [] : messages.slice(currentTurnStart);
+    if (compactableMessages.length === 0) {
       return 0;
     }
     const summary = await summarizeConversation({
@@ -592,16 +608,16 @@ export class Session {
       priorSummaries: systemContextSnapshot.messages.filter(
         isCompactionSummaryMessage,
       ),
-      messages: stripEnvelopeFieldsFromMessages(messages),
+      messages: compactableMessages,
       agentConfig: this.agentConfig,
       instructions: instructions,
     });
     if (!summary) {
       return 0;
     }
-    await this.persistModelMessages([summary]);
+    await this.persistModelMessages([summary, ...preservedMessages]);
 
-    return messages.length;
+    return compactableMessages.length;
   }
 
   async createEphemeralTurnContext(

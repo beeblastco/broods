@@ -4904,7 +4904,7 @@ components:
               type: integer
               minimum: 1
               maximum: 10000000
-              description: "Input tokens of the turn's last model call that start a compaction (default: `500000`)"
+              description: "Upper bound on the turn's last model call input before compaction (default: `500000`); the effective threshold is at most 80% of the model context window"
 
     ToolsConfig:
       type: object

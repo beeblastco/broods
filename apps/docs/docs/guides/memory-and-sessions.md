@@ -69,16 +69,18 @@ export const myAgent = defineAgent({
 });
 ```
 
-| Setting                                   | Default | What it does                                                                                |
-| ----------------------------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| `session.pruning.enabled`                 | on      | Drops reasoning and older tool calls with their results from what the model sees            |
-| `session.autoCompaction.enabled`          | on      | Summarizes the history with the agent's own model after a turn whose context grew too long  |
-| `session.autoCompaction.maxContextLength` | 500000  | Input tokens of a turn's last model call that start a compaction once the turn has finished |
+| Setting                                   | Default | What it does                                                                               |
+| ----------------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
+| `session.pruning.enabled`                 | on      | Drops reasoning and older tool calls with their results from what the model sees           |
+| `session.autoCompaction.enabled`          | on      | Summarizes the history with the agent's own model after a turn whose context grew too long |
+| `session.autoCompaction.maxContextLength` | 500000  | Upper bound on the last model call's input tokens before compaction                        |
 
 - On OpenAI and Azure, pruning keeps tool calls in context until compaction. Those providers replay a message by reference to a stored reasoning item, which they refuse without the tool call it produced.
 - A tool call with no result, such as an approval nobody answered, is always left out of what the model sees.
+- The effective threshold is the lower of `maxContextLength` and 80% of the configured model's known context window. Unknown and custom models use a conservative 128k window.
 - Auto-compaction runs only after a turn has finished, once the model answered with no tool call left, never between tool steps. It runs before the next queued message, so that message starts from the summary. A turn that stops on a tool approval or a question does not compact.
-- Compaction stores a summary and folds earlier summaries into the next one. The summary reads the full stored history.
+- If a model rejects a turn because its context is too long, Broods compacts the earlier history, preserves the current turn and retries once.
+- Compaction stores a summary and folds earlier summaries into the next one. The summary reads the newest history that safely fits the model window.
 - On Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram, `/compact [instructions]` compacts on demand, whatever the config says. Sent mid-turn, it waits until the model finishes the turn and stops calling tools. The instructions steer what the summary keeps. `/new` and `/clear` start over.
 
 A [harness adapter](agents.md) manages its own model context, so these settings apply to the default Broods loop.
