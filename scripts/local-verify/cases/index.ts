@@ -3,6 +3,7 @@ import { agentRun } from "./agent-run.ts";
 import { chatgptSignIn } from "./chatgpt-sign-in.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
+import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { trailingSlash } from "./trailing-slash.ts";
@@ -15,6 +16,7 @@ export const verifyCases: readonly VerifyCase[] = [
   sdkClient,
   queuedFollowup,
   machineSandbox,
+  ownBucketSandbox,
   trailingSlash,
   manifestSync,
   workToolWebhooks,
