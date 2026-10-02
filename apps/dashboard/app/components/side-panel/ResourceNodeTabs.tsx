@@ -180,7 +180,9 @@ export function SandboxResourceDetailsTab({
             onValueChange={(image) =>
               setConfig({
                 image: image === "default" ? undefined : image,
+                // Exclusive with an image: an ARN pin, or a fallback that could not boot it.
                 snapshot: undefined,
+                fallbackProvider: undefined,
               })
             }
             options={[

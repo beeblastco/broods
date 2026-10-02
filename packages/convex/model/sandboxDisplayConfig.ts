@@ -5,12 +5,13 @@
  * carry `envVars` or provider `options`, which hold credentials. These keys
  * are exactly what the sandbox node and its side panel render: the globe reads
  * `network.mode`, the feature row reads `persistent`, and the config tab shows
- * `provider` and `permissionMode`.
+ * `provider`, `image` and `permissionMode`.
  */
 
 import { isPlainObject } from "./objects";
 
 const DISPLAY_KEYS = [
+  "image",
   "network",
   "permissionMode",
   "persistent",
