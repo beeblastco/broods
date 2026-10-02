@@ -149,7 +149,7 @@ const streamTextMock = mock(
         outputTokens: number;
         totalTokens: number;
       };
-      steps: Array<{ content: unknown[] }>;
+      steps: Array<{ content: unknown[]; usage?: { inputTokens?: number } }>;
       toolCalls: unknown[];
       rawFinishReason?: string;
       totalUsage?: {
@@ -261,7 +261,7 @@ const streamTextMock = mock(
             text: "   ",
             finishReason: "tool-calls",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({
@@ -311,7 +311,7 @@ const streamTextMock = mock(
             text: "listed the files",
             finishReason: "stop",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({ type: "text-delta", text: "listed the files" });
@@ -2824,6 +2824,129 @@ describe("runAgentLoop", () => {
         },
       },
     });
+  });
+});
+
+describe("auto-compaction after a turn", () => {
+  // Runs a turn on the real SDK loop with a session that records, in order,
+  // every final reply and auto-compaction the harness asks for.
+  async function runCompactingTurn(options: {
+    scenario: "real-two-step" | "approval-request";
+    autoCompaction: { enabled?: boolean; maxContextLength?: number };
+    compactConversation?: () => Promise<number>;
+  }): Promise<{ stream: AgentLoopStream; order: string[] }> {
+    installHarnessEnv();
+    streamTextScenario = options.scenario;
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const order: string[] = [];
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: (): ResolvedAgentSandbox[] =>
+          options.scenario === "approval-request"
+            ? [
+                {
+                  name: "agent-sandbox",
+                  sandbox: { provider: "lambda", permissionMode: "ask" },
+                },
+              ]
+            : [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async (): Promise<string[]> => [],
+        renewConversationLease: async () => "renewed",
+        applySteeringIngress: async () => null,
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+        compactConversation: async (): Promise<number> => {
+          order.push("compact");
+
+          return (options.compactConversation ?? (async () => 4))();
+        },
+      } as never,
+      {
+        messages: [{ role: "user", content: "weather in Hanoi?" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+        session: { autoCompaction: options.autoCompaction },
+      },
+      {
+        onFinalText: async (): Promise<void> => {
+          order.push("final");
+        },
+        onErrorText: async (): Promise<void> => {
+          order.push("error");
+        },
+        onApprovalRequired: async (): Promise<void> => {
+          order.push("approval");
+        },
+      },
+    );
+    await stream.consumeStream();
+
+    return { stream: stream, order: order };
+  }
+
+  it("compacts once after the final reply, never between tool steps", async () => {
+    // Both steps read 10 input tokens; only the end of the turn may act on it.
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(order).toEqual(["final", "compact"]);
+  });
+
+  it("does not compact below the threshold or when turned off", async () => {
+    const below = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 11 },
+    });
+    const off = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { enabled: false, maxContextLength: 1 },
+    });
+    // The default threshold is 500000 tokens; this turn read 10.
+    const byDefault = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: {},
+    });
+
+    expect(below.order).toEqual(["final"]);
+    expect(off.order).toEqual(["final"]);
+    expect(byDefault.order).toEqual(["final"]);
+  });
+
+  it("does not compact a turn that stopped on a tool approval", async () => {
+    const { order } = await runCompactingTurn({
+      scenario: "approval-request",
+      autoCompaction: { maxContextLength: 1 },
+    });
+
+    expect(order).toEqual(["approval"]);
+  });
+
+  it("keeps the turn's outcome when the compaction fails", async () => {
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+      compactConversation: () =>
+        Promise.reject(new Error("summary model down")),
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(stream.failureText()).toBeNull();
+    expect(order).toEqual(["final", "compact"]);
   });
 });
 

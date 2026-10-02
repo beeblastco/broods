@@ -3320,13 +3320,20 @@ components:
           type: string
           enum: [reject, followup, collect, steer]
           default: steer
-          description: Busy-conversation behavior. When omitted, steer combines the contiguous FIFO steer prefix and injects it at the next AI SDK step boundary; it falls back to followup if the active run has no boundary left.
+          description: Busy-conversation behavior. When omitted, steer combines the contiguous FIFO steer prefix and injects it at the next AI SDK step boundary; it falls back to followup if the active run has no boundary left. A `/compact` request always runs as followup, whatever mode is sent.
         idempotencyKey:
           type: string
           description: Stable retry identity scoped to account, agent, and conversation. Defaults to eventId and remains bound for the seven-day status window.
         events:
           type: array
-          description: Vercel AI SDK-style messages. Required unless `answers` is sent.
+          description: >-
+            Vercel AI SDK-style messages. Required unless `answers` is sent. A
+            single text-only user message of `/compact [instructions]` (beside
+            any system messages) is a command, not model input: it waits behind
+            the running turn and any messages queued before it, then summarizes
+            the stored history instead of calling the model. The summary reply
+            is the run's response (`text-delta` parts on SSE, `response` when
+            polled), and a failed summary fails the run.
           items:
             $ref: "#/components/schemas/Message"
         answers:
@@ -4883,15 +4890,21 @@ components:
             enabled:
               type: boolean
               description: "Automatic history pruning (default: `true`)"
-        compaction:
+        autoCompaction:
           type: object
+          description: >-
+            Summarizes the stored history after a finished turn, once the model
+            answered with no tool call left, before the next queued message
+            runs. `/compact` works whatever this says.
           properties:
             enabled:
               type: boolean
-              description: "Context compaction (default: `false`)"
+              description: "Auto-compaction (default: `true`)"
             maxContextLength:
               type: integer
-              description: Serialized character-length threshold
+              minimum: 1
+              maximum: 10000000
+              description: "Input tokens of the turn's last model call that start a compaction (default: `500000`)"
 
     ToolsConfig:
       type: object

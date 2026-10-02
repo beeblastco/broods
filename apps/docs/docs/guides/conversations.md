@@ -63,7 +63,7 @@ Over WebSocket, send a `control` frame on the open subscription. See [SDK](../re
 | `/steer <message>` | Steers explicitly. On an idle conversation it starts a normal turn. |
 | `/stop`, `/cancel` | Stops the running turn at its next step                             |
 | `/new`, `/clear`   | Clears the history. Refused while a turn or queued message exists.  |
-| `/compact [notes]` | Summarizes the history now. Refused while busy.                     |
+| `/compact [notes]` | Summarizes the history. While busy, waits for the turn to finish.   |
 
 ## Stopping a run
 
