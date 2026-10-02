@@ -6,6 +6,7 @@
 
 import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
+import { normalizeHeaders } from "./mcp";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
   SANDBOX_PROVIDERS,
@@ -313,14 +314,21 @@ function assertCustomOptions(options: Record<string, unknown>): void {
       "config.options.endpoint is required for the custom provider: the https URL of your sandbox server",
     );
   }
-  assertPublicHttpsUrl(options.endpoint, "config.options.endpoint");
+  const endpoint = assertPublicHttpsUrl(
+    options.endpoint,
+    "config.options.endpoint",
+  );
+  // Core appends `/exec` to the string, so anything after the path is lost.
+  if (endpoint.search || endpoint.hash) {
+    throw new ClientError(
+      "config.options.endpoint must not carry a query or fragment",
+    );
+  }
   if (options.token !== undefined) {
     requireString(options.token, "config.options.token");
   }
-  if (options.headers !== undefined && !isStringRecord(options.headers)) {
-    throw new ClientError(
-      "config.options.headers must be an object with string values",
-    );
+  if (options.headers !== undefined) {
+    normalizeHeaders(options.headers);
   }
 }
 
@@ -329,7 +337,7 @@ function assertNetworkEnforceable(
   network: SandboxNetworkConfig,
 ): void {
   if (
-    (provider === "e2b" || provider === "machine" || provider === "custom") &&
+    (provider === "e2b" || STATELESS_SANDBOX_PROVIDERS.has(provider)) &&
     network.mode !== "allow-all"
   ) {
     throw new ClientError(

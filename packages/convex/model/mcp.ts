@@ -349,7 +349,12 @@ function normalizeDescription(value: unknown): string {
   return value;
 }
 
-function normalizeHeaders(value: unknown): Record<string, string> {
+/**
+ * Static request headers an account configures for a server it names: RFC 9110
+ * names, single-line bounded values, and a credential header only as a
+ * `${NAME}` env ref. Shared with the custom sandbox provider's headers.
+ */
+export function normalizeHeaders(value: unknown): Record<string, string> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ClientError("headers must be an object of header name to value");
   }

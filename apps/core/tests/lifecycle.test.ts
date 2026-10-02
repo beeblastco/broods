@@ -381,6 +381,7 @@ async function withWebhookServer(
         response.end();
       });
     },
-    (origin) => run((path) => `${origin}${path}`, deliveries),
+    (origin): Promise<void> =>
+      run((path): string => `${origin}${path}`, deliveries),
   );
 }

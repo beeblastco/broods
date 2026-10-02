@@ -543,7 +543,16 @@ describe("sandbox config custom provider", () => {
     );
   });
 
-  it("refuses a malformed token or headers", () => {
+  it("refuses an endpoint with a query or fragment, since /exec is appended", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { endpoint: "https://sandbox.example.com/api?team=ops" },
+      }),
+    ).toThrow("config.options.endpoint must not carry a query or fragment");
+  });
+
+  it("refuses a malformed token or headers, and an inline secret in a header", () => {
     expect(() =>
       normalizeSandboxConfig({
         ...custom,
@@ -555,7 +564,34 @@ describe("sandbox config custom provider", () => {
         ...custom,
         options: { ...custom.options, headers: { "x-n": 1 } },
       }),
-    ).toThrow("config.options.headers must be an object with string values");
+    ).toThrow("headers values must be single-line strings");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { ...custom.options, headers: { "x-n": "a\r\nb" } },
+      }),
+    ).toThrow("headers values must be single-line strings");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: {
+          ...custom.options,
+          headers: { authorization: "Bearer sk_live_abc" },
+        },
+      }),
+    ).toThrow("must reference an account env var");
+    expect(
+      normalizeSandboxConfig({
+        ...custom,
+        options: {
+          ...custom.options,
+          headers: { authorization: "Bearer ${SANDBOX_TOKEN}" },
+        },
+      }).options,
+    ).toEqual({
+      endpoint: "https://sandbox.example.com",
+      headers: { authorization: "Bearer ${SANDBOX_TOKEN}" },
+    });
   });
 
   it("is stateless: no persistence, sizing or snapshot, and never a fallback", () => {

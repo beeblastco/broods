@@ -28,11 +28,11 @@ export const helper = defineAgent({
 });
 ```
 
-| Option     | Required | Description                                                                       |
-| ---------- | -------- | --------------------------------------------------------------------------------- |
-| `endpoint` | yes      | Public `https` URL of your server. Broods POSTs to `<endpoint>/exec`              |
-| `token`    | no       | Sent as `Authorization: Bearer <token>`. Use `env("NAME")` to keep it out of code |
-| `headers`  | no       | Extra static headers on every request                                             |
+| Option     | Required | Description                                                                                     |
+| ---------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `endpoint` | yes      | Public `https` URL of your server, no query or fragment. Broods POSTs to `<endpoint>/exec`      |
+| `token`    | no       | Sent as `Authorization: Bearer <token>`. Use `env("NAME")` to keep it out of code               |
+| `headers`  | no       | Extra static headers on every request. A credential header's value must be an `env("NAME")` ref |
 
 `network.mode` must be `allow-all`, set explicitly: Broods cannot enforce egress on a server it does not run. `persistent`, `size`, `snapshot` and `memoryLimit` are rejected, a workspace cannot be attached, and `custom` cannot be a `fallbackProvider`. `envVars` and `timeout` apply as on every provider.
 

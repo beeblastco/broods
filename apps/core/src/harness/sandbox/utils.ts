@@ -90,19 +90,22 @@ export function execRunResult(
   };
 }
 
-// The body of a 2xx exec answer as the contract. The shape is the server's
-// word; only "is a JSON object" is checked here, like every provider SDK answer.
+// The body of a 2xx exec answer as the contract. A custom server is a third
+// party, so the fields a run result is built from are checked, not assumed.
 export function parseExecResponse(
   bodyText: string,
   label: string,
 ): SandboxExecResponse {
   if (!bodyText) throw new Error(`${label} returned an empty response`);
   const parsed: unknown = JSON.parse(bodyText);
-  if (!parsed || typeof parsed !== "object") {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`${label} response must be a JSON object`);
   }
+  if (!isExecResponse(parsed)) {
+    throw new Error(`${label} response is not a sandbox exec response`);
+  }
 
-  return parsed as SandboxExecResponse;
+  return parsed;
 }
 
 export function configString(value: unknown): string | undefined {
@@ -253,4 +256,24 @@ export function workspacePath(
   }
 
   return request.namespace ? `${root}/${request.namespace}` : root;
+}
+
+function isExecResponse(value: object): value is SandboxExecResponse {
+  const fields: Record<keyof SandboxExecResponse, string | undefined> = {
+    ok: "boolean",
+    runtime: undefined,
+    exit_code: undefined,
+    timed_out: "boolean",
+    duration_ms: "number",
+    stdout: "string",
+    stderr: "string",
+    truncated: undefined,
+    cpu_usec: undefined,
+    burst: undefined,
+  };
+  const record: Record<string, unknown> = { ...value };
+
+  return Object.entries(fields).every(
+    ([field, type]): boolean => !type || typeof record[field] === type,
+  );
 }

@@ -110,6 +110,23 @@ describe("HttpSandboxExecutor", () => {
     });
   });
 
+  it("refuses an answer that is not the exec contract", async () => {
+    await withExecServer([], async (endpoint) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+
+      await expect(executor.run(run())).rejects.toThrow(
+        "custom sandbox exec response must be a JSON object",
+      );
+    });
+    await withExecServer({ status: "queued" }, async (endpoint) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+
+      await expect(executor.run(run())).rejects.toThrow(
+        "custom sandbox exec response is not a sandbox exec response",
+      );
+    });
+  });
+
   it("refuses an endpoint whose name resolves to a private address", async () => {
     const executor = new HttpSandboxExecutor(config("https://public.test"), {
       transport: {
@@ -160,7 +177,7 @@ function seams(): HttpSandboxExecutorSeams {
 // A null answer never responds, so the client deadline is what ends the call.
 // A request whose code is "fail" is answered 401, like a server refusing a token.
 async function withExecServer(
-  answer: SandboxExecResponse | null,
+  answer: SandboxExecResponse | Record<string, unknown> | unknown[] | null,
   test: (endpoint: string, received: Received[]) => Promise<void>,
 ): Promise<void> {
   const received: Received[] = [];
@@ -186,6 +203,6 @@ async function withExecServer(
         response.end(JSON.stringify(answer));
       });
     },
-    (origin) => test(`${origin}/`, received),
+    (origin): Promise<void> => test(`${origin}/`, received),
   );
 }

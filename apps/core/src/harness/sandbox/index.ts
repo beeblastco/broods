@@ -29,13 +29,13 @@ type SandboxExecutorFactory = (
 ) => SandboxExecutor;
 
 const EXECUTORS: Record<SandboxProvider, SandboxExecutorFactory> = {
-  custom: (config) => new HttpSandboxExecutor(config),
-  daytona: (config) => new DaytonaSandboxExecutor(config),
-  e2b: (config) => new E2BSandboxExecutor(config),
-  lambda: (config) => new MicrovmSandboxExecutor(config),
-  machine: (config) => new MachineSandboxExecutor(config),
-  sandbox: (config) => new WorkdirSandboxExecutor(config),
-  vercel: (config) => new VercelSandboxExecutor(config),
+  custom: (config): SandboxExecutor => new HttpSandboxExecutor(config),
+  daytona: (config): SandboxExecutor => new DaytonaSandboxExecutor(config),
+  e2b: (config): SandboxExecutor => new E2BSandboxExecutor(config),
+  lambda: (config): SandboxExecutor => new MicrovmSandboxExecutor(config),
+  machine: (config): SandboxExecutor => new MachineSandboxExecutor(config),
+  sandbox: (config): SandboxExecutor => new WorkdirSandboxExecutor(config),
+  vercel: (config): SandboxExecutor => new VercelSandboxExecutor(config),
 };
 
 /**
@@ -93,11 +93,9 @@ export function createSandboxExecutor(
 export function providerExecutor(
   config: SandboxExecutorConfig,
 ): SandboxExecutor {
-  const factory: SandboxExecutorFactory | undefined =
-    EXECUTORS[config.provider];
-  if (!factory) {
+  if (!Object.hasOwn(EXECUTORS, config.provider)) {
     throw new Error(`sandbox provider ${config.provider} is not supported`);
   }
 
-  return factory(config);
+  return EXECUTORS[config.provider](config);
 }

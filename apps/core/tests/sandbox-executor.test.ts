@@ -460,6 +460,9 @@ describe("createSandboxExecutor", () => {
     expect(() => createSandboxExecutor({ provider: "nope" })).toThrow(
       "sandbox provider nope is not supported",
     );
+    expect(() => createSandboxExecutor({ provider: "constructor" })).toThrow(
+      "sandbox provider constructor is not supported",
+    );
   });
 
   it("runs a MicroVM and mounts the workspace via the run-hook payload when a namespace is present", async () => {
