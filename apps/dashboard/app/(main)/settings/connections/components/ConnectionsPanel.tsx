@@ -44,13 +44,17 @@ export function ConnectionsPanel(): React.JSX.Element {
   const disconnect = useMutation(api.account.connectionsPublic.disconnect);
   const [removing, setRemoving] = useState<Connection | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleDisconnect(): Promise<void> {
     if (!removing) return;
     setIsRemoving(true);
+    setError(null);
     try {
       await disconnect({ type: removing.type });
       setRemoving(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
       setIsRemoving(false);
     }
@@ -63,6 +67,7 @@ export function ConnectionsPanel(): React.JSX.Element {
         canWrite={canWrite}
         onDisconnect={setRemoving}
       />
+      {error && <p className="text-xs text-destructive">{error}</p>}
 
       {removing && (
         <DeleteConfirmDialog

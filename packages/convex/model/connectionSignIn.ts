@@ -209,7 +209,7 @@ export async function verifyIdToken(
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (
     !signed ||
-    !meta.issuer.test(claims.iss ?? "") ||
+    claims.iss !== meta.issuer ||
     !audiences.includes(clientId) ||
     typeof claims.exp !== "number" ||
     claims.exp * 1000 < Date.now() ||

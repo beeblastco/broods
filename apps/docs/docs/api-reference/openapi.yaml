@@ -4860,10 +4860,13 @@ components:
 
     ConnectionStartResult:
       type: object
-      required: [authorizeUrl, hostId]
+      required: [authorizeUrl, clientId, hostId]
       properties:
         authorizeUrl:
           type: string
+        clientId:
+          type: string
+          description: The client the consent runs on; send it on the PUT when the redirect has no client_id
         hostId:
           type: string
           description: Echo it back on the PUT
@@ -4882,7 +4885,7 @@ components:
           type: string
         clientId:
           type: string
-          description: The client OpenAI issued on the redirect
+          description: The client OpenAI issued on the redirect, else the start answer's
         hostId:
           type: string
           description: From the start answer

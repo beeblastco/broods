@@ -634,8 +634,7 @@ function apiErrorMessage(error: unknown): string {
 
 /**
  * `broods connect [type]`: with a type, signs that external account in through
- * the browser and stores it under --name (default: the type); without one,
- * lists the account's connections.
+ * the browser; without one, lists the account's connections.
  */
 async function connectCommand(args: string[]): Promise<void> {
   const [type] = positionalArgs(args);
@@ -688,7 +687,7 @@ async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
   });
 }
 
-/** `broods disconnect <name>`: forget a connection and revoke it. */
+/** `broods disconnect <type>`: forget a connection and revoke it. */
 async function disconnectCommand(args: string[]): Promise<void> {
   const [type] = positionalArgs(args);
   if (!type || !isConnectionType(type))

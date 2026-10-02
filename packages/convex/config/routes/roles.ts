@@ -33,7 +33,7 @@ import {
   writeAudit,
 } from "./shared";
 
-export type AccountCaller = {
+type AccountCaller = {
   accountId: Id<"accounts">;
   actor: ConfigAuditActor;
   deploymentScope?: { projectId: Id<"projects">; stageId: Id<"stages"> };

@@ -3,7 +3,8 @@
  * Broods account. `broods connect <type>` opens the provider's sign-in; the
  * deployment trades the code, checks the ID token and keeps the tokens, and
  * core refreshes them from then on. `chatgpt` backs the `chatgpt` model
- * provider; more types are tracked in an issue. Plain data, so the CLI, the config plane, core and the dashboard read one copy.
+ * provider. Plain data, so the CLI, the config plane, core and the dashboard
+ * read one copy.
  */
 
 export const CONNECTION_TYPE_NAMES = ["chatgpt"] as const;
@@ -11,13 +12,13 @@ export const CONNECTION_TYPE_NAMES = ["chatgpt"] as const;
 const CHATGPT_ISSUER = "https://auth.openai.com";
 
 /** The API a ChatGPT access token is minted for, sent on every token request. */
-export const CHATGPT_RESOURCE = "https://api.openai.com/v1";
+const CHATGPT_RESOURCE = "https://api.openai.com/v1";
 
 /** The first ChatGPT sign-in registers a client; OpenAI answers with its real id. */
 export const CHATGPT_DYNAMIC_CLIENT_ID = "dynamic_agent_client";
 
 /** The grant that lets requests draw on the user's ChatGPT plan. */
-export const CHATGPT_DIRECT_SCOPE = "chatgpt.tokens.use.direct";
+const CHATGPT_DIRECT_SCOPE = "chatgpt.tokens.use.direct";
 
 /** The name users see on OpenAI's consent screen and in ChatGPT settings. */
 export const CHATGPT_AGENT_NAME = "Broods";
@@ -35,7 +36,7 @@ export interface ConnectionTypeMeta {
   /** Keys that sign the ID token the deployment checks. */
   jwksUrl: string;
   /** The ID token's `iss`. */
-  issuer: RegExp;
+  issuer: string;
   scopes: readonly string[];
   /** The API tokens are minted for, sent on every authorize and token request. */
   resource?: string;
@@ -58,9 +59,11 @@ export interface ConnectionStart {
   nonce: string;
 }
 
-/** The provider's consent screen, plus the host id the PUT echoes back. */
+/** The provider's consent screen, plus the client and host id the PUT echoes back. */
 export interface ConnectionStartResult {
   authorizeUrl: string;
+  /** The client the consent runs on; a redirect that signs in again may omit it. */
+  clientId: string;
   hostId: string;
 }
 
@@ -70,7 +73,7 @@ export interface ConnectionCode {
   codeVerifier: string;
   redirectUri: string;
   nonce: string;
-  /** The client OpenAI issued on the redirect. */
+  /** The client OpenAI issued on the redirect, else the one `start` answered. */
   clientId: string;
   hostId: string;
 }
@@ -101,7 +104,7 @@ export const CONNECTION_TYPES: Readonly<
     tokenUrl: `${CHATGPT_ISSUER}/api/accounts/oauth/token`,
     revokeUrl: `${CHATGPT_ISSUER}/api/accounts/oauth/revoke`,
     jwksUrl: `${CHATGPT_ISSUER}/.well-known/jwks.json`,
-    issuer: /^https:\/\/auth\.openai\.com$/,
+    issuer: CHATGPT_ISSUER,
     scopes: [
       "openid",
       "profile",
@@ -112,7 +115,6 @@ export const CONNECTION_TYPES: Readonly<
     ],
     resource: CHATGPT_RESOURCE,
     requiredScope: CHATGPT_DIRECT_SCOPE,
-    // Hosted, paid services need OpenAI's approval before offering plan usage.
     selfHostedOnly:
       "ChatGPT plan usage is only available on self-hosted Broods for now. Use an OpenAI API key with the `openai` provider instead.",
     modelsUrl: `${CHATGPT_RESOURCE}/models`,

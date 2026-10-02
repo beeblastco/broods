@@ -376,7 +376,7 @@ export function waitForCallback<T>(
         url.pathname !== options.path ||
         url.searchParams.get("state") !== expectedState
       ) {
-        res.writeHead(400).end("Invalid login callback.");
+        res.writeHead(400).end("Invalid callback.");
 
         return;
       }
@@ -451,6 +451,7 @@ export async function waitWithTimeout<T>(
   }
 }
 
+/** Fails early with a hint when the dashboard has no `/cli-auth/start`. */
 async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
   const response = await fetch(startUrl, {
     method: "GET",
@@ -470,6 +471,7 @@ async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
   }
 }
 
+/** The `broods login` callback port: `BROODS_LOGIN_PORT`, else a free one. */
 function callbackPort(): number {
   const raw = process.env.BROODS_LOGIN_PORT;
   if (raw) {

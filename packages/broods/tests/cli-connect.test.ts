@@ -57,6 +57,14 @@ describe("connectInBrowser", () => {
     expect(connection.type).toBe("chatgpt");
   });
 
+  it("signs in again on the started client when the redirect omits it", async () => {
+    redirectParams = { code: "code-1" };
+
+    await runConnect("chatgpt");
+
+    expect(codes[0]?.clientId).toBe("client-saved");
+  });
+
   it("fails when the provider refuses the sign-in", async () => {
     redirectParams = { error: "access_denied" };
 
@@ -84,6 +92,7 @@ async function runConnect(type: ConnectionType): Promise<Connection> {
 
       return {
         authorizeUrl: "https://provider.example/authorize",
+        clientId: "client-saved",
         hostId: "urn:uuid:host-1",
       };
     },

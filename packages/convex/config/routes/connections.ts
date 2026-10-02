@@ -92,6 +92,14 @@ export async function handleConnectionsRoute(
     ref,
   );
 
+  // Hosted, paid services need the provider's approval before a sign-in starts.
+  const selfHostedOnly = CONNECTION_TYPES[type].selfHostedOnly;
+  if (
+    selfHostedOnly &&
+    isManagedService() &&
+    (path.start || req.method === "PUT")
+  )
+    return jsonError(403, selfHostedOnly);
   if (path.start) return await startResponse(req, type, existing);
   if (req.method === "GET") {
     return existing
@@ -161,26 +169,19 @@ function publicConnection(row: ConnectionStatus): Connection {
 
 /** Validates a PUT body: the code and PKCE verifier the redirect brought back. */
 function readCode(body: unknown): ConnectionCode {
-  const fields = readFields(body);
-
   return {
-    code: requireField(fields, "code"),
-    codeVerifier: requireField(fields, "codeVerifier"),
-    redirectUri: readRedirectUri(fields),
-    nonce: requireField(fields, "nonce"),
-    clientId: requireField(fields, "clientId"),
-    hostId: requireField(fields, "hostId"),
+    code: requireField(body, "code"),
+    codeVerifier: requireField(body, "codeVerifier"),
+    redirectUri: readRedirectUri(body),
+    nonce: requireField(body, "nonce"),
+    clientId: requireField(body, "clientId"),
+    hostId: requireField(body, "hostId"),
   };
 }
 
-/** Only typeof checks follow, so a non-object body reads as all fields missing. */
-function readFields(body: unknown): Partial<Record<string, unknown>> {
-  return (body ?? {}) as Partial<Record<string, unknown>>;
-}
-
 /** The loopback redirect the CLI listens on; no other host may get a code. */
-function readRedirectUri(fields: Partial<Record<string, unknown>>): string {
-  const redirectUri = requireField(fields, "redirectUri");
+function readRedirectUri(body: unknown): string {
+  const redirectUri = requireField(body, "redirectUri");
   if (!LOOPBACK_REDIRECT_PATTERN.test(redirectUri))
     throw new ClientError("redirectUri must be a loopback http address");
 
@@ -189,22 +190,18 @@ function readRedirectUri(fields: Partial<Record<string, unknown>>): string {
 
 /** Validates a start body: where to redirect and the PKCE and nonce values. */
 function readStart(body: unknown): ConnectionStart {
-  const fields = readFields(body);
-
   return {
-    redirectUri: readRedirectUri(fields),
-    codeChallenge: requireField(fields, "codeChallenge"),
-    state: requireField(fields, "state"),
-    nonce: requireField(fields, "nonce"),
+    redirectUri: readRedirectUri(body),
+    codeChallenge: requireField(body, "codeChallenge"),
+    state: requireField(body, "state"),
+    nonce: requireField(body, "nonce"),
   };
 }
 
-/** A non-empty string field, or a 400. */
-function requireField(
-  fields: Partial<Record<string, unknown>>,
-  field: string,
-): string {
-  const value = fields[field];
+/** A non-empty string field of the JSON body, or a 400; a non-object body has none. */
+function requireField(body: unknown, field: string): string {
+  // Only typeof checks follow, so any JSON value may be read this way.
+  const value = (body as Partial<Record<string, unknown>> | null)?.[field];
   if (
     typeof value !== "string" ||
     value.length < 1 ||
@@ -236,8 +233,6 @@ async function signInResponse(
   actor: ConfigAuditActor,
 ): Promise<Response> {
   const meta = CONNECTION_TYPES[ref.type];
-  if (meta.selfHostedOnly && isManagedService())
-    return jsonError(403, meta.selfHostedOnly);
   const code = readCode(await parseJsonRequest(req));
   // OpenAI issued the client on this sign-in's redirect.
   const client = { clientId: code.clientId, hostId: code.hostId };
@@ -299,14 +294,12 @@ async function startResponse(
   existing: ConnectionStatus | null,
 ): Promise<Response> {
   if (req.method !== "POST") return methodNotAllowed(["POST"]);
-  const selfHostedOnly = CONNECTION_TYPES[type].selfHostedOnly;
-  if (selfHostedOnly && isManagedService())
-    return jsonError(403, selfHostedOnly);
   const start = readStart(await parseJsonRequest(req));
   const client = signInClient(existing);
 
   return json({
     authorizeUrl: authorizeUrl(type, client, start),
+    clientId: client.clientId,
     hostId: client.hostId,
   });
 }

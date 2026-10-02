@@ -306,6 +306,7 @@ describe("chatgpt provider", () => {
   });
 });
 
+/** The account's agent model on the chatgpt provider. */
 function chatgptModel(): ReturnType<typeof resolveConfiguredModel> {
   return resolveConfiguredModel(
     { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
@@ -313,6 +314,7 @@ function chatgptModel(): ReturnType<typeof resolveConfiguredModel> {
   );
 }
 
+/** A stored ChatGPT connection, valid for an hour unless overridden. */
 function credential(
   overrides: Partial<StoredConnection> = {},
 ): StoredConnection {

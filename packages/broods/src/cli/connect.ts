@@ -21,8 +21,8 @@ const CALLBACK_PATH = "/auth/callback";
 
 interface AuthorizationCallback {
   code: string;
-  /** The client OpenAI registered for this sign-in. */
-  clientId: string;
+  /** A new registration's client; signing in again may leave it out. */
+  clientId: string | undefined;
 }
 
 /**
@@ -67,7 +67,7 @@ export async function connectInBrowser(
       codeVerifier: verifier,
       redirectUri: redirectUri,
       nonce: nonce,
-      clientId: callback.clientId,
+      clientId: callback.clientId ?? start.clientId,
       hostId: start.hostId,
     });
   } finally {
@@ -75,7 +75,7 @@ export async function connectInBrowser(
   }
 }
 
-/** The loopback redirect: the code, and the client OpenAI issued. */
+/** The loopback redirect: the code, and a new registration's client. */
 function readAuthorizationCallback(
   params: URLSearchParams,
 ): AuthorizationCallback {
@@ -86,9 +86,7 @@ function readAuthorizationCallback(
     );
   }
   const code = params.get("code");
-  const clientId = params.get("client_id");
-  if (!code || !clientId)
-    throw new Error("Sign-in callback carried no code or client id.");
+  if (!code) throw new Error("Sign-in callback carried no code.");
 
-  return { code: code, clientId: clientId };
+  return { code: code, clientId: params.get("client_id") ?? undefined };
 }

@@ -101,6 +101,7 @@ test("start answers ChatGPT's consent screen on a registering client", async () 
 
   expect(response.status).toBe(200);
   expect(body.hostId).toMatch(/^urn:uuid:/);
+  expect(body.clientId).toBe("dynamic_agent_client");
   expect(query.get("client_id")).toBe("dynamic_agent_client");
   expect(query.get("agent_name_hint")).toBe("Broods");
   expect(query.get("ext_agent_host_id")).toBe(body.hostId);
@@ -253,40 +254,27 @@ function codeBody(): Record<string, string> {
 
 /** An ID token for the current provider answer, signed with the test's key. */
 async function idToken(): Promise<string> {
-  const encode = (value: unknown): string =>
-    btoa(JSON.stringify(value))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-  const signingInput = `${encode({ alg: "RS256", kid: "key-1", typ: "JWT" })}.${encode(
-    {
+  const encode = (binary: string): string =>
+    btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const signingInput = `${encode(JSON.stringify({ alg: "RS256", kid: "key-1", typ: "JWT" }))}.${encode(
+    JSON.stringify({
       iss: provider.issuer,
       aud: provider.audience,
       exp: Math.floor(Date.now() / 1000) + 600,
       nonce: provider.nonce,
       email: "user@example.com",
-    },
+    }),
   )}`;
   const signature = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
     keys.privateKey,
     new TextEncoder().encode(signingInput),
   );
-  const bytes = String.fromCharCode(...new Uint8Array(signature));
 
-  return `${signingInput}.${btoa(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+  return `${signingInput}.${encode(String.fromCharCode(...new Uint8Array(signature)))}`;
 }
 
-/** The start body `broods connect` sends before opening the browser. */
-function startBody(): Record<string, string> {
-  return {
-    redirectUri: REDIRECT_URI,
-    codeChallenge: "challenge-1",
-    state: "state-1",
-    nonce: "nonce-1",
-  };
-}
-
+/** One call to the connections routes as the account owner. */
 async function request(
   t: T,
   method: "GET" | "POST" | "PUT" | "DELETE",
@@ -306,6 +294,7 @@ async function request(
   );
 }
 
+/** An org and account whose secret `request` sends. */
 async function seedAccount(t: T): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
@@ -325,4 +314,14 @@ async function seedAccount(t: T): Promise<Id<"accounts">> {
       updatedAt: Date.now(),
     });
   });
+}
+
+/** The start body `broods connect` sends before opening the browser. */
+function startBody(): Record<string, string> {
+  return {
+    redirectUri: REDIRECT_URI,
+    codeChallenge: "challenge-1",
+    state: "state-1",
+    nonce: "nonce-1",
+  };
 }

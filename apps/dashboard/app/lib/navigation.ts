@@ -123,7 +123,7 @@ export const ACCOUNT_NAV_ITEMS: readonly NavItem[] = [
   },
   {
     icon: Plug,
-    keywords: ["connections", "chatgpt", "gmail", "outlook", "google", "oauth"],
+    keywords: ["connections", "chatgpt", "oauth"],
     label: "Connections",
     segment: "/settings/connections",
     tabs: [],
