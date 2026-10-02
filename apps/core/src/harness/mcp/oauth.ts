@@ -8,6 +8,7 @@
  * itself, which `connections.ts` also refreshes every connection with.
  */
 
+import { createHash } from "node:crypto";
 import type { McpOauth } from "../../shared/domain/mcp.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { publicHostFetch } from "../../shared/http.ts";
@@ -52,6 +53,24 @@ export function clearMcpOauthTokens(): void {
 }
 
 /**
+ * The token cache identity of one oauth config. Every field is identity, so a
+ * rotated secret must not reuse the old token; they ride the key as a digest
+ * because a Map key lives process-wide for the token's whole lease.
+ */
+export function mcpOauthTokenCacheKey(oauth: ResolvedMcpOauth): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        oauth.tokenUrl,
+        oauth.clientId,
+        oauth.clientSecret,
+        oauth.refreshToken,
+      ]),
+    )
+    .digest("hex");
+}
+
+/**
  * The access token for one oauth config, minted via grant_type=refresh_token
  * when the cache holds none or the cached one is inside the refresh margin.
  * Concurrent callers, cold or stale, share one in-flight mint; a failed mint is evicted
@@ -61,13 +80,7 @@ export async function mcpAccessToken(
   serverName: string,
   oauth: ResolvedMcpOauth,
 ): Promise<string> {
-  // Every field is identity: a rotated secret must not reuse the old token.
-  const key = JSON.stringify([
-    oauth.tokenUrl,
-    oauth.clientId,
-    oauth.clientSecret,
-    oauth.refreshToken,
-  ]);
+  const key = mcpOauthTokenCacheKey(oauth);
   const pending = tokenCache.get(key);
   if (pending) {
     const minted = await pending.catch(() => null);

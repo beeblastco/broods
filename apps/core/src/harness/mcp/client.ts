@@ -40,6 +40,7 @@ import {
   mcpAccessToken,
   type ResolvedMcpOauth,
 } from "./oauth.ts";
+import { createHash } from "node:crypto";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 
@@ -249,14 +250,18 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 /**
  * One cache identity per server row version, resolved header set and oauth
  * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL.
+ * data for a TTL. The credentials ride the key only as a digest: a Map key
+ * lives process-wide for up to an hour and must not hold them in clear.
  */
-function cacheKeyFor(connection: McpConnection): string {
+export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
+  const credentials = createHash("sha256")
+    .update(JSON.stringify([headers, connection.oauth ?? null]))
+    .digest("hex");
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${credentials}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
