@@ -18,6 +18,26 @@ const RETRY_REPLY = "Retry";
 // 53 bytes at most, under Telegram's 64-byte callback_data cap.
 const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
 
+// The fix to append to a provider error, first match wins. A provider that
+// already says when to retry ("try again in 37s") gets no hint, so that entry
+// stays ahead of the generic rate limit and timeout ones.
+const ERROR_HINTS: [RegExp, string | null][] = [
+  [
+    /request too large|context (length|window)|prompt is too long/i,
+    "Send /compact to shorten the conversation, or /new to start over.",
+  ],
+  [
+    /usage limit|quota|insufficient.*credit|credit balance|purchase credits|upgrade your (token )?plan/i,
+    "Add credits or upgrade the plan with the model provider.",
+  ],
+  [/try again in/i, null],
+  [
+    /rate.?limit|\b429\b|too many requests|overloaded/i,
+    "Try again in a moment.",
+  ],
+  [/timed? ?out|etimedout|econnreset|network/i, "Try again."],
+];
+
 // Any JSON object. Fields stay as the provider sent them, nulls included; each
 // adapter reads what it needs through its own payload type.
 const WEBHOOK_BODY = z.looseObject({});
@@ -440,45 +460,15 @@ export function reachSet(ids: string[] | undefined): Set<string> | null {
 function simplifyErrorText(raw: string): string {
   const message = (raw.match(/Last error:\s*(.+)$/is)?.[1] ?? raw)
     .replace(/^AI_\w+:\s*/, "")
-    .replace(/\s+in organization \S+/i, "")
-    .replace(/\s*Visit https?:\/\/\S+[^.]*\.?/gi, "")
+    .replace(/ in organization \S+/i, "")
+    .replace(/ ?Visit https?:\/\/\S+[^.]*\.?/gi, "")
     .trim();
   if (!message) {
     return "Something went wrong while generating a reply. Try again.";
   }
-  if (
-    /request too large|context (length|window)|prompt is too long/i.test(
-      message,
-    )
-  ) {
-    return withHint(
-      message,
-      "Send /compact to shorten the conversation, or /new to start over.",
-    );
-  }
-  if (
-    /usage limit|quota|insufficient.*credit|credit balance|purchase credits|upgrade your (token )?plan/i.test(
-      message,
-    )
-  ) {
-    return withHint(
-      message,
-      "Add credits or upgrade the plan with the model provider.",
-    );
-  }
-  if (/try again in/i.test(message)) {
-    return message;
-  }
-  if (/rate.?limit|\b429\b|too many requests|overloaded/i.test(message)) {
-    return withHint(message, "Try again in a moment.");
-  }
-  if (/timed? ?out|etimedout|econnreset|network/i.test(message)) {
-    return withHint(message, "Try again.");
-  }
+  const hint = ERROR_HINTS.find(([pattern]) => pattern.test(message))?.[1];
 
-  return message;
-}
-
-function withHint(message: string, hint: string): string {
-  return `${message.replace(/[\s.]+$/, "")}. ${hint}`;
+  return hint
+    ? `${message.endsWith(".") ? message.slice(0, -1) : message}. ${hint}`
+    : message;
 }
