@@ -367,3 +367,45 @@ jobs:
           name: dashboard-e2e-${{ github.run_id }}
           path: apps/dashboard/test-results
           if-no-files-found: ignore
+
+  docs:
+    # Builds the docs on a pull request that touches them, so a broken link
+    # (`onBrokenLinks: "throw"`) fails here and not in the promote to main.
+    # Not a required check: on a pull request without docs changes it skips
+    # the build and still reports.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The merge commit and its base parent, enough to diff the pull request.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Check for docs changes
+        id: changed
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- apps/docs; then
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Bun
+        if: steps.changed.outputs.docs == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        # Hoisted like deploy-docs.yaml, so the Docusaurus theme packages share
+        # one React context.
+        if: steps.changed.outputs.docs == 'true'
+        run: bun install --ignore-scripts --frozen-lockfile --linker hoisted
+
+      - name: Build docs
+        if: steps.changed.outputs.docs == 'true'
+        run: bun run docs:build

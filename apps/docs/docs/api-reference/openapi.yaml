@@ -3901,7 +3901,57 @@ components:
               example: not_found_error
             code:
               type: string
-              description: Stable machine-readable reason. Branch on this.
+              description: |
+                Stable machine-readable reason. Branch on this. A code keeps its meaning across releases; new codes may be added, so handle an unknown one by its `type`. A response with no more specific code carries its status default.
+
+                | Code | Status | Meaning |
+                | --- | --- | --- |
+                | `account_not_found` | 404 | The account being deleted no longer exists. |
+                | `agent_name_exists` | 409 | An agent with this name already exists in the account. |
+                | `bad_gateway` | 502 | Default for a 502: an upstream answered with an error. |
+                | `budget_exhausted` | 402 | A monthly plan cap is used up. Upgrade or wait for next month. |
+                | `conflict` | 409 | Default for a 409: the request conflicts with current state. |
+                | `conversation_busy` | 409 | Another run holds this conversation. Retry when it finishes. |
+                | `conversation_not_found` | 404 | A `continue` request named a conversation key with no session behind it. |
+                | `forbidden` | 403 | Default for a 403: the credential may not do this. |
+                | `gateway_timeout` | 504 | Default for a 504: an upstream did not answer in time. |
+                | `gone` | 410 | Default for a 410: the resource existed but is no longer available. |
+                | `idempotency_conflict` | 409 | The idempotency key is already bound to a different payload. |
+                | `ingress_capacity` | 429 | The conversation's ingress queue is full. Retry after `Retry-After`. |
+                | `internal_error` | 500 | Default for a 500 and any unmapped 5xx. |
+                | `invalid_auth` | 502 | Slack rejected the agent's stored bot token (channel directory). |
+                | `invalid_cursor` | 400 | `cursor` is not a page cursor this collection issued. |
+                | `invalid_limit` | 400 | `limit` is not an integer in the allowed page range. |
+                | `invalid_request` | 400 | Default for a 400 and any unmapped 4xx: the request is malformed. |
+                | `job_result_not_found` | 404 | Unknown background job result, or its completion token does not match. |
+                | `job_result_settled` | 409 | The background job result was already completed. |
+                | `manifest_conflict` | 409 | The stage changed since the CLI read it. Re-read and retry the sync. |
+                | `method_not_allowed` | 405 | Default for a 405. `Allow` lists the methods the path takes. |
+                | `missing_scope` | 502 | The Slack app lacks a scope needed to list channels. |
+                | `not_configured` | 409 | The channel credential the request needs is not configured on the agent. |
+                | `not_found` | 404 | Default for a 404: the path or resource does not exist. |
+                | `payload_too_large` | 413 | Default for a 413: the body is over the size limit. |
+                | `plan_limit_exceeded` | 429 | Runs per minute are over the plan's limit. Retry after `Retry-After`. |
+                | `public_access_disabled` | 403 | The agent does not allow runtime-key access (`publicAccess` is off). |
+                | `question_already_answered` | 409 | An `ask_questions` question was already answered. |
+                | `question_not_found` | 404 | No open question with this `statusId` on the conversation. |
+                | `rate_limited` | 429 | Default for a 429. Retry after `Retry-After`. |
+                | `ratelimited` | 429 | Slack rate-limited the channel directory listing. Retry after `Retry-After`. |
+                | `run_not_found` | 404 | No run with this id in the account. |
+                | `run_overrides_disabled` | 403 | A runtime key sent `system` or `model` overrides and the agent does not set `allowRunOverrides`. |
+                | `sandbox_instance_reserved` | 409 | The sandbox still has a reserved instance that could not be terminated. |
+                | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
+                | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
+                | `slack_error` | 502 | Slack returned another error or did not answer in time (channel directory). |
+                | `status_access_denied` | 403 | The run status belongs to another deployment than this credential's. |
+                | `too_many_auth_failures` | 429 | Too many unauthorized attempts from this caller. Retry after `Retry-After`. |
+                | `unauthorized` | 401 | Missing, invalid or revoked credential. |
+                | `unknown_webhook_stage` | 404 | No stage of this account is deployed at the webhook URL's endpoint id. |
+                | `unknown_webhook_url` | 404 | The webhook path matches neither webhook URL shape. |
+                | `unprocessable_entity` | 422 | Default for a 422: the body parses but its values are invalid. |
+                | `unsupported_channel_type` | 400 | The channel type does not support this operation. |
+                | `unsupported_media_type` | 415 | Default for a 415: the `Content-Type` is not accepted. |
+                | `upload_quota_exceeded` | 429 | The hourly upload grant budget is spent. Retry after `Retry-After`. |
               example: not_found
             param:
               type: string
