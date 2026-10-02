@@ -7,6 +7,7 @@ import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
 import { logWarn, redactSensitiveText } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
+import { getObservabilityContext } from "./otel.ts";
 
 /** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
@@ -24,10 +25,10 @@ const CONTEXT_LIMIT_PATTERN =
   /request too large|context (length|window)|prompt is too long|input is too long|exceeds the maximum number of tokens/i;
 
 // The fix to append to any other provider error, first match wins. A provider
-// that already says when to retry ("try again in 37s") gets no hint, so that
-// entry stays ahead of the quota and rate limit ones.
+// that already says when to retry ("try again in 37s", "later") gets no hint,
+// so that entry stays ahead of the quota and rate limit ones.
 const ERROR_HINTS: [RegExp, string | null][] = [
-  [/\b(try|retry) (again )?in \d/i, null],
+  [/\b(try|retry) (again )?(in \d|later)/i, null],
   [
     /usage limit|quota|insufficient (balance|.*credit)|credit balance|purchase credits|upgrade your (token )?plan/i,
     "Add credits or upgrade the plan with the model provider.",
@@ -36,6 +37,7 @@ const ERROR_HINTS: [RegExp, string | null][] = [
     /rate.?limit|\b429\b|too many requests|overloaded/i,
     "Try again in a moment.",
   ],
+  [/timed? ?out|etimedout|econnreset/i, "Try again."],
 ];
 
 // Channels whose plain messages are parsed for slash commands like /new.
@@ -487,7 +489,10 @@ export function supportsInlineCommands(
 // Keep the provider's own reason so the chat says what actually failed, drop the
 // wrappers, OpenAI's org id and docs link, and add the one step that fixes it.
 function simplifyErrorText(raw: string, commands: boolean): string {
-  const text = redactSensitiveText(raw);
+  const text = redactSensitiveText(
+    raw,
+    getObservabilityContext()?.secretValues,
+  );
   const message = (text.match(/Last error:\s*(.+)$/is)?.[1] ?? text)
     .replace(/^AI_\w+:\s*/, "")
     .replace(/ in organization org-[\w-]+/, "")

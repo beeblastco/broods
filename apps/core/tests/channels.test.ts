@@ -2,6 +2,10 @@ import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
 import type { ChannelImage } from "../src/shared/channels.ts";
 import {
+  runWithObservabilityScope,
+  type ObservabilityContext,
+} from "../src/shared/otel.ts";
+import {
   channelAttachmentBytes,
   chunkChannelText,
   extractText,
@@ -113,6 +117,39 @@ describe("formatChannelErrorText", () => {
     ).toBe(
       "⚠️ Token Plan usage limit reached (2056). Add credits or upgrade the plan with the model provider.",
     );
+  });
+
+  it("leaves a provider's own 'try again later' alone", () => {
+    expect(
+      formatChannelErrorText("Rate limit exceeded. Please try again later."),
+    ).toBe("⚠️ Rate limit exceeded. Please try again later.");
+  });
+
+  it("adds a retry hint to a dropped connection", () => {
+    expect(
+      formatChannelErrorText("Cannot connect to API: read ECONNRESET"),
+    ).toBe("⚠️ Cannot connect to API: read ECONNRESET. Try again.");
+  });
+
+  it("redacts the tenant's secrets before the error reaches the chat", () => {
+    const scope = {
+      accountId: "acct",
+      project: "p",
+      stage: "e",
+      endpointId: "ep",
+      agentId: "a",
+      conversationKey: "c",
+      traceId: "t",
+      otelContext: {} as ObservabilityContext["otelContext"],
+      secretValues: ["tenant-secret-XYZ123"],
+    };
+
+    expect(
+      runWithObservabilityScope(
+        () => formatChannelErrorText("Bad token tenant-secret-XYZ123"),
+        scope,
+      ),
+    ).not.toContain("tenant-secret-XYZ123");
   });
 
   it("adds a retry hint to a bare rate limit", () => {
