@@ -186,7 +186,14 @@ export async function verifyIdToken(
     signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
   });
   const { keys } = (await jwks.json()) as { keys: Jwk[] };
-  const jwk = keys.find((key) => key.kid === header.kid);
+  // Only an RSA signing key for RS256 may verify, whatever else shares its kid.
+  const jwk = keys.find(
+    (key) =>
+      key.kid === header.kid &&
+      key.kty === "RSA" &&
+      (key.use === undefined || key.use === "sig") &&
+      (key.alg === undefined || key.alg === "RS256"),
+  );
   if (!jwk) {
     throw new Error(`${meta.label} ID token is signed with an unknown key.`);
   }
