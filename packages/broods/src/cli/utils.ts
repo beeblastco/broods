@@ -122,7 +122,13 @@ export async function loginWithBrowser(
   const codeChallenge = createHash("sha256")
     .update(codeVerifier)
     .digest("base64url");
-  const { code, close } = await waitForCallback(state);
+  const { code, close } = await waitForCallback(state, {
+    port: callbackPort(),
+    fixedPort: Boolean(process.env.BROODS_LOGIN_PORT),
+    path: "/callback",
+    read: readLoginCallback,
+    done: "broods CLI login complete. You can close this tab.",
+  });
 
   try {
     const callbackUrl = code.callbackUrl;
@@ -136,7 +142,7 @@ export async function loginWithBrowser(
     await assertCliAuthRouteExists(startUrl);
     openBrowser(startUrl);
     console.log(`Opening ${startUrl}`);
-    const login = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
+    const login = await waitWithTimeout(code.promise);
     // The dashboard advertises the API base URL in the callback; the
     // exchange and all later sync/env calls go there directly.
     const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
@@ -345,6 +351,20 @@ async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
   }
 }
 
+function readLoginCallback(params: URLSearchParams): LoginCallback {
+  const code = params.get("code");
+  if (!code) throw new Error("Login callback carried no code.");
+  const baseUrl = params.get("base_url");
+  if (!baseUrl) {
+    throw new Error(
+      "Login callback did not advertise the API base URL (base_url). " +
+        "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
+    );
+  }
+
+  return { code: code, baseUrl: stripTrailingSlash(baseUrl) };
+}
+
 function callbackPort(): number {
   const raw = process.env.BROODS_LOGIN_PORT;
   if (raw) {
@@ -356,67 +376,69 @@ function callbackPort(): number {
   return 18987;
 }
 
-function openBrowser(url: string): void {
+export function openBrowser(url: string): void {
   const { command, args } = browserCommand(url);
   const child = spawn(command, args, { stdio: "ignore", detached: true });
   child.unref();
 }
 
-function waitForCallback(expectedState: string): Promise<{
-  code: { callbackUrl: string; promise: Promise<LoginCallback> };
+interface CallbackOptions<T> {
+  /** Preferred port; a busy one falls back to any free port unless `fixedPort`. */
+  port: number;
+  fixedPort: boolean;
+  path: string;
+  /** Turns the callback query into its result; a throw fails the login. */
+  read: (params: URLSearchParams) => T;
+  /** What the browser tab shows once `read` succeeds. */
+  done: string;
+}
+
+/**
+ * Listens on 127.0.0.1 for one OAuth-style browser redirect carrying
+ * `expectedState`. A redirect with any other state is refused and ignored,
+ * so a stray tab cannot end the login.
+ */
+export function waitForCallback<T>(
+  expectedState: string,
+  options: CallbackOptions<T>,
+): Promise<{
+  code: { callbackUrl: string; promise: Promise<T> };
   close: () => void;
 }> {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (
+        url.pathname !== options.path ||
+        url.searchParams.get("state") !== expectedState
+      ) {
+        res.writeHead(400).end("Invalid login callback.");
+
+        return;
+      }
       try {
-        const url = new URL(req.url ?? "/", "http://127.0.0.1");
-        const state = url.searchParams.get("state");
-        const code = url.searchParams.get("code");
-        const baseUrl = url.searchParams.get("base_url");
-        if (state !== expectedState || !code) {
-          res.writeHead(400).end("Invalid broods login callback.");
-
-          return;
-        }
-        if (!baseUrl) {
-          res
-            .writeHead(400)
-            .end(
-              "Login callback omitted base_url; update the dashboard deployment.",
-            );
-          callbackReject(
-            new Error(
-              "Login callback did not advertise the API base URL (base_url). " +
-                "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
-            ),
-          );
-
-          return;
-        }
-        res
-          .writeHead(200, { "Content-Type": "text/plain" })
-          .end("broods CLI login complete. You can close this tab.");
-        callbackResolve({
-          code: code,
-          baseUrl: stripTrailingSlash(baseUrl),
-        });
+        const result = options.read(url.searchParams);
+        res.writeHead(200, { "Content-Type": "text/plain" }).end(options.done);
+        callbackResolve(result);
       } catch (error) {
+        res
+          .writeHead(400, { "Content-Type": "text/plain" })
+          .end(error instanceof Error ? error.message : String(error));
         callbackReject(error);
       }
     });
 
-    let callbackResolve!: (callback: LoginCallback) => void;
+    let callbackResolve!: (callback: T) => void;
     let callbackReject!: (error: unknown) => void;
-    const promise = new Promise<LoginCallback>((res, rej) => {
+    const promise = new Promise<T>((res, rej) => {
       callbackResolve = res;
       callbackReject = rej;
     });
 
-    const requestedPort = callbackPort();
     server.on("error", (error: NodeJS.ErrnoException) => {
       if (
-        !process.env.BROODS_LOGIN_PORT &&
-        requestedPort !== 0 &&
+        !options.fixedPort &&
+        options.port !== 0 &&
         error.code === "EADDRINUSE"
       ) {
         server.listen(0, "127.0.0.1");
@@ -425,7 +447,7 @@ function waitForCallback(expectedState: string): Promise<{
       }
       reject(error);
     });
-    server.listen(requestedPort, "127.0.0.1", () => {
+    server.listen(options.port, "127.0.0.1", () => {
       const address = server.address();
       if (!address || typeof address === "string") {
         reject(new Error("Failed to allocate callback port"));
@@ -434,7 +456,7 @@ function waitForCallback(expectedState: string): Promise<{
       }
       resolve({
         code: {
-          callbackUrl: `http://127.0.0.1:${address.port}/callback`,
+          callbackUrl: `http://127.0.0.1:${address.port}${options.path}`,
           promise: promise,
         },
         close: () => server.close(),
@@ -443,29 +465,28 @@ function waitForCallback(expectedState: string): Promise<{
   });
 }
 
+const DASHBOARD_LOGIN_TIMEOUT =
+  "Timed out waiting for browser login to complete.\n" +
+  "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
+  "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
+  "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
+  "cliAuth Convex functions or no active API account (Settings -> API Access).";
+
 /**
  * Race a promise against a timeout so a stalled browser login surfaces an
- * actionable error instead of hanging the CLI forever. The most common cause is
- * the dashboard's cliAuth Convex functions not being deployed in the target
- * stage, which makes /cli-auth/start return a 500 in the browser and never
- * redirect back to the local callback.
+ * actionable error instead of hanging the CLI forever. For `broods login` the
+ * most common cause is the dashboard's cliAuth Convex functions not being
+ * deployed in the target stage, which makes /cli-auth/start return a 500 in
+ * the browser and never redirect back to the local callback.
  */
-async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export async function waitWithTimeout<T>(
+  promise: Promise<T>,
+  ms: number = LOGIN_TIMEOUT_MS,
+  message: string = DASHBOARD_LOGIN_TIMEOUT,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          new Error(
-            "Timed out waiting for browser login to complete.\n" +
-              "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
-              "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
-              "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
-              "cliAuth Convex functions or no active API account (Settings -> API Access).",
-          ),
-        ),
-      ms,
-    );
+    timer = setTimeout(() => reject(new Error(message)), ms);
   });
   try {
     return await Promise.race([promise, timeout]);

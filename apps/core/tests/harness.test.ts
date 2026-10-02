@@ -2992,6 +2992,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     accountHooks: null as never,
     machineConnections: null as never,
     mcp: null as never,
+    providerCredentials: null as never,
     roleSessions: null as never,
     taskUsage: {
       record: async function (input) {

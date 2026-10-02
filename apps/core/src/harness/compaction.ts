@@ -23,6 +23,8 @@ const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 
 export interface CompactionInput {
+  // Whose sign-in a `chatgpt` model calls on.
+  accountId?: string;
   conversationKey: string;
   system: SystemModelMessage[];
   messages: ModelMessage[];
@@ -30,6 +32,7 @@ export interface CompactionInput {
 }
 
 export interface SummarizeConversationInput {
+  accountId?: string;
   conversationKey: string;
   priorSummaries: SystemModelMessage[];
   messages: ModelMessage[];
@@ -68,6 +71,7 @@ export async function compactSessionContext(
   const keepLastMessage = messages.at(-1)?.role === "user";
 
   return summarizeConversation({
+    accountId: input.accountId,
     conversationKey: input.conversationKey,
     priorSummaries: input.system.filter(isCompactionSummaryMessage),
     messages: keepLastMessage ? messages.slice(0, -1) : messages,
@@ -105,7 +109,10 @@ export async function summarizeConversation(
     return null;
   }
 
-  const configuredModel = resolveConfiguredModel(input.agentConfig);
+  const configuredModel = resolveConfiguredModel(
+    input.agentConfig,
+    input.accountId,
+  );
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const startedAt = Date.now();
   const result = await generateText({

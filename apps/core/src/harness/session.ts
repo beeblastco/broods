@@ -594,6 +594,7 @@ export class Session {
       return 0;
     }
     const summary = await summarizeConversation({
+      accountId: this.accountId,
       conversationKey: this.conversationKey,
       priorSummaries: systemContextSnapshot.messages.filter(
         isCompactionSummaryMessage,
@@ -660,6 +661,7 @@ export class Session {
 
     const compactionStartedMs = Date.now();
     const compactionSummary = await compactSessionContext({
+      accountId: this.accountId,
       conversationKey: this.conversationKey,
       system: system,
       // Compaction feeds these to a model, so envelope fields must not leak.

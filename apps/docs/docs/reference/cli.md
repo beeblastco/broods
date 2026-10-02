@@ -113,6 +113,16 @@ export BROODS_BASE_URL="https://gateway.your-domain.example"
 broods login --dashboard-url https://your-dashboard.example.com
 ```
 
+### login chatgpt
+
+Signs in with ChatGPT so agents on `model.provider: "chatgpt"` run on your ChatGPT plan. Self-hosted only; the managed service refuses it. See [ChatGPT plan](../guides/agents.md#chatgpt-plan).
+
+```bash
+broods login chatgpt [--status | --logout] [--base-url <url>]
+```
+
+It needs the account secret in `BROODS_ACCOUNT_SECRET`, not a `broods login` token, and calls the gateway in `BROODS_BASE_URL`. The browser redirect comes back to `http://127.0.0.1:1455/auth/callback`, or another free port when 1455 is busy. A second run signs in again on the same OAuth client and host id. `--status` prints the connection, and `--logout` revokes the refresh token at OpenAI and deletes it.
+
 ## whoami
 
 Shows the login, server, organization, plan, project and stage the next command will use.

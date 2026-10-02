@@ -978,6 +978,91 @@ paths:
                       updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: fp_acct_new...
 
+  /v1/account/chatgpt:
+    get:
+      tags:
+        - Accounts
+      summary: Get the ChatGPT sign-in
+      description: >-
+        The Sign in with ChatGPT login the `chatgpt` model provider runs on.
+        Never returns the tokens. Requires the account secret; role sessions
+        are refused.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "The connection, or `{ connected: false }`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGPTConnection"
+    put:
+      tags:
+        - Accounts
+      summary: Store a ChatGPT sign-in
+      description: >-
+        Stores a verified sign-in, replacing the previous one. `broods login
+        chatgpt` runs the browser sign-in and sends this. The grant must
+        include `chatgpt.tokens.use.direct`. Core refreshes the access token
+        from then on. The managed service answers 403: plan usage is for
+        self-hosted deployments.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                [clientId, hostId, scopes, expiresAt, accessToken, refreshToken]
+              properties:
+                clientId:
+                  type: string
+                  description: OAuth client OpenAI issued at sign-in
+                hostId:
+                  type: string
+                  description: This deployment's `ext_agent_host_id`
+                email:
+                  type: string
+                scopes:
+                  type: array
+                  items: { type: string }
+                expiresAt:
+                  type: string
+                  format: date-time
+                accessToken:
+                  type: string
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGPTConnection"
+        "400":
+          description: Missing field, or plan usage was not granted
+        "403":
+          description: A role session, or the managed service
+    delete:
+      tags:
+        - Accounts
+      summary: Disconnect ChatGPT
+      description: >-
+        Revokes the refresh token at OpenAI (best effort) and deletes the
+        sign-in.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "Deleted, or `deleted: false` when there was none"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResponse"
+
   /v1/account/assume-role:
     post:
       tags: [Roles]
@@ -4630,7 +4715,9 @@ components:
       description: >-
         Constructor settings for the Vercel AI SDK provider, keyed by provider
         name. The provider named by `model.provider` must have an entry here,
-        and that entry must carry its `apiKey`. Everything else is handed to
+        and that entry must carry its `apiKey`, except `chatgpt`, which runs on
+        the account's ChatGPT sign-in (`/v1/account/chatgpt`) and needs no
+        entry. Everything else is handed to
         that provider's AI SDK factory unchanged, so whatever the factory
         accepts is accepted here. Secret-like fields are encrypted at rest and
         redacted from reads.
@@ -4642,6 +4729,7 @@ components:
           - baseten
           - bedrock
           - cerebras
+          - chatgpt
           - cloudflare
           - cohere
           - custom
@@ -4667,6 +4755,32 @@ components:
           - zai
       additionalProperties:
         $ref: "#/components/schemas/ProviderSettings"
+
+    ChatGPTConnection:
+      type: object
+      required: [connected]
+      properties:
+        connected:
+          type: boolean
+        clientId:
+          type: string
+        hostId:
+          type: string
+        email:
+          type: string
+        scopes:
+          type: array
+          items: { type: string }
+        planUsage:
+          type: boolean
+          description: True when the grant allows drawing on the ChatGPT plan
+        expiresAt:
+          type: string
+          format: date-time
+          description: Access-token expiry; core refreshes before it
+        updatedAt:
+          type: string
+          format: date-time
 
     ProviderSettings:
       type: object
@@ -4695,7 +4809,10 @@ components:
       properties:
         provider:
           type: string
-          description: Provider constructor key matching `provider` config
+          description: >-
+            Provider constructor key matching `provider` config. `chatgpt` runs
+            on the account's ChatGPT sign-in instead and needs no `provider`
+            entry.
         modelId:
           type: string
           description: Provider-specific model identifier

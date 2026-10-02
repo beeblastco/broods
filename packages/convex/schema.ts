@@ -752,6 +752,30 @@ export const accountEnvVarsFields = {
 };
 
 /**
+ * An OAuth sign-in that stands in for a model provider's API key: today only
+ * `chatgpt` (Sign in with ChatGPT). One per account and provider. Core
+ * refreshes it in process and writes the rotated tokens back; the tokens are
+ * encrypted with the agent-config codec and never leave through the API.
+ */
+export const providerCredentialsFields = {
+  accountId: v.id("accounts"),
+  provider: v.literal("chatgpt"),
+  /** OAuth client OpenAI issued at the first sign-in; a reauthorization reuses it. */
+  clientId: v.string(),
+  /** `ext_agent_host_id` of this deployment, kept across sign-ins. */
+  hostId: v.string(),
+  email: v.optional(v.string()),
+  scopes: v.array(v.string()),
+  /** Access-token expiry, epoch ms. */
+  expiresAt: v.number(),
+  /** Encrypted `{ accessToken, refreshToken }`. */
+  ciphertext: v.string(),
+  iv: v.string(),
+  tag: v.string(),
+  updatedAt: v.number(),
+};
+
+/**
  * Audit record written every time an environment variable's plaintext value is
  * revealed (via the dashboard eye-icon or the CLI `env get`), so reveals of
  * otherwise write-only secrets leave a trail of who read what and when.
@@ -1443,6 +1467,10 @@ export default defineSchema({
   accountEnvVars: defineTable(accountEnvVarsFields).index(
     "by_accountId_and_name",
     ["accountId", "name"],
+  ),
+  providerCredentials: defineTable(providerCredentialsFields).index(
+    "by_accountId_and_provider",
+    ["accountId", "provider"],
   ),
   environmentVariableReveals: defineTable(environmentVariableRevealsFields)
     .index("by_stageId", ["stageId"])

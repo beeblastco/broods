@@ -36,7 +36,11 @@ import type {
   WorkspaceConfigRecord,
 } from "../domain/workspace-config.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
-import type { AgentDeploymentScope, Storage } from "../storage.ts";
+import type {
+  AgentDeploymentScope,
+  ProviderCredential,
+  Storage,
+} from "../storage.ts";
 import { budgets } from "./budgets.ts";
 import { getConvexClient } from "./client.ts";
 import { taskUsage } from "./usage.ts";
@@ -808,6 +812,26 @@ const machineConnections: Storage["machineConnections"] = {
   },
 };
 
+const providerCredentials: Storage["providerCredentials"] = {
+  load: async function (accountId, provider) {
+    return (await getConvexClient().query(
+      internal.account.providerCredentials.load,
+      { accountId: accountId, provider: provider },
+    )) as ProviderCredential | null;
+  },
+  saveRefreshed: async function (accountId, provider, loaded, refreshed) {
+    return (await getConvexClient().mutation(
+      internal.account.providerCredentials.saveRefreshed,
+      {
+        accountId: accountId,
+        provider: provider,
+        loadedUpdatedAt: loaded.updatedAt,
+        ...refreshed,
+      },
+    )) as boolean;
+  },
+};
+
 const roleSessions: Storage["roleSessions"] = {
   resolveByTokenHash: async function (tokenHash) {
     return (await getConvexClient().query(
@@ -832,6 +856,7 @@ export const convexStorage: Storage = {
   accountHooks: accountHooks,
   machineConnections: machineConnections,
   mcp: mcp,
+  providerCredentials: providerCredentials,
   roleSessions: roleSessions,
   taskUsage: taskUsage,
 };

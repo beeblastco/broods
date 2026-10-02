@@ -96,6 +96,39 @@ export interface AccountEnvVar {
   updatedAt: string;
 }
 
+/**
+ * The account's Sign in with ChatGPT login, which the `chatgpt` model provider
+ * runs on. Never carries the tokens.
+ */
+export type ChatGPTConnection =
+  | { connected: false }
+  | {
+      connected: true;
+      /** OAuth client OpenAI issued at the first sign-in. */
+      clientId: string;
+      /** This deployment's `ext_agent_host_id`. */
+      hostId: string;
+      email?: string;
+      scopes: string[];
+      /** True when the sign-in may draw on the user's ChatGPT plan. */
+      planUsage: boolean;
+      /** ISO 8601 access-token expiry; core refreshes before it. */
+      expiresAt: string;
+      updatedAt: string;
+    };
+
+/** A verified sign-in for `PUT /v1/account/chatgpt`; `broods login chatgpt` builds it. */
+export interface ChatGPTSignIn {
+  clientId: string;
+  hostId: string;
+  email?: string;
+  scopes: string[];
+  /** ISO 8601 access-token expiry. */
+  expiresAt: string;
+  accessToken: string;
+  refreshToken: string;
+}
+
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {
   name?: string;
@@ -583,6 +616,36 @@ export class BroodsAccountClient {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/env/${encodeURIComponent(name)}`,
+    );
+
+    return result?.deleted ?? false;
+  }
+
+  /** What ChatGPT sign-in the account holds, if any. Requires the account secret. */
+  async getChatGPTConnection(): Promise<ChatGPTConnection> {
+    return (
+      (await this.request<ChatGPTConnection>("GET", "/v1/account/chatgpt")) ?? {
+        connected: false,
+      }
+    );
+  }
+
+  /** Store a verified ChatGPT sign-in, replacing the previous one. Refused on the managed service. */
+  async connectChatGPT(signIn: ChatGPTSignIn): Promise<ChatGPTConnection> {
+    const result = await this.request<ChatGPTConnection>(
+      "PUT",
+      "/v1/account/chatgpt",
+      signIn,
+    );
+
+    return result ?? { connected: false };
+  }
+
+  /** Revoke the ChatGPT sign-in at OpenAI and forget it. False when there was none. */
+  async disconnectChatGPT(): Promise<boolean> {
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      "/v1/account/chatgpt",
     );
 
     return result?.deleted ?? false;

@@ -331,7 +331,10 @@ export async function runAgentLoop(
   let didFail = false;
   let failureText: string | null = null;
   let systemContextSnapshot = turnContext.systemContextSnapshot;
-  const configuredModel = resolveConfiguredModel(agentConfig);
+  const configuredModel = resolveConfiguredModel(
+    agentConfig,
+    session.accountId,
+  );
   const lifecycle = createAgentLifecycleEmitter(
     session,
     agentConfig,

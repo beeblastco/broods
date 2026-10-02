@@ -60,6 +60,14 @@ import {
   type LogLevel,
   type ObservabilityLogEntry,
 } from "../observability-contracts.ts";
+import { BroodsAccountClient, resolveEnvCredential } from "../account.ts";
+import { CHATGPT_USAGE_URL } from "../../../convex/model/chatgpt.ts";
+import {
+  listChatGPTModels,
+  newChatGPTHostId,
+  signInWithChatGPT,
+  type ChatGPTModel,
+} from "./chatgpt.ts";
 import {
   hasFlag,
   isPlainObject,
@@ -215,9 +223,16 @@ Options:
 
 ${GLOBAL_OPTIONS}`,
   login: `Usage: broods login [options]
+       broods login chatgpt [--status | --logout] [--base-url <url>]
 
 Authenticates through the dashboard and stores the token in
 ~/.broods/config.json.
+
+\`broods login chatgpt\` signs in with ChatGPT in the browser and stores the
+sign-in on your deployment, so agents with model.provider "chatgpt" run on your
+ChatGPT plan instead of an API key. It needs the account secret
+(BROODS_ACCOUNT_SECRET) and a self-hosted deployment; the managed service
+refuses it. --status shows the connection, --logout revokes it.
 
 Options:
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
@@ -559,6 +574,11 @@ async function init(args: string[]): Promise<void> {
 }
 
 async function login(args: string[]): Promise<void> {
+  if (positionalArgs(args)[0] === "chatgpt") {
+    await loginChatGPT(args);
+
+    return;
+  }
   const runtime = loadBroodsRuntimeConfig();
   const dashboardUrl =
     optionValue(args, "--dashboard-url") ??
@@ -587,6 +607,68 @@ async function login(args: string[]): Promise<void> {
   const stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
 
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
+}
+
+/**
+ * Sign in with ChatGPT for the deployment the account secret belongs to. The
+ * deployment keeps its own host id across sign-ins, and a reauthorization
+ * reuses the OAuth client OpenAI issued the first time.
+ */
+async function loginChatGPT(args: string[]): Promise<void> {
+  loadBroodsRuntimeConfig();
+  if (!resolveEnvCredential()) {
+    throw new Error(
+      "broods login chatgpt stores the sign-in with your account secret: set BROODS_ACCOUNT_SECRET (and BROODS_BASE_URL for a self-hosted gateway).",
+    );
+  }
+  const baseUrl = optionValue(args, "--base-url");
+  const client = new BroodsAccountClient(baseUrl ? { baseUrl: baseUrl } : {});
+  const current = await client.getChatGPTConnection();
+  if (hasFlag(args, "--status")) {
+    if (!current.connected) {
+      console.log("ChatGPT: not connected. Run `broods login chatgpt`.");
+
+      return;
+    }
+    console.log(
+      `ChatGPT: connected${current.email ? ` as ${current.email}` : ""}`,
+    );
+    console.log(`Plan usage: ${current.planUsage ? "allowed" : "not allowed"}`);
+    console.log(`Manage usage: ${CHATGPT_USAGE_URL}`);
+
+    return;
+  }
+  if (hasFlag(args, "--logout")) {
+    const deleted = await client.disconnectChatGPT();
+    printSuccess(
+      deleted ? "Disconnected ChatGPT" : "ChatGPT was not connected",
+    );
+
+    return;
+  }
+
+  const signIn = await signInWithChatGPT(
+    current.connected ? current.hostId : newChatGPTHostId(),
+    current.connected
+      ? {
+          clientId: current.clientId,
+          ...(current.email ? { email: current.email } : {}),
+        }
+      : undefined,
+  );
+  await client.connectChatGPT(signIn);
+  printSuccess(
+    `Connected ChatGPT${signIn.email ? ` as ${signIn.email}` : ""}. Agents on provider "chatgpt" now use your ChatGPT plan.`,
+  );
+  console.log(`Manage usage: ${CHATGPT_USAGE_URL}`);
+  const models = await listChatGPTModels(signIn.accessToken).catch(
+    (): ChatGPTModel[] => [],
+  );
+  if (models.length === 0) return;
+  console.log("Models (use the id as model.modelId):");
+  for (const model of models) {
+    console.log(`  ${model.slug.padEnd(24)} ${model.displayName}`);
+  }
 }
 
 /**

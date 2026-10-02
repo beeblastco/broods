@@ -248,6 +248,36 @@ interface AgentPolicyStore {
   getById(accountId: string, policyId: string): Promise<PolicyRecord | null>;
 }
 
+/** A provider sign-in that stands in for an API key; `chatgpt` is the only one. */
+export interface ProviderCredential {
+  accessToken: string;
+  refreshToken: string;
+  clientId: string;
+  scopes: string[];
+  /** Access-token expiry, epoch ms. */
+  expiresAt: number;
+  /** The row version a refresh must still match to save over it. */
+  updatedAt: number;
+}
+
+/** OAuth sign-ins that back a model provider. Written by the config plane. */
+interface ProviderCredentialStore {
+  load(
+    accountId: string,
+    provider: "chatgpt",
+  ): Promise<ProviderCredential | null>;
+  /** False when the row changed since `loaded` was read: a new sign-in wins. */
+  saveRefreshed(
+    accountId: string,
+    provider: "chatgpt",
+    loaded: ProviderCredential,
+    refreshed: Pick<
+      ProviderCredential,
+      "accessToken" | "refreshToken" | "scopes" | "expiresAt"
+    >,
+  ): Promise<boolean>;
+}
+
 /** Assume-role sessions, keyed by fp_sts_ token hash. Minted by the config plane. */
 interface RoleSessionStore {
   /** Resolve a live session to its role principal; null when unknown/expired/disabled. */
@@ -296,6 +326,7 @@ export interface Storage {
   machineConnections: MachineConnectionStore;
   mcp: McpStore;
   agentPolicies: AgentPolicyStore;
+  providerCredentials: ProviderCredentialStore;
   roleSessions: RoleSessionStore;
   taskUsage: TaskUsageStore;
 }
