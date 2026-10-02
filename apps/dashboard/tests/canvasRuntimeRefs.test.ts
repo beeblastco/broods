@@ -291,11 +291,9 @@ describe("writeChangedRefs caching", () => {
       if (attempts === 1) throw new Error("mutation failed");
     };
 
-    await Promise.resolve(
-      expect(
-        writeChangedRefs([ref("cfg", "a")], cache, serializeValue, write),
-      ).rejects.toThrow("mutation failed"),
-    );
+    expect(
+      writeChangedRefs([ref("cfg", "a")], cache, serializeValue, write),
+    ).rejects.toThrow("mutation failed");
     expect(cache.has("cfg")).toBe(false);
 
     await writeChangedRefs([ref("cfg", "a")], cache, serializeValue, write);
@@ -312,16 +310,14 @@ describe("writeChangedRefs caching", () => {
       if (r.configId === "cfg_bad") throw new Error("mutation failed");
     };
 
-    await Promise.resolve(
-      expect(
-        writeChangedRefs(
-          [ref("cfg_ok", "a"), ref("cfg_bad", "b")],
-          cache,
-          serializeValue,
-          write,
-        ),
-      ).rejects.toThrow("mutation failed"),
-    );
+    expect(
+      writeChangedRefs(
+        [ref("cfg_ok", "a"), ref("cfg_bad", "b")],
+        cache,
+        serializeValue,
+        write,
+      ),
+    ).rejects.toThrow("mutation failed");
 
     // Both were attempted; only the successful one is remembered.
     expect(attempts).toEqual(["cfg_ok", "cfg_bad"]);

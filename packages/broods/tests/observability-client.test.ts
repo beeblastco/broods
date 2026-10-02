@@ -133,6 +133,6 @@ test("does not include the credential in connection errors", async () => {
     error: "Unauthorized",
   });
 
-  await Promise.resolve(expect(result).rejects.toThrow("Unauthorized"));
-  await Promise.resolve(expect(result).rejects.not.toThrow("do-not-leak"));
+  expect(result).rejects.toThrow("Unauthorized");
+  expect(result).rejects.not.toThrow("do-not-leak");
 });

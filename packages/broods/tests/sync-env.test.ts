@@ -129,10 +129,8 @@ test("removeEnv DELETEs the named env var", async () => {
 test("removeEnv throws on a non-ok response", async () => {
   const { client } = clientWith(() => new Response("nope", { status: 500 }));
 
-  await Promise.resolve(
-    expect(client.removeEnv("demo-app", "development", "X")).rejects.toThrow(
-      "Remove environment variable failed",
-    ),
+  expect(client.removeEnv("demo-app", "development", "X")).rejects.toThrow(
+    "Remove environment variable failed",
   );
 });
 

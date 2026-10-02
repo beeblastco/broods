@@ -97,10 +97,8 @@ test("createStage surfaces the server error message", async () => {
       }),
   );
 
-  await Promise.resolve(
-    expect(client.createStage("demo-app", "staging")).rejects.toThrow(
-      /Stage Staging already exists/,
-    ),
+  expect(client.createStage("demo-app", "staging")).rejects.toThrow(
+    /Stage Staging already exists/,
   );
 });
 
@@ -112,10 +110,8 @@ test("listStages rejects a non-JSON 404 as a missing stages route", async () => 
     () => new Response("Not Found", { status: 404 }),
   );
 
-  await Promise.resolve(
-    expect(client.listStages("demo-app")).rejects.toThrow(
-      /no \/v1\/account\/stages route yet/,
-    ),
+  expect(client.listStages("demo-app")).rejects.toThrow(
+    /no \/v1\/account\/stages route yet/,
   );
 });
 
@@ -131,10 +127,8 @@ test("listStages surfaces a JSON 404 as a normal request failure", async () => {
       ),
   );
 
-  await Promise.resolve(
-    expect(client.listStages("demo-app")).rejects.toThrow(
-      /Project demo-app was not found/,
-    ),
+  expect(client.listStages("demo-app")).rejects.toThrow(
+    /Project demo-app was not found/,
   );
 });
 
@@ -147,9 +141,7 @@ test("a 401 tells the user to log in again", async () => {
       }),
   );
 
-  await Promise.resolve(
-    expect(client.listStages("demo-app")).rejects.toThrow(
-      "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
-    ),
+  expect(client.listStages("demo-app")).rejects.toThrow(
+    "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
   );
 });

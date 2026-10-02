@@ -88,20 +88,18 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
   servers.push(core.server);
   const lines: string[] = [];
 
-  await Promise.resolve(
-    expect(
-      runMachineDaemon({
-        credential: async (): Promise<string> => "key",
-        baseUrl: core.url,
-        cwd: process.cwd(),
-        log: (line: string): void => {
-          lines.push(line);
-        },
-        sandbox: "my-mac",
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("Replaced by a newer connection"),
-  );
+  expect(
+    runMachineDaemon({
+      credential: async (): Promise<string> => "key",
+      baseUrl: core.url,
+      cwd: process.cwd(),
+      log: (line: string): void => {
+        lines.push(line);
+      },
+      sandbox: "my-mac",
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow("Replaced by a newer connection");
 
   expect(core.received[0]).toMatchObject({
     type: "hello",
@@ -119,20 +117,18 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
 });
 
 test("the daemon stops when the stage session is refused", async () => {
-  await Promise.resolve(
-    expect(
-      runMachineDaemon({
-        baseUrl: "http://127.0.0.1:9",
-        credential: async (): Promise<string> => {
-          throw new StageSessionRefusedError("Open stage session failed: 401");
-        },
-        cwd: process.cwd(),
-        log: (): void => {},
-        sandbox: "my-mac",
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("Open stage session failed: 401"),
-  );
+  expect(
+    runMachineDaemon({
+      baseUrl: "http://127.0.0.1:9",
+      credential: async (): Promise<string> => {
+        throw new StageSessionRefusedError("Open stage session failed: 401");
+      },
+      cwd: process.cwd(),
+      log: (): void => {},
+      sandbox: "my-mac",
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow("Open stage session failed: 401");
 });
 
 test("the daemon retries when minting a stage session fails in transit", async () => {
@@ -143,25 +139,23 @@ test("the daemon retries when minting a stage session fails in transit", async (
   const lines: string[] = [];
   let calls = 0;
 
-  await Promise.resolve(
-    expect(
-      runMachineDaemon({
-        baseUrl: core.url,
-        credential: async (): Promise<string> => {
-          calls += 1;
-          if (calls === 1) throw new Error("network down");
+  expect(
+    runMachineDaemon({
+      baseUrl: core.url,
+      credential: async (): Promise<string> => {
+        calls += 1;
+        if (calls === 1) throw new Error("network down");
 
-          return "key";
-        },
-        cwd: process.cwd(),
-        log: (line: string): void => {
-          lines.push(line);
-        },
-        sandbox: "my-mac",
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("Replaced by a newer connection"),
-  );
+        return "key";
+      },
+      cwd: process.cwd(),
+      log: (line: string): void => {
+        lines.push(line);
+      },
+      sandbox: "my-mac",
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow("Replaced by a newer connection");
 
   expect(calls).toBe(2);
   expect(lines[0]).toStartWith("stage session unavailable (network down)");

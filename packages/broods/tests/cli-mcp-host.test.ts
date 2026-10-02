@@ -26,11 +26,7 @@ test("the host reads a .mcp.json, spawns the server on first use, lists and call
   expect(
     (await host.callTool("echo", "echo", { text: "pong" })).content,
   ).toEqual([{ type: "text", text: "echo: pong" }]);
-  await Promise.resolve(
-    expect(host.listTools("nope")).rejects.toThrow(
-      'no MCP server named "nope"',
-    ),
-  );
+  expect(host.listTools("nope")).rejects.toThrow('no MCP server named "nope"');
 });
 
 test("a bad file fails before any server runs", () => {
@@ -64,19 +60,17 @@ test("a daemon started with --mcp advertises its servers and answers both frames
   });
   servers.push(core.server);
 
-  await Promise.resolve(
-    expect(
-      runMachineDaemon({
-        credential: async (): Promise<string> => "key",
-        baseUrl: core.url,
-        cwd: process.cwd(),
-        log: () => {},
-        mcpFile: mcpFile(),
-        sandbox: "my-mac",
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("Replaced by a newer connection"),
-  );
+  expect(
+    runMachineDaemon({
+      credential: async (): Promise<string> => "key",
+      baseUrl: core.url,
+      cwd: process.cwd(),
+      log: () => {},
+      mcpFile: mcpFile(),
+      sandbox: "my-mac",
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow("Replaced by a newer connection");
 
   expect(core.received[0]).toMatchObject({ type: "hello", mcp: ["echo"] });
   expect(core.received[1]).toMatchObject({

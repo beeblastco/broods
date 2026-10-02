@@ -102,11 +102,9 @@ describe("forwarding a room message", () => {
   it("survives a webhook rejecting the delivery", async () => {
     captureFetch(500);
 
-    await Promise.resolve(
-      expect(
-        forwardRoomEvent(event, "token-a", TARGETS),
-      ).resolves.toBeUndefined(),
-    );
+    expect(
+      forwardRoomEvent(event, "token-a", TARGETS),
+    ).resolves.toBeUndefined();
   });
 });
 

@@ -60,19 +60,17 @@ macOnly(
     );
     servers.push(core.server);
 
-    await Promise.resolve(
-      expect(
-        runMachineDaemon({
-          credential: async (): Promise<string> => "key",
-          baseUrl: core.url,
-          computer: true,
-          cwd: process.cwd(),
-          log: () => {},
-          sandbox: "my-mac",
-          signal: new AbortController().signal,
-        }),
-      ).rejects.toThrow("Replaced by a newer connection"),
-    );
+    expect(
+      runMachineDaemon({
+        credential: async (): Promise<string> => "key",
+        baseUrl: core.url,
+        computer: true,
+        cwd: process.cwd(),
+        log: () => {},
+        sandbox: "my-mac",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Replaced by a newer connection");
 
     expect(core.received[0]).toMatchObject({ type: "hello", computer: true });
     expect(core.received[1]).toMatchObject({

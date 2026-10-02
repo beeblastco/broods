@@ -76,18 +76,16 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
       ),
   });
 
-  await Promise.resolve(
-    expect(
-      client.run({
-        agentId: "agent_1",
-        eventId: "steer-2",
-        conversationKey: "conversation-1",
-        mode: "steer",
-        idempotencyKey: "operation-2",
-        input: "change direction",
-      }),
-    ).rejects.toBeInstanceOf(IngressAcceptedError),
-  );
+  expect(
+    client.run({
+      agentId: "agent_1",
+      eventId: "steer-2",
+      conversationKey: "conversation-1",
+      mode: "steer",
+      idempotencyKey: "operation-2",
+      input: "change direction",
+    }),
+  ).rejects.toBeInstanceOf(IngressAcceptedError);
 });
 
 test("client accepts host as a shorthand for https baseUrl", async () => {
@@ -315,11 +313,9 @@ test("runAsync rejects an accepted answer without a runId", async () => {
       ),
   });
 
-  await Promise.resolve(
-    expect(
-      client.runAsync({ agentId: "agent_1", input: "hello" }),
-    ).rejects.toThrow("Async response missing runId"),
-  );
+  expect(
+    client.runAsync({ agentId: "agent_1", input: "hello" }),
+  ).rejects.toThrow("Async response missing runId");
 });
 
 test("client passes typed run overrides through async run bodies", async () => {
@@ -430,22 +426,18 @@ test("client rejects misrouted async SSE responses without dumping stream intern
       ),
   });
 
-  await Promise.resolve(
-    expect(
-      client.runAsync({
-        agentId: "agent_1",
-        input: "hello",
-      }),
-    ).rejects.toThrow("server returned an SSE stream"),
-  );
-  await Promise.resolve(
-    expect(
-      client.runAsync({
-        agentId: "agent_1",
-        input: "hello",
-      }),
-    ).rejects.not.toThrow("secret conversation"),
-  );
+  expect(
+    client.runAsync({
+      agentId: "agent_1",
+      input: "hello",
+    }),
+  ).rejects.toThrow("server returned an SSE stream");
+  expect(
+    client.runAsync({
+      agentId: "agent_1",
+      input: "hello",
+    }),
+  ).rejects.not.toThrow("secret conversation");
 });
 
 test("client polls async status by run id", async () => {

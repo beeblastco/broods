@@ -98,14 +98,12 @@ describe("BroodsSandboxProvider", () => {
     }) as typeof networkSession;
     expect(leasedSession.defaultWorkingDirectory).toBe("/workspace");
     expect(leasedSession.ports).toEqual([4_322]);
-    await Promise.resolve(
-      expect(
-        leasedSession.restricted().run({ command: "pwd" }),
-      ).resolves.toEqual({
+    expect(leasedSession.restricted().run({ command: "pwd" })).resolves.toEqual(
+      {
         exitCode: 0,
         stdout: "/workspace\n",
         stderr: "",
-      }),
+      },
     );
 
     expect(calls[0]).toEqual({
@@ -130,11 +128,9 @@ describe("BroodsSandboxProvider", () => {
     expect(
       await networkSession.getPortUrl({ port: 4_321, protocol: "ws" }),
     ).toBe("wss://sandbox.example.test:4321");
-    await Promise.resolve(
-      expect(
-        networkSession.getPortEndpoint({ port: 4_321, protocol: "ws" }),
-      ).resolves.toEqual({ url: "wss://sandbox.example.test:4321" }),
-    );
+    expect(
+      networkSession.getPortEndpoint({ port: 4_321, protocol: "ws" }),
+    ).resolves.toEqual({ url: "wss://sandbox.example.test:4321" });
     const policy: HarnessV1NetworkPolicy = {
       mode: "custom",
       allowedHosts: ["example.com"],
@@ -216,9 +212,7 @@ describe("BroodsSandboxProvider", () => {
     expect(decoder.decode(writes[1]!.content)).toBe("hello world");
     expect(decoder.decode(writes[2]!.content)).toBe("héllo");
 
-    await Promise.resolve(
-      expect(sandbox.run({ command: "fail" })).rejects.toBe(runFailure),
-    );
+    expect(sandbox.run({ command: "fail" })).rejects.toBe(runFailure);
   });
 
   test("aborts a stalled stream write and cancels its reader", async () => {
@@ -253,7 +247,7 @@ describe("BroodsSandboxProvider", () => {
     await Promise.resolve();
     controller.abort(failure);
 
-    await Promise.resolve(expect(write).rejects.toBe(failure));
+    expect(write).rejects.toBe(failure);
     expect(cancelReason).toBe(failure);
     expect(content.locked).toBe(false);
     expect(writes).toBe(0);
@@ -362,15 +356,13 @@ describe("BroodsSandboxProvider", () => {
       },
     });
 
-    await Promise.resolve(
-      expect(
-        provider.createSession({
-          onFirstCreate: async () => {
-            throw setupFailure;
-          },
-        }),
-      ).rejects.toBe(setupFailure),
-    );
+    expect(
+      provider.createSession({
+        onFirstCreate: async () => {
+          throw setupFailure;
+        },
+      }),
+    ).rejects.toBe(setupFailure);
     expect(destroys).toBe(1);
   });
 
@@ -424,15 +416,11 @@ describe("BroodsSandboxProvider", () => {
     });
     const sandbox = await provider.createSession();
 
-    await Promise.resolve(
-      expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
-        HarnessCapabilityUnsupportedError,
-      ),
+    expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
+      HarnessCapabilityUnsupportedError,
     );
-    await Promise.resolve(
-      expect(sandbox.getPortEndpoint({ port: 3_000 })).rejects.toBeInstanceOf(
-        HarnessCapabilityUnsupportedError,
-      ),
+    expect(sandbox.getPortEndpoint({ port: 3_000 })).rejects.toBeInstanceOf(
+      HarnessCapabilityUnsupportedError,
     );
     await Promise.all([
       sandbox.destroy?.(),

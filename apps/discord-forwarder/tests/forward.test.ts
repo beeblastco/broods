@@ -111,11 +111,9 @@ describe("forwarding a gateway message", () => {
   it("survives a webhook rejecting the delivery", async (): Promise<void> => {
     captureFetch(500);
 
-    await Promise.resolve(
-      expect(
-        withoutWaiting(forwardMessageCreate(MESSAGE, null, "token-a", TARGETS)),
-      ).resolves.toBeUndefined(),
-    );
+    expect(
+      withoutWaiting(forwardMessageCreate(MESSAGE, null, "token-a", TARGETS)),
+    ).resolves.toBeUndefined();
   });
 
   it("retries a 5xx and a network error until core answers", async (): Promise<void> => {

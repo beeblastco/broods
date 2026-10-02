@@ -58,9 +58,7 @@ describe("thread directory", () => {
     const stub = stubChannel(null, 429);
     const directory = new ThreadDirectory("token-a");
 
-    await Promise.resolve(
-      expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 429"),
-    );
+    expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 429");
     expect(stub.requests).toHaveLength(2);
   });
 
@@ -68,9 +66,7 @@ describe("thread directory", () => {
     const stub = stubChannel(null, 403);
     const directory = new ThreadDirectory("token-a");
 
-    await Promise.resolve(
-      expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 403"),
-    );
+    expect(directory.resolve("channel-1")).rejects.toThrow("HTTP 403");
     expect(stub.requests).toHaveLength(1);
   });
 

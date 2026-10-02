@@ -72,9 +72,7 @@ test("continue surfaces a non-202 answer as an error", async () => {
     error: { message: "Conversation not found" },
   });
 
-  await Promise.resolve(
-    expect(
-      client.continue({ agentId: "agent_1", conversationKey: "chat_1" }),
-    ).rejects.toThrow("Continue failed: 404"),
-  );
+  expect(
+    client.continue({ agentId: "agent_1", conversationKey: "chat_1" }),
+  ).rejects.toThrow("Continue failed: 404");
 });
