@@ -56,6 +56,8 @@ let testOverrides: McpTestOverrides | null = null;
 export interface McpConnection {
   record: McpRecord;
   headers: Record<string, string>;
+  /** The agent whose run calls; a hosted row runs as `accountId:agentId`. Unset on an account-surface probe. */
+  agentId?: string;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
@@ -302,7 +304,7 @@ async function connectClient(
         // A tenant url is dialed from inside the cluster, so it gets the same
         // resolve, refuse-private and pin treatment as a model endpoint.
         fetch: hosted
-          ? hostedMcpFetch(connection.record, onCpuUsec)
+          ? hostedMcpFetch(connection.record, connection.agentId, onCpuUsec)
           : publicHostFetch,
       },
     );

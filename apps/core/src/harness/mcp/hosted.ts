@@ -66,12 +66,15 @@ export interface HostedMcpBatchRequest {
 
 /**
  * mcp-mode invoke payload; the Lambda handler dispatches on `mode`.
- * `accountId` + `expectedSha256` key the handler's warm-child reuse (#189).
+ * `accountId` + `agentId` + `expectedSha256` key the handler's warm-child reuse
+ * (#189), so two agents of one account never share a child. `agentId` is absent
+ * on a probe from the account surface, which then keys on the account alone.
  */
 export interface McpHostPayload {
   mode: "mcp";
   toolName: string;
   accountId: string;
+  agentId?: string;
   expectedSha256: string;
   bundleUrl: string;
   requests: HostedMcpBatchRequest[];
@@ -99,6 +102,7 @@ interface PendingCall {
 
 interface OpenBatch {
   record: HostedBundleRecord;
+  agentId: string | undefined;
   calls: PendingCall[];
   timer: ReturnType<typeof setTimeout>;
 }
@@ -107,6 +111,7 @@ type HostedMcpSendBatch = (
   record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],
   abortSignal: AbortSignal,
+  agentId: string | undefined,
 ) => Promise<HostedMcpBatchResult>;
 
 /**
@@ -158,11 +163,13 @@ export async function collectBatchFrames(
 
 /**
  * A FetchLike for the SDK's StreamableHTTPClientTransport that routes every
- * request through the Lambda host instead of the network. onCpuUsec reports
+ * request through the Lambda host instead of the network. agentId is the agent
+ * whose run calls, undefined for an account-surface probe. onCpuUsec reports
  * this call's share of its batch's CPU for usage metering.
  */
 export function hostedMcpFetch(
   record: McpRecord,
+  agentId?: string,
   onCpuUsec?: (cpuUsec: number) => void,
 ): typeof fetch {
   return (async (
@@ -183,6 +190,7 @@ export function hostedMcpFetch(
     const body = await request.text();
     const result = await enqueueCall(
       record,
+      agentId,
       {
         method: request.method,
         headers: Object.fromEntries(request.headers),
@@ -197,6 +205,20 @@ export function hostedMcpFetch(
       headers: result.headers,
     });
   }) as typeof fetch;
+}
+
+/**
+ * The tenant one hosted call runs as: the agent within its account, or the
+ * account alone for a call with no agent. It is the Lambda TenantId under
+ * MCP_TENANT_ISOLATION and the prefix of every warm-child and batch key, so
+ * the same string decides both what shares a child and what shares an
+ * execution environment.
+ */
+export function hostedMcpTenantId(
+  accountId: string,
+  agentId: string | undefined,
+): string {
+  return agentId ? `${accountId}:${agentId}` : accountId;
 }
 
 /** Tests and the local stack: answer whole batches locally. null also drops open batches. */
@@ -237,7 +259,7 @@ async function drainInvokeStream(
       // other function refuses one with it. Off by default, matching the SST
       // deploy; set MCP_TENANT_ISOLATION=true on both sides together.
       ...(booleanEnv("MCP_TENANT_ISOLATION", false)
-        ? { TenantId: payload.accountId }
+        ? { TenantId: hostedMcpTenantId(payload.accountId, payload.agentId) }
         : {}),
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),
@@ -267,6 +289,7 @@ async function drainInvokeStream(
 // flushes it. A call that misses the window opens the next batch.
 function enqueueCall(
   record: McpRecord,
+  agentId: string | undefined,
   request: HostedMcpRequest,
   abortSignal: AbortSignal,
   onCpuUsec: ((cpuUsec: number) => void) | undefined,
@@ -284,11 +307,12 @@ function enqueueCall(
   abortSignal.addEventListener("abort", () => reject(abortSignal.reason), {
     once: true,
   });
-  const key = `${record.accountId}:${record.sha256}`;
+  const key = `${hostedMcpTenantId(record.accountId, agentId)}:${record.sha256}`;
   let batch = openBatches.get(key);
   if (!batch) {
     const opened: OpenBatch = {
       record: record,
+      agentId: agentId,
       calls: [],
       timer: setTimeout(
         () => flushBatch(key, opened),
@@ -359,7 +383,7 @@ function flushBatch(key: string, batch: OpenBatch): void {
     mcpRequest: call.request,
   }));
   const send = sendOverride ?? sendBatch;
-  void send(batch.record, requests, controller.signal).then(
+  void send(batch.record, requests, controller.signal, batch.agentId).then(
     (result) => {
       const settled = live.filter(({ call }) => !call.abortSignal.aborted);
       // Reported before any call resolves: the harness reads a call's compute
@@ -398,11 +422,13 @@ async function sendBatch(
   record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],
   abortSignal: AbortSignal,
+  agentId: string | undefined,
 ): Promise<HostedMcpBatchResult> {
   const payload: McpHostPayload = {
     mode: "mcp",
     toolName: record.name,
     accountId: record.accountId,
+    ...(agentId ? { agentId: agentId } : {}),
     expectedSha256: record.sha256,
     bundleUrl: await getS3ObjectUrl(
       toolBundlesBucket(),

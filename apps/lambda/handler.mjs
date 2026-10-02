@@ -2,13 +2,19 @@
  * AWS Lambda entry for the hosted MCP runner. Resolves the uploaded bundle,
  * runs one batch of requests (#397) in a child Node process with a scrubbed
  * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
- * frames to core. The child stays warm keyed by accountId + sha256 (#189),
- * bounded and retired on any batch-level failure. The function is shared by
- * default, so warm environments can serve several accounts. With
- * MCP_TENANT_ISOLATION it runs PER_TENANT: core invokes with TenantId =
- * accountId, and Lambda gives each account its own execution environments.
- * The child stays a containment layer, not a trust boundary. Same-UID, so keep
- * the execution role empty.
+ * frames to core. The child stays warm keyed by accountId + agentId + sha256
+ * (#189), bounded and retired on any batch-level failure, so two agents of one
+ * account never share a child; an event with no agentId (an account-surface
+ * probe) keys on accountId + sha256. The function is shared by default, so
+ * warm environments can serve several accounts. With MCP_TENANT_ISOLATION it
+ * runs PER_TENANT: core invokes with TenantId = `accountId:agentId` (or the
+ * accountId alone), and Lambda gives each tenant its own execution
+ * environments. The child stays a containment layer, not a trust boundary.
+ * Same-UID, so keep the execution role empty.
+ *
+ * Event: { mode: "mcp", toolName, accountId, agentId?, expectedSha256,
+ * bundleUrl | bundleSourceB64, requests: [{ id, mcpRequest }] }. Core builds it
+ * in apps/core/src/harness/mcp/hosted.ts (McpHostPayload); the two roll together.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */
@@ -444,7 +450,8 @@ function retire(state) {
 }
 
 // Reuse needs the tenant identity in the key: without accountId the call runs
-// in a one-shot child exactly as before.
+// in a one-shot child exactly as before. The agent is part of the tenant, so a
+// child only ever serves one agent's calls; core's batch key says the same.
 function reuseKey(event) {
   if (process.env.MCP_CHILD_REUSE === "0") return null;
   if (
@@ -453,8 +460,12 @@ function reuseKey(event) {
   ) {
     return null;
   }
+  const tenant =
+    typeof event.agentId === "string"
+      ? `${event.accountId}:${event.agentId}`
+      : event.accountId;
 
-  return `${event.accountId}:${event.expectedSha256}`;
+  return `${tenant}:${event.expectedSha256}`;
 }
 
 // A minimal, credential-free env. Explicitly no AWS_*/Lambda vars so user code

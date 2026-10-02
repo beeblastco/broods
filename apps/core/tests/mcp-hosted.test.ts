@@ -33,6 +33,7 @@ const URL = "http://mcp-hosted.internal/mcp";
 interface SentBatch {
   serverName: string;
   accountId: string;
+  agentId: string | undefined;
   requests: HostedMcpBatchRequest[];
 }
 
@@ -64,6 +65,7 @@ describe("hosted MCP fetch adapter", () => {
       {
         serverName: "hosted",
         accountId: "acct_test",
+        agentId: undefined,
         requests: [
           {
             id: "1",
@@ -132,7 +134,7 @@ describe("hosted MCP invoke", () => {
     );
 
     try {
-      const response = await hostedMcpFetch(hostedRecord())(URL, {
+      const response = await hostedMcpFetch(hostedRecord(), "agent_1")(URL, {
         method: "POST",
         body: "{}",
       });
@@ -141,11 +143,24 @@ describe("hosted MCP invoke", () => {
       expect(command).toBeInstanceOf(InvokeWithResponseStreamCommand);
       expect(command?.input).toMatchObject({
         FunctionName: "mcp-runner",
+        TenantId: "acct_test:agent_1",
+      });
+      // The payload carries the agent for the handler's warm-child key.
+      expect(
+        JSON.parse(
+          new TextDecoder().decode(
+            (command?.input as { Payload: Uint8Array }).Payload,
+          ),
+        ),
+      ).toMatchObject({ accountId: "acct_test", agentId: "agent_1" });
+      // A probe with no agent is the account's own tenant.
+      await hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" });
+      expect(send.mock.calls[1]?.[0]?.input).toMatchObject({
         TenantId: "acct_test",
       });
       delete process.env.MCP_TENANT_ISOLATION;
       await hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" });
-      expect(send.mock.calls[1]?.[0]?.input).not.toHaveProperty("TenantId");
+      expect(send.mock.calls[2]?.[0]?.input).not.toHaveProperty("TenantId");
     } finally {
       delete process.env.MCP_TENANT_ISOLATION;
       send.mockRestore();
@@ -299,18 +314,20 @@ describe("hosted MCP batch frame demux", () => {
 });
 
 describe("hosted MCP micro-batching", () => {
-  it("folds the parallel calls of one step into one invoke, keyed by tenant bundle", async () => {
+  it("folds the parallel calls of one step into one invoke, keyed by account, agent and bundle", async () => {
     const sent = stubBatches((request) => ok(`{"n":${request.body}}`));
-    const fetchLike = hostedMcpFetch(hostedRecord());
-    const otherTenant = hostedMcpFetch({
-      ...hostedRecord(),
-      accountId: "acct_other",
-    });
+    const fetchLike = hostedMcpFetch(hostedRecord(), "agent_1");
+    const otherTenant = hostedMcpFetch(
+      { ...hostedRecord(), accountId: "acct_other" },
+      "agent_1",
+    );
+    const otherAgent = hostedMcpFetch(hostedRecord(), "agent_2");
 
     const responses = await Promise.all([
       fetchLike(URL, { method: "POST", body: "1" }),
       fetchLike(URL, { method: "POST", body: "2" }),
       otherTenant(URL, { method: "POST", body: "3" }),
+      otherAgent(URL, { method: "POST", body: "5" }),
       fetchLike(URL, { method: "POST", body: "4" }),
     ]);
 
@@ -318,16 +335,19 @@ describe("hosted MCP micro-batching", () => {
       { n: 1 },
       { n: 2 },
       { n: 3 },
+      { n: 5 },
       { n: 4 },
     ]);
     expect(
       sent.map((batch) => [
         batch.accountId,
+        batch.agentId,
         batch.requests.map((r) => r.mcpRequest.body),
       ]),
     ).toEqual([
-      ["acct_test", ["1", "2", "4"]],
-      ["acct_other", ["3"]],
+      ["acct_test", "agent_1", ["1", "2", "4"]],
+      ["acct_other", "agent_1", ["3"]],
+      ["acct_test", "agent_2", ["5"]],
     ]);
   });
 
@@ -406,7 +426,7 @@ describe("hosted MCP micro-batching", () => {
       cpuUsec: 3_000,
     }));
     const seen: number[] = [];
-    const fetchLike = hostedMcpFetch(hostedRecord(), (cpuUsec) => {
+    const fetchLike = hostedMcpFetch(hostedRecord(), undefined, (cpuUsec) => {
       seen.push(cpuUsec);
     });
 
@@ -468,10 +488,11 @@ function stubBatches(
   answer: (request: HostedMcpBatchRequest["mcpRequest"]) => HostedMcpResponse,
 ): SentBatch[] {
   const sent: SentBatch[] = [];
-  setHostedMcpSendBatchForTests(async (record, requests) => {
+  setHostedMcpSendBatchForTests(async (record, requests, _signal, agentId) => {
     sent.push({
       serverName: record.name,
       accountId: record.accountId,
+      agentId: agentId,
       requests: requests,
     });
 
