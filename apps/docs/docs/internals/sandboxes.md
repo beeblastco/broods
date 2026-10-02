@@ -99,7 +99,21 @@ There is no API to promote a running VM into a new image, so the dashboard's Cre
 
 - Child processes start from `env_clear()`. That clears the environment, not IMDS. Code in the VM can read the MicroVM execution role from the metadata address on any network mode. The role is limited to writing CloudWatch logs in this stage's MicroVM group. It can create a stream named after another tenant, which is why the log forwarder labels only stream names core signed. See [observability](observability.md#sandbox-output).
 - Persistent VMs attach the AWS-managed `HTTP_INGRESS` and `SHELL_INGRESS` connectors at `RunMicrovm`, the second for the dashboard terminal. Connectors cannot be added to a live VM, so instances reserved before the feature must be terminated and re-reserved; the terminal route fails with that hint.
-- The in-VM mount directory uses the base namespace by design. Reservation, endpoint cache and S3 prefix key on the full namespace, so one VM holds one workspace.
+- The in-VM mount directory uses the base namespace by design. Reservation, endpoint cache and S3 prefix key on the full namespace, so one VM holds one workspace folder.
+
+### Isolation levels
+
+A workspace record's `isolation` decides the namespace a run mounts, derived in `src/shared/workspaces.ts` (`isolatedWorkspaceNamespace`). The full namespace is the sandbox reservation key, the S3 key prefix and the scope of the mount's STS session policy, so each level below is its own VM, its own prefix and its own credentials.
+
+| Level          | Namespace                             | Who shares it                                   |
+| -------------- | ------------------------------------- | ----------------------------------------------- |
+| unset          | `fs-<hash(account:workspace)>`        | every agent and conversation on the workspace   |
+| `conversation` | `<base>/<alias>/<hash(conversation)>` | one conversation, per the channel's `partition` |
+| `agent`        | `<base>/agent/<hash(agentId)>`        | one agent, across all of its conversations      |
+
+`true` reads as `conversation`. The folders stay under the base prefix, so a workspace purge, the storage meter and reserved-instance teardown by namespace prefix still cover them; nothing enumerates agents.
+
+Every mount session names the agent it serves. `assumeScopedMountCredentials` in `s3-mount.ts` sets `RoleSessionName` to `fp-sandbox-mount-<agentId>` (`fp-sandbox-mount-acct-<accountId>` when no agent is known) on every role, and on the platform `sandbox-s3mount` role also `SourceIdentity` = agent id plus session tags `broods:account` and `broods:agent`. CloudTrail then ties each S3 call to one agent. The role trusts only the `core-runtime` user and grants it `sts:SetSourceIdentity` and `sts:TagSession`; a bring-your-own role gets the session name only, since its trust policy is the account's.
 
 ## Harness adapters
 

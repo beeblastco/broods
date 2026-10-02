@@ -35,6 +35,7 @@ import {
 import {
   type S3MountContext,
   type S3MountIdentity,
+  mountAttribution,
   resolveS3Mount,
   resolveS3MountIdentity,
 } from "./s3-mount.ts";
@@ -496,7 +497,7 @@ async function daytonaCreateOptions(
 // land here, since agent code can read the env.
 async function daytonaEnvVars(
   config: SandboxExecutorConfig,
-  request: { namespace?: string },
+  request: Pick<SandboxRunRequest, "namespace" | "metadata">,
   baseEnv: Record<string, string>,
 ): Promise<Record<string, string>> {
   const options = isPlainObject(config.options) ? config.options : {};
@@ -544,7 +545,7 @@ function daytonaNetworkOptions(
 // Throws on a missing namespace before any STS call (the create path hits this first).
 function daytonaS3Context(
   config: SandboxExecutorConfig,
-  request: { namespace?: string },
+  request: Pick<SandboxRunRequest, "namespace" | "metadata">,
 ): S3MountContext {
   const options = isPlainObject(config.options) ? config.options : {};
   if (!request.namespace) {
@@ -564,6 +565,10 @@ function daytonaS3Context(
     ...(configString(options.s3Endpoint)
       ? { endpoint: configString(options.s3Endpoint) }
       : {}),
+    attribution: mountAttribution(
+      config.controlPlane?.accountId,
+      request.metadata?.agentId,
+    ),
   };
 }
 

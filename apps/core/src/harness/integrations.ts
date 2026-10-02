@@ -40,6 +40,7 @@ import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
 import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
+import { workspaceIsolation } from "@broods/convex/model/workspaceRules";
 import {
   applyRunOverrides,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
@@ -1613,13 +1614,13 @@ async function cleanupChannelPartitions(options: {
       options.accountId,
       ref.workspaceId,
     );
-    if (!record || record.config.isolation !== true) {
+    if (!record || workspaceIsolation(record.config) !== "conversation") {
       continue;
     }
 
     const namespace = isolatedWorkspaceNamespace(
       workspaceNamespace(options.accountId, ref.workspaceId),
-      record.config.isolation,
+      "conversation",
       {
         channelName: options.channelName,
         channelScopeKey: channelScopeKeyFromConversation(

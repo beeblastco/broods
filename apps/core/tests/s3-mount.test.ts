@@ -245,6 +245,59 @@ describe("resolveS3Mount", () => {
     );
   });
 
+  it("names the agent on the platform session as SourceIdentity and tags, and on a developer role by session name only", async () => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+      attribution: { accountId: "acct_1", agentId: "agent_1" },
+    });
+    expect(lastAssumeRoleInput).toMatchObject({
+      RoleSessionName: "fp-sandbox-mount-agent_1",
+      SourceIdentity: "agent_1",
+      Tags: [
+        { Key: "broods:account", Value: "acct_1" },
+        { Key: "broods:agent", Value: "agent_1" },
+      ],
+    });
+
+    // No agent (an account-level mount) still attributes the account.
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+      attribution: { accountId: "acct_1" },
+    });
+    expect(lastAssumeRoleInput).toMatchObject({
+      RoleSessionName: "fp-sandbox-mount-acct-acct_1",
+      SourceIdentity: "acct-acct_1",
+      Tags: [{ Key: "broods:account", Value: "acct_1" }],
+    });
+
+    // A developer's trust policy only grants sts:AssumeRole, so the session
+    // name is the one attribution that must not break their mount.
+    await resolveS3Mount({
+      storage: BYO_STORAGE,
+      namespace: NS,
+      attribution: { accountId: "acct_1", agentId: "agent_1" },
+    });
+    expect(lastAssumeRoleInput?.RoleSessionName).toBe(
+      "fp-sandbox-mount-agent_1",
+    );
+    expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
+    expect(lastAssumeRoleInput).not.toHaveProperty("Tags");
+
+    // An unattributed mount keeps the plain session name.
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+    });
+    expect(lastAssumeRoleInput?.RoleSessionName).toBe("fp-sandbox-mount");
+    expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
+  });
+
   it("assumes the developer's role with the ExternalId, scoped to their bucket/prefix", async () => {
     const mount = await resolveS3Mount({
       storage: {

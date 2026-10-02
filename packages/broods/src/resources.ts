@@ -26,6 +26,7 @@ import type {
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
+  WorkspaceIsolation,
   TelegramSource,
   GoogleChatSource,
   GitHubSource,
@@ -880,12 +881,13 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
 >;
 /**
  * Code-first workspace config. Says `partitioned` where storage says
- * `isolation`: the flag permits a split, it does not perform one. A channel's
- * `partition` decides which folder a run mounts.
+ * `isolation`. `true` or "conversation" permits a per-conversation split that
+ * a channel's `partition` performs; "agent" splits the workspace per attached
+ * agent on its own, with no partition needed.
  */
 export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
-  /** Allow this workspace to be split into per-conversation folders. */
-  partitioned?: boolean;
+  /** How to split this workspace: per conversation (`true`) or per agent. */
+  partitioned?: boolean | WorkspaceIsolation;
 };
 
 export type WorkspaceResource<Name extends string = string> =

@@ -8,6 +8,10 @@
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
+  type WorkspaceConfig,
+  workspaceIsolation,
+} from "@broods/convex/model/workspaceRules";
+import {
   ExpandBlock,
   ToggleRow,
 } from "@/app/components/side-panel/ConfigControls";
@@ -245,6 +249,9 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
+  const isolation = workspaceIsolation(
+    config as Pick<WorkspaceConfig, "isolation">,
+  );
   const storage: Record<string, unknown> = isPlainObject(config.storage)
     ? config.storage
     : { provider: "s3" };
@@ -426,15 +433,21 @@ export function WorkspaceResourceDetailsTab({
             )}
           </ExpandBlock>
         )}
-        <ToggleRow
+        <SelectField
           label="Isolation"
-          description="Split the filesystem per conversation instead of sharing one root."
-          checked={config.isolation === true}
-          onCheckedChange={(isolation) =>
-            setConfig({ isolation: isolation ? true : undefined })
+          value={isolation ?? "shared"}
+          onValueChange={(isolation) =>
+            setConfig({
+              isolation: isolation === "shared" ? undefined : isolation,
+            })
           }
+          options={[
+            { value: "shared", label: "Shared root" },
+            { value: "conversation", label: "Per conversation" },
+            { value: "agent", label: "Per agent" },
+          ]}
         />
-        {config.isolation === true && (
+        {isolation === "conversation" && (
           <ExpandBlock>
             <p className="text-2xs text-muted-foreground">
               Every channel attached to this workspace must set `partition`. A

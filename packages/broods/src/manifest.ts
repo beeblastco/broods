@@ -13,6 +13,7 @@ import type {
   AgentHookEventName,
   CliManifest,
   CliManifestResource,
+  WorkspaceIsolation,
 } from "./contracts.ts";
 import {
   build as esbuild,
@@ -43,6 +44,12 @@ import {
 
 /** Reach every room the app can see, instead of only the declared channels. */
 const CHANNEL_REACH_WILDCARD = "*";
+// The config plane's WORKSPACE_ISOLATION_LEVELS, listed here so the CLI does not
+// bundle packages/convex/model/workspaceRules and the convex runtime behind it.
+const WORKSPACE_ISOLATION_LEVELS: readonly WorkspaceIsolation[] = [
+  "conversation",
+  "agent",
+];
 
 export interface CompileOptions {
   cwd?: string;
@@ -479,9 +486,13 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
 function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
   if (resource.kind !== "workspace") return;
   const config = resource.config as unknown as Record<string, unknown>;
-  if (typeof config.partitioned === "string") {
+  if (
+    config.partitioned !== undefined &&
+    typeof config.partitioned !== "boolean" &&
+    !isWorkspaceIsolation(config.partitioned)
+  ) {
     throw new Error(
-      `Workspace "${resource.name}" config.partitioned must be a boolean; string modes are not supported.`,
+      `Workspace "${resource.name}" config.partitioned must be a boolean or one of: ${WORKSPACE_ISOLATION_LEVELS.join(", ")}`,
     );
   }
   if (config.isolation !== undefined) {
@@ -545,11 +556,15 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
           .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
           .filter((entry): entry is WorkspaceResource => Boolean(entry))
       : [];
-    const partitionedWorkspaces = attachedWorkspaces.filter(
-      (workspace) =>
-        (workspace.config as unknown as Record<string, unknown>).partitioned ===
-        true,
-    );
+    // Only the per-conversation split needs a channel partition; "agent" splits
+    // on its own.
+    const partitionedWorkspaces = attachedWorkspaces.filter((workspace) => {
+      const partitioned = (
+        workspace.config as unknown as Record<string, unknown>
+      ).partitioned;
+
+      return partitioned === true || partitioned === "conversation";
+    });
     const partitionedChannels = channelDefinitions.filter(
       (channel) => channel.partition,
     );
@@ -941,6 +956,10 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function isWorkspaceIsolation(value: unknown): value is WorkspaceIsolation {
+  return WORKSPACE_ISOLATION_LEVELS.some((level) => level === value);
+}
+
 function isValidIdentifier(value: string): boolean {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
 }
@@ -1058,17 +1077,13 @@ async function normalizeConfig(
 
   if (resource.kind === "workspace") {
     const config = { ...(resource.config as Record<string, unknown>) };
-    // Authoring says `partitioned`; storage still reads `isolation`.
-    if (config.partitioned !== undefined) {
-      if (typeof config.partitioned !== "boolean") {
-        throw new Error(
-          `Workspace "${resource.name}" config.partitioned must be a boolean`,
-        );
-      }
-      const partitioned = config.partitioned;
-      delete config.partitioned;
-      if (partitioned) config.isolation = true;
-    }
+    // Authoring says `partitioned`; storage reads `isolation` by level, with
+    // `true` meaning the per-conversation split (the shape check above already
+    // refused anything else).
+    const partitioned = config.partitioned;
+    delete config.partitioned;
+    if (partitioned === true) config.isolation = "conversation";
+    else if (isWorkspaceIsolation(partitioned)) config.isolation = partitioned;
 
     return rewriteValues(config);
   }

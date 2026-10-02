@@ -694,24 +694,39 @@ export default $config({
         })
       : undefined;
 
+    // IAM principal for the self-hosted container runtime (epic #85 phase 9a).
+    // Declared here because the sandbox mount role below trusts it by ARN; its
+    // policies follow further down, next to the permission sets they attach.
+    const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
+      name: resourceName("core-runtime", stage, region),
+    });
+
     // Scoped credentials for provider sandboxes that mount S3 with mount-s3
     // (daytona, workdir, and the lambda MicroVM via its /run hook). The harness assumes
     // this role per sandbox create and hands the short-lived, prefix-scoped session
     // credentials to the sandbox instead of its own runtime credentials, so sandbox
-    // code can only reach the workspace/skills buckets.
+    // code can only reach the workspace/skills buckets. Only core's runtime user may
+    // assume it, and every session it mints names the agent it serves
+    // (sts:SetSourceIdentity + sts:TagSession, see harness/sandbox/s3-mount.ts).
     const sandboxS3MountRole = new aws.iam.Role("SandboxS3MountRole", {
       name: resourceName("sandbox-s3mount", stage, region),
-      assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Sid: "AllowHarnessAssumeRole",
-            Effect: "Allow",
-            Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:root` },
-            Action: "sts:AssumeRole",
-          },
-        ],
-      }),
+      assumeRolePolicy: coreRuntimeUser.arn.apply((arn) =>
+        JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Sid: "AllowCoreRuntimeAssumeRole",
+              Effect: "Allow",
+              Principal: { AWS: arn },
+              Action: [
+                "sts:AssumeRole",
+                "sts:SetSourceIdentity",
+                "sts:TagSession",
+              ],
+            },
+          ],
+        }),
+      ),
     });
 
     new aws.iam.RolePolicy("SandboxS3MountRolePolicy", {
@@ -853,7 +868,7 @@ export default $config({
         resources: [mcpRunnerFn.arn],
       },
       {
-        actions: ["sts:AssumeRole"],
+        actions: ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"],
         resources: [sandboxS3MountRole.arn],
       },
       {
@@ -992,16 +1007,13 @@ export default $config({
         : []),
     ];
 
-    // IAM principal for the self-hosted container runtime (epic #85 phase 9a):
-    // one pod runs both handlers, so the user gets the union of the harness and
-    // account permission sets, generated from the same arrays so it cannot drift.
-    // The access key is minted out of band (`aws iam create-access-key`) and
+    // Policies of the container runtime user (CoreRuntimeUser above): one pod
+    // runs both handlers, so the user gets the union of the harness and account
+    // permission sets, generated from the same arrays so it cannot drift. The
+    // access key is minted out of band (`aws iam create-access-key`) and
     // delivered to the cluster as a k8s Secret, never in Pulumi state or git.
     // Two managed policies instead of one inline: IAM caps inline user policies
     // at 2048 chars total, which these documents exceed.
-    const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
-      name: resourceName("core-runtime", stage, region),
-    });
     const coreRuntimeHarnessPolicy = new aws.iam.Policy(
       "CoreRuntimeHarnessPolicy",
       {

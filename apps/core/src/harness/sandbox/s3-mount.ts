@@ -14,6 +14,9 @@
  * Credentials are always short-lived and scoped to the mount's own prefix, so the
  * harness's broad creds never reach a sandbox (any code the agent runs can read
  * the mount env). mount-s3 reads them from the standard env credential chain.
+ * A session minted for a sandbox names the agent it serves: the session name on
+ * every role, and SourceIdentity plus session tags on the platform role, so
+ * CloudTrail ties each S3 call back to one account and agent.
  */
 
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
@@ -30,6 +33,9 @@ import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 // close to expiry: longer than the 300s presign a read target can back, plus
 // room for clock skew.
 const READ_TARGET_REFRESH_MARGIN_MS = 10 * 60 * 1000;
+const MOUNT_SESSION_NAME = "fp-sandbox-mount";
+// STS caps RoleSessionName and SourceIdentity at 64 characters.
+const STS_IDENTITY_MAX_LENGTH = 64;
 // Bring-your-own read targets keyed by everything the STS session is scoped to.
 // The pending promise is cached, so parallel first reads of one workspace share
 // a single STS round trip and, through s3.ts, a single S3 client.
@@ -42,6 +48,13 @@ export interface ResolvedS3Mount extends S3MountIdentity {
   credentials?: S3MountCredentials;
 }
 
+// Who a sandbox mount session is minted for. Absent on harness-side reads, which
+// run on core's own identity or a read-only session nobody executes code under.
+export interface S3MountAttribution {
+  accountId: string;
+  agentId?: string;
+}
+
 export interface S3MountContext {
   storage: WorkspaceStorageConfig | undefined;
   namespace: string;
@@ -49,6 +62,7 @@ export interface S3MountContext {
   managedBucket?: string;
   region?: string;
   endpoint?: string;
+  attribution?: S3MountAttribution;
 }
 
 export interface S3MountCredentials {
@@ -80,12 +94,17 @@ export interface S3ReadTarget {
 }
 
 // Assume `roleArn` with a session policy narrowed to `bucket/prefix/*`; the prefix
-// must end in "/" so `agents/` never also matches `agents-archive/`.
+// must end in "/" so `agents/` never also matches `agents-archive/`. The session
+// is named for `attribution`; `attributed` additionally stamps it as SourceIdentity
+// and session tags, which only a trust policy granting sts:SetSourceIdentity and
+// sts:TagSession accepts (the platform role does, a developer's role need not).
 export async function assumeScopedMountCredentials(params: {
   roleArn: string;
   bucket: string;
   prefix: string;
   externalId?: string;
+  attribution?: S3MountAttribution;
+  attributed?: boolean;
 }): Promise<S3MountCredentials> {
   if (!params.prefix.endsWith("/")) {
     throw new Error(
@@ -112,13 +131,29 @@ export async function assumeScopedMountCredentials(params: {
     },
   ];
 
+  const identity = params.attribution
+    ? sessionIdentity(params.attribution)
+    : undefined;
   const result = await new STSClient({}).send(
     new AssumeRoleCommand({
       RoleArn: params.roleArn,
-      RoleSessionName: "fp-sandbox-mount",
+      RoleSessionName: identity
+        ? `${MOUNT_SESSION_NAME}-${identity}`.slice(0, STS_IDENTITY_MAX_LENGTH)
+        : MOUNT_SESSION_NAME,
       DurationSeconds: 3600,
       Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }),
       ...(params.externalId ? { ExternalId: params.externalId } : {}),
+      ...(identity && params.attribution && params.attributed
+        ? {
+            SourceIdentity: identity,
+            Tags: [
+              { Key: "broods:account", Value: params.attribution.accountId },
+              ...(params.attribution.agentId
+                ? [{ Key: "broods:agent", Value: params.attribution.agentId }]
+                : []),
+            ],
+          }
+        : {}),
     }),
   );
   const credentials = result.Credentials;
@@ -138,6 +173,18 @@ export async function assumeScopedMountCredentials(params: {
       ? { AWS_CREDENTIAL_EXPIRATION: credentials.Expiration.toISOString() }
       : {}),
   };
+}
+
+// The attribution an executor attaches to a sandbox mount, from the config's
+// control-plane account and the run's agent. Undefined when the config carries
+// no account (synthetic or stateless configs), so the session stays unnamed.
+export function mountAttribution(
+  accountId: string | undefined,
+  agentId: string | undefined,
+): S3MountAttribution | undefined {
+  if (!accountId) return undefined;
+
+  return { accountId: accountId, ...(agentId ? { agentId: agentId } : {}) };
 }
 
 // The mount role for a workspace: its own role for a bucket it names, else the
@@ -162,6 +209,9 @@ export async function resolveS3Mount(
         bucket: identity.bucket,
         prefix: identity.prefix,
         externalId: mountExternalId(ctx.storage),
+        attribution: ctx.attribution,
+        // Only the platform role's trust policy grants the attribution actions.
+        attributed: !ctx.storage?.bucket,
       })
     : undefined;
 
@@ -312,4 +362,12 @@ async function readTargetFromMount(ctx: S3MountContext): Promise<S3ReadTarget> {
     access: access,
     ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
   };
+}
+
+// The agent a session serves, or the account when no agent is known, in the
+// `[\w+=,.@-]` alphabet STS allows for session names and SourceIdentity (no colon).
+function sessionIdentity(attribution: S3MountAttribution): string {
+  return (attribution.agentId ?? `acct-${attribution.accountId}`)
+    .replace(/[^\w+=,.@-]/g, "-")
+    .slice(0, STS_IDENTITY_MAX_LENGTH);
 }
