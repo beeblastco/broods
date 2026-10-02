@@ -24,6 +24,7 @@ import {
   handleAgentConfigRoute,
 } from "./routes/agents";
 import { handleChannelRecordRoute } from "./routes/channels";
+import { handleChatGPTRoute } from "./routes/chatgpt";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
@@ -71,6 +72,11 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     // token, runtime key), so it runs before the shared bearer funnel.
     if (pathname === "/v1/account/assume-role") {
       return await handleAssumeRoleRoute(ctx, req);
+    }
+
+    // Authenticates itself too: only the account secret, never a role session.
+    if (pathname === "/v1/account/chatgpt") {
+      return await handleChatGPTRoute(ctx, req);
     }
 
     const accountRoute = parseAccountRoute(pathname);

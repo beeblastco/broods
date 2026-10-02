@@ -7,9 +7,7 @@
 
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
 import type { ProviderCredentialStatus } from "../../account/providerCredentials";
-import { type ConfigAuditActor } from "../../model/auditEvents";
 import {
   CHATGPT_DIRECT_SCOPE,
   CHATGPT_DISCOVERY_URL,
@@ -20,10 +18,12 @@ import {
 import { ClientError } from "../../model/clientError";
 import { isManagedService } from "../../model/planLimits";
 import {
+  auditActorForAuth,
   json,
   jsonError,
   methodNotAllowed,
   parseJsonRequest,
+  requireSelfAccount,
   writeAudit,
 } from "./shared";
 
@@ -32,9 +32,16 @@ const REVOKE_TIMEOUT_MS = 5_000;
 export async function handleChatGPTRoute(
   ctx: ActionCtx,
   req: Request,
-  accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
 ): Promise<Response> {
+  const accountAuth = await requireSelfAccount(ctx, req);
+  if (accountAuth instanceof Response) return accountAuth;
+  // Like rotating the secret: no role policy names this login, so only the
+  // master credential may read or replace it.
+  if (accountAuth.kind === "role") {
+    return jsonError(403, "The ChatGPT sign-in requires the account secret");
+  }
+  const accountId = accountAuth.account._id;
+  const actor = auditActorForAuth(accountAuth);
   const ref = { accountId: accountId, provider: "chatgpt" as const };
   if (req.method === "GET") {
     const status: ProviderCredentialStatus | null = await ctx.runQuery(
