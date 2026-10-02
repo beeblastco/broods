@@ -44,7 +44,8 @@ export type WorkspaceSandboxConfig = SandboxConfig & {
 //   - the FIRST workspace in the list is the default (used when the model omits `workspace`).
 //   - `sandbox` undefined => the workspace is read-only (write/edit/grep/bash are not
 //     exposed). read/glob then run through `readMount` (a service-managed read-only
-//     Lambda mount) by default, or straight from S3 when the ref opts out with `sandbox: null`.
+//     Lambda mount) by default, or straight from S3 when the ref opts out with
+//     `sandbox: null` or the workspace brings its own bucket.
 export interface ResolvedWorkspace {
   name: string;
   workspaceId: string;
@@ -52,10 +53,10 @@ export interface ResolvedWorkspace {
   description?: string;
   config: WorkspaceConfig;
   sandbox?: WorkspaceSandboxConfig;
-  // Read-only read runner. Set when the workspace has no effective sandbox AND the
-  // ref did not explicitly opt out with `sandbox: null`. read/glob use it to read
-  // through the mount so they see committed writes immediately; undefined => read S3
-  // directly (the `sandbox: null` opt-out, which skips Lambda/VPC but lags mount writes).
+  // Read-only read runner. Set when the workspace has no effective sandbox, the ref
+  // did not opt out with `sandbox: null`, and the workspace uses the managed bucket.
+  // read/glob use it to read through the mount so they see committed writes
+  // immediately; undefined => read S3 directly (skips Lambda/VPC but lags mount writes).
   readMount?: SandboxConfig;
 }
 
@@ -283,25 +284,16 @@ export async function resolveAgentRuntime(
       } else {
         effectiveSandbox = sandbox;
       }
-      // The file tools need an S3 mount, and a machine or a Cloudflare Container
-      // has none: they would act on the daemon's or the container's own disk.
-      // A fallback runs the same workspace, so it is held to the same rule.
-      const unmountable = [
-        effectiveSandbox?.provider,
-        effectiveSandbox?.fallbackProvider,
-      ].find((provider) => provider === "machine" || provider === "cloudflare");
-      if (unmountable) {
-        throw new Error(
-          `Workspace "${ref.name}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,
-        );
-      }
+      const ownBucket = Boolean(record.config.storage?.bucket);
+      assertSandboxReachesWorkspace(ref.name, effectiveSandbox, ownBucket);
       // Read-only workspace (no effective sandbox): default to reading through a
       // service-managed read-only Lambda mount (network denied, cheapest mount slot)
       // so reads reflect committed writes immediately. The existing `sandbox: null`
       // opt-out ("no sandbox, no compute") also skips the mount: read straight from
-      // S3 instead.
+      // S3 instead, and so does a workspace on its own bucket (see
+      // assertSandboxReachesWorkspace).
       const readMount: SandboxConfig | undefined =
-        !effectiveSandbox && ref.sandbox !== null
+        !effectiveSandbox && ref.sandbox !== null && !ownBucket
           ? { provider: "lambda", network: { mode: "deny-all" } }
           : undefined;
       workspaces.push({
@@ -399,6 +391,36 @@ export function workspaceNamespacesForAccount(
   return workspaceIds.map((workspaceId) =>
     workspaceNamespace(accountId, workspaceId),
   );
+}
+
+// The file tools need the workspace's S3 mount. A machine has none (they would act
+// on the daemon's own disk), and a MicroVM network other than allow-all only routes
+// to the managed bucket, so it can never mount a bucket the workspace names itself.
+function assertSandboxReachesWorkspace(
+  workspaceName: string,
+  sandbox: WorkspaceSandboxConfig | undefined,
+  ownBucket: boolean,
+): void {
+  // The file tools need an S3 mount, and a machine or a Cloudflare Container
+  // has none: they would act on the daemon's or the container's own disk. A
+  // fallback runs the same workspace, so it is held to the same rule.
+  const unmountable = [sandbox?.provider, sandbox?.fallbackProvider].find(
+    (provider) => provider === "machine" || provider === "cloudflare",
+  );
+  if (unmountable) {
+    throw new Error(
+      `Workspace "${workspaceName}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,
+    );
+  }
+  if (
+    sandbox?.provider === "lambda" &&
+    sandbox.network?.mode !== "allow-all" &&
+    ownBucket
+  ) {
+    throw new Error(
+      `Workspace "${workspaceName}" uses its own bucket, which a lambda sandbox reaches only with network allow-all; set that or sandbox: null`,
+    );
+  }
 }
 
 // bash picks a sandbox by record name, so two records under one name would leave
