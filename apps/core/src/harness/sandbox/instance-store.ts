@@ -1,7 +1,7 @@
 /** Authoritative Convex mapping from sandbox reservations to provider ids. */
 
 import { runtime } from "../../shared/convex/runtime.ts";
-import type { SandboxProvider } from "./types.ts";
+import type { SandboxProvider, SandboxReleaseTarget } from "./types.ts";
 export function getSandboxExternalId(
   provider: SandboxProvider,
   reservationKey: string,
@@ -20,6 +20,21 @@ export function getSandboxReservationRecord(
   return runtime.query("getSandboxReservationRecord", {
     provider: provider,
     reservationKey: reservationKey,
+  });
+}
+// The reserved machine, or `externalId` when the caller already holds it, and
+// the instance row's record of whose credentials it runs on, for a release.
+export function getSandboxReleaseTarget(
+  accountId: string,
+  provider: SandboxProvider,
+  reservationKey: string,
+  externalId?: string,
+): Promise<SandboxReleaseTarget> {
+  return runtime.query("getSandboxReleaseTarget", {
+    accountId: accountId,
+    provider: provider,
+    reservationKey: reservationKey,
+    externalId: externalId,
   });
 }
 // The reservation key is a hashed namespace, so the owning account can't be
