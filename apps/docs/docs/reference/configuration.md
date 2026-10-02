@@ -231,7 +231,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 
 | Field                  | Default    | Description                                                                                                                    |
 | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`             | `sandbox`  | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`                                                                     |
+| `provider`             | `sandbox`  | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`, `custom`                                                           |
 | `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                      |
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |
@@ -246,6 +246,8 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `memoryLimit`          |            | MB, informational                                                                                                              |
 | `outputLimitBytes`     | 65536      | Output kept per call                                                                                                           |
 | `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey` |
+
+`custom` runs `bash` on your own server through one HTTP contract: `options.endpoint` (public https, required), `options.token` (sent as a bearer) and `options.headers`. It is stateless, so `persistent`, `size`, `snapshot` and `memoryLimit` are rejected, it cannot back a workspace or be a `fallbackProvider`, and `network.mode` must be `allow-all`. See [Custom sandbox provider](../guides/custom-sandbox-provider.md).
 
 ```ts
 export const lambdaSandbox = defineSandbox({

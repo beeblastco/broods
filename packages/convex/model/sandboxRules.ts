@@ -4,11 +4,14 @@
  * is unchanged. The public projection lives in ./responses.ts.
  */
 
+import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
 import { assertStorageEndpoint } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
+// The one list core's executor registry, the Convex validator and the SDK
+// derive from. `custom` is an account's own server on the exec contract.
 export const SANDBOX_PROVIDERS = [
   "sandbox",
   "lambda",
@@ -16,6 +19,7 @@ export const SANDBOX_PROVIDERS = [
   "daytona",
   "vercel",
   "machine",
+  "custom",
 ] as const;
 
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
@@ -185,15 +189,19 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
       "config.fallbackProvider must differ from config.provider",
     );
   }
-  if (fallbackProvider === "machine") {
-    throw new ClientError("config.fallbackProvider cannot be machine");
+  // A machine is one computer, and a custom server's endpoint lives in
+  // `options`, which does not carry over to the fallback.
+  if (fallbackProvider === "machine" || fallbackProvider === "custom") {
+    throw new ClientError(
+      `config.fallbackProvider cannot be ${fallbackProvider}`,
+    );
   }
   if (fallbackProvider !== undefined && config.persistent === true) {
     throw new ClientError(
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
     );
   }
-  assertMachineFields(config, provider);
+  assertStatelessProviderFields(config, provider);
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
@@ -295,19 +303,27 @@ function assertEnvVarsAndOptions(
   if (config.options !== undefined) {
     validateProviderOptions(provider, config.options);
   }
+  if (provider === "custom") {
+    assertCustomOptions(config.options);
+  }
 }
 
-function assertMachineFields(
-  config: Record<string, unknown>,
-  provider: SandboxProvider,
-): void {
-  if (provider !== "machine") return;
-  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
-    if (config[field] !== undefined) {
-      throw new ClientError(
-        `config.${field} does not apply to the machine provider`,
-      );
-    }
+// A custom server is reached by one URL and nothing else, so the endpoint is
+// the one required option. A `${NAME}` token is fine; a placeholder URL is not.
+function assertCustomOptions(options: unknown): void {
+  if (!isPlainObject(options) || typeof options.endpoint !== "string") {
+    throw new ClientError(
+      "config.options.endpoint is required for the custom provider: the https URL of your sandbox server",
+    );
+  }
+  assertPublicHttpsUrl(options.endpoint, "config.options.endpoint");
+  if (options.token !== undefined) {
+    requireString(options.token, "config.options.token");
+  }
+  if (options.headers !== undefined && !isStringRecord(options.headers)) {
+    throw new ClientError(
+      "config.options.headers must be an object with string values",
+    );
   }
 }
 
@@ -316,7 +332,7 @@ function assertNetworkEnforceable(
   network: SandboxNetworkConfig,
 ): void {
   if (
-    (provider === "e2b" || provider === "machine") &&
+    (provider === "e2b" || provider === "machine" || provider === "custom") &&
     network.mode !== "allow-all"
   ) {
     throw new ClientError(
@@ -403,6 +419,22 @@ function assertRuntimes(value: unknown): void {
     throw new ClientError(
       `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
     );
+  }
+}
+
+// A machine is the user's computer and a custom server is one POST per run:
+// neither is sized, snapshotted or reserved by Broods.
+function assertStatelessProviderFields(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  if (provider !== "machine" && provider !== "custom") return;
+  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+    if (config[field] !== undefined) {
+      throw new ClientError(
+        `config.${field} does not apply to the ${provider} provider`,
+      );
+    }
   }
 }
 

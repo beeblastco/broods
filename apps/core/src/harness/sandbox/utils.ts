@@ -3,7 +3,13 @@
  * Keep small coercion, path, quoting, and output utilities here.
  */
 
+import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import type {
+  SandboxProvider,
+  SandboxRunRequest,
+  SandboxRunResult,
+} from "./types.ts";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -51,6 +57,34 @@ export class SandboxCapacityError extends Error {}
  * would for a provider 404.
  */
 export class SandboxGoneError extends Error {}
+
+// A `SandboxExecResponse` (the lambda-sandbox image's and a custom server's
+// answer) as a run result, with the output held to the request's limit.
+export function execRunResult(
+  request: SandboxRunRequest,
+  response: SandboxExecResponse,
+  provider: SandboxProvider,
+  startedAt: number,
+): SandboxRunResult {
+  const stdout = truncateText(response.stdout, request.outputLimitBytes);
+  const stderr = truncateText(response.stderr, request.outputLimitBytes);
+
+  return {
+    ok: response.ok,
+    runtime: request.runtime ?? "bash",
+    exitCode: response.exit_code ?? null,
+    stdout: stdout.value,
+    stderr: stderr.value,
+    durationMs: response.duration_ms || Date.now() - startedAt,
+    timedOut: response.timed_out,
+    truncated:
+      response.truncated === true || stdout.truncated || stderr.truncated,
+    provider: provider,
+    ...(typeof response.cpu_usec === "number" && response.cpu_usec > 0
+      ? { cpuUsec: response.cpu_usec }
+      : {}),
+  };
+}
 
 export function configString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0

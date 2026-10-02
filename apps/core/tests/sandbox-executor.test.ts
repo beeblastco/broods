@@ -433,19 +433,37 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  it("creates E2B, Daytona, and Vercel executor adapters", () => {
+  it("resolves every built-in provider from the registry", () => {
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
-    expect(createSandboxExecutor({ provider: "e2b" }).constructor.name).toBe(
-      "E2BSandboxExecutor",
-    );
+    const executorOf = (provider: string, options = {}): string =>
+      createSandboxExecutor({ provider: provider, options: options })
+        .constructor.name;
+    expect(executorOf("e2b")).toBe("E2BSandboxExecutor");
+    expect(executorOf("daytona")).toBe("DaytonaSandboxExecutor");
+    expect(executorOf("vercel")).toBe("VercelSandboxExecutor");
+    expect(executorOf("machine")).toBe("MachineSandboxExecutor");
+    expect(executorOf("custom")).toBe("HttpSandboxExecutor");
     expect(
-      createSandboxExecutor({ provider: "daytona" }).constructor.name,
-    ).toBe("DaytonaSandboxExecutor");
-    expect(createSandboxExecutor({ provider: "vercel" }).constructor.name).toBe(
-      "VercelSandboxExecutor",
+      executorOf("sandbox", {
+        workdirUrl: "https://workdir.example.com",
+        apiKey: "key",
+      }),
+    ).toBe("WorkdirSandboxExecutor");
+  });
+
+  it("throws on a provider nobody registered, and takes a registered one", () => {
+    const {
+      createSandboxExecutor,
+      registerSandboxProvider,
+    } = require("../src/harness/sandbox/index.ts");
+    expect(() => createSandboxExecutor({ provider: "nope" })).toThrow(
+      "sandbox provider nope is not supported",
     );
+    const executor = { run: async () => ({ ok: true }) };
+    registerSandboxProvider("nope", () => executor);
+    expect(createSandboxExecutor({ provider: "nope" })).toBe(executor);
   });
 
   it("runs a MicroVM and mounts the workspace via the run-hook payload when a namespace is present", async () => {

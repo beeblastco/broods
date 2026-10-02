@@ -499,6 +499,87 @@ describe("sandbox config update merge", () => {
   });
 });
 
+describe("sandbox config custom provider", () => {
+  const custom = {
+    provider: "custom",
+    network: { mode: "allow-all" },
+    options: { endpoint: "https://sandbox.example.com" },
+  };
+
+  it("keeps the endpoint, token and headers", () => {
+    expect(
+      normalizeSandboxConfig({
+        ...custom,
+        options: {
+          ...custom.options,
+          token: "${SANDBOX_TOKEN}",
+          headers: { "x-team": "ops" },
+        },
+      }).options,
+    ).toEqual({
+      endpoint: "https://sandbox.example.com",
+      token: "${SANDBOX_TOKEN}",
+      headers: { "x-team": "ops" },
+    });
+  });
+
+  it("requires a public https endpoint", () => {
+    expect(() =>
+      normalizeSandboxConfig({ ...custom, options: undefined }),
+    ).toThrow("config.options.endpoint is required for the custom provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { endpoint: "http://sandbox.example.com" },
+      }),
+    ).toThrow("config.options.endpoint must use https");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { endpoint: "https://10.0.0.8/exec" },
+      }),
+    ).toThrow(
+      "config.options.endpoint must not point to a private or internal address",
+    );
+  });
+
+  it("refuses a malformed token or headers", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { ...custom.options, token: "" },
+      }),
+    ).toThrow("config.options.token must be a non-empty string");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { ...custom.options, headers: { "x-n": 1 } },
+      }),
+    ).toThrow("config.options.headers must be an object with string values");
+  });
+
+  it("is stateless: no persistence, sizing or snapshot, and never a fallback", () => {
+    expect(() =>
+      normalizeSandboxConfig({ ...custom, persistent: true }),
+    ).toThrow("config.persistent does not apply to the custom provider");
+    expect(() => normalizeSandboxConfig({ ...custom, size: "small" })).toThrow(
+      "config.size does not apply to the custom provider",
+    );
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "custom",
+      }),
+    ).toThrow("config.fallbackProvider cannot be custom");
+  });
+
+  it("must declare allow-all, since Broods cannot enforce egress on the server", () => {
+    expect(() =>
+      normalizeSandboxConfig({ ...custom, network: undefined }),
+    ).toThrow("custom cannot enforce egress restrictions");
+  });
+});
+
 describe("sandbox config host boundary", () => {
   it("accepts options.docker only as a boolean on the sandbox provider", () => {
     expect(

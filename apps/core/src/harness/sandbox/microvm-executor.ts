@@ -31,6 +31,10 @@ import {
   removeSandboxInstance,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
+import type {
+  SandboxExecRequest,
+  SandboxExecResponse,
+} from "../../shared/domain/sandbox-config.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv } from "../../shared/env.ts";
@@ -73,10 +77,10 @@ import type {
   SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
-  SandboxRuntime,
 } from "./types.ts";
 import {
   configString,
+  execRunResult,
   mergeSandboxEnv,
   SandboxCapacityError,
   SandboxGoneError,
@@ -176,33 +180,6 @@ const reservedEndpoints = new Map<
 // credential without cutting normal interactive use short.
 export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
-
-// The JSON contract the lambda-sandbox image takes on /exec (snake_case).
-interface ExecPayload {
-  runtime: SandboxRuntime;
-  code: string;
-  namespace?: string;
-  workspace_root?: string;
-  timeout_ms: number;
-  args?: string[];
-  env: Record<string, string>;
-}
-
-// The JSON contract the lambda-sandbox image returns (snake_case), unchanged from
-// the Invoke era.
-interface SandboxResponse {
-  ok: boolean;
-  runtime?: string;
-  exit_code?: number | null;
-  timed_out: boolean;
-  duration_ms: number;
-  stdout: string;
-  stderr: string;
-  truncated?: boolean;
-  cpu_usec?: number;
-  /** The VM's vCPU-s and GB-s above its baseline since boot. */
-  burst?: { vcpu_seconds: number; gb_seconds: number };
-}
 
 export interface MicrovmHarnessReservation {
   readonly microvmId: string;
@@ -367,7 +344,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         cached.endpoint,
       );
       const response = await this.#execReserved(cached, request, payload);
-      if (response) return sandboxResult(request, response, startedAt);
+      if (response) {
+        return execRunResult(request, response, PROVIDER, startedAt);
+      }
     }
     const { microvmId, endpoint, isFirstCreate } = await this.#acquire(request);
 
@@ -392,9 +371,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         );
       }
 
-      return sandboxResult(
+      return execRunResult(
         request,
         await this.#exec(microvmId, endpoint, payload),
+        PROVIDER,
         startedAt,
       );
     } finally {
@@ -830,8 +810,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #execReserved(
     target: { microvmId: string; endpoint: string },
     request: SandboxRunRequest,
-    payload: ExecPayload,
-  ): Promise<SandboxResponse | null> {
+    payload: SandboxExecRequest,
+  ): Promise<SandboxExecResponse | null> {
     // The reservation's own record has a 30-day TTL, so skipping its refresh costs
     // nothing, but the dashboard row carries lastUsedAt and the trace link, so it
     // still mirrors every call. Fire-and-forget, like the acquire path.
@@ -1042,7 +1022,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { ...ingress, egressNetworkConnectors: [egress] };
   }
 
-  #execPayload(request: SandboxRunRequest): ExecPayload {
+  #execPayload(request: SandboxRunRequest): SandboxExecRequest {
     return {
       runtime: request.runtime ?? "bash",
       code: request.code,
@@ -1069,9 +1049,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #exec(
     microvmId: string,
     endpoint: string,
-    payload: ExecPayload,
+    payload: SandboxExecRequest,
     budgetMs = WARMUP_BUDGET_MS,
-  ): Promise<SandboxResponse> {
+  ): Promise<SandboxExecResponse> {
     const token = await this.#authToken(microvmId);
     const url = `https://${endpoint.replace(/^https?:\/\//, "")}/exec`;
     const deadline = Date.now() + budgetMs;
@@ -1097,7 +1077,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // last billed report. Convex bills only growth, so a repeat is harmless, and a
   // report is cached only once it billed a row, so a failed write or one that
   // beat the row is sent again on the next exec. Lower totals are a fresh VM.
-  #reportBurst(microvmId: string, burst: SandboxResponse["burst"]): void {
+  #reportBurst(microvmId: string, burst: SandboxExecResponse["burst"]): void {
     const accountId = this.#config.controlPlane?.accountId;
     if (!burst || !accountId) return;
     const totals = {
@@ -1133,10 +1113,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #postExec(
     url: string,
     token: string,
-    payload: ExecPayload,
+    payload: SandboxExecRequest,
   ): Promise<
     | { retry: true; status: number | string }
-    | { retry: false; response: SandboxResponse }
+    | { retry: false; response: SandboxExecResponse }
   > {
     let res: Response;
     try {
@@ -1177,7 +1157,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       throw new Error("MicroVM exec response must be an object");
     }
 
-    return { retry: false, response: parsed as SandboxResponse };
+    return { retry: false, response: parsed as SandboxExecResponse };
   }
 
   async #authToken(
@@ -1568,29 +1548,4 @@ function queueMirrorWrite(
   });
 
   return queued;
-}
-
-function sandboxResult(
-  request: SandboxRunRequest,
-  response: SandboxResponse,
-  startedAt: number,
-): SandboxRunResult {
-  const stdout = truncateText(response.stdout, request.outputLimitBytes);
-  const stderr = truncateText(response.stderr, request.outputLimitBytes);
-
-  return {
-    ok: response.ok,
-    runtime: request.runtime ?? "bash",
-    exitCode: response.exit_code ?? null,
-    stdout: stdout.value,
-    stderr: stderr.value,
-    durationMs: response.duration_ms || Date.now() - startedAt,
-    timedOut: response.timed_out,
-    truncated:
-      response.truncated === true || stdout.truncated || stderr.truncated,
-    provider: PROVIDER,
-    ...(typeof response.cpu_usec === "number" && response.cpu_usec > 0
-      ? { cpuUsec: response.cpu_usec }
-      : {}),
-  };
 }

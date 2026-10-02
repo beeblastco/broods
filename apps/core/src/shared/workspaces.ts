@@ -349,7 +349,7 @@ export function resolveWorkspaceRefs(
  * platform must not meter it or hold it to the plan's budget. Mirrors where
  * each executor takes its credentials: the config's own key wins over the
  * platform env. A MicroVM always runs on the platform's AWS account; a machine
- * is the user's computer.
+ * is the user's computer and a custom server is the account's own compute.
  */
 export function runsOnOwnCredentials(config: SandboxConfig): boolean {
   const options = config.options ?? {};
@@ -364,6 +364,7 @@ export function runsOnOwnCredentials(config: SandboxConfig): boolean {
     case "sandbox":
       return has("workdirUrl");
     case "machine":
+    case "custom":
       return true;
     case "lambda":
       return false;
@@ -393,16 +394,17 @@ export function workspaceNamespacesForAccount(
 }
 
 // The file tools need the workspace's S3 mount. A machine has none (they would act
-// on the daemon's own disk), and a MicroVM network other than allow-all only routes
-// to the managed bucket, so it can never mount a bucket the workspace names itself.
+// on the daemon's own disk), a custom server is never handed mount credentials,
+// and a MicroVM network other than allow-all only routes to the managed bucket,
+// so it can never mount a bucket the workspace names itself.
 function assertSandboxReachesWorkspace(
   workspaceName: string,
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
 ): void {
-  if (sandbox?.provider === "machine") {
+  if (sandbox?.provider === "machine" || sandbox?.provider === "custom") {
     throw new Error(
-      `Workspace "${workspaceName}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
+      `Workspace "${workspaceName}" cannot run on a ${sandbox.provider} sandbox; give it its own sandbox or set sandbox: null`,
     );
   }
   if (

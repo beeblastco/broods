@@ -9,6 +9,10 @@
 import type { SandboxConfig } from "@broods/convex/model/sandboxRules";
 
 export type {
+  SandboxExecRequest,
+  SandboxExecResponse,
+} from "@broods/convex/model/sandboxExec";
+export type {
   NetworkMode as SandboxNetworkMode,
   PermissionMode as SandboxPermissionMode,
   RuntimeName as SandboxRuntimeName,

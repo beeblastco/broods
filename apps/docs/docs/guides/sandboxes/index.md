@@ -33,8 +33,9 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `e2b`     | E2B template                 | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
 | `vercel`  | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
 | `machine` | Your own computer            | no              | no                    | no                      | `allow-all` only               |
+| `custom`  | Your own server over HTTP    | no              | no                    | no                      | `allow-all` only               |
 
-`sandbox` is the default provider. Attaching a workspace to an `e2b`, `vercel` or `machine` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and the `machine` provider has its own page, [Your computer](machine.md).
+`sandbox` is the default provider. Attaching a workspace to an `e2b`, `vercel`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md). The `machine` provider has its own page, [Your computer](machine.md), and so does `custom`, [Your own server](../custom-sandbox-provider.md).
 
 ## Configuration
 
