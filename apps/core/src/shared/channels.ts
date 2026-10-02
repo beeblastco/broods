@@ -5,7 +5,7 @@ import type { Attachment, StreamOptions } from "chat";
 import { z } from "zod";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
-import { logWarn } from "./log.ts";
+import { logWarn, redactSensitiveText } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 
 /** Reach every room or sender, instead of only the listed ids. */
@@ -18,25 +18,40 @@ const RETRY_REPLY = "Retry";
 // 53 bytes at most, under Telegram's 64-byte callback_data cap.
 const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
 
-// The fix to append to a provider error, first match wins. A provider that
-// already says when to retry ("try again in 37s") gets no hint, so that entry
-// stays ahead of the generic rate limit and timeout ones.
+// A provider error saying the conversation no longer fits what the model takes
+// per request, whether the context window or a per-minute token cap.
+const CONTEXT_LIMIT_PATTERN =
+  /request too large|context (length|window)|prompt is too long|input is too long|exceeds the maximum number of tokens/i;
+
+// The fix to append to any other provider error, first match wins. A provider
+// that already says when to retry ("try again in 37s") gets no hint, so that
+// entry stays ahead of the quota and rate limit ones.
 const ERROR_HINTS: [RegExp, string | null][] = [
+  [/\b(try|retry) (again )?in \d/i, null],
   [
-    /request too large|context (length|window)|prompt is too long/i,
-    "Send /compact to shorten the conversation, or /new to start over.",
-  ],
-  [
-    /usage limit|quota|insufficient.*credit|credit balance|purchase credits|upgrade your (token )?plan/i,
+    /usage limit|quota|insufficient (balance|.*credit)|credit balance|purchase credits|upgrade your (token )?plan/i,
     "Add credits or upgrade the plan with the model provider.",
   ],
-  [/try again in/i, null],
   [
     /rate.?limit|\b429\b|too many requests|overloaded/i,
     "Try again in a moment.",
   ],
-  [/timed? ?out|etimedout|econnreset|network/i, "Try again."],
 ];
+
+// Channels whose plain messages are parsed for slash commands like /new.
+const INLINE_COMMAND_CHANNELS = new Set([
+  "discord",
+  "gchat",
+  "instagram",
+  "matrix",
+  "messenger",
+  "slack",
+  "teams",
+  "telegram",
+  "twilio",
+  "whatsapp",
+  "zalo",
+]);
 
 // Any JSON object. Fields stay as the provider sent them, nulls included; each
 // adapter reads what it needs through its own payload type.
@@ -350,8 +365,15 @@ export function extractText(content: UserContent): string {
     .join("");
 }
 
-export function formatChannelErrorText(error: string): string {
-  return `⚠️ ${simplifyErrorText(error)}`;
+/**
+ * The chat line for a failed turn. Pass the channel so a fix that needs a slash
+ * command is only offered where the channel parses one.
+ */
+export function formatChannelErrorText(
+  error: string,
+  channelName?: string,
+): string {
+  return `⚠️ ${simplifyErrorText(error, supportsInlineCommands(channelName))}`;
 }
 
 /**
@@ -453,22 +475,32 @@ export function reachSet(ids: string[] | undefined): Set<string> | null {
   return ids ? new Set(ids) : null;
 }
 
+/** Whether plain messages on this channel are parsed for slash commands. */
+export function supportsInlineCommands(
+  channelName: string | undefined,
+): boolean {
+  return channelName !== undefined && INLINE_COMMAND_CHANNELS.has(channelName);
+}
+
 // Provider/runtime errors reach the chat wrapped ("Failed after 6 attempts. Last
 // error: AI_APICallError: Request too large for gpt-6-luna in organization …").
 // Keep the provider's own reason so the chat says what actually failed, drop the
-// wrappers, org ids and docs links, and add the one step that fixes it.
-function simplifyErrorText(raw: string): string {
-  const message = (raw.match(/Last error:\s*(.+)$/is)?.[1] ?? raw)
+// wrappers, OpenAI's org id and docs link, and add the one step that fixes it.
+function simplifyErrorText(raw: string, commands: boolean): string {
+  const text = redactSensitiveText(raw);
+  const message = (text.match(/Last error:\s*(.+)$/is)?.[1] ?? text)
     .replace(/^AI_\w+:\s*/, "")
-    .replace(/ in organization \S+/i, "")
-    .replace(/ ?Visit https?:\/\/\S+[^.]*\.?/gi, "")
+    .replace(/ in organization org-[\w-]+/, "")
+    .replace(/ ?Visit https?:\/\/\S+ to learn more\./g, "")
     .trim();
   if (!message) {
     return "Something went wrong while generating a reply. Try again.";
   }
-  const hint = ERROR_HINTS.find(([pattern]) => pattern.test(message))?.[1];
+  const hint = CONTEXT_LIMIT_PATTERN.test(message)
+    ? commands
+      ? "Send /compact to summarize the conversation, or /new to start over if that fails."
+      : "Start a new conversation to continue."
+    : ERROR_HINTS.find(([pattern]) => pattern.test(message))?.[1];
 
-  return hint
-    ? `${message.endsWith(".") ? message.slice(0, -1) : message}. ${hint}`
-    : message;
+  return hint ? `${message.replace(/[.!?]$/, "")}. ${hint}` : message;
 }

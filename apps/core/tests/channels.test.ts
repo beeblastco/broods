@@ -70,13 +70,28 @@ describe("channelAttachmentBytes", () => {
 });
 
 describe("formatChannelErrorText", () => {
+  const TOO_LARGE =
+    "Failed after 6 attempts. Last error: AI_APICallError: Request too large for gpt-6-luna in organization org-Pw28 on tokens per min (TPM): Limit 200000, Requested 204097. The input or output tokens must be reduced in order to run successfully. Visit https://platform.openai.com/account/rate-limits to learn more.";
+
   it("names a request over the per-minute token limit and points at /compact", () => {
+    expect(formatChannelErrorText(TOO_LARGE, "telegram")).toBe(
+      "⚠️ Request too large for gpt-6-luna on tokens per min (TPM): Limit 200000, Requested 204097. The input or output tokens must be reduced in order to run successfully. Send /compact to summarize the conversation, or /new to start over if that fails.",
+    );
+  });
+
+  it("offers no slash command where the channel does not parse one", () => {
+    expect(formatChannelErrorText(TOO_LARGE, "github")).toEndWith(
+      "successfully. Start a new conversation to continue.",
+    );
+  });
+
+  it("keeps the provider's wait time over a quota hint", () => {
     expect(
       formatChannelErrorText(
-        "Failed after 6 attempts. Last error: AI_APICallError: Request too large for gpt-6-luna in organization org-Pw28 on tokens per min (TPM): Limit 200000, Requested 204097. The input or output tokens must be reduced in order to run successfully. Visit https://platform.openai.com/account/rate-limits to learn more.",
+        "Resource has been exhausted (e.g. check quota). Please retry in 37.6s.",
       ),
     ).toBe(
-      "⚠️ Request too large for gpt-6-luna on tokens per min (TPM): Limit 200000, Requested 204097. The input or output tokens must be reduced in order to run successfully. Send /compact to shorten the conversation, or /new to start over.",
+      "⚠️ Resource has been exhausted (e.g. check quota). Please retry in 37.6s.",
     );
   });
 
