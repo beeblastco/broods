@@ -51,7 +51,7 @@ export function ConnectionsPanel(): React.JSX.Element {
 
       {removing && (
         <DeleteConfirmDialog
-          open={removing !== null}
+          open={true}
           onOpenChange={(open) => {
             if (!open) setRemoving(null);
           }}

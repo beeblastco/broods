@@ -118,11 +118,17 @@ async function completedResponse(response: Response): Promise<Response> {
     if (!line.startsWith("data:")) continue;
     const data = line.slice("data:".length).trim();
     if (!data || data === "[DONE]") continue;
-    const event = JSON.parse(data) as {
+    let event: {
       type?: string;
       response?: { error?: unknown };
       error?: unknown;
     };
+    // A malformed line is skipped; the terminal event decides the answer.
+    try {
+      event = JSON.parse(data) as typeof event;
+    } catch {
+      continue;
+    }
     // An incomplete response is still an answer; the SDK reads its status.
     if (
       event.type === "response.completed" ||
