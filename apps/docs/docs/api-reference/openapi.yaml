@@ -65,6 +65,11 @@ tags:
       Scoped API roles (`fp_role_...`). A role carries a policy over the
       `<resource>:read`/`<resource>:write` API action namespace and is exchanged
       via assume-role for a short-lived `fp_sts_...` session token.
+  - name: Audit
+    description: >-
+      The account's hash-chained, append-only audit ledger: config mutations,
+      run lifecycle and enforced tool denials. Read it by `seq`, verify the
+      chain, and export it to one signed webhook sink.
 
 paths:
   # checkov:skip=CKV_OPENAPI_21:Request arrays are bounded by the gateway body cap. Lists page with limit or cursor; with neither they return the whole collection, by design.
@@ -2872,6 +2877,125 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /v1/audit:
+    get:
+      tags: [Audit]
+      summary: List audit events
+      description: >-
+        Ledger rows with `seq` greater than `since`, oldest first. Every row
+        carries the hash of the row before it, so a reader that keeps the last
+        `hash` it saw can verify each page as it arrives. `head` is the chain
+        tip at the time of the read. Account secret, or a role with
+        `audit:read`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: Return rows after this `seq`. Defaults to 0, the whole kept ledger.
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          required: false
+          description: Rows per page, 1 to 500. Defaults to 100.
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Audit page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+  /v1/audit/verify:
+    get:
+      tags: [Audit]
+      summary: Verify the audit chain
+      description: >-
+        Recomputes every row's hash and link over `[fromSeq, toSeq]`, the
+        whole kept ledger by default, at most 1000 rows per call. Without
+        `toSeq` the last row must also match the chain head, so a dropped tail
+        reports at the first missing `seq`. Pruned rows below the oldest kept
+        row are not an error: that row's own hash still pins its `prevHash`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: fromSeq
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+        - name: toSeq
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditVerification"
+  /v1/audit/sink:
+    get:
+      tags: [Audit]
+      summary: Get the audit sink
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The account's sink
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditSink"
+        "404": { description: No sink configured }
+    put:
+      tags: [Audit]
+      summary: Set the audit sink
+      description: >-
+        One webhook per account. Every 10 minutes Broods POSTs a JSON array of
+        up to 200 unexported rows to `url`, signed with
+        `X-Broods-Signature: sha256=<hex>`, an HMAC-SHA256 of the body under
+        `secret`. A 2xx advances `exportedSeq`; anything else is kept in
+        `lastError` and the batch is retried next tick. `url` must be public
+        `https`. Setting the sink keeps the watermark. Account secret, or a
+        role with `audit:write`.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, secret]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                  maxLength: 256
+      responses:
+        "200":
+          description: Sink set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditSink"
+        "400": { description: Invalid url or secret }
+    delete:
+      tags: [Audit]
+      summary: Remove the audit sink
+      description: Exports stop; rows already in the ledger stay, and nothing is pruned until a sink exports again.
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Whether a sink existed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+
   /v1/channels:
     post:
       tags: [Channels]
@@ -4455,6 +4579,8 @@ components:
                 account:write,
                 agents:read,
                 agents:write,
+                audit:read,
+                audit:write,
                 channels:read,
                 channels:write,
                 crons:read,
@@ -4704,6 +4830,133 @@ components:
         status:
           type: string
           enum: [active, deleted]
+
+    AuditEvent:
+      type: object
+      description: >-
+        One ledger row. `hash` is sha256 hex over the canonical JSON (keys
+        sorted recursively) of `accountId`, `seq`, `prevHash`, `at`, `actor`,
+        `action`, `resource`, `summary` and `detailsJson`; `projectId`,
+        `stageId` and `traceId` ride beside the chain and are not hashed.
+      required:
+        [accountId, seq, prevHash, hash, at, actor, action, resource, summary]
+      properties:
+        accountId:
+          type: string
+        seq:
+          type: integer
+          description: Per-account, starts at 1, gapless at append time.
+        prevHash:
+          type: string
+          description: Hash of the row before; empty on the first row.
+        hash:
+          type: string
+        at:
+          type: integer
+          description: Unix milliseconds.
+        actor:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum:
+                [
+                  dashboardUser,
+                  apiAccountSecret,
+                  admin,
+                  service,
+                  cli,
+                  deployKey,
+                  role,
+                  agent,
+                ]
+            id:
+              type: string
+            email:
+              type: string
+            name:
+              type: string
+            agentId:
+              type: string
+        action:
+          type: string
+          description: >-
+            Config rows use `created`, `updated`, `deleted` and the like against
+            `resource.kind`; runtime rows use `run.started`, `run.completed`
+            and `tool.denied`.
+        resource:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+            id:
+              type: string
+            name:
+              type: string
+        summary:
+          type: string
+        detailsJson:
+          type: string
+          description: Small non-secret JSON metadata, capped at 8 KB.
+        projectId:
+          type: string
+        stageId:
+          type: string
+        traceId:
+          type: string
+
+    AuditPage:
+      type: object
+      required: [events, nextSince, head]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        nextSince:
+          type: integer
+          description: Pass as `since` to read what follows this page.
+        head:
+          type: [object, "null"]
+          description: The chain tip, or null for an account with no rows yet.
+          properties:
+            seq:
+              type: integer
+            hash:
+              type: string
+
+    AuditVerification:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        brokenAtSeq:
+          type: integer
+          description: The first row whose hash or link does not match; absent when `ok`.
+        checkedFrom:
+          type: integer
+        checkedTo:
+          type: integer
+
+    AuditSink:
+      type: object
+      required: [kind, url, exportedSeq, updatedAt]
+      properties:
+        kind:
+          type: string
+          enum: [webhook]
+        url:
+          type: string
+        exportedSeq:
+          type: integer
+          description: Highest `seq` the receiver acknowledged with a 2xx.
+        lastError:
+          type: string
+        updatedAt:
+          type: string
 
     AgentPolicy:
       allOf:

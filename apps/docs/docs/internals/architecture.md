@@ -209,7 +209,7 @@ sequenceDiagram
 
 1. A client calls a config path such as `/v1/agents`, `/v1/crons`, `/v1/workspaces/:id/files` or `/v1/account`. The gateway strips trailing slashes first (`normalizePathname`) and forwards that path, so `/v1/agents/` and `/v1/agents` reach the same plane. `isConfigHttpPath` in `apps/gateway/src/routes.ts` is method-aware and decides; everything else under `/v1/` goes to core.
 2. The gateway proxies to `BROODS_CONFIG_URL`, the Convex HTTP router in `packages/convex/http.ts`, with handlers in `config/http.ts` and `config/routes/*`.
-3. The config plane authenticates the bearer, checks role policy for a role session, runs the mutation, and writes a `configAuditEvents` row.
+3. The config plane authenticates the bearer, checks role policy for a role session, runs the mutation, and appends an `auditEvents` row to the account ledger.
 4. Sandbox lifecycle verbs (`/v1/sandboxes/:id/suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec`, `terminal`) and account creation and deletion are the exceptions. They reach core's account handler (`src/accounts/handler.ts`, `routesToAccountManage`). The dashboard reaches them through Convex actions that call core with the service token (`packages/convex/model/serviceBridge.ts`).
 
 ### CLI sync
@@ -327,7 +327,7 @@ The doc id of `accounts` is the `accountId` every other table carries. Config ro
 | Runtime               | `runtimeConversationEvents`, `runtimeHarnessSessions`, `runtimeClaims`, `runtimeConversationCoordinators`, `runtimeIngressEnvelopes`, `runtimeIngressApplications`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`                             |
 | Sandboxes             | `sandboxReservations`, `sandboxInstances`, `sandboxSnapshots`, `sandboxAuditEvents`, `machineConnections`                                                                                                                                             |
 | Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                                           |
-| Audit and usage       | `configAuditEvents`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`                                                                                                                                                                            |
+| Audit and usage       | `auditEvents`, `auditChainHeads`, `auditSinks`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`                                                                                                                                                 |
 
 `packages/convex/schema.ts` is the source of truth. Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). `channelEndpoints` holds each connection's encrypted bot token so the forwarders' `listConnections` subscription reads one small table.
 
