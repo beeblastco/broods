@@ -11,7 +11,7 @@ import { api } from "@broods/convex/_generated/api";
 import {
   CONNECTION_TYPE_NAMES,
   CONNECTION_TYPES,
-  type ConnectionType,
+  connectCommand,
 } from "@broods/convex/model/connections";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -80,7 +80,7 @@ export function ConnectionsView({
   return (
     <Section
       title="Connections"
-      description="External accounts your agents act through. Broods keeps their tokens fresh."
+      description="External accounts your agents act through."
     >
       <div className="grid gap-4">
         {connections && connections.length === 0 && (
@@ -123,29 +123,26 @@ export function ConnectionsView({
           <Label variant="muted">
             Connect one from a terminal signed in with broods login
           </Label>
-          {CONNECTION_TYPE_NAMES.map((type) => (
-            <div key={type} className="grid gap-1">
-              <span className="text-xs text-muted-foreground">
-                {CONNECTION_TYPES[type].description}
-              </span>
-              <CopyRow
-                value={connectCommand(type)}
-                className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
-              >
-                <span className="flex-1 truncate">{connectCommand(type)}</span>
-              </CopyRow>
-            </div>
-          ))}
+          {CONNECTION_TYPE_NAMES.map((type): React.JSX.Element => {
+            const meta = CONNECTION_TYPES[type];
+            const command = connectCommand(type);
+
+            return (
+              <div key={type} className="grid gap-1">
+                <span className="text-xs text-muted-foreground">
+                  {meta.description}
+                </span>
+                <CopyRow
+                  value={command}
+                  className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+                >
+                  <span className="flex-1 truncate">{command}</span>
+                </CopyRow>
+              </div>
+            );
+          })}
         </div>
       </div>
     </Section>
   );
-}
-
-/** What a developer runs to add a type; an own-app type needs its client. */
-function connectCommand(type: ConnectionType): string {
-  const meta = CONNECTION_TYPES[type];
-  if (meta.client !== "own") return `broods connect ${type}`;
-
-  return `broods connect ${type} --name <name> --client-id <id>${meta.needsClientSecret ? " --client-secret <secret>" : ""}`;
 }

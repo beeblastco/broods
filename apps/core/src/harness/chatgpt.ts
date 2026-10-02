@@ -8,7 +8,7 @@
 
 import type { LanguageModelMiddleware } from "ai";
 import { CHATGPT_CONNECTION_NAME } from "@broods/convex/model/connections";
-import { connectionAccessToken, rejectConnectionToken } from "./connections.ts";
+import { connectionFetch } from "./connections.ts";
 
 // Request fields plan usage refuses outright: the AI SDK sends some of them
 // from ordinary call settings (`temperature`, `maxOutputTokens`) and the rest
@@ -39,6 +39,13 @@ interface ResponsesRequestBody {
   [field: string]: unknown;
 }
 
+/** The slice of a Responses stream event a non-streaming answer reads. */
+interface ResponsesStreamEvent {
+  type?: string;
+  response?: { error?: unknown };
+  error?: unknown;
+}
+
 /**
  * Plan usage stores nothing and answers system messages only as developer
  * messages. Turning `store` off is also what makes the AI SDK replay history
@@ -60,7 +67,7 @@ export const chatgptMiddleware: LanguageModelMiddleware = {
 };
 
 /**
- * The `fetch` a `chatgpt` model calls through: stamps the login's current
+ * The `fetch` a `chatgpt` model calls through: stamps the connection's current
  * access token, drops what plan usage refuses, and always streams. A call the
  * SDK made without streaming (compaction's `generateText`) is read to
  * `response.completed` and answered as the plain JSON response it expected.
@@ -76,12 +83,6 @@ export function chatgptFetch(
     if (!accountId) {
       throw new Error("The chatgpt provider runs only inside an account");
     }
-    const accessToken = await connectionAccessToken(
-      accountId,
-      CHATGPT_CONNECTION_NAME,
-    );
-    const headers = new Headers(init?.headers);
-    headers.set("Authorization", `Bearer ${accessToken}`);
     let body = init?.body;
     let wantsJson = false;
     if (typeof body === "string") {
@@ -90,14 +91,12 @@ export function chatgptFetch(
       wantsJson = parsed.stream !== true;
       body = JSON.stringify({ ...parsed, stream: true });
     }
-    const response = await modelFetch(input, {
-      ...init,
-      headers: headers,
-      body: body,
-    });
-    if (response.status === 401) {
-      rejectConnectionToken(accountId, CHATGPT_CONNECTION_NAME, accessToken);
-    }
+    const response = await connectionFetch(
+      accountId,
+      CHATGPT_CONNECTION_NAME,
+      "model",
+      modelFetch,
+    )(input, { ...init, body: body });
 
     return wantsJson && response.ok
       ? await completedResponse(response)
@@ -118,14 +117,10 @@ async function completedResponse(response: Response): Promise<Response> {
     if (!line.startsWith("data:")) continue;
     const data = line.slice("data:".length).trim();
     if (!data || data === "[DONE]") continue;
-    let event: {
-      type?: string;
-      response?: { error?: unknown };
-      error?: unknown;
-    };
+    let event: ResponsesStreamEvent;
     // A malformed line is skipped; the terminal event decides the answer.
     try {
-      event = JSON.parse(data) as typeof event;
+      event = JSON.parse(data) as ResponsesStreamEvent;
     } catch {
       continue;
     }

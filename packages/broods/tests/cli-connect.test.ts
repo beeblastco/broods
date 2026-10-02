@@ -29,7 +29,7 @@ beforeEach(() => {
   grantedScope =
     "openid profile email offline_access chatgpt.tokens.use.direct";
   nonceOverride = undefined;
-  console.log = () => {};
+  console.log = (): void => {};
 });
 
 afterEach(() => {
@@ -128,6 +128,20 @@ describe("connectInBrowser", () => {
   });
 });
 
+/** An ID token signed with the test's key, as a provider would mint it. */
+function idToken(claims: Record<string, unknown>): string {
+  const encode = (value: unknown): string =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const signingInput = `${encode({ alg: "RS256", kid: "key-1", typ: "JWT" })}.${encode({ jti: randomUUID(), ...claims })}`;
+  const signature = sign(
+    "RSA-SHA256",
+    Buffer.from(signingInput),
+    keys.privateKey,
+  );
+
+  return `${signingInput}.${signature.toString("base64url")}`;
+}
+
 /** Plays the provider: answers JWKS and the token endpoint, and redirects the "browser" back. */
 async function runSignIn(
   type: ConnectionType,
@@ -141,7 +155,10 @@ async function runSignIn(
   let nonce = "";
   const clientId = type === "chatgpt" ? "client-issued" : options.clientId;
   globalThis.fetch = Object.assign(
-    async (input: string | URL | Request, init?: RequestInit) => {
+    async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = input instanceof Request ? input.url : String(input);
       if (url.startsWith("http://127.0.0.1")) return realFetch(input, init);
       if (init?.method !== "POST") return Response.json({ keys: [jwk] });
@@ -178,17 +195,4 @@ async function runSignIn(
   const signIn = await connectInBrowser(type, current, options, open);
 
   return { signIn: signIn, authorize: authorize };
-}
-
-function idToken(claims: Record<string, unknown>): string {
-  const encode = (value: unknown): string =>
-    Buffer.from(JSON.stringify(value)).toString("base64url");
-  const signingInput = `${encode({ alg: "RS256", kid: "key-1", typ: "JWT" })}.${encode({ jti: randomUUID(), ...claims })}`;
-  const signature = sign(
-    "RSA-SHA256",
-    Buffer.from(signingInput),
-    keys.privateKey,
-  );
-
-  return `${signingInput}.${signature.toString("base64url")}`;
 }

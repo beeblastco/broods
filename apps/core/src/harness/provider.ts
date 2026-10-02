@@ -233,30 +233,6 @@ export function resolveConfiguredModel(
 }
 
 /**
- * OpenAI on the account's ChatGPT plan. The API key is a placeholder the fetch
- * replaces with the connection's access token on every request; the endpoint is
- * OpenAI's own, so no tenant setting reaches it.
- */
-function resolveChatGPTModel(
-  modelId: string,
-  accountId: string | undefined,
-): ResolvedModelProvider {
-  const provider = createOpenAI({
-    apiKey: "chatgpt-sign-in",
-    fetch: chatgptFetch(accountId, withModelFetch({}).fetch),
-  });
-
-  return {
-    providerName: "chatgpt",
-    provider: provider,
-    model: wrapLanguageModel({
-      model: provider(modelId),
-      middleware: [dropUnsupportedMediaMiddleware, chatgptMiddleware],
-    }),
-  };
-}
-
-/**
  * The speech-to-text model to read inbound audio with, or undefined when this
  * account's provider ships none or its config cannot build one. Undefined
  * rather than a throw: a half-configured account should lose its transcript and
@@ -642,6 +618,30 @@ function withoutStaleStoredItems(
   });
 
   return withoutStoredItemState(params);
+}
+
+/**
+ * OpenAI on the account's ChatGPT plan. The API key is a placeholder the fetch
+ * replaces with the connection's access token on every request; the endpoint is
+ * OpenAI's own, so no tenant setting reaches it.
+ */
+function resolveChatGPTModel(
+  modelId: string,
+  accountId: string | undefined,
+): ResolvedModelProvider {
+  const provider = createOpenAI({
+    apiKey: "chatgpt-connection",
+    fetch: chatgptFetch(accountId, withModelFetch({}).fetch),
+  });
+
+  return {
+    providerName: "chatgpt",
+    provider: provider,
+    model: wrapLanguageModel({
+      model: provider(modelId),
+      middleware: [dropUnsupportedMediaMiddleware, chatgptMiddleware],
+    }),
+  };
 }
 
 function resolveOpenAICompatibleModel(

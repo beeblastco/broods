@@ -26,7 +26,7 @@ const PROVIDER_REQUIRED_SETTINGS: Partial<
   custom: { base_url: "https://llm.example.com/v1" },
 };
 
-// `chatgpt` runs on the account's sign-in, not an API key or a factory.
+// `chatgpt` runs on the account's `chatgpt` connection, not an API key or a factory.
 const API_KEY_PROVIDER_NAMES = ACCOUNT_MODEL_PROVIDER_NAMES.filter(
   (name) => name !== "chatgpt",
 );

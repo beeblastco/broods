@@ -4812,7 +4812,7 @@ components:
         expiresAt:
           type: string
           format: date-time
-          description: Access-token expiry; core refreshes before it
+          description: Access-token expiry; Broods refreshes it before then
         updatedAt:
           type: string
           format: date-time

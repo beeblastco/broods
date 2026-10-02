@@ -1,5 +1,5 @@
 /**
- * The `chatgpt` provider against a stubbed OpenAI: the sign-in's token rides
+ * The `chatgpt` provider against a stubbed OpenAI: the connection's token rides
  * every request, plan usage only ever sees a stored-nothing stream, and a
  * rotated refresh token is saved back exactly once.
  */
@@ -62,8 +62,15 @@ const responseEvents = [
     output_index: 0,
     item: completed.output[0],
   },
-  { type: "response.completed", response: completed },
 ];
+
+/** The request body fields these tests assert on. */
+interface SentBody {
+  stream?: boolean;
+  temperature?: unknown;
+  max_output_tokens?: unknown;
+  input: Array<{ role?: string }>;
+}
 
 interface SentRequest {
   url: string;
@@ -76,13 +83,15 @@ let saved: Array<Parameters<Storage["connections"]["saveRefreshed"]>>;
 let stored: StoredConnection | null;
 let tokenResponse: Response;
 let refuseNextInference: boolean;
+let terminalEvent: { type: string; response: unknown };
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   sent = [];
   refuseNextInference = false;
+  terminalEvent = { type: "response.completed", response: completed };
   saved = [];
-  stored = credential({ expiresAt: Date.now() + 3_600_000 });
+  stored = credential();
   tokenResponse = Response.json({
     access_token: "access-2",
     refresh_token: "refresh-2",
@@ -124,7 +133,7 @@ beforeEach(() => {
       }
 
       return new Response(
-        responseEvents
+        [...responseEvents, terminalEvent]
           .map((event) => `data: ${JSON.stringify(event)}\n\n`)
           .join(""),
         { headers: { "Content-Type": "text/event-stream" } },
@@ -140,7 +149,7 @@ afterEach(() => {
 });
 
 describe("chatgpt provider", () => {
-  it("streams on the sign-in's token with nothing plan usage refuses", async () => {
+  it("streams on the connection's token with nothing plan usage refuses", async () => {
     // Not a reasoning model, so the SDK itself sends temperature and system.
     const { model } = resolveConfiguredModel(
       { model: { provider: "chatgpt", modelId: "gpt-4.1-mini" } },
@@ -159,7 +168,7 @@ describe("chatgpt provider", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.url).toBe("https://api.openai.com/v1/responses");
     expect(sent[0]?.headers.get("authorization")).toBe("Bearer access-1");
-    const body = JSON.parse(sent[0]?.body ?? "{}");
+    const body = JSON.parse(sent[0]?.body ?? "{}") as SentBody;
     expect(body).toMatchObject({
       model: "gpt-4.1-mini",
       store: false,
@@ -176,26 +185,17 @@ describe("chatgpt provider", () => {
     const result = await generateText({ model: model, prompt: "hello" });
 
     expect(result.text).toBe("hi");
-    expect(JSON.parse(sent[0]?.body ?? "{}").stream).toBe(true);
+    expect((JSON.parse(sent[0]?.body ?? "{}") as SentBody).stream).toBe(true);
   });
 
   it("answers a non-streaming call from an incomplete stream", async () => {
-    const incomplete = { ...completed, status: "incomplete" };
-    responseEvents.splice(-1, 1, {
+    terminalEvent = {
       type: "response.incomplete",
-      response: incomplete,
-    });
+      response: { ...completed, status: "incomplete" },
+    };
     const { model } = chatgptModel();
 
-    const result = await generateText({
-      model: model,
-      prompt: "hello",
-    }).finally(() =>
-      responseEvents.splice(-1, 1, {
-        type: "response.completed",
-        response: completed,
-      }),
-    );
+    const result = await generateText({ model: model, prompt: "hello" });
 
     expect(result.text).toBe("hi");
     expect(sent).toHaveLength(1);
@@ -232,20 +232,47 @@ describe("chatgpt provider", () => {
     ).toEqual(["Bearer access-2", "Bearer access-2"]);
   });
 
-  it("refreshes once the plan refuses a token before its expiry", async () => {
+  it("refreshes and retries once the plan refuses a token before its expiry", async () => {
     refuseNextInference = true;
     const { model } = chatgptModel();
 
-    await generateText({ model: model, prompt: "one", maxRetries: 0 }).catch(
-      () => undefined,
-    );
-    await generateText({ model: model, prompt: "two" });
+    const result = await generateText({
+      model: model,
+      prompt: "one",
+      maxRetries: 0,
+    });
 
     const refreshes = sent.filter((request) =>
       request.url.startsWith("https://auth.openai.com/"),
     );
+    expect(result.text).toBe("hi");
     expect(refreshes).toHaveLength(1);
     expect(sent.at(-1)?.headers.get("authorization")).toBe("Bearer access-2");
+  });
+
+  it("takes the pair another writer saved when its own refresh is refused", async () => {
+    stored = credential({ expiresAt: Date.now() });
+    const saved = credential({
+      accessToken: "access-other",
+      refreshToken: "refresh-other",
+      updatedAt: 2,
+    });
+    tokenResponse = Response.json({ error: "invalid_grant" }, { status: 400 });
+    let loads = 0;
+    setStorageForTests({
+      connections: {
+        load: async () => (loads++ === 0 ? stored : saved),
+        saveRefreshed: async () => true,
+      },
+    } as Partial<Storage> as Storage);
+    const { model } = chatgptModel();
+
+    const result = await generateText({ model: model, prompt: "hello" });
+
+    expect(result.text).toBe("hi");
+    expect(sent.at(-1)?.headers.get("authorization")).toBe(
+      "Bearer access-other",
+    );
   });
 
   it("asks for a new sign-in when the refresh token is spent", async () => {
@@ -264,7 +291,21 @@ describe("chatgpt provider", () => {
     expect(saved).toHaveLength(0);
   });
 
-  it("asks for a sign-in when the account has none", async () => {
+  it("refuses a connection of another type stored under the name", async () => {
+    stored = credential({ type: "google" });
+    const { model } = chatgptModel();
+
+    const error = await generateText({
+      model: model,
+      prompt: "hello",
+      maxRetries: 0,
+    }).catch((caught: unknown) => caught);
+
+    expect(String(error)).toContain("which a model provider cannot use");
+    expect(sent).toHaveLength(0);
+  });
+
+  it("asks for a connection when the account has none", async () => {
     stored = null;
     const { model } = chatgptModel();
 
@@ -286,7 +327,9 @@ function chatgptModel(): ReturnType<typeof resolveConfiguredModel> {
   );
 }
 
-function credential(overrides: Partial<StoredConnection>): StoredConnection {
+function credential(
+  overrides: Partial<StoredConnection> = {},
+): StoredConnection {
   return {
     type: "chatgpt",
     scopes: ["chatgpt.tokens.use.direct"],

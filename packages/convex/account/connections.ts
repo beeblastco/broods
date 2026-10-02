@@ -20,6 +20,7 @@ import { configEncryptionSecret } from "../config/routes/shared";
 import {
   decryptAgentConfigBlob,
   encryptAgentConfigBlob,
+  type EncryptedAgentConfig,
 } from "../model/agentConfigCodec";
 import { CONNECTION_TYPES } from "../model/connections";
 import { connectionsFields } from "../schema";
@@ -39,17 +40,19 @@ const statusFields = {
   ...signInFields,
   updatedAt: connectionsFields.updatedAt,
 };
-const statusValidator = v.object(statusFields);
+export const statusValidator = v.object(statusFields);
 const secretFields = {
   accessToken: v.string(),
   refreshToken: v.string(),
   clientSecret: v.optional(v.string()),
 };
 const storedValidator = v.object({ ...statusFields, ...secretFields });
+const secretsValidator = v.object(secretFields);
 const ref = { accountId: v.id("accounts"), name: v.string() };
 
 export type ConnectionStatus = Infer<typeof statusValidator>;
 export type StoredConnection = Infer<typeof storedValidator>;
+type ConnectionSecrets = Infer<typeof secretsValidator>;
 
 /** Every connection the account holds, never their tokens. */
 export const list = internalQuery({
@@ -106,11 +109,9 @@ export const set = internalMutation({
     };
     const existing = await findRow(ctx, args.accountId, args.name);
     if (existing) await ctx.db.replace(existing._id, fields);
-    const id = existing?._id ?? (await ctx.db.insert("connections", fields));
-    const stored = await ctx.db.get(id);
-    if (!stored) throw new Error(`Connection ${args.name} was not stored`);
+    else await ctx.db.insert("connections", fields);
 
-    return statusOf(stored);
+    return statusOf(fields);
   },
 });
 
@@ -154,13 +155,14 @@ export const disconnect = internalMutation({
     if (!row) return false;
     await ctx.db.delete(row._id);
     const revokeUrl = CONNECTION_TYPES[row.type].revokeUrl;
+    // The secrets stay encrypted in the scheduler; the action decrypts them.
     if (revokeUrl) {
-      const stored = await decrypted(row);
       await ctx.scheduler.runAfter(0, internal.account.connections.revoke, {
         revokeUrl: revokeUrl,
         clientId: row.clientId,
-        refreshToken: stored.refreshToken,
-        ...(stored.clientSecret ? { clientSecret: stored.clientSecret } : {}),
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        tag: row.tag,
       });
     }
 
@@ -176,20 +178,24 @@ export const revoke = internalAction({
   args: {
     revokeUrl: v.string(),
     clientId: v.string(),
-    clientSecret: v.optional(v.string()),
-    refreshToken: v.string(),
+    ciphertext: connectionsFields.ciphertext,
+    iv: connectionsFields.iv,
+    tag: connectionsFields.tag,
   },
   returns: v.null(),
   handler: async (_ctx, args): Promise<null> => {
     try {
+      const secrets = await decryptSecrets(args);
       const response = await fetch(args.revokeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
-          token: args.refreshToken,
+          token: secrets.refreshToken,
           token_type_hint: "refresh_token",
           client_id: args.clientId,
-          ...(args.clientSecret ? { client_secret: args.clientSecret } : {}),
+          ...(secrets.clientSecret
+            ? { client_secret: secrets.clientSecret }
+            : {}),
         }),
         signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
       });
@@ -206,20 +212,27 @@ export const revoke = internalAction({
   },
 });
 
+/** The row with its tokens and client secret decrypted. */
 async function decrypted(row: Doc<"connections">): Promise<StoredConnection> {
+  return { ...statusOf(row), ...(await decryptSecrets(row)) };
+}
+
+/** The tokens and client secret out of a row's encrypted blob. */
+async function decryptSecrets(
+  blob: EncryptedAgentConfig,
+): Promise<ConnectionSecrets> {
   const secrets = await decryptAgentConfigBlob(
-    { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
+    { ciphertext: blob.ciphertext, iv: blob.iv, tag: blob.tag },
     configEncryptionSecret(),
   );
   if (
     typeof secrets?.accessToken !== "string" ||
     typeof secrets.refreshToken !== "string"
   ) {
-    throw new Error(`Failed to decrypt the ${row.name} connection`);
+    throw new Error("Failed to decrypt a connection");
   }
 
   return {
-    ...statusOf(row),
     accessToken: secrets.accessToken,
     refreshToken: secrets.refreshToken,
     ...(typeof secrets.clientSecret === "string"
@@ -228,11 +241,12 @@ async function decrypted(row: Doc<"connections">): Promise<StoredConnection> {
   };
 }
 
+/** The tokens and client secret as one encrypted blob for the row. */
 async function encryptSecrets(secrets: {
   accessToken: string;
   refreshToken: string;
   clientSecret: string | undefined;
-}): Promise<{ ciphertext: string; iv: string; tag: string }> {
+}): Promise<EncryptedAgentConfig> {
   return await encryptAgentConfigBlob(
     {
       accessToken: secrets.accessToken,
@@ -243,6 +257,7 @@ async function encryptSecrets(secrets: {
   );
 }
 
+/** The account's connection by name, if any. */
 async function findRow(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
@@ -256,7 +271,10 @@ async function findRow(
     .unique();
 }
 
-function statusOf(row: Doc<"connections">): ConnectionStatus {
+/** What a connection holds, never its secrets. */
+function statusOf(
+  row: Omit<Doc<"connections">, "_id" | "_creationTime">,
+): ConnectionStatus {
   return {
     name: row.name,
     type: row.type,

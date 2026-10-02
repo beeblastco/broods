@@ -11,7 +11,6 @@ import { internal } from "../../_generated/api";
 import type { ConnectionStatus } from "../../account/connections";
 import { ClientError } from "../../model/clientError";
 import {
-  CHATGPT_MANAGED_SERVICE_REFUSAL,
   CONNECTION_NAME_PATTERN,
   CONNECTION_TYPE_NAMES,
   CONNECTION_TYPES,
@@ -32,6 +31,7 @@ import {
 
 const MAX_FIELD_LENGTH = 16_384;
 
+/** Serves `/v1/account/connections[/{name}]` after resolving the caller. */
 export async function handleConnectionsRoute(
   ctx: ActionCtx,
   req: Request,
@@ -71,8 +71,9 @@ export async function handleConnectionsRoute(
   }
   if (req.method === "PUT") {
     const signIn = readSignIn(name, await parseJsonRequest(req));
-    if (CONNECTION_TYPES[signIn.type].selfHostedOnly && isManagedService())
-      return jsonError(403, CHATGPT_MANAGED_SERVICE_REFUSAL);
+    const selfHostedOnly = CONNECTION_TYPES[signIn.type].selfHostedOnly;
+    if (selfHostedOnly && isManagedService())
+      return jsonError(403, selfHostedOnly);
     const stored: ConnectionStatus = await ctx.runMutation(
       internal.account.connections.set,
       { ...ref, ...signIn, expiresAt: Date.parse(signIn.expiresAt) },
@@ -122,6 +123,7 @@ export function parseConnectionsPath(pathname: string): {
   return match?.[1] ? { name: decodeURIComponent(match[1]) } : null;
 }
 
+/** The API shape of a stored connection, with ISO dates. */
 function publicConnection(row: ConnectionStatus): Connection {
   return {
     name: row.name,
@@ -135,6 +137,7 @@ function publicConnection(row: ConnectionStatus): Connection {
   };
 }
 
+/** Validates a PUT body against the name and the type's own rules. */
 function readSignIn(name: string, body: unknown): ConnectionSignIn {
   if (!CONNECTION_NAME_PATTERN.test(name))
     throw new ClientError(
@@ -179,6 +182,12 @@ function readSignIn(name: string, body: unknown): ConnectionSignIn {
     throw new ClientError(
       `A ${type} connection must be named ${meta.fixedName}`,
     );
+  // Something reads a fixed name as its own type, so no other type may take it.
+  const owner = CONNECTION_TYPE_NAMES.find(
+    (typeName) => CONNECTION_TYPES[typeName].fixedName === name,
+  );
+  if (owner && owner !== type)
+    throw new ClientError(`${name} is reserved for the ${owner} connection`);
   // A registered client is attributed to the deployment's host id.
   if (meta.client === "dynamic" && !hostId)
     throw new ClientError(`hostId is required for ${type}`);

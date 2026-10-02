@@ -1,7 +1,10 @@
 "use client";
 
 import { RuntimeKeyView } from "@/app/(main)/[projectId]/dashboard/components/RuntimeKeyDialog";
-import { ConnectionsView } from "@/app/(main)/settings/connections/components/ConnectionsPanel";
+import {
+  ConnectionsView,
+  type Connection,
+} from "@/app/(main)/settings/connections/components/ConnectionsPanel";
 import {
   CANVAS_EDGE_TYPES,
   CANVAS_NODE_TYPES,
@@ -286,10 +289,10 @@ const CONVEX_SERVER_ERROR = new Error(
 const subscribeNever = (): (() => void) => () => {};
 
 /** Connections as the dashboard lists them: one of each type. */
-const CONNECTION_FIXTURES = [
+const CONNECTION_FIXTURES: Connection[] = [
   {
     name: "chatgpt",
-    type: "chatgpt" as const,
+    type: "chatgpt",
     clientId: "oaiapp_fixture",
     hostId: "urn:uuid:fixture",
     email: "owner@example.com",
@@ -299,7 +302,7 @@ const CONNECTION_FIXTURES = [
   },
   {
     name: "gmail",
-    type: "google" as const,
+    type: "google",
     clientId: "1234.apps.googleusercontent.com",
     email: "support@example.com",
     scopes: ["openid", "https://www.googleapis.com/auth/gmail.modify"],
@@ -308,7 +311,7 @@ const CONNECTION_FIXTURES = [
   },
   {
     name: "outlook",
-    type: "microsoft" as const,
+    type: "microsoft",
     clientId: "00000000-0000-0000-0000-000000000000",
     scopes: ["openid", "https://graph.microsoft.com/Mail.ReadWrite"],
     expiresAt: 0,

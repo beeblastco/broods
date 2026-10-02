@@ -114,6 +114,11 @@ describe("agent rules", () => {
         mcp: { [serverId]: { oauth: { connection: "Gmail Work" } } },
       }),
     ).toThrow("must name a connection");
+    expect(() =>
+      normalizeAgentConfig({
+        mcp: { [serverId]: { oauth: { connection: "chatgpt" } } },
+      }),
+    ).toThrow("is for the chatgpt model provider, not MCP servers");
   });
 
   it("validates channel trace settings", () => {

@@ -19,6 +19,13 @@ import { formatChoiceRow } from "./output.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
+const DASHBOARD_LOGIN_TIMEOUT =
+  "Timed out waiting for browser login to complete.\n" +
+  "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
+  "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
+  "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
+  "cliAuth Convex functions or no active API account (Settings -> API Access).";
+
 /** Options whose value is a separate token, so both have to leave a prompt. */
 const VALUE_OPTIONS = new Set([
   "--base-url",
@@ -42,6 +49,17 @@ const VALUE_OPTIONS = new Set([
 interface LoginCallback {
   code: string;
   baseUrl: string;
+}
+
+interface CallbackOptions<T> {
+  /** Preferred port; a busy one falls back to any free port unless `fixedPort`. */
+  port: number;
+  fixedPort: boolean;
+  path: string;
+  /** Turns the callback query into its result; a throw fails the login. */
+  read: (params: URLSearchParams) => T;
+  /** What the browser tab shows once `read` succeeds. */
+  done: string;
 }
 
 /**
@@ -336,65 +354,11 @@ export async function promptText(
   }
 }
 
-async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
-  const response = await fetch(startUrl, {
-    method: "GET",
-    redirect: "manual",
-  });
-  if (response.status === 404) {
-    const url = new URL(startUrl);
-    throw new Error(
-      `${url.origin} does not expose /cli-auth/start yet. Deploy the dashboard changes first, ` +
-        `or use --dashboard-url http://localhost:3000 with a local dashboard dev server.`,
-    );
-  }
-  if (response.status >= 500) {
-    throw new Error(
-      `Dashboard CLI auth route failed: ${response.status} ${await response.text()}`,
-    );
-  }
-}
-
-function readLoginCallback(params: URLSearchParams): LoginCallback {
-  const code = params.get("code");
-  if (!code) throw new Error("Login callback carried no code.");
-  const baseUrl = params.get("base_url");
-  if (!baseUrl) {
-    throw new Error(
-      "Login callback did not advertise the API base URL (base_url). " +
-        "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
-    );
-  }
-
-  return { code: code, baseUrl: stripTrailingSlash(baseUrl) };
-}
-
-function callbackPort(): number {
-  const raw = process.env.BROODS_LOGIN_PORT;
-  if (raw) {
-    const port = Number(raw);
-    if (Number.isInteger(port) && port > 0 && port < 65536) return port;
-    throw new Error("BROODS_LOGIN_PORT must be a TCP port number");
-  }
-
-  return 18987;
-}
-
+/** Opens `url` in the default browser, detached so the CLI never waits on it. */
 export function openBrowser(url: string): void {
   const { command, args } = browserCommand(url);
   const child = spawn(command, args, { stdio: "ignore", detached: true });
   child.unref();
-}
-
-interface CallbackOptions<T> {
-  /** Preferred port; a busy one falls back to any free port unless `fixedPort`. */
-  port: number;
-  fixedPort: boolean;
-  path: string;
-  /** Turns the callback query into its result; a throw fails the login. */
-  read: (params: URLSearchParams) => T;
-  /** What the browser tab shows once `read` succeeds. */
-  done: string;
 }
 
 /**
@@ -469,13 +433,6 @@ export function waitForCallback<T>(
   });
 }
 
-const DASHBOARD_LOGIN_TIMEOUT =
-  "Timed out waiting for browser login to complete.\n" +
-  "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
-  "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
-  "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
-  "cliAuth Convex functions or no active API account (Settings -> API Access).";
-
 /**
  * Race a promise against a timeout so a stalled browser login surfaces an
  * actionable error instead of hanging the CLI forever. For `broods login` the
@@ -496,4 +453,49 @@ export async function waitWithTimeout<T>(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
+  const response = await fetch(startUrl, {
+    method: "GET",
+    redirect: "manual",
+  });
+  if (response.status === 404) {
+    const url = new URL(startUrl);
+    throw new Error(
+      `${url.origin} does not expose /cli-auth/start yet. Deploy the dashboard changes first, ` +
+        `or use --dashboard-url http://localhost:3000 with a local dashboard dev server.`,
+    );
+  }
+  if (response.status >= 500) {
+    throw new Error(
+      `Dashboard CLI auth route failed: ${response.status} ${await response.text()}`,
+    );
+  }
+}
+
+function callbackPort(): number {
+  const raw = process.env.BROODS_LOGIN_PORT;
+  if (raw) {
+    const port = Number(raw);
+    if (Number.isInteger(port) && port > 0 && port < 65536) return port;
+    throw new Error("BROODS_LOGIN_PORT must be a TCP port number");
+  }
+
+  return 18987;
+}
+
+/** The dashboard's redirect: the login code and the API base URL it advertises. */
+function readLoginCallback(params: URLSearchParams): LoginCallback {
+  const code = params.get("code");
+  if (!code) throw new Error("Login callback carried no code.");
+  const baseUrl = params.get("base_url");
+  if (!baseUrl) {
+    throw new Error(
+      "Login callback did not advertise the API base URL (base_url). " +
+        "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
+    );
+  }
+
+  return { code: code, baseUrl: stripTrailingSlash(baseUrl) };
 }

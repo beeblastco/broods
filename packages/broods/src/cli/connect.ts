@@ -84,8 +84,8 @@ interface SignInClient {
 /**
  * Opens the browser on the provider's consent screen and returns the
  * verified sign-in. `current` is what the deployment already holds under this
- * name: a ChatGPT reauthorization keeps its host id and issued client, and an
- * own-app type reuses its client id.
+ * name: a ChatGPT reauthorization keeps its host id and issued client. An
+ * own-app type takes its client from `options` every time.
  */
 export async function connectInBrowser(
   type: ConnectionType,
@@ -197,10 +197,12 @@ function authorizeQuery(
   });
 }
 
+/** One base64url JWT segment, parsed as JSON. */
 function decodeSegment<T>(segment: string): T {
   return JSON.parse(Buffer.from(segment, "base64url").toString("utf8")) as T;
 }
 
+/** Trades the authorization code at the type's token endpoint; both tokens must come back. */
 async function exchangeCode(
   type: ConnectionType,
   form: Record<string, string>,
@@ -225,6 +227,7 @@ async function exchangeCode(
   };
 }
 
+/** The loopback redirect: the code, and the client a registering type was issued. */
 function readAuthorizationCallback(
   params: URLSearchParams,
 ): AuthorizationCallback {

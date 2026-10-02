@@ -7,7 +7,7 @@
  * then revokes.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -18,9 +18,8 @@ const modules = import.meta.glob("../**/*.ts");
 
 const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
 
-const connectionsTest = () => convexTest(schema, modules);
-
-type T = ReturnType<typeof connectionsTest>;
+const connectionsTest = (): TestConvex<typeof schema> =>
+  convexTest(schema, modules);
 
 const chatgpt = {
   type: "chatgpt",
@@ -43,6 +42,8 @@ const google = {
   accessToken: "access-g",
   refreshToken: "refresh-g",
 };
+
+type T = TestConvex<typeof schema>;
 
 beforeEach(() => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
@@ -109,11 +110,13 @@ test("each type's sign-in rules hold", async () => {
     clientSecret: undefined,
   });
   const badName = await request(t, "PUT", "Gmail_Work", google);
+  const reserved = await request(t, "PUT", "chatgpt", google);
 
   expect(noPlanUsage.status).toBe(400);
   expect(misnamed.status).toBe(400);
   expect(noSecret.status).toBe(400);
   expect(badName.status).toBe(400);
+  expect(reserved.status).toBe(400);
   expect(await (await request(t, "GET")).json()).toEqual({ connections: [] });
   expect((await request(t, "GET", "gmail")).status).toBe(404);
 });
@@ -181,6 +184,11 @@ test("a disconnect forgets the connection, then revokes it", async () => {
   expect(revoked[0]?.url).toBe("https://oauth2.googleapis.com/revoke");
   expect(revoked[0]?.form.get("token")).toBe("refresh-g");
   expect(revoked[0]?.form.get("client_secret")).toBe("google-secret");
+  const scheduled = await t.run(async (ctx) =>
+    ctx.db.system.query("_scheduled_functions").collect(),
+  );
+  expect(JSON.stringify(scheduled)).not.toContain("refresh-g");
+  expect(JSON.stringify(scheduled)).not.toContain("google-secret");
   expect((await request(t, "GET", "gmail")).status).toBe(404);
 });
 

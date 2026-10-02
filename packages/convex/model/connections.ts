@@ -14,11 +14,29 @@ export const CONNECTION_TYPE_NAMES = [
   "microsoft",
 ] as const;
 
+const CHATGPT_ISSUER = "https://auth.openai.com";
+
+/** The API a ChatGPT access token is minted for, sent on every token request. */
+export const CHATGPT_RESOURCE = "https://api.openai.com/v1";
+
+/** The first ChatGPT sign-in registers a client; OpenAI answers with its real id. */
+export const CHATGPT_DYNAMIC_CLIENT_ID = "dynamic_agent_client";
+
+/** The `chatgpt` model provider reads the connection stored under this name. */
+export const CHATGPT_CONNECTION_NAME = "chatgpt";
+
+/** The grant that lets requests draw on the user's ChatGPT plan. */
+export const CHATGPT_DIRECT_SCOPE = "chatgpt.tokens.use.direct";
+
+/** Where a user reviews and limits what apps draw from their ChatGPT plan. */
+export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
+
+/** Lowercase letters, digits and dashes, so a name is safe in a URL path. */
+export const CONNECTION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
 export type ConnectionType = (typeof CONNECTION_TYPE_NAMES)[number];
 
-export function isConnectionType(value: unknown): value is ConnectionType {
-  return CONNECTION_TYPE_NAMES.some((name) => name === value);
-}
+export type ConnectionUse = ConnectionTypeMeta["usableBy"];
 
 export interface ConnectionTypeMeta {
   label: string;
@@ -49,8 +67,10 @@ export interface ConnectionTypeMeta {
   refreshScopes?: boolean;
   /** A grant without this scope is refused before it is stored. */
   requiredScope?: string;
-  /** The managed service refuses this type; self-hosted deployments only. */
-  selfHostedOnly?: boolean;
+  /** Why the managed service refuses this type; self-hosted deployments only. */
+  selfHostedOnly?: string;
+  /** What may send its token: the `model` provider, or `mcp` servers. */
+  usableBy: "model" | "mcp";
   /** The one name this type is stored under, because something reads it by name. */
   fixedName?: string;
 }
@@ -81,33 +101,6 @@ export interface Connection extends Omit<
   updatedAt: string;
 }
 
-const CHATGPT_ISSUER = "https://auth.openai.com";
-
-/** The API a ChatGPT access token is minted for, sent on every token request. */
-export const CHATGPT_RESOURCE = "https://api.openai.com/v1";
-
-/** The first ChatGPT sign-in registers a client; OpenAI answers with its real id. */
-export const CHATGPT_DYNAMIC_CLIENT_ID = "dynamic_agent_client";
-
-/** The `chatgpt` model provider reads the connection stored under this name. */
-export const CHATGPT_CONNECTION_NAME = "chatgpt";
-
-/** The grant that lets requests draw on the user's ChatGPT plan. */
-export const CHATGPT_DIRECT_SCOPE = "chatgpt.tokens.use.direct";
-
-/** Where a user reviews and limits what apps draw from their ChatGPT plan. */
-export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
-
-/**
- * Hosted, paid services need OpenAI's approval before offering plan usage, so
- * the managed service refuses new ChatGPT sign-ins until that approval exists.
- */
-export const CHATGPT_MANAGED_SERVICE_REFUSAL =
-  "ChatGPT plan usage is only available on self-hosted Broods for now. Use an OpenAI API key with the `openai` provider instead.";
-
-/** Lowercase letters, digits and dashes, so a name is safe in a URL path. */
-export const CONNECTION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
 // https://developers.openai.com/siwc/token-sharing-open-source
 // https://developers.google.com/identity/protocols/oauth2/native-app
 // https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow
@@ -134,7 +127,10 @@ export const CONNECTION_TYPES: Readonly<
     needsClientSecret: false,
     resource: CHATGPT_RESOURCE,
     requiredScope: CHATGPT_DIRECT_SCOPE,
-    selfHostedOnly: true,
+    // Hosted, paid services need OpenAI's approval before offering plan usage.
+    selfHostedOnly:
+      "ChatGPT plan usage is only available on self-hosted Broods for now. Use an OpenAI API key with the `openai` provider instead.",
+    usableBy: "model",
     fixedName: CHATGPT_CONNECTION_NAME,
   },
   google: {
@@ -153,6 +149,7 @@ export const CONNECTION_TYPES: Readonly<
     authorizeParams: { access_type: "offline", prompt: "consent" },
     client: "own",
     needsClientSecret: true,
+    usableBy: "mcp",
   },
   microsoft: {
     label: "Microsoft",
@@ -171,5 +168,26 @@ export const CONNECTION_TYPES: Readonly<
     client: "own",
     needsClientSecret: false,
     refreshScopes: true,
+    usableBy: "mcp",
   },
 };
+
+/**
+ * The `broods connect` command that signs a connection in, with the client
+ * flags its type needs; core's errors and the dashboard both print it.
+ */
+export function connectCommand(type: string, name: string = type): string {
+  const meta = isConnectionType(type) ? CONNECTION_TYPES[type] : undefined;
+  const nameFlag = name === type ? "" : ` --name ${name}`;
+  const clientFlags =
+    meta?.client === "own"
+      ? ` --client-id <id>${meta.needsClientSecret ? " --client-secret <secret>" : ""}`
+      : "";
+
+  return `broods connect ${type}${nameFlag}${clientFlags}`;
+}
+
+/** Narrows a request body or CLI argument to a known connection type. */
+export function isConnectionType(value: unknown): value is ConnectionType {
+  return CONNECTION_TYPE_NAMES.some((name) => name === value);
+}

@@ -2,27 +2,28 @@
  * A connection's live access token: loaded from the config plane, refreshed
  * before it expires (or once the provider refused it), and the rotated pair
  * saved back. The `chatgpt` model provider and MCP servers with
- * `oauth.connection` call `connectionAccessToken`; the model provider also
- * calls `rejectConnectionToken` on a 401. `broods connect` signs in; the
- * config plane stores.
+ * `oauth.connection` dial through `connectionFetch`. `broods connect` signs
+ * in; the config plane stores.
  */
 
 import {
   CONNECTION_TYPES,
+  connectCommand,
   isConnectionType,
+  type ConnectionUse,
 } from "@broods/convex/model/connections";
+import { toErrorMessage } from "../shared/errors.ts";
 import { getStorage, type StoredConnection } from "../shared/storage.ts";
-import { REFRESH_MARGIN_MS, refreshTokenGrant } from "./mcp/oauth.ts";
+import {
+  REFRESH_MARGIN_MS,
+  refreshTokenGrant,
+  type RefreshedToken,
+} from "./mcp/oauth.ts";
 
 /** Re-read the stored connection this often, so a new `broods connect` lands. */
 const CACHE_TTL_MS = 5 * 60_000;
 /** A stalled refresh fails rather than hold every run waiting on it. */
 const REFRESH_TIMEOUT_MS = 15_000;
-
-interface CachedConnection {
-  connection: StoredConnection;
-  loadedAt: number;
-}
 
 // Core runs one replica, so an in-flight promise per connection is all the
 // serialization a rotating refresh token needs: two runs never spend it twice.
@@ -31,38 +32,44 @@ const inFlight = new Map<string, Promise<StoredConnection>>();
 /** The access token a provider refused, so the next load refreshes it. */
 const rejected = new Map<string, string>();
 
-/** The connection's access token, refreshed when it is close to expiry. */
-export async function connectionAccessToken(
-  accountId: string,
-  name: string,
-): Promise<string> {
-  const key = `${accountId}:${name}`;
-  const cached = cache.get(key);
-  if (
-    cached &&
-    Date.now() - cached.loadedAt < CACHE_TTL_MS &&
-    !expiresSoon(cached.connection)
-  ) {
-    return cached.connection.accessToken;
-  }
-  const pending = inFlight.get(key);
-  if (pending) return (await pending).accessToken;
-
-  const next = loadFresh(accountId, name).finally(() => inFlight.delete(key));
-  inFlight.set(key, next);
-
-  return (await next).accessToken;
+interface CachedConnection {
+  connection: StoredConnection;
+  loadedAt: number;
 }
 
-/** The provider answered 401 to this token: refresh before the next call. */
-export function rejectConnectionToken(
+/** The fetch shape both the AI SDK and the MCP transport dial through. */
+type Fetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
+/**
+ * A fetch that sends the connection's access token and, when the provider
+ * refuses it (401), refreshes once and resends: neither the AI SDK nor the
+ * MCP client retries a 401. `use` is who sends it, checked against the type.
+ */
+export function connectionFetch(
   accountId: string,
   name: string,
-  accessToken: string,
-): void {
-  const key = `${accountId}:${name}`;
-  cache.delete(key);
-  rejected.set(key, accessToken);
+  use: ConnectionUse,
+  baseFetch: Fetch,
+): Fetch {
+  return async (input, init): Promise<Response> => {
+    const send = async (token: string): Promise<Response> => {
+      const headers = new Headers(init?.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+
+      return await baseFetch(input, { ...init, headers: headers });
+    };
+    const token = await accessToken(accountId, name, use);
+    const response = await send(token);
+    if (response.status !== 401) return response;
+    const key = `${accountId}:${name}`;
+    cache.delete(key);
+    rejected.set(key, token);
+
+    return await send(await accessToken(accountId, name, use));
+  };
 }
 
 /** Forget cached connections; tests only. */
@@ -72,16 +79,40 @@ export function resetConnectionsForTests(): void {
   rejected.clear();
 }
 
-/** The command that signs this connection in again. */
-function connectCommand(
+/** The connection's access token, refreshed when it is close to expiry. */
+async function accessToken(
+  accountId: string,
   name: string,
-  type: string = isConnectionType(name) ? name : "<type>",
-): string {
-  return name === type
-    ? `broods connect ${type}`
-    : `broods connect ${type} --name ${name}`;
+  use: ConnectionUse,
+): Promise<string> {
+  const key = `${accountId}:${name}`;
+  const cached = cache.get(key);
+  const fresh =
+    cached &&
+    Date.now() - cached.loadedAt < CACHE_TTL_MS &&
+    !expiresSoon(cached.connection);
+  let connection: StoredConnection;
+  if (fresh) {
+    connection = cached.connection;
+  } else {
+    // Joined or registered before any await, so concurrent calls share one refresh.
+    let pending = inFlight.get(key);
+    if (!pending) {
+      pending = loadFresh(accountId, name).finally(() => inFlight.delete(key));
+      inFlight.set(key, pending);
+    }
+    connection = await pending;
+  }
+  const meta = CONNECTION_TYPES[connection.type];
+  if (meta.usableBy !== use)
+    throw new Error(
+      `${name} is a ${meta.label} connection, which ${use === "mcp" ? "MCP servers" : "a model provider"} cannot use.`,
+    );
+
+  return connection.accessToken;
 }
 
+/** Whether a token is inside the refresh margin, so the next call refreshes it. */
 function expiresSoon(connection: StoredConnection): boolean {
   return connection.expiresAt - Date.now() < REFRESH_MARGIN_MS;
 }
@@ -97,7 +128,7 @@ async function loadFresh(
   if (!stored) {
     cache.delete(key);
     throw new Error(
-      `This account has no ${name} connection. Run \`${connectCommand(name)}\` to sign in.`,
+      `This account has no ${name} connection. Run \`${connectCommand(isConnectionType(name) ? name : "<type>", name)}\` to sign in.`,
     );
   }
   const connection =
@@ -110,29 +141,41 @@ async function loadFresh(
   return connection;
 }
 
+/** Refreshes the stored pair at the type's token endpoint and saves it back. */
 async function refreshAndSave(
   accountId: string,
   name: string,
   stored: StoredConnection,
 ): Promise<StoredConnection> {
   const type = CONNECTION_TYPES[stored.type];
-  const refreshed = await refreshTokenGrant(
-    type.tokenUrl,
-    {
-      client_id: stored.clientId,
-      refresh_token: stored.refreshToken,
-      ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
-      ...(type.resource ? { resource: type.resource } : {}),
-      // Otherwise no scope: the refreshed grant keeps what the user approved.
-      ...(type.refreshScopes ? { scope: stored.scopes.join(" ") } : {}),
-    },
-    (url, init) =>
-      fetch(url, { ...init, signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }),
-  ).catch((error: unknown) => {
-    throw new Error(
-      `${type.label} connection ${name} could not refresh: ${error instanceof Error ? error.message : String(error)}. Run \`${connectCommand(name, stored.type)}\` to sign in again.`,
+  let refreshed: RefreshedToken;
+  try {
+    refreshed = await refreshTokenGrant(
+      type.tokenUrl,
+      {
+        client_id: stored.clientId,
+        refresh_token: stored.refreshToken,
+        ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
+        ...(type.resource ? { resource: type.resource } : {}),
+        // Otherwise no scope: the refreshed grant keeps what the user approved.
+        ...(type.refreshScopes ? { scope: stored.scopes.join(" ") } : {}),
+      },
+      (url, init) =>
+        fetch(url, {
+          ...init,
+          signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+        }),
     );
-  });
+  } catch (error) {
+    // Another writer may have spent this refresh token and saved its pair:
+    // storage moved under us, so start over from it.
+    const latest = await getStorage().connections.load(accountId, name);
+    if (latest && latest.updatedAt !== stored.updatedAt)
+      return await loadFresh(accountId, name);
+    throw new Error(
+      `${type.label} connection ${name} could not refresh: ${toErrorMessage(error)}. Run \`${connectCommand(stored.type, name)}\` to sign in again.`,
+    );
+  }
   // The refresh token rotates; keep the old one only if none came back.
   const rotated = {
     accessToken: refreshed.accessToken,

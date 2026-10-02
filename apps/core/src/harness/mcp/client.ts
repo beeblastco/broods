@@ -33,7 +33,7 @@ import {
   runMachineMcpList,
 } from "../sandbox/machine-executor.ts";
 import { publicHostFetch } from "../../shared/http.ts";
-import { connectionAccessToken } from "../connections.ts";
+import { connectionFetch } from "../connections.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -205,8 +205,9 @@ export async function listMcpTools(
 
 /**
  * Build the connection for a server row: row headers and oauth overlaid with
- * the agent config's (those resolved their ${NAME} refs at sync). A value
- * still carrying a placeholder never reaches the wire.
+ * the agent config's (those resolved their ${NAME} refs at sync), or
+ * `oauth.connection` naming a connection whose token replaces the row's oauth.
+ * A value still carrying a placeholder never reaches the wire.
  */
 export function mcpConnection(
   record: McpRecord,
@@ -294,26 +295,29 @@ async function connectClient(
     // Minted (or served from the token cache) per connect: clients are
     // per-operation, so every request carries a token outside its refresh
     // margin instead of a static header that expires mid-conversation.
-    const accessToken = connection.connectionName
-      ? await connectionAccessToken(
-          connection.record.accountId,
-          connection.connectionName,
-        )
-      : connection.oauth
-        ? await mcpAccessToken(connection.record.name, connection.oauth)
-        : undefined;
+    const accessToken = connection.oauth
+      ? await mcpAccessToken(connection.record.name, connection.oauth)
+      : undefined;
     const headers = accessToken
       ? { ...connection.headers, Authorization: `Bearer ${accessToken}` }
       : connection.headers;
+    // A tenant url is dialed from inside the cluster, so it gets the same
+    // resolve, refuse-private and pin treatment as a model endpoint.
+    const baseFetch = hosted
+      ? hostedMcpFetch(connection.record, onCpuUsec)
+      : publicHostFetch;
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {
         requestInit: { headers: headers },
-        // A tenant url is dialed from inside the cluster, so it gets the same
-        // resolve, refuse-private and pin treatment as a model endpoint.
-        fetch: hosted
-          ? hostedMcpFetch(connection.record, onCpuUsec)
-          : publicHostFetch,
+        fetch: connection.connectionName
+          ? connectionFetch(
+              connection.record.accountId,
+              connection.connectionName,
+              "mcp",
+              baseFetch,
+            )
+          : baseFetch,
       },
     );
     const client = new Client(CLIENT_INFO, {

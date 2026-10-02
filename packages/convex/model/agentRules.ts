@@ -19,7 +19,11 @@ import {
   type AccountModelProviderName,
 } from "./modelProviders";
 import { ClientError } from "./clientError";
-import { CONNECTION_NAME_PATTERN } from "./connections";
+import {
+  CONNECTION_NAME_PATTERN,
+  CONNECTION_TYPE_NAMES,
+  CONNECTION_TYPES,
+} from "./connections";
 
 export type AgentStatus = "active" | "disabled";
 export type { AccountModelProviderName } from "./modelProviders";
@@ -978,6 +982,17 @@ function normalizeMcpConfig(value: unknown): void {
       if (!CONNECTION_NAME_PATTERN.test(connection))
         throw new ClientError(
           `config.mcp.${serverId}.oauth.connection must name a connection (lowercase letters, digits and dashes)`,
+        );
+      // A model-only type's token never goes to an MCP host; its fixed name
+      // says which connection that is before core sees the stored type.
+      const modelOnly = CONNECTION_TYPE_NAMES.find(
+        (type) =>
+          CONNECTION_TYPES[type].usableBy !== "mcp" &&
+          CONNECTION_TYPES[type].fixedName === connection,
+      );
+      if (modelOnly)
+        throw new ClientError(
+          `config.mcp.${serverId}.oauth.connection: the ${connection} connection is for the ${modelOnly} model provider, not MCP servers`,
         );
     }
   }

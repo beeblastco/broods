@@ -4,11 +4,13 @@
  * Authorization header cannot hold: this module mints an access token per
  * oauth config, caches it in-process, and re-mints with a safety margin
  * before expiry. client.ts stamps the minted token onto the connection's
- * Authorization header at connect time.
+ * Authorization header at connect time. `refreshTokenGrant` is the grant
+ * itself, which `connections.ts` also refreshes every connection with.
  */
 
 import { CONNECTION_TYPES } from "@broods/convex/model/connections";
 import type { McpOauth } from "../../shared/domain/mcp.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 
 export const DEFAULT_OAUTH_TOKEN_URL = CONNECTION_TYPES.google.tokenUrl;
@@ -91,36 +93,9 @@ export async function mcpAccessToken(
   return (await mint).accessToken;
 }
 
-/** One form-encoded POST to the token endpoint; errors name the server. */
-async function mintAccessToken(
-  serverName: string,
-  oauth: ResolvedMcpOauth,
-): Promise<MintedToken> {
-  try {
-    const token = await refreshTokenGrant(
-      oauth.tokenUrl,
-      {
-        client_id: oauth.clientId,
-        client_secret: oauth.clientSecret,
-        refresh_token: oauth.refreshToken,
-      },
-      publicHostFetch,
-    );
-
-    return {
-      accessToken: token.accessToken,
-      expiresAt: token.expiresAt - REFRESH_MARGIN_MS,
-    };
-  } catch (error) {
-    throw new Error(
-      `MCP server ${serverName}: OAuth token refresh against ${oauth.tokenUrl} failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 /**
- * One form-encoded grant_type=refresh_token POST, shared by MCP oauth and the
- * `chatgpt` provider. Throws the endpoint's reason; callers say who failed.
+ * One form-encoded grant_type=refresh_token POST, shared by MCP oauth and
+ * `connections.ts`. Throws the endpoint's reason; callers say who failed.
  */
 export async function refreshTokenGrant(
   tokenUrl: string,
@@ -162,4 +137,31 @@ export async function refreshTokenGrant(
       : {}),
     expiresAt: Date.now() + expiresInSeconds * 1000,
   };
+}
+
+/** One form-encoded POST to the token endpoint; errors name the server. */
+async function mintAccessToken(
+  serverName: string,
+  oauth: ResolvedMcpOauth,
+): Promise<MintedToken> {
+  try {
+    const token = await refreshTokenGrant(
+      oauth.tokenUrl,
+      {
+        client_id: oauth.clientId,
+        client_secret: oauth.clientSecret,
+        refresh_token: oauth.refreshToken,
+      },
+      publicHostFetch,
+    );
+
+    return {
+      accessToken: token.accessToken,
+      expiresAt: token.expiresAt - REFRESH_MARGIN_MS,
+    };
+  } catch (error) {
+    throw new Error(
+      `MCP server ${serverName}: OAuth token refresh against ${oauth.tokenUrl} failed: ${toErrorMessage(error)}`,
+    );
+  }
 }

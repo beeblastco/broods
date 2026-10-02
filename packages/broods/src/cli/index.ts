@@ -210,15 +210,15 @@ Options:
   --region <region>     Service region for a new project (default: ${DEFAULT_SERVICE_REGION})
 
 ${GLOBAL_OPTIONS}`,
-  disconnect: `Usage: broods disconnect <name>
-
-Forgets a connection and revokes it at the provider.
-
-${GLOBAL_OPTIONS}`,
   diff: `Usage: broods diff [options]
 
 Shows local desired state against the remote state of the current stage, and
 warns when the stage's value for an env("NAME") ref no longer matches .env.local.
+
+${GLOBAL_OPTIONS}`,
+  disconnect: `Usage: broods disconnect <name>
+
+Forgets a connection and revokes it at the provider.
 
 ${GLOBAL_OPTIONS}`,
   env: `Usage: broods env <set|get|list|rm|sync> [name]
@@ -648,7 +648,7 @@ async function connectCommand(args: string[]): Promise<void> {
     );
   }
   const meta = CONNECTION_TYPES[type];
-  const name = optionValue(args, "--name") ?? meta.fixedName ?? type;
+  const name = optionValue(args, "--name") ?? type;
   // Refused before the browser opens rather than by the server after it.
   if (meta.fixedName && name !== meta.fixedName) {
     throw new Error(`A ${type} connection is always named ${meta.fixedName}.`);
@@ -677,7 +677,7 @@ async function connectCommand(args: string[]): Promise<void> {
   printSuccess(
     `Connected ${name} (${meta.label})${signIn.email ? ` as ${signIn.email}` : ""}.`,
   );
-  if (type !== "chatgpt") {
+  if (meta.usableBy === "mcp") {
     console.log(
       `Use it from an MCP server: config.mcp.<server>.oauth = { connection: "${name}" }`,
     );
