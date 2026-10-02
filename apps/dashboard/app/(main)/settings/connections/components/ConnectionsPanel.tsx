@@ -1,27 +1,43 @@
 "use client";
 
+import { ChatGPTLogo } from "@/app/components/ChatGPTLogo";
 import { CopyRow } from "@/app/components/CopyButton";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
-import { Label } from "@/app/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { api } from "@broods/convex/_generated/api";
 import {
   CONNECTION_TYPE_NAMES,
   CONNECTION_TYPES,
+  type ConnectionType,
 } from "@broods/convex/model/connections";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
 
+/** Each type's mark; a new type fails the type check until it has one. */
+const LOGOS: Record<
+  ConnectionType,
+  (props: { className?: string }) => React.JSX.Element
+> = {
+  chatgpt: ChatGPTLogo,
+};
+
 export type Connection = FunctionReturnType<
   typeof api.account.connectionsPublic.list
 >[number];
 
-/** The account's connections, and the command that adds each type. */
+/** The account's connections from Convex, with disconnect behind a confirm. */
 export function ConnectionsPanel(): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const connections = useQuery(api.account.connectionsPublic.list, {});
@@ -65,7 +81,7 @@ export function ConnectionsPanel(): React.JSX.Element {
   );
 }
 
-/** The connection rows and connect commands; data-free so the UI gallery can render it. */
+/** Every connection type as a row: signed in, or Connect. Data-free so the UI gallery can render it. */
 export function ConnectionsView({
   connections,
   canWrite,
@@ -76,71 +92,109 @@ export function ConnectionsView({
   canWrite: boolean;
   onDisconnect: (connection: Connection) => void;
 }): React.JSX.Element {
+  const [connecting, setConnecting] = useState<ConnectionType | null>(null);
+  const byType = new Map(
+    connections?.map((connection) => [connection.type, connection]),
+  );
+
   return (
     <Section
       title="Connections"
       description="External accounts your agents act through."
     >
-      <div className="grid gap-4">
-        {connections && connections.length === 0 && (
-          <p className="text-sm text-muted-foreground">No connections yet.</p>
-        )}
-        <div className="grid gap-2">
-          {connections?.map((connection) => (
+      <div className="grid divide-y rounded-md border">
+        {CONNECTION_TYPE_NAMES.map((type): React.JSX.Element => {
+          const meta = CONNECTION_TYPES[type];
+          const Logo = LOGOS[type];
+          const connection = byType.get(type);
+
+          return (
             <div
-              key={connection.type}
-              className="grid grid-cols-[8rem_minmax(0,1fr)_auto] items-center gap-2"
+              key={type}
+              className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2.5"
             >
-              <span className="truncate text-sm font-medium text-foreground">
-                {CONNECTION_TYPES[connection.type].label}
+              <span className="flex size-8 items-center justify-center rounded-md border bg-card text-foreground">
+                <Logo className="size-4" />
               </span>
-              <span className="truncate text-xs text-muted-foreground">
-                {connection.email ?? connection.clientId}
-              </span>
-              {canWrite ? (
-                <IconTooltip
-                  label={`Disconnect ${CONNECTION_TYPES[connection.type].label}`}
-                >
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted-destructive"
-                    className="cursor-pointer"
-                    onClick={() => onDisconnect(connection)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </IconTooltip>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-foreground">
+                  {meta.label}
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {connection
+                    ? `Signed in as ${connection.email ?? connection.clientId}`
+                    : meta.description}
+                </p>
+              </div>
+              {connection ? (
+                canWrite && (
+                  <IconTooltip label={`Disconnect ${meta.label}`}>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted-destructive"
+                      className="cursor-pointer"
+                      onClick={() => onDisconnect(connection)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </IconTooltip>
+                )
               ) : (
-                <span />
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className={
+                    connections ? "cursor-pointer" : "cursor-not-allowed"
+                  }
+                  disabled={!connections}
+                  onClick={() => setConnecting(type)}
+                >
+                  Connect
+                </Button>
               )}
             </div>
-          ))}
-        </div>
-        <div className="grid gap-2">
-          <Label variant="muted">
-            Connect one from a terminal signed in with broods login
-          </Label>
-          {CONNECTION_TYPE_NAMES.map((type): React.JSX.Element => {
-            const meta = CONNECTION_TYPES[type];
-            const command = `broods connect ${type}`;
-
-            return (
-              <div key={type} className="grid gap-1">
-                <span className="text-xs text-muted-foreground">
-                  {meta.description}
-                </span>
-                <CopyRow
-                  value={command}
-                  className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
-                >
-                  <span className="flex-1 truncate">{command}</span>
-                </CopyRow>
-              </div>
-            );
-          })}
-        </div>
+          );
+        })}
       </div>
+
+      {/* Closes on its own once the sign-in lands and the row flips. */}
+      <Dialog
+        open={connecting !== null && !byType.has(connecting)}
+        onOpenChange={(open) => {
+          if (!open) setConnecting(null);
+        }}
+      >
+        {connecting && <ConnectDialogContent type={connecting} />}
+      </Dialog>
     </Section>
+  );
+}
+
+/** The command that signs a type in; the sign-in itself runs in the CLI's browser flow. */
+function ConnectDialogContent({
+  type,
+}: {
+  type: ConnectionType;
+}): React.JSX.Element {
+  const meta = CONNECTION_TYPES[type];
+  const command = `broods connect ${type}`;
+
+  return (
+    <DialogContent className="sm:max-w-sm">
+      <DialogHeader>
+        <DialogTitle>Connect {meta.label}</DialogTitle>
+        <DialogDescription>
+          Run this in a terminal signed in with broods login. It opens the
+          sign-in in your browser, and this list updates when you approve.
+        </DialogDescription>
+      </DialogHeader>
+      <CopyRow
+        value={command}
+        className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+      >
+        <span className="flex-1 truncate">{command}</span>
+      </CopyRow>
+    </DialogContent>
   );
 }

@@ -1,16 +1,25 @@
 import { expect, test } from "@playwright/test";
 
-test("lists connections and the command that adds each type", async ({
+test("lists each connection type, signed in or ready to connect", async ({
   page,
 }) => {
   await page.goto("/ui-gallery?tab=connections");
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible();
+  const [connected, empty] = [
+    page.locator("section").nth(0),
+    page.locator("section").nth(1),
+  ];
 
-  for (const label of ["ChatGPT plan", "Google", "Microsoft"]) {
-    await expect(page.getByText(label, { exact: true })).toBeVisible();
-  }
+  await expect(connected.getByText("ChatGPT plan")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Disconnect Google" }),
+    connected.getByText("Signed in as owner@example.com"),
   ).toBeVisible();
-  await expect(page.getByText("broods connect google")).toBeVisible();
+  await expect(
+    connected.getByRole("button", { name: "Disconnect ChatGPT plan" }),
+  ).toBeVisible();
+
+  await empty.getByRole("button", { name: "Connect" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Connect ChatGPT plan")).toBeVisible();
+  await expect(dialog.getByText("broods connect chatgpt")).toBeVisible();
 });

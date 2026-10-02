@@ -288,7 +288,7 @@ const CONVEX_SERVER_ERROR = new Error(
 
 const subscribeNever = (): (() => void) => () => {};
 
-/** Connections as the dashboard lists them: one of each type. */
+/** The account's ChatGPT plan, signed in; the gallery also renders none. */
 const CONNECTION_FIXTURES: Connection[] = [
   {
     type: "chatgpt",
@@ -296,21 +296,6 @@ const CONNECTION_FIXTURES: Connection[] = [
     hostId: "urn:uuid:fixture",
     email: "owner@example.com",
     scopes: ["openid", "chatgpt.tokens.use.direct"],
-    expiresAt: 0,
-    updatedAt: 0,
-  },
-  {
-    type: "google",
-    clientId: "1234.apps.googleusercontent.com",
-    email: "support@example.com",
-    scopes: ["openid", "https://www.googleapis.com/auth/gmail.modify"],
-    expiresAt: 0,
-    updatedAt: 0,
-  },
-  {
-    type: "microsoft",
-    clientId: "00000000-0000-0000-0000-000000000000",
-    scopes: ["openid", "https://graph.microsoft.com/Mail.ReadWrite"],
     expiresAt: 0,
     updatedAt: 0,
   },
@@ -338,10 +323,15 @@ export function UiGallery(): React.JSX.Element {
     return (
       <main
         data-hydrated={hydrated ? "true" : undefined}
-        className="mx-auto w-full max-w-2xl px-6 pt-6 pb-12"
+        className="mx-auto grid w-full max-w-2xl gap-10 px-6 pt-6 pb-12"
       >
         <ConnectionsView
           connections={CONNECTION_FIXTURES}
+          canWrite={true}
+          onDisconnect={() => {}}
+        />
+        <ConnectionsView
+          connections={[]}
           canWrite={true}
           onDisconnect={() => {}}
         />
