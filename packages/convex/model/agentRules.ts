@@ -83,7 +83,8 @@ export type LaterSandboxMount = {
 };
 
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
-const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
+// Input tokens; above every model context window shipped today.
+const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 10_000_000;
 export const AGENT_HARNESS_TYPES = [
   "claude-code",
   "codex",
@@ -809,7 +810,12 @@ function normalizeSessionConfig(value: unknown): void {
     throw new ClientError("config.session must be an object");
   const config = value as Record<string, unknown>;
   normalizeSessionPruningConfig(config.pruning);
-  normalizeSessionCompactionConfig(config.compaction);
+  if (config.compaction !== undefined) {
+    throw new ClientError(
+      "config.session.compaction was renamed to config.session.autoCompaction, and maxContextLength now counts input tokens",
+    );
+  }
+  normalizeSessionAutoCompactionConfig(config.autoCompaction);
 }
 
 function normalizeSessionPruningConfig(value: unknown): void {
@@ -819,14 +825,14 @@ function normalizeSessionPruningConfig(value: unknown): void {
   assertOptionalBoolean(value.enabled, "config.session.pruning.enabled");
 }
 
-function normalizeSessionCompactionConfig(value: unknown): void {
+function normalizeSessionAutoCompactionConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new ClientError("config.session.compaction must be an object");
-  assertOptionalBoolean(value.enabled, "config.session.compaction.enabled");
+    throw new ClientError("config.session.autoCompaction must be an object");
+  assertOptionalBoolean(value.enabled, "config.session.autoCompaction.enabled");
   assertOptionalPositiveInteger(
     value.maxContextLength,
-    "config.session.compaction.maxContextLength",
+    "config.session.autoCompaction.maxContextLength",
     SESSION_MAX_CONTEXT_LENGTH_LIMIT,
   );
 }

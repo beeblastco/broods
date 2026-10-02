@@ -77,6 +77,13 @@ export async function transcribeWithModel(
       audio: audio,
       maxRetries: maxRetries,
       abortSignal: AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS),
+      // Same policy as the agent spans: the transcript is user speech and stays
+      // out of Tempo. The span itself still records timing and usage.
+      telemetry: {
+        functionId: "harness.transcribe",
+        recordInputs: false,
+        recordOutputs: false,
+      },
     });
 
     return { status: "transcribed", text: result.text.trim() };

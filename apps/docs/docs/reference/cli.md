@@ -113,6 +113,24 @@ export BROODS_BASE_URL="https://gateway.your-domain.example"
 broods login --dashboard-url https://your-dashboard.example.com
 ```
 
+## connect
+
+Signs an external account in through the browser and keeps it on your deployment, so agents act through it. There is nothing to pass. Without a type, lists the account's connections. See [Connections](../guides/connections.md).
+
+```bash
+broods connect [chatgpt]
+```
+
+It uses `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` is self-hosted only; the managed service refuses it.
+
+## disconnect
+
+```bash
+broods disconnect <chatgpt>
+```
+
+Forgets the connection and revokes its refresh token at the provider.
+
 ## whoami
 
 Shows the login, server, organization, plan, project and stage the next command will use.

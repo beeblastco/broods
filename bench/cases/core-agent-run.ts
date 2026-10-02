@@ -272,6 +272,7 @@ function fakeStorage(): Storage {
     accountHooks: { getById: none, removeAllForAccount: zero },
     mcp: { getById: none, removeAllForAccount: zero },
     agentPolicies: { getById: none },
+    connections: { load: none, saveRefreshed: async () => false },
     roleSessions: { resolveByTokenHash: none },
     taskUsage: { record: async () => undefined },
   };

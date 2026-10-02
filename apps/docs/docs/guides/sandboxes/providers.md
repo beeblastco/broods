@@ -41,7 +41,7 @@ export const box = defineSandbox({
 - MicroVM images come in sizes from 0.5 GB with 0.25 vCPU up to 8 GB with 4 vCPU. The image sets the machine, so `size` only changes what the dashboard shows.
 - A MicroVM lives at most 8 hours. A persistent reservation is recreated after that.
 - `restricted` behaves like `deny-all`, and `allowDomains` or `allowCidrs` are rejected. Under `deny-all` the managed workspace bucket stays reachable.
-- A workspace that brings its own bucket cannot be reached under `deny-all`. Pair it with `allow-all`.
+- A workspace that brings its own bucket cannot be reached under `deny-all`, so the run is refused. Pair it with `allow-all`.
 - The workspace mount cannot append or edit in place. `>>` and in-place edits fail. The `write` and `edit` tools rewrite whole files, so tell the agent not to append.
 - The image, roles and log group are managed by the platform. `options` accepts only `workspaceRoot` and `reservationKey`.
 - Create snapshot is not available. MicroVM images are built ahead of time by the platform. `snapshot` can pin another platform image by ARN, in the same AWS account and region as the default. Any other ARN fails the run.

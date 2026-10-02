@@ -356,10 +356,34 @@ describe("agent rules", () => {
     });
     expect(() =>
       normalizeAgentConfig({
-        session: { compaction: { maxContextLength: 500_001 } },
+        session: { autoCompaction: { maxContextLength: 10_000_001 } },
       }),
     ).toThrow(
-      "config.session.compaction.maxContextLength must be an integer from 1 to 500000",
+      "config.session.autoCompaction.maxContextLength must be an integer from 1 to 10000000",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        session: { autoCompaction: { enabled: "yes" } },
+      }),
+    ).toThrow("config.session.autoCompaction.enabled must be a boolean");
+    expect(
+      normalizeAgentConfig({
+        session: {
+          autoCompaction: { enabled: false, maxContextLength: 500_000 },
+        },
+      }),
+    ).toEqual({
+      session: {
+        autoCompaction: { enabled: false, maxContextLength: 500_000 },
+      },
+    });
+    // The old key would otherwise be dropped silently and auto-compaction left on.
+    expect(() =>
+      normalizeAgentConfig({
+        session: { compaction: { enabled: true } },
+      }),
+    ).toThrow(
+      "config.session.compaction was renamed to config.session.autoCompaction",
     );
     expect(() => normalizeAgentConfig({ model: { apiKey: "x" } })).toThrow(
       "config.model.apiKey is not supported; use config.model.providerOptions for provider-specific settings",

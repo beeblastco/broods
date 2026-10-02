@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { CONNECTION_TYPE_NAMES } from "./model/connections";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -752,6 +753,30 @@ export const accountEnvVarsFields = {
 };
 
 /**
+ * A connection: an external account (today the ChatGPT plan) signed in once
+ * per account by `broods connect`, one of each type.
+ * Core refreshes it in process and writes the rotated tokens back. Tokens are
+ * encrypted with the agent-config codec and never leave through the API.
+ */
+export const connectionsFields = {
+  accountId: v.id("accounts"),
+  type: v.union(...CONNECTION_TYPE_NAMES.map((name) => v.literal(name))),
+  /** The OAuth client OpenAI issued at the first sign-in. */
+  clientId: v.string(),
+  /** `ext_agent_host_id` of this deployment, kept across sign-ins. */
+  hostId: v.string(),
+  email: v.optional(v.string()),
+  scopes: v.array(v.string()),
+  /** Access-token expiry, epoch ms. */
+  expiresAt: v.number(),
+  /** Encrypted `{ accessToken, refreshToken }`. */
+  ciphertext: v.string(),
+  iv: v.string(),
+  tag: v.string(),
+  updatedAt: v.number(),
+};
+
+/**
  * Audit record written every time an environment variable's plaintext value is
  * revealed (via the dashboard eye-icon or the CLI `env get`), so reveals of
  * otherwise write-only secrets leave a trail of who read what and when.
@@ -1444,6 +1469,10 @@ export default defineSchema({
     "by_accountId_and_name",
     ["accountId", "name"],
   ),
+  connections: defineTable(connectionsFields).index("by_accountId_and_type", [
+    "accountId",
+    "type",
+  ]),
   environmentVariableReveals: defineTable(environmentVariableRevealsFields)
     .index("by_stageId", ["stageId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])

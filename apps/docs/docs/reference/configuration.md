@@ -69,7 +69,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                        |
 | `skills`            | `enabled`, `allowed` skill resources                                                                   |
 | `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                   |
-| `session`           | `pruning.enabled`, `compaction.enabled`, `compaction.maxContextLength`                                 |
+| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
 | `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
 | `policies`          | Policies that gate the agent. Each carries its own mode                                                |
 | `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                               |
@@ -121,7 +121,7 @@ model: {
 
 ### Model providers
 
-Every Vercel AI SDK language model provider works, plus any OpenAI-compatible endpoint through `custom`. Each needs an `apiKey`, and other settings pass through to the provider's AI SDK factory. The provider keys and the `bedrock`, `vertex` and `custom` specifics are in [Agents](../guides/agents.md). When a `custom` server reports no reasoning token count, Broods estimates it.
+Every Vercel AI SDK language model provider works, plus any OpenAI-compatible endpoint through `custom`. Each needs an `apiKey`, and other settings pass through to the provider's AI SDK factory. `chatgpt` is the exception: it runs on the account's `chatgpt` [connection](../guides/connections.md) and takes no settings. The provider keys and the `bedrock`, `vertex`, `custom` and `chatgpt` specifics are in [Agents](../guides/agents.md). When a `custom` server reports no reasoning token count, Broods estimates it.
 
 ### tools and mcp
 

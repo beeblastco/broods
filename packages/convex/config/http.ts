@@ -24,6 +24,10 @@ import {
   handleAgentConfigRoute,
 } from "./routes/agents";
 import { handleChannelRecordRoute } from "./routes/channels";
+import {
+  handleConnectionsRoute,
+  parseConnectionsPath,
+} from "./routes/connections";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
@@ -71,6 +75,12 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     // token, runtime key), so it runs before the shared bearer funnel.
     if (pathname === "/v1/account/assume-role") {
       return await handleAssumeRoleRoute(ctx, req);
+    }
+
+    // Authenticates itself too: account secret or CLI login, never a role session.
+    const connectionsPath = parseConnectionsPath(pathname);
+    if (connectionsPath) {
+      return await handleConnectionsRoute(ctx, req, connectionsPath);
     }
 
     const accountRoute = parseAccountRoute(pathname);

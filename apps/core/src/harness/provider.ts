@@ -63,6 +63,7 @@ import type {
 } from "../shared/domain/agent-config.ts";
 import { logInfo } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
+import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
 
 // Providers that answer on OpenAI's Responses API, where a replayed assistant
 // message is a reference to the item the provider still holds rather than the
@@ -163,7 +164,7 @@ export type ModelOutputSpec =
 // factory. Built per call so each is read off its live binding, keeping it
 // mockable.
 export function modelProviderFactories(): Record<
-  AccountModelProviderName,
+  Exclude<AccountModelProviderName, "chatgpt">,
   ModelProviderFactory
 > {
   return {
@@ -203,11 +204,19 @@ export function modelProviderFactories(): Record<
   };
 }
 
+/**
+ * The agent's model, ready to wrap. `accountId` is only read by `chatgpt`,
+ * whose credential is the account's `chatgpt` connection, not a config setting.
+ */
 export function resolveConfiguredModel(
   agentConfig: AgentConfig,
+  accountId?: string,
 ): ResolvedModelProvider {
   const providerName = requireModelProvider(agentConfig);
   const modelId = requireModelId(agentConfig);
+  if (providerName === "chatgpt") {
+    return resolveChatGPTModel(modelId, accountId);
+  }
   const providerConfig = requireProviderSettings(agentConfig, providerName);
   if (providerName === "custom") {
     return resolveOpenAICompatibleModel(providerName, providerConfig, modelId);
@@ -286,7 +295,8 @@ export function modelSettingsFromModelConfig(
 
 /**
  * Prompt-cache defaults for a conversation run: Anthropic gets an ephemeral
- * cacheControl (caching there is opt-in per request), OpenAI a promptCacheKey
+ * cacheControl (caching there is opt-in per request), OpenAI (and ChatGPT,
+ * where a cached prefix spends less of the plan) a promptCacheKey
  * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
  * A call without a conversation, like compaction, gets neither: a one-shot
  * request pays the cache write and never reads it back. Explicit account
@@ -314,7 +324,7 @@ export function providerOptionsFromModelConfig(
       },
     };
   }
-  if (!STORED_ITEM_PROVIDERS.has(providerName)) {
+  if (!STORED_ITEM_PROVIDERS.has(providerName) && providerName !== "chatgpt") {
     return configured;
   }
 
@@ -622,6 +632,30 @@ function withoutStaleStoredItems(
   });
 
   return withoutStoredItemState(params);
+}
+
+/**
+ * OpenAI on the account's ChatGPT plan. The API key is a placeholder the fetch
+ * replaces with the connection's access token on every request; the endpoint is
+ * OpenAI's own, so no tenant setting reaches it.
+ */
+function resolveChatGPTModel(
+  modelId: string,
+  accountId: string | undefined,
+): ResolvedModelProvider {
+  const provider = createOpenAI({
+    apiKey: "chatgpt-connection",
+    fetch: chatgptFetch(accountId, withModelFetch({}).fetch),
+  });
+
+  return {
+    providerName: "chatgpt",
+    provider: provider,
+    model: wrapLanguageModel({
+      model: provider(modelId),
+      middleware: [dropUnsupportedMediaMiddleware, chatgptMiddleware],
+    }),
+  };
 }
 
 function resolveOpenAICompatibleModel(

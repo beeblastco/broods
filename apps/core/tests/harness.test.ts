@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -9,10 +10,17 @@ import {
 } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
-import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
+import type {
+  LanguageModel,
+  ModelMessage,
+  SystemModelMessage,
+  TextStreamPart,
+  ToolSet,
+} from "ai";
 import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
@@ -30,6 +38,9 @@ import type {
 
 // mock.module("ai") below patches the namespace binding, so hold the real one.
 const realStreamText = actualAi.streamText;
+// Copied before the mocks patch them; afterAll hands them back to later files.
+const realAi = { ...actualAi };
+const realOpenAI = { ...actualOpenAI };
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
@@ -149,7 +160,7 @@ const streamTextMock = mock(
         outputTokens: number;
         totalTokens: number;
       };
-      steps: Array<{ content: unknown[] }>;
+      steps: Array<{ content: unknown[]; usage?: { inputTokens?: number } }>;
       toolCalls: unknown[];
       rawFinishReason?: string;
       totalUsage?: {
@@ -261,7 +272,7 @@ const streamTextMock = mock(
             text: "   ",
             finishReason: "tool-calls",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({
@@ -311,7 +322,7 @@ const streamTextMock = mock(
             text: "listed the files",
             finishReason: "stop",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({ type: "text-delta", text: "listed the files" });
@@ -604,6 +615,11 @@ mock.module("ai", () => ({
   ...actualAi,
   streamText: streamTextMock,
 }));
+
+afterAll(async () => {
+  await mock.module("ai", () => realAi);
+  await mock.module("@ai-sdk/openai", () => realOpenAI);
+});
 
 beforeEach(() => {
   setStorageForTests(usageStorage([]));
@@ -947,6 +963,25 @@ describe("runAgentLoop", () => {
 
     expect(stream.didFail()).toBe(false);
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+  });
+
+  it("drops raw provider chunks so consumers only see stream parts", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const parts: TextStreamPart<ToolSet>[] = [
+      { type: "raw", rawValue: { type: "tool_progress" } },
+      { type: "text-delta", id: "t1", text: "hi" },
+      { type: "raw", rawValue: { type: "message_stop" } },
+      { type: "text-end", id: "t1" },
+    ];
+    const stream = {
+      stream: actualAi.simulateReadableStream({ chunks: parts }),
+      ensureFinalized: async (): Promise<void> => {},
+    };
+
+    const seen: unknown[] = [];
+    for await (const chunk of readAgentFullStream(stream)) seen.push(chunk);
+
+    expect(seen).toEqual([parts[1], parts[3]]);
   });
 
   it("keeps a finished run completed when the reader leaves during onEnd", async () => {
@@ -2864,6 +2899,129 @@ describe("runAgentLoop", () => {
   });
 });
 
+describe("auto-compaction after a turn", () => {
+  // Runs a turn on the real SDK loop with a session that records, in order,
+  // every final reply and auto-compaction the harness asks for.
+  async function runCompactingTurn(options: {
+    scenario: "real-two-step" | "approval-request";
+    autoCompaction: { enabled?: boolean; maxContextLength?: number };
+    compactConversation?: () => Promise<number>;
+  }): Promise<{ stream: AgentLoopStream; order: string[] }> {
+    installHarnessEnv();
+    streamTextScenario = options.scenario;
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const order: string[] = [];
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: (): ResolvedAgentSandbox[] =>
+          options.scenario === "approval-request"
+            ? [
+                {
+                  name: "agent-sandbox",
+                  sandbox: { provider: "lambda", permissionMode: "ask" },
+                },
+              ]
+            : [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async (): Promise<string[]> => [],
+        renewConversationLease: async () => "renewed",
+        applySteeringIngress: async () => null,
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+        compactConversation: async (): Promise<number> => {
+          order.push("compact");
+
+          return (options.compactConversation ?? (async () => 4))();
+        },
+      } as never,
+      {
+        messages: [{ role: "user", content: "weather in Hanoi?" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+        session: { autoCompaction: options.autoCompaction },
+      },
+      {
+        onFinalText: async (): Promise<void> => {
+          order.push("final");
+        },
+        onErrorText: async (): Promise<void> => {
+          order.push("error");
+        },
+        onApprovalRequired: async (): Promise<void> => {
+          order.push("approval");
+        },
+      },
+    );
+    await stream.consumeStream();
+
+    return { stream: stream, order: order };
+  }
+
+  it("compacts once after the final reply, never between tool steps", async () => {
+    // Both steps read 10 input tokens; only the end of the turn may act on it.
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(order).toEqual(["final", "compact"]);
+  });
+
+  it("does not compact below the threshold or when turned off", async () => {
+    const below = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 11 },
+    });
+    const off = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { enabled: false, maxContextLength: 1 },
+    });
+    // The default threshold is 500000 tokens; this turn read 10.
+    const byDefault = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: {},
+    });
+
+    expect(below.order).toEqual(["final"]);
+    expect(off.order).toEqual(["final"]);
+    expect(byDefault.order).toEqual(["final"]);
+  });
+
+  it("does not compact a turn that stopped on a tool approval", async () => {
+    const { order } = await runCompactingTurn({
+      scenario: "approval-request",
+      autoCompaction: { maxContextLength: 1 },
+    });
+
+    expect(order).toEqual(["approval"]);
+  });
+
+  it("keeps the turn's outcome when the compaction fails", async () => {
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+      compactConversation: () =>
+        Promise.reject(new Error("summary model down")),
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(stream.failureText()).toBeNull();
+    expect(order).toEqual(["final", "compact"]);
+  });
+});
+
 describe("subagent policy input", () => {
   // A child replies to its parent and has no delivery of its own. Its policy
   // input must still name the parent's place and person, or a deny scoped by
@@ -3029,6 +3187,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     accountHooks: null as never,
     machineConnections: null as never,
     mcp: null as never,
+    connections: null as never,
     roleSessions: null as never,
     taskUsage: {
       record: async function (input) {
