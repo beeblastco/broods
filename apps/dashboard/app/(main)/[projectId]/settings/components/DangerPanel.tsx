@@ -10,6 +10,7 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   projectId: Id<"projects">;
@@ -49,9 +50,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
       setProjectDialogOpen(false);
       router.replace("/projects");
     } catch (err) {
-      setProjectDeleteError(
-        err instanceof Error ? err.message : "Failed to delete project.",
-      );
+      setProjectDeleteError(toErrorMessage(err));
       setIsDeletingProject(false);
     }
   }
@@ -65,9 +64,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
       setStageId(defaultStage ? defaultStage._id : null);
       setStageDialogOpen(false);
     } catch (err) {
-      setStageDeleteError(
-        err instanceof Error ? err.message : "Failed to delete stage.",
-      );
+      setStageDeleteError(toErrorMessage(err));
     } finally {
       setIsDeletingStage(false);
     }
@@ -96,7 +93,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
               <Button
                 variant="destructive"
                 size="sm"
-                className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
+                className="shrink-0 cursor-pointer"
                 disabled={!canDeleteStage}
                 onClick={() => {
                   setStageDeleteError(null);

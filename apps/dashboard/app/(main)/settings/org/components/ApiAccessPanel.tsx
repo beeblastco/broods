@@ -25,6 +25,7 @@ import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   org: Doc<"orgs">;
@@ -54,7 +55,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
       setRevealedSecret(result.secret);
       setShowSecret(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Provision failed");
+      setError(toErrorMessage(err));
     } finally {
       setPending(false);
     }
@@ -69,7 +70,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
       setShowSecret(true);
       setRotateOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Rotate failed");
+      setError(toErrorMessage(err));
     } finally {
       setPending(false);
     }
@@ -104,7 +105,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
           {canWrite && (
             <Button
               size="sm"
-              className="mt-4 cursor-pointer disabled:cursor-not-allowed"
+              className="mt-4 cursor-pointer"
               disabled={pending}
               onClick={handleProvision}
             >
@@ -213,7 +214,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             <Button
               variant="outline"
               size="sm"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={pending}
               onClick={() => setRotateOpen(true)}
             >
@@ -245,7 +246,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
               Cancel
             </Button>
             <Button
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               onClick={handleRotate}
               disabled={pending}
             >

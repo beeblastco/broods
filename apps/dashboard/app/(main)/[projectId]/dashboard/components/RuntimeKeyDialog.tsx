@@ -33,6 +33,7 @@ import {
 } from "@/app/components/ui/tabs";
 import { useNow } from "@/app/hooks/useNow";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
 import type { api } from "@broods/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
@@ -43,7 +44,8 @@ import { relativeTime } from "../../sandbox/components/sandboxFormat";
 const DESCRIPTION =
   "One key for runs, streaming and observability on this stage.";
 
-const INSTALL_SNIPPET = "bun add broods";
+// npm like the onboarding dialog, but local: the SDK import needs a project dependency.
+const INSTALL_SNIPPET = "npm install broods";
 
 const SSE_SNIPPET = [
   `import { BroodsClient } from "broods";`,
@@ -53,7 +55,7 @@ const SSE_SNIPPET = [
   `const client = new BroodsClient();`,
   ``,
   `// Default transport: server-sent events over plain HTTP.`,
-  `for await (const chunk of client.stream(api.agent.agents.yourAgent, {`,
+  `for await (const chunk of client.stream(api.agents.myAgent, {`,
   `  input: "Hello from the SDK!",`,
   `})) {`,
   `  if (chunk.type === "text-delta") process.stdout.write(chunk.text);`,
@@ -61,15 +63,15 @@ const SSE_SNIPPET = [
 ].join("\n");
 
 const WS_SNIPPET = [
-  `import { WebsocketClient } from "broods";`,
+  `import { BroodsWebSocketClient } from "broods";`,
   `import { api } from "./broods/_generated/api";`,
   ``,
   `// Reads BROODS_API_KEY from your .env automatically.`,
-  `const client = new WebsocketClient();`,
+  `const client = new BroodsWebSocketClient();`,
   ``,
   `// Opt-in transport: a full-duplex WebSocket connection.`,
   `for await (const message of client.stream({`,
-  `  agent: api.agent.agents.yourAgent,`,
+  `  agent: api.agents.myAgent,`,
   `  input: "Hello from the SDK!",`,
   `})) {`,
   `  if (message.type === "text-delta") process.stdout.write(message.text);`,
@@ -279,7 +281,7 @@ function RotateButton({
       await onRotate();
       setConfirming(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to rotate key");
+      setError(toErrorMessage(e));
     } finally {
       setRotating(false);
     }

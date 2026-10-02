@@ -20,16 +20,9 @@ import {
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
-import {
-  AlertTriangle,
-  BookOpen,
-  Eye,
-  EyeOff,
-  Loader2,
-  Send,
-  X,
-} from "lucide-react";
+import { AlertTriangle, BookOpen, Eye, EyeOff, Send, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 const ALLOWED_EXTENSIONS = new Set([
   "css",
@@ -156,7 +149,7 @@ export function SkillFilesTab({
           message: `Published "${result.name}" successfully.`,
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
+        const msg = toErrorMessage(err);
         if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
           clearSkillsBearerToken();
         }
@@ -312,17 +305,15 @@ export function SkillFilesTab({
           <Button
             size="sm"
             variant="outline"
-            className="h-7 flex-1 cursor-pointer text-2xs disabled:cursor-not-allowed"
+            className="h-7 flex-1 cursor-pointer text-2xs"
             disabled={isBusy || !hasSkillMd}
             title={!hasSkillMd ? "SKILL.md is required" : undefined}
             onClick={handlePublishClick}
           >
-            {status.type === "publishing" ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <Send className="size-3" />
-            )}
-            Publish to account
+            <Send className="size-3" />
+            {status.type === "publishing"
+              ? "Publishing…"
+              : "Publish to account"}
           </Button>
           {getSkillsBearerToken() && (
             <IconTooltip label="Clear saved Bearer token">
@@ -412,7 +403,7 @@ function CreateSkillMdForm({
       </div>
       <Button
         size="sm"
-        className="h-7 cursor-pointer self-end text-2xs disabled:cursor-not-allowed"
+        className="h-7 cursor-pointer self-end text-2xs"
         disabled={!nameValid || !desc.trim()}
         onClick={() => onSubmit(name, desc.trim())}
       >
@@ -487,7 +478,7 @@ function TokenPrompt({
       </div>
       <Button
         size="sm"
-        className="h-7 cursor-pointer self-end text-2xs disabled:cursor-not-allowed"
+        className="h-7 cursor-pointer self-end text-2xs"
         disabled={!draft.trim()}
         onClick={() => onConfirm(draft.trim())}
       >

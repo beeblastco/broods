@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/app/components/ui/button";
-import { KeyRound, Loader2 } from "lucide-react";
+import { KeyRound } from "lucide-react";
 
 interface Props {
   generating: boolean;
@@ -33,11 +33,7 @@ export function ObservabilityKeyPrompt({
         disabled={generating}
         onClick={onGenerate}
       >
-        {generating ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          "Generate key"
-        )}
+        {generating ? "Generating…" : "Generate key"}
       </Button>
 
       {error ? (

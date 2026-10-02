@@ -1,18 +1,22 @@
 "use client";
 
-import { useCopied } from "@/app/components/CopyButton";
+import { CopyButton, useCopied } from "@/app/components/CopyButton";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
+import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+
+const DEPLOYING_GUIDE_URL = "https://docs.broods.app/guides/deploying";
 
 type DeployKey = FunctionReturnType<typeof api.deployKeys.list>[number];
 
@@ -57,9 +61,7 @@ export function DeployKeysPanel({
       setName("");
       setAdding(false);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to create deploy key",
-      );
+      setError(toErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -102,6 +104,7 @@ export function DeployKeysPanel({
                 variant="outline"
                 size="sm"
                 className="cursor-pointer"
+                aria-label="Copy token"
                 onClick={copyToken}
               >
                 {copied ? (
@@ -124,6 +127,11 @@ export function DeployKeysPanel({
                 Copy failed. Try again or select and copy the token manually.
               </p>
             ) : null}
+            <DeployCommand
+              token={revealed}
+              projectId={projectId}
+              stageId={stageId}
+            />
           </div>
         )}
 
@@ -164,12 +172,13 @@ export function DeployKeysPanel({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Key name (e.g. CI staging)"
+              aria-label="Deploy key name"
               className="flex-1 text-sm"
               autoFocus
             />
             <Button
               size="sm"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={!name.trim() || busy}
               onClick={handleCreate}
             >
@@ -214,6 +223,49 @@ export function DeployKeysPanel({
           isDeleting={isDeletingKey}
         />
       )}
+    </>
+  );
+}
+
+// The exact `broods deploy` line for a just-revealed key, as the deploying
+// guide documents it. Nothing until the stage name and gateway URL are known.
+function DeployCommand({
+  token,
+  projectId,
+  stageId,
+}: {
+  token: string;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}): React.JSX.Element | null {
+  const stages = useQuery(api.stage.list, { projectId: projectId });
+  // The CLI matches --stage against the stage name case-insensitively.
+  const stageSlug = stages
+    ?.find((stage) => stage._id === stageId)
+    ?.name.toLowerCase();
+  const endpoint = resolveCoreEndpoint();
+  if (!stageSlug || !endpoint.ok) return null;
+  const command = `BROODS_TOKEN=${token} BROODS_BASE_URL=${endpoint.httpBaseUrl} broods deploy --stage ${stageSlug}`;
+
+  return (
+    <>
+      <p className="mt-3 mb-1 text-xs text-muted-foreground">
+        Deploy from CI or a shell with this key.{" "}
+        <a
+          href={DEPLOYING_GUIDE_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+        >
+          Deploying guide
+        </a>
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+          {command}
+        </code>
+        <CopyButton value={command} label="deploy command" />
+      </div>
     </>
   );
 }

@@ -67,7 +67,7 @@ test("a segment that is no project id is the not-found page", async ({
 }) => {
   await page.goto("/not-a-project");
   await expect(
-    page.getByRole("heading", { name: "Project not found" }),
+    page.getByRole("heading", { name: "Page not found" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Back to projects" }),

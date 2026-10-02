@@ -30,11 +30,11 @@ import {
   EyeOff,
   FolderOpen,
   GitBranch,
-  Loader2,
   RotateCcw,
   Sparkles,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 type SkillSource = "files" | "github" | "json";
 
@@ -318,7 +318,7 @@ function GithubForm({
       });
       onSuccess(result.path);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
+      const msg = toErrorMessage(err);
       if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
         clearSkillsBearerToken();
         setToken("");
@@ -364,14 +364,11 @@ function GithubForm({
       {canWrite && (
         <Button
           size="sm"
-          className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
+          className="h-8 cursor-pointer text-xs"
           disabled={!url.trim() || !token.trim() || status.type === "busy"}
           onClick={() => void handleImport()}
         >
-          {status.type === "busy" && (
-            <Loader2 className="size-3.5 animate-spin" />
-          )}
-          Import from GitHub
+          {status.type === "busy" ? "Importing…" : "Import from GitHub"}
         </Button>
       )}
     </div>
@@ -420,7 +417,7 @@ function JsonForm({
       setStatus({ type: "success", message: `Skill "${result.name}" saved.` });
       onSuccess(result.path);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
+      const msg = toErrorMessage(err);
       if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
         clearSkillsBearerToken();
         setToken("");
@@ -504,14 +501,15 @@ function JsonForm({
       {canWrite && (
         <Button
           size="sm"
-          className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
+          className="h-8 cursor-pointer text-xs"
           disabled={!canSubmit}
           onClick={() => void handleSubmit()}
         >
-          {status.type === "busy" && (
-            <Loader2 className="size-3.5 animate-spin" />
-          )}
-          {isUpdate ? "Update skill" : "Create skill"}
+          {status.type === "busy"
+            ? "Saving…"
+            : isUpdate
+              ? "Update skill"
+              : "Create skill"}
         </Button>
       )}
     </div>
