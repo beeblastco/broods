@@ -124,6 +124,7 @@ import type * as model_uploads from "../model/uploads.js";
 import type * as model_usageEndpoints from "../model/usageEndpoints.js";
 import type * as model_usageMeter from "../model/usageMeter.js";
 import type * as model_workspaceFs from "../model/workspaceFs.js";
+import type * as model_workspaceIsolation from "../model/workspaceIsolation.js";
 import type * as model_workspaceRules from "../model/workspaceRules.js";
 import type * as org_lifecycle from "../org/lifecycle.js";
 import type * as org_members from "../org/members.js";
@@ -272,6 +273,7 @@ declare const fullApi: ApiFromModules<{
   "model/usageEndpoints": typeof model_usageEndpoints;
   "model/usageMeter": typeof model_usageMeter;
   "model/workspaceFs": typeof model_workspaceFs;
+  "model/workspaceIsolation": typeof model_workspaceIsolation;
   "model/workspaceRules": typeof model_workspaceRules;
   "org/lifecycle": typeof org_lifecycle;
   "org/members": typeof org_members;

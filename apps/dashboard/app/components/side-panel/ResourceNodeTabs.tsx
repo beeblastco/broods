@@ -11,7 +11,7 @@ import {
   WORKSPACE_ISOLATION_LEVELS,
   type WorkspaceIsolation,
   workspaceIsolation,
-} from "@broods/convex/model/workspaceRules";
+} from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
   ToggleRow,

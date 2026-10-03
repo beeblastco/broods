@@ -25,7 +25,7 @@ import type {
   WorkspaceIsolation,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
-import { workspaceIsolation } from "@broods/convex/model/workspaceRules";
+import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
 import { resolveSandboxLifecycle } from "./sandbox.ts";
 import {

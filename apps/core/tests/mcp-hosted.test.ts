@@ -150,10 +150,7 @@ describe("hosted MCP invoke", () => {
             (command?.input as { Payload: Uint8Array }).Payload,
           ),
         ),
-      ).toMatchObject({
-        accountId: "acct_test",
-        tenantId: "acct_test:agent_1",
-      });
+      ).toMatchObject({ tenantId: "acct_test:agent_1" });
       // A probe with no agent is the account's own tenant.
       await hostedMcpFetch({ record: hostedRecord() })(URL, {
         method: "POST",

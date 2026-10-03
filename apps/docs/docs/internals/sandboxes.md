@@ -113,7 +113,7 @@ A workspace record's `isolation` decides the namespace a run mounts, derived in 
 
 `true` reads as `conversation`. The folders stay under the base prefix, so a workspace purge, the storage meter and reserved-instance teardown by namespace prefix still cover them; nothing enumerates agents.
 
-Every mount session names the agent it serves. `assumeScopedMountCredentials` in `s3-mount.ts` sets `RoleSessionName` to `fp-sandbox-mount-<agentId>` (`fp-sandbox-mount-acct-<accountId>` when no agent is known) on every role, and on the platform `sandbox-s3mount` role also `SourceIdentity` = agent id plus session tags `broods:account` and `broods:agent`. CloudTrail then ties each S3 call to one agent. The role trusts only the `core-runtime` user and grants it `sts:SetSourceIdentity` and `sts:TagSession`; a bring-your-own role gets the session name only, since its trust policy is the account's.
+A mount session minted for a sandbox names the agent it serves. `assumeScopedMountCredentials` in `s3-mount.ts` sets `RoleSessionName` to `fp-sandbox-mount-<agentId>` (`fp-sandbox-mount-acct-<accountId>` when no agent is known) on every role, and on the platform `sandbox-s3mount` role also `SourceIdentity` = agent id plus session tags `broods:account` and `broods:agent`. CloudTrail then ties each S3 call to one agent. The role trusts only the `core-runtime` user and grants it `sts:SetSourceIdentity` and `sts:TagSession`; a bring-your-own role gets the session name only, since its trust policy is the account's. The service-managed read-only mount of a workspace with no sandbox has no sandbox record to take the account from, so its session keeps the plain `fp-sandbox-mount` name.
 
 ## Harness adapters
 

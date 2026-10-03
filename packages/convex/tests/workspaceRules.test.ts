@@ -16,8 +16,8 @@ import {
   normalizeUpdateWorkspaceConfigInput,
   normalizeWorkspaceConfig,
   type WorkspaceConfig,
-  workspaceIsolation,
 } from "../model/workspaceRules";
+import { workspaceIsolation } from "../model/workspaceIsolation";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");

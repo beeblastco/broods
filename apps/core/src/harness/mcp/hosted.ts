@@ -73,7 +73,6 @@ export interface HostedMcpBatchRequest {
 export interface McpHostPayload {
   mode: "mcp";
   toolName: string;
-  accountId: string;
   // `accountId:agentId`, or the account alone for an account-surface probe. The
   // Lambda TenantId under MCP_TENANT_ISOLATION, see hostedMcpTenantId.
   tenantId: string;
@@ -427,7 +426,6 @@ async function sendBatch(
   const payload: McpHostPayload = {
     mode: "mcp",
     toolName: record.name,
-    accountId: record.accountId,
     tenantId: batch.tenantId,
     expectedSha256: record.sha256,
     bundleUrl: await getS3ObjectUrl(

@@ -452,7 +452,7 @@ function daytonaClientOptions(
 
 async function daytonaCreateOptions(
   config: SandboxExecutorConfig,
-  request: { namespace?: string; envVars?: Record<string, string> },
+  request: Pick<SandboxRunRequest, "namespace" | "envVars" | "metadata">,
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};

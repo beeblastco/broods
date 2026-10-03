@@ -18,12 +18,6 @@ import {
   workspaceIsolation,
 } from "./workspaceIsolation";
 
-export {
-  WORKSPACE_ISOLATION_LEVELS,
-  type WorkspaceIsolation,
-  workspaceIsolation,
-} from "./workspaceIsolation";
-
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
 const PLATFORM_BUCKET_ENV_NAMES = [
@@ -340,18 +334,6 @@ function isClusterEndpoint(value: string): boolean {
   );
 }
 
-// Accepts the two levels plus the boolean form; `true` is stored as its level.
-function normalizeWorkspaceIsolation(
-  value: unknown,
-): WorkspaceIsolation | undefined {
-  if (value === undefined || value === false) return undefined;
-  if (value !== true) {
-    assertOptionalEnum(value, "config.isolation", WORKSPACE_ISOLATION_LEVELS);
-  }
-
-  return workspaceIsolation(value);
-}
-
 function normalizeHarnessFeature(
   value: unknown,
   name: string,
@@ -366,6 +348,18 @@ function normalizeHarnessFeature(
 
   // Features default to on: `enabled: true` normalizes away to the omitted form.
   return value.enabled === false ? { enabled: false } : undefined;
+}
+
+// Accepts the two levels plus the boolean form; `true` is stored as its level.
+function normalizeWorkspaceIsolation(
+  value: unknown,
+): WorkspaceIsolation | undefined {
+  if (value === undefined || value === false) return undefined;
+  if (value !== true) {
+    assertOptionalEnum(value, "config.isolation", WORKSPACE_ISOLATION_LEVELS);
+  }
+
+  return workspaceIsolation(value);
 }
 
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {

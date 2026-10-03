@@ -12,7 +12,7 @@
  * execution environments. The child stays a containment layer, not a trust
  * boundary. Same-UID, so keep the execution role empty.
  *
- * Event: { mode: "mcp", toolName, accountId, tenantId, expectedSha256,
+ * Event: { mode: "mcp", toolName, tenantId, expectedSha256,
  * bundleUrl | bundleSourceB64, requests: [{ id, mcpRequest }] }. Core builds it
  * in apps/core/src/harness/mcp/hosted.ts (McpHostPayload); the two roll together.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
