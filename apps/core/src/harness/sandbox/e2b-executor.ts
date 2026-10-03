@@ -90,11 +90,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         background: true,
         timeoutMs: request.timeoutSeconds * 1000,
         envs: {
-          ...mergeSandboxEnv(
-            this.#config.envVars,
-            request.envVars,
-            request.principal,
-          ),
+          ...mergeSandboxEnv(this.#config.envVars, request.envVars),
           ...callbackEnv(request.callback),
         },
       },

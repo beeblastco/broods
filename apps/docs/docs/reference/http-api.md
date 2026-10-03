@@ -23,7 +23,7 @@ The runtime key only reaches agents with `publicAccess: true` in its own stage. 
 
 ### Calling the API from a sandbox
 
-Every `bash` command that blocks runs with the identity of the run that issued it. A background job gets it on some providers only, so do not rely on it there:
+Every `bash` command that blocks runs with the identity of the run that issued it. A background job outlives the run and its token, so it gets none:
 
 | Variable            | Value                                                                            |
 | ------------------- | -------------------------------------------------------------------------------- |

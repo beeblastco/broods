@@ -282,11 +282,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     );
     const result = await sandbox.exec(script, {
       env: {
-        ...mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
+        ...mergeSandboxEnv(this.#config.envVars, request.envVars),
         ...callbackEnv(request.callback),
       },
     });

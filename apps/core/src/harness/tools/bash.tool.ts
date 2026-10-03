@@ -273,7 +273,6 @@ async function dispatchBackground(
       {
         jobId: jobId,
         metadata: sandboxRunMetadata(context, ws),
-        principal: context.principal?.(),
         ...(callback ? { callback: callback } : {}),
       },
     );

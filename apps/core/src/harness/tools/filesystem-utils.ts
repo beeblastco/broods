@@ -110,9 +110,9 @@ export interface SandboxToolContext {
   // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
-  // The run's identity for a `bash` exec env; the file tools run the harness's
-  // own scripts and get none. A function, so the run token is only minted once
-  // a command actually runs.
+  // The run's identity for a blocking `bash` exec env. The file tools run the
+  // harness's own scripts and a background job outlives its run, so they get
+  // none. A function, so the run token is only minted once a command runs.
   principal?: () => SandboxRunPrincipal | undefined;
 }
 
@@ -322,7 +322,6 @@ export async function runSandboxBackground(
     jobId: string;
     callback?: SandboxJobCallback;
     metadata?: SandboxRunMetadata;
-    principal?: SandboxRunPrincipal;
   },
 ): Promise<SandboxJobHandle> {
   const executor = createSandboxExecutor(config);
@@ -337,7 +336,6 @@ export async function runSandboxBackground(
     jobId: options.jobId,
     ...(options.callback ? { callback: options.callback } : {}),
     ...(options.metadata ? { metadata: options.metadata } : {}),
-    ...(options.principal ? { principal: options.principal } : {}),
     workspaceRoot: workspaceRootFor(config),
     timeoutSeconds: boundedInteger(
       config.timeout,

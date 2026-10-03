@@ -111,6 +111,7 @@ export interface SandboxRunRequest {
   // drops RESERVED_SANDBOX_ENV_KEYS; the host process.env is never inherited.
   envVars?: Record<string, string>;
   // The run's identity, laid over both env layers as BROODS_* by `mergeSandboxEnv`.
+  // Blocking execs only: a background job outlives the run and its token.
   principal?: SandboxRunPrincipal;
   metadata?: SandboxRunMetadata;
   // Background-only: the caller supplies the jobId (so the tracking row exists
