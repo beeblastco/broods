@@ -40,7 +40,7 @@ sequenceDiagram
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is plain runtime env on core and on the Convex deployment, and both must hold the same value. Rotating it needs a re-encryption migration.
 - Core decrypts only when it needs a selected agent's runtime settings.
 
-Reads recursively redact secret-like field names such as `token`, `secret`, `privateKey`, `apiKey`, `x-api-key` and any header ending in `authorization` as `********`, including inside tool config. A value made only of `${NAME}` refs, optionally after an auth scheme word like `Bearer ${KEY}`, holds no secret and is shown as is. Sending `********` back in a patch keeps the stored value.
+Reads recursively redact secret-like field names such as `token`, `secret`, `privateKey`, `apiKey`, `x-api-key`, `cookie` and `authorization` as `********`, including inside tool config. One rule, `isSecretName` in `packages/convex/model/secretNames.ts`, decides this, which MCP headers must be `${NAME}` refs, and which keys log and policy redaction hide. A value made only of `${NAME}` refs, optionally after an auth scheme word like `Bearer ${KEY}`, holds no secret and is shown as is. Sending `********` back in a patch keeps the stored value.
 
 Logs go through one redaction chokepoint. See [observability](observability.md#security).
 

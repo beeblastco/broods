@@ -144,7 +144,7 @@ Prompts, full tool inputs and outputs, request and response bodies, and response
 
 ## Security
 
-- One redaction chokepoint. `log.ts` redacts by key name, using exact, prefix and suffix deny lists with an allow list for known-safe keys, and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens.
+- One redaction chokepoint. `log.ts` redacts by key name with `isSecretName` (`packages/convex/model/secretNames.ts`), the same rule config redaction and MCP header refs use, and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens.
 - Scoped STS mount credentials are never logged. The MicroVM forwarder applies the pattern half of redaction, covering `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens. It cannot know a run's own secret values. A guest that echoes an injected secret prints it to the owning account's view and to operators. Treat sandbox stdout as untrusted.
 - A sandbox tail is scoped like every other observability socket. The gateway builds the Loki selector from the ticket's server-derived account, project and stage, and the client's `sandboxId` only narrows inside that. It must be the UUID shape core mints, or the wire rejects it before it reaches LogQL.
 

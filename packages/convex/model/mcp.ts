@@ -18,6 +18,7 @@ import {
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./envRefs";
 import { ClientError } from "./clientError";
+import { isSecretName } from "./secretNames";
 
 const MAX_ALLOWED_TOOLS = 256;
 /**
@@ -38,10 +39,6 @@ const MAX_URL_LENGTH = 2048;
 
 /** RFC 9110 field-name token characters. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
-
-/** Header names whose values carry credentials and so must use a ${NAME} ref. */
-const SENSITIVE_HEADER_NAME_PATTERN =
-  /auth|token|secret|key|cookie|password|credential/i;
 
 /**
  * Server names become the `server__tool` namespace prefix inside provider
@@ -369,7 +366,7 @@ function normalizeHeaders(value: unknown): Record<string, string> {
       );
     }
     if (
-      SENSITIVE_HEADER_NAME_PATTERN.test(name) &&
+      isSecretName(name) &&
       !CREDENTIAL_HEADER_VALUE_PATTERN.test(headerValue)
     ) {
       throw new ClientError(
