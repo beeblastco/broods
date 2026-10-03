@@ -58,8 +58,8 @@ import {
 } from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
+  agentOwnWorkspace,
   hasStandaloneSandbox,
-  isAgentOwnSandbox,
   machineSandboxes,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
@@ -484,12 +484,10 @@ function sandboxMcpTarget(
   }
   const workspace =
     host === context.sandboxes?.[0]
-      ? context.workspaces?.find((candidate): boolean =>
-          isAgentOwnSandbox(candidate, {
-            workspaces: context.workspaces ?? [],
-            sandboxes: context.sandboxes,
-          }),
-        )
+      ? agentOwnWorkspace({
+          workspaces: context.workspaces ?? [],
+          sandboxes: context.sandboxes,
+        })
       : undefined;
   const config = workspace?.sandbox ?? host.sandbox;
   const reservationKey = workspace

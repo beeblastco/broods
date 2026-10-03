@@ -295,26 +295,23 @@ function normalizeBundle(value: unknown): string {
 
 /** A stdio server's argv: non-empty strings, bounded in count and length. */
 function normalizeCommand(value: unknown): string[] {
-  const args = Array.isArray(value)
-    ? value.filter(
-        (arg): arg is string =>
-          typeof arg === "string" &&
-          arg.length > 0 &&
-          arg.length <= MAX_COMMAND_ARG_LENGTH,
-      )
-    : [];
   if (
     !Array.isArray(value) ||
-    args.length !== value.length ||
-    args.length === 0 ||
-    args.length > MAX_COMMAND_ARGS
+    value.length === 0 ||
+    value.length > MAX_COMMAND_ARGS ||
+    !value.every(
+      (arg): arg is string =>
+        typeof arg === "string" &&
+        arg.length > 0 &&
+        arg.length <= MAX_COMMAND_ARG_LENGTH,
+    )
   ) {
     throw new ClientError(
       `command must be 1-${MAX_COMMAND_ARGS} non-empty strings of at most ${MAX_COMMAND_ARG_LENGTH} characters, like ["obscura", "mcp"]`,
     );
   }
 
-  return args;
+  return value;
 }
 
 /**
@@ -372,13 +369,10 @@ function normalizeConnection(
     input.transport = "hosted";
   }
   if (input.sandbox !== undefined) input.transport = "machine";
+  // Only a sandbox row may carry one; assertMcpRow checks the row every write
+  // produces, including a patch that sets command alone.
   if (record.command !== undefined && record.command !== null) {
     input.command = normalizeCommand(record.command);
-    // A patch carrying command alone leaves transport unset; assertMcpRow
-    // checks the row it produces.
-    if (input.transport !== undefined && input.transport !== "machine") {
-      throw new ClientError("command applies to a server on a sandbox");
-    }
   }
 }
 

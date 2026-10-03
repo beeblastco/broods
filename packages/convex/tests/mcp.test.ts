@@ -290,13 +290,8 @@ describe("normalizeMcpInput", () => {
         ),
       ).rejects.toThrow("command must be 1-32 non-empty strings");
     }
-    await expect(
-      normalizeMcpInput(
-        { name: "search", url: SERVER_URL, command: ["obscura", "mcp"] },
-        { requireConnection: true },
-      ),
-    ).rejects.toThrow("command applies to a server on a sandbox");
-    // A patch carrying command alone is checked against the row it produces.
+    // Every write checks the row it produces, so a url row or a patch carrying
+    // command alone is refused there.
     expect(() =>
       assertMcpRow({
         transport: "http",
