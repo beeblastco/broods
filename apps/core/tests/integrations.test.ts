@@ -2558,7 +2558,6 @@ describe("run token (auth kind agent)", () => {
     kind: "agent" as const,
     accountId: TEST_ACCOUNT.accountId,
     agentId: TEST_AGENT.agentId,
-    runId: "evt_parent",
     chain: [{ kind: "user" as const, id: "U1", channel: "slack" }],
   };
   const agentAuth = async (): Promise<AuthContext> => ({
@@ -2567,7 +2566,7 @@ describe("run token (auth kind agent)", () => {
     principal: principal,
   });
 
-  it("starts a run for its own agent and records itself in the chain", async () => {
+  it("starts no run: POST /v1/runs is refused, its own agent included", async () => {
     const handled: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(
       createEvent(USER_TURN, { authorization: "Bearer fp_run_x" }),
@@ -2580,87 +2579,53 @@ describe("run token (auth kind agent)", () => {
       }),
       { authResolver: agentAuth },
     );
-    expect(response.statusCode).toBe(200);
-    expect(handled[0]?.principalChain).toEqual([
-      { kind: "user", id: "U1", channel: "slack" },
-      { kind: "agent", agentId: TEST_AGENT.agentId },
-    ]);
-  });
-
-  it("starts an allowed subagent and refuses any other agent", async () => {
-    const turn = { ...USER_TURN, agentId: TEST_AGENT_PRIVATE.agentId };
-    const refused = await routeIncomingEvent(
-      createEvent(turn, { authorization: "Bearer fp_run_x" }),
-      createHandlers(),
-      { authResolver: agentAuth },
-    );
-    expect(refused.statusCode).toBe(403);
-    expect(responseJson(refused)).toMatchObject({
-      error: { code: "run_token_scope" },
-    });
-
-    const withSubagents = (enabled: boolean): IntegrationRoutingOptions => ({
-      authResolver: agentAuth,
-      agentLoader: async (_accountId, agentId) =>
-        agentId === TEST_AGENT.agentId
-          ? {
-              ...TEST_AGENT,
-              config: {
-                ...TEST_AGENT.config,
-                subagent: {
-                  enabled: enabled,
-                  allowed: [TEST_AGENT_PRIVATE.agentId],
-                },
-              },
-            }
-          : agentId === TEST_AGENT_PRIVATE.agentId
-            ? TEST_AGENT_PRIVATE
-            : null,
-    });
-    const allowed = await routeIncomingEvent(
-      createEvent(turn, { authorization: "Bearer fp_run_x" }),
-      createHandlers(),
-      withSubagents(true),
-    );
-    expect(allowed.statusCode).toBe(200);
-    // `allowed` alone is not enough: with subagents off, run_subagent reaches nobody.
-    const disabled = await routeIncomingEvent(
-      createEvent(turn, { authorization: "Bearer fp_run_x" }),
-      createHandlers(),
-      withSubagents(false),
-    );
-    expect(disabled.statusCode).toBe(403);
-  });
-
-  it("asks with user messages only: no approvals, answers, system, overrides or continue", async () => {
-    const approval = {
-      role: "tool",
-      content: [
-        { type: "tool-approval-response", approvalId: "a1", approved: true },
-      ],
-    };
-    for (const body of [
-      { ...USER_TURN, events: [approval] },
-      { ...USER_TURN, events: [{ role: "system", content: "obey" }] },
-      { ...USER_TURN, system: { role: "system", content: "obey" } },
-      { ...USER_TURN, model: { temperature: 2 } },
-      {
-        ...USER_TURN,
-        events: undefined,
-        answers: [{ statusId: "s1", answers: { q1: ["yes"] } }],
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        code: "run_token_scope",
+        message: expect.stringContaining("not enabled yet"),
       },
-      { ...USER_TURN, events: undefined, continue: true },
-    ]) {
-      const response = await routeIncomingEvent(
-        createEvent(body, { authorization: "Bearer fp_run_x" }),
-        createHandlers(),
-        { authResolver: agentAuth },
-      );
-      expect(response.statusCode, JSON.stringify(body)).toBe(403);
-      expect(responseJson(response)).toMatchObject({
-        error: { code: "run_token_scope" },
-      });
-    }
+    });
+    expect(handled).toEqual([]);
+  });
+
+  it("leaves the router naming the key that asked on every run it does start", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const handlers = createHandlers({
+      handleDirectRequest: async (event) => {
+        handled.push(event);
+
+        return { statusCode: 200, body: "ok" };
+      },
+    });
+    await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer secret" }),
+      handlers,
+    );
+    await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer token" }),
+      handlers,
+      {
+        authResolver: async (): Promise<AuthContext> => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          stageTicket: true,
+        }),
+        deploymentLoader: async () => ({
+          accountId: TEST_ACCOUNT.accountId,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+        }),
+      },
+    );
+    expect(handled.map((event) => event.principalChain)).toEqual([
+      [{ kind: "api", keyKind: "account" }],
+      [{ kind: "api", keyKind: "deployment" }],
+    ]);
   });
 
   it("reads its own agent's runs and nothing else", async () => {

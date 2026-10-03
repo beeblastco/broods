@@ -53,8 +53,7 @@ export type AuthContext =
     }
   | {
       // One agent run, from the fp_run_ token core handed its sandbox. It may
-      // only start runs for its own agent or an allowed subagent and read its
-      // own runs; integrations.ts enforces that per route.
+      // only read its own agent's runs; integrations.ts refuses the rest.
       kind: "agent";
       account: AccountRecord;
       principal: Principal;

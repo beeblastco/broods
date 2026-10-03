@@ -49,11 +49,7 @@ import {
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
-import {
-  delegatedChain,
-  type Principal,
-  type PrincipalLink,
-} from "../shared/domain/principal.ts";
+import type { PrincipalLink } from "../shared/domain/principal.ts";
 import {
   channelActorRoles,
   channelRecordMatchesWorkspace,
@@ -179,12 +175,6 @@ type PublicEndpointPath = {
   stageSlug?: string;
 };
 
-// The credentials that may start a run on the direct API.
-type RunAuth = Extract<
-  AuthContext,
-  { kind: "account" | "deployment" | "agent" }
->;
-
 // A lookup that failed is not the same as "no record": the first must not run.
 type ChannelTarget =
   | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
@@ -259,8 +249,8 @@ export interface DirectInboundEvent {
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
-  // Who asked, as the router authenticated it: the key kind, or the chain of
-  // the run whose token started this one. Absent on a rebuilt envelope.
+  // Who asked, as the router authenticated it, or the chain of the run that
+  // sent a session message. Absent on a rebuilt envelope: nothing is guessed.
   principalChain?: PrincipalLink[];
   // Answers to open ask_questions prompts. A request carrying these settles
   // the prompts and resumes the conversation; it runs no turn of its own.
@@ -805,8 +795,8 @@ async function handleHttpRequest(
     });
   }
 
-  // A run token starts runs on /v1/runs and reads its own; nothing else.
-  if (auth?.kind === "agent" && request.path !== RUN_PATH) {
+  // A run token reads its own agent's runs, above. It starts none yet.
+  if (auth?.kind === "agent") {
     return runTokenScopeResponse(auth.principal.agentId);
   }
 
@@ -876,7 +866,8 @@ async function handleHttpRequest(
     return unauthorizedResponse();
   }
 
-  if (auth?.kind !== "account" && auth?.kind !== "agent") {
+  const account = auth?.kind === "account" ? auth.account : null;
+  if (!account) {
     return unauthorizedResponse();
   }
 
@@ -885,23 +876,11 @@ async function handleHttpRequest(
       ...(await parseDirectPayload(
         request.body,
         request.headers,
-        auth.account,
+        account,
         context,
-        auth,
       )),
-      principalChain:
-        auth.kind === "agent"
-          ? delegatedChain(auth.principal)
-          : [{ kind: "api", keyKind: "account" } as const],
+      principalChain: [{ kind: "api", keyKind: "account" } as const],
     };
-    // A run token reaches its own agent and the subagents that agent may
-    // delegate to, the same set `run_subagent` would give it.
-    if (
-      auth.kind === "agent" &&
-      !(await runTokenMayStart(auth.principal, parsed.agentId, context))
-    ) {
-      return runTokenScopeResponse(auth.principal.agentId);
-    }
     if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -2081,27 +2060,11 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(text);
 }
 
-/** Own agent, or one `run_subagent` would reach: subagents enabled and the target in `subagent.allowed`. */
-async function runTokenMayStart(
-  principal: Principal,
-  agentId: string,
-  context: Pick<HttpRoutingContext, "agentLoader">,
-): Promise<boolean> {
-  if (agentId === principal.agentId) return true;
-  const subagent = (
-    await context.agentLoader(principal.accountId, principal.agentId)
-  )?.config.subagent;
-
-  return (
-    subagent?.enabled === true && subagent.allowed?.includes(agentId) === true
-  );
-}
-
-/** The one refusal a run token gets outside its two routes and its own agent. */
+/** The one refusal a run token gets outside reading its own agent's runs. */
 function runTokenScopeResponse(agentId: string): Response {
   return errorResponse(
     403,
-    `Run tokens may only POST /v1/runs for agent ${agentId} or a subagent it is allowed to run, and GET /v1/runs/{runId} for that agent's runs.`,
+    `A run token may only GET /v1/runs/{runId} for agent ${agentId}'s runs. Starting runs with a run token is not enabled yet.`,
     { code: "run_token_scope" },
   );
 }
@@ -2155,7 +2118,7 @@ async function parseDirectPayload(
   headers: Record<string, string>,
   account: AccountRecord,
   context: Pick<HttpRoutingContext, "agentLoader" | "deploymentLoader">,
-  auth: RunAuth,
+  deploymentAuth?: Extract<AuthContext, { kind: "deployment" }>,
 ): Promise<DirectInboundEvent> {
   let parsed: unknown;
 
@@ -2190,14 +2153,14 @@ async function parseDirectPayload(
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
   const [agent, deployment] = await Promise.all([
     context.agentLoader(account.accountId, agentId),
-    auth.kind === "deployment"
+    deploymentAuth
       ? context.deploymentLoader(account.accountId, agentId)
       : Promise.resolve(null),
   ]);
   if (!agent) {
     throw new DirectNotFoundError("Agent not found");
   }
-  const embeddableKey = admitStageCredential(auth, agent, deployment);
+  const embeddableKey = admitStageCredential(deploymentAuth, agent, deployment);
 
   const rawEventId = assertValidPublicEventId(record.eventId as string);
   const conversation = directConversationKeys(
@@ -2221,7 +2184,6 @@ async function parseDirectPayload(
 
   const overrides = parseRunOverrides(record);
   assertRunOverridesAllowed(embeddableKey, agent, overrides, events);
-  assertRunTokenPayload(auth, continuation, events, answers, overrides);
   assertOneDirectPayloadShape(continuation, {
     eventCount: events.length,
     answerCount: answers.length,
@@ -2339,14 +2301,14 @@ function assertOneDirectPayloadShape(
 /**
  * Throws unless the agent is in the credential's stage, and public for the
  * embeddable runtime key. True for that key, false for a member's ticket or
- * any other credential.
+ * no credential.
  */
 function admitStageCredential(
-  auth: RunAuth,
+  auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
   agent: AgentRecord,
   deployment: AgentDeploymentScope | null,
 ): boolean {
-  if (auth.kind !== "deployment") return false;
+  if (!auth) return false;
   // Another stage's agent answers like an unknown one, so nothing leaks.
   if (!deploymentScopeMatches(auth, deployment)) {
     throw new DirectNotFoundError("Agent not found");
@@ -2379,33 +2341,6 @@ function assertRunOverridesAllowed(
     throw new DirectForbiddenError(
       `Agent ${agent.agentId} does not accept system messages or model overrides from a runtime key. Set allowRunOverrides: true and redeploy to allow them.`,
       { code: "run_overrides_disabled", param: "allowRunOverrides" },
-    );
-  }
-}
-
-/**
- * A run token asks the way `run_subagent` does, with user messages. Approvals,
- * answers, system messages, overrides and `continue` stay with a person or a
- * key, so sandbox code never approves its own agent's tool calls. Any other
- * credential passes.
- */
-function assertRunTokenPayload(
-  auth: RunAuth,
-  continuation: boolean,
-  events: DirectIngressEvent[],
-  answers: QuestionAnswer[],
-  overrides: RunOverrides | undefined,
-): void {
-  if (
-    auth.kind === "agent" &&
-    (continuation ||
-      answers.length > 0 ||
-      overrides !== undefined ||
-      events.some((event) => event.role !== "user"))
-  ) {
-    throw new DirectForbiddenError(
-      "A run token sends user messages only: no tool approvals, answers, system messages, model overrides or continue.",
-      { code: "run_token_scope" },
     );
   }
 }
