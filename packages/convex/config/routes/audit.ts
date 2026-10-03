@@ -129,18 +129,17 @@ async function listResponse(
   accountId: Id<"accounts">,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const since = integerParam(url, "since");
-  if (since === null) {
+  const sinceParam = integerParam(url, "since");
+  if (sinceParam === null) {
     return jsonError(400, "since must be a non-negative integer.", {
       code: "invalid_since",
       param: "since",
     });
   }
-  const limit = integerParam(url, "limit");
-  if (
-    limit === null ||
-    (limit !== undefined && (limit < 1 || limit > AUDIT_LIST_LIMIT_MAX))
-  ) {
+  const since = sinceParam ?? 0;
+  const limitParam = integerParam(url, "limit");
+  const limit = limitParam === undefined ? DEFAULT_LIST_LIMIT : limitParam;
+  if (limit === null || limit < 1 || limit > AUDIT_LIST_LIMIT_MAX) {
     return jsonError(
       400,
       `limit must be an integer between 1 and ${AUDIT_LIST_LIMIT_MAX}.`,
@@ -153,8 +152,8 @@ async function listResponse(
     await Promise.all([
       ctx.runQuery(internal.audit.ledger.list, {
         accountId: accountId,
-        since: since ?? 0,
-        limit: limit ?? DEFAULT_LIST_LIMIT,
+        since: since,
+        limit: limit,
       }),
       ctx.runQuery(internal.audit.ledger.head, { accountId: accountId }),
     ]);
@@ -162,7 +161,7 @@ async function listResponse(
 
   return json({
     events: events,
-    nextSince: events[events.length - 1]?.seq ?? since ?? 0,
+    nextSince: events[events.length - 1]?.seq ?? since,
     head: head,
   });
 }

@@ -3,6 +3,8 @@
  * `PUT /v1/audit/sink` body must look like, and how an export batch is signed.
  */
 
+import type { Doc, Id } from "../_generated/dataModel";
+import type { QueryCtx } from "../_generated/server";
 import { hexFromBytes } from "./accountSecrets";
 import { assertPublicHttpsUrl } from "./agentRules";
 import { ClientError } from "./clientError";
@@ -17,6 +19,21 @@ export type AuditSinkInput = {
   url: string;
   secret: string;
 };
+
+/**
+ * The one sink row an account may have, or null.
+ * @param db Convex database reader.
+ * @param accountId the account whose sink to read.
+ */
+export async function auditSinkRow(
+  db: QueryCtx["db"],
+  accountId: Id<"accounts">,
+): Promise<Doc<"auditSinks"> | null> {
+  return await db
+    .query("auditSinks")
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .unique();
+}
 
 /**
  * Validate a sink body: https to a public host (the same rule core applies to

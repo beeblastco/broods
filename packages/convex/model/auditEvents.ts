@@ -169,22 +169,25 @@ export function auditDetailsJson(details: Record<string, unknown>): string {
 export async function auditEventHash(
   fields: AuditHashedFields,
 ): Promise<string> {
-  return await sha256Hex(
-    stableJson({
-      accountId: fields.accountId,
-      seq: fields.seq,
-      prevHash: fields.prevHash,
-      at: fields.at,
-      actor: fields.actor,
-      action: fields.action,
-      resource: fields.resource,
-      summary: fields.summary,
-      detailsJson: fields.detailsJson,
-      projectId: fields.projectId,
-      stageId: fields.stageId,
-      traceId: fields.traceId,
-    }),
-  );
+  // Keyed by the type, so a field added to the table fails the typecheck
+  // here until it is hashed. Listed one by one because a stored row passed
+  // in also carries `_id` and `hash`.
+  const canonical: Record<keyof AuditHashedFields, unknown> = {
+    accountId: fields.accountId,
+    seq: fields.seq,
+    prevHash: fields.prevHash,
+    at: fields.at,
+    actor: fields.actor,
+    action: fields.action,
+    resource: fields.resource,
+    summary: fields.summary,
+    detailsJson: fields.detailsJson,
+    projectId: fields.projectId,
+    stageId: fields.stageId,
+    traceId: fields.traceId,
+  };
+
+  return await sha256Hex(stableJson(canonical));
 }
 
 /**

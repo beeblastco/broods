@@ -6,17 +6,20 @@
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Doc } from "../_generated/dataModel";
 import {
   internalAction,
   internalMutation,
   internalQuery,
   type ActionCtx,
-  type QueryCtx,
 } from "../_generated/server";
 import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
 import { auditChainHeadRow, publicAuditEvent } from "../model/auditEvents";
-import { AUDIT_SIGNATURE_HEADER, signAuditExport } from "../model/auditSinks";
+import {
+  AUDIT_SIGNATURE_HEADER,
+  auditSinkRow,
+  signAuditExport,
+} from "../model/auditSinks";
 import { configEncryptionSecret } from "../config/routes/shared";
 import { auditSinksFields } from "../schema";
 
@@ -73,7 +76,7 @@ export const get = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.union(auditSinkDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"auditSinks"> | null> => {
-    return await sinkForAccount(ctx.db, args.accountId);
+    return await auditSinkRow(ctx.db, args.accountId);
   },
 });
 
@@ -155,7 +158,7 @@ export const put = internalMutation({
   },
   returns: auditSinkDoc,
   handler: async (ctx, args): Promise<Doc<"auditSinks">> => {
-    const existing = await sinkForAccount(ctx.db, args.accountId);
+    const existing = await auditSinkRow(ctx.db, args.accountId);
     const fields = {
       url: args.url,
       encryptedSecret: args.encryptedSecret,
@@ -185,7 +188,7 @@ export const remove = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const existing = await sinkForAccount(ctx.db, args.accountId);
+    const existing = await auditSinkRow(ctx.db, args.accountId);
     if (!existing) return false;
     await ctx.db.delete(existing._id);
 
@@ -272,15 +275,4 @@ async function postBatch(
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }
-}
-
-/** The one sink row an account may have. */
-async function sinkForAccount(
-  db: QueryCtx["db"],
-  accountId: Id<"accounts">,
-): Promise<Doc<"auditSinks"> | null> {
-  return await db
-    .query("auditSinks")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-    .unique();
 }
