@@ -1,6 +1,7 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
 import { autoCompaction } from "./auto-compaction.ts";
+import { browserSandbox } from "./browser-sandbox.ts";
 import { connections } from "./connections.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
@@ -23,6 +24,7 @@ export const verifyCases: readonly VerifyCase[] = [
   machineSandbox,
   ownBucketSandbox,
   sandboxImage,
+  browserSandbox,
   trailingSlash,
   manifestSync,
   workToolWebhooks,

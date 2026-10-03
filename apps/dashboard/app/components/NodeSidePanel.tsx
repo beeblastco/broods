@@ -589,17 +589,17 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
-  // Public-endpoint opt-in (issue #65). Stored as a top-level scalar in
-  // extraConfig so it rides through the codec to the harness; off by default.
-  const handleUpdatePublicAccess = useCallback(
-    async (enabled: boolean) => {
+  // One top-level extraConfig entry, such as the public-endpoint opt-in (issue #65)
+  // or the browser switch, so it rides through the codec to the harness.
+  const handleUpdateExtraEntry = useCallback(
+    async (key: "publicAccess" | "browser", value: unknown) => {
       if (!agentConfigId || !agentConfig) return;
 
       const currentExtra =
         (agentConfig.extraConfig as Record<string, unknown>) ?? {};
       await updateConfig({
         configId: agentConfigId,
-        extraConfig: { ...currentExtra, publicAccess: enabled },
+        extraConfig: { ...currentExtra, [key]: value },
       });
     },
     [agentConfigId, agentConfig, updateConfig],
@@ -809,7 +809,15 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}
                 onUpdateModelReasoning={handleUpdateModelReasoning}
-                onUpdatePublicAccess={handleUpdatePublicAccess}
+                onUpdatePublicAccess={(enabled) =>
+                  handleUpdateExtraEntry("publicAccess", enabled)
+                }
+                onUpdateBrowser={(enabled) =>
+                  handleUpdateExtraEntry(
+                    "browser",
+                    enabled ? { enabled: true } : undefined,
+                  )
+                }
                 onUpdatePolicyConfig={handleUpdatePolicyConfig}
               />
             ) : isMcp && node ? (

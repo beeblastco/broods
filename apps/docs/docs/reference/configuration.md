@@ -53,27 +53,28 @@ Names are uppercase letters, digits and underscores. A sync fails, and writes no
 
 The agent's model, instructions, tools, and what it can reach. See [Agents](../guides/agents.md).
 
-| Field               | Description                                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `name`              | Unique per stage. Required                                                                             |
-| `description`       | Shown to parent agents choosing a subagent                                                             |
-| `provider`          | Credentials per model provider. See [providers](#model-providers)                                      |
-| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId` |
-| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                          |
-| `harness`           | A `defineHarness()` value to replace the built-in loop                                                 |
-| `tools`             | Provider-executed tools, keyed by the provider's tool name                                             |
-| `mcp`               | MCP servers to enable, keyed by server name                                                            |
-| `connections`       | Channel connections the agent answers on                                                               |
-| `sandboxes`         | Sandboxes it can use. The first is the default                                                         |
-| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                              |
-| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                        |
-| `skills`            | `enabled`, `allowed` skill resources                                                                   |
-| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                   |
-| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
-| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
-| `policies`          | Policies that gate the agent. Each carries its own mode                                                |
-| `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                               |
-| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                           |
+| Field               | Description                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `name`              | Unique per stage. Required                                                                               |
+| `description`       | Shown to parent agents choosing a subagent                                                               |
+| `provider`          | Credentials per model provider. See [providers](#model-providers)                                        |
+| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`   |
+| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                            |
+| `harness`           | A `defineHarness()` value to replace the built-in loop                                                   |
+| `tools`             | Provider-executed tools, keyed by the provider's tool name                                               |
+| `mcp`               | MCP servers to enable, keyed by server name                                                              |
+| `connections`       | Channel connections the agent answers on                                                                 |
+| `sandboxes`         | Sandboxes it can use. The first is the default                                                           |
+| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                |
+| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                          |
+| `skills`            | `enabled`, `allowed` skill resources                                                                     |
+| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                     |
+| `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox needs `image: "obscura"` and `allow-all` |
+| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                           |
+| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                  |
+| `policies`          | Policies that gate the agent. Each carries its own mode                                                  |
+| `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                                 |
+| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                             |
 
 ```ts
 import { defineAgent, env } from "broods";

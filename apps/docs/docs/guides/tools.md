@@ -7,7 +7,7 @@ An agent gets tools from four places:
 | Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `computerUse` |
 | MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                         |
 | Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`             |
-| Broods features       | the matching agent setting       | `load_skill`, `run_subagent`, `schedule`, `ask_questions`   |
+| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`          |
 
 This page covers the first two, approvals, and the built-in tools. Sandbox tools are in [Sandboxes](sandboxes/index.md).
 
@@ -153,6 +153,46 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 | Any client  | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
 | WebSocket   | a `question-request` frame               | an `execute` frame carrying `answers`                                                          |
 
+## Web browsing
+
+`browse` opens a public web page in [Obscura](https://github.com/h4ckf0r0day/obscura), a headless browser on the agent's first sandbox, and returns it to the model. Turn it on with `browser` and give the agent a sandbox with the Obscura image and internet access:
+
+```ts title="broods/index.ts"
+import { defineAgent, defineSandbox, defineWorkspace } from "broods";
+
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  network: { mode: "allow-all" },
+});
+
+export const workspace = defineWorkspace({
+  name: "workspace",
+  storage: { provider: "s3" },
+});
+
+export const researcher = defineAgent({
+  name: "researcher",
+  sandboxes: [web], // the first sandbox runs browse
+  workspaces: [workspace], // screenshots are saved here
+  browser: { enabled: true },
+});
+```
+
+| `mode`               | Returns                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `markdown` (default) | The rendered page as markdown, usually 3 to 17x smaller than its HTML                   |
+| `text`               | Plain text                                                                              |
+| `links`              | Every link on the page, one per line                                                    |
+| `eval`               | The result of a JavaScript expression run in the page, passed as `script`               |
+| `screenshot`         | An image of the viewport, saved under `.broods/browse/` so `send-images` can send it on |
+
+- The first sandbox must be `lambda` with `image: "obscura"` and `network.mode: "allow-all"`, or a [machine](sandboxes/machine.md) with `obscura` installed. Anything else fails the run with a message saying what to change.
+- `screenshot` needs a workspace on that sandbox. The image reaches the model on the turn it was taken. Later turns keep the file path.
+- Private and internal addresses are refused. Layout can differ from Chrome on JavaScript-heavy pages. For pixel-exact screenshots, run Chromium through `bash` on a sandbox with `image: "browser"`.
+- Reading needs no approval. `eval` runs the model's own JavaScript in the page, so it asks like `bash` unless the sandbox uses `permissionMode: "bypass"`.
+
 ## Background tools
 
 `async_status` appears on its own when the agent can start background work, through a workspace on a persistent sandbox or a tool marked `async: true`. The model uses it to check, tail or stop that work. See [Persistent sandboxes](sandboxes/persistent.md).
@@ -161,6 +201,7 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 
 | Tool                                                                      | Enabled by                          | Guide                                         |
 | ------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
+| `browse`                                                                  | `browser`                           | [Web browsing](#web-browsing)                 |
 | `load_skill`                                                              | `skills`                            | [Skills](skills.md)                           |
 | `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent`                          | [Subagents](subagents.md)                     |
 | `ask_parent`                                                              | the run being a persistent subagent | [Subagents](subagents.md)                     |

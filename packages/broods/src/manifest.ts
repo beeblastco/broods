@@ -398,6 +398,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "subagent",
   "skills",
   "scheduler",
+  "browser",
   "policies",
   "publicAccess",
   "allowRunOverrides",
