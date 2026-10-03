@@ -558,9 +558,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     // on its own.
     const partitionedWorkspaces = attachedWorkspaces.filter(
       (workspace) =>
-        workspaceIsolation(
-          (workspace.config as unknown as Record<string, unknown>).partitioned,
-        ) === "conversation",
+        workspaceIsolation(workspace.config.partitioned) === "conversation",
     );
     const partitionedChannels = channelDefinitions.filter(
       (channel) => channel.partition,

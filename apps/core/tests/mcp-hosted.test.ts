@@ -144,13 +144,14 @@ describe("hosted MCP invoke", () => {
         TenantId: "acct_test:agent_1",
       });
       // The payload carries the same tenant for the handler's warm-child key.
-      expect(
-        JSON.parse(
-          new TextDecoder().decode(
-            (command?.input as { Payload: Uint8Array }).Payload,
-          ),
-        ),
-      ).toMatchObject({ tenantId: "acct_test:agent_1" });
+      const payload =
+        command instanceof InvokeWithResponseStreamCommand &&
+        command.input.Payload instanceof Uint8Array
+          ? command.input.Payload
+          : new Uint8Array();
+      expect(JSON.parse(new TextDecoder().decode(payload))).toMatchObject({
+        tenantId: "acct_test:agent_1",
+      });
       // A probe with no agent is the account's own tenant.
       await hostedMcpFetch({ record: hostedRecord() })(URL, {
         method: "POST",
