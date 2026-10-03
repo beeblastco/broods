@@ -6,6 +6,7 @@ import {
   test,
   setSystemTime,
 } from "bun:test";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import {
   AccountCipher,
   createWrappedAccountKey,
@@ -85,6 +86,31 @@ describe("account key cache", () => {
     await expect(
       decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", stale),
     ).rejects.toThrow("does not decrypt");
+  });
+
+  test("a legacy blob decrypts without loading keys", async () => {
+    // Core may roll out before the backend that serves `account.keys.list`.
+    resetAccountKeysForTests(async (): Promise<WrappedAccountKey[]> => {
+      throw new Error("Could not find function account/keys:list");
+    });
+    const iv = randomBytes(12);
+    const cipher = createCipheriv(
+      "aes-256-gcm",
+      createHash("sha256").update(SECRET).digest(),
+      iv,
+    );
+    const ciphertext = Buffer.concat([
+      cipher.update(JSON.stringify(VALUE), "utf-8"),
+      cipher.final(),
+    ]);
+
+    expect(
+      await decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", {
+        ciphertext: ciphertext.toString("base64url"),
+        iv: iv.toString("base64url"),
+        tag: cipher.getAuthTag().toString("base64url"),
+      }),
+    ).toEqual(VALUE);
   });
 
   test("refuses a blob bound to another column", async () => {

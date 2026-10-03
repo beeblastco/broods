@@ -9,6 +9,7 @@
 import type { FunctionReference } from "convex/server";
 import {
   AccountCipher,
+  blobKeyId,
   type BlobScope,
   type EncryptedBlob,
   type WrappedAccountKey,
@@ -17,6 +18,7 @@ import { requireSecretsEnv } from "../env.ts";
 import { getConvexClient } from "./client.ts";
 
 const KEYRING_TTL_MS = 5 * 60_000;
+const SECRETS_ENV = "ACCOUNT_CONFIG_ENCRYPTION_SECRET";
 
 /** Fetches an account's wrapped keys; swapped out by tests. */
 type WrappedKeyLoader = (accountId: string) => Promise<WrappedAccountKey[]>;
@@ -43,6 +45,8 @@ let loader: WrappedKeyLoader = loadFromConvex;
 /**
  * Decrypts one stored blob of `accountId`. A blob under a key the cached
  * keyring has not seen (a rotation since the last read) refreshes it once.
+ * A legacy blob needs no keyring, so core can roll out before the backend
+ * that serves the key list.
  * @throws when the blob does not decrypt under any key the account holds
  */
 export async function decryptAccountBlob(
@@ -50,7 +54,10 @@ export async function decryptAccountBlob(
   scope: BlobScope,
   blob: EncryptedBlob,
 ): Promise<Record<string, unknown>> {
-  let cipher = await keyringFor(accountId);
+  let cipher =
+    blobKeyId(blob) === null
+      ? new AccountCipher(accountId, requireSecretsEnv(SECRETS_ENV), [])
+      : await keyringFor(accountId);
   if (!cipher.hasKey(blob)) {
     keyrings.delete(accountId);
     cipher = await keyringFor(accountId);
@@ -75,12 +82,8 @@ function keyringFor(accountId: string): Promise<AccountCipher> {
   const cached = keyrings.get(accountId);
   if (cached && cached.expiresAt > Date.now()) return cached.cipher;
   const cipher = loader(accountId).then(
-    (keys) =>
-      new AccountCipher(
-        accountId,
-        requireSecretsEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"),
-        keys,
-      ),
+    (keys): AccountCipher =>
+      new AccountCipher(accountId, requireSecretsEnv(SECRETS_ENV), keys),
   );
   const entry: CachedKeyring = {
     cipher: cipher,
@@ -88,7 +91,7 @@ function keyringFor(accountId: string): Promise<AccountCipher> {
   };
   keyrings.set(accountId, entry);
   // A failed load is not kept for the whole window.
-  cipher.catch(() => {
+  cipher.catch((): void => {
     if (keyrings.get(accountId) === entry) keyrings.delete(accountId);
   });
 
