@@ -75,13 +75,25 @@ export async function handleAccountRoute(
     if (route.kind === "self") {
       if (req.method === "GET")
         return json({ account: toPublicAccount(account) });
-      if (req.method === "PATCH")
-        return await updateAccountResponse(
-          ctx,
-          account._id,
-          actor,
-          await parseJsonRequest(req),
-        );
+      if (req.method === "PATCH") {
+        const input = await parseJsonRequest(req);
+        // Retention decides when ledger rows are deleted, so a role needs
+        // audit:write for it on top of account:write.
+        if (
+          accountAuth.kind === "role" &&
+          isPlainObject(input) &&
+          input.auditRetentionDays !== undefined
+        ) {
+          const denial = roleDenial(
+            rolePrincipal(accountAuth.role),
+            req.method,
+            { type: "audit" },
+          );
+          if (denial) return jsonError(403, denial);
+        }
+
+        return await updateAccountResponse(ctx, account._id, actor, input);
+      }
 
       return methodNotAllowed(["GET", "PATCH"]);
     }

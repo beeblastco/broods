@@ -48,7 +48,19 @@ export const exportDue = internalAction({
         internal.audit.sinks.listDue,
         { cursor: cursor },
       );
-      await Promise.allSettled(page.due.map((sink) => exportSink(ctx, sink)));
+      const outcomes = await Promise.allSettled(
+        page.due.map((sink) => exportSink(ctx, sink)),
+      );
+      // A delivery failure is on the sink row as `lastError`; this is the
+      // export itself failing (a query or mutation), which leaves no row.
+      for (const [index, outcome] of outcomes.entries()) {
+        if (outcome.status === "rejected") {
+          console.error("Audit sink export failed", {
+            sinkId: page.due[index]?._id,
+            error: String(outcome.reason),
+          });
+        }
+      }
       cursor = page.cursor;
     } while (cursor !== null);
 

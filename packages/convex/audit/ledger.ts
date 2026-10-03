@@ -138,9 +138,12 @@ export const record = internalMutation({
 
 /**
  * Recompute the chain over `[fromSeq, toSeq]` (defaults: oldest kept row to
- * the head). The row before `fromSeq` anchors the first link when it is still
- * stored. Without `toSeq` the last row must also match the head, so a dropped
- * tail is reported at the first missing seq. At most 1000 rows per call.
+ * the head), at most 1000 rows per call; `checkedTo` says where it stopped.
+ * Stored rows are gapless from the oldest kept row to the head, so the nearest
+ * stored row below the range must be its direct predecessor and anchors the
+ * first link: a row deleted at the range start is reported, a pruned prefix
+ * is not. Without `toSeq` the last row must also match the head, so a dropped
+ * tail is reported at the first missing seq.
  */
 export const verifyChain = internalQuery({
   args: {
@@ -166,19 +169,38 @@ export const verifyChain = internalQuery({
       })
       .take(VERIFY_ROWS_MAX);
     const first = rows[0];
-    if (!first) return { ok: true };
-
-    // The genesis row links to ""; any other range anchors on the row before
-    // it when that row is still stored.
+    // The genesis row links to ""; anything else anchors on the nearest
+    // stored row below it.
     const before =
-      first.seq === 1
+      first?.seq === 1
         ? null
         : await ctx.db
             .query("auditEvents")
             .withIndex("by_accountId_and_seq", (q) =>
-              q.eq("accountId", args.accountId).eq("seq", first.seq - 1),
+              q
+                .eq("accountId", args.accountId)
+                .lt("seq", first?.seq ?? fromSeq),
             )
-            .unique();
+            .order("desc")
+            .first();
+    const tip = await chainHead(ctx, args.accountId);
+    if (!first) {
+      // An empty range is only fine when nothing should be there: the row
+      // after a stored one exists unless that one is the head, and an
+      // open-ended range always holds the head row, which is never pruned.
+      if (before && tip && tip.seq > before.seq) {
+        return { ok: false, brokenAtSeq: before.seq + 1 };
+      }
+      if (!before && tip && toSeq === undefined && tip.seq >= fromSeq) {
+        return { ok: false, brokenAtSeq: tip.seq };
+      }
+
+      return { ok: true };
+    }
+    if (before && before.seq !== first.seq - 1) {
+      return { ok: false, brokenAtSeq: before.seq + 1 };
+    }
+
     const result = await verifyChainRows(
       rows,
       first.seq === 1 ? "" : before?.hash,
@@ -187,7 +209,6 @@ export const verifyChain = internalQuery({
     const range = { checkedFrom: first.seq, checkedTo: last.seq };
     if (!result.ok) return { ...result, ...range };
 
-    const tip = await chainHead(ctx, args.accountId);
     const reachedEnd = toSeq === undefined && rows.length < VERIFY_ROWS_MAX;
     if (reachedEnd && tip && (tip.seq !== last.seq || tip.hash !== last.hash)) {
       return { ok: false, brokenAtSeq: last.seq + 1, ...range };

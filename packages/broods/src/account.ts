@@ -1275,7 +1275,11 @@ export class BroodsAccountClient {
 
       return result;
     },
-    /** Recompute the chain over `[fromSeq, toSeq]`, the whole kept ledger by default. */
+    /**
+     * Recompute the chain over `[fromSeq, toSeq]`, from the oldest kept row by
+     * default, at most 1000 rows per call. `ok` covers only `checkedFrom` to
+     * `checkedTo`; on a longer ledger call again with `fromSeq: checkedTo + 1`.
+     */
     verify: async (
       options: { fromSeq?: number; toSeq?: number } = {},
     ): Promise<AuditVerification> => {

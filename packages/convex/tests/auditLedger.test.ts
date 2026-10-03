@@ -196,6 +196,43 @@ describe("chain", () => {
     ).toEqual({ ok: false, brokenAtSeq: 2, checkedFrom: 1, checkedTo: 1 });
   });
 
+  test("rows deleted at the start of a requested range are reported", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    for (let index = 0; index < 5; index += 1) {
+      await record(t, accountId, `row ${index + 1}`);
+    }
+    const rows = await allRows(t, accountId);
+    await t.run(async (ctx) => {
+      await ctx.db.delete(rows[2]!._id);
+    });
+
+    // A reader paging from seq 3 must not be told the rest is intact.
+    expect(
+      await t.query(internal.audit.ledger.verifyChain, {
+        accountId: accountId,
+        fromSeq: 3,
+      }),
+    ).toMatchObject({ ok: false, brokenAtSeq: 3 });
+  });
+
+  test("a ledger emptied behind its head does not verify", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    await record(t, accountId, "first");
+    await record(t, accountId, "second");
+    const rows = await allRows(t, accountId);
+    await t.run(async (ctx) => {
+      for (const row of rows) await ctx.db.delete(row._id);
+    });
+
+    expect(
+      await t.query(internal.audit.ledger.verifyChain, {
+        accountId: accountId,
+      }),
+    ).toEqual({ ok: false, brokenAtSeq: 2 });
+  });
+
   test("verifyChainRows checks the first link only when the anchor is known", async () => {
     const t = ledgerTest();
     const accountId = await seedAccount(t);
@@ -325,6 +362,45 @@ describe("routes", () => {
       headers: { Authorization: `Bearer ${ACCOUNT_SECRET}` },
     });
     expect(bad.status).toBe(400);
+  });
+
+  test("a malformed or oversized page param is refused, not defaulted", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    await record(t, accountId, "first");
+
+    for (const query of ["since=bad", "limit=bad", `since=${"9".repeat(40)}`]) {
+      const response = await t.fetch(`/v1/audit?${query}`, {
+        headers: { Authorization: `Bearer ${ACCOUNT_SECRET}` },
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  test("a role needs audit:write to change retention, not only account:write", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    const patch = async (token: string): Promise<number> => {
+      const response = await t.fetch("/v1/account", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ auditRetentionDays: 1 }),
+      });
+
+      return response.status;
+    };
+
+    expect(
+      await patch(await roleSession(t, accountId, ["account:write"])),
+    ).toBe(403);
+    expect(
+      await patch(
+        await roleSession(t, accountId, ["account:write", "audit:write"]),
+      ),
+    ).toBe(200);
   });
 
   test("a role needs audit:read to list and audit:write to set the sink", async () => {
@@ -552,7 +628,9 @@ async function record(
 async function roleSession(
   t: T,
   accountId: Id<"accounts">,
-  actions: Array<"audit:read" | "agents:read">,
+  actions: Array<
+    "account:write" | "agents:read" | "audit:read" | "audit:write"
+  >,
 ): Promise<string> {
   const created = await t.mutation(internal.account.roles.createInternal, {
     accountId: accountId,

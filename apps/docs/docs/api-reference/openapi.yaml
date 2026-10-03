@@ -924,7 +924,8 @@ paths:
                   description: >-
                     Days an audit ledger row is kept. With a sink, a row it has
                     not exported yet stays past that. `null` returns to the
-                    default of 90.
+                    default of 90. A role needs `audit:write` as well as
+                    `account:write` to set it.
             examples:
               updateDescription:
                 value:
@@ -2919,8 +2920,10 @@ paths:
       tags: [Audit]
       summary: Verify the audit chain
       description: >-
-        Recomputes every row's hash and link over `[fromSeq, toSeq]`, the
-        whole kept ledger by default, at most 1000 rows per call. Without
+        Recomputes every row's hash and link over `[fromSeq, toSeq]`, from the
+        oldest kept row by default, at most 1000 rows per call. `ok` covers
+        only `checkedFrom` to `checkedTo`; on a longer ledger call again with
+        `fromSeq` set to `checkedTo + 1`. Without
         `toSeq` the last row must also match the chain head, so a dropped tail
         reports at the first missing `seq`. Pruned rows below the oldest kept
         row are not an error: that row's own hash still pins its `prevHash`.

@@ -113,12 +113,13 @@ export function parseAuditRoute(pathname: string): AuditLeaf | null {
   return null;
 }
 
-/** A non-negative integer query param: undefined when absent, null when malformed. */
+/** A non-negative integer query param: undefined when absent, null when malformed or too large to be exact. */
 function integerParam(url: URL, name: string): number | null | undefined {
   const raw = url.searchParams.get(name)?.trim();
   if (raw === undefined || raw === "") return undefined;
+  const value = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
 
-  return /^\d+$/.test(raw) ? Number(raw) : null;
+  return Number.isSafeInteger(value) ? value : null;
 }
 
 /** `GET /v1/audit`: one page of rows after `since`, with the chain head. */
@@ -128,15 +129,18 @@ async function listResponse(
   accountId: Id<"accounts">,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const since = integerParam(url, "since") ?? 0;
+  const since = integerParam(url, "since");
   if (since === null) {
     return jsonError(400, "since must be a non-negative integer.", {
       code: "invalid_since",
       param: "since",
     });
   }
-  const limit = integerParam(url, "limit") ?? DEFAULT_LIST_LIMIT;
-  if (limit === null || limit < 1 || limit > AUDIT_LIST_LIMIT_MAX) {
+  const limit = integerParam(url, "limit");
+  if (
+    limit === null ||
+    (limit !== undefined && (limit < 1 || limit > AUDIT_LIST_LIMIT_MAX))
+  ) {
     return jsonError(
       400,
       `limit must be an integer between 1 and ${AUDIT_LIST_LIMIT_MAX}.`,
@@ -149,8 +153,8 @@ async function listResponse(
     await Promise.all([
       ctx.runQuery(internal.audit.ledger.list, {
         accountId: accountId,
-        since: since,
-        limit: limit,
+        since: since ?? 0,
+        limit: limit ?? DEFAULT_LIST_LIMIT,
       }),
       ctx.runQuery(internal.audit.ledger.head, { accountId: accountId }),
     ]);
@@ -158,7 +162,7 @@ async function listResponse(
 
   return json({
     events: events,
-    nextSince: events[events.length - 1]?.seq ?? since,
+    nextSince: events[events.length - 1]?.seq ?? since ?? 0,
     head: head,
   });
 }

@@ -146,7 +146,7 @@ flowchart LR
 - Verify: `GET /v1/audit/verify` (internal query `audit.ledger.verifyChain`) recomputes every hash and link over a range, 1000 rows per call. Without `toSeq` the last row must match the head, so a deleted tail is reported at the first missing `seq`. Editing a row breaks its own hash; re-hashing it breaks the next row's `prevHash`.
 - Export: `PUT /v1/audit/sink` stores one webhook per account, the secret encrypted with the agent-config codec. The `export audit events` cron posts the rows past `exportedSeq` as JSON arrays of up to 200, at most 10 batches per sink per tick, each with `X-Broods-Signature: sha256=<hmac>`, the same shape as lifecycle webhooks, and advances the watermark on each 2xx. Sinks export side by side with a 10 second timeout, so one receiver cannot hold up another account's export. The url is held to public `https` by the same `assertPublicHttpsUrl` the rest of the config plane uses.
 - Retention: `pruneExpired` sweeps every account with a ledger and deletes rows older than the account's `auditRetentionDays` (90 by default, settable through `PATCH /v1/account`). When the account has a sink, `exportedSeq` is a floor: a row the sink has not exported is never dropped, however old. The head row is never deleted, and rows go oldest first with no gap, so the kept range always verifies from its oldest row to the head.
-- Access: the account secret, or a role with `audit:read` for the ledger and `audit:write` for the sink.
+- Access: the account secret, or a role with `audit:read` for the ledger and `audit:write` for the sink. Setting `auditRetentionDays` takes `audit:write` on top of `account:write`, since it decides when rows are deleted.
 
 ## Limits
 
