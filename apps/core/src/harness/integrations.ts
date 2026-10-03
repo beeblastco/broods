@@ -881,6 +881,7 @@ async function handleHttpRequest(
         request.headers,
         auth.account,
         context,
+        auth.kind === "agent" ? auth : undefined,
       )),
       principalChain:
         auth.kind === "agent"
@@ -2074,16 +2075,20 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(text);
 }
 
-/** Own agent, or one its config lists under `subagent.allowed`. */
+/** Own agent, or one `run_subagent` would reach: subagents enabled and the target in `subagent.allowed`. */
 async function runTokenMayStart(
   principal: Principal,
   agentId: string,
   context: Pick<HttpRoutingContext, "agentLoader">,
 ): Promise<boolean> {
   if (agentId === principal.agentId) return true;
-  const own = await context.agentLoader(principal.accountId, principal.agentId);
+  const subagent = (
+    await context.agentLoader(principal.accountId, principal.agentId)
+  )?.config.subagent;
 
-  return own?.config.subagent?.allowed?.includes(agentId) === true;
+  return (
+    subagent?.enabled === true && subagent.allowed?.includes(agentId) === true
+  );
 }
 
 /** The one refusal a run token gets outside its two routes and its own agent. */
@@ -2144,8 +2149,9 @@ async function parseDirectPayload(
   headers: Record<string, string>,
   account: AccountRecord,
   context: Pick<HttpRoutingContext, "agentLoader" | "deploymentLoader">,
-  deploymentAuth?: Extract<AuthContext, { kind: "deployment" }>,
+  auth?: Extract<AuthContext, { kind: "deployment" | "agent" }>,
 ): Promise<DirectInboundEvent> {
+  const deploymentAuth = auth?.kind === "deployment" ? auth : undefined;
   let parsed: unknown;
 
   try {
@@ -2210,6 +2216,9 @@ async function parseDirectPayload(
 
   const overrides = parseRunOverrides(record);
   assertRunOverridesAllowed(embeddableKey, agent, overrides, events);
+  if (auth?.kind === "agent") {
+    assertRunTokenPayload(continuation, events, answers, overrides);
+  }
   assertOneDirectPayloadShape(continuation, {
     eventCount: events.length,
     answerCount: answers.length,
@@ -2367,6 +2376,30 @@ function assertRunOverridesAllowed(
     throw new DirectForbiddenError(
       `Agent ${agent.agentId} does not accept system messages or model overrides from a runtime key. Set allowRunOverrides: true and redeploy to allow them.`,
       { code: "run_overrides_disabled", param: "allowRunOverrides" },
+    );
+  }
+}
+
+/**
+ * A run token asks the way `run_subagent` does, with user messages. Approvals,
+ * answers, system messages, overrides and `continue` stay with a person or a
+ * key, so sandbox code never approves its own agent's tool calls.
+ */
+function assertRunTokenPayload(
+  continuation: boolean,
+  events: DirectIngressEvent[],
+  answers: QuestionAnswer[],
+  overrides: RunOverrides | undefined,
+): void {
+  if (
+    continuation ||
+    answers.length > 0 ||
+    overrides !== undefined ||
+    events.some((event) => event.role !== "user")
+  ) {
+    throw new DirectForbiddenError(
+      "A run token sends user messages only: no tool approvals, answers, system messages, model overrides or continue.",
+      { code: "run_token_scope" },
     );
   }
 }

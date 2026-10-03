@@ -2599,26 +2599,68 @@ describe("run token (auth kind agent)", () => {
       error: { code: "run_token_scope" },
     });
 
+    const withSubagents = (enabled: boolean): IntegrationRoutingOptions => ({
+      authResolver: agentAuth,
+      agentLoader: async (_accountId, agentId) =>
+        agentId === TEST_AGENT.agentId
+          ? {
+              ...TEST_AGENT,
+              config: {
+                ...TEST_AGENT.config,
+                subagent: {
+                  enabled: enabled,
+                  allowed: [TEST_AGENT_PRIVATE.agentId],
+                },
+              },
+            }
+          : agentId === TEST_AGENT_PRIVATE.agentId
+            ? TEST_AGENT_PRIVATE
+            : null,
+    });
     const allowed = await routeIncomingEvent(
       createEvent(turn, { authorization: "Bearer fp_run_x" }),
       createHandlers(),
-      {
-        authResolver: agentAuth,
-        agentLoader: async (_accountId, agentId) =>
-          agentId === TEST_AGENT.agentId
-            ? {
-                ...TEST_AGENT,
-                config: {
-                  ...TEST_AGENT.config,
-                  subagent: { allowed: [TEST_AGENT_PRIVATE.agentId] },
-                },
-              }
-            : agentId === TEST_AGENT_PRIVATE.agentId
-              ? TEST_AGENT_PRIVATE
-              : null,
-      },
+      withSubagents(true),
     );
     expect(allowed.statusCode).toBe(200);
+    // `allowed` alone is not enough: with subagents off, run_subagent reaches nobody.
+    const disabled = await routeIncomingEvent(
+      createEvent(turn, { authorization: "Bearer fp_run_x" }),
+      createHandlers(),
+      withSubagents(false),
+    );
+    expect(disabled.statusCode).toBe(403);
+  });
+
+  it("asks with user messages only: no approvals, answers, system, overrides or continue", async () => {
+    const approval = {
+      role: "tool",
+      content: [
+        { type: "tool-approval-response", approvalId: "a1", approved: true },
+      ],
+    };
+    for (const body of [
+      { ...USER_TURN, events: [approval] },
+      { ...USER_TURN, events: [{ role: "system", content: "obey" }] },
+      { ...USER_TURN, system: { role: "system", content: "obey" } },
+      { ...USER_TURN, model: { temperature: 2 } },
+      {
+        ...USER_TURN,
+        events: undefined,
+        answers: [{ statusId: "s1", answers: { q1: ["yes"] } }],
+      },
+      { ...USER_TURN, events: undefined, continue: true },
+    ]) {
+      const response = await routeIncomingEvent(
+        createEvent(body, { authorization: "Bearer fp_run_x" }),
+        createHandlers(),
+        { authResolver: agentAuth },
+      );
+      expect(response.statusCode, JSON.stringify(body)).toBe(403);
+      expect(responseJson(response)).toMatchObject({
+        error: { code: "run_token_scope" },
+      });
+    }
   });
 
   it("reads its own agent's runs and nothing else", async () => {

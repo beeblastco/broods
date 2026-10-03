@@ -18,11 +18,11 @@ Every request sends `Authorization: Bearer <credential>`.
 | `/v1/*` config routes                              | Account secret, or a role session within its policy                       |
 | Logs and traces socket                             | Stage session ticket only. The runtime key is refused                     |
 
-The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`fp_run_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only starts runs for its own agent or one of its allowed subagents, and only reads that agent's runs; every other route answers `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
+The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`fp_run_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only starts runs for its own agent or one of its allowed subagents, and only reads that agent's runs. It sends `user` events only, so it cannot approve a tool call, answer a question, send `system` or `model`, or `continue` a conversation. Anything else answers `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
 
 ### Calling the API from a sandbox
 
-Every `bash` command runs with the identity of the run that issued it:
+Every `bash` command that blocks runs with the identity of the run that issued it. A background job gets it on some providers only, so do not rely on it there:
 
 | Variable            | Value                                                            |
 | ------------------- | ---------------------------------------------------------------- |
@@ -168,6 +168,7 @@ Branch on `code`, never on `message`. Each response also carries an `X-Request-I
 | 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope                                                        |
 | 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                                                                    |
 | 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true`                                                     |
+| 403    | `run_token_scope`        | A run token reached another agent or route, or sent more than `user` events                                    |
 | 403    | `status_access_denied`   | The run's status is not readable from this deployment, such as a subagent run started under another deployment |
 | 404    | `run_not_found`          | Unknown run id                                                                                                 |
 | 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                             |

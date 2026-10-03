@@ -225,12 +225,18 @@ paths:
                       type: invalid_request_error
                       code: budget_exhausted
         "403":
-          description: Agent has not opted into public access (secure by default), or a runtime key sent run overrides the agent does not allow
+          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, or a run token asked for more than its scope
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token sends user messages only: no tool approvals, answers, system messages, model overrides or continue."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
@@ -3494,10 +3500,11 @@ components:
         observability socket.
         A run token (`fp_run_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)
         works only on `POST /v1/runs` for its own agent or one of that agent's
-        allowed subagents, and on `GET /v1/runs/{runId}` for that agent's runs;
-        every other run route answers 403 `run_token_scope`, and every
-        config-plane route answers 401. It expires shortly after the run's
-        time budget.
+        allowed subagents, and on `GET /v1/runs/{runId}` for that agent's runs.
+        It sends `user` events only: tool approvals, `answers`, `system`,
+        `model` and `continue` answer 403 `run_token_scope`, and so does every
+        other run route. Every config-plane route answers 401. It expires
+        shortly after the run's time budget.
     AdminAuth:
       type: http
       scheme: bearer
