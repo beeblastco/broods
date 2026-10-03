@@ -29,7 +29,6 @@ import { logDebug, logInfo, logWarn } from "../shared/log.ts";
 import { COMPUTER_READ_ACTIONS } from "../shared/machine-socket.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import { getStorage } from "../shared/storage.ts";
-import { recordAuditEvent } from "../shared/telemetry.ts";
 import type {
   ResolvedAgentSandbox,
   ResolvedWorkspace,
@@ -257,8 +256,9 @@ export async function createPolicyToolApproval(
         // Only a denial that stopped the tool reaches the ledger; an audited
         // policy's would-deny is a log line, not an account event. The log
         // message carries the input preview, so the row gets its own summary.
+        // Not awaited: the store logs a failed write and never throws.
         if (event.decision.type === "denied" && event.enforced) {
-          void recordAuditEvent({
+          void getStorage().auditLedger.append({
             accountId: accountId,
             agentId: baseInput.agentId,
             traceId: getObservabilityContext()?.traceId,

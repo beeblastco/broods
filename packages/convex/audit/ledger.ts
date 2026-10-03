@@ -16,17 +16,12 @@ import {
 import {
   AUDIT_LIST_LIMIT_MAX,
   appendAuditEvent,
+  auditChainHeadRow,
   verifyChainRows,
-  type AuditActor,
   type AuditChainHead,
-  type AuditResource,
   type ChainVerification,
 } from "../model/auditEvents";
-import {
-  auditActorKindValidator,
-  auditEventsFields,
-  auditResourceKindValidator,
-} from "../schema";
+import { auditEventsFields } from "../schema";
 
 const DEFAULT_RETENTION_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -117,19 +112,9 @@ export const record = internalMutation({
     projectId: v.optional(v.id("projects")),
     stageId: v.optional(v.id("stages")),
     traceId: v.optional(v.string()),
-    actor: v.object({
-      kind: auditActorKindValidator,
-      id: v.optional(v.string()),
-      email: v.optional(v.string()),
-      name: v.optional(v.string()),
-      agentId: v.optional(v.string()),
-    }),
+    actor: auditEventsFields.actor,
     action: v.string(),
-    resource: v.object({
-      kind: auditResourceKindValidator,
-      id: v.optional(v.string()),
-      name: v.optional(v.string()),
-    }),
+    resource: auditEventsFields.resource,
     summary: v.string(),
     detailsJson: v.optional(v.string()),
   },
@@ -140,9 +125,9 @@ export const record = internalMutation({
       projectId: args.projectId,
       stageId: args.stageId,
       traceId: args.traceId,
-      actor: args.actor as AuditActor,
+      actor: args.actor,
       action: args.action,
-      resource: args.resource as AuditResource,
+      resource: args.resource,
       summary: args.summary,
       detailsJson: args.detailsJson,
     });
@@ -167,12 +152,7 @@ export const verifyChain = internalQuery({
     checkedFrom: v.optional(v.number()),
     checkedTo: v.optional(v.number()),
   }),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<
-    ChainVerification & { checkedFrom?: number; checkedTo?: number }
-  > => {
+  handler: async (ctx, args): Promise<ChainVerification> => {
     const fromSeq = Math.max(1, Math.floor(args.fromSeq ?? 1));
     const toSeq = args.toSeq === undefined ? undefined : Math.floor(args.toSeq);
     const rows = await ctx.db
@@ -186,12 +166,17 @@ export const verifyChain = internalQuery({
     const first = rows[0];
     if (!first) return { ok: true };
 
-    const before = await ctx.db
-      .query("auditEvents")
-      .withIndex("by_accountId_and_seq", (q) =>
-        q.eq("accountId", args.accountId).eq("seq", first.seq - 1),
-      )
-      .unique();
+    // The genesis row links to ""; any other range anchors on the row before
+    // it when that row is still stored.
+    const before =
+      first.seq === 1
+        ? null
+        : await ctx.db
+            .query("auditEvents")
+            .withIndex("by_accountId_and_seq", (q) =>
+              q.eq("accountId", args.accountId).eq("seq", first.seq - 1),
+            )
+            .unique();
     const result = await verifyChainRows(
       rows,
       first.seq === 1 ? "" : before?.hash,
@@ -214,10 +199,7 @@ async function chainHead(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
 ): Promise<AuditChainHead> {
-  const row = await ctx.db
-    .query("auditChainHeads")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-    .unique();
+  const row = await auditChainHeadRow(ctx.db, accountId);
 
   return row ? { seq: row.seq, hash: row.hash } : null;
 }
@@ -240,17 +222,18 @@ async function pruneAccount(
   // Below the watermark and below the head: the head row is the chain tip
   // and stays whatever its age.
   const belowSeq = Math.min(sink.exportedSeq + 1, tip.seq);
+  // Only rows past retention are read, so a caught-up account reads nothing.
   const rows = await ctx.db
     .query("auditEvents")
-    .withIndex("by_accountId_and_seq", (q) =>
-      q.eq("accountId", sink.accountId).lt("seq", belowSeq),
+    .withIndex("by_accountId_and_at", (q) =>
+      q.eq("accountId", sink.accountId).lt("at", cutoff),
     )
     .take(PRUNE_BATCH_SIZE);
   let deleted = 0;
   for (const row of rows) {
-    // Rows are in seq order and `at` only grows with seq, so the first row
-    // inside the window ends the batch.
-    if (row.at >= cutoff) break;
+    // Rows are in `at` order and `at` only grows with seq, so the first row
+    // at or past the watermark ends the batch.
+    if (row.seq >= belowSeq) break;
     await ctx.db.delete(row._id);
     deleted += 1;
   }

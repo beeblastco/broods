@@ -1262,13 +1262,10 @@ export class BroodsAccountClient {
     list: async (
       options: { since?: number; limit?: number } = {},
     ): Promise<AuditPage> => {
-      const query = new URLSearchParams();
-      if (options.since !== undefined)
-        query.set("since", String(options.since));
-      if (options.limit !== undefined)
-        query.set("limit", String(options.limit));
-      const suffix = query.size > 0 ? `?${query.toString()}` : "";
-      const result = await this.request<AuditPage>("GET", `/v1/audit${suffix}`);
+      const result = await this.request<AuditPage>(
+        "GET",
+        `/v1/audit${optionalQuery(options)}`,
+      );
       if (!result)
         throw new BroodsAccountApiError("GET", "/v1/audit", 404, "Not found");
 
@@ -1278,15 +1275,9 @@ export class BroodsAccountClient {
     verify: async (
       options: { fromSeq?: number; toSeq?: number } = {},
     ): Promise<AuditVerification> => {
-      const query = new URLSearchParams();
-      if (options.fromSeq !== undefined)
-        query.set("fromSeq", String(options.fromSeq));
-      if (options.toSeq !== undefined)
-        query.set("toSeq", String(options.toSeq));
-      const suffix = query.size > 0 ? `?${query.toString()}` : "";
       const result = await this.request<AuditVerification>(
         "GET",
-        `/v1/audit/verify${suffix}`,
+        `/v1/audit/verify${optionalQuery(options)}`,
       );
       if (!result)
         throw new BroodsAccountApiError(
@@ -1482,6 +1473,16 @@ export class BroodsAccountClient {
 
 function envVar(name: string): string | undefined {
   return typeof process !== "undefined" ? process?.env?.[name] : undefined;
+}
+
+/** `?a=1&b=2` from the defined entries, or "" when none is set. */
+function optionalQuery(params: Record<string, number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(name, String(value));
+  }
+
+  return query.size > 0 ? `?${query.toString()}` : "";
 }
 
 function stageScopeQuery(scope: StageScope): string {

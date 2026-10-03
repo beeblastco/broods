@@ -12,9 +12,10 @@ import {
   internalMutation,
   internalQuery,
   type ActionCtx,
+  type QueryCtx,
 } from "../_generated/server";
 import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
-import { publicAuditEvent } from "../model/auditEvents";
+import { auditChainHeadRow, publicAuditEvent } from "../model/auditEvents";
 import { AUDIT_SIGNATURE_HEADER, signAuditExport } from "../model/auditSinks";
 import { configEncryptionSecret } from "../config/routes/shared";
 import { auditSinksFields } from "../schema";
@@ -34,10 +35,7 @@ export const get = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.union(auditSinkDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"auditSinks"> | null> => {
-    return await ctx.db
-      .query("auditSinks")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-      .unique();
+    return await sinkForAccount(ctx.db, args.accountId);
   },
 });
 
@@ -47,16 +45,15 @@ export const listDue = internalQuery({
   returns: v.array(auditSinkDoc),
   handler: async (ctx): Promise<Doc<"auditSinks">[]> => {
     const sinks = await ctx.db.query("auditSinks").take(DUE_SINKS_MAX);
-    const due: Doc<"auditSinks">[] = [];
-    for (const sink of sinks) {
-      const tip = await ctx.db
-        .query("auditChainHeads")
-        .withIndex("by_accountId", (q) => q.eq("accountId", sink.accountId))
-        .unique();
-      if (tip && tip.seq > sink.exportedSeq) due.push(sink);
-    }
+    const tips = await Promise.all(
+      sinks.map((sink) => auditChainHeadRow(ctx.db, sink.accountId)),
+    );
 
-    return due;
+    return sinks.filter((sink, index) => {
+      const tip = tips[index];
+
+      return tip !== null && tip !== undefined && tip.seq > sink.exportedSeq;
+    });
   },
 });
 
@@ -110,9 +107,9 @@ export const markExported = internalMutation({
 });
 
 /**
- * Create or replace the account's sink. A new url or secret keeps the
- * watermark: the ledger is one stream, and the receiver that moved still
- * wants only what it has not seen.
+ * Create or replace the account's sink and return the stored row. A new url
+ * or secret keeps the watermark: the ledger is one stream, and the receiver
+ * that moved still wants only what it has not seen.
  */
 export const put = internalMutation({
   args: {
@@ -122,12 +119,9 @@ export const put = internalMutation({
     secretIv: v.string(),
     secretTag: v.string(),
   },
-  returns: v.id("auditSinks"),
-  handler: async (ctx, args): Promise<Id<"auditSinks">> => {
-    const existing = await ctx.db
-      .query("auditSinks")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-      .unique();
+  returns: auditSinkDoc,
+  handler: async (ctx, args): Promise<Doc<"auditSinks">> => {
+    const existing = await sinkForAccount(ctx.db, args.accountId);
     const fields = {
       url: args.url,
       encryptedSecret: args.encryptedSecret,
@@ -136,18 +130,19 @@ export const put = internalMutation({
       lastError: undefined,
       updatedAt: Date.now(),
     };
-    if (existing) {
-      await ctx.db.patch(existing._id, fields);
+    const sinkId = existing
+      ? existing._id
+      : await ctx.db.insert("auditSinks", {
+          accountId: args.accountId,
+          kind: "webhook",
+          exportedSeq: 0,
+          ...fields,
+        });
+    if (existing) await ctx.db.patch(sinkId, fields);
+    const sink = await ctx.db.get(sinkId);
+    if (!sink) throw new Error("Audit sink vanished during put");
 
-      return existing._id;
-    }
-
-    return await ctx.db.insert("auditSinks", {
-      accountId: args.accountId,
-      kind: "webhook",
-      exportedSeq: 0,
-      ...fields,
-    });
+    return sink;
   },
 });
 
@@ -156,16 +151,24 @@ export const remove = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const existing = await ctx.db
-      .query("auditSinks")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-      .unique();
+    const existing = await sinkForAccount(ctx.db, args.accountId);
     if (!existing) return false;
     await ctx.db.delete(existing._id);
 
     return true;
   },
 });
+
+/** The one sink row an account may have. */
+async function sinkForAccount(
+  db: QueryCtx["db"],
+  accountId: Id<"accounts">,
+): Promise<Doc<"auditSinks"> | null> {
+  return await db
+    .query("auditSinks")
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .unique();
+}
 
 /** Post one batch to one sink and record the outcome. */
 async function exportSink(

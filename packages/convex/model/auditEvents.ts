@@ -13,23 +13,11 @@ import { stableJson, stripUndefined } from "./objects";
 /** Most rows one `GET /v1/audit` page or one sink batch carries. */
 export const AUDIT_LIST_LIMIT_MAX = 500;
 const DETAILS_JSON_LIMIT_BYTES = 8 * 1024;
+const ENCODER = new TextEncoder();
 const TRUNCATED_MARKER = "…[truncated]";
 
-export type AuditActor = {
-  kind:
-    | "dashboardUser"
-    | "apiAccountSecret"
-    | "admin"
-    | "service"
-    | "cli"
-    | "deployKey"
-    | "role"
-    | "agent";
-  id?: string;
-  email?: string;
-  name?: string;
-  agentId?: string;
-};
+/** Who wrote a row; the schema validator is the one list of kinds. */
+export type AuditActor = Doc<"auditEvents">["actor"];
 
 export type AuditEventInput = {
   accountId: Id<"accounts">;
@@ -64,36 +52,16 @@ export type AuditChainHead = { seq: number; hash: string } | null;
 export type AuditChainRow = AuditHashedFields &
   Pick<Doc<"auditEvents">, "hash">;
 
-export type AuditResource = {
-  kind:
-    | "account"
-    | "agent"
-    | "skill"
-    | "hook"
-    | "mcp"
-    | "workspace"
-    | "workspaceFile"
-    | "cron"
-    | "sandbox"
-    | "policy"
-    | "role"
-    | "channel"
-    | "environmentVariable"
-    | "deployment"
-    | "webhook"
-    | "manifest"
-    | "run"
-    | "tool"
-    | "auditSink"
-    | "unknown";
-  id?: string;
-  name?: string;
-};
+/** What a row is about; the schema validator is the one list of kinds. */
+export type AuditResource = Doc<"auditEvents">["resource"];
 
 export type ChainVerification = {
   ok: boolean;
   /** First row whose hash or link does not match; absent when `ok`. */
   brokenAtSeq?: number;
+  /** The seq range that was recomputed, when any row was. */
+  checkedFrom?: number;
+  checkedTo?: number;
 };
 
 /** A ledger row as `GET /v1/audit` and the webhook sink serve it. */
@@ -144,10 +112,7 @@ export async function appendAuditEvent(
   db: MutationCtx["db"],
   event: AuditEventInput,
 ): Promise<Id<"auditEvents">> {
-  const head = await db
-    .query("auditChainHeads")
-    .withIndex("by_accountId", (q) => q.eq("accountId", event.accountId))
-    .unique();
+  const head = await auditChainHeadRow(db, event.accountId);
   const hashed: AuditHashedFields = {
     accountId: event.accountId,
     seq: (head?.seq ?? 0) + 1,
@@ -180,6 +145,21 @@ export async function appendAuditEvent(
   }
 
   return rowId;
+}
+
+/**
+ * The account's ledger tip row, or null before its first append.
+ * @param db Convex database reader.
+ * @param accountId the account whose chain to read.
+ */
+export async function auditChainHeadRow(
+  db: QueryCtx["db"],
+  accountId: Id<"accounts">,
+): Promise<Doc<"auditChainHeads"> | null> {
+  return await db
+    .query("auditChainHeads")
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .unique();
 }
 
 /**
@@ -239,7 +219,7 @@ export function dashboardAuditActor(user: {
  * @returns the public row
  */
 export function publicAuditEvent(row: Doc<"auditEvents">): PublicAuditEvent {
-  return stripUndefined({
+  return {
     accountId: row.accountId,
     seq: row.seq,
     prevHash: row.prevHash,
@@ -253,7 +233,7 @@ export function publicAuditEvent(row: Doc<"auditEvents">): PublicAuditEvent {
     projectId: row.projectId,
     stageId: row.stageId,
     traceId: row.traceId,
-  });
+  };
 }
 
 /**
@@ -269,14 +249,17 @@ export async function verifyChainRows(
   rows: AuditChainRow[],
   prevHash?: string,
 ): Promise<ChainVerification> {
+  // Each hash depends only on its own row, so they recompute in parallel;
+  // only the links are walked in order.
+  const hashes = await Promise.all(rows.map(auditEventHash));
   let expectedPrevHash = prevHash;
   let expectedSeq: number | undefined;
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     const linked =
       (expectedSeq === undefined || row.seq === expectedSeq) &&
       (expectedPrevHash === undefined || row.prevHash === expectedPrevHash) &&
       (row.seq !== 1 || row.prevHash === "");
-    if (!linked || (await auditEventHash(row)) !== row.hash) {
+    if (!linked || hashes[index] !== row.hash) {
       return { ok: false, brokenAtSeq: row.seq };
     }
     expectedPrevHash = row.hash;
@@ -287,8 +270,9 @@ export async function verifyChainRows(
 }
 
 function capDetailsJson(value: string): string {
-  const encoder = new TextEncoder();
-  const byteLength = encoder.encode(value).byteLength;
+  // A UTF-16 unit encodes to at most three bytes, so a short string needs no encode.
+  if (value.length * 3 <= DETAILS_JSON_LIMIT_BYTES) return value;
+  const byteLength = ENCODER.encode(value).byteLength;
   if (byteLength <= DETAILS_JSON_LIMIT_BYTES) return value;
 
   // The field must stay parseable JSON, so an oversized payload is replaced

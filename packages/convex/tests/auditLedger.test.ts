@@ -11,7 +11,12 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
-import { auditEventHash, verifyChainRows } from "../model/auditEvents";
+import {
+  auditChainHeadRow,
+  auditEventHash,
+  verifyChainRows,
+  type PublicAuditEvent,
+} from "../model/auditEvents";
 import { signAuditExport } from "../model/auditSinks";
 import schema from "../schema";
 
@@ -249,15 +254,14 @@ describe("routes", () => {
     await record(t, accountId, "second");
     await record(t, accountId, "third");
 
-    const page = (await (
-      await t.fetch("/v1/audit?since=1&limit=1", {
-        headers: { Authorization: `Bearer ${ACCOUNT_SECRET}` },
-      })
-    ).json()) as {
-      events: Array<{ seq: number; summary: string; hash: string }>;
+    const response = await t.fetch("/v1/audit?since=1&limit=1", {
+      headers: { Authorization: `Bearer ${ACCOUNT_SECRET}` },
+    });
+    const page: {
+      events: PublicAuditEvent[];
       nextSince: number;
       head: { seq: number; hash: string };
-    };
+    } = await response.json();
     expect(page.events.map((event) => event.seq)).toEqual([2]);
     expect(page.nextSince).toBe(2);
     expect(page.head.seq).toBe(3);
@@ -329,7 +333,7 @@ describe("routes", () => {
     const read = await t.fetch("/v1/audit/sink", {
       headers: { Authorization: `Bearer ${ACCOUNT_SECRET}` },
     });
-    const body = (await read.json()) as Record<string, unknown>;
+    const body: Record<string, unknown> = await read.json();
     expect(body).not.toHaveProperty("encryptedSecret");
     expect(JSON.stringify(body)).not.toContain(SINK_SECRET);
 
@@ -365,7 +369,7 @@ describe("export", () => {
         const headers = new Headers(init.headers);
         posted.push({
           url: url,
-          body: String(init.body),
+          body: typeof init.body === "string" ? init.body : "",
           signature: headers.get("X-Broods-Signature") ?? "",
         });
 
@@ -377,7 +381,7 @@ describe("export", () => {
 
     expect(posted).toHaveLength(1);
     expect(posted[0]?.url).toBe("https://sink.example/audit");
-    const events = JSON.parse(posted[0]!.body) as Array<{ seq: number }>;
+    const events: PublicAuditEvent[] = JSON.parse(posted[0]!.body);
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
     expect(posted[0]?.signature).toBe(
       `sha256=${createHmac("sha256", SINK_SECRET).update(posted[0]!.body).digest("hex")}`,
@@ -431,10 +435,7 @@ async function backdate(
         hash: row.hash,
       });
     }
-    const head = await ctx.db
-      .query("auditChainHeads")
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .unique();
+    const head = await auditChainHeadRow(ctx.db, accountId);
     if (head) await ctx.db.patch(head._id, { hash: prevHash });
   });
 }
@@ -497,7 +498,7 @@ async function roleSession(
     },
     body: JSON.stringify({ roleId: created.roleId }),
   });
-  const body = (await response.json()) as { token: string };
+  const body: { token: string } = await response.json();
 
   return body.token;
 }
@@ -527,13 +528,15 @@ async function seedSink(
   t: T,
   accountId: Id<"accounts">,
 ): Promise<Id<"auditSinks">> {
-  return await t.mutation(internal.audit.sinks.put, {
+  const row = await t.mutation(internal.audit.sinks.put, {
     accountId: accountId,
     url: "https://sink.example/audit",
     encryptedSecret: "x",
     secretIv: "x",
     secretTag: "x",
   });
+
+  return row._id;
 }
 
 async function sink(

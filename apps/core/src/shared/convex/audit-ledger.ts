@@ -16,17 +16,15 @@ export const auditLedger: Storage["auditLedger"] = {
         internal.audit.ledger.record,
         {
           accountId: input.accountId as any,
-          ...(input.traceId ? { traceId: input.traceId } : {}),
-          actor: {
-            kind: "agent",
-            ...(input.agentId ? { agentId: input.agentId } : {}),
-          },
+          traceId: input.traceId,
+          actor: { kind: "agent", agentId: input.agentId },
           action: input.action,
           resource: input.resource,
           summary: input.summary,
-          ...(input.details
-            ? { detailsJson: JSON.stringify(input.details) }
-            : {}),
+          detailsJson:
+            input.details === undefined
+              ? undefined
+              : JSON.stringify(input.details),
         },
         { skipQueue: true },
       );

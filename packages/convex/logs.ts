@@ -10,7 +10,7 @@ import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { projectEndpointIds } from "./model/usageEndpoints";
-import { type UsageGrain } from "./usage";
+import { taskIdParts, type UsageGrain } from "./usage";
 
 const usageRange = v.union(
   v.literal("1h"),
@@ -263,7 +263,7 @@ export const fetchUsageTasks = query({
       .sort((a, b) => b.totalTokens - a.totalTokens)
       .slice(0, USAGE_TASK_RETURN_LIMIT)
       .map((row) => ({
-        traceId: traceIdFromTaskId(row.taskId),
+        traceId: taskIdParts(row.taskId).traceId ?? null,
         agentId: row.agentId,
         modelProvider: row.modelProvider,
         modelId: row.modelId,
@@ -455,11 +455,4 @@ function aggregateUsage(
   );
 
   return { buckets: buckets, totals: totals };
-}
-
-/** Trace id from a `${eventId}#${traceId}` task id, or null when it has none. */
-function traceIdFromTaskId(taskId: string): string | null {
-  const separator = taskId.lastIndexOf("#");
-
-  return separator === -1 ? null : taskId.slice(separator + 1) || null;
 }

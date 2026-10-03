@@ -70,18 +70,16 @@ export async function handleAuditRoute(
       { secret: input.secret },
       configEncryptionSecret(),
     );
-    await ctx.runMutation(internal.audit.sinks.put, {
-      accountId: accountId,
-      url: input.url,
-      encryptedSecret: blob.ciphertext,
-      secretIv: blob.iv,
-      secretTag: blob.tag,
-    });
-    const sink: Doc<"auditSinks"> | null = await ctx.runQuery(
-      internal.audit.sinks.get,
-      { accountId: accountId },
+    const sink: Doc<"auditSinks"> = await ctx.runMutation(
+      internal.audit.sinks.put,
+      {
+        accountId: accountId,
+        url: input.url,
+        encryptedSecret: blob.ciphertext,
+        secretIv: blob.iv,
+        secretTag: blob.tag,
+      },
     );
-    if (!sink) throw new Error("Failed to fetch audit sink");
     await writeAudit(ctx, {
       accountId: accountId,
       actor: actor,
@@ -114,17 +112,12 @@ export async function handleAuditRoute(
   return methodNotAllowed(["GET", "PUT", "DELETE"]);
 }
 
-/** A non-negative integer query param, `fallback` when absent, null when malformed. */
-function integerParam(
-  url: URL,
-  name: string,
-  fallback: number | undefined,
-): number | null | undefined {
-  const raw = url.searchParams.get(name)?.trim() ?? "";
-  if (raw === "") return fallback;
-  if (!/^\d+$/.test(raw)) return null;
+/** A non-negative integer query param: undefined when absent, null when malformed. */
+function integerParam(url: URL, name: string): number | null | undefined {
+  const raw = url.searchParams.get(name)?.trim();
+  if (raw === undefined || raw === "") return undefined;
 
-  return Number(raw);
+  return /^\d+$/.test(raw) ? Number(raw) : null;
 }
 
 async function listResponse(
@@ -133,28 +126,32 @@ async function listResponse(
   accountId: Id<"accounts">,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const since = integerParam(url, "since", 0);
-  if (since === null || since === undefined) {
+  const since = integerParam(url, "since") ?? 0;
+  if (since === null) {
     return jsonError(400, "since must be a non-negative integer.", {
       code: "invalid_since",
       param: "since",
     });
   }
-  const limit = integerParam(url, "limit", DEFAULT_LIST_LIMIT);
-  if (!limit || limit > AUDIT_LIST_LIMIT_MAX) {
+  const limit = integerParam(url, "limit") ?? DEFAULT_LIST_LIMIT;
+  if (limit === null || limit < 1 || limit > AUDIT_LIST_LIMIT_MAX) {
     return jsonError(
       400,
       `limit must be an integer between 1 and ${AUDIT_LIST_LIMIT_MAX}.`,
       { code: "invalid_limit", param: "limit" },
     );
   }
-  const rows: Doc<"auditEvents">[] = await ctx.runQuery(
-    internal.audit.ledger.list,
-    { accountId: accountId, since: since, limit: limit },
-  );
-  const head: AuditChainHead = await ctx.runQuery(internal.audit.ledger.head, {
-    accountId: accountId,
-  });
+  // Two snapshots: `head` may already sit past the page, which is what a
+  // reader paging toward the tip expects.
+  const [rows, head]: [Doc<"auditEvents">[], AuditChainHead] =
+    await Promise.all([
+      ctx.runQuery(internal.audit.ledger.list, {
+        accountId: accountId,
+        since: since,
+        limit: limit,
+      }),
+      ctx.runQuery(internal.audit.ledger.head, { accountId: accountId }),
+    ]);
   const events = rows.map(publicAuditEvent);
 
   return json({
@@ -180,22 +177,22 @@ async function verifyResponse(
   accountId: Id<"accounts">,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const fromSeq = integerParam(url, "fromSeq", undefined);
-  const toSeq = integerParam(url, "toSeq", undefined);
+  const fromSeq = integerParam(url, "fromSeq");
+  const toSeq = integerParam(url, "toSeq");
   if (fromSeq === null || toSeq === null) {
     return jsonError(400, "fromSeq and toSeq must be positive integers.", {
       code: "invalid_range",
       param: fromSeq === null ? "fromSeq" : "toSeq",
     });
   }
-  const result: ChainVerification & {
-    checkedFrom?: number;
-    checkedTo?: number;
-  } = await ctx.runQuery(internal.audit.ledger.verifyChain, {
-    accountId: accountId,
-    ...(fromSeq !== undefined ? { fromSeq: fromSeq } : {}),
-    ...(toSeq !== undefined ? { toSeq: toSeq } : {}),
-  });
+  const result: ChainVerification = await ctx.runQuery(
+    internal.audit.ledger.verifyChain,
+    {
+      accountId: accountId,
+      fromSeq: fromSeq,
+      toSeq: toSeq,
+    },
+  );
 
   return json(result);
 }

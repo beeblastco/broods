@@ -28,6 +28,20 @@ export const USAGE_GRAIN_MS: Record<UsageGrain, number> = {
 /** Rollup grain. */
 export type UsageGrain = "5m" | "hour" | "day";
 
+/** The two halves of a `${eventId}#${traceId}` task id; `traceId` is undefined when it has none. */
+export function taskIdParts(taskId: string): {
+  eventId: string;
+  traceId: string | undefined;
+} {
+  const separator = taskId.lastIndexOf("#");
+  if (separator === -1) return { eventId: taskId, traceId: undefined };
+
+  return {
+    eventId: taskId.slice(0, separator),
+    traceId: taskId.slice(separator + 1) || undefined,
+  };
+}
+
 /** Counter fields folded into a rollup bucket, summed identically per grain. */
 type RollupCounters = {
   inputTokens: number;
@@ -189,12 +203,12 @@ export const recordTaskUsage = internalMutation({
       });
     }
 
-    // `taskId` is `${eventId}#${traceId}`: the run is the resource, the trace
-    // the correlation key. Tool input and the prompt preview stay off the row.
-    const [eventId = "", traceId = ""] = args.taskId.split("#");
+    // The run is the resource, the trace the correlation key. Tool input and
+    // the prompt preview stay off the row.
+    const { eventId, traceId } = taskIdParts(args.taskId);
     await appendAuditEvent(ctx.db, {
       accountId: args.accountId,
-      ...(traceId ? { traceId: traceId } : {}),
+      traceId: traceId,
       actor: { kind: "agent", agentId: args.agentId },
       action: "run.completed",
       resource: { kind: "run", id: eventId },
