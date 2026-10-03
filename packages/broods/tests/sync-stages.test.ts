@@ -111,8 +111,44 @@ test("listStages rejects a non-JSON 404 as a missing stages route", async () => 
   );
 
   await expect(client.listStages("demo-app")).rejects.toThrow(
-    /no \/v1\/account\/stages route yet/,
+    /older than your CLI .*no \/v1\/account\/stages route/,
   );
+});
+
+// Node's bare "fetch failed" hid which server was down and why.
+test("a network failure names the server and the cause", async () => {
+  const client = new BroodsSyncClient({
+    baseUrl: "https://convex.example.com",
+    token: "tok",
+    fetch: async () => {
+      throw new TypeError("fetch failed", {
+        cause: new Error("connect ECONNREFUSED 10.0.0.1:443"),
+      });
+    },
+  });
+
+  await expect(client.listStages("demo-app")).rejects.toThrow(
+    "Cannot reach https://convex.example.com: connect ECONNREFUSED 10.0.0.1:443",
+  );
+});
+
+// A sync can hold the connection for minutes; every other call gives up.
+test("requests time out, except the manifest write", async () => {
+  const signals: Array<AbortSignal | null | undefined> = [];
+  const { client } = clientWith((_url, init) => {
+    signals.push(init.signal);
+
+    return Response.json({ stages: [], manifest: {}, ids: {} });
+  });
+
+  await client.listStages("demo-app");
+  await client.putManifest(
+    { version: 1, project: "demo-app", stage: "development", resources: [] },
+    false,
+  );
+
+  expect(signals[0]).toBeInstanceOf(AbortSignal);
+  expect(signals[1]).toBeUndefined();
 });
 
 test("listStages surfaces a JSON 404 as a normal request failure", async () => {

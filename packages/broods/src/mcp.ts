@@ -9,7 +9,7 @@
  * resolution and error shapes stay identical to the SDK and the CLI. The
  * credential comes from the environment: prefer a role session
  * (`BROODS_SESSION_TOKEN`) so the policy bounds what this server can reach,
- * and fall back to the account secret only when there is no role.
+ * and fall back to the account key only when there is no role.
  */
 
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
@@ -179,7 +179,7 @@ const RESOURCES: ResourceSpec[] = [
     plural: "roles",
     key: "roleId",
     createHint:
-      "Needs name and a version-1 policy over the API namespace, e.g. agents:read. Account secret only.",
+      "Needs name and a version-1 policy over the API namespace, e.g. agents:read. Account key only.",
     list: (client) => client.listRoles(),
     get: (client, id) => client.getRole(id),
     create: (client, body) =>
@@ -318,7 +318,7 @@ function requireScope(
 
 /**
  * Org, project and stage live behind the CLI router, not the config plane, so
- * they need a login token rather than an account secret or a role session.
+ * they need a login token rather than an account key or a role session.
  * They are registered only when `broods login` has stored one: a role session
  * is rejected by that router, so offering the tools without a login would hand
  * the agent calls that can only 401.
@@ -402,7 +402,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
 
 /**
  * The tools whose blast radius no role policy bounds: rotating the account
- * secret breaks every deployment holding the old one, and a project delete
+ * key breaks every deployment holding the old one, and a project delete
  * cascades through everything under it. `confirm` is asserted by the calling
  * agent itself, so exposing these is the operator's opt-in, not the agent's.
  */
@@ -416,7 +416,7 @@ function registerDestructive(
       "rotate-secret",
       {
         description:
-          "Rotate the account secret. The current secret stops working immediately and the new one is shown once, so this breaks every deployment and CI job still holding the old one. Requires confirm:true.",
+          "Rotate the account key. The current key stops working immediately and the new one is shown once, so this breaks every deployment and CI job still holding the old one. Requires confirm:true.",
         inputSchema: { confirm: CONFIRM_FIELD },
       },
       async ({ confirm }) =>

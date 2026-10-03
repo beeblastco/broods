@@ -79,7 +79,7 @@ export interface BroodsWebSocketClientOptions {
   baseUrl?: string;
   /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
   host?: string;
-  /** API key used as the WebSocket token. Defaults to BROODS_API_KEY from the environment or local .env files. */
+  /** Runtime key used as the WebSocket token. Defaults to BROODS_API_KEY from the environment or local .env files. */
   apiKey?: string;
   WebSocket?: WebSocketConstructorLike;
   connectTimeoutMs?: number;

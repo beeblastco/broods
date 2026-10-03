@@ -3,7 +3,7 @@
  * files, crons, workspaces, sandboxes, policies, and roles served straight
  * from Convex. The gateway forwards these paths here; response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
- * the account Bearer secret, or an fp_sts_ role session checked against its
+ * the account key, or an fp_sts_ role session checked against its
  * role's policy at this funnel. This file is the router; each resource
  * family's handlers live in `config/routes/`.
  */
@@ -71,13 +71,13 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const pathname = new URL(req.url).pathname;
 
-    // The exchange authenticates its own caller kinds (account secret, CLI
+    // The exchange authenticates its own caller kinds (account key, CLI
     // token, runtime key), so it runs before the shared bearer funnel.
     if (pathname === "/v1/account/assume-role") {
       return await handleAssumeRoleRoute(ctx, req);
     }
 
-    // Authenticates itself too: account secret or CLI login, never a role session.
+    // Authenticates itself too: account key or CLI login, never a role session.
     const connectionsPath = parseConnectionsPath(pathname);
     if (connectionsPath) {
       return await handleConnectionsRoute(ctx, req, connectionsPath);
@@ -103,7 +103,7 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     // edit roles could grant itself anything.
     if (route.kind === "roles") {
       if (accountAuth.kind !== "account") {
-        return jsonError(403, "Role management requires the account secret");
+        return jsonError(403, "Role management requires the account key");
       }
 
       return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);

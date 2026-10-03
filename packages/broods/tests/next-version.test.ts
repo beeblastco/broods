@@ -36,6 +36,42 @@ test("a declared version ahead of the last stable tag is released as is", async 
   });
 });
 
+// The 1.0.0 cut, rehearsed end to end: rc.1 ships to `next`, rc.2 follows,
+// the stable declaration lands, and the first breaking change after it is a
+// real major. Prerelease tags never become the anchor, so each step still
+// compares against the last stable release.
+test("release candidates ship as declared and lead to the stable cut", async (): Promise<void> => {
+  repo = await releasedRepo("0.43.0");
+
+  await commit(repo, "1.0.0-rc.1", "chore(broods): cut 1.0.0-rc.1");
+  expect(await run(repo, "--write")).toMatchObject({
+    bump: "declared",
+    next: "1.0.0-rc.1",
+  });
+  git(repo, ["tag", "broods-v1.0.0-rc.1"]);
+
+  // Re-running on the same commit derives the same version, so the workflow
+  // skips the publish instead of bumping.
+  expect(await run(repo)).toMatchObject({
+    bump: "declared",
+    next: "1.0.0-rc.1",
+  });
+
+  await commit(repo, "1.0.0-rc.2", "fix(broods): rc feedback");
+  expect(await run(repo)).toMatchObject({
+    bump: "declared",
+    next: "1.0.0-rc.2",
+  });
+  git(repo, ["tag", "broods-v1.0.0-rc.2"]);
+
+  await commit(repo, "1.0.0", "chore(broods): cut 1.0.0");
+  expect(await run(repo)).toMatchObject({ bump: "declared", next: "1.0.0" });
+  git(repo, ["tag", "broods-v1.0.0"]);
+
+  await commit(repo, "1.0.0", "feat(broods)!: drop the deprecated flag");
+  expect(await run(repo)).toMatchObject({ bump: "major", next: "2.0.0" });
+});
+
 test("a stale declared version behind the tag is ignored", async (): Promise<void> => {
   repo = await releasedRepo("0.40.0");
   await commit(repo, "0.26.0", "feat(broods): add a flag");

@@ -1,4 +1,4 @@
-/** Account secret helper parity tests for config HTTP account rotation. */
+/** Account key helper parity tests for config HTTP account rotation. */
 
 import { describe, expect, it } from "vitest";
 import {
@@ -7,17 +7,17 @@ import {
   sha256Hex,
 } from "../model/accountSecrets";
 
-describe("account secrets", () => {
-  it("generates account-prefixed 32-byte base64url secrets", () => {
+describe("account keys", () => {
+  it("generates ask_-prefixed 32-byte base64url keys", () => {
     const secret = createAccountSecret();
 
-    expect(secret.startsWith("fp_acct_")).toBe(true);
-    expect(secret).toHaveLength("fp_acct_".length + 43);
-    expect(secret.slice("fp_acct_".length)).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(secret.startsWith("ask_")).toBe(true);
+    expect(secret).toHaveLength("ask_".length + 43);
+    expect(secret.slice("ask_".length)).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   it("hashes secrets with the same SHA-256 hex digest as Web Crypto", async () => {
-    const secret = "fp_acct_test-secret";
+    const secret = "ask_test-secret";
     const digest = await crypto.subtle.digest(
       "SHA-256",
       new TextEncoder().encode(secret),

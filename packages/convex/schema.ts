@@ -157,7 +157,7 @@ export const canvasLayoutsFields = {
 };
 
 /**
- * Project + stage scoped runtime API key (`fp_agent_…`). One key per
+ * Project + stage scoped runtime key (`sk_…`). One key per
  * stage invokes ANY deployed agent in it; the agent is selected per request
  * by id. The SHA-256 hash authenticates runtime calls; the plaintext is also kept
  * AES-GCM encrypted at rest so the owner can recover it for dashboard streaming
@@ -187,8 +187,8 @@ export const agentDeploymentsFields = {
 };
 
 /**
- * Project + stage scoped CLI/API deploy key. Authorizes the `broods`
- * CLI against exactly one project/stage, unlike the org Bearer secret
+ * Project + stage scoped project key (`pdk_…`). Authorizes the `broods`
+ * CLI against exactly one project/stage, unlike the account key
  * which grants the whole account. Only the SHA-256 hash is stored.
  */
 export const deployKeysFields = {
@@ -350,7 +350,7 @@ export const agentPoliciesFields = {
  * Scoped API role assumed via `POST /v1/account/assume-role`. The policy is a
  * version-1 PolicyDocument over the `<resource>:read`/`<resource>:write` API
  * action namespace (model/roleRules.ts validates it). `projectId`/`stageId`
- * bound which stage runtime keys may assume the role, same shape as deployKeys.
+ * bound which runtime keys may assume the role, same shape as deployKeys.
  */
 export const accountRolesFields = {
   accountId: v.id("accounts"),
@@ -789,13 +789,13 @@ export const environmentVariableRevealsFields = {
   source: v.union(v.literal("dashboard"), v.literal("cli")),
   /** WorkOS authId of the dashboard user who revealed it (when source is "dashboard"). */
   revealedByAuthId: v.optional(v.string()),
-  /** Account that revealed it through a CLI deploy token (when source is "cli"). */
+  /** Account that revealed it through a CLI token or project key (when source is "cli"). */
   revealedByAccountId: v.optional(v.id("accounts")),
   /** CLI token row used for the reveal, when authenticated by `broods login`. */
   revealedByCliTokenId: v.optional(v.id("cliTokens")),
   /** WorkOS authId attached to the CLI token used for the reveal. */
   revealedByCliAuthId: v.optional(v.string()),
-  /** Project/stage deploy key used for the reveal, when authenticated by a deploy key. */
+  /** Project key used for the reveal, when authenticated by one. */
   revealedByDeployKeyId: v.optional(v.id("deployKeys")),
   revealedAt: v.number(),
 };

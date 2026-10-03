@@ -43,7 +43,7 @@ export const DASHBOARD_TABS = [
   { id: "tracing", label: "Tracing" },
   { id: "usage", label: "Usage" },
   { id: "billing", label: "Billing & Plan" },
-  { id: "api-key", label: "API key" },
+  { id: "api-key", label: "Runtime key" },
 ] as const;
 
 export const SANDBOX_TABS = [

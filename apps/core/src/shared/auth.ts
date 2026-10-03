@@ -1,11 +1,18 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (fp_sts_), stage runtime key
- * (fp_agent_, whose lastUsedAt is written here, throttled), and account-secret
- * hash lookup. Persistence is reached via `getStorage().accounts.*` so the
- * auth path is identical through the Convex-backed account store.
+ * server-side actions), assume-role session (fp_sts_), runtime key
+ * (sk_, whose lastUsedAt is written here, throttled), and account-key
+ * hash lookup (ask_). Each prefix goes straight to its one lookup; any other
+ * token tries the runtime key, then the account key, both by hash, which is
+ * how a key minted under an earlier prefix keeps working until it is rotated.
+ * Persistence is reached via `getStorage()` so the auth path is identical
+ * through the Convex-backed store.
  */
 
+import {
+  ACCOUNT_KEY_PREFIX,
+  RUNTIME_KEY_PREFIX,
+} from "@broods/convex/model/accountSecrets";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
@@ -134,36 +141,17 @@ export async function resolveBearerAuth(
     return { kind: "account", account: account, viaServiceToken: true };
   }
 
-  const apiKeyHash = sha256Hex(token);
-  const deployment =
-    await getStorage().agentDeployments.getByApiKeyHash(apiKeyHash);
-  if (deployment) {
-    const account = await getStorage().accounts.getById(deployment.accountId);
-    if (!account || account.status !== "active") return null;
-    const now = Date.now();
-    if (claimLastUsedWrite(keyLastUsedWrites, apiKeyHash, now)) {
-      waitUntil(getStorage().agentDeployments.touchLastUsed(apiKeyHash, now));
-    }
-
-    return {
-      kind: "deployment",
-      account: account,
-      endpointId: deployment.endpointId,
-      projectSlug: deployment.projectSlug,
-      stageSlug: deployment.stageSlug,
-    };
+  if (token.startsWith(ACCOUNT_KEY_PREFIX)) {
+    return await resolveAccountSecretAuth(token, options);
+  }
+  if (token.startsWith(RUNTIME_KEY_PREFIX)) {
+    return await resolveRuntimeKeyAuth(token);
   }
 
-  const account = await getStorage().accounts.getBySecretHash(
-    hashAccountSecret(token),
+  return (
+    (await resolveRuntimeKeyAuth(token)) ??
+    (await resolveAccountSecretAuth(token, options))
   );
-  if (
-    !account ||
-    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
-  )
-    return null;
-
-  return { kind: "account", account: account };
 }
 
 // Hashing both sides keeps the comparison constant-time regardless of length.
@@ -175,6 +163,23 @@ export function timingSafeStringEqual(
   const expectedDigest = createHash("sha256").update(expected).digest();
 
   return timingSafeEqual(actualDigest, expectedDigest);
+}
+
+/** Resolve an account key to its account; a disabled one only when the caller allows it. */
+async function resolveAccountSecretAuth(
+  token: string,
+  options: { allowDisabledAccountSecret?: boolean },
+): Promise<AuthContext | null> {
+  const account = await getStorage().accounts.getBySecretHash(
+    hashAccountSecret(token),
+  );
+  if (
+    !account ||
+    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
+  )
+    return null;
+
+  return { kind: "account", account: account };
 }
 
 /** Resolve an fp_sts_ token to role auth via the config-plane session store. */
@@ -189,6 +194,28 @@ async function resolveRoleSessionAuth(
   if (!account || account.status !== "active") return null;
 
   return { kind: "role", account: account, role: principal };
+}
+
+/** Resolve a runtime key in one lookup, stamping its lastUsedAt (throttled). */
+async function resolveRuntimeKeyAuth(
+  token: string,
+): Promise<AuthContext | null> {
+  const apiKeyHash = sha256Hex(token);
+  const deployment =
+    await getStorage().agentDeployments.getByApiKeyHash(apiKeyHash);
+  if (!deployment || deployment.account.status !== "active") return null;
+  const now = Date.now();
+  if (claimLastUsedWrite(keyLastUsedWrites, apiKeyHash, now)) {
+    waitUntil(getStorage().agentDeployments.touchLastUsed(apiKeyHash, now));
+  }
+
+  return {
+    kind: "deployment",
+    account: deployment.account,
+    endpointId: deployment.endpointId,
+    projectSlug: deployment.projectSlug,
+    stageSlug: deployment.stageSlug,
+  };
 }
 
 /**

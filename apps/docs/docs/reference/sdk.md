@@ -6,11 +6,11 @@ title: TypeScript SDK
 
 The `broods` package ships three clients:
 
-| Client                | Import           | Credential                     | Use it to                                    |
-| --------------------- | ---------------- | ------------------------------ | -------------------------------------------- |
-| `BroodsClient`        | `broods`         | Stage runtime key              | Run agents over HTTP and SSE                 |
-| `WebSocketClient`     | `broods`         | Stage runtime key              | Run and steer agents over one socket         |
-| `BroodsAccountClient` | `broods/account` | Account secret or role session | Create and change config while your app runs |
+| Client                | Import           | Credential                  | Use it to                                    |
+| --------------------- | ---------------- | --------------------------- | -------------------------------------------- |
+| `BroodsClient`        | `broods`         | Runtime key                 | Run agents over HTTP and SSE                 |
+| `WebSocketClient`     | `broods`         | Runtime key                 | Run and steer agents over one socket         |
+| `BroodsAccountClient` | `broods/account` | Account key or role session | Create and change config while your app runs |
 
 There is no Python SDK yet. Call the [HTTP API](http-api.md) directly.
 
@@ -47,12 +47,12 @@ const client = new BroodsClient();
 
 | Option    | Default                                                                               |
 | --------- | ------------------------------------------------------------------------------------- |
-| `apiKey`  | `BROODS_API_KEY`, loaded from `.env` and `.env.local`                                 |
+| `apiKey`  | The runtime key. `BROODS_API_KEY`, loaded from `.env` and `.env.local`                |
 | `baseUrl` | `BROODS_BASE_URL`, then `BROODS_HOST`, then `https://gateway.broods.app`              |
 | `host`    | Hostname form of `baseUrl`. `gateway.broods.app` becomes `https://gateway.broods.app` |
 | `fetch`   | Global `fetch`                                                                        |
 
-The runtime key, `fp_agent_...`, is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
+The runtime key, `sk_...`, is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
 
 ### Methods
 
@@ -168,7 +168,7 @@ const ws = new WebSocketClient();
 
 | Option             | Default                                            |
 | ------------------ | -------------------------------------------------- |
-| `apiKey`           | `BROODS_API_KEY`. Required                         |
+| `apiKey`           | The runtime key. `BROODS_API_KEY`. Required        |
 | `baseUrl`, `host`  | As for `BroodsClient`. `https` becomes `wss`       |
 | `WebSocket`        | `globalThis.WebSocket`. Pass one on older runtimes |
 | `connectTimeoutMs` | 2000                                               |
@@ -229,12 +229,12 @@ const account = new BroodsAccountClient({
 });
 ```
 
-| Option          | Default                                                             |
-| --------------- | ------------------------------------------------------------------- |
-| `accountSecret` | `BROODS_ACCOUNT_SECRET`, an `fp_acct_...` value                     |
-| `sessionToken`  | `BROODS_SESSION_TOKEN`, an `fp_sts_...` value. Wins over the secret |
-| `baseUrl`       | `BROODS_BASE_URL`, then `https://gateway.broods.app`                |
-| `fetch`         | Global `fetch`                                                      |
+| Option          | Default                                                                  |
+| --------------- | ------------------------------------------------------------------------ |
+| `accountSecret` | The account key. `BROODS_ACCOUNT_SECRET`, an `ask_...` value             |
+| `sessionToken`  | `BROODS_SESSION_TOKEN`, an `fp_sts_...` value. Wins over the account key |
+| `baseUrl`       | `BROODS_BASE_URL`, then `https://gateway.broods.app`                     |
+| `fetch`         | Global `fetch`                                                           |
 
 The entry point has no dependencies and uses plain `fetch`, so it runs in Convex actions, Cloudflare Workers and other edge runtimes where the main `broods` entry cannot load.
 

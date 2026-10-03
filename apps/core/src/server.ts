@@ -21,6 +21,7 @@ import {
 import { drainInFlight, waitUntil } from "./shared/in-flight.ts";
 import { resolveRequestId, withRequestId } from "./shared/request-id.ts";
 import { logError, logInfo } from "./shared/log.ts";
+import { flushObservabilityNats } from "./shared/nats.ts";
 import { forceFlushOtel, initOtel } from "./shared/otel.ts";
 
 const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
@@ -232,8 +233,11 @@ if (import.meta.main) {
     );
     const graceful = (async () => {
       await server.stop();
+      // A channel admission in flight can start a worker, and a finished
+      // worker leaves its usage write in flight, so drain in that order.
       await drainInFlight();
       await drainInProcessWorkers();
+      await drainInFlight();
       drained = true;
       shutdownIsolatePool();
       stopSandboxSweeper();
@@ -258,7 +262,7 @@ if (import.meta.main) {
         interrupted: interrupted,
       });
     }
-    await forceFlushOtel().catch(() => undefined);
+    await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     process.exit(0);
   };
 

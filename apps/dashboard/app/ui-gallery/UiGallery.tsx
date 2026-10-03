@@ -385,7 +385,6 @@ export function UiGallery(): React.JSX.Element {
           onClear={() => {}}
           onRefresh={() => {}}
           refreshDisabled={false}
-          refreshSpinning={false}
           refreshTitle="Refresh"
           isError={false}
         />

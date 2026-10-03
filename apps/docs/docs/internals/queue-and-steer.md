@@ -6,14 +6,14 @@ To use it, read [Conversations](../guides/conversations.md). This page is for ch
 
 ## Where it lives
 
-| File                                | Owns                                                                                                                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages/convex/runtimeIngress.ts` | The coordinator: `accept`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `acquireClear`, `clearConversation`, `renewOwner`, `releaseOwner`, `maintain` |
-| `apps/core/src/harness/ingress.ts`  | Candidate and delivery types, the limit and TTL constants, admission helpers                                                                                 |
-| `apps/core/src/harness/harness.ts`  | The `prepareStep` and `onStepEnd` hooks that apply steering at a step boundary                                                                               |
-| `apps/core/src/harness/handler.ts`  | HTTP and async admission, `409` and `429` responses, the continuation workers                                                                                |
-| `apps/core/src/shared/commands.ts`  | `/steer`, `/queue`, `/stop` and `/cancel`, lease-safe `/new` and `/clear`, `/compact`                                                                        |
-| `apps/gateway/src/agent.ts`         | WebSocket `execute`, `control`, `attach` and `cancel` frames, ACK and status relay                                                                           |
+| File                                | Owns                                                                                                                                                                         |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/convex/runtimeIngress.ts` | The coordinator: `accept`, `stepBoundary`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `acquireClear`, `clearConversation`, `renewOwner`, `releaseOwner`, `maintain` |
+| `apps/core/src/harness/ingress.ts`  | Candidate and delivery types, the limit and TTL constants, admission helpers                                                                                                 |
+| `apps/core/src/harness/harness.ts`  | The `prepareStep` and `onStepEnd` hooks that apply steering at a step boundary                                                                                               |
+| `apps/core/src/harness/handler.ts`  | HTTP and async admission, `409` and `429` responses, the continuation workers                                                                                                |
+| `apps/core/src/shared/commands.ts`  | `/steer`, `/queue`, `/stop` and `/cancel`, lease-safe `/new` and `/clear`, `/compact`                                                                                        |
+| `apps/gateway/src/agent.ts`         | WebSocket `execute`, `control`, `attach` and `cancel` frames, ACK and status relay                                                                                           |
 
 ## Why it exists
 
@@ -128,7 +128,7 @@ The status an envelope row moves through, with the `runtimeIngress.ts` mutation 
 stateDiagram-v2
   [*] --> processing: accept, idle conversation
   [*] --> queued: accept, busy conversation
-  queued --> processing: applySteering, steer prefix
+  queued --> processing: stepBoundary or applySteering, steer prefix
   queued --> processing: takeNext, recoverQueued, or recovery in accept
   queued --> expired: past 15 min, maintain
   processing --> completed: settle completed
@@ -168,7 +168,7 @@ sequenceDiagram
   Core-->>B: 202 queued
   M-->>Core: step 1 ends with its tool results
   alt another model call is left
-    Core->>CX: prepareStep: renewOwner, then applySteering
+    Core->>CX: prepareStep: stepBoundary
     CX-->>Core: event-2, appliedToEventId event-1
     Core->>M: step 2 with event-2 appended
   else the run has finished
@@ -179,7 +179,7 @@ sequenceDiagram
   end
 ```
 
-`renewOwner` runs first in `prepareStep`. It answers `stopped` when `/stop` asked this generation to stop, and `stale` when ownership moved, and either one ends the run before steering is applied.
+`prepareStep` makes one fenced mutation, `stepBoundary`. In one transaction it checks ownership, stores the finished step's messages, checks for a stop, renews the lease when a tenth of the TTL has passed, and claims the steer prefix. It answers `stale` when ownership moved, and writes nothing then. It answers `stopped` when `/stop` asked this generation to stop: the step's messages stay stored and no steer is claimed. Either answer ends the run. Only a claimed steer costs a second call, the append of its messages. A successful fenced call also proves ownership for `OWNER_CHECK_INTERVAL_MS` (2 s), so the stream's periodic owner check and the owner fence before a tool skip their `isCurrentOwner` read inside that window. Frames the client acts on (`done`, `error`, approvals, questions, structured output, `waiting`) still check exactly.
 
 This follows the AI SDK contract. [`prepareStep`](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text) runs before a step and may replace its messages, and the next step's messages already include finished tool results. [`onStepFinish`](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#onstepfinish-callback) fires only once the step's text, tool calls and tool results exist.
 
@@ -256,7 +256,7 @@ Channels use the same coordinator.
 
 Authorization finishes before any envelope exists.
 
-- An account secret keeps its account and agent ownership checks.
+- An account key keeps its account and agent ownership checks.
 - A runtime key keeps its project, stage, endpoint and agent scope. The HTTP path must match it, and WebSocket `control` and `attach` inherit the socket's scope.
 - Channel ingress keeps provider authentication and the configured account and agent route.
 
