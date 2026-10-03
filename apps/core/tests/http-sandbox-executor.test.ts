@@ -141,6 +141,26 @@ describe("HttpSandboxExecutor", () => {
     );
   });
 
+  // The config API stores a ref as written; only a code sync resolves it.
+  it("refuses a token or header that still carries an env ref", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint, received) => {
+      for (const options of [
+        { token: "${SANDBOX_TOKEN}" },
+        { headers: { authorization: "Bearer ${SANDBOX_TOKEN}" } },
+      ]) {
+        const executor = new HttpSandboxExecutor(
+          config(endpoint, options),
+          seams(),
+        );
+
+        await expect(executor.run(run())).rejects.toThrow(
+          "still carries a ${NAME} ref",
+        );
+      }
+      expect(received).toHaveLength(0);
+    });
+  });
+
   it("refuses a literal private endpoint before resolving anything", async () => {
     const executor = new HttpSandboxExecutor(config("https://10.0.0.8"));
 

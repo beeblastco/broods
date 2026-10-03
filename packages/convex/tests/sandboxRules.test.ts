@@ -594,6 +594,36 @@ describe("sandbox config custom provider", () => {
     });
   });
 
+  // A code sync stores the header with its ref resolved, and an update merges into that.
+  it("keeps a resolved credential header through an update that leaves it alone", () => {
+    const synced = normalizeSandboxConfig({
+      ...custom,
+      options: {
+        ...custom.options,
+        headers: { authorization: "Bearer ${SANDBOX_TOKEN}" },
+      },
+    });
+    const resolved = {
+      ...synced,
+      options: {
+        ...synced.options,
+        headers: { authorization: "Bearer sk_live_abc" },
+      },
+    };
+
+    expect(
+      normalizeUpdateSandboxConfigInput(resolved, { config: { timeout: 60 } })
+        .config,
+    ).toEqual({ ...resolved, timeout: 60 });
+    expect(() =>
+      normalizeUpdateSandboxConfigInput(resolved, {
+        config: {
+          options: { headers: { authorization: "Bearer sk_live_other" } },
+        },
+      }),
+    ).toThrow("must reference an account env var");
+  });
+
   it("is stateless: no persistence, sizing or snapshot, and never a fallback", () => {
     expect(() =>
       normalizeSandboxConfig({ ...custom, persistent: true }),

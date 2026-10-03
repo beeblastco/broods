@@ -352,9 +352,14 @@ function normalizeDescription(value: unknown): string {
 /**
  * Static request headers an account configures for a server it names: RFC 9110
  * names, single-line bounded values, and a credential header only as a
- * `${NAME}` env ref. Shared with the custom sandbox provider's headers.
+ * `${NAME}` env ref. Shared with the custom sandbox provider's headers, whose
+ * update passes the `stored` values: one sent back unchanged was a ref that a
+ * code sync resolved, so it is kept.
  */
-export function normalizeHeaders(value: unknown): Record<string, string> {
+export function normalizeHeaders(
+  value: unknown,
+  stored: Record<string, string> = {},
+): Record<string, string> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ClientError("headers must be an object of header name to value");
   }
@@ -380,7 +385,8 @@ export function normalizeHeaders(value: unknown): Record<string, string> {
     }
     if (
       SENSITIVE_HEADER_NAME_PATTERN.test(name) &&
-      !CREDENTIAL_HEADER_VALUE_PATTERN.test(headerValue)
+      !CREDENTIAL_HEADER_VALUE_PATTERN.test(headerValue) &&
+      stored[name] !== headerValue
     ) {
       throw new ClientError(
         `headers values for ${name} must reference an account env var like \${NAME}, not an inline secret`,

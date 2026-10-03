@@ -145,9 +145,13 @@ export function workspaceSandboxLimits(
 
 /**
  * @param value the raw config value
+ * @param stored the config an update merges into, when there is one
  * @returns the normalized sandbox config
  */
-export function normalizeSandboxConfig(value: unknown): SandboxConfig {
+export function normalizeSandboxConfig(
+  value: unknown,
+  stored?: SandboxConfig,
+): SandboxConfig {
   if (value == null) {
     return {
       provider: "sandbox",
@@ -210,7 +214,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     assertNetworkEnforceable(runsOn, network);
     assertResourceLimits(config, runsOn);
   }
-  assertEnvVarsAndOptions(config, provider);
+  assertEnvVarsAndOptions(config, provider, stored);
 
   return buildNormalizedConfig(
     config,
@@ -261,6 +265,7 @@ export function normalizeUpdateSandboxConfigInput(
     "config" in value
       ? normalizeSandboxConfig(
           mergeConfigObjects(existingConfig, asObject(value.config)),
+          existingConfig,
         )
       : existingConfig;
 
@@ -289,6 +294,7 @@ function asObject(value: unknown): Record<string, unknown> {
 function assertEnvVarsAndOptions(
   config: Record<string, unknown>,
   provider: SandboxProvider,
+  stored: SandboxConfig | undefined,
 ): void {
   if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
     throw new ClientError(
@@ -302,13 +308,16 @@ function assertEnvVarsAndOptions(
     validateProviderOptions(provider, config.options);
   }
   if (provider === "custom") {
-    assertCustomOptions(config.options ?? {});
+    assertCustomOptions(config.options ?? {}, stored?.options?.headers);
   }
 }
 
 // A custom server is reached by one URL and nothing else, so the endpoint is
 // the one required option. A `${NAME}` token is fine; a placeholder URL is not.
-function assertCustomOptions(options: Record<string, unknown>): void {
+function assertCustomOptions(
+  options: Record<string, unknown>,
+  storedHeaders: unknown,
+): void {
   if (typeof options.endpoint !== "string") {
     throw new ClientError(
       "config.options.endpoint is required for the custom provider: the https URL of your sandbox server",
@@ -328,7 +337,10 @@ function assertCustomOptions(options: Record<string, unknown>): void {
     requireString(options.token, "config.options.token");
   }
   if (options.headers !== undefined) {
-    normalizeHeaders(options.headers);
+    normalizeHeaders(
+      options.headers,
+      isStringRecord(storedHeaders) ? storedHeaders : undefined,
+    );
   }
 }
 

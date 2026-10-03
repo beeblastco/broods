@@ -6,6 +6,7 @@
  * workspace mount, lifecycle or background job here.
  */
 
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 import type { SandboxExecRequest } from "../../shared/domain/sandbox-config.ts";
 import {
   assertPublicHttpsUrl,
@@ -56,6 +57,18 @@ export class HttpSandboxExecutor implements SandboxExecutor {
     }
     assertPublicHttpsUrl(endpoint, "custom sandbox endpoint");
     const token = configString(options.token);
+    const headers = stringRecord(options.headers);
+    // Refs resolve when the sandbox syncs from code. One left over would go out
+    // as the credential itself.
+    if (
+      [token ?? "", ...Object.values(headers)].some((value) =>
+        ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value),
+      )
+    ) {
+      throw new Error(
+        "custom sandbox token or header still carries a ${NAME} ref: refs resolve when the sandbox syncs from code, not through the API",
+      );
+    }
     const payload: SandboxExecRequest = {
       runtime: request.runtime ?? "bash",
       code: request.code,
@@ -73,7 +86,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
       {
         method: "POST",
         headers: {
-          ...stringRecord(options.headers),
+          ...headers,
           "content-type": "application/json",
           ...(token ? { authorization: `Bearer ${token}` } : {}),
         },

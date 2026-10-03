@@ -197,10 +197,10 @@ async function releaseOnProvider(
     return false;
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {
-    // The candidates come from a reserving provider, so every executor releases.
-    const executor = providerExecutor(config);
-    if (!executor.release) continue;
     try {
+      // The candidates come from a reserving provider, so every executor releases.
+      const executor = providerExecutor(config);
+      if (!executor.release) continue;
       await executor.release({
         namespace: namespace,
         expectedExternalId: target.externalId,

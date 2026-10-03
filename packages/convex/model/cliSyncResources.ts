@@ -44,6 +44,7 @@ import {
   loadPolicyReferenceRows,
   type PolicyReferenceRows,
 } from "./policyReferences";
+import { normalizeSandboxConfig } from "./sandboxRules";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
@@ -605,6 +606,14 @@ export async function syncSandboxResources(
     // `refreshSandboxConfigsForEnvironmentVariable` can re-resolve on a later
     // env-var change without a CLI re-sync (parity with agent configs).
     const sourceConfig = rewriteEnvRefs(asObject(resource.config), envNames);
+    // Same rules as the config API for a custom server, on the placeholder
+    // form its credential headers are written in.
+    if (
+      sourceConfig.provider === "custom" ||
+      sourceConfig.fallbackProvider === "custom"
+    ) {
+      normalizeSandboxConfig(sourceConfig);
+    }
     const resolvedConfig = substituteEnvPlaceholders(sourceConfig, envValues);
     const runtimeVariables = [...envNames].map((key) => ({
       key: key,
