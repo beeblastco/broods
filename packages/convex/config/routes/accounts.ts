@@ -208,8 +208,7 @@ async function patchSelfResponse(
   const input = await parseJsonRequest(req);
   if (
     auth.kind === "role" &&
-    isPlainObject(input) &&
-    input.auditRetentionDays !== undefined
+    normalizeAccountUpdateInput(input).auditRetentionDays !== undefined
   ) {
     const denial = roleDenial(rolePrincipal(auth.role), req.method, {
       type: "audit",

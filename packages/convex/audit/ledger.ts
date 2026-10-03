@@ -1,6 +1,6 @@
 /**
  * Internal functions over the audit ledger: append from HTTP actions and
- * core, read a page since a seq, verify the chain, and prune exported rows.
+ * core, read a page since a seq, verify the chain, and prune rows past retention.
  * The chain itself lives in `model/auditEvents.ts`.
  */
 
@@ -261,20 +261,20 @@ async function pruneAccount(
   // Below the head, which is the chain tip and stays whatever its age, and
   // with a sink also at or below its watermark.
   const belowSeq = sink ? Math.min(sink.exportedSeq + 1, tip.seq) : tip.seq;
-  let deleted = 0;
   // Walking in seq order and stopping at the first row inside the window
   // only ever removes a prefix, so the kept range has no gap to verify over.
+  const expired: Id<"auditEvents">[] = [];
   for await (const row of ctx.db
     .query("auditEvents")
     .withIndex("by_accountId_and_seq", (q) =>
       q.eq("accountId", tip.accountId).lt("seq", belowSeq),
     )) {
-    if (deleted === limit || row.at >= cutoff) break;
-    await ctx.db.delete(row._id);
-    deleted += 1;
+    if (expired.length === limit || row.at >= cutoff) break;
+    expired.push(row._id);
   }
+  for (const rowId of expired) await ctx.db.delete(rowId);
 
-  return deleted;
+  return expired.length;
 }
 
 /** The nearest stored row with a seq below `seq`, or null when none is kept. */

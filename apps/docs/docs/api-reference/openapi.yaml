@@ -2915,6 +2915,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditPage"
+        "400": { description: A malformed `since` or `limit` }
   /v1/audit/verify:
     get:
       tags: [Audit]
@@ -2923,10 +2924,11 @@ paths:
         Recomputes every row's hash and link over `[fromSeq, toSeq]`, from the
         oldest kept row by default, at most 1000 rows per call. `ok` covers
         only `checkedFrom` to `checkedTo`; on a longer ledger call again with
-        `fromSeq` set to `checkedTo + 1`. Without
-        `toSeq` the last row must also match the chain head, so a dropped tail
-        reports at the first missing `seq`. Pruned rows below the oldest kept
-        row are not an error: that row's own hash still pins its `prevHash`.
+        `fromSeq` set to `checkedTo + 1`. A row missing at the start of the
+        range reports at its `seq`. Without `toSeq` the last row must also
+        match the chain head, so a dropped tail reports at the first missing
+        `seq`. Pruned rows below the oldest kept row are not an error: that
+        row's own hash still pins its `prevHash`.
       security: [{ BearerAuth: [] }]
       parameters:
         - name: fromSeq
