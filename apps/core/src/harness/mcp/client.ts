@@ -254,14 +254,17 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 /**
  * One cache identity per server row version, resolved header set and oauth
  * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL.
+ * data for a TTL. A hosted row adds the agent: its answers come from that
+ * agent's own child, so one agent never reads what another agent's child said.
  */
 function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
+  const agent =
+    connection.record.transport === "hosted" ? (connection.agentId ?? "") : "";
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}:${agent}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */

@@ -19,6 +19,7 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
+import { listMcpTools, setMcpForTests } from "../src/harness/mcp/client.ts";
 import {
   collectBatchFrames,
   hostedMcpFetch,
@@ -321,6 +322,53 @@ describe("hosted MCP batch frame demux", () => {
     expect(ended).toBe(false);
     expect(result.cpuUsec).toBeUndefined();
     expect(outcomeSummary(result.outcomes)).toEqual({ "1": "200 one" });
+  });
+});
+
+describe("hosted MCP tool listing", () => {
+  afterEach(() => {
+    setMcpForTests(null);
+  });
+
+  it("caches a hosted listing per agent, so one agent never reads another agent's child", async () => {
+    const sent = stubBatches((request) => {
+      const message: { id?: number; method: string } = JSON.parse(
+        request.body ?? "{}",
+      );
+      if (message.id === undefined)
+        return { status: 202, headers: {}, body: "" };
+      const result =
+        message.method === "server/discover"
+          ? { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } }
+          : { tools: [{ name: "query", inputSchema: { type: "object" } }] };
+
+      return ok(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            resultType: "complete",
+            ttlMs: 60_000,
+            cacheScope: "private",
+            ...result,
+          },
+        }),
+      );
+    });
+    const connection = { record: hostedRecord(), headers: {} };
+
+    await listMcpTools({ ...connection, agentId: "agent_1" });
+    await listMcpTools({ ...connection, agentId: "agent_1" });
+    const tools = await listMcpTools({ ...connection, agentId: "agent_2" });
+
+    expect(tools.map((tool) => tool.name)).toEqual(["query"]);
+    expect(
+      sent
+        .filter((batch) =>
+          batch.requests.some((r) => r.mcpRequest.body?.includes("tools/list")),
+        )
+        .map((batch) => batch.tenantId),
+    ).toEqual(["acct_test:agent_1", "acct_test:agent_2"]);
   });
 });
 

@@ -67,7 +67,7 @@ Approval requests on a sync direct API run stream as SSE and persist in the conv
 
 ## MCP servers
 
-Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session.
+Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session. A hosted server's listing is cached per agent, because it comes from that agent's own child.
 
 - The `url` host is resolved before connecting. Private, loopback, link-local and metadata addresses are refused, and so are redirects. The OAuth `tokenUrl` gets the same check.
 - Credential-bearing headers must reference an account env var (`Bearer ${NAME}`). Inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
