@@ -955,6 +955,35 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("skips a cached endpoint once the sandbox image changes", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const request = {
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
+      request,
+    );
+    const lookups = getSandboxExternalIdMock.mock.calls.length;
+    await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    }).run(request);
+
+    // The cached VM booted the default image, so the run goes back to the
+    // reservation, where reconnect replaces it.
+    expect(getSandboxExternalIdMock.mock.calls.length).toBe(lookups + 1);
+  });
+
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
