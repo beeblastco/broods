@@ -1653,8 +1653,8 @@ paths:
                       {
                         type: string,
                         enum: [sandbox, lambda, e2b, daytona, vercel, machine],
-                        default: sandbox,
-                        description: "Compute backend. Defaults to sandbox (the workdir backend). On the hosted platform no per-sandbox options are needed; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
+                        default: lambda,
+                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
                       }
                     network:
                       type: object

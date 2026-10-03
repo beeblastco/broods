@@ -17,6 +17,7 @@ import {
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
+import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
 import { ClientError } from "./clientError";
 
 // Exceeds Convex's 30-minute HTTP action limit plus a 10-minute child Node action.
@@ -680,7 +681,7 @@ function rewriteRefList(
 function sandboxProvider(sandbox: CliResource): string {
   const provider = plainRecord(sandbox.config).provider;
 
-  return typeof provider === "string" ? provider : "sandbox";
+  return typeof provider === "string" ? provider : DEFAULT_SANDBOX_PROVIDER;
 }
 
 async function stageSyncRow(
