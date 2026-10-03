@@ -20,14 +20,40 @@ import { AUDIT_SIGNATURE_HEADER, signAuditExport } from "../model/auditSinks";
 import { configEncryptionSecret } from "../config/routes/shared";
 import { auditSinksFields } from "../schema";
 
-const EXPORT_BATCH_SIZE = 200;
-const DUE_SINKS_MAX = 100;
+const DUE_SINKS_PAGE_SIZE = 100;
 const ERROR_MAX_LENGTH = 500;
+const EXPORT_BATCH_SIZE = 200;
+const EXPORT_BATCHES_PER_TICK = 10;
+const EXPORT_TIMEOUT_MS = 10_000;
 
 const auditSinkDoc = v.object({
   ...auditSinksFields,
   _id: v.id("auditSinks"),
   _creationTime: v.number(),
+});
+
+type DueSinksPage = { due: Doc<"auditSinks">[]; cursor: string | null };
+
+/**
+ * Cron: drain every due sink, one page of sinks at a time. Sinks export side
+ * by side, so one slow or failing receiver never holds up the rest.
+ */
+export const exportDue = internalAction({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    let cursor: string | null = null;
+    do {
+      const page: DueSinksPage = await ctx.runQuery(
+        internal.audit.sinks.listDue,
+        { cursor: cursor },
+      );
+      await Promise.allSettled(page.due.map((sink) => exportSink(ctx, sink)));
+      cursor = page.cursor;
+    } while (cursor !== null);
+
+    return null;
+  },
 });
 
 /** The sink row for one account, or null. */
@@ -39,36 +65,32 @@ export const get = internalQuery({
   },
 });
 
-/** Sinks whose account ledger has rows past their watermark. */
+/**
+ * One page of sinks, keeping those whose account ledger has rows past their
+ * watermark. `cursor` is null on the first page and null again after the last.
+ */
 export const listDue = internalQuery({
-  args: {},
-  returns: v.array(auditSinkDoc),
-  handler: async (ctx): Promise<Doc<"auditSinks">[]> => {
-    const sinks = await ctx.db.query("auditSinks").take(DUE_SINKS_MAX);
+  args: { cursor: v.union(v.string(), v.null()) },
+  returns: v.object({
+    due: v.array(auditSinkDoc),
+    cursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args): Promise<DueSinksPage> => {
+    const page = await ctx.db
+      .query("auditSinks")
+      .paginate({ numItems: DUE_SINKS_PAGE_SIZE, cursor: args.cursor });
     const tips = await Promise.all(
-      sinks.map((sink) => auditChainHeadRow(ctx.db, sink.accountId)),
+      page.page.map((sink) => auditChainHeadRow(ctx.db, sink.accountId)),
     );
 
-    return sinks.filter((sink, index) => {
-      const tip = tips[index];
+    return {
+      due: page.page.filter((sink, index) => {
+        const tip = tips[index];
 
-      return tip !== null && tip !== undefined && tip.seq > sink.exportedSeq;
-    });
-  },
-});
-
-/** Cron: post every due sink its next batch. One sink's failure never stops the rest. */
-export const exportDue = internalAction({
-  args: {},
-  returns: v.null(),
-  handler: async (ctx): Promise<null> => {
-    const due: Doc<"auditSinks">[] = await ctx.runQuery(
-      internal.audit.sinks.listDue,
-      {},
-    );
-    for (const sink of due) await exportSink(ctx, sink);
-
-    return null;
+        return tip !== null && tip !== undefined && tip.seq > sink.exportedSeq;
+      }),
+      cursor: page.isDone ? null : page.continueCursor,
+    };
   },
 });
 
@@ -159,32 +181,15 @@ export const remove = internalMutation({
   },
 });
 
-/** The one sink row an account may have. */
-async function sinkForAccount(
-  db: QueryCtx["db"],
-  accountId: Id<"accounts">,
-): Promise<Doc<"auditSinks"> | null> {
-  return await db
-    .query("auditSinks")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-    .unique();
-}
-
-/** Post one batch to one sink and record the outcome. */
+/**
+ * Post one sink its unexported rows, a batch at a time, until it is caught up,
+ * a delivery fails, or the per-tick cap is reached. Each 2xx moves the
+ * watermark, so a failure part way keeps what was already delivered.
+ */
 async function exportSink(
   ctx: ActionCtx,
   sink: Doc<"auditSinks">,
 ): Promise<void> {
-  const rows: Doc<"auditEvents">[] = await ctx.runQuery(
-    internal.audit.ledger.list,
-    {
-      accountId: sink.accountId,
-      since: sink.exportedSeq,
-      limit: EXPORT_BATCH_SIZE,
-    },
-  );
-  const last = rows[rows.length - 1];
-  if (!last) return;
   const decrypted = await decryptAgentConfigBlob(
     {
       ciphertext: sink.encryptedSecret,
@@ -203,12 +208,44 @@ async function exportSink(
     return;
   }
 
+  let since = sink.exportedSeq;
+  for (let batch = 0; batch < EXPORT_BATCHES_PER_TICK; batch += 1) {
+    const rows: Doc<"auditEvents">[] = await ctx.runQuery(
+      internal.audit.ledger.list,
+      { accountId: sink.accountId, since: since, limit: EXPORT_BATCH_SIZE },
+    );
+    const last = rows[rows.length - 1];
+    if (!last) return;
+    const failure = await postBatch(sink.url, secret, rows);
+    if (failure !== null) {
+      await ctx.runMutation(internal.audit.sinks.markError, {
+        sinkId: sink._id,
+        error: failure,
+      });
+
+      return;
+    }
+    await ctx.runMutation(internal.audit.sinks.markExported, {
+      sinkId: sink._id,
+      exportedSeq: last.seq,
+    });
+    if (rows.length < EXPORT_BATCH_SIZE) return;
+    since = last.seq;
+  }
+}
+
+/** Sign and post one batch. Returns null on a 2xx, else why the delivery failed. */
+async function postBatch(
+  url: string,
+  secret: string,
+  rows: Doc<"auditEvents">[],
+): Promise<string | null> {
   const body = JSON.stringify(rows.map(publicAuditEvent));
-  let outcome: string | null;
   try {
     // No redirects: the signed body goes to the host the account named or
-    // nowhere, so a 3xx counts as a failed delivery.
-    const response = await fetch(sink.url, {
+    // nowhere, so a 3xx counts as a failed delivery. The timeout keeps a
+    // receiver that never answers from holding the action open.
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -216,21 +253,22 @@ async function exportSink(
       },
       body: body,
       redirect: "manual",
+      signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS),
     });
-    outcome = response.ok ? null : `HTTP ${response.status}`;
-  } catch (err) {
-    outcome = err instanceof Error ? err.message : String(err);
-  }
 
-  if (outcome === null) {
-    await ctx.runMutation(internal.audit.sinks.markExported, {
-      sinkId: sink._id,
-      exportedSeq: last.seq,
-    });
-  } else {
-    await ctx.runMutation(internal.audit.sinks.markError, {
-      sinkId: sink._id,
-      error: outcome,
-    });
+    return response.ok ? null : `HTTP ${response.status}`;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
   }
+}
+
+/** The one sink row an account may have. */
+async function sinkForAccount(
+  db: QueryCtx["db"],
+  accountId: Id<"accounts">,
+): Promise<Doc<"auditSinks"> | null> {
+  return await db
+    .query("auditSinks")
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .unique();
 }

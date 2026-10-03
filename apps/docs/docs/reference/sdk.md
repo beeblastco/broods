@@ -250,6 +250,7 @@ The entry point has no dependencies and uses plain `fetch`, so it runs in Convex
 | MCP        | `listMcp(scope)`, `createMcp`, `uploadMcpBundle`, `getMcp`, `updateMcp`, `deleteMcp`                                                                                              |
 | Policies   | `listPolicies`, `createPolicy`, `getPolicy`, `updatePolicy`, `deletePolicy`                                                                                                       |
 | Roles      | `listRoles`, `createRole`, `getRole`, `updateRole`, `deleteRole`                                                                                                                  |
+| Audit      | `audit.list`, `audit.verify`, `audit.getSink`, `audit.setSink`, `audit.deleteSink`                                                                                                |
 | Channels   | `listChannels`, `createChannel`, `getChannel`, `updateChannel`, `deleteChannel`                                                                                                   |
 | Skills     | `listSkills`, `createSkill`, `getSkill`, `uploadSkill`, `deleteSkill`                                                                                                             |
 

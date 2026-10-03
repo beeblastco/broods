@@ -222,18 +222,17 @@ async function pruneAccount(
   // Below the watermark and below the head: the head row is the chain tip
   // and stays whatever its age.
   const belowSeq = Math.min(sink.exportedSeq + 1, tip.seq);
-  // Only rows past retention are read, so a caught-up account reads nothing.
   const rows = await ctx.db
     .query("auditEvents")
-    .withIndex("by_accountId_and_at", (q) =>
-      q.eq("accountId", sink.accountId).lt("at", cutoff),
+    .withIndex("by_accountId_and_seq", (q) =>
+      q.eq("accountId", sink.accountId).lt("seq", belowSeq),
     )
     .take(PRUNE_BATCH_SIZE);
   let deleted = 0;
   for (const row of rows) {
-    // Rows are in `at` order and `at` only grows with seq, so the first row
-    // at or past the watermark ends the batch.
-    if (row.seq >= belowSeq) break;
+    // Walking in seq order and stopping at the first row inside the window
+    // only ever removes a prefix, so the kept range has no gap to verify over.
+    if (row.at >= cutoff) break;
     await ctx.db.delete(row._id);
     deleted += 1;
   }

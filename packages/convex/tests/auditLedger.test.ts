@@ -18,6 +18,7 @@ import {
   type PublicAuditEvent,
 } from "../model/auditEvents";
 import { signAuditExport } from "../model/auditSinks";
+import { stableJson } from "../model/objects";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -112,6 +113,27 @@ describe("chain", () => {
       totalTokens: 137,
     });
     expect(rows[0]?.detailsJson).not.toContain("rm -rf");
+  });
+
+  // A receiver recomputing the hash in another language sorts keys by code
+  // point; locale collation would put "a" before "B".
+  test("the hash input sorts keys by code point", () => {
+    expect(stableJson({ b: 1, B: 2, a: { d: 1, C: 2 } })).toBe(
+      '{"B":2,"a":{"C":2,"d":1},"b":1}',
+    );
+  });
+
+  test("verify refuses a range that starts at 0 or runs backwards", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    await record(t, accountId, "first");
+
+    for (const query of ["fromSeq=0", "toSeq=0", "fromSeq=5&toSeq=2"]) {
+      const response = await t.fetch(`/v1/audit/verify?${query}`, {
+        headers: { Authorization: `Bearer ${ACCOUNT_SECRET}` },
+      });
+      expect(response.status).toBe(400);
+    }
   });
 
   test("a row edited in place is reported at its seq", async () => {
@@ -400,6 +422,33 @@ describe("export", () => {
       exportedSeq: 3,
       lastError: "HTTP 503",
     });
+  });
+
+  test("one tick drains a backlog larger than one batch", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    for (let index = 0; index < 200; index += 1) {
+      await record(t, accountId, `row ${index}`);
+    }
+    // Setting the sink is row 201, one past a full batch.
+    expect((await putSink(t, "https://sink.example/audit")).status).toBe(200);
+    const batchSizes: number[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit): Promise<Response> => {
+        const rows: PublicAuditEvent[] = JSON.parse(
+          typeof init.body === "string" ? init.body : "[]",
+        );
+        batchSizes.push(rows.length);
+
+        return new Response("", { status: 200 });
+      }),
+    );
+
+    await t.action(internal.audit.sinks.exportDue, {});
+
+    expect(batchSizes).toEqual([200, 1]);
+    expect(await sink(t, accountId)).toMatchObject({ exportedSeq: 201 });
   });
 
   test("signAuditExport matches an HMAC-SHA256 the receiver computes", async () => {

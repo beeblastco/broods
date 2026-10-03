@@ -917,6 +917,13 @@ paths:
                   type: string
                 description:
                   type: string
+                auditRetentionDays:
+                  type: [integer, "null"]
+                  minimum: 1
+                  maximum: 3650
+                  description: >-
+                    Days an audit ledger row is kept once the sink has exported
+                    it. `null` returns to the default of 90.
             examples:
               updateDescription:
                 value:
@@ -2925,14 +2932,19 @@ paths:
         - name: toSeq
           in: query
           required: false
+          description: Must not be less than `fromSeq`.
           schema: { type: integer, minimum: 1 }
       responses:
         "200":
-          description: Verification result
+          description: >-
+            Verification result. `checkedFrom` and `checkedTo` are absent when
+            the range holds no rows, so nothing was recomputed.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditVerification"
+        "400":
+          { description: A bound below 1, or `fromSeq` greater than `toSeq` }
   /v1/audit/sink:
     get:
       tags: [Audit]
@@ -2950,11 +2962,12 @@ paths:
       tags: [Audit]
       summary: Set the audit sink
       description: >-
-        One webhook per account. Every 10 minutes Broods POSTs a JSON array of
-        up to 200 unexported rows to `url`, signed with
-        `X-Broods-Signature: sha256=<hex>`, an HMAC-SHA256 of the body under
-        `secret`. A 2xx advances `exportedSeq`; anything else is kept in
-        `lastError` and the batch is retried next tick. `url` must be public
+        One webhook per account. Every 10 minutes Broods POSTs the unexported
+        rows to `url` as JSON arrays of up to 200, at most 10 batches a tick,
+        each signed with `X-Broods-Signature: sha256=<hex>`, an HMAC-SHA256 of
+        the body under `secret`. A 2xx within 10 seconds advances
+        `exportedSeq`; anything else is kept in `lastError` and the batch is
+        retried next tick. `url` must be public
         `https`. Setting the sink keeps the watermark. Account secret, or a
         role with `audit:write`.
       security: [{ BearerAuth: [] }]
@@ -4175,6 +4188,9 @@ components:
         status:
           type: string
           enum: [active, disabled]
+        auditRetentionDays:
+          type: integer
+          description: Days an exported audit ledger row is kept. Absent means the default of 90.
         createdAt:
           type: string
           format: date-time
@@ -4835,7 +4851,7 @@ components:
       type: object
       description: >-
         One ledger row. `hash` is sha256 hex over the canonical JSON (keys
-        sorted recursively) of `accountId`, `seq`, `prevHash`, `at`, `actor`,
+        sorted recursively by UTF-16 code unit, no whitespace) of `accountId`, `seq`, `prevHash`, `at`, `actor`,
         `action`, `resource`, `summary` and `detailsJson`; `projectId`,
         `stageId` and `traceId` ride beside the chain and are not hashed.
       required:

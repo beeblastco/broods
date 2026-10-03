@@ -15,7 +15,7 @@ export const auditLedger: Storage["auditLedger"] = {
       await getConvexClient().mutation(
         internal.audit.ledger.record,
         {
-          accountId: input.accountId as any,
+          accountId: input.accountId,
           traceId: input.traceId,
           actor: { kind: "agent", agentId: input.agentId },
           action: input.action,

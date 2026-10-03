@@ -30,15 +30,7 @@ const DEFAULT_LIST_LIMIT = 100;
 
 export type AuditLeaf = "events" | "verify" | "sink";
 
-/** `/v1/audit`, `/v1/audit/verify`, `/v1/audit/sink`; null for anything else. */
-export function parseAuditRoute(pathname: string): AuditLeaf | null {
-  if (pathname === "/v1/audit") return "events";
-  if (pathname === "/v1/audit/verify") return "verify";
-  if (pathname === "/v1/audit/sink") return "sink";
-
-  return null;
-}
-
+/** Serve one `/v1/audit*` leaf; ledger reads are GET only, the sink takes GET, PUT and DELETE. */
 export async function handleAuditRoute(
   ctx: ActionCtx,
   req: Request,
@@ -112,6 +104,15 @@ export async function handleAuditRoute(
   return methodNotAllowed(["GET", "PUT", "DELETE"]);
 }
 
+/** `/v1/audit`, `/v1/audit/verify`, `/v1/audit/sink`; null for anything else. */
+export function parseAuditRoute(pathname: string): AuditLeaf | null {
+  if (pathname === "/v1/audit") return "events";
+  if (pathname === "/v1/audit/verify") return "verify";
+  if (pathname === "/v1/audit/sink") return "sink";
+
+  return null;
+}
+
 /** A non-negative integer query param: undefined when absent, null when malformed. */
 function integerParam(url: URL, name: string): number | null | undefined {
   const raw = url.searchParams.get(name)?.trim();
@@ -120,6 +121,7 @@ function integerParam(url: URL, name: string): number | null | undefined {
   return /^\d+$/.test(raw) ? Number(raw) : null;
 }
 
+/** `GET /v1/audit`: one page of rows after `since`, with the chain head. */
 async function listResponse(
   ctx: ActionCtx,
   req: Request,
@@ -161,6 +163,7 @@ async function listResponse(
   });
 }
 
+/** The sink as the API serves it: never the encrypted secret. */
 function publicSink(sink: Doc<"auditSinks">): Record<string, unknown> {
   return {
     kind: sink.kind,
@@ -171,6 +174,7 @@ function publicSink(sink: Doc<"auditSinks">): Record<string, unknown> {
   };
 }
 
+/** `GET /v1/audit/verify`: recompute the chain over an optional seq range. */
 async function verifyResponse(
   ctx: ActionCtx,
   req: Request,
@@ -179,10 +183,22 @@ async function verifyResponse(
   const url = new URL(req.url);
   const fromSeq = integerParam(url, "fromSeq");
   const toSeq = integerParam(url, "toSeq");
-  if (fromSeq === null || toSeq === null) {
-    return jsonError(400, "fromSeq and toSeq must be positive integers.", {
+  if (!fromSeq && fromSeq !== undefined) {
+    return jsonError(400, "fromSeq must be a positive integer.", {
       code: "invalid_range",
-      param: fromSeq === null ? "fromSeq" : "toSeq",
+      param: "fromSeq",
+    });
+  }
+  if (!toSeq && toSeq !== undefined) {
+    return jsonError(400, "toSeq must be a positive integer.", {
+      code: "invalid_range",
+      param: "toSeq",
+    });
+  }
+  if (fromSeq !== undefined && toSeq !== undefined && fromSeq > toSeq) {
+    return jsonError(400, "fromSeq must not be greater than toSeq.", {
+      code: "invalid_range",
+      param: "fromSeq",
     });
   }
   const result: ChainVerification = await ctx.runQuery(

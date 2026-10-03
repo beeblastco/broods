@@ -74,6 +74,8 @@ export interface BroodsAccount {
   accountId: string;
   username: string;
   status: string;
+  /** Days an exported audit row is kept; absent means the 90 day default. */
+  auditRetentionDays?: number;
   [key: string]: unknown;
 }
 
@@ -496,6 +498,8 @@ export class BroodsAccountClient {
   async updateAccount(patch: {
     username?: string;
     description?: string | null;
+    /** 1 to 3650 days, or null to return to the 90 day default. */
+    auditRetentionDays?: number | null;
   }): Promise<BroodsAccount | null> {
     const result = await this.request<{ account: BroodsAccount }>(
       "PATCH",
@@ -1289,6 +1293,7 @@ export class BroodsAccountClient {
 
       return result;
     },
+    /** The account's sink, or null when none is set. */
     getSink: async (): Promise<AuditSink | null> => {
       return await this.request<AuditSink>("GET", "/v1/audit/sink");
     },
@@ -1312,6 +1317,7 @@ export class BroodsAccountClient {
 
       return result;
     },
+    /** Remove the sink; exports stop and nothing more is pruned. Returns whether one existed. */
     deleteSink: async (): Promise<boolean> => {
       const result = await this.request<{ deleted: boolean }>(
         "DELETE",

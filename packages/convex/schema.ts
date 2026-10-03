@@ -1518,9 +1518,10 @@ export default defineSchema({
     .index("by_stageId", ["stageId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])
     .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
-  auditEvents: defineTable(auditEventsFields)
-    .index("by_accountId_and_seq", ["accountId", "seq"])
-    .index("by_accountId_and_at", ["accountId", "at"]),
+  auditEvents: defineTable(auditEventsFields).index("by_accountId_and_seq", [
+    "accountId",
+    "seq",
+  ]),
   auditChainHeads: defineTable(auditChainHeadsFields).index("by_accountId", [
     "accountId",
   ]),
