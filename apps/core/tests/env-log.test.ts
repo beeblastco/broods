@@ -223,6 +223,10 @@ describe("logging helpers", () => {
     expect(
       redactWithRunSecrets("a run-secret-value", ["run-secret-value"]),
     ).toBe("a [redacted]");
+    // The log patterns stay out: prose and a paging url are not credentials.
+    const prose = "a basic setup, see https://api.test/items?page=2&token=next";
+    expect(redactWithRunSecrets(prose)).toBe(prose);
+    expect(redactWithRunSecrets("key fp_agent_abc123")).toBe("key [redacted]");
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {

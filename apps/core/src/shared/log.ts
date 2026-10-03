@@ -155,15 +155,18 @@ export function redact(
 }
 
 /**
- * Scrubs every nested string against the run's secret values and leaves keys
- * alone, unlike `redact`. For tool data that is read back, stream frames and
- * stored tool rows: a `nextPageToken` must reach the model as it was.
+ * Scrubs every nested string of the run's secret values and Broods' own key
+ * formats, and nothing else: keys are left alone and the log patterns for
+ * `Basic`, `Bearer` and query strings do not run, unlike `redact`. For text
+ * and tool data that is read back, stream frames and stored tool rows: prose
+ * and a `nextPageToken` must reach the reader as they were.
  */
 export function redactWithRunSecrets(
   value: unknown,
   secretValues: readonly string[] = runSecretValues(),
 ): unknown {
-  if (typeof value === "string") return redactString(value, secretValues);
+  if (typeof value === "string")
+    return replaceSecretValues(value, secretValues);
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) {
     return value.map((item) => redactWithRunSecrets(item, secretValues));
@@ -329,7 +332,21 @@ function publishNats(
     });
 }
 
+/** A log string: known secret values, then anything shaped like a credential. */
 function redactString(value: string, secretValues: readonly string[]): string {
+  let redacted = replaceSecretValues(value, secretValues);
+  redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
+  redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
+  redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
+
+  return redacted;
+}
+
+/** Replaces each known secret value, longest first, and Broods' own key formats. */
+function replaceSecretValues(
+  value: string,
+  secretValues: readonly string[],
+): string {
   let redacted = value;
   const uniqueSecrets = [
     ...new Set(secretValues.filter((secret) => secret.length >= 4)),
@@ -337,9 +354,6 @@ function redactString(value: string, secretValues: readonly string[]): string {
   for (const secret of uniqueSecrets) {
     redacted = redacted.split(secret).join("[redacted]");
   }
-  redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
-  redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
-  redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
   redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
   redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
 

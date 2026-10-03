@@ -10,6 +10,7 @@ import {
   redactWithRunSecrets,
   runSecretValues,
 } from "../shared/log.ts";
+import { getObservabilityContext } from "../shared/otel.ts";
 import {
   ensureResponseStream,
   getSharedNatsConn,
@@ -46,6 +47,10 @@ export class LiveNatsPublisher implements NatsPublisher {
   private streamReady: Promise<void> | null = null;
   private readonly subject: string;
   private sequence = 0;
+  // The scrub list and the context secrets it was built from: rebuilt only
+  // when the run swaps its context, not for every token.
+  private scrubValues: string[] | null = null;
+  private scrubValuesFor: readonly string[] | undefined;
 
   /**
    * @param secretValues the run's resolved secrets, as `collectSecretValues`
@@ -146,12 +151,16 @@ export class LiveNatsPublisher implements NatsPublisher {
   private redactPayload(
     data: Record<string, unknown>,
   ): Record<string, unknown> {
-    const secretValues = [...runSecretValues(), ...this.secretValues];
+    const contextSecrets = getObservabilityContext()?.secretValues;
+    if (!this.scrubValues || contextSecrets !== this.scrubValuesFor) {
+      this.scrubValues = [...runSecretValues(), ...this.secretValues];
+      this.scrubValuesFor = contextSecrets;
+    }
     const safe: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(data)) {
       safe[field] = STRUCTURAL_FRAME_FIELDS.has(field)
         ? value
-        : redactWithRunSecrets(value, secretValues);
+        : redactWithRunSecrets(value, this.scrubValues);
     }
 
     return safe;
