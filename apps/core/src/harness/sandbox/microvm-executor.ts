@@ -168,7 +168,7 @@ const mirrorWrites = new Map<string, Promise<void>>();
 // token cache: an executor is constructed per request, so an instance field never hits.
 const reservedEndpoints = new Map<
   string,
-  { microvmId: string; endpoint: string; expiresAt: number }
+  { microvmId: string; endpoint: string; image: string; expiresAt: number }
 >();
 
 // The proxy authenticates shell WebSocket upgrades with this header; the value
@@ -660,6 +660,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     const cached = key ? reservedEndpoints.get(key) : undefined;
     if (!cached || cached.expiresAt <= Date.now()) return null;
+    // A changed image goes through #acquire, whose reconnect replaces the VM.
+    if (cached.image !== microvmImageName(this.#image().imageIdentifier)) {
+      return null;
+    }
 
     return { microvmId: cached.microvmId, endpoint: cached.endpoint };
   }
@@ -791,6 +795,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const entry = { microvmId: target.microvmId, endpoint: target.endpoint };
     reservedEndpoints.set(key, {
       ...entry,
+      image: microvmImageName(this.#image().imageIdentifier),
       expiresAt: now + RESERVED_ENDPOINT_TTL_MS,
     });
 
@@ -839,7 +844,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       microvmImageName(info.imageArn) !==
         microvmImageName(this.#image().imageIdentifier)
     ) {
-      void this.#terminate(microvmId);
+      await this.#terminate(microvmId);
       throw new MicrovmGoneError(
         `MicroVM ${microvmId} runs ${info.imageArn}, not the sandbox's image`,
       );
