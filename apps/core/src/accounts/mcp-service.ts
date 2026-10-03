@@ -11,7 +11,7 @@ import {
   mcpConnection,
   type McpConnection,
 } from "../harness/mcp/client.ts";
-import type { McpRecord, McpRuntime } from "../shared/domain/mcp.ts";
+import type { McpRecord } from "../shared/domain/mcp.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -31,7 +31,7 @@ interface McpProbe {
   headers?: Record<string, string>;
   bundleStorageKey?: string;
   sha256?: string;
-  runtime?: McpRuntime;
+  workersCompatible?: boolean;
 }
 
 /**
@@ -95,8 +95,15 @@ export async function handleMcpServiceRpc(
  */
 function parseProbe(value: unknown): McpProbe | string {
   if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
-  const { name, transport, url, headers, bundleStorageKey, sha256, runtime } =
-    value;
+  const {
+    name,
+    transport,
+    url,
+    headers,
+    bundleStorageKey,
+    sha256,
+    workersCompatible,
+  } = value;
   if (typeof name !== "string" || !name) return "probe needs a name";
   if (headers !== undefined && !isStringRecord(headers)) {
     return "probe headers must be a string record";
@@ -115,11 +122,10 @@ function parseProbe(value: unknown): McpProbe | string {
       return "a hosted probe needs bundleStorageKey and sha256";
     }
     if (
-      runtime !== undefined &&
-      runtime !== "lambda" &&
-      runtime !== "cloudflare"
+      workersCompatible !== undefined &&
+      typeof workersCompatible !== "boolean"
     ) {
-      return "probe runtime must be lambda or cloudflare";
+      return "probe workersCompatible must be a boolean";
     }
 
     return {
@@ -127,7 +133,9 @@ function parseProbe(value: unknown): McpProbe | string {
       transport: transport,
       bundleStorageKey: bundleStorageKey,
       sha256: sha256,
-      ...(runtime !== undefined ? { runtime: runtime } : {}),
+      ...(workersCompatible !== undefined
+        ? { workersCompatible: workersCompatible }
+        : {}),
     };
   }
 
@@ -148,7 +156,9 @@ function probeRecord(accountId: string, probe: McpProbe): McpRecord {
     stageId: "probe",
     name: probe.name,
     transport: probe.transport,
-    ...(probe.runtime !== undefined ? { runtime: probe.runtime } : {}),
+    ...(probe.workersCompatible !== undefined
+      ? { workersCompatible: probe.workersCompatible }
+      : {}),
     ...(probe.url !== undefined ? { url: probe.url } : {}),
     ...(probe.headers !== undefined ? { headers: probe.headers } : {}),
     ...(probe.bundleStorageKey !== undefined

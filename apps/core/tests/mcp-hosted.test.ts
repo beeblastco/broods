@@ -201,7 +201,31 @@ describe("hosted MCP metering", () => {
     ]);
   });
 
-  it("sends an opt-in row to the Cloudflare runtime and meters it like Lambda", async (): Promise<void> => {
+  it("keeps a Workers-capable row on Lambda when the deployment runs no Worker", async (): Promise<void> => {
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+    delete process.env.CLOUDFLARE_MCP_URL;
+    const frames = new TextEncoder().encode(
+      `${JSON.stringify({ t: "final", id: "1", result: ok("lambda") })}\n{"t":"end"}\n`,
+    );
+    const send = spyOn(LambdaClient.prototype, "send").mockImplementation(
+      async (): Promise<{
+        EventStream: InvokeWithResponseStreamResponseEvent[];
+      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+    );
+
+    try {
+      const response = await hostedMcpFetch({
+        ...hostedRecord(),
+        workersCompatible: true,
+      })(URL, { method: "POST", body: "{}" });
+      expect(await response.text()).toBe("lambda");
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("sends a Workers-capable row to the Cloudflare runtime and meters it like Lambda", async (): Promise<void> => {
     process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
     process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
     let reply = (): Response =>
@@ -218,7 +242,7 @@ describe("hosted MCP metering", () => {
     try {
       const response = await hostedMcpFetch({
         ...hostedRecord(),
-        runtime: "cloudflare",
+        workersCompatible: true,
       })(URL, { method: "POST", body: "{}" });
       expect(await response.text()).toBe("cloudflare");
       await Promise.resolve();
@@ -227,7 +251,7 @@ describe("hosted MCP metering", () => {
       expect(new Headers(init?.headers).get("authorization")).toBe(
         "Bearer bridge-key",
       );
-      expect(JSON.parse(String(init?.body))).toMatchObject({
+      expect(JSON.parse(await new Response(init?.body).text())).toMatchObject({
         accountId: "acct_test",
         expectedSha256: "a".repeat(64),
       });
@@ -235,7 +259,7 @@ describe("hosted MCP metering", () => {
 
       reply = (): Response => new Response("Unauthorized", { status: 401 });
       await expect(
-        hostedMcpFetch({ ...hostedRecord(), runtime: "cloudflare" })(URL, {
+        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
           method: "POST",
           body: "{}",
         }),
@@ -246,7 +270,7 @@ describe("hosted MCP metering", () => {
           `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
         );
       await expect(
-        hostedMcpFetch({ ...hostedRecord(), runtime: "cloudflare" })(URL, {
+        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
           method: "POST",
           body: "{}",
         }),

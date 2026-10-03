@@ -1,8 +1,8 @@
 /**
  * Hosted MCP server transport (#331 phase 2, micro-batching #397). A hosted
- * row's endpoint is the mcp-runner Lambda, or the opt-in Cloudflare Dynamic
- * Workers runtime (apps/cloudflare-mcp) when the row says
- * `runtime: "cloudflare"`: this fetch adapter serializes a web request,
+ * row's endpoint is the Cloudflare Dynamic Workers runtime
+ * (apps/cloudflare-mcp) when its bundle can run there and this deployment
+ * runs that Worker, the mcp-runner Lambda otherwise: this fetch adapter serializes a web request,
  * batches it with the sibling calls that arrive in the same window, sends
  * the batch once, and once the batch's terminal NDJSON frame (../frames.ts)
  * arrives settles each call off the frame tagged with its id.
@@ -16,6 +16,7 @@ import { HOSTED_MCP_MEMORY_GB } from "@broods/convex/model/pricing";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import {
   booleanEnv,
+  optionalEnv,
   positiveIntegerEnv,
   requireEnv,
 } from "../../shared/env.ts";
@@ -230,12 +231,12 @@ function defaultClient(): LambdaClient {
 // (bad token, invalid payload) runs no tenant code and costs nothing; a
 // timeout or abort after sending may have, so it still counts.
 async function drainBridgeStream(
+  url: string,
   payload: McpHostPayload,
   abortSignal: AbortSignal,
   queue: FrameQueue,
   onInvoked: (startedAt: number) => void,
 ): Promise<void> {
-  const url = requireEnv("CLOUDFLARE_MCP_URL");
   const apiKey = requireEnv("CLOUDFLARE_MCP_API_KEY");
   const startedAt = Date.now();
   const response = await fetch(url, {
@@ -341,7 +342,7 @@ function enqueueCall(
   abortSignal.addEventListener("abort", () => reject(abortSignal.reason), {
     once: true,
   });
-  const key = `${record.accountId}:${record.runtime ?? "lambda"}:${record.sha256}`;
+  const key = `${record.accountId}:${workersUrl(record) ?? "lambda"}:${record.sha256}`;
   let batch = openBatches.get(key);
   if (!batch) {
     const opened: OpenBatch = {
@@ -476,9 +477,10 @@ async function sendBatch(
   const onInvoked = (startedAt: number): void => {
     invokedAt = startedAt;
   };
+  const bridgeUrl = workersUrl(record);
   const pump = (
-    record.runtime === "cloudflare"
-      ? drainBridgeStream(payload, abortSignal, queue, onInvoked)
+    bridgeUrl
+      ? drainBridgeStream(bridgeUrl, payload, abortSignal, queue, onInvoked)
       : drainInvokeStream(
           defaultClient(),
           payload,
@@ -522,4 +524,12 @@ async function sendBatch(
       });
     }
   }
+}
+
+// The Worker's URL when the bundle can run on Workers and this deployment runs
+// the Worker (URL and key both set); undefined sends the row to Lambda.
+function workersUrl(record: McpRecord): string | undefined {
+  return record.workersCompatible && optionalEnv("CLOUDFLARE_MCP_API_KEY")
+    ? optionalEnv("CLOUDFLARE_MCP_URL")
+    : undefined;
 }

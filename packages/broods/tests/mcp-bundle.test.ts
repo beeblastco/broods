@@ -22,7 +22,9 @@ test("compileProject bundles a servable hosted MCP server", async () => {
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const server = manifest.resources.find((entry) => entry.kind === "mcp");
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
   const bundle = (server?.config as { bundle?: unknown } | undefined)?.bundle;
   expect(typeof bundle).toBe("string");
 });
@@ -56,21 +58,17 @@ test("compileProject rejects a server with neither url nor handler", async () =>
   );
 });
 
-test("a cloudflare server keeps its runtime and cannot bundle Node builtins", async (): Promise<void> => {
-  const servable = await mcpFixture(
-    `runtime: "cloudflare", handler: (request) => new Response("{}"),`,
-  );
-  const { manifest } = await compileProject({ cwd: servable, command: "dev" });
-  const server = manifest.resources.find((entry) => entry.kind === "mcp");
-  expect(server?.config).toMatchObject({ runtime: "cloudflare" });
-
+test("a server that needs Node builtins ships the Node build", async (): Promise<void> => {
   const nodeOnly = await mcpFixture(
-    `runtime: "cloudflare", handler: () => new Response(String(execSync("true"))),`,
+    `handler: () => new Response(String(execSync("true"))),`,
     `import { execSync } from "node:child_process";\n`,
   );
-  await expect(
-    compileProject({ cwd: nodeOnly, command: "dev" }),
-  ).rejects.toThrow("failed to build");
+
+  const { manifest } = await compileProject({ cwd: nodeOnly, command: "dev" });
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
+  expect(String(server?.config.bundle)).toContain("node:child_process");
 });
 
 async function mcpFixture(handlerLine: string, prelude = ""): Promise<string> {

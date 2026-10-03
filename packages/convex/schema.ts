@@ -272,13 +272,11 @@ export const mcpFields = {
   url: v.optional(v.string()),
   /** Machine-only: name of the machine sandbox whose daemon serves it. */
   sandbox: v.optional(v.string()),
-  /** Hosted-only: where the bundle runs. Absent means "lambda"; "cloudflare" is opt-in. */
-  runtime: v.optional(v.union(v.literal("lambda"), v.literal("cloudflare"))),
+  /** Hosted-only: Cloudflare Dynamic Workers can run the bundle; set by aws/bundles.ts putMcpBundle. */
+  workersCompatible: v.optional(v.boolean()),
   /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),
-  /** Hosted-only: byte size of an inline-uploaded bundle; absent after a storage-id upload. */
-  bundleBytes: v.optional(v.number()),
   headers: v.optional(v.record(v.string(), v.string())),
   /** OAuth 2.0 refresh-token grant for "http" rows; secret fields are ${NAME} refs. */
   oauth: v.optional(

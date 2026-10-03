@@ -2,9 +2,9 @@
  * Shared validation for MCP server registrations (#331). One normalizer
  * serves every write path (CLI sync, direct API, dashboard). A `url` makes an "http" row
  * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
- * a "hosted" row served by the mcp-runner Lambda (or Cloudflare Dynamic
- * Workers with `runtime: "cloudflare"`), hashed here so sha256 always travels
- * with the bundle. Auth header values may carry ${NAME}
+ * a "hosted" row, hashed here so sha256 always travels with the bundle; the
+ * S3 bundle writer (aws/bundles.ts) marks whether Cloudflare Dynamic Workers
+ * can run it. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one
  * instead of an inline secret. `oauth` follows the same rule: clientSecret
@@ -24,14 +24,9 @@ const MAX_ALLOWED_TOOLS = 256;
  * packages/broods/src/manifest.ts (the published CLI cannot import this
  * package). Change both or the CLI accepts what the config plane rejects.
  */
-const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
+export const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
 /** Ceiling for a hosted MCP server bundle by either upload path (#190). */
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
-/**
- * A Cloudflare bundle must fit the Worker size cap, so it only travels
- * inline, where its size is known. Mirrors apps/cloudflare-mcp and the CLI.
- */
-const MAX_CLOUDFLARE_MCP_BUNDLE_BYTES = MAX_INLINE_BUNDLE_BYTES;
 
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -69,9 +64,6 @@ export type McpPlacement = { sandbox: string | null; transport: McpTransport };
 
 export type McpTransport = "http" | "hosted" | "machine";
 
-/** Where a hosted bundle runs. Lambda is the default; Cloudflare Dynamic Workers is opt-in. */
-export type McpRuntime = "lambda" | "cloudflare";
-
 /**
  * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
  * at connect time and sends `Authorization: Bearer <token>`, so a server
@@ -90,8 +82,6 @@ export interface McpInput {
   name?: string;
   description?: string;
   transport?: McpTransport;
-  /** Hosted-only: the runtime that serves the bundle. */
-  runtime?: McpRuntime;
   url?: string;
   /** Machine-only: the machine sandbox (by name) whose daemon serves it. */
   sandbox?: string;
@@ -104,8 +94,6 @@ export interface McpInput {
    */
   bundleStorageId?: string;
   sha256?: string;
-  /** Set with an inline `bundle`: its UTF-8 byte size. */
-  bundleBytes?: number;
   headers?: Record<string, string>;
   oauth?: McpOauth;
   allowedTools?: string[];
@@ -114,33 +102,17 @@ export interface McpInput {
 
 /**
  * Invariants on the row a create or update produces, whichever side brings
- * each field: only a hosted row picks a runtime, a machine row names its sandbox, and oauth needs an external row
+ * each field: a machine row names its sandbox, and oauth needs an external row
  * with an https url (the minted bearer rides every request) and no
  * Authorization header (core mints it itself).
  */
 export function assertMcpRow(row: {
   transport: McpTransport;
-  runtime?: McpRuntime;
-  bundleBytes?: number;
   url?: string;
   sandbox?: string;
   headers?: Record<string, string>;
   oauth?: McpOauth;
 }): void {
-  if (row.runtime !== undefined && row.transport !== "hosted") {
-    throw new ClientError("runtime applies only to hosted MCP servers");
-  }
-  // A runtime-only patch over a bundle of unknown size (a storage-id upload,
-  // or a row written before sizes were kept) must bring the bundle again.
-  if (
-    row.runtime === "cloudflare" &&
-    (row.bundleBytes === undefined ||
-      row.bundleBytes > MAX_CLOUDFLARE_MCP_BUNDLE_BYTES)
-  ) {
-    throw new ClientError(
-      `a cloudflare server needs its bundle sent inline (at most ${MAX_CLOUDFLARE_MCP_BUNDLE_BYTES} bytes) with this write`,
-    );
-  }
   if (row.transport === "machine" && !row.sandbox) {
     throw new ClientError(
       "a machine MCP server needs the sandbox that serves it",
@@ -241,13 +213,11 @@ export async function normalizeMcpInput(
     input.description = normalizeDescription(record.description);
   }
   normalizeConnection(record, input);
-  normalizeRuntime(record, input);
   // Hash here (async: Convex's runtime only offers web crypto) so every
   // write path gets sha256 with the bundle; a storage-id upload declares its
   // own, which the S3 writer verifies against the bytes.
   if (input.bundle !== undefined) {
     input.sha256 = await sha256Hex(input.bundle);
-    input.bundleBytes = new TextEncoder().encode(input.bundle).byteLength;
   }
   if (record.headers !== undefined && record.headers !== null) {
     input.headers = normalizeHeaders(record.headers);
@@ -484,25 +454,6 @@ function normalizeOauth(
     refreshToken: field("refreshToken", true),
     ...(tokenUrl !== undefined ? { tokenUrl: tokenUrl } : {}),
   };
-}
-
-function normalizeRuntime(
-  record: Record<string, unknown>,
-  input: McpInput,
-): void {
-  if (record.runtime === undefined) return;
-  if (record.runtime !== "lambda" && record.runtime !== "cloudflare") {
-    throw new ClientError("runtime must be lambda or cloudflare");
-  }
-  if (input.transport !== undefined && input.transport !== "hosted") {
-    throw new ClientError("runtime applies only to hosted MCP servers");
-  }
-  if (record.runtime === "cloudflare" && input.bundleStorageId !== undefined) {
-    throw new ClientError(
-      `a cloudflare server's bundle goes inline as bundle (at most ${MAX_CLOUDFLARE_MCP_BUNDLE_BYTES} bytes), not bundleStorageId`,
-    );
-  }
-  input.runtime = record.runtime;
 }
 
 function normalizeUrl(value: unknown): string {

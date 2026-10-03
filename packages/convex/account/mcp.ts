@@ -10,12 +10,7 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import {
-  assertMcpRow,
-  type McpOauth,
-  type McpRuntime,
-  type McpTransport,
-} from "../model/mcp";
+import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
@@ -35,12 +30,11 @@ export const create = internalMutation({
     name: v.string(),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
-    runtime: mcpFields.runtime,
+    workersCompatible: mcpFields.workersCompatible,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
-    bundleBytes: v.optional(v.number()),
     headers: v.optional(v.record(v.string(), v.string())),
     oauth: mcpFields.oauth,
     allowedTools: v.optional(v.array(v.string())),
@@ -79,8 +73,6 @@ export const create = internalMutation({
     }
     assertMcpRow({
       transport: transport,
-      runtime: args.runtime,
-      bundleBytes: args.bundleBytes,
       url: args.url,
       sandbox: args.sandbox,
       headers: args.headers,
@@ -96,12 +88,11 @@ export const create = internalMutation({
       name: args.name,
       description: args.description,
       transport: transport,
-      runtime: args.runtime,
+      workersCompatible: args.workersCompatible,
       url: args.url,
       sandbox: args.sandbox,
       bundleStorageKey: args.bundleStorageKey,
       sha256: args.sha256,
-      bundleBytes: args.bundleBytes,
       headers: args.headers,
       oauth: args.oauth,
       allowedTools: args.allowedTools,
@@ -250,12 +241,11 @@ export const update = internalMutation({
     name: v.optional(v.string()),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
-    runtime: mcpFields.runtime,
+    workersCompatible: mcpFields.workersCompatible,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
-    bundleBytes: v.optional(v.number()),
     headers: v.optional(v.record(v.string(), v.string())),
     oauth: mcpFields.oauth,
     allowedTools: v.optional(v.array(v.string())),
@@ -290,21 +280,6 @@ export const update = internalMutation({
   },
 });
 
-/**
- * A new bundle brings its own size, or none for a storage-id upload; the
- * same bundle carried forward keeps the size already on the row.
- */
-function bundleBytesPatch(
-  args: { sha256?: string; bundleBytes?: number },
-  doc: Doc<"mcp">,
-): Partial<Doc<"mcp">> {
-  const newBundle = args.sha256 !== undefined && args.sha256 !== doc.sha256;
-
-  return args.bundleBytes !== undefined || newBundle
-    ? { bundleBytes: args.bundleBytes }
-    : {};
-}
-
 async function requireNameFree(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -333,12 +308,11 @@ function updatePatch(
     name?: string;
     description?: string;
     transport?: McpTransport;
-    runtime?: McpRuntime;
+    workersCompatible?: boolean;
     url?: string;
     sandbox?: string;
     bundleStorageKey?: string;
     sha256?: string;
-    bundleBytes?: number;
     headers?: Record<string, string>;
     oauth?: McpOauth;
     allowedTools?: string[];
@@ -353,14 +327,15 @@ function updatePatch(
       ? { description: args.description }
       : {}),
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
-    ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
+    ...(args.workersCompatible !== undefined
+      ? { workersCompatible: args.workersCompatible }
+      : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
     ...(args.bundleStorageKey !== undefined
       ? { bundleStorageKey: args.bundleStorageKey }
       : {}),
     ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
-    ...bundleBytesPatch(args, doc),
     ...(args.headers !== undefined ? { headers: args.headers } : {}),
     ...(args.oauth !== undefined ? { oauth: args.oauth } : {}),
     ...(args.allowedTools !== undefined
@@ -373,10 +348,9 @@ function updatePatch(
       : {}),
     ...(args.transport === "http"
       ? {
-          runtime: undefined,
+          workersCompatible: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
-          bundleBytes: undefined,
           sourceCode: undefined,
           sandbox: undefined,
         }
@@ -386,10 +360,9 @@ function updatePatch(
           url: undefined,
           oauth: undefined,
           headers: undefined,
-          runtime: undefined,
+          workersCompatible: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
-          bundleBytes: undefined,
           sourceCode: undefined,
         }
       : {}),

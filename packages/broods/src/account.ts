@@ -31,7 +31,6 @@ import type {
   UpdateCronInput,
   WorkspaceConfig,
 } from "./contracts.ts";
-import type { McpRuntime } from "./resources.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
 import type {
   Connection,
@@ -267,8 +266,6 @@ export interface AccountMcp {
   url?: string;
   /** Machine servers only: the machine sandbox (by name) whose daemon serves it. */
   sandbox?: string;
-  /** Hosted servers only: absent means the Lambda default. */
-  runtime?: McpRuntime;
   /** Hosted servers only: content hash of the uploaded bundle. */
   sha256?: string;
   headers?: Record<string, string>;
@@ -294,8 +291,6 @@ export interface CreateMcpInput {
   bundle?: string;
   bundleStorageId?: string;
   sha256?: string;
-  /** Hosted only: `"cloudflare"` opts into Dynamic Workers; omit for Lambda. */
-  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
@@ -310,8 +305,6 @@ export interface UpdateMcpInput {
   bundle?: string;
   bundleStorageId?: string;
   sha256?: string;
-  /** Hosted only: `"cloudflare"` opts into Dynamic Workers; omit for Lambda. */
-  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];

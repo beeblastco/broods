@@ -284,58 +284,6 @@ describe("normalizeMcpInput", () => {
     ).toThrow("headers do not apply to a machine server");
   });
 
-  test("only a hosted row opts into the cloudflare runtime", async () => {
-    const input = await normalizeMcpInput(
-      { name: "tools", bundle: "export default {}", runtime: "cloudflare" },
-      { requireConnection: true },
-    );
-    expect(input.transport).toBe("hosted");
-    expect(input.runtime).toBe("cloudflare");
-    await expect(
-      normalizeMcpInput(
-        { name: "tools", bundle: "export default {}", runtime: "workers" },
-        { requireConnection: true },
-      ),
-    ).rejects.toThrow("runtime must be lambda or cloudflare");
-    await expect(
-      normalizeMcpInput(
-        { name: "search", url: SERVER_URL, runtime: "cloudflare" },
-        { requireConnection: true },
-      ),
-    ).rejects.toThrow("runtime applies only to hosted MCP servers");
-    expect(input.bundleBytes).toBe(17);
-    await expect(
-      normalizeMcpInput(
-        {
-          name: "tools",
-          bundleStorageId: "kg2storage",
-          sha256: "a".repeat(64),
-          runtime: "cloudflare",
-        },
-        { requireConnection: true },
-      ),
-    ).rejects.toThrow("not bundleStorageId");
-    // A runtime-only patch over a bundle of unknown size must resend it.
-    expect(() =>
-      assertMcpRow({ transport: "hosted", runtime: "cloudflare" }),
-    ).toThrow("needs its bundle sent inline");
-    expect(() =>
-      assertMcpRow({
-        transport: "hosted",
-        runtime: "cloudflare",
-        bundleBytes: 17,
-      }),
-    ).not.toThrow();
-    // A runtime-only patch leaves transport unset; the row invariant refuses it.
-    expect(() =>
-      assertMcpRow({
-        transport: "http",
-        url: SERVER_URL,
-        runtime: "cloudflare",
-      }),
-    ).toThrow("runtime applies only to hosted MCP servers");
-  });
-
   test("rejects names that break the server__tool namespace", async () => {
     for (const name of ["Search", "se_arch", "1search", "a".repeat(33), ""]) {
       await expect(

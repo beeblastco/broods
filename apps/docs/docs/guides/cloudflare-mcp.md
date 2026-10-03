@@ -1,39 +1,25 @@
 # Cloudflare MCP runtime
 
-A [hosted MCP server](tools.md#host-your-own-server-on-broods) runs on AWS Lambda unless you choose otherwise. Set `runtime: "cloudflare"` to run it on Cloudflare Dynamic Workers instead. Each server opts in on its own, and Broods never moves an existing server for you.
+A [hosted MCP server](tools.md#host-your-own-server-on-broods) runs where it is cheapest and fastest for its code. You do not choose: Broods runs a server on Cloudflare Dynamic Workers when its bundle can run there, and on AWS Lambda otherwise.
 
-```ts
-import { defineMcp } from "broods";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+| Runtime    | Picked when                                                          | Bundle cap         | Per call                      |
+| ---------- | -------------------------------------------------------------------- | ------------------ | ----------------------------- |
+| Cloudflare | The bundle builds for Workers, is 10 MB or less, needs nothing below | 10 MB, sent inline | 30 s, 5 s CPU, 50 subrequests |
+| Lambda     | Anything else                                                        | 50 MB              | 30 s shared by the batch      |
 
-export const greeter = defineMcp({
-  name: "greeter",
-  runtime: "cloudflare",
-  handler: createMcpHandler(() => {
-    const server = new McpServer({ name: "greeter", version: "1.0.0" });
-    // server.registerTool(...)
-    return server;
-  }),
-});
-```
+For a server that mostly does `fetch` calls and JSON, Workers costs about a quarter of Lambda per call and starts in milliseconds. A batch is the parallel calls of one model step to one server; both runtimes take up to 6 MiB in and 16 MiB out.
 
-Remove `runtime` and sync again to move the server back to Lambda. Over the API, send `runtime` on `POST /v1/mcp` or `PATCH /v1/mcp/{serverId}`. Only hosted servers accept it.
+## What sends a server to Lambda
 
-## When to pick it
+- Node builtins (`node:child_process`, `node:fs`, ...), `require()`, `process`, `Buffer`, `__dirname`, native modules or a filesystem.
+- `eval` or `new Function`, which Workers forbid.
+- A bundle over 10 MB.
+- A deployment that does not run the Cloudflare runtime. A self-hosted Broods without it keeps every server on Lambda.
 
-| Runtime            | Runs                                | Bundle cap         | Batch in | Batch out | Per call                      |
-| ------------------ | ----------------------------------- | ------------------ | -------- | --------- | ----------------------------- |
-| `lambda` (default) | Node.js, npm dependencies, builtins | 50 MB              | 6 MiB    | 16 MiB    | 30 s shared by the batch      |
-| `cloudflare`       | Workers-compatible JavaScript only  | 10 MB, sent inline | 6 MiB    | 16 MiB    | 30 s, 5 s CPU, 50 subrequests |
+The CLI tries a Workers build first (browser and `workerd` package exports) and ships it when it passes the same static scan Broods runs on every upload; otherwise it ships a Node build. The scan is a heuristic that leans toward Lambda. A server that gets past it and still fails on Workers stays there until its code changes.
 
-A batch is the parallel calls of one model step to one server. On Cloudflare each call answers as soon as it finishes, and a call that would push the batch past 16 MiB fails on its own.
+## What the server can reach on Cloudflare
 
-Cloudflare starts in milliseconds. Pick it for a server that only does `fetch` calls and JSON. Stay on Lambda if the server needs Node builtins, native modules, a filesystem or long CPU work.
-
-## What the server can reach
-
-- The CLI bundles for Workers: browser and `workerd` package exports, no Node builtins. An import such as `node:child_process` fails the sync, before anything uploads.
-- A Cloudflare bundle always goes inline, not through an upload URL. A `runtime` switch over a bundle uploaded by URL is refused until you send the bundle again.
 - Each account's bundle runs in its own isolate. Broods checks the bundle against its sha256 before it runs.
 - The isolate has no bindings and no platform secrets. Pass credentials through `headers` with `${NAME}` env refs, exactly as on Lambda.
 - Outbound `fetch` reaches the public internet. Raw TCP sockets (`connect()`) are not available.
@@ -42,7 +28,7 @@ Cloudflare starts in milliseconds. Pick it for a server that only does `fetch` c
 
 A Cloudflare call is billed like a Lambda call: one request per batch, plus the batch's wall time at the hosted MCP rate. The Compute panel shows no CPU figure for these calls, because the runtime does not report one.
 
-## Enabling it on a self-hosted deployment
+## Running it on a self-hosted deployment
 
 The runtime is `apps/cloudflare-mcp`, a Worker with a `LOADER` [Worker Loader](https://developers.cloudflare.com/dynamic-workers/) binding. Dynamic Workers needs a Workers Paid plan.
 
@@ -50,4 +36,4 @@ The runtime is `apps/cloudflare-mcp`, a Worker with a `LOADER` [Worker Loader](h
 2. Deploy the Worker with Wrangler.
 3. Set core's `CLOUDFLARE_MCP_URL` to `https://<worker-host>/mcp` and `CLOUDFLARE_MCP_API_KEY` to the same secret.
 
-Until both core variables are set, a call to a `cloudflare` server fails with a clear error. Lambda servers are unaffected.
+Until `CLOUDFLARE_MCP_URL` is set, every server runs on Lambda.

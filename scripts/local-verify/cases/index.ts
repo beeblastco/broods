@@ -3,7 +3,6 @@ import { agentRun } from "./agent-run.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { connections } from "./connections.ts";
 import { manifestSync } from "./manifest-sync.ts";
-import { mcpRuntime } from "./mcp-runtime.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
@@ -24,7 +23,6 @@ export const verifyCases: readonly VerifyCase[] = [
   ownBucketSandbox,
   trailingSlash,
   manifestSync,
-  mcpRuntime,
   workToolWebhooks,
   webhookHandshake,
   connections,

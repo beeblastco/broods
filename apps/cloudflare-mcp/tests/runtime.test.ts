@@ -139,7 +139,7 @@ it("budgets encoded frames, escaping included, against the 16 MiB batch cap", as
   const frames = text
     .trim()
     .split("\n")
-    .map((line): Frame => JSON.parse(line) as Frame);
+    .map((line): Frame => JSON.parse(line));
 
   expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(
     16 * 1024 * 1024,
@@ -179,7 +179,7 @@ async function framesOf(response: Response): Promise<Frame[]> {
   return (await response.text())
     .trim()
     .split("\n")
-    .map((line): Frame => JSON.parse(line) as Frame);
+    .map((line): Frame => JSON.parse(line));
 }
 
 async function send(
