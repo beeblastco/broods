@@ -832,6 +832,18 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (isTerminalMicrovmState(info.state)) {
       throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
     }
+    // A sandbox whose image changed must not keep reaching the VM the old image
+    // booted: stop it, and the caller creates one from the new image.
+    if (
+      info.imageArn &&
+      microvmImageName(info.imageArn) !==
+        microvmImageName(this.#image().imageIdentifier)
+    ) {
+      void this.#terminate(microvmId);
+      throw new MicrovmGoneError(
+        `MicroVM ${microvmId} runs ${info.imageArn}, not the sandbox's image`,
+      );
+    }
     if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
 
     return { microvmId: microvmId, endpoint: info.endpoint };
@@ -1569,6 +1581,11 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
   if (!scope || !name) return undefined;
 
   return `${scope}:${name}-${variant}`;
+}
+
+// An image ARN without any version qualifier, so two versions compare equal.
+function microvmImageName(arn: string): string {
+  return arn.split(":").slice(0, 7).join(":");
 }
 
 function microvmLocalNamespace(namespace: string): string {
