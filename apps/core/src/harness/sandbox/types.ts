@@ -120,13 +120,13 @@ export interface SandboxRunRequest {
   callback?: SandboxJobCallback;
 }
 
-/** What sandbox code learns about the run it serves: who it is and a bearer to call back as it. */
+/** What sandbox code learns about the run it serves: who it is and a bearer that reads its agent's runs. */
 export interface SandboxRunPrincipal {
   accountId: string;
   agentId: string;
   runToken: string;
   /** The public API base, when core knows its own (PUBLIC_BASE_URL). */
-  apiUrl?: string;
+  baseUrl?: string;
 }
 
 // Where a finished background job reports its result. The detached process POSTs

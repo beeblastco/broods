@@ -348,13 +348,13 @@ export class Session {
   sandboxPrincipal(): SandboxRunPrincipal | undefined {
     if (!this.principal) return undefined;
     this.mintedRunToken ??= sealRunToken(this.principal);
-    const apiUrl = getHarnessPublicUrl();
+    const baseUrl = getHarnessPublicUrl();
 
     return {
       accountId: this.principal.accountId,
       agentId: this.principal.agentId,
       runToken: this.mintedRunToken,
-      ...(apiUrl ? { apiUrl: apiUrl } : {}),
+      ...(baseUrl ? { baseUrl: baseUrl } : {}),
     };
   }
 

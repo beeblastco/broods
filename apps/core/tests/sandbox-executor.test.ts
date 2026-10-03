@@ -2494,7 +2494,7 @@ describe("mergeSandboxEnv with a run principal", () => {
       accountId: "acct_1",
       agentId: "agent_1",
       runToken: "fp_run_token",
-      apiUrl: "https://api.example.test",
+      baseUrl: "https://api.example.test",
     };
     expect(
       mergeSandboxEnv(
@@ -2508,14 +2508,14 @@ describe("mergeSandboxEnv with a run principal", () => {
       BROODS_ACCOUNT_ID: "acct_1",
       BROODS_AGENT_ID: "agent_1",
       BROODS_RUN_TOKEN: "fp_run_token",
-      BROODS_API_URL: "https://api.example.test",
+      BROODS_BASE_URL: "https://api.example.test",
     });
     // Without a principal the request layer still cannot plant the names.
     expect(mergeSandboxEnv({}, { BROODS_RUN_TOKEN: "spoofed" })).toEqual({});
     for (const key of [
       "BROODS_ACCOUNT_ID",
       "BROODS_AGENT_ID",
-      "BROODS_API_URL",
+      "BROODS_BASE_URL",
       "BROODS_RUN_TOKEN",
     ]) {
       expect(RESERVED_SANDBOX_ENV_KEYS.has(key)).toBe(true);

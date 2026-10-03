@@ -19,7 +19,7 @@ export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
   "BASH_ENV",
   "BROODS_ACCOUNT_ID",
   "BROODS_AGENT_ID",
-  "BROODS_API_URL",
+  "BROODS_BASE_URL",
   "BROODS_RUN_TOKEN",
   "ENV",
   "HOME",
@@ -219,7 +219,7 @@ function principalEnv(principal: SandboxRunPrincipal): Record<string, string> {
   return {
     BROODS_ACCOUNT_ID: principal.accountId,
     BROODS_AGENT_ID: principal.agentId,
+    ...(principal.baseUrl ? { BROODS_BASE_URL: principal.baseUrl } : {}),
     BROODS_RUN_TOKEN: principal.runToken,
-    ...(principal.apiUrl ? { BROODS_API_URL: principal.apiUrl } : {}),
   };
 }
