@@ -21,6 +21,7 @@ import {
   type AuditChainHead,
   type ChainVerification,
 } from "../model/auditEvents";
+import { auditSinkRow } from "../model/auditSinks";
 import { auditEventsFields } from "../schema";
 
 const DEFAULT_RETENTION_DAYS = 90;
@@ -89,21 +90,22 @@ export const pruneExpired = internalMutation({
       numItems: PRUNE_ACCOUNT_PAGE_SIZE,
       cursor: args.cursor ?? null,
     });
-    let deleted = 0;
-    let batchFilled = false;
+    // One delete budget for the whole page keeps the mutation's writes
+    // bounded however many accounts have rows to drop.
+    let budget = PRUNE_BATCH_SIZE;
     for (const tip of tips.page) {
-      const count = await pruneAccount(ctx, tip, now);
-      deleted += count;
-      batchFilled ||= count === PRUNE_BATCH_SIZE;
+      if (budget === 0) break;
+      budget -= await pruneAccount(ctx, tip, now, budget);
     }
-    if (batchFilled || !tips.isDone) {
+    // Out of budget: this page may hold more, so it runs again.
+    if (budget === 0 || !tips.isDone) {
       await ctx.scheduler.runAfter(0, internal.audit.ledger.pruneExpired, {
         now: now,
-        cursor: batchFilled ? args.cursor : tips.continueCursor,
+        cursor: budget === 0 ? args.cursor : tips.continueCursor,
       });
     }
 
-    return deleted;
+    return PRUNE_BATCH_SIZE - budget;
   },
 });
 
@@ -174,28 +176,18 @@ export const verifyChain = internalQuery({
     const before =
       first?.seq === 1
         ? null
-        : await ctx.db
-            .query("auditEvents")
-            .withIndex("by_accountId_and_seq", (q) =>
-              q
-                .eq("accountId", args.accountId)
-                .lt("seq", first?.seq ?? fromSeq),
-            )
-            .order("desc")
-            .first();
-    const tip = await chainHead(ctx, args.accountId);
+        : await rowBelow(ctx, args.accountId, first?.seq ?? fromSeq);
     if (!first) {
-      // An empty range is only fine when nothing should be there: the row
-      // after a stored one exists unless that one is the head, and an
-      // open-ended range always holds the head row, which is never pruned.
-      if (before && tip && tip.seq > before.seq) {
-        return { ok: false, brokenAtSeq: before.seq + 1 };
-      }
-      if (!before && tip && toSeq === undefined && tip.seq >= fromSeq) {
-        return { ok: false, brokenAtSeq: tip.seq };
-      }
+      const missing = missingFromEmptyRange(
+        before,
+        await chainHead(ctx, args.accountId),
+        fromSeq,
+        toSeq,
+      );
 
-      return { ok: true };
+      return missing === null
+        ? { ok: true }
+        : { ok: false, brokenAtSeq: missing };
     }
     if (before && before.seq !== first.seq - 1) {
       return { ok: false, brokenAtSeq: before.seq + 1 };
@@ -209,8 +201,12 @@ export const verifyChain = internalQuery({
     const range = { checkedFrom: first.seq, checkedTo: last.seq };
     if (!result.ok) return { ...result, ...range };
 
-    const reachedEnd = toSeq === undefined && rows.length < VERIFY_ROWS_MAX;
-    if (reachedEnd && tip && (tip.seq !== last.seq || tip.hash !== last.hash)) {
+    // The tail check only applies when the walk reached the end of the ledger.
+    if (toSeq !== undefined || rows.length === VERIFY_ROWS_MAX) {
+      return { ok: true, ...range };
+    }
+    const tip = await chainHead(ctx, args.accountId);
+    if (tip && (tip.seq !== last.seq || tip.hash !== last.hash)) {
       return { ok: false, brokenAtSeq: last.seq + 1, ...range };
     }
 
@@ -228,40 +224,70 @@ async function chainHead(
 }
 
 /**
- * One batch of deletes for one account: rows older than its retention, never
- * the head, and never past what its sink exported when it has one. Returns
- * the count deleted; a full batch means there may be more.
+ * The seq a verify of an empty range must report as missing, or null when
+ * nothing should be there. The row after a stored one exists unless that one
+ * is the head, and an open-ended range always holds the head row, which is
+ * never pruned.
+ */
+function missingFromEmptyRange(
+  before: Doc<"auditEvents"> | null,
+  tip: AuditChainHead,
+  fromSeq: number,
+  toSeq: number | undefined,
+): number | null {
+  if (!tip) return null;
+  if (before) return tip.seq > before.seq ? before.seq + 1 : null;
+
+  return toSeq === undefined && tip.seq >= fromSeq ? tip.seq : null;
+}
+
+/**
+ * Delete up to `limit` rows for one account: older than its retention, never
+ * the head, and never past what its sink exported when it has one. Rows are
+ * read one at a time, so an account with nothing to drop reads one row.
+ * @returns the count deleted
  */
 async function pruneAccount(
   ctx: MutationCtx,
   tip: Doc<"auditChainHeads">,
   now: number,
+  limit: number,
 ): Promise<number> {
   const account = await ctx.db.get(tip.accountId);
   if (!account) return 0;
-  const sink = await ctx.db
-    .query("auditSinks")
-    .withIndex("by_accountId", (q) => q.eq("accountId", tip.accountId))
-    .unique();
+  const sink = await auditSinkRow(ctx.db, tip.accountId);
   const cutoff =
     now - (account.auditRetentionDays ?? DEFAULT_RETENTION_DAYS) * DAY_MS;
   // Below the head, which is the chain tip and stays whatever its age, and
   // with a sink also at or below its watermark.
   const belowSeq = sink ? Math.min(sink.exportedSeq + 1, tip.seq) : tip.seq;
-  const rows = await ctx.db
+  let deleted = 0;
+  // Walking in seq order and stopping at the first row inside the window
+  // only ever removes a prefix, so the kept range has no gap to verify over.
+  for await (const row of ctx.db
     .query("auditEvents")
     .withIndex("by_accountId_and_seq", (q) =>
       q.eq("accountId", tip.accountId).lt("seq", belowSeq),
-    )
-    .take(PRUNE_BATCH_SIZE);
-  let deleted = 0;
-  for (const row of rows) {
-    // Walking in seq order and stopping at the first row inside the window
-    // only ever removes a prefix, so the kept range has no gap to verify over.
-    if (row.at >= cutoff) break;
+    )) {
+    if (deleted === limit || row.at >= cutoff) break;
     await ctx.db.delete(row._id);
     deleted += 1;
   }
 
   return deleted;
+}
+
+/** The nearest stored row with a seq below `seq`, or null when none is kept. */
+async function rowBelow(
+  ctx: QueryCtx,
+  accountId: Id<"accounts">,
+  seq: number,
+): Promise<Doc<"auditEvents"> | null> {
+  return await ctx.db
+    .query("auditEvents")
+    .withIndex("by_accountId_and_seq", (q) =>
+      q.eq("accountId", accountId).lt("seq", seq),
+    )
+    .order("desc")
+    .first();
 }

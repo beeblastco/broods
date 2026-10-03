@@ -20,6 +20,7 @@ import {
   requireAdminAuth,
   requireSelfAccount,
   writeAudit,
+  type ConfigAuth,
 } from "./shared";
 import { ClientError } from "../../model/clientError";
 
@@ -75,25 +76,8 @@ export async function handleAccountRoute(
     if (route.kind === "self") {
       if (req.method === "GET")
         return json({ account: toPublicAccount(account) });
-      if (req.method === "PATCH") {
-        const input = await parseJsonRequest(req);
-        // Retention decides when ledger rows are deleted, so a role needs
-        // audit:write for it on top of account:write.
-        if (
-          accountAuth.kind === "role" &&
-          isPlainObject(input) &&
-          input.auditRetentionDays !== undefined
-        ) {
-          const denial = roleDenial(
-            rolePrincipal(accountAuth.role),
-            req.method,
-            { type: "audit" },
-          );
-          if (denial) return jsonError(403, denial);
-        }
-
-        return await updateAccountResponse(ctx, account._id, actor, input);
-      }
+      if (req.method === "PATCH")
+        return await patchSelfResponse(ctx, req, accountAuth, actor);
 
       return methodNotAllowed(["GET", "PATCH"]);
     }
@@ -208,6 +192,32 @@ function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
   }
 
   return normalized;
+}
+
+/**
+ * `PATCH /v1/account` for the caller's own account. Retention decides when
+ * ledger rows are deleted, so a role that sets `auditRetentionDays` needs
+ * audit:write on top of the account:write the route already checked.
+ */
+async function patchSelfResponse(
+  ctx: ActionCtx,
+  req: Request,
+  auth: Extract<ConfigAuth, { kind: "account" | "role" }>,
+  actor: AuditActor,
+): Promise<Response> {
+  const input = await parseJsonRequest(req);
+  if (
+    auth.kind === "role" &&
+    isPlainObject(input) &&
+    input.auditRetentionDays !== undefined
+  ) {
+    const denial = roleDenial(rolePrincipal(auth.role), req.method, {
+      type: "audit",
+    });
+    if (denial) return jsonError(403, denial);
+  }
+
+  return await updateAccountResponse(ctx, auth.account._id, actor, input);
 }
 
 /**
