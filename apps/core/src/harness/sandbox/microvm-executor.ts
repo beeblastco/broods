@@ -86,7 +86,7 @@ import {
 } from "./utils.ts";
 
 // The image serves the exec API on this port; the proxy maps external 443 -> 8080.
-const MICROVM_PROXY_PORT = 8080;
+export const MICROVM_PROXY_PORT = 8080;
 // Auth tokens are short-lived (well under the 60-min cap) so a leaked one expires
 // fast, and reused until close to expiry so a warm exec costs no control-plane call.
 const AUTH_TOKEN_TTL_MINUTES = 15;
@@ -95,9 +95,9 @@ const AUTH_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
 // while it warms. Retry the first exec within this budget before giving up, polling
 // fast at first (a resumed VM is usually ready in well under a second) then backing
 // off. A flat delay put its whole value on the floor of every single call.
-const WARMUP_BUDGET_MS = 30_000;
-const WARMUP_RETRY_MIN_DELAY_MS = 150;
-const WARMUP_RETRY_MAX_DELAY_MS = 750;
+export const WARMUP_BUDGET_MS = 30_000;
+export const WARMUP_RETRY_MIN_DELAY_MS = 150;
+export const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // A cached endpoint is a guess, so it gets a short warm-up before the call falls back
 // to the authoritative reservation instead of spending the full budget on a dead VM. A
 // warm VM answers in well under this; anything slower is a restore the authoritative
@@ -105,7 +105,7 @@ const WARMUP_RETRY_MAX_DELAY_MS = 750;
 const CACHED_WARMUP_BUDGET_MS = 1_200;
 // Past the guest's own timeout: it answers timed_out itself, the signal only
 // covers a proxy that never answers.
-const EXEC_GRACE_MS = 15_000;
+export const EXEC_GRACE_MS = 15_000;
 // The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",

@@ -506,6 +506,22 @@ async function registerMcpTools(
           serverConfig.headers,
           serverConfig.oauth,
         );
+        // A machine row on a lambda sandbox runs in that VM; on a machine
+        // sandbox the daemon serves it from its own --mcp file.
+        const host = context.sandboxes?.find(
+          (entry) => entry.name === record.sandbox,
+        );
+        if (
+          record.transport === "machine" &&
+          host?.sandbox.provider === "lambda"
+        ) {
+          if (!record.command) {
+            throw new Error(
+              `config.mcp.${serverId} runs on lambda sandbox "${host.name}" and needs command`,
+            );
+          }
+          connection.sandbox = host.sandbox;
+        }
         // An unreachable server degrades to zero tools for this run instead
         // of killing every agent run that references it; config errors above
         // (unknown id, unresolved header) still throw.

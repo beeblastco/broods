@@ -6,8 +6,9 @@
  * row runs the same transport with every request routed through the Lambda
  * host (hosted.ts). A "machine" row never dials: the daemon on the user's
  * computer runs the MCP client for its stdio server, and core relays the
- * listing and each call over the machine socket. The version probe and tool listings
- * are cached in-process per server row (keyed by row version, resolved headers
+ * listing and each call over the machine socket; on a lambda sandbox the VM
+ * runs it and core relays each request over HTTP (sandbox.ts). The version
+ * probe and tool listings are cached in-process per server row (keyed by row version, resolved headers
  * and oauth config, so an edit is a cache miss), honoring the ttlMs the spec
  * puts on cacheable results. A row with oauth mints a bearer token (oauth.ts)
  * at connect time.
@@ -33,6 +34,7 @@ import {
   runMachineMcpCall,
   runMachineMcpList,
 } from "../sandbox/machine-executor.ts";
+import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
@@ -41,6 +43,7 @@ import {
   mcpAccessToken,
   type ResolvedMcpOauth,
 } from "./oauth.ts";
+import { sandboxMcpRequest } from "./sandbox.ts";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 
@@ -61,6 +64,8 @@ export interface McpConnection {
   oauth?: ResolvedMcpOauth;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
   uncached?: boolean;
+  /** Set when a "machine" row names a lambda sandbox: its VM runs the server, not a daemon. */
+  sandbox?: SandboxExecutorConfig;
 }
 
 /** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
@@ -130,9 +135,14 @@ export async function callMcpToolResult(
     return await testOverrides.callTool(connection, toolName, args);
   }
   if (connection.record.transport === "machine") {
-    // The daemon's own SDK client produced this, but it crossed a socket and
-    // the frame parser only checks the envelope, so the payload is checked here.
-    const relayed = await runMachineMcpCall(connection.record, toolName, args);
+    // The daemon's or VM's own SDK client produced this, but it crossed a
+    // socket and the relay only checks the envelope, so the payload is checked here.
+    const relayed = connection.sandbox
+      ? await sandboxMcpRequest(connection.sandbox, connection.record, {
+          method: "tools/call",
+          params: { name: toolName, arguments: args },
+        })
+      : await runMachineMcpCall(connection.record, toolName, args);
     if (!isCallToolResult(relayed)) {
       throw new Error(
         `MCP tool ${connection.record.name}.${toolName} answered with a result this SDK does not accept`,
@@ -166,18 +176,21 @@ export async function listMcpTools(
   if (testOverrides?.listTools) {
     return await testOverrides.listTools(connection);
   }
-  // Uncached: the daemon answers from the live server process.
-  if (connection.record.transport === "machine") {
+  // Uncached: the daemon answers from the live server process. A lambda
+  // sandbox row is cached like a remote one, so a run does not wake its VM
+  // just to learn a listing that changes only with the row.
+  if (connection.record.transport === "machine" && !connection.sandbox) {
     return (await runMachineMcpList(connection.record)) as Tool[];
   }
+  const fetchListing = (): Promise<{ tools: Tool[]; ttlMs?: unknown }> =>
+    connection.sandbox
+      ? (sandboxMcpRequest(connection.sandbox, connection.record, {
+          method: "tools/list",
+          params: {},
+        }) as Promise<{ tools: Tool[] }>)
+      : withClient(connection, (client) => client.listTools(), onCpuUsec);
   if (connection.uncached) {
-    const result = await withClient(
-      connection,
-      (client) => client.listTools(),
-      onCpuUsec,
-    );
-
-    return result.tools;
+    return (await fetchListing()).tools;
   }
   const key = cacheKeyFor(connection);
   const cached = toolListCache.get(key);
@@ -185,11 +198,8 @@ export async function listMcpTools(
     if (cached.expiresAt > Date.now()) return await cached.tools;
     toolListCache.delete(key);
   }
-  const pending = withClient(
-    connection,
-    (client) => client.listTools(),
-    onCpuUsec,
-  ).then((result) => {
+  const listing = fetchListing();
+  const pending = listing.then((result) => {
     const entry = toolListCache.get(key);
     if (entry) {
       entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);

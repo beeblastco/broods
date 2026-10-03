@@ -48,6 +48,17 @@ test("compileProject rejects a server that crashes on import", async () => {
   );
 });
 
+test("compileProject forwards a sandbox server's command", async () => {
+  const cwd = await mcpFixture(`sandbox: "web", command: ["obscura", "mcp"],`);
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const server = manifest.resources.find((entry) => entry.kind === "mcp");
+  expect(server?.config).toEqual({
+    sandbox: "web",
+    command: ["obscura", "mcp"],
+  });
+});
+
 test("compileProject rejects a server with neither url nor handler", async () => {
   const cwd = await mcpFixture("");
 

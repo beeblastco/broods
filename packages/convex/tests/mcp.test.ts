@@ -266,7 +266,44 @@ describe("normalizeMcpInput", () => {
         { name: "blender", sandbox: "" },
         { requireConnection: true },
       ),
-    ).rejects.toThrow("sandbox must be the name of a machine sandbox");
+    ).rejects.toThrow("sandbox must be the name of the sandbox that serves it");
+  });
+
+  test("command is a bounded argv, only for a server on a sandbox", async () => {
+    const input = await normalizeMcpInput(
+      { name: "obscura", sandbox: "web", command: ["obscura", "mcp"] },
+      { requireConnection: true },
+    );
+    expect(input.command).toEqual(["obscura", "mcp"]);
+    for (const command of [
+      [],
+      "obscura mcp",
+      ["obscura", ""],
+      [42],
+      Array.from({ length: 33 }, () => "a"),
+      ["a".repeat(4097)],
+    ]) {
+      await expect(
+        normalizeMcpInput(
+          { name: "obscura", sandbox: "web", command: command },
+          { requireConnection: true },
+        ),
+      ).rejects.toThrow("command must be 1-32 non-empty strings");
+    }
+    await expect(
+      normalizeMcpInput(
+        { name: "search", url: SERVER_URL, command: ["obscura", "mcp"] },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("command applies to a server on a sandbox");
+    // A patch carrying command alone is checked against the row it produces.
+    expect(() =>
+      assertMcpRow({
+        transport: "http",
+        url: SERVER_URL,
+        command: ["obscura", "mcp"],
+      }),
+    ).toThrow("command applies to a server on a sandbox");
   });
 
   test("headers cannot reach a machine row through a patch", () => {
@@ -498,6 +535,38 @@ describe("normalizeMcpInput", () => {
         headers: { authorization: "Bearer ${SEARCH_TOKEN}" },
       }),
     ).rejects.toThrow("drop the explicit authorization header");
+  });
+
+  test("a command lives on a sandbox row and leaves with a transport switch", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const serverId = await seedServer(tt, scope);
+
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: serverId,
+        command: ["obscura", "mcp"],
+      }),
+    ).rejects.toThrow("command applies to a server on a sandbox");
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "machine",
+      sandbox: "web",
+      command: ["obscura", "mcp"],
+    });
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "http",
+      url: SERVER_URL,
+    });
+    const row = await tt.query(internal.account.mcp.getById, {
+      accountId: scope.accountId,
+      serverId: serverId,
+    });
+    expect(row?.command).toBeUndefined();
   });
 
   test("create checks the oauth invariants on the row it writes", async () => {

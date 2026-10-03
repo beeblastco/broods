@@ -127,6 +127,35 @@ See the runnable [`mcp-connect` demo](https://github.com/beeblastco/broods/tree/
 
 A server in your `.mcp.json`, such as a Blender or filesystem server, can run on your machine and serve cloud agents. Name the machine sandbox instead of a URL. See [Machine](sandboxes/machine.md).
 
+### Run a server in a sandbox
+
+A stdio server installed in a sandbox image can run inside a persistent `lambda` sandbox. Name the sandbox and give the server's `command`:
+
+```ts
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  persistent: true,
+  network: { mode: "allow-all" },
+});
+export const obscura = defineMcp({
+  name: "obscura",
+  sandbox: web,
+  command: ["obscura", "mcp"],
+});
+export const researcher = defineAgent({
+  name: "researcher",
+  sandboxes: [web],
+  mcp: { obscura: { enabled: true } },
+});
+```
+
+- The sandbox must be `persistent: true` and listed in the agent's `sandboxes`.
+- The server starts on the first call and keeps running for as long as the reserved sandbox lives, so its state, such as a browser session, carries over between calls and runs.
+- `command` is required on a `lambda` sandbox. A machine sandbox ignores it and uses its own `.mcp.json`.
+- Tool listings are not cached, so a run that enables the server starts the sandbox to list its tools.
+
 ## Approvals
 
 `needsApproval: true` on a provider tool or an MCP entry pauses the run before the tool executes. Sandbox tools follow the sandbox `permissionMode` instead.
