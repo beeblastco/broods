@@ -200,8 +200,8 @@ export interface IngressCandidate {
   delivery: IngressDelivery;
   // Per-request execution context persisted with the envelope so a queued
   // request runs under its own config/overrides, never a previous owner's.
-  // Absent on a subagent control, which runs on the config its dispatch scope
-  // already holds.
+  // Absent only on a subagent's envelopes, which run on the config their
+  // dispatch scope holds; any other envelope without one is failed.
   configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
   // Set on a turn a channel delivered: pins this conversation's channel target
@@ -473,20 +473,23 @@ export async function loadChannelSessionConfig(options: {
  * names one, the agent's own config plus the request's model override
  * otherwise. One agent read per dispatch, plus the credential holder and the
  * record when a channel session pins them; nothing else in the dispatched run
- * loads it. An envelope with no ref (a subagent control) runs on `fallback`,
- * the config its dispatch scope already holds. Throws when the agent is gone
- * or the channel session no longer binds to it, and the caller fails the
- * envelope with that reason.
+ * loads it. A subagent's envelope has no ref and runs on `subagentConfig`.
+ * Throws when any other envelope has no ref (a core pod from before config
+ * refs admitted it), when the agent is gone, or when the channel session no
+ * longer binds to it; the caller fails the envelope with that reason.
  */
 export async function loadAppliedIngressConfig(options: {
   accountId: string;
   agentId: string;
   configRef: IngressConfigRef | undefined;
-  fallback: AgentConfig;
+  subagentConfig?: AgentConfig;
 }): Promise<AgentConfig> {
   const { accountId, agentId, configRef } = options;
   if (!configRef) {
-    return options.fallback;
+    if (options.subagentConfig) {
+      return options.subagentConfig;
+    }
+    throw new Error("Queued turn was admitted before config refs; retry");
   }
   if (configRef.channel) {
     const loaded = await loadChannelSessionConfig({

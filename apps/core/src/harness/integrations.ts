@@ -205,6 +205,9 @@ export interface DirectInboundEvent {
   // How a queued envelope rebuilds `agentConfig` when it runs; the stored
   // envelope carries this, never the config. Absent on a subagent child.
   configRef?: IngressConfigRef;
+  // Set on a subagent's run: its config derives from its parent, so no ref can
+  // rebuild it and its ref-less controls run on `agentConfig`.
+  subagent?: true;
   // Per-deployment id from the runtime key, when the request authenticated with a
   // deployment key. Scopes realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
@@ -257,18 +260,23 @@ export interface DirectInboundEvent {
   answers?: QuestionAnswer[];
 }
 
-/** The scope a queued envelope needs to be rebuilt into its own run. */
+/**
+ * The scope a queued envelope needs to be rebuilt into its own run. It names
+ * no config: the envelope's ref rebuilds one. Only a subagent's scope carries
+ * `agentConfig`, for the ref-less controls of that subagent.
+ */
 export type IngressDispatchScope = Pick<
   DirectInboundEvent,
   | "accountId"
   | "agentId"
-  | "agentConfig"
   | "conversationKey"
   | "publicConversationKey"
   | "endpointId"
   | "projectSlug"
   | "stageSlug"
->;
+  | "subagent"
+> &
+  Partial<Pick<DirectInboundEvent, "agentConfig">>;
 
 export type DispatchAppliedIngress = (
   scope: IngressDispatchScope,

@@ -70,6 +70,7 @@ import {
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
 import { getStorage } from "../shared/storage.ts";
+import { resolveAgentRuntime } from "../shared/workspaces.ts";
 import {
   createPendingAsyncAgentResult,
   getAsyncAgentResult,
@@ -596,6 +597,7 @@ async function handleSandboxJobCompletionRequest(
     status: event.status,
     ...(event.response !== undefined ? { response: event.response } : {}),
     ...(event.error ? { error: event.error } : {}),
+    secretValues: await asyncToolRowSecretValues(existing),
   });
   if (!settled) {
     return errorResponse(409, "Background job result is already settled", {
@@ -607,6 +609,40 @@ async function handleSandboxJobCompletionRequest(
     settled,
     await continueAfterAsyncToolSettlement(settled),
   );
+}
+
+/**
+ * The secret values the run that started this row scrubbed with: its agent's
+ * config and the sandboxes and workspaces that config names. A job callback
+ * arrives outside any run, so it resolves them from the row. An agent whose
+ * sandbox or workspace no longer resolves still gives its config's values.
+ */
+async function asyncToolRowSecretValues(
+  row: AsyncToolResultRecord,
+): Promise<string[]> {
+  const scope = parseAccountAgentFromScopedKey(row.parentEventId);
+  const agent = scope
+    ? await getStorage().agents.getById(scope.accountId, scope.agentId)
+    : null;
+  if (!scope || !agent) {
+    return [];
+  }
+  const agentConfig = toRuntimeAgentConfig(agent.config);
+  try {
+    const { sandboxes, workspaces } = await resolveAgentRuntime(agentConfig, {
+      accountId: scope.accountId,
+      agentId: scope.agentId,
+    });
+
+    return collectSecretValues([agentConfig, sandboxes, workspaces]);
+  } catch (err) {
+    logWarn("Background job secrets resolved from the agent config only", {
+      resultId: row.resultId,
+      error: toErrorMessage(err),
+    });
+
+    return collectSecretValues(agentConfig);
+  }
 }
 
 /**
@@ -1573,7 +1609,6 @@ export async function handleChannelRequest(
   const scope: IngressDispatchScope = {
     accountId: event.accountId,
     agentId: event.agentId,
-    agentConfig: event.agentConfig ?? {},
     conversationKey: event.conversationKey,
     publicConversationKey: eventPublicConversationKey(
       event.conversationKey,
@@ -1860,7 +1895,6 @@ async function runChannelTurns(
             accountId: scope.accountId,
             agentId: scope.agentId,
             configRef: next.configRef,
-            fallback: scope.agentConfig,
           });
           break;
         } catch (err) {
@@ -2299,8 +2333,10 @@ export async function dispatchAppliedIngress(
     // delivery (status URL included) is the stored one, so this id is never
     // published. It exists only because every direct event carries one.
     runId: createRunId(),
-    agentConfig: base.agentConfig,
+    // Loaded below; an envelope whose config cannot load settles on this.
+    agentConfig: {},
     configRef: next.configRef,
+    ...(base.subagent ? { subagent: true } : {}),
     conversationKey: base.conversationKey,
     endpointId: base.endpointId,
     projectSlug: base.projectSlug,
@@ -2327,12 +2363,13 @@ export async function dispatchAppliedIngress(
       : {}),
   };
   try {
-    // An agent deleted while the envelope waited fails it here.
+    // An agent deleted while the envelope waited fails it here, and so does
+    // an envelope with no ref that is not a subagent's.
     event.agentConfig = await loadAppliedIngressConfig({
       accountId: base.accountId,
       agentId: base.agentId,
       configRef: next.configRef,
-      fallback: base.agentConfig,
+      ...(base.subagent ? { subagentConfig: base.agentConfig } : {}),
     });
     if (delivery.kind === "websocket") {
       await invokeNatsWorker(event);

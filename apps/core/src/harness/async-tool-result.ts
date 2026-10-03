@@ -3,7 +3,7 @@
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
-import { redactWithRunSecrets } from "../shared/log.ts";
+import { redactWithRunSecrets, runSecretValues } from "../shared/log.ts";
 import type { ReservedSandbox } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
@@ -136,22 +136,30 @@ export function rootEventId(eventId: string): string {
 
   return index === -1 ? eventId : eventId.slice(0, index);
 }
-/** Settles a still-processing row from outside the run, for background job callbacks and question answers. Null when already settled. */
+/**
+ * Settles a still-processing row from outside the run, for background job
+ * callbacks and question answers. Null when already settled. `secretValues`
+ * are the run's own, from a caller that no run's context covers.
+ */
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";
   response?: JSONValue;
   error?: string;
+  secretValues?: readonly string[];
 }): Promise<AsyncToolResultRecord | null> {
+  const secretValues = [...runSecretValues(), ...(options.secretValues ?? [])];
+
   return runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: options.status,
     onlyWhenProcessing: true,
     ...(options.status === "completed"
-      ? { response: redactWithRunSecrets(options.response) }
+      ? { response: redactWithRunSecrets(options.response, secretValues) }
       : {
           error: redactWithRunSecrets(
             options.error ?? "Async tool call failed",
+            secretValues,
           ),
         }),
   });

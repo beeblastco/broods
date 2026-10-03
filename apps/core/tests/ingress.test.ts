@@ -568,12 +568,17 @@ describe("channel senders", (): void => {
     appliedToEventId: "event-2",
     contributingEventIds: ["event-2"],
     ownerGeneration: 2,
+    configRef: { channel: { channelName: "slack" } },
   };
   const originalAppend = Session.prototype.appendIngressEvents;
   let senders: unknown[];
 
   beforeEach((): void => {
     senders = [];
+    // The queued envelope's ref rebuilds its config from this row.
+    setStorageForTests({
+      agents: { getById: async (): Promise<AgentRecord> => agentRecord({}) },
+    } as never);
     runtime.query = (async (name: string): Promise<[] | null> =>
       name === "listPendingAsyncToolResults" ? [] : null) as never;
     // Ends each turn before the model runs; only the session's sender matters.
@@ -589,6 +594,7 @@ describe("channel senders", (): void => {
 
   afterEach((): void => {
     Session.prototype.appendIngressEvents = originalAppend;
+    resetStorageForTests();
   });
 
   function aliceMessage(): ChannelInboundEvent {
@@ -1214,7 +1220,6 @@ describe("applied ingress config", (): void => {
       accountId: "acct_test",
       agentId: "agent_test",
       configRef: { model: { temperature: 0.7 } },
-      fallback: {},
     });
 
     expect(config.model).toEqual({
@@ -1244,7 +1249,6 @@ describe("applied ingress config", (): void => {
       configRef: {
         channel: { channelName: "telegram", channelRecordId: "rec_1" },
       },
-      fallback: {},
     });
 
     expect(config.channels).toEqual({ telegram: { botToken: "rotated" } });
@@ -1260,12 +1264,11 @@ describe("applied ingress config", (): void => {
         accountId: "acct_test",
         agentId: "agent_test",
         configRef: {},
-        fallback: {},
       }),
     ).rejects.toThrow("Agent not found: agent_test");
   });
 
-  it("runs a ref-less envelope on its dispatch scope's config without a read", async (): Promise<void> => {
+  it("runs a subagent's ref-less envelope on its scope's config without a read", async (): Promise<void> => {
     setStorageForTests({
       agents: {
         getById: async (): Promise<never> => {
@@ -1273,7 +1276,7 @@ describe("applied ingress config", (): void => {
         },
       },
     } as never);
-    const fallback: AgentConfig = {
+    const subagentConfig: AgentConfig = {
       model: { provider: "openai", modelId: "gpt-5" },
     };
 
@@ -1282,9 +1285,19 @@ describe("applied ingress config", (): void => {
         accountId: "acct_test",
         agentId: "agent_test",
         configRef: undefined,
-        fallback: fallback,
+        subagentConfig: subagentConfig,
       }),
-    ).resolves.toBe(fallback);
+    ).resolves.toBe(subagentConfig);
+  });
+
+  it("fails any other ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
+    await expect(
+      loadAppliedIngressConfig({
+        accountId: "acct_test",
+        agentId: "agent_test",
+        configRef: undefined,
+      }),
+    ).rejects.toThrow("Queued turn was admitted before config refs; retry");
   });
 });
 
