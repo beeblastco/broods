@@ -1436,6 +1436,7 @@ describe("connected MCP servers", () => {
     expect(listed?.sandbox).toEqual({
       config: web,
       reservationKey: "acct_test:web",
+      command: ["obscura", "mcp"],
     });
 
     setStorageForTests(storageWithMcp(mcpRecord(machineRow)));

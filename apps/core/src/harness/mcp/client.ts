@@ -140,7 +140,7 @@ export async function callMcpToolResult(
     const relayed = connection.sandbox
       ? await sandboxMcpRequest(
           connection.sandbox,
-          sandboxServer(connection.record),
+          connection.record.name,
           {
             method: "tools/call",
             params: { name: toolName, arguments: args },
@@ -207,7 +207,7 @@ export async function listMcpTools(
     }
     const listing = await sandboxMcpRequest(
       connection.sandbox,
-      sandboxServer(connection.record),
+      connection.record.name,
       { method: "tools/list", params: {} },
     );
     if (!isSpecType.ListToolsResult(listing)) {
@@ -227,8 +227,7 @@ export async function listMcpTools(
     if (cached.expiresAt > Date.now()) return await cached.tools;
     toolListCache.delete(key);
   }
-  const listing = fetchListing();
-  const pending = listing.then((result) => {
+  const pending = fetchListing().then((result) => {
     const entry = toolListCache.get(key);
     if (entry) {
       entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);
@@ -293,16 +292,17 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 }
 
 /**
- * One cache identity per server row version, resolved header set and oauth
- * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL.
+ * One cache identity per server row version, sandbox image, resolved header
+ * set and oauth config, so a row edit or a credential change is a miss
+ * instead of stale data for a TTL. A lambda row's listing does not depend on
+ * which VM answered, so every conversation shares it.
  */
 function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${connection.sandbox?.reservationKey ?? ""}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${connection.sandbox?.config.image ?? ""}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -385,11 +385,6 @@ async function connectClient(
   }
 
   return client;
-}
-
-/** A lambda row's server as the sandbox image needs it; registration refused a row without a command. */
-function sandboxServer(record: McpRecord): { name: string; command: string[] } {
-  return { name: record.name, command: record.command ?? [] };
 }
 
 /** Drop oldest entries so a long-lived core process stays bounded. */

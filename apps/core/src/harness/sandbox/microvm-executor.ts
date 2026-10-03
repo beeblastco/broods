@@ -86,7 +86,7 @@ import {
 } from "./utils.ts";
 
 // The image serves the exec API on this port; the proxy maps external 443 -> 8080.
-export const MICROVM_PROXY_PORT = 8080;
+const MICROVM_PROXY_PORT = 8080;
 // Auth tokens are short-lived (well under the 60-min cap) so a leaked one expires
 // fast, and reused until close to expiry so a warm exec costs no control-plane call.
 const AUTH_TOKEN_TTL_MINUTES = 15;
@@ -95,9 +95,9 @@ const AUTH_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
 // while it warms. Retry the first exec within this budget before giving up, polling
 // fast at first (a resumed VM is usually ready in well under a second) then backing
 // off. A flat delay put its whole value on the floor of every single call.
-export const WARMUP_BUDGET_MS = 30_000;
-export const WARMUP_RETRY_MIN_DELAY_MS = 150;
-export const WARMUP_RETRY_MAX_DELAY_MS = 750;
+const WARMUP_BUDGET_MS = 30_000;
+const WARMUP_RETRY_MIN_DELAY_MS = 150;
+const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // A cached endpoint is a guess, so it gets a short warm-up before the call falls back
 // to the authoritative reservation instead of spending the full budget on a dead VM. A
 // warm VM answers in well under this; anything slower is a restore the authoritative
@@ -105,7 +105,7 @@ export const WARMUP_RETRY_MAX_DELAY_MS = 750;
 const CACHED_WARMUP_BUDGET_MS = 1_200;
 // Past the guest's own timeout: it answers timed_out itself, the signal only
 // covers a proxy that never answers.
-export const EXEC_GRACE_MS = 15_000;
+const EXEC_GRACE_MS = 15_000;
 // The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",
@@ -203,6 +203,11 @@ interface SandboxResponse {
   /** The VM's vCPU-s and GB-s above its baseline since boot. */
   burst?: { vcpu_seconds: number; gb_seconds: number };
 }
+
+// One POST to the guest: retry while the VM warms, or its answer.
+type Warming<T> =
+  | { retry: true; status: number | string }
+  | { retry: false; response: T };
 
 export interface MicrovmHarnessReservation {
   readonly microvmId: string;
@@ -349,6 +354,41 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     port: number,
   ): Promise<string> {
     return this.#authToken(microvmId, port);
+  }
+
+  // One JSON POST to a route the sandbox image serves beside /exec, for the MCP
+  // relay's /mcp. Like run(), it tries this pod's cached endpoint first and
+  // reserves only when that VM is gone. The reservation is shared: bash and other
+  // conversations use the same VM, so a failed first setup must not release it.
+  async postReserved(request: {
+    reservationKey: string;
+    path: string;
+    body: unknown;
+    timeoutMs: number;
+    abortSignal?: AbortSignal;
+  }): Promise<unknown> {
+    const cached = this.#cachedTarget(request);
+    if (cached) {
+      try {
+        return await this.#whileWarming(
+          cached.microvmId,
+          CACHED_WARMUP_BUDGET_MS,
+          () => this.#postGuest(cached, request),
+        );
+      } catch (error) {
+        if (!(error instanceof MicrovmNotReadyError)) throw error;
+        reservedEndpoints.delete(request.reservationKey);
+      }
+    }
+    const reserved = await this.acquireHarnessReservation({
+      reservationKey: request.reservationKey,
+      abortSignal: request.abortSignal,
+      shared: true,
+    });
+
+    return this.#whileWarming(reserved.microvmId, WARMUP_BUDGET_MS, () =>
+      this.#postGuest(reserved, request),
+    );
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -1100,15 +1140,26 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): Promise<SandboxResponse> {
     const token = await this.#authToken(microvmId);
     const url = `https://${endpoint.replace(/^https?:\/\//, "")}/exec`;
+    const response = await this.#whileWarming(microvmId, budgetMs, () =>
+      this.#postExec(url, token, payload),
+    );
+    this.#reportBurst(microvmId, response.burst);
+
+    return response;
+  }
+
+  // Repeat `post` while the VM is still warming (the proxy's 502/503, or a
+  // refused connection while the snapshot restores), up to `budgetMs`.
+  async #whileWarming<T>(
+    microvmId: string,
+    budgetMs: number,
+    post: () => Promise<Warming<T>>,
+  ): Promise<T> {
     const deadline = Date.now() + budgetMs;
     let wait = WARMUP_RETRY_MIN_DELAY_MS;
     for (;;) {
-      const warming = await this.#postExec(url, token, payload);
-      if (!warming.retry) {
-        this.reportBurst(microvmId, warming.response.burst);
-
-        return warming.response;
-      }
+      const warming = await post();
+      if (!warming.retry) return warming.response;
       if (Date.now() >= deadline) {
         throw new MicrovmNotReadyError(
           `MicroVM ${microvmId} did not become ready within ${budgetMs}ms (last status ${warming.status})`,
@@ -1123,8 +1174,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // last billed report. Convex bills only growth, so a repeat is harmless, and a
   // report is cached only once it billed a row, so a failed write or one that
   // beat the row is sent again on the next exec. Lower totals are a fresh VM.
-  // Public so the MCP relay (mcp/sandbox.ts) bills /mcp answers the same way.
-  reportBurst(microvmId: string, burst: SandboxResponse["burst"]): void {
+  #reportBurst(microvmId: string, burst: SandboxResponse["burst"]): void {
     const accountId = this.#config.controlPlane?.accountId;
     if (!burst || !accountId) return;
     const totals = {
@@ -1161,10 +1211,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     url: string,
     token: string,
     payload: ExecPayload,
-  ): Promise<
-    | { retry: true; status: number | string }
-    | { retry: false; response: SandboxResponse }
-  > {
+  ): Promise<Warming<SandboxResponse>> {
     let res: Response;
     try {
       res = await fetch(url, {
@@ -1205,6 +1252,60 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
 
     return { retry: false, response: parsed as SandboxResponse };
+  }
+
+  // postReserved's single attempt. Only a refused connection or the proxy's
+  // 502/503 retry: past that the guest may have run the request. The image
+  // reports the VM's burst totals in an `x-sandbox-burst` header here.
+  async #postGuest(
+    target: { microvmId: string; endpoint: string },
+    request: {
+      path: string;
+      body: unknown;
+      timeoutMs: number;
+      abortSignal?: AbortSignal;
+    },
+  ): Promise<Warming<unknown>> {
+    const deadline = AbortSignal.timeout(request.timeoutMs + EXEC_GRACE_MS);
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://${target.endpoint.replace(/^https?:\/\//, "")}${request.path}`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            [MICROVM_SHELL_AUTH_HEADER]: await this.#authToken(
+              target.microvmId,
+            ),
+            "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
+          },
+          body: JSON.stringify(request.body),
+          signal: request.abortSignal
+            ? AbortSignal.any([deadline, request.abortSignal])
+            : deadline,
+        },
+      );
+    } catch (err) {
+      if (err instanceof DOMException) throw err;
+
+      return {
+        retry: true,
+        status: err instanceof Error ? err.message : "fetch error",
+      };
+    }
+    if (res.status === 502 || res.status === 503) {
+      return { retry: true, status: res.status };
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(
+        `MicroVM ${request.path} failed (${res.status}): ${text || res.statusText}`,
+      );
+    }
+    this.#reportBurst(target.microvmId, burstHeader(res.headers));
+
+    return { retry: false, response: JSON.parse(text) };
   }
 
   async #authToken(
@@ -1586,6 +1687,25 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
 // An image ARN without any version qualifier, so two versions compare equal.
 function microvmImageName(arn: string): string {
   return arn.split(":").slice(0, 7).join(":");
+}
+
+// The burst totals a non-exec route sends in its `x-sandbox-burst` header.
+function burstHeader(headers: Headers): SandboxResponse["burst"] {
+  const header = headers.get("x-sandbox-burst");
+  if (!header) return undefined;
+  const totals: unknown = JSON.parse(header);
+  if (
+    typeof totals !== "object" ||
+    totals === null ||
+    !("vcpu_seconds" in totals) ||
+    !("gb_seconds" in totals) ||
+    typeof totals.vcpu_seconds !== "number" ||
+    typeof totals.gb_seconds !== "number"
+  ) {
+    return undefined;
+  }
+
+  return { vcpu_seconds: totals.vcpu_seconds, gb_seconds: totals.gb_seconds };
 }
 
 function microvmLocalNamespace(namespace: string): string {

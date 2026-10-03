@@ -1183,6 +1183,80 @@ describe("createSandboxExecutor", () => {
     expect(posted.at(-1)).toContain("microvm-1");
   });
 
+  it("posts a guest route on the reserved VM, then through its cached endpoint", async () => {
+    storedSandboxExternalId = "microvm-1";
+    const posts: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      posts.push({ url: String(url), init: init });
+
+      return Response.json({ jsonrpc: "2.0", id: "1", result: {} });
+    }) as unknown as typeof fetch;
+    const {
+      MicrovmSandboxExecutor,
+    } = require("../src/harness/sandbox/microvm-executor.ts");
+    const executor = new MicrovmSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const request = {
+      reservationKey: microvmNamespace(),
+      path: "/mcp",
+      body: { server: "obscura" },
+      timeoutMs: 1_000,
+    };
+
+    expect(await executor.postReserved(request)).toEqual({
+      jsonrpc: "2.0",
+      id: "1",
+      result: {},
+    });
+    await executor.postReserved(request);
+
+    // The second request skips the reservation, like a cached bash exec.
+    expect(getSandboxExternalIdMock).toHaveBeenCalledTimes(1);
+    expect(posts.map((post) => post.url)).toEqual([
+      "https://microvm-1.lambda-microvm.us-east-1.on.aws/mcp",
+      "https://microvm-1.lambda-microvm.us-east-1.on.aws/mcp",
+    ]);
+    expect(posts[0]!.init.headers).toEqual({
+      "content-type": "application/json",
+      "X-aws-proxy-auth": "proxy-token",
+      "X-aws-proxy-port": "8080",
+    });
+    expect(posts[0]!.init.body).toBe(JSON.stringify({ server: "obscura" }));
+  });
+
+  it("never resends a guest POST the VM answered with an error", async () => {
+    storedSandboxExternalId = "microvm-1";
+    let posts = 0;
+    globalThis.fetch = (async () => {
+      posts += 1;
+
+      return new Response("boom", { status: 500 });
+    }) as unknown as typeof fetch;
+    const {
+      MicrovmSandboxExecutor,
+    } = require("../src/harness/sandbox/microvm-executor.ts");
+
+    const failure = await new MicrovmSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    })
+      .postReserved({
+        reservationKey: microvmNamespace(),
+        path: "/mcp",
+        body: {},
+        timeoutMs: 1_000,
+      })
+      .then(
+        (): string => "resolved",
+        (error: unknown): string => String(error),
+      );
+
+    expect(failure).toContain("MicroVM /mcp failed (500): boom");
+    expect(posts).toBe(1);
+  });
+
   it("surfaces an exec that outlived its deadline instead of posting it again", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";

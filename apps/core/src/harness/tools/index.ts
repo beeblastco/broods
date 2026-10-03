@@ -33,7 +33,6 @@ import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
 import type { SandboxCpuSample } from "../sandbox/types.ts";
-import { configString } from "../sandbox/utils.ts";
 import type { Session } from "../session.ts";
 import {
   listMcpTools,
@@ -64,6 +63,7 @@ import {
   machineSandboxes,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  statelessReservationKeyFor,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
@@ -499,14 +499,14 @@ function sandboxMcpTarget(
   const config = workspace?.sandbox ?? host.sandbox;
   const reservationKey = workspace
     ? workspace.namespace
-    : configString(host.sandbox.options?.reservationKey);
+    : statelessReservationKeyFor(host.sandbox);
   if (config.persistent !== true || !reservationKey) {
     throw new Error(
       `config.mcp.${serverId} runs on lambda sandbox "${host.name}", which must be persistent`,
     );
   }
 
-  return { config: config, reservationKey: reservationKey };
+  return { config: config, reservationKey: reservationKey, command: command };
 }
 
 /**
