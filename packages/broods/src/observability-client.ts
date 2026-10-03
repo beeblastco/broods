@@ -40,6 +40,8 @@ const WS_OPEN = 1;
 const WS_CONNECTING = 0;
 /** How long the stream may stay down before reconnecting gives up. */
 const RECONNECT_GIVE_UP_MS = 60_000;
+/** How long a new socket may wait for the gateway's first answer. */
+const READY_TIMEOUT_MS = 15_000;
 
 /** Resolves after `ms`, or at once when `signal` aborts; never rejects. */
 export function reconnectDelay(
@@ -169,7 +171,18 @@ async function* subscribeObservabilityLogsOnce(
     webSocketSubprotocols(await credential()),
   );
 
+  // A socket that opens but never answers would wait forever, out of reach of
+  // the reconnect loop above.
+  const readyTimer = setTimeout((): void => {
+    socketError = new Error(
+      `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
+    );
+    done = true;
+    notify();
+  }, READY_TIMEOUT_MS);
+
   const cleanup = (): void => {
+    clearTimeout(readyTimer);
     if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING) {
       socket.close(1000, "client closed");
     }
@@ -204,6 +217,7 @@ async function* subscribeObservabilityLogsOnce(
   socket.onmessage = (event: MessageEvent): void => {
     const msg = parseServerMessage(event.data);
     if (!msg) return;
+    clearTimeout(readyTimer);
     if (msg.type !== "error") onLive();
 
     switch (msg.type) {

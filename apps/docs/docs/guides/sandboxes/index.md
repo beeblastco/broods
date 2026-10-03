@@ -40,7 +40,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 
 | Field                  | Default                | What it does                                                                                                      |
 | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `provider`             | `sandbox`              | Compute backend, from the table above                                                                             |
+| `provider`             | `lambda`               | Compute backend, from the table above                                                                             |
 | `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                          |
 | `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
 | `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |

@@ -376,7 +376,7 @@ export async function promptText(
 export function openBrowser(url: string): void {
   const { command, args } = browserCommand(url);
   const child = spawn(command, args, { stdio: "ignore", detached: true });
-  child.on("error", (error) => {
+  child.on("error", (error): void => {
     console.error(
       formatWarning(
         `Could not open a browser (${error.message}). Open the URL above to continue.`,

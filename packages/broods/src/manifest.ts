@@ -719,7 +719,7 @@ function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
 function sandboxProvider(sandbox: SandboxResource): string {
   return typeof sandbox.config.provider === "string"
     ? sandbox.config.provider
-    : "sandbox";
+    : "lambda";
 }
 
 // Resource files skip the typecheck and CLI sync keeps unknown names as-is, so a
