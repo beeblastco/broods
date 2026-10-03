@@ -33,11 +33,11 @@ Every `bash` command that blocks runs with the identity of the run that issued i
 | `BROODS_BASE_URL`   | The API base, when the deployment publishes one                                  |
 
 ```bash
-curl -sS "$BROODS_BASE_URL/v1/runs/$RUN_ID" \
+curl -sS "$BROODS_BASE_URL/v1/runs/run_..." \
   -H "Authorization: Bearer $BROODS_RUN_TOKEN"
 ```
 
-Account `envVars` cannot override these names. The token does not start runs yet.
+The env carries no run id. Use one your script was handed, such as the `runId` returned to whoever started a background run of this agent. Account `envVars` cannot override these names. The token does not start runs yet.
 
 ## Run an agent
 
