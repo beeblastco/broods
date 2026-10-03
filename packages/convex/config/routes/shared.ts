@@ -58,7 +58,12 @@ export async function accountCipherForAction(
           accountId: accountId,
         });
 
-  return new AccountCipher(accountId, encryptionSecrets(), keys);
+  return new AccountCipher(
+    accountId,
+    encryptionSecrets(),
+    keys,
+    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET,
+  );
 }
 
 /**

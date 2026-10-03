@@ -159,6 +159,115 @@ test("migrateToEnvelope moves every legacy blob under its account key and is ide
   expect((await snapshot()).ciphertexts).toEqual(first.ciphertexts);
 });
 
+test("migrateToEnvelope opens rows written under a secret that holds a comma", async () => {
+  const raw = "left, right ";
+  vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", raw);
+  vi.useFakeTimers();
+  const tt = convexTest(schema, modules);
+  const seeded = await tt.run(async (ctx) => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "comma",
+      slug: "comma",
+      ownerAuthId: "auth_comma",
+      plan: "free",
+      createdAt: now,
+    });
+    const accountId = await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "comma",
+      secretHash: "hash-comma",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const legacy = await encryptLegacyBlob(AGENT_CONFIG, raw);
+    const agentId = await ctx.db.insert("agents", {
+      accountId: accountId,
+      name: "planner",
+      encryptedConfig: legacy.ciphertext,
+      encryptionIv: legacy.iv,
+      encryptionTag: legacy.tag,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return { accountId: accountId, agentId: agentId };
+  });
+
+  await tt.mutation(internal.migrations.migrateToEnvelope, {});
+  await tt.finishAllScheduledFunctions(vi.runAllTimers);
+
+  const config = await tt.run(async (ctx) => {
+    const agent = (await ctx.db.get(seeded.agentId))!;
+    expect(blobKeyId({ ciphertext: agent.encryptedConfig! })).toEqual(
+      expect.any(String),
+    );
+
+    return await (
+      await accountCipher(ctx, seeded.accountId)
+    ).decrypt("agents:encryptedConfig", {
+      ciphertext: agent.encryptedConfig!,
+      iv: agent.encryptionIv!,
+      tag: agent.encryptionTag!,
+    });
+  });
+  expect(config).toEqual(AGENT_CONFIG);
+});
+
+test("migrateToEnvelope counts rows it cannot move because their project has no account", async () => {
+  vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", SECRET);
+  vi.useFakeTimers();
+  const tt = convexTest(schema, modules);
+  const variableId = await tt.run(async (ctx) => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "fresh",
+      slug: "fresh",
+      ownerAuthId: "auth_fresh",
+      plan: "free",
+      createdAt: now,
+    });
+    const projectId = await ctx.db.insert("projects", {
+      authId: "auth_fresh",
+      orgId: orgId,
+      name: "demo",
+      slug: "demo",
+      updatedAt: now,
+    });
+    const stageId = await ctx.db.insert("stages", {
+      authId: "auth_fresh",
+      projectId: projectId,
+      name: "Development",
+      kind: "development",
+      isDefault: true,
+      updatedAt: now,
+    });
+    const variable = await encryptLegacyBlob({ value: "v" }, SECRET);
+
+    return await ctx.db.insert("environmentVariables", {
+      projectId: projectId,
+      stageId: stageId,
+      name: "API_KEY",
+      ...variable,
+      valueDigest: "legacy-sha256",
+      updatedAt: now,
+    });
+  });
+
+  const result = await tt.mutation(internal.migrations.migrateToEnvelope, {
+    table: "environmentVariables",
+    cursor: null,
+    skipped: 2,
+  });
+  await tt.finishAllScheduledFunctions(vi.runAllTimers);
+
+  expect(result.patched).toBe(0);
+  expect(result.skipped).toBe(3);
+  const after = await tt.run((ctx) => ctx.db.get(variableId));
+  expect(blobKeyId(after!)).toBeNull();
+});
+
 test("migrateToEnvelope leaves an account with no legacy rows alone", async () => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", SECRET);
   vi.useFakeTimers();

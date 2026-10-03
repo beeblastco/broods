@@ -7,8 +7,10 @@ import {
   accountCipher,
   accountCipherForWrite,
   listWrappedKeys,
+  requireAccountIdForProject,
 } from "../model/accountKeys";
-import { blobKeyId, kekIdOf } from "../model/envelope";
+import { clientErrorData } from "../model/clientError";
+import { AccountCipher, blobKeyId, kekIdOf } from "../model/envelope";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -170,11 +172,7 @@ test("rotateAccountKey rewrites every blob of the account and retires the old ke
     return {
       keys: keys,
       currentKeyId: cipher.keyId,
-      agentKeyId: blobKeyId({
-        ciphertext: agent.encryptedConfig!,
-        iv: agent.encryptionIv!,
-        tag: agent.encryptionTag!,
-      }),
+      agentKeyId: blobKeyId({ ciphertext: agent.encryptedConfig! }),
       agentConfig: await cipher.decrypt("agents:encryptedConfig", {
         ciphertext: agent.encryptedConfig!,
         iv: agent.encryptionIv!,
@@ -248,6 +246,86 @@ test("running rotateAccountKey again joins the rotation under way instead of min
     1,
   );
   expect(after.config).toEqual({ model: { provider: "deepseek" } });
+});
+
+test("a config sealed before a rotation is refused instead of stored under the retired key", async () => {
+  vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", SECRET);
+  vi.useFakeTimers();
+  const tt = convexTest(schema, modules);
+  const scope = await seedAccount(tt, "beeblast");
+  const rows = await seedEncryptedRows(tt, scope);
+  // An HTTP action fetches its keyring, then a rotation runs to completion.
+  const stale = new AccountCipher(
+    scope.accountId,
+    [SECRET],
+    await tt.mutation(internal.account.keys.ensure, {
+      accountId: scope.accountId,
+    }),
+  );
+  await tt.mutation(internal.account.keys.rotateAccountKey, {
+    accountId: scope.accountId,
+  });
+  await tt.finishAllScheduledFunctions(vi.runAllTimers);
+
+  const blob = await stale.encrypt("agents:encryptedConfig", { stale: true });
+  const refused = await tt
+    .mutation(internal.agent.agents.update, {
+      accountId: scope.accountId,
+      agentId: rows.agentId,
+      encryptedConfig: blob.ciphertext,
+      encryptionIv: blob.iv,
+      encryptionTag: blob.tag,
+    })
+    .then(
+      (): null => null,
+      (error: unknown) => clientErrorData(error),
+    );
+  expect(refused?.code).toBe("conflict");
+
+  const config = await tt.run(async (ctx) => {
+    const agent = (await ctx.db.get(rows.agentId))!;
+
+    return await (
+      await accountCipher(ctx, scope.accountId)
+    ).decrypt("agents:encryptedConfig", {
+      ciphertext: agent.encryptedConfig!,
+      iv: agent.encryptionIv!,
+      tag: agent.encryptionTag!,
+    });
+  });
+  expect(config).toEqual({ model: { provider: "deepseek" } });
+});
+
+test("a project whose account is not provisioned yet answers a retryable error", async () => {
+  vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", SECRET);
+  const tt = convexTest(schema, modules);
+
+  const refused = await tt.run(async (ctx) => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "fresh",
+      slug: "fresh",
+      ownerAuthId: "auth_fresh",
+      plan: "free",
+      createdAt: now,
+    });
+    const projectId = await ctx.db.insert("projects", {
+      authId: "auth_fresh",
+      orgId: orgId,
+      name: "demo",
+      slug: "demo",
+      updatedAt: now,
+    });
+
+    return await requireAccountIdForProject(ctx, projectId).then(
+      (): null => null,
+      (error: unknown) => clientErrorData(error),
+    );
+  });
+  expect(refused).toEqual({
+    code: "conflict",
+    message: "Account is still being provisioned; retry in a moment",
+  });
 });
 
 test("rewrapAllKeys moves every key under the first secret so the old one can be dropped", async () => {

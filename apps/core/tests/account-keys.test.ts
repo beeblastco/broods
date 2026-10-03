@@ -113,6 +113,29 @@ describe("account key cache", () => {
     ).toEqual(VALUE);
   });
 
+  test("a legacy blob opens under a secret that holds a comma", async () => {
+    const raw = "left, right ";
+    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = raw;
+    const iv = randomBytes(12);
+    const cipher = createCipheriv(
+      "aes-256-gcm",
+      createHash("sha256").update(raw).digest(),
+      iv,
+    );
+    const ciphertext = Buffer.concat([
+      cipher.update(JSON.stringify(VALUE), "utf-8"),
+      cipher.final(),
+    ]);
+
+    expect(
+      await decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", {
+        ciphertext: ciphertext.toString("base64url"),
+        iv: iv.toString("base64url"),
+        tag: cipher.getAuthTag().toString("base64url"),
+      }),
+    ).toEqual(VALUE);
+  });
+
   test("refuses a blob bound to another column", async () => {
     const blob = await new AccountCipher(ACCOUNT, [SECRET], keys).encrypt(
       "sandboxConfigs:encryptedConfig",

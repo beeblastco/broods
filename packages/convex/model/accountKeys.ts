@@ -12,6 +12,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { accountIdForProject } from "./auditEvents";
+import { ClientError } from "./clientError";
 import {
   AccountCipher,
   type BlobScope,
@@ -73,6 +74,7 @@ export async function accountCipher(
       accountId,
       encryptionSecrets(),
       await listWrappedKeys(ctx, accountId),
+      process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET,
     );
     ciphers.set(accountId, cipher);
   }
@@ -90,6 +92,30 @@ export async function accountCipherForWrite(
   await mintKey(ctx, accountId);
 
   return await accountCipher(ctx, accountId);
+}
+
+/**
+ * Refuses blobs sealed outside this mutation, by an HTTP action, under a key
+ * that is no longer the account's current one. A rotation that ran in between
+ * would retire that key and strand the row; the caller retries and seals
+ * under the new key.
+ */
+export async function assertSealedUnderCurrentKey(
+  ctx: QueryCtx | MutationCtx,
+  accountId: Id<"accounts">,
+  ciphertexts: Array<string | undefined>,
+): Promise<void> {
+  const sealed = ciphertexts.filter((ciphertext) => ciphertext !== undefined);
+  if (sealed.length === 0) return;
+  const cipher = await accountCipher(ctx, accountId);
+  if (
+    sealed.some((ciphertext) => cipher.needsRewrite({ ciphertext: ciphertext }))
+  ) {
+    throw new ClientError(
+      "The account's encryption key changed during this request; retry",
+      "conflict",
+    );
+  }
 }
 
 /**
@@ -172,7 +198,8 @@ export async function mintKey(
  * `accountId` only that account's rows are rewritten; the table is still paged
  * in full since two of them have no account index. A blob that does not
  * decrypt throws, so a bad secret stops the walk instead of skipping rows.
- * @returns rows rewritten, and the arguments of the next batch or null once the last table is done
+ * A row whose project has no account yet cannot be rewritten and is counted.
+ * @returns rows rewritten, rows skipped, and the arguments of the next batch or null once the last table is done
  */
 export async function reencryptBatch(
   ctx: MutationCtx,
@@ -183,6 +210,7 @@ export async function reencryptBatch(
   },
 ): Promise<{
   patched: number;
+  skipped: number;
   next: { table: EnvelopeTable; cursor: string | null } | null;
 }> {
   const table = args.table ?? ENVELOPE_COLUMNS[0].table;
@@ -190,11 +218,14 @@ export async function reencryptBatch(
     .query(table)
     .paginate({ numItems: REENCRYPT_BATCH_SIZE, cursor: args.cursor ?? null });
   let patched = 0;
+  let skipped = 0;
   for (const row of page.page) {
     const accountId = await accountIdForRow(ctx, row);
-    if (!accountId || (args.accountId && accountId !== args.accountId)) {
+    if (!accountId) {
+      skipped += 1;
       continue;
     }
+    if (args.accountId && accountId !== args.accountId) continue;
     const patch = await reencryptRow(
       table,
       row,
@@ -209,6 +240,7 @@ export async function reencryptBatch(
   if (!page.isDone) {
     return {
       patched: patched,
+      skipped: skipped,
       next: { table: table, cursor: page.continueCursor },
     };
   }
@@ -216,18 +248,22 @@ export async function reencryptBatch(
 
   return {
     patched: patched,
+    skipped: skipped,
     next: following ? { table: following, cursor: null } : null,
   };
 }
 
-/** The account id that owns the project, throwing where a caller needs one to encrypt. */
+/** The account id that owns the project; a retryable error where a caller needs one to encrypt and it is not provisioned yet. */
 export async function requireAccountIdForProject(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,
 ): Promise<Id<"accounts">> {
   const accountId = await accountIdForProject(ctx, projectId);
   if (!accountId) {
-    throw new Error("Project has no provisioned account to encrypt under");
+    throw new ClientError(
+      "Account is still being provisioned; retry in a moment",
+      "conflict",
+    );
   }
 
   return accountId;

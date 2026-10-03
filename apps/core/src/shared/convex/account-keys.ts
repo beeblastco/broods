@@ -14,7 +14,7 @@ import {
   type EncryptedBlob,
   type WrappedAccountKey,
 } from "@broods/convex/model/envelope";
-import { requireSecretsEnv } from "../env.ts";
+import { requireEnv, requireSecretsEnv } from "../env.ts";
 import { getConvexClient } from "./client.ts";
 
 const KEYRING_TTL_MS = 5 * 60_000;
@@ -56,7 +56,12 @@ export async function decryptAccountBlob(
 ): Promise<Record<string, unknown>> {
   let cipher =
     blobKeyId(blob) === null
-      ? new AccountCipher(accountId, requireSecretsEnv(SECRETS_ENV), [])
+      ? new AccountCipher(
+          accountId,
+          requireSecretsEnv(SECRETS_ENV),
+          [],
+          requireEnv(SECRETS_ENV),
+        )
       : await keyringFor(accountId);
   if (!cipher.hasKey(blob)) {
     keyrings.delete(accountId);
@@ -83,7 +88,12 @@ function keyringFor(accountId: string): Promise<AccountCipher> {
   if (cached && cached.expiresAt > Date.now()) return cached.cipher;
   const cipher = loader(accountId).then(
     (keys): AccountCipher =>
-      new AccountCipher(accountId, requireSecretsEnv(SECRETS_ENV), keys),
+      new AccountCipher(
+        accountId,
+        requireSecretsEnv(SECRETS_ENV),
+        keys,
+        requireEnv(SECRETS_ENV),
+      ),
   );
   const entry: CachedKeyring = {
     cipher: cipher,

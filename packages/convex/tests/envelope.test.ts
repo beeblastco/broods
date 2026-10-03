@@ -64,6 +64,26 @@ describe("envelope codec", () => {
     ).toBeNull();
   });
 
+  test("a legacy blob opens under the unsplit secret it was written with", async () => {
+    const raw = "left, right ";
+    const split = ["left", "right"];
+    const legacy = await encryptLegacyBlob(VALUE, raw);
+    const keys = [await createWrappedAccountKey(ACCOUNT, split)];
+
+    expect(
+      await new AccountCipher(ACCOUNT, split, keys).decrypt(
+        "agents:encryptedConfig",
+        legacy,
+      ),
+    ).toBeNull();
+    expect(
+      await new AccountCipher(ACCOUNT, split, keys, raw).decrypt(
+        "agents:encryptedConfig",
+        legacy,
+      ),
+    ).toEqual(VALUE);
+  });
+
   test("a KEK list unwraps under any entry and rewraps under the first", async () => {
     const { keys } = await cipherWith(["kek-old"]);
     const blob = await new AccountCipher(ACCOUNT, ["kek-old"], keys).encrypt(

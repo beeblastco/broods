@@ -17,22 +17,33 @@ import { reencryptBatch, reencryptWalkArgs } from "./model/accountKeys";
  * self-reschedule; call it with no arguments. Idempotent: a blob already under
  * the current key is skipped. Once dev and production have run it, the legacy
  * decrypt branch in `model/envelope.ts` can go.
- * @returns rows rewritten in this batch and whether the whole walk finished
+ * @returns rows rewritten in this batch, rows skipped so far because their project has no account yet (they stay legacy), and whether the whole walk finished
  */
 export const migrateToEnvelope = internalMutation({
-  args: reencryptWalkArgs,
-  returns: v.object({ patched: v.number(), isDone: v.boolean() }),
-  handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
+  args: { ...reencryptWalkArgs, skipped: v.optional(v.number()) },
+  returns: v.object({
+    patched: v.number(),
+    skipped: v.number(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ patched: number; skipped: number; isDone: boolean }> => {
     const batch = await reencryptBatch(ctx, args);
+    const skipped = (args.skipped ?? 0) + batch.skipped;
     if (batch.next) {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.migrations.migrateToEnvelope,
-        batch.next,
-      );
+      await ctx.scheduler.runAfter(0, internal.migrations.migrateToEnvelope, {
+        ...batch.next,
+        skipped: skipped,
+      });
     }
 
-    return { patched: batch.patched, isDone: batch.next === null };
+    return {
+      patched: batch.patched,
+      skipped: skipped,
+      isDone: batch.next === null,
+    };
   },
 });
 

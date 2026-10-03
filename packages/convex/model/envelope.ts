@@ -149,13 +149,28 @@ interface DataKey {
 export class AccountCipher {
   private readonly accountId: string;
   private readonly secrets: string[];
+  private readonly legacySecrets: string[];
   private readonly keys: Map<string, WrappedAccountKey>;
   private readonly currentKeyId: string | null;
   private readonly dataKeys = new Map<string, Promise<DataKey>>();
 
-  constructor(accountId: string, secrets: string[], keys: WrappedAccountKey[]) {
+  /**
+   * @param rawSecret the env value before it was split into `secrets`. Legacy
+   * blobs were keyed by that whole string, so one holding a comma or outer
+   * whitespace only opens under it.
+   */
+  constructor(
+    accountId: string,
+    secrets: string[],
+    keys: WrappedAccountKey[],
+    rawSecret?: string,
+  ) {
     this.accountId = accountId;
     this.secrets = secrets;
+    this.legacySecrets =
+      rawSecret === undefined || secrets.includes(rawSecret)
+        ? secrets
+        : [...secrets, rawSecret];
     this.keys = new Map(keys.map((key) => [key.keyId, key]));
     // The newest key that is not retired seals new blobs.
     this.currentKeyId =
@@ -192,7 +207,7 @@ export class AccountCipher {
     try {
       const plaintext =
         keyId === null
-          ? await decryptLegacyBlob(this.secrets, blob)
+          ? await decryptLegacyBlob(this.legacySecrets, blob)
           : await this.decryptEnvelope(keyId, scope, blob);
       const parsed: unknown = JSON.parse(plaintext);
 
@@ -238,7 +253,7 @@ export class AccountCipher {
   }
 
   /** True when `blob` was not written under the current key, so a rotation or migration must rewrite it. */
-  needsRewrite(blob: EncryptedBlob): boolean {
+  needsRewrite(blob: Pick<EncryptedBlob, "ciphertext">): boolean {
     return blobKeyId(blob) !== this.currentKeyId;
   }
 
@@ -300,7 +315,9 @@ export class AccountCipher {
 }
 
 /** The key id a blob names, or null for a legacy blob under the old global key. */
-export function blobKeyId(blob: EncryptedBlob): string | null {
+export function blobKeyId(
+  blob: Pick<EncryptedBlob, "ciphertext">,
+): string | null {
   if (!blob.ciphertext.startsWith(BLOB_VERSION_PREFIX)) return null;
   const end = blob.ciphertext.indexOf(":", BLOB_VERSION_PREFIX.length);
 
