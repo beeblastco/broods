@@ -13,10 +13,11 @@ import { z } from "zod";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { shellQuote } from "../sandbox/utils.ts";
 import {
+  agentOwnWorkspace,
   formatRunText,
-  isAgentOwnSandbox,
   runSandbox,
   sandboxRunMetadata,
+  sandboxTimeoutSeconds,
   workspaceMediaBytes,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
@@ -86,9 +87,7 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
         }
         // The workspace on the agent's own sandbox, when one mounts it: runs land
         // there so a screenshot is a workspace file.
-        const workspace = context.workspaces.find((candidate): boolean =>
-          isAgentOwnSandbox(candidate, context),
-        );
+        const workspace = agentOwnWorkspace(context);
         if (mode === "screenshot" && !workspace) {
           return toolError(
             "Error: screenshots need a workspace on the agent's first sandbox",
@@ -147,7 +146,10 @@ export function obscuraCommand(
     path: string;
   },
 ): string {
-  const timeout = Math.max(5, (sandbox.timeout ?? 30) - TIMEOUT_MARGIN_SECONDS);
+  const timeout = Math.max(
+    5,
+    sandboxTimeoutSeconds(sandbox) - TIMEOUT_MARGIN_SECONDS,
+  );
   const fetch = `obscura fetch ${shellQuote(call.url)} --quiet --timeout ${timeout}`;
   switch (call.mode) {
     case "eval":
