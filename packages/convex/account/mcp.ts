@@ -30,6 +30,7 @@ export const create = internalMutation({
     name: v.string(),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    workersCompatible: mcpFields.workersCompatible,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -87,6 +88,7 @@ export const create = internalMutation({
       name: args.name,
       description: args.description,
       transport: transport,
+      workersCompatible: args.workersCompatible,
       url: args.url,
       sandbox: args.sandbox,
       bundleStorageKey: args.bundleStorageKey,
@@ -239,6 +241,7 @@ export const update = internalMutation({
     name: v.optional(v.string()),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    workersCompatible: mcpFields.workersCompatible,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -305,6 +308,7 @@ function updatePatch(
     name?: string;
     description?: string;
     transport?: McpTransport;
+    workersCompatible?: boolean;
     url?: string;
     sandbox?: string;
     bundleStorageKey?: string;
@@ -323,6 +327,9 @@ function updatePatch(
       ? { description: args.description }
       : {}),
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
+    ...(args.workersCompatible !== undefined
+      ? { workersCompatible: args.workersCompatible }
+      : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
     ...(args.bundleStorageKey !== undefined
@@ -341,6 +348,7 @@ function updatePatch(
       : {}),
     ...(args.transport === "http"
       ? {
+          workersCompatible: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,
@@ -352,6 +360,7 @@ function updatePatch(
           url: undefined,
           oauth: undefined,
           headers: undefined,
+          workersCompatible: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,

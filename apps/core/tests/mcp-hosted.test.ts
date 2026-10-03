@@ -201,6 +201,94 @@ describe("hosted MCP metering", () => {
     ]);
   });
 
+  it("keeps a Workers-capable row on Lambda when the deployment runs no Worker", async (): Promise<void> => {
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+    delete process.env.CLOUDFLARE_MCP_URL;
+    const frames = new TextEncoder().encode(
+      `${JSON.stringify({ t: "final", id: "1", result: ok("lambda") })}\n{"t":"end"}\n`,
+    );
+    const send = spyOn(LambdaClient.prototype, "send").mockImplementation(
+      async (): Promise<{
+        EventStream: InvokeWithResponseStreamResponseEvent[];
+      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+    );
+
+    try {
+      const response = await hostedMcpFetch({
+        ...hostedRecord(),
+        workersCompatible: true,
+      })(URL, { method: "POST", body: "{}" });
+      expect(await response.text()).toBe("lambda");
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("sends a Workers-capable row to the Cloudflare runtime and meters it like Lambda", async (): Promise<void> => {
+    process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
+    process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
+    let reply = (): Response =>
+      new Response(
+        `${JSON.stringify({ t: "final", id: "1", result: ok("cloudflare") })}\n{"t":"end"}\n`,
+      );
+    const bridge = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(async (): Promise<Response> => reply(), {
+        preconnect: (): void => {},
+      }),
+    );
+    const lambda = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      const response = await hostedMcpFetch({
+        ...hostedRecord(),
+        workersCompatible: true,
+      })(URL, { method: "POST", body: "{}" });
+      expect(await response.text()).toBe("cloudflare");
+      await Promise.resolve();
+      const [target, init] = bridge.mock.calls[0] ?? [];
+      expect(target).toBe("https://mcp.example.workers.dev/mcp");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer bridge-key",
+      );
+      expect(JSON.parse(await new Response(init?.body).text())).toMatchObject({
+        accountId: "acct_test",
+        expectedSha256: "a".repeat(64),
+      });
+      expect(lambda).not.toHaveBeenCalled();
+
+      reply = (): Response => new Response("Unauthorized", { status: 401 });
+      await expect(
+        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
+          method: "POST",
+          body: "{}",
+        }),
+      ).rejects.toThrow("HTTP 401: Unauthorized");
+
+      reply = (): Response =>
+        new Response(
+          `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
+        );
+      await expect(
+        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
+          method: "POST",
+          body: "{}",
+        }),
+      ).rejects.toThrow("without an end frame");
+      await Promise.resolve();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+
+    // The refused batch is free; the truncated one ran, so it is charged.
+    const charge = {
+      accountId: "acct_test",
+      usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
+    };
+    expect(recorded).toEqual([charge, charge]);
+  });
+
   it("charges nothing when no invoke starts", async () => {
     delete process.env.TOOL_RUNNER_FUNCTION_NAME;
     const send = spyOn(LambdaClient.prototype, "send");

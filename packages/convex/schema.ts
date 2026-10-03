@@ -272,6 +272,8 @@ export const mcpFields = {
   url: v.optional(v.string()),
   /** Machine-only: name of the machine sandbox whose daemon serves it. */
   sandbox: v.optional(v.string()),
+  /** Hosted-only: Cloudflare Dynamic Workers can run the bundle; set by aws/bundles.ts putMcpBundle. */
+  workersCompatible: v.optional(v.boolean()),
   /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),

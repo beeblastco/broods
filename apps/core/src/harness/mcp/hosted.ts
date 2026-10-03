@@ -1,10 +1,11 @@
 /**
  * Hosted MCP server transport (#331 phase 2, micro-batching #397). A hosted
- * row's endpoint is the mcp-runner Lambda: this fetch adapter serializes a
- * web request, batches it with the sibling calls that arrive in the same
- * window, invokes the Lambda once per batch over InvokeWithResponseStream,
- * and once the batch's terminal NDJSON frame (../frames.ts) arrives settles
- * each call off the frame tagged with its id.
+ * row's endpoint is the Cloudflare Dynamic Workers runtime
+ * (apps/cloudflare-mcp) when its bundle can run there and this deployment
+ * runs that Worker, the mcp-runner Lambda otherwise: this fetch adapter serializes a web request,
+ * batches it with the sibling calls that arrive in the same window, sends
+ * the batch once, and once the batch's terminal NDJSON frame (../frames.ts)
+ * arrives settles each call off the frame tagged with its id.
  */
 
 import {
@@ -15,6 +16,7 @@ import { HOSTED_MCP_MEMORY_GB } from "@broods/convex/model/pricing";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import {
   booleanEnv,
+  optionalEnv,
   positiveIntegerEnv,
   requireEnv,
 } from "../../shared/env.ts";
@@ -28,6 +30,10 @@ export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
 // The runner fetches at the start of a 35s-bounded invocation, so the grant
 // only has to outlive a cold start.
 const BUNDLE_URL_TTL_SECONDS = 120;
+// Matches the Lambda client's requestTimeout below.
+const CLOUDFLARE_REQUEST_TIMEOUT_MS = 45_000;
+// Enough of a refusal's body to name its cause (bad origin, bad batch).
+const CLOUDFLARE_ERROR_BODY_CHARS = 512;
 
 // The parallel calls of one model step arrive well under 1ms apart; the window
 // only has to outlast that. The cap bounds what one batch's shared deadline,
@@ -66,7 +72,8 @@ export interface HostedMcpBatchRequest {
 
 /**
  * mcp-mode invoke payload; the Lambda handler dispatches on `mode`.
- * `accountId` + `expectedSha256` key the handler's warm-child reuse (#189).
+ * `accountId` + `expectedSha256` key the handler's warm-child reuse (#189),
+ * and the Cloudflare runtime's isolate cache. Both runtimes take this body.
  */
 export interface McpHostPayload {
   mode: "mcp";
@@ -219,6 +226,57 @@ function defaultClient(): LambdaClient {
   return sharedClient;
 }
 
+// POST the batch to the Cloudflare runtime and push its NDJSON body into the
+// queue as it arrives. Metering starts when the request is sent. A refusal
+// (bad token, invalid payload) runs no tenant code and costs nothing; a
+// timeout or abort after sending may have, so it still counts.
+async function drainBridgeStream(
+  url: string,
+  payload: McpHostPayload,
+  abortSignal: AbortSignal,
+  queue: FrameQueue,
+  onInvoked: (startedAt: number) => void,
+): Promise<void> {
+  const apiKey = requireEnv("CLOUDFLARE_MCP_API_KEY");
+  const startedAt = Date.now();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    redirect: "error",
+    signal: AbortSignal.any([
+      abortSignal,
+      AbortSignal.timeout(CLOUDFLARE_REQUEST_TIMEOUT_MS),
+    ]),
+  }).catch((error: unknown): never => {
+    if (
+      error instanceof DOMException &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      onInvoked(startedAt);
+    }
+    throw error;
+  });
+  if (!response.ok || !response.body) {
+    const reason = (await response.text()).slice(
+      0,
+      CLOUDFLARE_ERROR_BODY_CHARS,
+    );
+    throw new Error(
+      `cloudflare MCP runtime failed with HTTP ${response.status}${reason ? `: ${reason}` : ""}`,
+    );
+  }
+  onInvoked(startedAt);
+  const decoder = new TextDecoder();
+  for await (const chunk of response.body) {
+    queue.push(decoder.decode(chunk, { stream: true }));
+  }
+  queue.push(decoder.decode());
+}
+
 // Invoke the runner Lambda and push its raw NDJSON payload chunks into the queue
 // as they arrive. Surfaces a Lambda-side failure (InvokeComplete.ErrorCode) as a
 // thrown error; server-side failures arrive as an `error` frame instead.
@@ -227,7 +285,7 @@ async function drainInvokeStream(
   payload: McpHostPayload,
   abortSignal: AbortSignal,
   queue: FrameQueue,
-  onInvoked: () => void,
+  onInvoked: (startedAt: number) => void,
 ): Promise<void> {
   const result = await client.send(
     new InvokeWithResponseStreamCommand({
@@ -243,7 +301,7 @@ async function drainInvokeStream(
     }),
     { abortSignal: abortSignal },
   );
-  onInvoked();
+  onInvoked(Date.now());
   // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
   // to carry state across them.
   const decoder = new TextDecoder();
@@ -284,7 +342,7 @@ function enqueueCall(
   abortSignal.addEventListener("abort", () => reject(abortSignal.reason), {
     once: true,
   });
-  const key = `${record.accountId}:${record.sha256}`;
+  const key = `${record.accountId}:${workersUrl(record) ?? "lambda"}:${record.sha256}`;
   let batch = openBatches.get(key);
   if (!batch) {
     const opened: OpenBatch = {
@@ -392,8 +450,8 @@ function hasBundle(record: McpRecord): record is HostedBundleRecord {
   return Boolean(record.bundleStorageKey && record.sha256);
 }
 
-// One invoke for one batch; a transport failure before any terminal frame
-// throws for every call.
+// One invoke for one batch, on the row's runtime; a transport failure before
+// any terminal frame throws for every call.
 async function sendBatch(
   record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],
@@ -413,17 +471,23 @@ async function sendBatch(
   };
   const queue = new FrameQueue();
   let transportError: unknown;
-  // Set once Lambda accepts the invoke. A failure before that (no function
+  // When the batch got underway. A failure before that (no function
   // name, a refused or throttled request) runs nothing and costs nothing.
   let invokedAt: number | undefined;
-  const pump = drainInvokeStream(
-    defaultClient(),
-    payload,
-    abortSignal,
-    queue,
-    (): void => {
-      invokedAt = Date.now();
-    },
+  const onInvoked = (startedAt: number): void => {
+    invokedAt = startedAt;
+  };
+  const bridgeUrl = workersUrl(record);
+  const pump = (
+    bridgeUrl
+      ? drainBridgeStream(bridgeUrl, payload, abortSignal, queue, onInvoked)
+      : drainInvokeStream(
+          defaultClient(),
+          payload,
+          abortSignal,
+          queue,
+          onInvoked,
+        )
   )
     .catch((error: unknown) => {
       transportError = error;
@@ -436,13 +500,22 @@ async function sendBatch(
       queue.frames(),
     );
     // A transport failure after the child's own terminal frame is noise; the
-    // child's answer stands.
-    if (transportError && !collected.ended) throw transportError;
+    // child's answer stands. A stream that closed without one is truncated.
+    if (!collected.ended) {
+      throw (
+        transportError ??
+        new Error(
+          `hosted MCP server ${record.name} stream closed without an end frame`,
+        )
+      );
+    }
 
     return collected.result;
   } finally {
     await pump;
     // Lambda bills the invoke's wall time at the function's memory size.
+    // Cloudflare is metered the same way, so the tariff does not depend on
+    // which runtime a row picked.
     if (invokedAt !== undefined) {
       recordUsage(record.accountId, {
         hostedMcpGbSeconds:
@@ -451,4 +524,12 @@ async function sendBatch(
       });
     }
   }
+}
+
+// The Worker's URL when the bundle can run on Workers and this deployment runs
+// the Worker (URL and key both set); undefined sends the row to Lambda.
+function workersUrl(record: McpRecord): string | undefined {
+  return record.workersCompatible && optionalEnv("CLOUDFLARE_MCP_API_KEY")
+    ? optionalEnv("CLOUDFLARE_MCP_URL")
+    : undefined;
 }

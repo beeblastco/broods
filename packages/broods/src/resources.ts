@@ -187,7 +187,8 @@ export interface McpDefinitionConfig {
    * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
    * right next to the `defineMcp` call. The CLI bundles the defining module
-   * and the mcp-runner Lambda hosts it, one invoke per batch of requests.
+   * and the platform hosts it, one invocation per batch of requests: on
+   * Cloudflare Workers when the bundle builds for them, on Lambda otherwise.
    */
   handler?: McpHandler;
   /**

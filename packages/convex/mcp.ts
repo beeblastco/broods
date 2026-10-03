@@ -17,7 +17,7 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { mcpDoc } from "./account/mcp";
-import { storeMcpBundle } from "./model/bundles";
+import { storeMcpBundle, type StoredMcpBundle } from "./model/bundles";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./model/envRefs";
 import { REDACTED_SECRET_VALUE } from "./model/configValues";
 import {
@@ -54,6 +54,8 @@ interface ResolvedConnection {
   headers?: Record<string, string>;
   bundleStorageKey?: string;
   sha256?: string;
+  /** So the save-time probe runs where the row will. */
+  workersCompatible?: boolean;
 }
 
 /** One canvas-owned server as `listByStage` returns it. */
@@ -499,8 +501,7 @@ async function resolveConnection(
 
   return stripUndefined({
     transport: transport,
-    bundleStorageKey: stored.bundleStorageKey,
-    sha256: stored.sha256,
+    ...stored,
     headers: input.headers ?? existing?.headers,
   });
 }
@@ -510,21 +511,20 @@ async function storeBundle(
   ctx: ActionCtx,
   context: NodeContext,
   input: McpInput,
-): Promise<{ bundleStorageKey: string; sha256: string } | null> {
-  const bundleStorageKey = await storeMcpBundle(
+): Promise<StoredMcpBundle | null> {
+  const stored = await storeMcpBundle(
     ctx,
     context.accountId,
     input,
     context.existing,
   );
-  if (bundleStorageKey !== undefined) {
-    return { bundleStorageKey: bundleStorageKey, sha256: input.sha256! };
-  }
+  if (stored !== undefined) return stored;
   const existing = context.existing;
   if (existing?.bundleStorageKey && existing.sha256) {
     return {
       bundleStorageKey: existing.bundleStorageKey,
       sha256: existing.sha256,
+      workersCompatible: existing.workersCompatible,
     };
   }
 

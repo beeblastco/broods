@@ -129,7 +129,7 @@ async function handleMcpCollectionRoute(
     const input = await normalizeMcpInput(await req.json(), {
       requireConnection: true,
     });
-    const bundleStorageKey = await storeMcpBundle(ctx, accountId, input, null);
+    const storedBundle = await storeMcpBundle(ctx, accountId, input, null);
     const createdId = await ctx.runMutation(internal.account.mcp.create, {
       accountId: accountId,
       projectId: scope.projectId,
@@ -138,9 +138,7 @@ async function handleMcpCollectionRoute(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-      ...(bundleStorageKey !== undefined
-        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-        : {}),
+      ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),
@@ -191,12 +189,7 @@ async function patchMcpRoute(
   const input = await normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
-  const bundleStorageKey = await storeMcpBundle(
-    ctx,
-    accountId,
-    input,
-    existing,
-  );
+  const storedBundle = await storeMcpBundle(ctx, accountId, input, existing);
   await ctx.runMutation(internal.account.mcp.update, {
     accountId: accountId,
     serverId: serverId,
@@ -207,9 +200,7 @@ async function patchMcpRoute(
     ...(input.transport !== undefined ? { transport: input.transport } : {}),
     ...(input.url !== undefined ? { url: input.url } : {}),
     ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-    ...(bundleStorageKey !== undefined
-      ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-      : {}),
+    ...storedBundle,
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
     ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
     ...(input.allowedTools !== undefined

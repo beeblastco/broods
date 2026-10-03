@@ -625,6 +625,7 @@ interface ConvexMcpDoc {
   name: string;
   description?: string;
   transport: McpTransport;
+  workersCompatible?: boolean;
   url?: string;
   sandbox?: string;
   bundleStorageKey?: string;
@@ -650,6 +651,9 @@ function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
     name: doc.name,
     ...(doc.description !== undefined ? { description: doc.description } : {}),
     transport: doc.transport,
+    ...(doc.workersCompatible !== undefined
+      ? { workersCompatible: doc.workersCompatible }
+      : {}),
     ...(doc.url !== undefined ? { url: doc.url } : {}),
     ...(doc.sandbox !== undefined ? { sandbox: doc.sandbox } : {}),
     ...(doc.bundleStorageKey !== undefined

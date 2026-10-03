@@ -1077,7 +1077,7 @@ async function syncMcpResources(
 
   for (const { name, input } of desired) {
     const current = existing.get(name);
-    const bundleStorageKey = await storeMcpBundle(
+    const storedBundle = await storeMcpBundle(
       ctx,
       accountId,
       input,
@@ -1088,9 +1088,7 @@ async function syncMcpResources(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-      ...(bundleStorageKey !== undefined
-        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-        : {}),
+      ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),

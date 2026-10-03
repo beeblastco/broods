@@ -26,6 +26,8 @@ export interface McpRecord {
   name: string;
   description?: string;
   transport: McpTransport;
+  /** Hosted-only: Cloudflare Dynamic Workers can run the bundle; harness/mcp/hosted.ts routes on it. */
+  workersCompatible?: boolean;
   /** Present on "http" rows; a "hosted" row's endpoint is the Lambda host. */
   url?: string;
   /** "machine" rows: name of the machine sandbox whose daemon serves the server. */

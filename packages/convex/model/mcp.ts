@@ -2,8 +2,9 @@
  * Shared validation for MCP server registrations (#331). One normalizer
  * serves every write path (CLI sync, direct API, dashboard). A `url` makes an "http" row
  * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
- * a "hosted" row served by the mcp-runner Lambda, hashed here so sha256
- * always travels with the bundle. Auth header values may carry ${NAME}
+ * a "hosted" row, hashed here so sha256 always travels with the bundle; the
+ * S3 bundle writer (aws/bundles.ts) marks whether Cloudflare Dynamic Workers
+ * can run it. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one
  * instead of an inline secret. `oauth` follows the same rule: clientSecret
@@ -23,7 +24,7 @@ const MAX_ALLOWED_TOOLS = 256;
  * packages/broods/src/manifest.ts (the published CLI cannot import this
  * package). Change both or the CLI accepts what the config plane rejects.
  */
-const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
+export const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
 /** Ceiling for a hosted MCP server bundle by either upload path (#190). */
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 
