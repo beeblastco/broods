@@ -7,7 +7,7 @@ import {
   rewrapAccountKey,
   type WrappedAccountKey,
 } from "../model/envelope";
-import { encryptLegacyBlob } from "./legacyBlob";
+import { encryptLegacyBlob } from "./legacyBlob.helper";
 
 const ACCOUNT = "acct_one";
 const OTHER_ACCOUNT = "acct_two";

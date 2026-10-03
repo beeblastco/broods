@@ -6,7 +6,7 @@ import type { Id } from "../_generated/dataModel";
 import { accountCipher, listWrappedKeys } from "../model/accountKeys";
 import { blobKeyId } from "../model/envelope";
 import schema from "../schema";
-import { encryptLegacyBlob } from "./legacyBlob";
+import { encryptLegacyBlob } from "./legacyBlob.helper";
 
 const modules = import.meta.glob("../**/*.ts");
 const SECRET = "test-config-secret";
