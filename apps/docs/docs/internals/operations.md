@@ -86,7 +86,7 @@ Rotation:
 
 - `TERMINAL_TICKET_SECRET` and `MEDIA_TICKET_SECRET` take a comma-separated list. The first entry seals, every entry opens. Prepend the new value, roll the pods, then drop the old one. A media link never expires, so dropping a value is what revokes the links it sealed.
 - `SERVICE_AUTH_SECRET` and `STAGE_TICKET_SECRET` are single values. Change core and Convex together. Stage tickets live 15 minutes, so rotating `STAGE_TICKET_SECRET` logs out open dashboard log streams and `broods logs` sessions until they mint a new ticket.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is set on core and Convex and takes a comma-separated list. The first entry wraps account keys, every entry unwraps. Prepend the new value on both, run `account/keys:rewrapAllKeys`, then drop the old one; the steps are in the [rotation runbook](security.md#rotation-runbook). Dropping a value before the rewrap finishes makes the keys it wrapped, and every config under them, unreadable.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is set on core and Convex and takes a comma-separated list. The first entry wraps account keys, every entry unwraps. Rotating it takes the steps in the [rotation runbook](security.md#rotation-runbook): add the new value last on both, then move it first, run `account/keys:rewrapAllKeys`, and drop the old one. Dropping a value before the rewrap finishes makes the keys it wrapped, and every config under them, unreadable.
 - `ADMIN_ACCOUNT_SECRET` is set on core and Convex. Rotating it only affects admin account creation and the account admin routes.
 
 ## Service token rules
