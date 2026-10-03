@@ -34,6 +34,8 @@ export interface ObservabilitySubscribeOptions {
   signal?: AbortSignal;
   /** Called before each reconnect, so a terminal can say the tail is down. */
   onReconnect?: (attempt: number, reason: string) => void;
+  /** Never give up after a minute down, for a tail that lives as long as its session. */
+  keepReconnecting?: boolean;
 }
 
 const WS_OPEN = 1;
@@ -126,7 +128,10 @@ export async function* subscribeObservabilityLogs(
       attempt = 0;
       downSince = Date.now();
     }
-    if (Date.now() - downSince >= RECONNECT_GIVE_UP_MS) {
+    if (
+      !subscribeOptions.keepReconnecting &&
+      Date.now() - downSince >= RECONNECT_GIVE_UP_MS
+    ) {
       throw new Error(
         `Gave up reconnecting to the live logs after ${RECONNECT_GIVE_UP_MS / 1000} s. Last error: ${reason}`,
       );

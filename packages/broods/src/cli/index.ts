@@ -1410,6 +1410,7 @@ async function streamDevLogs(
   try {
     for await (const entry of subscribeObservabilityLogs(session, {
       backfill: 0,
+      keepReconnecting: true,
       minLevel: minLevel,
       signal: signal,
       onReconnect: printReconnect,

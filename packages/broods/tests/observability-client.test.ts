@@ -128,6 +128,37 @@ test("reports each reconnect and gives up after a minute down", async () => {
   }
 });
 
+// `broods dev` tails for the whole session, so an outage must not end it.
+test("keeps reconnecting past a minute down when asked to", async () => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const controller = new AbortController();
+  const stream = subscribeObservabilityLogs(
+    {
+      baseUrl: "https://app.example",
+      credential: async (): Promise<string> => "secret-key",
+      project: "demo",
+      stage: "development",
+    },
+    { keepReconnecting: true, signal: controller.signal },
+  );
+  const result = stream.next();
+  await Bun.sleep(0);
+  FakeObservabilitySocket.instances[0]!.close(1006, "gateway down");
+
+  setSystemTime(new Date(Date.now() + 61_000));
+  try {
+    await Bun.sleep(550);
+    FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
+    await Bun.sleep(1_050);
+    expect(FakeObservabilitySocket.instances).toHaveLength(3);
+  } finally {
+    setSystemTime();
+  }
+
+  controller.abort();
+  await result;
+});
+
 // A socket that opened but never answered used to hang the tail for good.
 test("reconnects a socket the gateway never answers", async () => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
