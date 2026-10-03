@@ -102,8 +102,7 @@ export const coreConfigCases: readonly BenchCase[] = [
         ACCOUNT_ID,
         ENCRYPTION_SECRETS,
         [await createWrappedAccountKey(ACCOUNT_ID, ENCRYPTION_SECRETS)],
-        undefined,
-        NODE_CRYPTO,
+        { primitive: NODE_CRYPTO },
       );
     },
     // Write then read under a warm keyring on core's `node:crypto` primitive,

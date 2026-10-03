@@ -77,7 +77,7 @@ describe("envelope codec", () => {
       ),
     ).toBeNull();
     expect(
-      await new AccountCipher(ACCOUNT, split, keys, raw).decrypt(
+      await new AccountCipher(ACCOUNT, split, keys, { rawSecret: raw }).decrypt(
         "agents:encryptedConfig",
         legacy,
       ),

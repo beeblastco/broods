@@ -26,13 +26,9 @@ describe("node:crypto and Web Crypto primitives", () => {
   test("a blob sealed by either opens with the other, and both refuse another column", async () => {
     const keys = [await createWrappedAccountKey(ACCOUNT, [SECRET])];
     const web = new AccountCipher(ACCOUNT, [SECRET], keys);
-    const node = new AccountCipher(
-      ACCOUNT,
-      [SECRET],
-      keys,
-      undefined,
-      NODE_CRYPTO,
-    );
+    const node = new AccountCipher(ACCOUNT, [SECRET], keys, {
+      primitive: NODE_CRYPTO,
+    });
     const fromWeb = await web.encrypt("agents:encryptedConfig", VALUE);
     const fromNode = await node.encrypt("agents:encryptedConfig", VALUE);
 

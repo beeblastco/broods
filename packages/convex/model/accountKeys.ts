@@ -70,12 +70,7 @@ export async function accountCipher(
   }
   let cipher = ciphers.get(accountId);
   if (!cipher) {
-    cipher = new AccountCipher(
-      accountId,
-      encryptionSecrets(),
-      await listWrappedKeys(ctx, accountId),
-      process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-    );
+    cipher = cipherFromKeys(accountId, await listWrappedKeys(ctx, accountId));
     ciphers.set(accountId, cipher);
   }
 
@@ -116,6 +111,16 @@ export async function assertSealedUnderCurrentKey(
       "conflict",
     );
   }
+}
+
+/** A keyring over `keys` under this deployment's secrets, legacy blobs included. */
+export function cipherFromKeys(
+  accountId: Id<"accounts">,
+  keys: WrappedAccountKey[],
+): AccountCipher {
+  return new AccountCipher(accountId, encryptionSecrets(), keys, {
+    rawSecret: process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET,
+  });
 }
 
 /**

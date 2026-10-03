@@ -9,7 +9,7 @@ import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { encryptionSecrets } from "../../model/accountKeys";
+import { cipherFromKeys } from "../../model/accountKeys";
 import { sha256Hex } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
 import type {
@@ -25,7 +25,7 @@ import {
   rateLimitHeaders,
 } from "../../model/httpJson";
 import { ClientError } from "../../model/clientError";
-import { AccountCipher, type WrappedAccountKey } from "../../model/envelope";
+import type { AccountCipher, WrappedAccountKey } from "../../model/envelope";
 
 export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
@@ -58,12 +58,7 @@ export async function accountCipherForAction(
           accountId: accountId,
         });
 
-  return new AccountCipher(
-    accountId,
-    encryptionSecrets(),
-    keys,
-    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-  );
+  return cipherFromKeys(accountId, keys);
 }
 
 /**

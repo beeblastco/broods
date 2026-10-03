@@ -6,9 +6,10 @@
  */
 
 import { createCipheriv, createDecipheriv, createHmac } from "node:crypto";
-import type { AeadPrimitive } from "@broods/convex/model/envelope";
-
-const GCM_TAG_BYTES = 16;
+import {
+  type AeadPrimitive,
+  GCM_TAG_BYTES,
+} from "@broods/convex/model/envelope";
 
 export const NODE_CRYPTO: AeadPrimitive = {
   hmac: (key, data): Uint8Array =>

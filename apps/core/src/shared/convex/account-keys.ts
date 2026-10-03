@@ -57,13 +57,7 @@ export async function decryptAccountBlob(
 ): Promise<Record<string, unknown>> {
   const cipher =
     blobKeyId(blob) === null
-      ? new AccountCipher(
-          accountId,
-          requireSecretsEnv(SECRETS_ENV),
-          [],
-          requireEnv(SECRETS_ENV),
-          NODE_CRYPTO,
-        )
+      ? cipherFromKeys(accountId, [])
       : await keyringHolding(accountId, blob);
   const value = await cipher.decrypt(scope, blob);
   if (!value) {
@@ -81,19 +75,23 @@ export function resetAccountKeysForTests(
   loader = loaderOverride ?? loadFromConvex;
 }
 
+/** A keyring over `keys` on `node:crypto`, under this process's secrets, legacy blobs included. */
+function cipherFromKeys(
+  accountId: string,
+  keys: WrappedAccountKey[],
+): AccountCipher {
+  return new AccountCipher(accountId, requireSecretsEnv(SECRETS_ENV), keys, {
+    rawSecret: requireEnv(SECRETS_ENV),
+    primitive: NODE_CRYPTO,
+  });
+}
+
 /** The cached entry for the account, loading its keys when there is none or it expired. */
 function keyringFor(accountId: string): CachedKeyring {
   const cached = keyrings.get(accountId);
   if (cached && cached.expiresAt > Date.now()) return cached;
-  const cipher = loader(accountId).then(
-    (keys): AccountCipher =>
-      new AccountCipher(
-        accountId,
-        requireSecretsEnv(SECRETS_ENV),
-        keys,
-        requireEnv(SECRETS_ENV),
-        NODE_CRYPTO,
-      ),
+  const cipher = loader(accountId).then((keys): AccountCipher =>
+    cipherFromKeys(accountId, keys),
   );
   const entry: CachedKeyring = {
     cipher: cipher,

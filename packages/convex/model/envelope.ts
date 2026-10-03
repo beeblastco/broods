@@ -9,8 +9,9 @@
  * Web Crypto by default: Convex mutations run in a V8 isolate without
  * `node:crypto`. The cipher itself is an `AeadPrimitive`, so core passes the
  * synchronous `node:crypto` one and keeps a per-turn decrypt off a thread hop;
- * the format, the additional data and the key ids stay in this one file. Key rows live in `accountKeys`; the Convex
- * side reads them in `./accountKeys.ts`, core caches them in
+ * the format, the additional data and the key ids stay in this one file.
+ * Key rows live in `accountKeys`; the Convex side reads them in
+ * `./accountKeys.ts`, core caches them in
  * `apps/core/src/shared/convex/account-keys.ts`.
  */
 
@@ -21,7 +22,7 @@ import { isPlainObject } from "./objects";
 const BLOB_VERSION_PREFIX = "v2:";
 const DEK_BYTES = 32;
 const GCM_IV_BYTES = 12;
-const GCM_TAG_BYTES = 16;
+export const GCM_TAG_BYTES = 16;
 const KEY_ID_BYTES = 6;
 const KEK_ID_HEX_LENGTH = 8;
 const TEXT_DECODER = new TextDecoder();
@@ -116,12 +117,12 @@ const WEB_AES_KEYS = new WeakMap<Uint8Array, Promise<CryptoKey>>();
 const WEB_HMAC_KEYS = new WeakMap<Uint8Array, Promise<CryptoKey>>();
 
 /** Web Crypto, the only crypto a Convex isolate has. */
-export const WEB_CRYPTO: AeadPrimitive = {
+const WEB_CRYPTO: AeadPrimitive = {
   hmac: async (key, data): Promise<Uint8Array> =>
     new Uint8Array(
       await crypto.subtle.sign(
         "HMAC",
-        await webKey(WEB_HMAC_KEYS, key),
+        await webKey(key, "hmac"),
         toArrayBuffer(data),
       ),
     ),
@@ -133,7 +134,7 @@ export const WEB_CRYPTO: AeadPrimitive = {
           iv: toArrayBuffer(iv),
           additionalData: toArrayBuffer(aad),
         },
-        await webKey(WEB_AES_KEYS, key),
+        await webKey(key, "aes"),
         toArrayBuffer(sealed),
       ),
     ),
@@ -145,7 +146,7 @@ export const WEB_CRYPTO: AeadPrimitive = {
           iv: toArrayBuffer(iv),
           additionalData: toArrayBuffer(aad),
         },
-        await webKey(WEB_AES_KEYS, key),
+        await webKey(key, "aes"),
         toArrayBuffer(plaintext),
       ),
     ),
@@ -171,7 +172,7 @@ export interface WrappedAccountKey {
   retiredAt?: number;
 }
 
-export type EnvelopeColumn = (typeof ENVELOPE_COLUMNS)[number];
+type EnvelopeColumn = (typeof ENVELOPE_COLUMNS)[number];
 
 export type EnvelopeTable = EnvelopeColumn["table"];
 
@@ -217,24 +218,24 @@ export class AccountCipher {
   private readonly dataKeys = new Map<string, Promise<Uint8Array>>();
 
   /**
-   * @param rawSecret the env value before it was split into `secrets`. Legacy
-   * blobs were keyed by that whole string, so one holding a comma or outer
-   * whitespace only opens under it.
+   * @param options.rawSecret the env value before it was split into
+   * `secrets`. Legacy blobs were keyed by that whole string, so one holding a
+   * comma or outer whitespace only opens under it.
+   * @param options.primitive the cipher to run on; Web Crypto when omitted.
    */
   constructor(
     accountId: string,
     secrets: string[],
     keys: WrappedAccountKey[],
-    rawSecret?: string,
-    primitive: AeadPrimitive = WEB_CRYPTO,
+    options: { rawSecret?: string; primitive?: AeadPrimitive } = {},
   ) {
     this.accountId = accountId;
     this.secrets = secrets;
-    this.primitive = primitive;
+    this.primitive = options.primitive ?? WEB_CRYPTO;
     this.legacySecrets =
-      rawSecret === undefined || secrets.includes(rawSecret)
+      options.rawSecret === undefined || secrets.includes(options.rawSecret)
         ? secrets
-        : [...secrets, rawSecret];
+        : [...secrets, options.rawSecret];
     this.keys = new Map(keys.map((key) => [key.keyId, key]));
     // The newest key that is not retired seals new blobs.
     this.currentKeyId =
@@ -302,7 +303,7 @@ export class AccountCipher {
   }
 
   /** True when this keyring holds the key a blob names (retired included), or the blob is legacy. */
-  hasKey(blob: EncryptedBlob): boolean {
+  hasKey(blob: Pick<EncryptedBlob, "ciphertext">): boolean {
     const keyId = blobKeyId(blob);
 
     return keyId === null || this.keys.has(keyId);
@@ -520,14 +521,12 @@ async function unwrapAccountKey(
   );
 }
 
-function webKey(
-  cache: WeakMap<Uint8Array, Promise<CryptoKey>>,
-  key: Uint8Array,
-): Promise<CryptoKey> {
+function webKey(key: Uint8Array, use: "aes" | "hmac"): Promise<CryptoKey> {
+  const cache = use === "hmac" ? WEB_HMAC_KEYS : WEB_AES_KEYS;
   let imported = cache.get(key);
   if (!imported) {
     imported =
-      cache === WEB_HMAC_KEYS
+      use === "hmac"
         ? crypto.subtle.importKey(
             "raw",
             toArrayBuffer(key),
