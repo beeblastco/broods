@@ -1196,6 +1196,7 @@ export async function ingestChannelAttachments(
   attachments: Attachment[] | undefined,
   context: {
     accountId: string | undefined;
+    agentId: string | undefined;
     agentConfig: AgentConfig;
     channelName: string;
     conversationKey: string;
@@ -1207,7 +1208,7 @@ export async function ingestChannelAttachments(
   }
   const runtimeConfig = await resolveAgentRuntime(
     context.agentConfig,
-    { accountId: context.accountId },
+    { accountId: context.accountId, agentId: context.agentId },
     {
       channelName: context.channelName,
       channelScopeKey: channelScopeKeyFromConversation(context.conversationKey),

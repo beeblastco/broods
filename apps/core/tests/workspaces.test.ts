@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { ingestChannelAttachments } from "../src/harness/session.ts";
 import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 import {
   agentSandboxReservation,
@@ -386,7 +387,10 @@ describe("resolveAgentRuntime", () => {
     const agentConfig = {
       workspaces: [{ name: "notes", workspaceId: "ws_a" }],
     };
-    const resolve = (agentId: string, conversationKey: string) =>
+    const resolve = (
+      agentId: string,
+      conversationKey: string,
+    ): ReturnType<typeof resolveAgentRuntime> =>
       resolveAgentRuntime(
         agentConfig,
         { accountId: "acct_1", agentId: agentId },
@@ -414,6 +418,42 @@ describe("resolveAgentRuntime", () => {
     await expect(
       resolveAgentRuntime(agentConfig, { accountId: "acct_1" }),
     ).rejects.toThrow('Workspace isolation "agent" requires an agent identity');
+  });
+
+  it("ingests a channel attachment on an agent-isolated workspace as that agent", async () => {
+    setStorageForTests({
+      sandboxConfigs: { getById: async () => null },
+      workspaceConfigs: {
+        getById: async () => ({
+          config: { storage: { provider: "s3" }, isolation: "agent" },
+        }),
+      },
+    } as never);
+
+    // The download is refused; resolving the workspace before it needs the agent.
+    await expect(
+      ingestChannelAttachments(
+        [],
+        [
+          {
+            type: "image",
+            name: "photo.png",
+            mimeType: "image/png",
+            fetchData: async (): Promise<Buffer> => {
+              throw new Error("download refused");
+            },
+          },
+        ],
+        {
+          accountId: "acct_1",
+          agentId: "agent_1",
+          agentConfig: { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
+          channelName: "slack",
+          conversationKey: "slack:C1:T1",
+          eventId: "evt_1",
+        },
+      ),
+    ).resolves.toMatchObject({ events: [{ role: "user" }] });
   });
 
   it("lets a workspace override the agent-level sandbox per agent", async () => {
