@@ -84,10 +84,13 @@ export async function resolveProjectId(page: Page): Promise<string> {
       }).toPass({ timeout: AUTH_TIMEOUT_MS });
       continue;
     }
+    // Home opens the project, or provisions an unprovisioned account and
+    // lands back on the projects page for the next visit.
     await page.goto("/");
-    await page.waitForURL((url) => PROJECT_PATH.test(url.pathname), {
-      timeout: AUTH_TIMEOUT_MS,
-    });
+    await page.waitForURL(
+      (url) => PROJECT_PATH.test(url.pathname) || url.pathname === "/projects",
+      { timeout: AUTH_TIMEOUT_MS },
+    );
   }
 
   throw new Error(

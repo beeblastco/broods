@@ -294,7 +294,8 @@ function PlanSummary({
 }
 
 // The one notice worth showing, most urgent first. `checkoutReturned` is the
-// success=true Stripe adds to the checkout return URL.
+// success=true Stripe adds to the checkout return URL; a payment due outranks
+// it, since the URL keeps that flag after the subscription later fails.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
   status: string | undefined,
@@ -303,9 +304,6 @@ function pickNotice(
   plan: PlanTier,
   checkoutReturned: boolean,
 ): Notice | null {
-  if (checkoutReturned && plan === DEFAULT_PLAN) return ACTIVATING_NOTICE;
-  if (!budget) return null;
-  const reset = billingReset(budget.month);
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return {
       tone: "destructive",
@@ -314,6 +312,9 @@ function pickNotice(
       actionLabel: "Update card",
     };
   }
+  if (checkoutReturned && plan === DEFAULT_PLAN) return ACTIVATING_NOTICE;
+  if (!budget) return null;
+  const reset = billingReset(budget.month);
   if (budget.level === "exhausted") {
     return {
       tone: "destructive",

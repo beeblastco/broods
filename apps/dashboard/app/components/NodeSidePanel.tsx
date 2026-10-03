@@ -451,15 +451,17 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const base = agentConfig
       ? (toNestedAgentConfig(agentConfig) as Record<string, unknown>)
       : {};
-    const currentProvider = isPlainObject(base.provider) ? base.provider : {};
-    const chosen = currentProvider[next.provider];
+    const currentProvider = readAgentBranch<
+      Partial<Record<AgentProvider, Record<string, unknown>>>
+    >(agentConfig, "provider");
     // A provider picked here without a key yet reads the same `${NAME}` stage
     // variable a newly created agent does.
+    const keyVariable = providerApiKeyEnvName(next.provider);
     const nextProviderConfig = {
       ...currentProvider,
       [next.provider]: {
-        apiKey: `\${${providerApiKeyEnvName(next.provider)}}`,
-        ...(isPlainObject(chosen) ? chosen : {}),
+        ...(keyVariable ? { apiKey: `\${${keyVariable}}` } : {}),
+        ...currentProvider[next.provider],
         ...(next.provider === "custom"
           ? { base_url: next.customBaseUrl, baseURL: next.customBaseUrl }
           : {}),
