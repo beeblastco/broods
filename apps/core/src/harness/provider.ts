@@ -693,9 +693,10 @@ function resolveOpenAICompatibleModel(
 
 /**
  * The `cloudflare` provider: Workers AI over REST, through AI Gateway once
- * `gatewayId` is set (`apiKey` rides `cf-aig-authorization`). `@cf/` models keep
- * the Workers AI provider; other ids use the gateway's OpenAI-compatible
- * endpoint, where `headers.Authorization` carries an upstream key.
+ * `gatewayId` is set (`apiKey` rides `cf-aig-authorization`). Workers AI
+ * models (`@cf/`, `@hf/`) keep the Workers AI provider; other ids use the
+ * gateway's OpenAI-compatible endpoint, where `headers.Authorization` carries an
+ * upstream key.
  */
 function createCloudflare({
   gatewayId,
@@ -704,7 +705,10 @@ function createCloudflare({
 }: CloudflareProviderSettings): ModelProviderInstance {
   const gateway = gatewayId?.trim();
   if (!gateway) {
-    return createWorkersAI(settings);
+    const workersAI = createWorkersAI(settings);
+
+    return (modelId: string): Exclude<LanguageModel, string> =>
+      workersAI(workersAIModelId(modelId));
   }
   const gatewayAuth = { "cf-aig-authorization": `Bearer ${settings.apiKey}` };
   const workersAI = createWorkersAI({ ...settings, gateway: { id: gateway } });
@@ -718,12 +722,17 @@ function createCloudflare({
   });
 
   return (modelId: string): Exclude<LanguageModel, string> => {
-    const workersModel = modelId.replace(/^workers-ai\//, "");
+    const workersModel = workersAIModelId(modelId);
 
-    return workersModel.startsWith("@cf/")
+    return workersModel.startsWith("@")
       ? workersAI(workersModel, { extraHeaders: gatewayAuth })
       : compatible(modelId);
   };
+}
+
+// The gateway names Workers AI models `workers-ai/@cf/...`; Workers AI itself takes `@cf/...`.
+function workersAIModelId(modelId: string): string {
+  return modelId.replace(/^workers-ai\//, "");
 }
 
 /**

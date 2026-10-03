@@ -824,6 +824,8 @@ export interface ProviderSettingsInput {
   apiKey?: string | EnvRef;
   base_url?: string | EnvRef;
   baseURL?: string | EnvRef;
+  /** `cloudflare` only: the AI Gateway every request goes through. */
+  gatewayId?: string;
   headers?: Record<string, string | EnvRef>;
   [key: string]: unknown;
 }

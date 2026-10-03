@@ -4909,9 +4909,11 @@ components:
         gatewayId:
           type: string
           description: >-
-            `cloudflare` only. Sends requests through this Cloudflare AI
-            Gateway's OpenAI-compatible endpoint instead of Workers AI, with
-            `apiKey` as the `cf-aig-authorization` token.
+            `cloudflare` only. Sends every request through this Cloudflare AI
+            Gateway, with `apiKey` as the `cf-aig-authorization` token. Workers
+            AI models (`@cf/...`) take the gateway's Workers AI route; any other
+            `{provider}/{model}` id takes its OpenAI-compatible endpoint.
+            Letters, digits, `-` and `_`.
         headers:
           type: object
           additionalProperties:

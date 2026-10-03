@@ -115,6 +115,8 @@ const AGENT_HARNESS_KEYS = new Set([
 ]);
 const AGENT_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+// Core puts the gateway id into AI Gateway URL paths, so it stays URL-safe.
+const AI_GATEWAY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 // Deprecated public account-tool id prefix. It is neither a native Convex id
 // nor a provider tool name, so it must not fall through as one.
 const DEPRECATED_TOOL_ID_PREFIX = "tool_";
@@ -670,10 +672,14 @@ function normalizeProviderSettings(
     throw new ClientError(`config.provider.${providerName} must be an object`);
   const config = value as Record<string, unknown>;
   assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
-  assertOptionalString(
-    config.gatewayId,
-    `config.provider.${providerName}.gatewayId`,
-  );
+  if (
+    config.gatewayId !== undefined &&
+    (typeof config.gatewayId !== "string" ||
+      !AI_GATEWAY_ID_PATTERN.test(config.gatewayId))
+  )
+    throw new ClientError(
+      `config.provider.${providerName}.gatewayId must be an AI Gateway id (letters, digits, - and _)`,
+    );
   assertOptionalString(
     config.base_url,
     `config.provider.${providerName}.base_url`,

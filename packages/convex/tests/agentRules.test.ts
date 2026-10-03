@@ -403,10 +403,21 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
     ).not.toThrow();
-    // Core trims it into the AI Gateway URL.
+    // Core puts it into AI Gateway URL paths.
+    for (const gatewayId of [7, "gw/../other", "gw?x=1"]) {
+      expect(() =>
+        normalizeAgentConfig({
+          provider: { cloudflare: { gatewayId: gatewayId } },
+        }),
+      ).toThrow(
+        "config.provider.cloudflare.gatewayId must be an AI Gateway id",
+      );
+    }
     expect(() =>
-      normalizeAgentConfig({ provider: { cloudflare: { gatewayId: 7 } } }),
-    ).toThrow("config.provider.cloudflare.gatewayId must be a string");
+      normalizeAgentConfig({
+        provider: { cloudflare: { gatewayId: "broods-dev_1" } },
+      }),
+    ).not.toThrow();
     // An upstream key in a literal header is as secret as an apiKey.
     expect(
       redactConfigSecrets({
