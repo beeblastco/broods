@@ -179,6 +179,12 @@ type PublicEndpointPath = {
   stageSlug?: string;
 };
 
+// The credentials that may start a run on the direct API.
+type RunAuth = Extract<
+  AuthContext,
+  { kind: "account" | "deployment" | "agent" }
+>;
+
 // A lookup that failed is not the same as "no record": the first must not run.
 type ChannelTarget =
   | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
@@ -881,7 +887,7 @@ async function handleHttpRequest(
         request.headers,
         auth.account,
         context,
-        auth.kind === "agent" ? auth : undefined,
+        auth,
       )),
       principalChain:
         auth.kind === "agent"
@@ -2149,9 +2155,8 @@ async function parseDirectPayload(
   headers: Record<string, string>,
   account: AccountRecord,
   context: Pick<HttpRoutingContext, "agentLoader" | "deploymentLoader">,
-  auth?: Extract<AuthContext, { kind: "deployment" | "agent" }>,
+  auth: RunAuth,
 ): Promise<DirectInboundEvent> {
-  const deploymentAuth = auth?.kind === "deployment" ? auth : undefined;
   let parsed: unknown;
 
   try {
@@ -2185,14 +2190,14 @@ async function parseDirectPayload(
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
   const [agent, deployment] = await Promise.all([
     context.agentLoader(account.accountId, agentId),
-    deploymentAuth
+    auth.kind === "deployment"
       ? context.deploymentLoader(account.accountId, agentId)
       : Promise.resolve(null),
   ]);
   if (!agent) {
     throw new DirectNotFoundError("Agent not found");
   }
-  const embeddableKey = admitStageCredential(deploymentAuth, agent, deployment);
+  const embeddableKey = admitStageCredential(auth, agent, deployment);
 
   const rawEventId = assertValidPublicEventId(record.eventId as string);
   const conversation = directConversationKeys(
@@ -2216,9 +2221,7 @@ async function parseDirectPayload(
 
   const overrides = parseRunOverrides(record);
   assertRunOverridesAllowed(embeddableKey, agent, overrides, events);
-  if (auth?.kind === "agent") {
-    assertRunTokenPayload(continuation, events, answers, overrides);
-  }
+  assertRunTokenPayload(auth, continuation, events, answers, overrides);
   assertOneDirectPayloadShape(continuation, {
     eventCount: events.length,
     answerCount: answers.length,
@@ -2336,14 +2339,14 @@ function assertOneDirectPayloadShape(
 /**
  * Throws unless the agent is in the credential's stage, and public for the
  * embeddable runtime key. True for that key, false for a member's ticket or
- * no credential.
+ * any other credential.
  */
 function admitStageCredential(
-  auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
+  auth: RunAuth,
   agent: AgentRecord,
   deployment: AgentDeploymentScope | null,
 ): boolean {
-  if (!auth) return false;
+  if (auth.kind !== "deployment") return false;
   // Another stage's agent answers like an unknown one, so nothing leaks.
   if (!deploymentScopeMatches(auth, deployment)) {
     throw new DirectNotFoundError("Agent not found");
@@ -2383,19 +2386,22 @@ function assertRunOverridesAllowed(
 /**
  * A run token asks the way `run_subagent` does, with user messages. Approvals,
  * answers, system messages, overrides and `continue` stay with a person or a
- * key, so sandbox code never approves its own agent's tool calls.
+ * key, so sandbox code never approves its own agent's tool calls. Any other
+ * credential passes.
  */
 function assertRunTokenPayload(
+  auth: RunAuth,
   continuation: boolean,
   events: DirectIngressEvent[],
   answers: QuestionAnswer[],
   overrides: RunOverrides | undefined,
 ): void {
   if (
-    continuation ||
-    answers.length > 0 ||
-    overrides !== undefined ||
-    events.some((event) => event.role !== "user")
+    auth.kind === "agent" &&
+    (continuation ||
+      answers.length > 0 ||
+      overrides !== undefined ||
+      events.some((event) => event.role !== "user"))
   ) {
     throw new DirectForbiddenError(
       "A run token sends user messages only: no tool approvals, answers, system messages, model overrides or continue.",
