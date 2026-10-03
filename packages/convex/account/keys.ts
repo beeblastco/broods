@@ -50,9 +50,8 @@ export const list = internalQuery({
 /**
  * KEK rotation step two: rewrap every account key under the first secret in
  * `ACCOUNT_CONFIG_ENCRYPTION_SECRET`. Paginated with a self-reschedule and
- * idempotent, so run it until it reports `isDone` and then drop the old
- * secret from the list.
- * @returns keys rewrapped in this batch and whether the walk finished
+ * idempotent. Drop the old secret only once no row carries its `kekId`.
+ * @returns keys rewrapped in this batch and whether this batch was the last
  */
 export const rewrapAllKeys = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
@@ -86,14 +85,19 @@ export const rewrapAllKeys = internalMutation({
  * DEK rotation for one account: mints a new key (every write from now on
  * uses it), rewrites every blob of the account under it table by table in
  * bounded batches, then retires the older keys. Call it with only
- * `accountId`; the other arguments are the walk's own continuation.
+ * `accountId`; the other arguments are the walk's own continuation. Calling
+ * it again before it finishes, or after a batch failed, resumes that rotation.
  * @returns rows rewritten in this batch and whether the rotation finished
  */
 export const rotateAccountKey = internalMutation({
   args: { accountId: v.id("accounts"), ...reencryptWalkArgs },
   returns: v.object({ patched: v.number(), isDone: v.boolean() }),
   handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
-    if (args.table === undefined) await mintKey(ctx, args.accountId);
+    // Two live keys mean a rotation is already walking or stopped midway.
+    // Minting a third would let the first walk retire a key the second needs.
+    if (args.table === undefined && (await liveKeys(ctx, args.accountId)) < 2) {
+      await mintKey(ctx, args.accountId);
+    }
     const batch = await reencryptBatch(ctx, args);
     if (batch.next) {
       await ctx.scheduler.runAfter(0, internal.account.keys.rotateAccountKey, {
@@ -108,6 +112,16 @@ export const rotateAccountKey = internalMutation({
     return { patched: batch.patched, isDone: true };
   },
 });
+
+/** How many of the account's keys still open blobs. */
+async function liveKeys(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+): Promise<number> {
+  const keys = await listWrappedKeys(ctx, accountId);
+
+  return keys.filter((key) => key.retiredAt === undefined).length;
+}
 
 /** Every key but the newest live one stops opening blobs. */
 async function retireOlderKeys(

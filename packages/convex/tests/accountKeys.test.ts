@@ -213,6 +213,43 @@ test("rotateAccountKey rewrites every blob of the account and retires the old ke
   expect(after.bystanderBlob).toBe(before.bystanderBlob);
 });
 
+test("running rotateAccountKey again joins the rotation under way instead of minting another key", async () => {
+  vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", SECRET);
+  vi.useFakeTimers();
+  const tt = convexTest(schema, modules);
+  const scope = await seedAccount(tt, "beeblast");
+  const rows = await seedEncryptedRows(tt, scope);
+
+  // The first call always answers `isDone: false`, which invites a second.
+  await tt.mutation(internal.account.keys.rotateAccountKey, {
+    accountId: scope.accountId,
+  });
+  await tt.mutation(internal.account.keys.rotateAccountKey, {
+    accountId: scope.accountId,
+  });
+  await tt.finishAllScheduledFunctions(vi.runAllTimers);
+
+  const after = await tt.run(async (ctx) => {
+    const agent = (await ctx.db.get(rows.agentId))!;
+
+    return {
+      keys: await listWrappedKeys(ctx, scope.accountId),
+      config: await (
+        await accountCipher(ctx, scope.accountId)
+      ).decrypt("agents:encryptedConfig", {
+        ciphertext: agent.encryptedConfig!,
+        iv: agent.encryptionIv!,
+        tag: agent.encryptionTag!,
+      }),
+    };
+  });
+  expect(after.keys).toHaveLength(2);
+  expect(after.keys.filter((key) => key.retiredAt === undefined)).toHaveLength(
+    1,
+  );
+  expect(after.config).toEqual({ model: { provider: "deepseek" } });
+});
+
 test("rewrapAllKeys moves every key under the first secret so the old one can be dropped", async () => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "old-secret");
   vi.useFakeTimers();
