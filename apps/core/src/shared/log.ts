@@ -168,6 +168,10 @@ export function redactWithRunSecrets(
   if (typeof value === "string")
     return replaceSecretValues(value, secretValues);
   if (value === null || typeof value !== "object") return value;
+  // What JSON.stringify would write: a Date is its ISO string, not `{}`.
+  if ("toJSON" in value && typeof value.toJSON === "function") {
+    return redactWithRunSecrets(value.toJSON(), secretValues);
+  }
   if (Array.isArray(value)) {
     return value.map((item) => redactWithRunSecrets(item, secretValues));
   }

@@ -227,6 +227,10 @@ describe("logging helpers", () => {
     const prose = "a basic setup, see https://api.test/items?page=2&token=next";
     expect(redactWithRunSecrets(prose)).toBe(prose);
     expect(redactWithRunSecrets("key fp_agent_abc123")).toBe("key [redacted]");
+    // A frame's timestamp stays what JSON.stringify would have written.
+    expect(
+      redactWithRunSecrets({ timestamp: new Date("2026-01-02T03:04:05Z") }),
+    ).toEqual({ timestamp: "2026-01-02T03:04:05.000Z" });
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {
