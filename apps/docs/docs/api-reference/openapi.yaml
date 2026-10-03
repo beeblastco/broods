@@ -5379,7 +5379,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5433,7 +5433,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5479,7 +5479,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5520,7 +5520,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5573,7 +5573,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5626,7 +5626,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5660,7 +5660,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5719,7 +5719,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5760,7 +5760,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5814,7 +5814,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5864,7 +5864,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5919,7 +5919,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5971,7 +5971,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6020,7 +6020,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:

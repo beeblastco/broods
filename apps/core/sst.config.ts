@@ -706,7 +706,7 @@ export default $config({
     // this role per sandbox create and hands the short-lived, prefix-scoped session
     // credentials to the sandbox instead of its own runtime credentials, so sandbox
     // code can only reach the workspace/skills buckets. Only core's runtime user may
-    // assume it, and every session it mints names the agent it serves
+    // assume it, and every session it mints names who it serves
     // (sts:SetSourceIdentity + sts:TagSession, see harness/sandbox/s3-mount.ts).
     const sandboxS3MountRole = new aws.iam.Role("SandboxS3MountRole", {
       name: resourceName("sandbox-s3mount", stage, region),

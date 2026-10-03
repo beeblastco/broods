@@ -180,12 +180,9 @@ export async function assumeScopedMountCredentials(params: {
   };
 }
 
-// The attribution an executor attaches to a sandbox mount: the config's
-// control-plane account, plus the run's agent when the mount is that agent's
-// own folder. A shared or per-conversation mount outlives one run's credentials
-// and the next agent on the same sandbox reuses them, so it names the account
-// only. Undefined when the config carries no account (synthetic or stateless
-// configs), so the session stays unnamed.
+// The attribution an executor attaches to a sandbox mount: the account, plus the
+// run's agent only on that agent's own folder, because any other mount's
+// credentials are reused by the next agent. Undefined without an account.
 export function mountAttribution(
   config: { controlPlane?: Pick<SandboxControlPlane, "accountId"> },
   request: Pick<SandboxRunRequest, "namespace" | "metadata">,
