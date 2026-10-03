@@ -291,29 +291,9 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
-function assertEnvVarsAndOptions(
-  config: Record<string, unknown>,
-  provider: SandboxProvider,
-  stored: SandboxConfig | undefined,
-): void {
-  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
-    throw new ClientError(
-      "config.envVars must be an object with string values",
-    );
-  }
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new ClientError("config.options must be an object");
-  }
-  if (config.options !== undefined) {
-    validateProviderOptions(provider, config.options);
-  }
-  if (provider === "custom") {
-    assertCustomOptions(config.options ?? {}, stored?.options?.headers);
-  }
-}
-
 // A custom server is reached by one URL and nothing else, so the endpoint is
-// the one required option. A `${NAME}` token is fine; a placeholder URL is not.
+// the one required option. A `${NAME}` token or header resolves on a code sync
+// only (core refuses one left over); a placeholder URL is never accepted.
 function assertCustomOptions(
   options: Record<string, unknown>,
   storedHeaders: unknown,
@@ -341,6 +321,27 @@ function assertCustomOptions(
       options.headers,
       isStringRecord(storedHeaders) ? storedHeaders : undefined,
     );
+  }
+}
+
+function assertEnvVarsAndOptions(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+  stored: SandboxConfig | undefined,
+): void {
+  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
+    throw new ClientError(
+      "config.envVars must be an object with string values",
+    );
+  }
+  if (config.options !== undefined && !isPlainObject(config.options)) {
+    throw new ClientError("config.options must be an object");
+  }
+  if (config.options !== undefined) {
+    validateProviderOptions(provider, config.options);
+  }
+  if (provider === "custom") {
+    assertCustomOptions(config.options ?? {}, stored?.options?.headers);
   }
 }
 
