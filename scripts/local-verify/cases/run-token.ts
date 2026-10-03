@@ -75,12 +75,7 @@ export async function runToken(context: VerifyContext): Promise<void> {
   ]);
   // Core's own signer, on the secret this stack's core derives its key from.
   process.env.STAGE_TICKET_SECRET = context.stageTicketSecret;
-  const token = sealRunToken({
-    kind: "agent",
-    accountId: accountId,
-    agentId: own.agentId,
-    chain: [{ kind: "api", keyKind: "account" }],
-  });
+  const token = sealRunToken({ accountId: accountId, agentId: own.agentId });
 
   const read = await context.measure("run token reads its run", () =>
     send("GET", `/v1/runs/${ownRunId}`, token),

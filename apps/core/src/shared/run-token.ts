@@ -8,7 +8,6 @@
 
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
-import { chainWithoutNames, type Principal } from "./domain/principal.ts";
 import { requireEnv, WORKER_TIMEOUT_BUDGET_MS } from "./env.ts";
 
 const HKDF_INFO = "broods-run-token";
@@ -22,20 +21,22 @@ const RUN_TOKEN_TTL_MS = Math.min(
   TTL_MAX_MS,
 );
 
-// What the bearer carries. Nothing in here is unchecked on the way back in.
-type RunTokenClaims = Pick<
-  Principal,
-  "kind" | "accountId" | "agentId" | "chain"
-> & { exp: number };
+/** Whose runs the bearer reads. Nothing else is signed, so nothing goes unchecked. */
+export interface RunTokenSubject {
+  accountId: string;
+  agentId: string;
+}
+
+type RunTokenClaims = RunTokenSubject & { exp: number };
 
 // One derived key per secret value, so a rotation re-derives and a test can swap it.
 let derivedKey: { secret: string; key: Buffer } | undefined;
 
-/** Verify signature and expiry; null for anything else. The chain comes back without display names. */
+/** Verify signature and expiry; null for anything else. */
 export function openRunToken(
   token: string,
   now = Date.now(),
-): Principal | null {
+): RunTokenSubject | null {
   if (!token.startsWith(RUN_TOKEN_PREFIX)) return null;
   const [payload, signature, ...rest] = token
     .slice(RUN_TOKEN_PREFIX.length)
@@ -53,22 +54,19 @@ export function openRunToken(
     return null;
   }
   if (typeof claims.exp !== "number" || claims.exp <= now) return null;
-  const { exp: _exp, ...principal } = claims;
 
-  return principal;
+  return { accountId: claims.accountId, agentId: claims.agentId };
 }
 
-/** Sign a principal into a bearer. The payload is readable by its holder, so the chain carries ids and kinds, never a display name. */
+/** Sign an agent's bearer. The payload is readable by its holder, so it carries the two ids and an expiry. */
 export function sealRunToken(
-  principal: Principal,
+  subject: RunTokenSubject,
   now = Date.now(),
   ttlMs = RUN_TOKEN_TTL_MS,
 ): string {
   const claims: RunTokenClaims = {
-    kind: principal.kind,
-    accountId: principal.accountId,
-    agentId: principal.agentId,
-    ...(principal.chain ? { chain: chainWithoutNames(principal.chain) } : {}),
+    accountId: subject.accountId,
+    agentId: subject.agentId,
     exp: now + ttlMs,
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");

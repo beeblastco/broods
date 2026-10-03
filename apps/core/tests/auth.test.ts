@@ -314,31 +314,26 @@ describe("stage session tickets", () => {
 });
 
 describe("resolveBearerAuth with a run token", () => {
-  const principal = {
-    kind: "agent" as const,
-    accountId: ACCOUNT.accountId,
-    agentId: AGENT.agentId,
-    chain: [{ kind: "api" as const, keyKind: "account" as const }],
-  };
+  const subject = { accountId: ACCOUNT.accountId, agentId: AGENT.agentId };
 
-  it("resolves a run token to its agent principal", async () => {
+  it("resolves a run token to its agent", async () => {
     const auth = await resolveBearerAuth({
-      authorization: `Bearer ${sealRunToken(principal)}`,
+      authorization: `Bearer ${sealRunToken(subject)}`,
     });
     expect(auth).toEqual({
       kind: "agent",
       account: ACCOUNT,
-      principal: principal,
+      agentId: AGENT.agentId,
     });
   });
 
   it("refuses an expired token, a tampered one and a disabled account", async () => {
     expect(
       await resolveBearerAuth({
-        authorization: `Bearer ${sealRunToken(principal, Date.now() - 120_000, 60_000)}`,
+        authorization: `Bearer ${sealRunToken(subject, Date.now() - 120_000, 60_000)}`,
       }),
     ).toBeNull();
-    const token = sealRunToken(principal);
+    const token = sealRunToken(subject);
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${token}x` }),
     ).toBeNull();

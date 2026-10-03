@@ -587,11 +587,8 @@ async function handleHttpRequest(
           return errorResponse(403, denial.message, { code: denial.code });
         }
       }
-      if (
-        auth?.kind === "agent" &&
-        ingress.agentId !== auth.principal.agentId
-      ) {
-        return runTokenScopeResponse(auth.principal.agentId);
+      if (auth?.kind === "agent" && ingress.agentId !== auth.agentId) {
+        return runTokenScopeResponse(auth.agentId);
       }
 
       return handlers.handleStatusRequest(parsed);
@@ -797,7 +794,7 @@ async function handleHttpRequest(
 
   // A run token reads its own agent's runs, above. It starts none yet.
   if (auth?.kind === "agent") {
-    return runTokenScopeResponse(auth.principal.agentId);
+    return runTokenScopeResponse(auth.agentId);
   }
 
   // Everything below dispatches a run, whatever path it arrived on. Keying

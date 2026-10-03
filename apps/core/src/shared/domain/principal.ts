@@ -3,8 +3,8 @@
  * chain that led to it (the person or key that asked, then each agent that
  * delegated). Built once where a Session is constructed, read by the policy
  * input, the audit ledger, the run's root span, sandbox env and MCP headers.
- * The link shape and the run-token prefix live in the convex model so the
- * ledger validates the same chain.
+ * The link shape lives in the convex model so the ledger validates the same
+ * chain.
  */
 
 import type { PrincipalLink } from "@broods/convex/model/principal";
@@ -16,8 +16,6 @@ export interface Principal {
   kind: "agent";
   accountId: string;
   agentId: string;
-  runId?: string;
-  conversationKey?: string;
   /**
    * Oldest first: the requester, then every delegating agent before this one.
    * Absent when core does not know who asked. It is never guessed, because the
@@ -41,20 +39,6 @@ export function channelPrincipalChain(
       channel: channelName,
     },
   ];
-}
-
-/**
- * The chain as it leaves core for a reader the account does not control (the
- * run token's payload, a remote MCP server): ids and kinds, never a display
- * name. The ledger and the OPA input keep the name.
- */
-export function chainWithoutNames(chain: PrincipalLink[]): PrincipalLink[] {
-  return chain.map((link): PrincipalLink => {
-    if (link.kind !== "user") return link;
-    const { name: _name, ...rest } = link;
-
-    return rest;
-  });
 }
 
 /** The chain a run this principal delegates to starts from: its own chain plus itself. Unknown stays unknown. */
@@ -98,12 +82,7 @@ export function principalChainLabel(principal: Principal): string | undefined {
 
 /** The principal a run acts as; undefined until the run names an account and an agent. */
 export function runPrincipal(
-  run: {
-    accountId?: string;
-    agentId?: string;
-    eventId: string;
-    conversationKey: string;
-  },
+  run: { accountId?: string; agentId?: string },
   chain: PrincipalLink[] | undefined,
 ): Principal | undefined {
   if (!run.accountId || !run.agentId) return undefined;
@@ -112,8 +91,6 @@ export function runPrincipal(
     kind: "agent",
     accountId: run.accountId,
     agentId: run.agentId,
-    runId: run.eventId,
-    conversationKey: run.conversationKey,
     ...(chain ? { chain: chain } : {}),
   };
 }

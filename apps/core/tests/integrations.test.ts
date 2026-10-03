@@ -2554,16 +2554,10 @@ async function responseToShape(response: Response): Promise<ResponseShape> {
 }
 
 describe("run token (auth kind agent)", () => {
-  const principal = {
-    kind: "agent" as const,
-    accountId: TEST_ACCOUNT.accountId,
-    agentId: TEST_AGENT.agentId,
-    chain: [{ kind: "user" as const, id: "U1", channel: "slack" }],
-  };
   const agentAuth = async (): Promise<AuthContext> => ({
     kind: "agent",
     account: TEST_ACCOUNT,
-    principal: principal,
+    agentId: TEST_AGENT.agentId,
   });
 
   it("starts no run: POST /v1/runs is refused, its own agent included", async () => {

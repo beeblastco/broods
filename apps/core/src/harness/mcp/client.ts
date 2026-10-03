@@ -23,9 +23,9 @@ import {
 } from "@modelcontextprotocol/client";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
-  chainWithoutNames,
   delegatedChain,
   type Principal,
+  type PrincipalLink,
 } from "../../shared/domain/principal.ts";
 import {
   authorizationHeaderName,
@@ -294,6 +294,16 @@ function cacheKeyFor(connection: McpConnection): string {
   );
 
   return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+}
+
+/** The chain as a remote server sees it: ids and kinds, never a display name. The ledger and the OPA input keep the name. */
+function chainWithoutNames(chain: PrincipalLink[]): PrincipalLink[] {
+  return chain.map((link): PrincipalLink => {
+    if (link.kind !== "user") return link;
+    const { name: _name, ...rest } = link;
+
+    return rest;
+  });
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */

@@ -10,16 +10,10 @@ import {
   directPrincipalChain,
   principalChainLabel,
   runPrincipal,
-  type Principal,
 } from "../src/shared/domain/principal.ts";
 import { openRunToken, sealRunToken } from "../src/shared/run-token.ts";
 
-const RUN = {
-  accountId: "acct_1",
-  agentId: "agent_1",
-  eventId: "evt_1",
-  conversationKey: "acct:acct_1:agent:agent_1:slack:C1",
-};
+const RUN = { accountId: "acct_1", agentId: "agent_1" };
 
 describe("principal chain", () => {
   it("names the channel sender on a channel turn, and no chain when the adapter gave none", () => {
@@ -69,15 +63,13 @@ describe("principal chain", () => {
       { kind: "user", id: "U1", channel: "slack" },
     ])!;
     const child = runPrincipal(
-      { ...RUN, agentId: "agent_2", eventId: "evt_2" },
+      { ...RUN, agentId: "agent_2" },
       delegatedChain(parent),
     )!;
     expect(child).toEqual({
       kind: "agent",
       accountId: "acct_1",
       agentId: "agent_2",
-      runId: "evt_2",
-      conversationKey: RUN.conversationKey,
       chain: [
         { kind: "user", id: "U1", channel: "slack" },
         { kind: "agent", agentId: "agent_1" },
@@ -91,13 +83,7 @@ describe("principal chain", () => {
 });
 
 describe("run token", () => {
-  const principal: Principal = {
-    kind: "agent",
-    accountId: "acct_1",
-    agentId: "agent_1",
-    runId: "evt_1",
-    chain: [{ kind: "api", keyKind: "account" }],
-  };
+  const subject = { accountId: "acct_1", agentId: "agent_1" };
   let previousSecret: string | undefined;
 
   beforeEach(() => {
@@ -110,56 +96,34 @@ describe("run token", () => {
     else process.env.STAGE_TICKET_SECRET = previousSecret;
   });
 
-  it("opens what it sealed: account, agent and chain, nothing unchecked", () => {
+  it("opens what it sealed, and signs the account, the agent and an expiry only", () => {
+    // A whole principal goes in; its chain, with a user id and a display
+    // name, stays out of a payload the sandbox can read.
     const token = sealRunToken(
-      { ...principal, conversationKey: RUN.conversationKey },
+      runPrincipal(RUN, [
+        { kind: "user", id: "U1", name: "Ada Lovelace", channel: "slack" },
+      ])!,
       1_000,
       60_000,
     );
     expect(token.startsWith("fp_run_")).toBe(true);
-    expect(openRunToken(token, 60_999)).toEqual({
-      kind: "agent",
-      accountId: "acct_1",
-      agentId: "agent_1",
-      chain: [{ kind: "api", keyKind: "account" }],
-    });
-    const { chain: _chain, ...unknown } = principal;
-    expect(openRunToken(sealRunToken(unknown, 1_000, 60_000), 2_000)).toEqual({
-      kind: "agent",
-      accountId: "acct_1",
-      agentId: "agent_1",
-    });
-  });
-
-  it("carries chain ids and kinds, never a channel user's display name", () => {
-    const token = sealRunToken(
-      {
-        ...principal,
-        chain: [
-          { kind: "user", id: "U1", name: "Ada Lovelace", channel: "slack" },
-          { kind: "agent", agentId: "agent_0" },
-        ],
-      },
-      1_000,
-      60_000,
-    );
-    const payload = Buffer.from(
-      token.slice("fp_run_".length).split(".")[0]!,
-      "base64url",
-    ).toString("utf8");
-    expect(payload).not.toContain("Ada");
-    expect(openRunToken(token, 2_000)?.chain).toEqual([
-      { kind: "user", id: "U1", channel: "slack" },
-      { kind: "agent", agentId: "agent_0" },
-    ]);
+    expect(openRunToken(token, 60_999)).toEqual(subject);
+    expect(
+      JSON.parse(
+        Buffer.from(
+          token.slice("fp_run_".length).split(".")[0]!,
+          "base64url",
+        ).toString("utf8"),
+      ),
+    ).toEqual({ ...subject, exp: 61_000 });
   });
 
   it("refuses an expired, tampered, foreign or malformed token", () => {
-    const token = sealRunToken(principal, 1_000, 60_000);
+    const token = sealRunToken(subject, 1_000, 60_000);
     expect(openRunToken(token, 61_000)).toBeNull();
     const [payload, signature] = token.slice("fp_run_".length).split(".");
     const forged = Buffer.from(
-      JSON.stringify({ ...principal, agentId: "agent_2", exp: 61_000 }),
+      JSON.stringify({ ...subject, agentId: "agent_2", exp: 61_000 }),
     ).toString("base64url");
     expect(openRunToken(`fp_run_${forged}.${signature}`, 1)).toBeNull();
     expect(openRunToken(`fp_run_${payload}.${signature}x`, 1)).toBeNull();

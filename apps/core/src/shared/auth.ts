@@ -17,7 +17,6 @@ import {
 } from "@broods/convex/model/stageSessionTicket";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
-import type { Principal } from "./domain/principal.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
 import { waitUntil } from "./in-flight.ts";
 import { openRunToken } from "./run-token.ts";
@@ -56,7 +55,7 @@ export type AuthContext =
       // only read its own agent's runs; integrations.ts refuses the rest.
       kind: "agent";
       account: AccountRecord;
-      principal: Principal;
+      agentId: string;
     };
 
 /**
@@ -192,14 +191,14 @@ export function timingSafeStringEqual(
   return timingSafeEqual(actualDigest, expectedDigest);
 }
 
-/** Resolve an fp_run_ token to the agent principal it was minted for. */
+/** Resolve an fp_run_ token to the agent it was minted for. */
 async function resolveRunTokenAuth(token: string): Promise<AuthContext | null> {
-  const principal = openRunToken(token);
-  if (!principal) return null;
-  const account = await getStorage().accounts.getById(principal.accountId);
+  const subject = openRunToken(token);
+  if (!subject) return null;
+  const account = await getStorage().accounts.getById(subject.accountId);
   if (!account || account.status !== "active") return null;
 
-  return { kind: "agent", account: account, principal: principal };
+  return { kind: "agent", account: account, agentId: subject.agentId };
 }
 
 /** Resolve an fp_sts_ token to role auth via the config-plane session store. */

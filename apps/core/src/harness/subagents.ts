@@ -728,7 +728,10 @@ export class SubagentCoordinator {
       // The child acts as its own agent, delegated to by the parent's chain.
       principal: this.parentSession.principal
         ? runPrincipal(
-            { ...task, accountId: this.parentSession.principal.accountId },
+            {
+              accountId: this.parentSession.principal.accountId,
+              agentId: task.agentId,
+            },
             delegatedChain(this.parentSession.principal),
           )
         : undefined,

@@ -150,7 +150,7 @@ flowchart LR
 
 ## Agent principal and run tokens
 
-Every run acts as one agent of one account, never "as the account". Core builds a `Principal` (`apps/core/src/shared/domain/principal.ts`) where the `Session` is constructed: `{ kind: "agent", accountId, agentId, runId, conversationKey, chain }`. The chain records who asked, oldest first:
+Every run acts as one agent of one account, never "as the account". Core builds a `Principal` (`apps/core/src/shared/domain/principal.ts`) where the `Session` is constructed: `{ kind: "agent", accountId, agentId, chain }`. The chain records who asked, oldest first:
 
 | Run                                             | Chain                                                                      |
 | ----------------------------------------------- | -------------------------------------------------------------------------- |
@@ -169,7 +169,7 @@ The link shape is one validator, `principalLinkValidator` in `packages/convex/mo
 - Root span: `principal.agentId` and `principal.chain` (`user:U1>agent:a1`) on `agent.task`, `agent.cron` and `agent.subtask`.
 - Sandbox env and MCP requests, below.
 
-Run tokens (`fp_run_…`) let sandbox code read its agent's runs. A token is stateless: base64url JSON of `{ kind, accountId, agentId, chain, exp }`, HMAC-SHA256 signed with a key derived from `STAGE_TICKET_SECRET` by HKDF-SHA256 (empty salt, info `broods-run-token`, 32 bytes). No new secret, and the purpose separation means a run token can never open a stage ticket. The payload is signed, not encrypted, and sandbox code can read it, so its chain carries ids and kinds only: a channel user's display name stays on the ledger and the OPA input and never enters the token or an MCP header. It carries nothing core does not check on the way back in. Log and span redaction strips `fp_run_` bearers like the other prefixed credentials. Its TTL is the worker budget (`WORKER_TIMEOUT_BUDGET_MS`) plus five minutes, capped at two hours. Core mints one lazily, on the first sandbox exec of a run, so the per-turn Convex budget is untouched and a run with no exec never signs one.
+Run tokens (`fp_run_…`) let sandbox code read its agent's runs. A token is stateless: base64url JSON of `{ accountId, agentId, exp }`, HMAC-SHA256 signed with a key derived from `STAGE_TICKET_SECRET` by HKDF-SHA256 (empty salt, info `broods-run-token`, 32 bytes). No new secret, and the purpose separation means a run token can never open a stage ticket. The payload is signed, not encrypted, and sandbox code can read it, so it carries the two ids and nothing core does not check on the way back in: no chain, no user id, no display name. A display name stays on the ledger and the OPA input, and never enters an MCP header either. Log and span redaction strips `fp_run_` bearers like the other prefixed credentials. Its TTL is the worker budget (`WORKER_TIMEOUT_BUDGET_MS`) plus five minutes, capped at two hours. Core mints one lazily, on the first sandbox exec of a run, so the per-turn Convex budget is untouched and a run with no exec never signs one.
 
 A run token resolves on core to auth kind `agent`. It may `GET /v1/runs/{runId}` for its own agent's runs, and nothing else. Every other core route, `POST /v1/runs` included, answers 403 `run_token_scope`; the config plane and the CLI routes answer 401 `run tokens cannot reach the config plane` on the prefix alone; the machine socket and the account verbs refuse it.
 

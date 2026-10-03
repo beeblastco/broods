@@ -1869,7 +1869,7 @@ async function runChannelTurns(
         ownerGeneration: next.ownerGeneration,
         channelActions: event.channelFactory?.(source) ?? event.channel,
         principal: runPrincipal(
-          { ...event, eventId: next.eventId },
+          event,
           channelPrincipalChain(identity, event.channelName),
         ),
       });
