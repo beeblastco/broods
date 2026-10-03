@@ -86,15 +86,17 @@ describe("createTools", () => {
       Object.keys(await createTools(context, { browser: { enabled: true } })),
     ).toContain("browse");
     expect(Object.keys(await createTools(context, {}))).not.toContain("browse");
-    await expect(
-      createTools(
-        {
-          ...createToolContext(),
-          sandboxes: [{ name: "base", sandbox: { provider: "lambda" } }],
-        },
-        { browser: { enabled: true } },
-      ),
-    ).rejects.toThrow('image: "obscura"');
+    const refused = await createTools(
+      {
+        ...createToolContext(),
+        sandboxes: [{ name: "base", sandbox: { provider: "lambda" } }],
+      },
+      { browser: { enabled: true } },
+    ).then(
+      (): string => "registered",
+      (error: unknown): string => String(error),
+    );
+    expect(refused).toContain('image: "obscura"');
   });
 
   it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {

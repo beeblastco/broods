@@ -227,11 +227,9 @@ export function DetailsTab({
     (agentConfig?.extraConfig as Record<string, unknown> | undefined)
       ?.publicAccess === true;
   // The `browse` tool switch, `config.browser.enabled` in extraConfig.
-  const extraConfig: unknown = agentConfig?.extraConfig;
   const browserEnabled =
-    isPlainObject(extraConfig) &&
-    isPlainObject(extraConfig.browser) &&
-    extraConfig.browser.enabled === true;
+    readAgentBranch<{ enabled?: boolean }>(agentConfig, "browser").enabled ===
+    true;
   const policyOptions = useQuery(
     api.agent.policies.listForStage,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
