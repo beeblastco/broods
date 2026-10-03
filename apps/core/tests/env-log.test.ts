@@ -202,6 +202,9 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
     );
+    expect(
+      redactSensitiveText("BROODS_RUN_TOKEN=fp_run_eyJhIjoxfQ.c2ln_-A next"),
+    ).toBe("BROODS_RUN_TOKEN=[redacted] next");
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {
