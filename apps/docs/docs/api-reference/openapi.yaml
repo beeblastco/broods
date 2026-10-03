@@ -4935,7 +4935,7 @@ components:
                       kind: { type: string, enum: [api] }
                       keyKind:
                         type: string
-                        enum: [account, deployment, role, cli, cron]
+                        enum: [account, deployment, cron]
                   - type: object
                     required: [kind, agentId]
                     properties:

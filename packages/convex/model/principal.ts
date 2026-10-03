@@ -22,8 +22,6 @@ export const principalLinkValidator = v.union(
     keyKind: v.union(
       v.literal("account"),
       v.literal("deployment"),
-      v.literal("role"),
-      v.literal("cli"),
       v.literal("cron"),
     ),
   }),

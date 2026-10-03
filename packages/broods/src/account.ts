@@ -185,10 +185,7 @@ export interface AccountRole {
 /** One link of an agent actor's delegation chain: who asked, or an agent that delegated. */
 export type AuditPrincipalLink =
   | { kind: "user"; id: string; name?: string; channel?: string }
-  | {
-      kind: "api";
-      keyKind: "account" | "deployment" | "role" | "cli" | "cron";
-    }
+  | { kind: "api"; keyKind: "account" | "deployment" | "cron" }
   | { kind: "agent"; agentId: string };
 
 /**
