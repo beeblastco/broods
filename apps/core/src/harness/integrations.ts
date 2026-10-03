@@ -34,6 +34,7 @@ import {
   extractText,
   formatChannelErrorText,
   reachSet,
+  supportsInlineCommands,
 } from "../shared/channels.ts";
 import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
@@ -1792,7 +1793,7 @@ async function processChannelMessage(
       error: error,
     });
     await event.channel
-      .sendText(formatChannelErrorText(error))
+      .sendText(formatChannelErrorText(error, event.channelName))
       .catch((sendErr) => {
         logError("Failed to send channel error message", {
           channel: event.channelName,
@@ -1894,22 +1895,6 @@ function resolveCommandToken(
   }
 
   return null;
-}
-
-function supportsInlineCommands(channelName: string): boolean {
-  return (
-    channelName === "discord" ||
-    channelName === "gchat" ||
-    channelName === "instagram" ||
-    channelName === "matrix" ||
-    channelName === "messenger" ||
-    channelName === "slack" ||
-    channelName === "teams" ||
-    channelName === "telegram" ||
-    channelName === "twilio" ||
-    channelName === "whatsapp" ||
-    channelName === "zalo"
-  );
 }
 
 function toResponse(response: ChannelResponse): Response {

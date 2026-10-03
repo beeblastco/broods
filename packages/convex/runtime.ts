@@ -90,6 +90,17 @@ const sandboxReservationSummary = v.object({
   ttlSeconds: v.optional(v.number()),
 });
 
+const sandboxReleaseTarget = v.object({
+  externalId: v.union(v.string(), v.null()),
+  instance: v.union(
+    v.object({
+      ownCredentials: v.boolean(),
+      sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+    }),
+    v.null(),
+  ),
+});
+
 interface SandboxReservationPage {
   page: Infer<typeof sandboxReservationSummary>[];
   cursor: string | null;
@@ -680,6 +691,64 @@ export const getSandboxReservation = internalQuery({
         )
         .unique()
     )?.externalId ?? null,
+});
+
+/**
+ * What a release needs to pick credentials: the reserved machine, and the
+ * instance row's record of whose credentials it runs on and which config
+ * reserved it. The row is a best-effort mirror, so it is returned only while
+ * it still names `externalId`, or the reserved machine when none is given.
+ * With no reservation, the mirror row's own machine is the target.
+ * @returns the reserved provider id, or null, and the matching instance row, or null
+ */
+export const getSandboxReleaseTarget = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    provider: sandboxProviderValidator,
+    reservationKey: v.string(),
+    externalId: v.optional(v.string()),
+  },
+  returns: sandboxReleaseTarget,
+  handler: async (ctx, args): Promise<Infer<typeof sandboxReleaseTarget>> => {
+    const reservation = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    const instances = (
+      await ctx.db
+        .query("sandboxInstances")
+        .withIndex("by_reservationKey", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .collect()
+    ).filter(
+      (row) =>
+        row.accountId === args.accountId && row.provider === args.provider,
+    );
+    // A mirror row a failed teardown left behind still names its machine.
+    const externalId =
+      args.externalId ??
+      (reservation?.accountId === args.accountId
+        ? reservation.externalId
+        : instances[0]?.externalId) ??
+      null;
+    if (!externalId) return { externalId: null, instance: null };
+    const instance = instances.find((row) => row.externalId === externalId);
+
+    return {
+      externalId: externalId,
+      instance: instance
+        ? {
+            ownCredentials: instance.ownCredentials === true,
+            sandboxConfigId: instance.sandboxConfigId,
+          }
+        : null,
+    };
+  },
 });
 
 /**

@@ -1,7 +1,11 @@
 /** Channel-agnostic bot commands. */
 
-import type { UserContent } from "ai";
-import { extractText, type ChannelActions } from "./channels.ts";
+import type { ModelMessage, UserContent } from "ai";
+import {
+  extractText,
+  supportsInlineCommands,
+  type ChannelActions,
+} from "./channels.ts";
 import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
 
@@ -9,18 +13,16 @@ type ChannelCommandMode = "steer" | "followup";
 
 export interface CommandContext {
   conversationKey: string;
-  channel: ChannelActions;
+  // Absent on an API run, whose reply rides the run's own result instead.
+  channel?: ChannelActions;
   accountId?: string;
   agentId?: string;
   eventId?: string;
   text?: string;
-  // Harness-injected: compacts the stored conversation under the given fenced
+  // Harness-injected: compacts the stored conversation under the drain's owner
   // lease and resolves with how many messages were summarized (0 = nothing).
   // Commands stay channel-agnostic and never import harness modules.
-  compact?: (options: {
-    ownerGeneration: number;
-    instructions: string;
-  }) => Promise<number>;
+  compact?: (instructions: string) => Promise<number>;
 }
 
 interface DiscordCommandOption {
@@ -47,6 +49,22 @@ interface CommandHandler {
   // Set when the command rewrites the ingress text instead of replying; the
   // value is the mode it requests. `execute` then serves only the bare usage.
   rewriteMode?: ChannelCommandMode;
+  // Set when the command waits in the queue like a follow-up message, so it
+  // runs only once the active turn has ended. The drain loop runs `execute`
+  // under its own lease in place of a model turn.
+  queued?: boolean;
+}
+
+/** A queued command, as the drain loop finds it in an envelope's events. */
+export interface QueuedCommand {
+  commandToken: string;
+  text: string;
+}
+
+/** What a command answered; `error` is set when it threw instead. */
+export interface CommandResult {
+  reply: string;
+  error?: string;
 }
 
 export interface DiscordCommandRegistration {
@@ -107,6 +125,7 @@ export const commands: CommandHandler[] = [
   {
     aliases: ["/compact"],
     description: "Compact conversation context into a summary",
+    queued: true,
     discord: {
       names: ["compact"],
       description: "Compact conversation context into a summary",
@@ -124,18 +143,13 @@ export const commands: CommandHandler[] = [
       if (!compact) {
         throw new Error("Compact requires the harness compact capability");
       }
-      const instructions = stripCommandToken(ctx.text ?? "", "/compact");
+      const compactedMessageCount = await compact(
+        stripCommandToken(ctx.text ?? "", "/compact"),
+      );
 
-      return withIngressClearLease(ctx, "compact", async (ownerGeneration) => {
-        const compactedMessageCount = await compact({
-          ownerGeneration: ownerGeneration,
-          instructions: instructions,
-        });
-
-        return compactedMessageCount > 0
-          ? `Context compacted. ${compactedMessageCount} message(s) summarized.`
-          : "Nothing to compact yet.";
-      });
+      return compactedMessageCount > 0
+        ? `Context compacted. ${compactedMessageCount} message(s) summarized.`
+        : "Nothing to compact yet.";
     },
   },
   {
@@ -225,25 +239,30 @@ export const commands: CommandHandler[] = [
   },
 ];
 
+/** Runs a command and sends its reply; resolves with what it answered. */
 export async function executeCommand(
   commandToken: string,
   ctx: CommandContext,
-): Promise<void> {
+): Promise<CommandResult | undefined> {
   const handler = getExecutableCommands().find((c) =>
     c.aliases.includes(commandToken),
   );
-  if (!handler?.execute) return;
+  if (!handler?.execute) return undefined;
 
+  let result: CommandResult;
   try {
-    const reply = await handler.execute(ctx);
-    await ctx.channel.sendText(reply);
+    result = { reply: await handler.execute(ctx) };
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
     logError("Command execution failed", {
       command: commandToken,
-      error: err instanceof Error ? err.message : String(err),
+      error: error,
     });
-    await ctx.channel.sendText("Something went wrong. Please try again.");
+    result = { reply: "Something went wrong. Please try again.", error: error };
   }
+  await ctx.channel?.sendText(result.reply);
+
+  return result;
 }
 
 export function getDiscordCommandRegistrations(
@@ -278,6 +297,40 @@ export function parseCommand(text: string): string | null {
   return match ? token : null;
 }
 
+/**
+ * The queued command an envelope carries in place of a message: one text-only
+ * user message that is a `queued` command, beside any one-turn system events.
+ * Undefined for an ordinary turn, and on a channel that takes no commands.
+ */
+export function queuedCommand(
+  events: readonly ModelMessage[],
+  channelName?: string,
+): QueuedCommand | undefined {
+  if (channelName !== undefined && !supportsInlineCommands(channelName)) {
+    return undefined;
+  }
+  const turn = events.filter((event) => event.role !== "system");
+  const event = turn.length === 1 ? turn[0] : undefined;
+  // A file or image sent with the command would be dropped with it.
+  if (
+    event?.role !== "user" ||
+    (typeof event.content !== "string" &&
+      !event.content.every((part) => part.type === "text"))
+  ) {
+    return undefined;
+  }
+  const text = extractText(event.content).trim();
+  const commandToken = parseCommand(text);
+  if (
+    !commandToken ||
+    !commands.some((c) => c.queued && c.aliases.includes(commandToken))
+  ) {
+    return undefined;
+  }
+
+  return { commandToken: commandToken, text: text };
+}
+
 export function resolveChannelCommand({
   content,
   commandToken,
@@ -286,9 +339,18 @@ export function resolveChannelCommand({
   commandToken?: string;
 }): ChannelCommandOutcome {
   if (!commandToken) return { kind: "passthrough" };
-  const requestedMode = commands.find((c) =>
-    c.aliases.includes(commandToken),
-  )?.rewriteMode;
+  const handler = commands.find((c) => c.aliases.includes(commandToken));
+  // Admitted as a follow-up with its token kept, so the drain loop finds it.
+  if (handler?.queued) {
+    const text = stripCommandToken(extractText(content), commandToken);
+
+    return {
+      kind: "rewrite",
+      text: `${commandToken} ${text}`.trim(),
+      requestedMode: "followup",
+    };
+  }
+  const requestedMode = handler?.rewriteMode;
   if (!requestedMode) return { kind: "reply", commandToken: commandToken };
 
   // A bare rewrite command carries no message, so it falls back to its usage reply.

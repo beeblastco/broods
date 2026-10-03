@@ -7,6 +7,7 @@
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
+import { queuedCommand } from "../shared/commands.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import {
   channelRuntimeAgentConfig,
@@ -231,8 +232,16 @@ export interface IngressStatusRecord {
 
 /** Atomically admits one candidate into the durable conversation coordinator. */
 export async function acceptIngress(
-  candidate: IngressCandidate,
+  input: IngressCandidate,
 ): Promise<IngressAdmission> {
+  // A queued command waits its own turn behind the active one: as a steer it
+  // would reach the running model as text, and a collect would batch it.
+  const candidate: IngressCandidate = queuedCommand(
+    input.events,
+    input.delivery.kind === "channel" ? input.delivery.channel : undefined,
+  )
+    ? { ...input, requestedMode: "followup" }
+    : input;
   const serializedPayload = JSON.stringify({
     events: candidate.events,
     ...(candidate.agentConfig !== undefined

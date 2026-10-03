@@ -42,7 +42,7 @@ The routing below dates from the earlier S3 Files mount, where a mount write too
 
 The agent always reads through the mount, so it always sees its own writes. The choice only applies to harness-side reads.
 
-Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag.
+Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag. A read-only workspace on a bring-your-own bucket always reads S3 directly, because the mount's `deny-all` network only reaches the managed bucket.
 
 One known exception exists. `Session.loadMemoryFile` reads `memory/MEMORY.md` through the S3 API at the start of each turn, so a workspace with no sandbox still serves memory. A read that lands before the agent's last edit reached the bucket is stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
 
@@ -94,7 +94,8 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 - An agent turn is deduplicated at admission, by its ingress identity. `claim()` in `runtimeClaims` only guards channel commands such as `/clear` and context-only messages, which never enter the queue.
 - The conversation lease serializes work per conversation, fenced by owner generation. See [queue and steer](queue-and-steer.md).
 - `appendIngressEvents()` persists incoming user, assistant, tool and persisted system messages to `runtimeConversationEvents`.
-- `createTurnContext()` loads history, builds system prompt parts, runs compaction when configured (`compaction.ts`) and prunes model-visible messages (`pruning.ts`).
+- `createTurnContext()` loads history, builds system prompt parts and prunes model-visible messages (`pruning.ts`).
+- `compactConversation()` folds the stored history into a summary (`compaction.ts`). It serves `/compact` and runs in `harness.ts` after a finished turn whose last model call read `session.autoCompaction.maxContextLength` input tokens.
 - `resolvedWorkspaces()`, backed by `resolveAgentRuntime()` in `src/shared/workspaces.ts`, resolves workspace and sandbox records, applies per-workspace overrides and hashes namespaces.
 
 What one turn reads and writes, and in which store:
@@ -117,7 +118,7 @@ sequenceDiagram
     S->>S3: memory/MEMORY.md per workspace (loadMemoryFile)
     S->>S: resolve workspaces, skill and subagent metadata
   end
-  S->>S: system prompt parts, compaction, pruning
+  S->>S: system prompt parts, pruning
   S-->>M: messages + system for streamText
   M->>CVX: persistModelMessages each step, fenced by ownerGeneration
 ```

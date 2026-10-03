@@ -978,6 +978,54 @@ describe("sandbox reservation expiry", () => {
     ]);
   });
 
+  // A release trusts a 404 only from the account that owns the machine, so the
+  // instance row counts only while it still names the reserved machine.
+  test("release target carries the instance row only while it names the machine", async () => {
+    const t = runtimeTest();
+    ACCOUNT = await createActiveAccount(t);
+    await reservation(t, "byo", Math.floor(Date.now() / 1000) - 60);
+    await t.run(async (ctx): Promise<void> => {
+      await ctx.db.insert("sandboxInstances", {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "byo",
+        externalId: "sbx-byo",
+        name: "byo",
+        status: "running",
+        specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        ownCredentials: true,
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+      });
+    });
+    const target = (externalId?: string) =>
+      t.query(internal.runtime.getSandboxReleaseTarget, {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "byo",
+        externalId: externalId,
+      });
+
+    expect(await target()).toEqual({
+      externalId: "sbx-byo",
+      instance: { ownCredentials: true },
+    });
+    expect(await target("sbx-replaced")).toEqual({
+      externalId: "sbx-replaced",
+      instance: null,
+    });
+    // A failed teardown can leave the mirror after the reservation is gone.
+    await t.run(async (ctx): Promise<void> => {
+      for (const row of await ctx.db.query("sandboxReservations").collect()) {
+        await ctx.db.delete(row._id);
+      }
+    });
+    expect(await target()).toEqual({
+      externalId: "sbx-byo",
+      instance: { ownCredentials: true },
+    });
+  });
+
   test("deferral moves a row off the head of the expiry page", async () => {
     const t = runtimeTest();
     ACCOUNT = await createActiveAccount(t);

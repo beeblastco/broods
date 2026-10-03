@@ -33,6 +33,13 @@ import type {
 } from "./contracts.ts";
 import type { McpRuntime } from "./resources.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
+import type {
+  Connection,
+  ConnectionCode,
+  ConnectionStart,
+  ConnectionStartResult,
+  ConnectionType,
+} from "../../convex/model/connections.ts";
 
 /**
  * Managed gateway host, matching the OpenAPI `servers` entry and
@@ -96,6 +103,15 @@ export interface AccountEnvVar {
   /** ISO 8601, like every other timestamp in the API. */
   updatedAt: string;
 }
+
+// The connection wire types live with the server so they cannot drift.
+export type {
+  Connection,
+  ConnectionCode,
+  ConnectionStart,
+  ConnectionStartResult,
+  ConnectionType,
+};
 
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {
@@ -590,6 +606,76 @@ export class BroodsAccountClient {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/env/${encodeURIComponent(name)}`,
+    );
+
+    return result?.deleted ?? false;
+  }
+
+  /** The account's connections (`broods connect`), never their tokens. */
+  async listConnections(): Promise<Connection[]> {
+    const result = await this.request<{ connections: Connection[] }>(
+      "GET",
+      "/v1/account/connections",
+    );
+
+    return result?.connections ?? [];
+  }
+
+  /** The account's connection of one type, or null when there is none. */
+  async getConnection(type: ConnectionType): Promise<Connection | null> {
+    return await this.request<Connection>(
+      "GET",
+      `/v1/account/connections/${type}`,
+    );
+  }
+
+  /** Starts a sign-in: the provider's consent screen for `broods connect` to open. */
+  async startConnection(
+    type: ConnectionType,
+    start: ConnectionStart,
+  ): Promise<ConnectionStartResult> {
+    const result = await this.request<ConnectionStartResult>(
+      "POST",
+      `/v1/account/connections/${type}/start`,
+      start,
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "POST",
+        `/v1/account/connections/${type}/start`,
+        404,
+        "This deployment has no /v1/account/connections yet",
+      );
+
+    return result;
+  }
+
+  /** Finishes a sign-in with the code the browser brought back; the deployment keeps the tokens. */
+  async connect(
+    type: ConnectionType,
+    code: ConnectionCode,
+  ): Promise<Connection> {
+    const result = await this.request<Connection>(
+      "PUT",
+      `/v1/account/connections/${type}`,
+      code,
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "PUT",
+        `/v1/account/connections/${type}`,
+        404,
+        "This deployment has no /v1/account/connections yet",
+      );
+
+    return result;
+  }
+
+  /** Forget a connection and revoke it at the provider. False when there was none. */
+  async disconnect(type: ConnectionType): Promise<boolean> {
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/account/connections/${type}`,
     );
 
     return result?.deleted ?? false;

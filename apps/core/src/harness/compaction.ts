@@ -1,6 +1,7 @@
 /**
  * Session compaction for persisted conversation context.
- * Keep threshold checks and summary generation here; storage stays in session.ts.
+ * Keep the auto-compaction threshold and summary generation here; storage
+ * stays in session.ts.
  */
 
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
@@ -12,24 +13,15 @@ import {
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
 } from "./provider.ts";
-import {
-  hasPendingToolApprovalResponse,
-  pruneSessionMessages,
-  stripReasoningFromMessages,
-} from "./pruning.ts";
+import { stripReasoningFromMessages } from "./pruning.ts";
 
-const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000;
+// Input tokens of a turn's last model call that start an auto-compaction.
+const DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH = 500_000;
 const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 
-export interface CompactionInput {
-  conversationKey: string;
-  system: SystemModelMessage[];
-  messages: ModelMessage[];
-  agentConfig: AgentConfig;
-}
-
 export interface SummarizeConversationInput {
+  accountId?: string;
   conversationKey: string;
   priorSummaries: SystemModelMessage[];
   messages: ModelMessage[];
@@ -39,48 +31,20 @@ export interface SummarizeConversationInput {
 }
 
 /**
- * The automatic compaction gate: compacts only when the agent's compaction
- * config enables it and the serialized pruned context exceeds the configured max.
+ * Whether a finished turn auto-compacts: on unless the agent turns it off, once
+ * the turn's last model call read `maxContextLength` input tokens or more.
  */
-export async function compactSessionContext(
-  input: CompactionInput,
-): Promise<SystemModelMessage | null> {
-  const compactionConfig = input.agentConfig.session?.compaction;
-  if (compactionConfig?.enabled !== true) {
-    return null;
-  }
-  if (hasPendingToolApprovalResponse(input.messages)) {
-    return null;
-  }
+export function shouldAutoCompact(
+  agentConfig: AgentConfig,
+  lastInputTokens: number | undefined,
+): boolean {
+  const config = agentConfig.session?.autoCompaction;
+  if (config?.enabled === false || lastInputTokens === undefined) return false;
 
-  const messages = stripReasoningFromMessages(input.messages);
-  const maxContextLength =
-    compactionConfig.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
-  // The limit is about what the model receives, so measure the pruned view. The
-  // summary still reads every message, since nothing reads them again after it.
-  const modelMessages = pruneSessionMessages(messages, input.agentConfig);
-  if (estimateContextLength(input.system, modelMessages) <= maxContextLength) {
-    return null;
-  }
-
-  // The active turn resumes after compaction, so a pending user message stays
-  // out of the summary.
-  const keepLastMessage = messages.at(-1)?.role === "user";
-
-  return summarizeConversation({
-    conversationKey: input.conversationKey,
-    priorSummaries: input.system.filter(isCompactionSummaryMessage),
-    messages: keepLastMessage ? messages.slice(0, -1) : messages,
-    agentConfig: input.agentConfig,
-  });
-}
-
-export function estimateContextLength(
-  system: SystemModelMessage[],
-  messages: ModelMessage[],
-): number {
-  // A serialized character count, not tokens: cheap and provider-independent.
-  return JSON.stringify({ system: system, messages: messages }).length;
+  return (
+    lastInputTokens >=
+    (config?.maxContextLength ?? DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH)
+  );
 }
 
 export function isCompactionSummaryMessage(
@@ -105,7 +69,10 @@ export async function summarizeConversation(
     return null;
   }
 
-  const configuredModel = resolveConfiguredModel(input.agentConfig);
+  const configuredModel = resolveConfiguredModel(
+    input.agentConfig,
+    input.accountId,
+  );
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const startedAt = Date.now();
   const result = await generateText({
