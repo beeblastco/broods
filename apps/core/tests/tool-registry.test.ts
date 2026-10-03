@@ -1259,6 +1259,41 @@ describe("connected MCP servers", () => {
     expect(result).toEqual({ hits: 3 });
   });
 
+  it("hands an image result to the model as image data, not as text", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(storageWithMcp(mcpRecord()));
+    setMcpForTests({
+      listTools: async function () {
+        return [
+          { name: "screenshot", inputSchema: { type: "object" } },
+        ] as never;
+      },
+      callTool: async function () {
+        return {
+          content: [
+            { type: "text", text: "Viewport of example.com" },
+            { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+          ],
+        } as never;
+      },
+    });
+
+    const tools = await createTools(createToolContext(), {
+      mcp: { [serverId]: { enabled: true } },
+    });
+    const result = await (
+      tools.search__screenshot as unknown as ChannelTestTool
+    ).execute({}, {} as never);
+
+    expect(result).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "Viewport of example.com" },
+        { type: "image-data", data: "iVBORw0KGgo=", mediaType: "image/png" },
+      ],
+    });
+  });
+
   it("filters by the row's allowedTools and skips disabled rows", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setMcpForTests({

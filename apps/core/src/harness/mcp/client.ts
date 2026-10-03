@@ -21,6 +21,7 @@ import {
   type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
+import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
   authorizationHeaderName,
@@ -104,6 +105,12 @@ export async function callMcpTool(
     throw new Error(
       `MCP tool ${connection.record.name}.${toolName} failed: ${renderContent(result.content)}`,
     );
+  }
+
+  // An image is something the model can look at, so a result carrying one goes
+  // through as content parts instead of being flattened to text.
+  if (result.content.some((block): boolean => block.type === "image")) {
+    return imageContentOutput(result.content);
   }
 
   return result.structuredContent ?? renderContent(result.content);
@@ -348,6 +355,20 @@ function pruneCache(cache: Map<string, unknown>): void {
     if (oldest === undefined) break;
     cache.delete(oldest);
   }
+}
+
+/** A result's content as model content parts: images as image data, the rest as text. */
+function imageContentOutput(
+  content: CallToolResult["content"],
+): ToolResultOutput {
+  return {
+    type: "content",
+    value: content.map((block) =>
+      block.type === "image"
+        ? { type: "image-data", data: block.data, mediaType: block.mimeType }
+        : { type: "text", text: renderContent([block]) },
+    ),
+  };
 }
 
 /**

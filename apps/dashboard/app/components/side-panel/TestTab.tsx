@@ -16,7 +16,9 @@ import {
 import { QuestionCard } from "@/app/components/side-panel/QuestionCard";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
+import { isPlainObject } from "@/app/lib/utils";
 import type { UIMessage } from "ai";
+import Image from "next/image";
 import {
   ArrowUp,
   ChevronRight,
@@ -379,6 +381,34 @@ function AgentAvatar({
   );
 }
 
+/**
+ * Pulls the images out of a content tool result (browse, computer, MCP
+ * screenshots) as data URLs, so the card shows the picture and not its base64.
+ */
+function splitToolImages(output: unknown): { images: string[]; rest: unknown } {
+  if (
+    !isPlainObject(output) ||
+    output.type !== "content" ||
+    !Array.isArray(output.value)
+  ) {
+    return { images: [], rest: output };
+  }
+  const images: string[] = [];
+  const text: string[] = [];
+  for (const part of output.value) {
+    if (!isPlainObject(part)) continue;
+    if (part.type === "image-data" && typeof part.data === "string") {
+      images.push(`data:${String(part.mediaType)};base64,${part.data}`);
+    } else if (part.type === "text" && typeof part.text === "string") {
+      text.push(part.text);
+    }
+  }
+
+  return images.length > 0
+    ? { images: images, rest: text.join("\n") }
+    : { images: [], rest: output };
+}
+
 function formatToolValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -680,6 +710,7 @@ function ToolInvocationBlock({
   isError: boolean;
 }): React.JSX.Element {
   const hasOutput = output !== undefined;
+  const result = splitToolImages(output);
   const isRunning = state === "input-available" || state === "input-streaming";
   const elapsed = useElapsedTime(isRunning);
 
@@ -742,8 +773,20 @@ function ToolInvocationBlock({
                 <Terminal className="size-2.5" />
                 {isError ? "Error" : "Result"}
               </p>
+              {result.images.map((src, index) => (
+                <Image
+                  key={index}
+                  src={src}
+                  alt={`${toolName} result ${index + 1}`}
+                  // Data URLs from the tool result; nothing for the optimizer to fetch.
+                  unoptimized
+                  width={1280}
+                  height={800}
+                  className="mb-1.5 h-auto max-h-64 w-auto rounded-md border"
+                />
+              ))}
               <pre className="max-h-40 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap wrap-break-word font-mono text-xs text-foreground">
-                {formatToolValue(output)}
+                {formatToolValue(result.rest)}
               </pre>
             </div>
           )}

@@ -477,7 +477,7 @@ export async function runAgentLoop(
           ? ""
           : typeof safeValue === "string"
             ? safeValue
-            : JSON.stringify(safeValue);
+            : JSON.stringify(safeValue, withoutMediaBytes);
     } catch {
       serialized = String(safeValue);
     }
@@ -2977,4 +2977,24 @@ function serializeError(error: unknown): Record<string, unknown> {
   }
 
   return details;
+}
+
+// JSON.stringify replacer for trace attributes: a screenshot's base64 would fill
+// the attribute with truncated noise, so an image or file part keeps its type and
+// size only.
+function withoutMediaBytes(_key: string, value: unknown): unknown {
+  if (
+    isPlainObject(value) &&
+    (value.type === "image-data" || value.type === "file-data") &&
+    typeof value.data === "string"
+  ) {
+    const kilobytes = Math.round((value.data.length * 3) / 4 / 1024);
+
+    return {
+      ...value,
+      data: `[${String(value.mediaType)} base64, ${kilobytes} KB]`,
+    };
+  }
+
+  return value;
 }
