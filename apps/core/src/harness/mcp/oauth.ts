@@ -8,7 +8,7 @@
  * itself, which `connections.ts` also refreshes every connection with.
  */
 
-import { createHash } from "node:crypto";
+import { cacheDigest } from "../../shared/cache-digest.ts";
 import type { McpOauth } from "../../shared/domain/mcp.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { publicHostFetch } from "../../shared/http.ts";
@@ -54,20 +54,19 @@ export function clearMcpOauthTokens(): void {
 
 /**
  * The token cache identity of one oauth config. Every field is identity, so a
- * rotated secret must not reuse the old token; they ride the key as a digest
- * because a Map key lives process-wide for the token's whole lease.
+ * rotated secret must not reuse the old token; they ride the key as a
+ * process-keyed digest because a Map key lives process-wide for the token's
+ * whole lease.
  */
 export function mcpOauthTokenCacheKey(oauth: ResolvedMcpOauth): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify([
-        oauth.tokenUrl,
-        oauth.clientId,
-        oauth.clientSecret,
-        oauth.refreshToken,
-      ]),
-    )
-    .digest("hex");
+  return cacheDigest(
+    JSON.stringify([
+      oauth.tokenUrl,
+      oauth.clientId,
+      oauth.clientSecret,
+      oauth.refreshToken,
+    ]),
+  );
 }
 
 /**

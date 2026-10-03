@@ -13,7 +13,6 @@
  * at connect time.
  */
 
-import { createHash } from "node:crypto";
 import {
   Client,
   isCallToolResult,
@@ -22,6 +21,7 @@ import {
   type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
+import { cacheDigest } from "../../shared/cache-digest.ts";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
   authorizationHeaderName,
@@ -250,16 +250,17 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 /**
  * One cache identity per server row version, resolved header set and oauth
  * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL. The credentials ride the key only as a digest: a Map key
- * lives process-wide for up to an hour and must not hold them in clear.
+ * data for a TTL. The credentials ride the key only as a process-keyed
+ * digest: a Map key lives process-wide for up to an hour and must not hold
+ * them in clear.
  */
 export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
-  const credentials = createHash("sha256")
-    .update(JSON.stringify([headers, connection.oauth ?? null]))
-    .digest("hex");
+  const credentials = cacheDigest(
+    JSON.stringify([headers, connection.oauth ?? null]),
+  );
 
   return `${connection.record.serverId}:${connection.record.updatedAt}:${credentials}`;
 }
