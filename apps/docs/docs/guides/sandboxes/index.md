@@ -42,7 +42,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | Field                  | Default                | What it does                                                                                                      |
 | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `provider`             | `sandbox`              | Compute backend, from the table above                                                                             |
-| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                          |
+| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`              |
 | `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
 | `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
@@ -95,6 +95,7 @@ network: {
 | `vercel`  | allowed     | denied     | domain and CIDR allowlist                                    |
 | `e2b`     | allowed     | rejected   | rejected                                                     |
 | `machine` | allowed     | rejected   | rejected                                                     |
+| `custom`  | allowed     | rejected   | rejected                                                     |
 
 A provider that cannot enforce a mode rejects the config instead of quietly granting more access. Background jobs report back to the platform over the network, so under `deny-all` a job still runs but its result has to be polled. See [Persistent sandboxes](persistent.md#background-jobs).
 
