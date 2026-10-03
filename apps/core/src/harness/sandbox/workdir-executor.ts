@@ -493,10 +493,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 
   // Throws when the run carries no workspace namespace.
-  #s3Context(request: {
-    namespace?: string;
-    metadata?: SandboxRunMetadata;
-  }): S3MountContext {
+  #s3Context(
+    request: Pick<SandboxRunRequest, "namespace" | "metadata">,
+  ): S3MountContext {
     if (!request.namespace) {
       throw new Error(
         "workdir AWS S3 workspace mount requires a workspace namespace.",
@@ -515,10 +514,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         optionalEnv("AWS_REGION") ??
         optionalEnv("AWS_DEFAULT_REGION"),
       endpoint: configString(options.s3Endpoint),
-      attribution: mountAttribution(
-        this.#config.controlPlane?.accountId,
-        request.metadata?.agentId,
-      ),
+      attribution: mountAttribution(this.#config, request),
     };
   }
 
@@ -823,11 +819,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // when a remount is due.
   async #ensureS3Mount(
     sandbox: Sandbox,
-    request: {
-      namespace?: string;
-      workspaceRoot?: string;
-      metadata?: SandboxRunMetadata;
-    },
+    request: Pick<
+      SandboxRunRequest,
+      "namespace" | "workspaceRoot" | "metadata"
+    >,
     isFirstCreate: boolean,
     minted?: Promise<ResolvedS3Mount>,
   ): Promise<void> {

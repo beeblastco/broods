@@ -710,23 +710,21 @@ export default $config({
     // (sts:SetSourceIdentity + sts:TagSession, see harness/sandbox/s3-mount.ts).
     const sandboxS3MountRole = new aws.iam.Role("SandboxS3MountRole", {
       name: resourceName("sandbox-s3mount", stage, region),
-      assumeRolePolicy: coreRuntimeUser.arn.apply((arn) =>
-        JSON.stringify({
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Sid: "AllowCoreRuntimeAssumeRole",
-              Effect: "Allow",
-              Principal: { AWS: arn },
-              Action: [
-                "sts:AssumeRole",
-                "sts:SetSourceIdentity",
-                "sts:TagSession",
-              ],
-            },
-          ],
-        }),
-      ),
+      assumeRolePolicy: $jsonStringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Sid: "AllowCoreRuntimeAssumeRole",
+            Effect: "Allow",
+            Principal: { AWS: coreRuntimeUser.arn },
+            Action: [
+              "sts:AssumeRole",
+              "sts:SetSourceIdentity",
+              "sts:TagSession",
+            ],
+          },
+        ],
+      }),
     });
 
     new aws.iam.RolePolicy("SandboxS3MountRolePolicy", {

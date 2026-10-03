@@ -1614,7 +1614,10 @@ async function cleanupChannelPartitions(options: {
       options.accountId,
       ref.workspaceId,
     );
-    if (!record || workspaceIsolation(record.config) !== "conversation") {
+    if (
+      !record ||
+      workspaceIsolation(record.config.isolation) !== "conversation"
+    ) {
       continue;
     }
 

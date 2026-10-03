@@ -1000,10 +1000,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       namespace: namespace,
       managedBucket: optionalEnv("FILESYSTEM_BUCKET_NAME"),
       region: optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
-      attribution: mountAttribution(
-        this.#config.controlPlane?.accountId,
-        request.metadata?.agentId,
-      ),
+      attribution: mountAttribution(this.#config, request),
     };
   }
 

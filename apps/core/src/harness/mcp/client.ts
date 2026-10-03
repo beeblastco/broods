@@ -205,12 +205,14 @@ export async function listMcpTools(
 /**
  * Build the connection for a server row: row headers and oauth overlaid with
  * the agent config's (those resolved their ${NAME} refs at sync). A value
- * still carrying a placeholder never reaches the wire.
+ * still carrying a placeholder never reaches the wire. agentId is the agent
+ * whose run calls, unset on an account-surface probe.
  */
 export function mcpConnection(
   record: McpRecord,
   configHeaders: Record<string, string> | undefined,
   configOauth?: AgentMcpEntry["oauth"],
+  agentId?: string,
 ): McpConnection {
   const headers: Record<string, string> = {
     ...record.headers,
@@ -236,6 +238,7 @@ export function mcpConnection(
   return {
     record: record,
     headers: headers,
+    agentId: agentId,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
   };
 }
@@ -303,9 +306,7 @@ async function connectClient(
         requestInit: { headers: headers },
         // A tenant url is dialed from inside the cluster, so it gets the same
         // resolve, refuse-private and pin treatment as a model endpoint.
-        fetch: hosted
-          ? hostedMcpFetch(connection.record, connection.agentId, onCpuUsec)
-          : publicHostFetch,
+        fetch: hosted ? hostedMcpFetch(connection, onCpuUsec) : publicHostFetch,
       },
     );
     const client = new Client(CLIENT_INFO, {

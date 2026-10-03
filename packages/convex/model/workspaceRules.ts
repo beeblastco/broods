@@ -12,6 +12,17 @@ import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
+import {
+  WORKSPACE_ISOLATION_LEVELS,
+  type WorkspaceIsolation,
+  workspaceIsolation,
+} from "./workspaceIsolation";
+
+export {
+  WORKSPACE_ISOLATION_LEVELS,
+  type WorkspaceIsolation,
+  workspaceIsolation,
+} from "./workspaceIsolation";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
@@ -33,17 +44,9 @@ const ROLE_ARN_PATTERN = /^arn:[a-z-]+:iam::(\d+):role\/.+$/;
 /** Per-file cap, enforced on the S3 write path and on dashboard uploads. */
 export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
 export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
-export const WORKSPACE_ISOLATION_LEVELS = ["conversation", "agent"] as const;
 
 export type WorkspaceStorageProvider =
   (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
-
-/**
- * How a workspace splits its files. "conversation" mounts a folder per channel
- * partition, "agent" gives every attached agent its own folder. Unset shares
- * one root between every agent and conversation.
- */
-export type WorkspaceIsolation = (typeof WORKSPACE_ISOLATION_LEVELS)[number];
 
 export type WorkspaceStorageAuth =
   | { type: "managed" }
@@ -67,7 +70,7 @@ export interface WorkspaceStorageConfig {
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
   // `true` is the first spelling of "conversation": the API still accepts it and
-  // rows written before the levels existed hold it. Read it with workspaceIsolation.
+  // rows written before the levels existed hold it. Read it with workspaceIsolation().
   isolation?: WorkspaceIsolation | true;
   // Named harness features, each with its own options (no top-level enabled):
   // workspace = the <workspace> prompt, memory = structured memory.
@@ -136,18 +139,6 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     ...(isolation ? { isolation: isolation } : {}),
     ...(harness ? { harness: harness } : {}),
   };
-}
-
-/**
- * The isolation level a config asks for, with the boolean spelling folded in.
- * Every reader (core resolution, cleanup, the dashboard) goes through here so
- * a row holding `true` keeps its per-conversation split.
- * @returns the level, or undefined for a shared root
- */
-export function workspaceIsolation(
-  config: Pick<WorkspaceConfig, "isolation"> | undefined,
-): WorkspaceIsolation | undefined {
-  return config?.isolation === true ? "conversation" : config?.isolation;
 }
 
 /**
@@ -354,10 +345,11 @@ function normalizeWorkspaceIsolation(
   value: unknown,
 ): WorkspaceIsolation | undefined {
   if (value === undefined || value === false) return undefined;
-  if (value === true) return "conversation";
-  assertOptionalEnum(value, "config.isolation", WORKSPACE_ISOLATION_LEVELS);
+  if (value !== true) {
+    assertOptionalEnum(value, "config.isolation", WORKSPACE_ISOLATION_LEVELS);
+  }
 
-  return value as WorkspaceIsolation;
+  return workspaceIsolation(value);
 }
 
 function normalizeHarnessFeature(

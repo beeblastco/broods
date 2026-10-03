@@ -134,10 +134,10 @@ describe("workspace config", () => {
   });
 
   it("reads a stored boolean isolation as the conversation level", () => {
-    expect(workspaceIsolation({ isolation: true })).toBe("conversation");
-    expect(workspaceIsolation({ isolation: "agent" })).toBe("agent");
-    expect(workspaceIsolation({})).toBeUndefined();
+    expect(workspaceIsolation(true)).toBe("conversation");
+    expect(workspaceIsolation("agent")).toBe("agent");
     expect(workspaceIsolation(undefined)).toBeUndefined();
+    expect(workspaceIsolation("channel")).toBeUndefined();
   });
 
   it("parses a bring-your-own bucket with assume-role auth", () => {

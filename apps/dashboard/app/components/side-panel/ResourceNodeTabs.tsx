@@ -8,7 +8,8 @@
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
-  type WorkspaceConfig,
+  WORKSPACE_ISOLATION_LEVELS,
+  type WorkspaceIsolation,
   workspaceIsolation,
 } from "@broods/convex/model/workspaceRules";
 import {
@@ -52,6 +53,10 @@ const SANDBOX_DEFAULT_CONFIG = {
 // derived from all of them, not just `bucket`: a workspace carrying only a prefix
 // would otherwise show the switch off and hide the value it already has.
 const OWN_BUCKET_FIELDS = ["bucket", "region", "endpoint", "prefix"] as const;
+const WORKSPACE_ISOLATION_LABELS: Record<WorkspaceIsolation, string> = {
+  conversation: "Per conversation",
+  agent: "Per agent",
+};
 
 // What the default harness gives every workspace. Always on; turning one off is a
 // deliberate code-only choice, so these are reported here and never edited here.
@@ -249,9 +254,7 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
-  const isolation = workspaceIsolation(
-    config as Pick<WorkspaceConfig, "isolation">,
-  );
+  const isolation = workspaceIsolation(config.isolation);
   const storage: Record<string, unknown> = isPlainObject(config.storage)
     ? config.storage
     : { provider: "s3" };
@@ -443,8 +446,10 @@ export function WorkspaceResourceDetailsTab({
           }
           options={[
             { value: "shared", label: "Shared root" },
-            { value: "conversation", label: "Per conversation" },
-            { value: "agent", label: "Per agent" },
+            ...WORKSPACE_ISOLATION_LEVELS.map((level) => ({
+              value: level,
+              label: WORKSPACE_ISOLATION_LABELS[level],
+            })),
           ]}
         />
         {isolation === "conversation" && (

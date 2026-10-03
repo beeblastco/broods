@@ -565,10 +565,7 @@ function daytonaS3Context(
     ...(configString(options.s3Endpoint)
       ? { endpoint: configString(options.s3Endpoint) }
       : {}),
-    attribution: mountAttribution(
-      config.controlPlane?.accountId,
-      request.metadata?.agentId,
-    ),
+    attribution: mountAttribution(config, request),
   };
 }
 

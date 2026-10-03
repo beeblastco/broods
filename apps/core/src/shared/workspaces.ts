@@ -320,7 +320,7 @@ export async function resolveAgentRuntime(
         workspaceId: ref.workspaceId,
         namespace: isolatedWorkspaceNamespace(
           workspaceNamespace(accountId, ref.workspaceId),
-          workspaceIsolation(record.config),
+          workspaceIsolation(record.config.isolation),
           { ...isolationScope, agentId: identity.agentId },
         ),
         ...(record.description ? { description: record.description } : {}),
