@@ -23,12 +23,15 @@ import type {
   ChannelPartition,
   AgentConfig,
 } from "../shared/domain/agent-config.ts";
+import type { Principal } from "../shared/domain/principal.ts";
+import { getHarnessPublicUrl } from "../shared/env.ts";
 import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
 import { logDebug, logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
+import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -71,6 +74,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import type { SandboxRunPrincipal } from "./sandbox/types.ts";
 import { truncateText } from "./sandbox/utils.ts";
 import {
   listConfiguredSkillMetadata,
@@ -268,6 +272,9 @@ export interface SessionOptions {
   trigger?: RunTrigger;
   // false keeps an ephemeral subagent's messages out of Convex.
   persist?: boolean;
+  // Who this run acts as and who asked. Set on every session that runs the
+  // agent loop; a context-only session (command, claim, failure) has none.
+  principal?: Principal;
 }
 
 /**
@@ -294,7 +301,9 @@ export class Session {
   readonly ownerGeneration: number | undefined;
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
+  readonly principal: Principal | undefined;
   private readonly agentConfig: AgentConfig;
+  private mintedRunToken: string | undefined;
   private readonly persist: boolean;
   private messageSequence = 0;
   private lastSystemCursor: string | null = null;
@@ -331,7 +340,22 @@ export class Session {
     this.ownerGeneration = options.ownerGeneration;
     this.channelActions = options.channelActions;
     this.trigger = options.trigger;
+    this.principal = options.principal;
     this.persist = options.persist ?? true;
+  }
+
+  /** The identity a sandbox exec runs with. Its `fp_run_` bearer is minted on first use, so a run with no exec never signs one. */
+  sandboxPrincipal(): SandboxRunPrincipal | undefined {
+    if (!this.principal) return undefined;
+    this.mintedRunToken ??= sealRunToken(this.principal);
+    const baseUrl = getHarnessPublicUrl();
+
+    return {
+      accountId: this.principal.accountId,
+      agentId: this.principal.agentId,
+      runToken: this.mintedRunToken,
+      ...(baseUrl ? { baseUrl: baseUrl } : {}),
+    };
   }
 
   /** Rejects a side effect when this run no longer owns the conversation. */

@@ -12,6 +12,7 @@ import type { UsageQuantities } from "@broods/convex/model/pricing";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { PolicyRecord } from "./domain/policy.ts";
+import type { PrincipalLink } from "./domain/principal.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { ChannelRecord } from "./domain/channel-record.ts";
 import type {
@@ -43,6 +44,8 @@ export interface TaskUsageInput {
   /** Convex endpoint identifier when the task belongs to a deployment. */
   endpointId?: string;
   agentId: string;
+  /** The run's delegation chain, stored as `actor.chain` on its `run.completed` ledger row. */
+  principalChain?: PrincipalLink[];
   conversationKey: string;
   /** `${eventId}#${traceId}`: one row per model pass. */
   taskId: string;
@@ -325,6 +328,8 @@ interface TaskUsageStore {
 export interface AuditLedgerInput {
   accountId: string;
   agentId?: string;
+  /** The run's delegation chain, stored as `actor.chain`. */
+  chain?: PrincipalLink[];
   traceId?: string;
   action: "tool.denied";
   resource: { kind: "tool"; name: string };

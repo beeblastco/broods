@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
+import { principalLinkValidator } from "./model/principal";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -857,6 +858,8 @@ export const auditEventsFields = {
     email: v.optional(v.string()),
     name: v.optional(v.string()),
     agentId: v.optional(v.string()),
+    /** An agent actor's delegation chain: who asked, then each delegating agent. */
+    chain: v.optional(v.array(principalLinkValidator)),
   }),
   action: v.string(),
   resource: v.object({

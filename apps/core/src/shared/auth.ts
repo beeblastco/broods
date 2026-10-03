@@ -1,12 +1,14 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (fp_sts_), stage runtime key
- * (fp_agent_, whose lastUsedAt is written here, throttled), and account-secret
- * hash lookup. Persistence is reached via `getStorage().accounts.*` so the
- * auth path is identical through the Convex-backed account store.
+ * server-side actions), assume-role session (fp_sts_), run token (fp_run_,
+ * minted by core for one agent run), stage runtime key (fp_agent_, whose
+ * lastUsedAt is written here, throttled), and account-secret hash lookup.
+ * Persistence is reached via `getStorage().accounts.*` so the auth path is
+ * identical through the Convex-backed account store.
  */
 
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import {
@@ -17,6 +19,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
 import { waitUntil } from "./in-flight.ts";
+import { openRunToken } from "./run-token.ts";
 import { getStorage } from "./storage.ts";
 
 const KEY_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
@@ -46,6 +49,13 @@ export type AuthContext =
       kind: "role";
       account: AccountRecord;
       role: RolePrincipal;
+    }
+  | {
+      // One agent run, from the fp_run_ token core handed its sandbox. It may
+      // only read its own agent's runs; integrations.ts refuses the rest.
+      kind: "agent";
+      account: AccountRecord;
+      agentId: string;
     };
 
 /**
@@ -116,6 +126,10 @@ export async function resolveBearerAuth(
   if (token.startsWith(STAGE_SESSION_TICKET_PREFIX)) {
     return await resolveStageSessionAuth(token);
   }
+  // fp_run_ likewise: a run token is its agent or nothing.
+  if (token.startsWith(RUN_TOKEN_PREFIX)) {
+    return await resolveRunTokenAuth(token);
+  }
 
   const adminSecret = optionalEnv("ADMIN_ACCOUNT_SECRET");
   if (adminSecret && timingSafeStringEqual(token, adminSecret)) {
@@ -175,6 +189,16 @@ export function timingSafeStringEqual(
   const expectedDigest = createHash("sha256").update(expected).digest();
 
   return timingSafeEqual(actualDigest, expectedDigest);
+}
+
+/** Resolve an fp_run_ token to the agent it was minted for. */
+async function resolveRunTokenAuth(token: string): Promise<AuthContext | null> {
+  const subject = openRunToken(token);
+  if (!subject) return null;
+  const account = await getStorage().accounts.getById(subject.accountId);
+  if (!account || account.status !== "active") return null;
+
+  return { kind: "agent", account: account, agentId: subject.agentId };
 }
 
 /** Resolve an fp_sts_ token to role auth via the config-plane session store. */

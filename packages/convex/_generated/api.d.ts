@@ -112,6 +112,7 @@ import type * as model_planLimits from "../model/planLimits.js";
 import type * as model_policyReferences from "../model/policyReferences.js";
 import type * as model_policyRules from "../model/policyRules.js";
 import type * as model_pricing from "../model/pricing.js";
+import type * as model_principal from "../model/principal.js";
 import type * as model_projectScope from "../model/projectScope.js";
 import type * as model_responses from "../model/responses.js";
 import type * as model_roleRules from "../model/roleRules.js";
@@ -264,6 +265,7 @@ declare const fullApi: ApiFromModules<{
   "model/policyReferences": typeof model_policyReferences;
   "model/policyRules": typeof model_policyRules;
   "model/pricing": typeof model_pricing;
+  "model/principal": typeof model_principal;
   "model/projectScope": typeof model_projectScope;
   "model/responses": typeof model_responses;
   "model/roleRules": typeof model_roleRules;

@@ -781,6 +781,7 @@ function verifyContext(
     gatewayUrl: gatewayUrl,
     measure: measure,
     runId: runId,
+    stageTicketSecret: state.secrets.stageTicket,
   };
 }
 

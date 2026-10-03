@@ -12,6 +12,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import { sha256Hex } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
 import type { AuditActor, AuditResource } from "../../model/auditEvents";
+import { RUN_TOKEN_PREFIX } from "../../model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
 import { VIA_GATEWAY_HEADER } from "../../model/serviceBridge";
 import {
@@ -270,6 +271,17 @@ export async function requireSelfAccount(
   }
 
   return auth;
+}
+
+/**
+ * The 401 a run token (`fp_run_`) gets on every config-plane and CLI route,
+ * on the prefix alone: it is a core credential for one agent run. Null for
+ * any other bearer.
+ */
+export function runTokenRefusal(req: Request): Response | null {
+  return bearerToken(req)?.startsWith(RUN_TOKEN_PREFIX)
+    ? jsonError(401, "run tokens cannot reach the config plane")
+    : null;
 }
 
 /**

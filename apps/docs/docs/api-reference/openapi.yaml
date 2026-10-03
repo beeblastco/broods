@@ -225,12 +225,18 @@ paths:
                       type: invalid_request_error
                       code: budget_exhausted
         "403":
-          description: Agent has not opted into public access (secure by default), or a runtime key sent run overrides the agent does not allow
+          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, or the credential is a run token, which does not start runs yet
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token may only GET /v1/runs/{runId} for agent agent_...'s runs. Starting runs with a run token is not enabled yet."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
@@ -336,12 +342,18 @@ paths:
                     status: failed
                     error: Model provider returned 503
         "403":
-          description: Deployment-key caller polling an agent that has not opted into public access
+          description: Deployment-key caller polling an agent that has not opted into public access, or a run token reading a run of another agent
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token may only GET /v1/runs/{runId} for agent agent_...'s runs. Starting runs with a run token is not enabled yet."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
@@ -3494,6 +3506,11 @@ components:
         A stage session ticket (`fp_dts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
+        A run token (`fp_run_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)
+        works only on `GET /v1/runs/{runId}` for its own agent's runs. Starting
+        a run with it is not enabled yet: `POST /v1/runs` and every other run
+        route answer 403 `run_token_scope`, and every config-plane route
+        answers 401. It expires shortly after the run's time budget.
     AdminAuth:
       type: http
       scheme: bearer
@@ -4903,6 +4920,34 @@ components:
               type: string
             agentId:
               type: string
+            chain:
+              type: array
+              description: >-
+                On an agent actor, the delegation chain behind the run, oldest
+                first: the person or key that asked, then each agent that
+                delegated. The actor's own `agentId` is not repeated in it.
+                Absent when the requester is not known; it is never guessed.
+              items:
+                oneOf:
+                  - type: object
+                    required: [kind, id]
+                    properties:
+                      kind: { type: string, enum: [user] }
+                      id: { type: string }
+                      name: { type: string }
+                      channel: { type: string }
+                  - type: object
+                    required: [kind, keyKind]
+                    properties:
+                      kind: { type: string, enum: [api] }
+                      keyKind:
+                        type: string
+                        enum: [account, deployment, cron]
+                  - type: object
+                    required: [kind, agentId]
+                    properties:
+                      kind: { type: string, enum: [agent] }
+                      agentId: { type: string }
         action:
           type: string
           description: >-

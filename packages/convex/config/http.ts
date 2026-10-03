@@ -40,7 +40,12 @@ import { handleMcpRoute, handleMcpUploadsRoute } from "./routes/mcp";
 import { handlePolicyConfigRoute } from "./routes/policies";
 import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
-import { auditActorForAuth, jsonError, requireAccount } from "./routes/shared";
+import {
+  auditActorForAuth,
+  jsonError,
+  requireAccount,
+  runTokenRefusal,
+} from "./routes/shared";
 import { handleSkillRoute } from "./routes/skills";
 import {
   handleDownloadRedeemRoute,
@@ -76,6 +81,9 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
   let readsPolicyReferences = true;
   try {
     const pathname = new URL(req.url).pathname;
+
+    const refusal = runTokenRefusal(req);
+    if (refusal) return refusal;
 
     // The exchange authenticates its own caller kinds (account secret, CLI
     // token, runtime key), so it runs before the shared bearer funnel.

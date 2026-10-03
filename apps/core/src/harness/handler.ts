@@ -36,9 +36,16 @@ import {
   type CronRunRecord,
 } from "../shared/domain/cron.ts";
 import {
+  channelPrincipalChain,
+  delegatedChain,
+  directPrincipalChain,
+  runPrincipal,
+} from "../shared/domain/principal.ts";
+import {
   booleanEnv,
   getHarnessPublicUrl,
   positiveIntegerEnv,
+  WORKER_TIMEOUT_BUDGET_MS,
 } from "../shared/env.ts";
 import {
   errorResponse,
@@ -165,10 +172,6 @@ const WAIT_DEADLINE_MARGIN_MS = 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
-  "WORKER_TIMEOUT_BUDGET_MS",
-  10 * 60 * 1000,
-);
 const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
@@ -1624,6 +1627,10 @@ export async function handleChannelRequest(
     stageSlug: event.stageSlug,
     ownerGeneration: admission.ownerGeneration,
     channelActions: event.channel,
+    principal: runPrincipal(
+      event,
+      channelPrincipalChain(event.identity, event.channelName),
+    ),
   });
   // A queued worker starts later, from whichever run frees its slot, so it
   // takes this message's observability context rather than inheriting that one.
@@ -1861,6 +1868,10 @@ async function runChannelTurns(
         stageSlug: event.stageSlug,
         ownerGeneration: next.ownerGeneration,
         channelActions: event.channelFactory?.(source) ?? event.channel,
+        principal: runPrincipal(
+          event,
+          channelPrincipalChain(identity, event.channelName),
+        ),
       });
       incoming = next.events as ConversationIngressEvent[];
       incomingEphemeral = next.ephemeralSystem ?? [];
@@ -2066,6 +2077,7 @@ function directSession(event: DirectInboundEvent): Session {
         ) ?? undefined)
       : undefined,
     trigger: event.cronRun ? "cron" : undefined,
+    principal: runPrincipal(event, directPrincipalChain(event)),
   });
 }
 
@@ -2359,6 +2371,7 @@ async function dispatchSessionMessage(
   });
   const { candidate, publicEventId, publicConversationKey } = prepared;
   const delivery = candidate.delivery;
+  const senderChain = session.principal && delegatedChain(session.principal);
   const event: DirectInboundEvent = {
     accountId: candidate.accountId,
     agentId: candidate.agentId,
@@ -2375,6 +2388,8 @@ async function dispatchSessionMessage(
       channelName: delivery.channel,
       source: delivery.source ?? {},
     },
+    // The sending run asked, so the run it starts records that agent.
+    ...(senderChain ? { principalChain: senderChain } : {}),
   };
   const admission = await acceptIngress(candidate);
   await dispatchRecoveredIngress(event, admission);

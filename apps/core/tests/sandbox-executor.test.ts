@@ -2485,3 +2485,57 @@ describe("mergeSandboxEnv", () => {
     }
   });
 });
+
+describe("mergeSandboxEnv with a run principal", () => {
+  it("lays the BROODS_* identity over account and request env, and reserves the names", async () => {
+    const { mergeSandboxEnv, RESERVED_SANDBOX_ENV_KEYS } =
+      await import("../src/harness/sandbox/utils.ts");
+    const principal = {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      runToken: "fp_run_token",
+      baseUrl: "https://api.example.test",
+    };
+    expect(
+      mergeSandboxEnv(
+        { BROODS_RUN_TOKEN: "spoofed-by-account", KEEP: "yes" },
+        { BROODS_AGENT_ID: "spoofed-by-request", NEW: "1" },
+        principal,
+      ),
+    ).toEqual({
+      KEEP: "yes",
+      NEW: "1",
+      BROODS_ACCOUNT_ID: "acct_1",
+      BROODS_AGENT_ID: "agent_1",
+      BROODS_RUN_TOKEN: "fp_run_token",
+      BROODS_BASE_URL: "https://api.example.test",
+    });
+    // Only core sets the names: neither layer plants one where core sets none.
+    const planted = {
+      BROODS_AGENT_ID: "spoofed",
+      BROODS_BASE_URL: "https://elsewhere.example.test",
+    };
+    expect(mergeSandboxEnv({ ...planted, KEEP: "yes" }, planted)).toEqual({
+      KEEP: "yes",
+    });
+    expect(
+      mergeSandboxEnv(planted, undefined, {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        runToken: "fp_run_token",
+      }),
+    ).toEqual({
+      BROODS_ACCOUNT_ID: "acct_1",
+      BROODS_AGENT_ID: "agent_1",
+      BROODS_RUN_TOKEN: "fp_run_token",
+    });
+    for (const key of [
+      "BROODS_ACCOUNT_ID",
+      "BROODS_AGENT_ID",
+      "BROODS_BASE_URL",
+      "BROODS_RUN_TOKEN",
+    ]) {
+      expect(RESERVED_SANDBOX_ENV_KEYS.has(key)).toBe(true);
+    }
+  });
+});

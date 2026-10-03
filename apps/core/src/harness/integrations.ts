@@ -49,6 +49,7 @@ import {
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
+import type { PrincipalLink } from "../shared/domain/principal.ts";
 import {
   channelActorRoles,
   channelRecordMatchesWorkspace,
@@ -248,6 +249,9 @@ export interface DirectInboundEvent {
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
+  // Who asked, as the router authenticated it, or the chain of the run that
+  // sent a session message. Absent on a rebuilt envelope: nothing is guessed.
+  principalChain?: PrincipalLink[];
   // Answers to open ask_questions prompts. A request carrying these settles
   // the prompts and resumes the conversation; it runs no turn of its own.
   answers?: QuestionAnswer[];
@@ -544,7 +548,9 @@ async function handleHttpRequest(
   if (method === "GET" && request.path.startsWith(RUN_PATH_PREFIX)) {
     const auth = await context.authResolver(headers);
     const account =
-      auth?.kind === "account" || auth?.kind === "deployment"
+      auth?.kind === "account" ||
+      auth?.kind === "deployment" ||
+      auth?.kind === "agent"
         ? auth.account
         : null;
     if (!account) {
@@ -580,6 +586,9 @@ async function handleHttpRequest(
         if (denial) {
           return errorResponse(403, denial.message, { code: denial.code });
         }
+      }
+      if (auth?.kind === "agent" && ingress.agentId !== auth.agentId) {
+        return runTokenScopeResponse(auth.agentId);
       }
 
       return handlers.handleStatusRequest(parsed);
@@ -783,6 +792,11 @@ async function handleHttpRequest(
     });
   }
 
+  // A run token reads its own agent's runs, above. It starts none yet.
+  if (auth?.kind === "agent") {
+    return runTokenScopeResponse(auth.agentId);
+  }
+
   // Everything below dispatches a run, whatever path it arrived on. Keying
   // this on the recognized path shapes let a POST to a retired URL through.
   if (!context.directApiEnabled) {
@@ -799,13 +813,16 @@ async function handleHttpRequest(
     }
 
     try {
-      const parsed = await parseDirectPayload(
-        request.body,
-        request.headers,
-        auth.account,
-        context,
-        auth,
-      );
+      const parsed = {
+        ...(await parseDirectPayload(
+          request.body,
+          request.headers,
+          auth.account,
+          context,
+          auth,
+        )),
+        principalChain: [{ kind: "api", keyKind: "deployment" } as const],
+      };
       if (parsed.background) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
@@ -852,12 +869,15 @@ async function handleHttpRequest(
   }
 
   try {
-    const parsed = await parseDirectPayload(
-      request.body,
-      request.headers,
-      account,
-      context,
-    );
+    const parsed = {
+      ...(await parseDirectPayload(
+        request.body,
+        request.headers,
+        account,
+        context,
+      )),
+      principalChain: [{ kind: "api", keyKind: "account" } as const],
+    };
     if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -2035,6 +2055,15 @@ export async function sendChannelReply(options: {
   };
 
   await adapter.actions(message).sendText(text);
+}
+
+/** The one refusal a run token gets outside reading its own agent's runs. */
+function runTokenScopeResponse(agentId: string): Response {
+  return errorResponse(
+    403,
+    `A run token may only GET /v1/runs/{runId} for agent ${agentId}'s runs. Starting runs with a run token is not enabled yet.`,
+    { code: "run_token_scope" },
+  );
 }
 
 /** The two invoke shapes: project/stage scoped, and bare agent id. */
