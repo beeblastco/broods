@@ -110,8 +110,9 @@ export interface SandboxToolContext {
   // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
-  // The run's identity for the exec env. A function, so the run token is only
-  // minted once a command actually runs.
+  // The run's identity for a `bash` exec env; the file tools run the harness's
+  // own scripts and get none. A function, so the run token is only minted once
+  // a command actually runs.
   principal?: () => SandboxRunPrincipal | undefined;
 }
 

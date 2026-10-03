@@ -56,7 +56,6 @@ Usage notes:
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
             onSandboxCpu: context.onSandboxCpu,
             metadata: sandboxRunMetadata(context, ws),
-            principal: context.principal?.(),
           });
           if (!result.ok) {
             return toolError(
