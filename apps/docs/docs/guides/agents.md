@@ -70,7 +70,7 @@ provider: {
 model: { provider: "cloudflare", modelId: "openai/gpt-5-mini" },
 ```
 
-On the gateway `apiKey` is sent as `cf-aig-authorization`. The upstream provider key goes in `headers.Authorization`. Leave it out and the gateway uses its stored key or unified billing. Workers AI models on the gateway are `workers-ai/@cf/...`.
+On the gateway `apiKey` is sent as `cf-aig-authorization`. The upstream provider key goes in `headers.Authorization`. Leave it out and the gateway uses its stored key or unified billing. Workers AI models keep their `@cf/...` id and run on the token in `apiKey`.
 
 ### ChatGPT plan
 

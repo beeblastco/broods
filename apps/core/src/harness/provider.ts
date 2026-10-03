@@ -77,8 +77,7 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 // shorter than a tokens-per-minute window, so one 429 failed the whole run.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
 
-// Cloudflare AI Gateway's OpenAI-compatible endpoint. It routes any
-// `{provider}/{model}` id, `workers-ai/@cf/...` included.
+// Cloudflare AI Gateway's base URL.
 const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
 
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
@@ -693,11 +692,10 @@ function resolveOpenAICompatibleModel(
 }
 
 /**
- * The `cloudflare` provider: Workers AI over REST, or Cloudflare AI Gateway's
- * OpenAI-compatible endpoint once `gatewayId` is set. On the gateway `apiKey`
- * is the Cloudflare token sent as `cf-aig-authorization`. An upstream key rides
- * `headers.Authorization`; without one the gateway's stored key or unified
- * billing pays.
+ * The `cloudflare` provider: Workers AI over REST, through AI Gateway once
+ * `gatewayId` is set (`apiKey` rides `cf-aig-authorization`). `@cf/` models keep
+ * the Workers AI provider; other ids use the gateway's OpenAI-compatible
+ * endpoint, where `headers.Authorization` carries an upstream key.
  */
 function createCloudflare({
   gatewayId,
@@ -708,21 +706,24 @@ function createCloudflare({
   if (!gateway) {
     return createWorkersAI(settings);
   }
+  const gatewayAuth = { "cf-aig-authorization": `Bearer ${settings.apiKey}` };
+  const workersAI = createWorkersAI({ ...settings, gateway: { id: gateway } });
   const path = [settings.accountId, gateway].map(encodeURIComponent).join("/");
-  const provider = createOpenAICompatible({
+  const compatible = createOpenAICompatible({
     name: "cloudflare",
     baseURL: `${CLOUDFLARE_GATEWAY_BASE_URL}/${path}/compat`,
-    headers: {
-      ...headers,
-      "cf-aig-authorization": `Bearer ${settings.apiKey}`,
-    },
+    headers: { ...headers, ...gatewayAuth },
     fetch: settings.fetch,
     includeUsage: true,
   });
 
-  // A Workers AI id saved before the gateway was named keeps working on it.
-  return (modelId: string): Exclude<LanguageModel, string> =>
-    provider(modelId.startsWith("@cf/") ? `workers-ai/${modelId}` : modelId);
+  return (modelId: string): Exclude<LanguageModel, string> => {
+    const workersModel = modelId.replace(/^workers-ai\//, "");
+
+    return workersModel.startsWith("@cf/")
+      ? workersAI(workersModel, { extraHeaders: gatewayAuth })
+      : compatible(modelId);
+  };
 }
 
 /**

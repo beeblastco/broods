@@ -2644,10 +2644,7 @@ describe("runAgentLoop", () => {
           },
         },
       },
-      model: {
-        provider: "cloudflare",
-        modelId: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      },
+      model: { provider: "cloudflare", modelId: "openai/gpt-5-mini" },
     });
 
     expect(createOpenAICompatibleMock).toHaveBeenCalledWith({
@@ -2660,9 +2657,7 @@ describe("runAgentLoop", () => {
       fetch: expect.any(Function),
       includeUsage: true,
     });
-    expect(openAICompatibleModelMock).toHaveBeenCalledWith(
-      "workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    );
+    expect(openAICompatibleModelMock).toHaveBeenCalledWith("openai/gpt-5-mini");
   });
 
   it("creates an Anthropic provider from agent provider config", async () => {
