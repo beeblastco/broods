@@ -58,4 +58,29 @@ describe("mcp principal headers", () => {
       await mcpRequestHeaders(mcpConnection(MCP_RECORD, undefined)),
     ).toEqual({ "X-Api-Key": "k" });
   });
+
+  it("drops a row or config header that claims either principal name, in any case", async () => {
+    const spoofed = {
+      "x-broods-agent-id": "agent_admin",
+      "X-BROODS-PRINCIPAL": "e30",
+    };
+    for (const connection of [
+      mcpConnection(
+        { ...MCP_RECORD, headers: { ...MCP_RECORD.headers, ...spoofed } },
+        spoofed,
+        undefined,
+        principal,
+      ),
+      mcpConnection(MCP_RECORD, spoofed),
+    ]) {
+      const wire = new Headers(await mcpRequestHeaders(connection));
+      expect(wire.get(MCP_AGENT_ID_HEADER)).toBe(
+        connection.principalHeaders ? "agent_1" : null,
+      );
+      expect(wire.get(MCP_PRINCIPAL_HEADER)).toBe(
+        connection.principalHeaders?.[MCP_PRINCIPAL_HEADER] ?? null,
+      );
+      expect(wire.get("X-Api-Key")).toBe("k");
+    }
+  });
 });

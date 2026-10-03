@@ -62,7 +62,7 @@ Rules:
 - The URL must be public. Private, loopback, link-local and metadata addresses are refused, and so are redirects. For a server on `localhost` or your network, run it on your computer with the [machine sandbox](sandboxes/machine.md).
 - Credential headers such as `Authorization` or `X-Api-Key` must name an environment variable inside a plain string, `"Bearer ${SEARCH_TOKEN}"`. Inline secrets are rejected. A template literal around `env()` sends `[object Object]`.
 - Tool lists are cached for the time the server's listing allows. Server-pushed list changes are not supported.
-- Every request carries `X-Broods-Agent-Id` (the calling agent) and `X-Broods-Principal` (base64url JSON of the delegation chain: who asked, then each agent that delegated, the caller last). A server can authorize per agent on them. Hosted servers read the same headers off the `Request` they are handed.
+- Every request carries `X-Broods-Agent-Id` (the calling agent) and `X-Broods-Principal` (base64url JSON of the delegation chain: who asked, then each agent that delegated, the caller last). A server can authorize per agent on them. Hosted servers read the same headers off the `Request` they are handed. Both names are reserved: a configured header of either name, in any case, is dropped. Tool lists are shared across agents, so authorize in the call, not by hiding tools from the list.
 
 ### Servers with expiring OAuth tokens
 

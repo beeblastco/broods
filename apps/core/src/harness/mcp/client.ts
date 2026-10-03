@@ -48,6 +48,12 @@ import {
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
 export const MCP_PRINCIPAL_HEADER = "X-Broods-Principal";
+// Core alone names the caller. Header names are case-insensitive on the wire,
+// where a tenant's own copy would be joined with the real one.
+const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
+  MCP_AGENT_ID_HEADER.toLowerCase(),
+  MCP_PRINCIPAL_HEADER.toLowerCase(),
+]);
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
@@ -211,7 +217,8 @@ export async function listMcpTools(
 /**
  * Build the connection for a server row: row headers and oauth overlaid with
  * the agent config's (those resolved their ${NAME} refs at sync). A value
- * still carrying a placeholder never reaches the wire.
+ * still carrying a placeholder never reaches the wire, and neither does a
+ * header claiming one of the principal names.
  */
 export function mcpConnection(
   record: McpRecord,
@@ -219,10 +226,11 @@ export function mcpConnection(
   configOauth?: AgentMcpEntry["oauth"],
   principal?: Principal,
 ): McpConnection {
-  const headers: Record<string, string> = {
-    ...record.headers,
-    ...configHeaders,
-  };
+  const headers: Record<string, string> = Object.fromEntries(
+    Object.entries({ ...record.headers, ...configHeaders }).filter(
+      ([name]) => !PRINCIPAL_HEADER_NAMES.has(name.toLowerCase()),
+    ),
+  );
   for (const [name, value] of Object.entries(headers)) {
     if (ENV_PLACEHOLDER_PATTERN.test(value)) {
       throw new Error(
