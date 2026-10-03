@@ -833,7 +833,11 @@ function requireAccountAuth(
   auth: AuthContext,
   options: { allowServiceToken?: boolean } = {},
 ): Extract<AuthContext, { kind: "account" }>["account"] {
-  if (auth.kind === "deployment" || auth.kind === "role") {
+  if (
+    auth.kind === "deployment" ||
+    auth.kind === "role" ||
+    auth.kind === "agent"
+  ) {
     throw new AccountEndpointUnauthorizedError();
   }
   if (auth.kind !== "account") {

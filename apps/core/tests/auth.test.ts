@@ -8,6 +8,7 @@ import {
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
+import { sealRunToken } from "../src/shared/run-token.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -308,6 +309,43 @@ describe("stage session tickets", () => {
     const valid = await sealStageSessionTicket(ticket, "stage-secret");
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${valid}` }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveBearerAuth with a run token", () => {
+  const principal = {
+    kind: "agent" as const,
+    accountId: ACCOUNT.accountId,
+    agentId: AGENT.agentId,
+    runId: "evt_1",
+    chain: [{ kind: "api" as const, keyKind: "account" as const }],
+  };
+
+  it("resolves a run token to its agent principal", async () => {
+    const auth = await resolveBearerAuth({
+      authorization: `Bearer ${sealRunToken(principal)}`,
+    });
+    expect(auth).toEqual({
+      kind: "agent",
+      account: ACCOUNT,
+      principal: principal,
+    });
+  });
+
+  it("refuses an expired token, a tampered one and a disabled account", async () => {
+    expect(
+      await resolveBearerAuth({
+        authorization: `Bearer ${sealRunToken(principal, Date.now() - 120_000, 60_000)}`,
+      }),
+    ).toBeNull();
+    const token = sealRunToken(principal);
+    expect(
+      await resolveBearerAuth({ authorization: `Bearer ${token}x` }),
+    ).toBeNull();
+    accountsById[ACCOUNT.accountId] = { ...ACCOUNT, status: "disabled" };
+    expect(
+      await resolveBearerAuth({ authorization: `Bearer ${token}` }),
     ).toBeNull();
   });
 });

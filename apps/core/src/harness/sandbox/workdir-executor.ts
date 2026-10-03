@@ -219,7 +219,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         `timeout -k 5 ${request.timeoutSeconds} bash -c ${shellQuote(request.code)}`,
         {
           ...(cwd ? { cwd: cwd } : {}),
-          env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+          env: mergeSandboxEnv(
+            this.#config.envVars,
+            request.envVars,
+            request.principal,
+          ),
         },
       );
       const stdout = truncateText(
@@ -278,7 +282,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     );
     const result = await sandbox.exec(script, {
       env: {
-        ...mergeSandboxEnv(this.#config.envVars, request.envVars),
+        ...mergeSandboxEnv(
+          this.#config.envVars,
+          request.envVars,
+          request.principal,
+        ),
         ...callbackEnv(request.callback),
       },
     });

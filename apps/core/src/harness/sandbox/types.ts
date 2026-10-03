@@ -110,12 +110,23 @@ export interface SandboxRunRequest {
   // Per-call env vars merged over the account envVars by `mergeSandboxEnv`, which
   // drops RESERVED_SANDBOX_ENV_KEYS; the host process.env is never inherited.
   envVars?: Record<string, string>;
+  // The run's identity, laid over both env layers as BROODS_* by `mergeSandboxEnv`.
+  principal?: SandboxRunPrincipal;
   metadata?: SandboxRunMetadata;
   // Background-only: the caller supplies the jobId (so the tracking row exists
   // before the job can finish) and an optional completion callback the detached
   // job POSTs when it exits.
   jobId?: string;
   callback?: SandboxJobCallback;
+}
+
+/** What sandbox code learns about the run it serves: who it is and a bearer to call back as it. */
+export interface SandboxRunPrincipal {
+  accountId: string;
+  agentId: string;
+  runToken: string;
+  /** The public API base, when core knows its own (PUBLIC_BASE_URL). */
+  apiUrl?: string;
 }
 
 // Where a finished background job reports its result. The detached process POSTs

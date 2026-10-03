@@ -2552,3 +2552,135 @@ async function responseToShape(response: Response): Promise<ResponseShape> {
     body: await response.text(),
   };
 }
+
+describe("run token (auth kind agent)", () => {
+  const principal = {
+    kind: "agent" as const,
+    accountId: TEST_ACCOUNT.accountId,
+    agentId: TEST_AGENT.agentId,
+    runId: "evt_parent",
+    chain: [{ kind: "user" as const, id: "U1", channel: "slack" }],
+  };
+  const agentAuth = async (): Promise<AuthContext> => ({
+    kind: "agent",
+    account: TEST_ACCOUNT,
+    principal: principal,
+  });
+
+  it("starts a run for its own agent and records itself in the chain", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer fp_run_x" }),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handled.push(event);
+
+          return { statusCode: 200, body: "ok" };
+        },
+      }),
+      { authResolver: agentAuth },
+    );
+    expect(response.statusCode).toBe(200);
+    expect(handled[0]?.principalChain).toEqual([
+      { kind: "user", id: "U1", channel: "slack" },
+      { kind: "agent", agentId: TEST_AGENT.agentId },
+    ]);
+  });
+
+  it("starts an allowed subagent and refuses any other agent", async () => {
+    const turn = { ...USER_TURN, agentId: TEST_AGENT_PRIVATE.agentId };
+    const refused = await routeIncomingEvent(
+      createEvent(turn, { authorization: "Bearer fp_run_x" }),
+      createHandlers(),
+      { authResolver: agentAuth },
+    );
+    expect(refused.statusCode).toBe(403);
+    expect(responseJson(refused)).toMatchObject({
+      error: { code: "run_token_scope" },
+    });
+
+    const allowed = await routeIncomingEvent(
+      createEvent(turn, { authorization: "Bearer fp_run_x" }),
+      createHandlers(),
+      {
+        authResolver: agentAuth,
+        agentLoader: async (_accountId, agentId) =>
+          agentId === TEST_AGENT.agentId
+            ? {
+                ...TEST_AGENT,
+                config: {
+                  ...TEST_AGENT.config,
+                  subagent: { allowed: [TEST_AGENT_PRIVATE.agentId] },
+                },
+              }
+            : agentId === TEST_AGENT_PRIVATE.agentId
+              ? TEST_AGENT_PRIVATE
+              : null,
+      },
+    );
+    expect(allowed.statusCode).toBe(200);
+  });
+
+  it("reads its own agent's runs and nothing else", async () => {
+    const own = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer fp_run_x" },
+        {
+          method: "GET",
+          rawPath: `/v1/runs/${TEST_RUN_ID}`,
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({ statusCode: 200, body: "{}" }),
+      }),
+      { authResolver: agentAuth },
+    );
+    expect(own.statusCode).toBe(200);
+
+    const other = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer fp_run_x" },
+        {
+          method: "GET",
+          rawPath: `/v1/runs/${TEST_RUN_ID}`,
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({ statusCode: 200, body: "{}" }),
+      }),
+      {
+        authResolver: agentAuth,
+        ingressStatusLoader: async ({ runId }) =>
+          ingressStatus(
+            scopedDirectEventId(
+              TEST_ACCOUNT.accountId,
+              TEST_AGENT_PRIVATE.agentId,
+              "one",
+            ),
+            "alpha",
+            TEST_AGENT_PRIVATE.agentId,
+            runId,
+          ),
+      },
+    );
+    expect(other.statusCode).toBe(403);
+
+    const endpoint = await routeIncomingEvent(
+      createEvent(
+        USER_TURN,
+        { authorization: "Bearer fp_run_x" },
+        {
+          rawPath: "/v1/agents/env-endpoint",
+        },
+      ),
+      createHandlers(),
+      { authResolver: agentAuth },
+    );
+    expect(endpoint.statusCode).toBe(403);
+    expect(responseJson(endpoint)).toMatchObject({
+      error: { code: "run_token_scope" },
+    });
+  });
+});

@@ -9,6 +9,12 @@
  * accountId, and Lambda gives each account its own execution environments.
  * The child stays a containment layer, not a trust boundary. Same-UID, so keep
  * the execution role empty.
+ * Payload: `{ mode: "mcp", toolName, accountId, expectedSha256, bundleUrl,
+ * requests: [{ id, mcpRequest: { method, headers, body } }] }`. Every
+ * `mcpRequest.headers` carries the calling agent's identity as
+ * `X-Broods-Agent-Id` and `X-Broods-Principal` (base64url JSON of the
+ * delegation chain), so a bundle can authorize per agent. They ride each
+ * request, not the batch: one batch mixes calls from different agents.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */

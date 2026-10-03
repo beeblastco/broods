@@ -136,6 +136,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
                 await runSandbox(sandbox, ws?.namespace, effective, {
                   onSandboxCpu: context.onSandboxCpu,
                   metadata: sandboxRunMetadata(context, ws),
+                  principal: context.principal?.(),
                 }),
               ),
           );
@@ -272,6 +273,7 @@ async function dispatchBackground(
       {
         jobId: jobId,
         metadata: sandboxRunMetadata(context, ws),
+        principal: context.principal?.(),
         ...(callback ? { callback: callback } : {}),
       },
     );

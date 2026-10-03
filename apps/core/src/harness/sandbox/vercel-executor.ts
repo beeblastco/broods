@@ -89,7 +89,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         cmd: "bash",
         args: ["-lc", request.code],
         ...(cwd ? { cwd: cwd } : {}),
-        env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+        env: mergeSandboxEnv(
+          this.#config.envVars,
+          request.envVars,
+          request.principal,
+        ),
         timeoutMs: request.timeoutSeconds * 1000,
       });
 
@@ -517,7 +521,7 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
 
 function vercelCreateOptions(
   config: SandboxExecutorConfig,
-  request: { envVars?: Record<string, string>; timeoutSeconds: number },
+  request: Pick<SandboxRunRequest, "envVars" | "principal" | "timeoutSeconds">,
   persistent: boolean,
 ): VercelCreateOptions {
   const options = isPlainObject(config.options) ? config.options : {};
@@ -533,7 +537,7 @@ function vercelCreateOptions(
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
       1000,
     networkPolicy: vercelNetworkPolicy(config),
-    env: mergeSandboxEnv(config.envVars, request.envVars),
+    env: mergeSandboxEnv(config.envVars, request.envVars, request.principal),
     tags: { app: "broods", provider: "vercel" },
   };
 }

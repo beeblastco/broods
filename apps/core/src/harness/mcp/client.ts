@@ -23,6 +23,10 @@ import {
 } from "@modelcontextprotocol/client";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
+  delegatedChain,
+  type Principal,
+} from "../../shared/domain/principal.ts";
+import {
   authorizationHeaderName,
   ENV_PLACEHOLDER_PATTERN,
   type McpOauth,
@@ -42,6 +46,8 @@ import {
 } from "./oauth.ts";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
+export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
+export const MCP_PRINCIPAL_HEADER = "X-Broods-Principal";
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
@@ -56,6 +62,8 @@ let testOverrides: McpTestOverrides | null = null;
 export interface McpConnection {
   record: McpRecord;
   headers: Record<string, string>;
+  /** Who is calling, on every request; not part of the listing cache key. */
+  principalHeaders?: Record<string, string>;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
@@ -209,6 +217,7 @@ export function mcpConnection(
   record: McpRecord,
   configHeaders: Record<string, string> | undefined,
   configOauth?: AgentMcpEntry["oauth"],
+  principal?: Principal,
 ): McpConnection {
   const headers: Record<string, string> = {
     ...record.headers,
@@ -235,6 +244,35 @@ export function mcpConnection(
     record: record,
     headers: headers,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
+    ...(principal ? { principalHeaders: principalHeaders(principal) } : {}),
+  };
+}
+
+/** The agent id and its chain (base64url JSON), so a server can authorize per agent. */
+export function principalHeaders(principal: Principal): Record<string, string> {
+  return {
+    [MCP_AGENT_ID_HEADER]: principal.agentId,
+    [MCP_PRINCIPAL_HEADER]: Buffer.from(
+      JSON.stringify(delegatedChain(principal)),
+    ).toString("base64url"),
+  };
+}
+
+/** Every header one request carries: row and config headers, the principal, then a minted bearer. */
+export async function mcpRequestHeaders(
+  connection: McpConnection,
+): Promise<Record<string, string>> {
+  // Minted (or served from the token cache) per connect: clients are
+  // per-operation, so every request carries a token outside its refresh
+  // margin instead of a static header that expires mid-conversation.
+  return {
+    ...connection.headers,
+    ...connection.principalHeaders,
+    ...(connection.oauth
+      ? {
+          Authorization: `Bearer ${await mcpAccessToken(connection.record.name, connection.oauth)}`,
+        }
+      : {}),
   };
 }
 
@@ -286,15 +324,7 @@ async function connectClient(
   const makeClient = async (
     discover: DiscoverResult | undefined,
   ): Promise<Client> => {
-    // Minted (or served from the token cache) per connect: clients are
-    // per-operation, so every request carries a token outside its refresh
-    // margin instead of a static header that expires mid-conversation.
-    const headers = connection.oauth
-      ? {
-          ...connection.headers,
-          Authorization: `Bearer ${await mcpAccessToken(connection.record.name, connection.oauth)}`,
-        }
-      : connection.headers;
+    const headers = await mcpRequestHeaders(connection);
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {

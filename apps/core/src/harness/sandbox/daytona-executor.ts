@@ -333,7 +333,11 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   #execEnvVars(request: SandboxRunRequest): Record<string, string> | undefined {
-    const env = mergeSandboxEnv(this.#config.envVars, request.envVars);
+    const env = mergeSandboxEnv(
+      this.#config.envVars,
+      request.envVars,
+      request.principal,
+    );
 
     return Object.keys(env).length > 0 ? env : undefined;
   }
@@ -451,11 +455,15 @@ function daytonaClientOptions(
 
 async function daytonaCreateOptions(
   config: SandboxExecutorConfig,
-  request: { namespace?: string; envVars?: Record<string, string> },
+  request: Pick<SandboxRunRequest, "namespace" | "envVars" | "principal">,
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
-  const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
+  const baseEnv = mergeSandboxEnv(
+    config.envVars,
+    request.envVars,
+    request.principal,
+  );
   const envVars = await daytonaEnvVars(config, request, baseEnv);
   // Persistent: auto-stop on idle (filesystem persists, harness restarts on next
   // call); auto-delete after the grace if it stays stopped (leak backstop).

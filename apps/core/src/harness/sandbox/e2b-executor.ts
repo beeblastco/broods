@@ -50,7 +50,11 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     try {
       const result = await sandbox.commands.run(request.code, {
         timeoutMs: request.timeoutSeconds * 1000,
-        envs: mergeSandboxEnv(this.#config.envVars, request.envVars),
+        envs: mergeSandboxEnv(
+          this.#config.envVars,
+          request.envVars,
+          request.principal,
+        ),
       });
       const stdout = truncateText(
         result.stdout ?? "",
@@ -86,7 +90,11 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         background: true,
         timeoutMs: request.timeoutSeconds * 1000,
         envs: {
-          ...mergeSandboxEnv(this.#config.envVars, request.envVars),
+          ...mergeSandboxEnv(
+            this.#config.envVars,
+            request.envVars,
+            request.principal,
+          ),
           ...callbackEnv(request.callback),
         },
       },

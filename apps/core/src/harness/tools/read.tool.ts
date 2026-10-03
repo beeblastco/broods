@@ -78,6 +78,7 @@ Usage notes:
             `sed -n '${start},${end}p' -- ${q} | nl -ba -v ${start}`;
           const result = await runSandbox(runner, ws.namespace, code, {
             metadata: sandboxRunMetadata(context, ws),
+            principal: context.principal?.(),
           });
           if (!result.ok) {
             return toolError(

@@ -54,6 +54,7 @@ Usage notes:
           const code = globScript(toBase64(pattern), toBase64(root));
           const result = await runSandbox(runner, ws.namespace, code, {
             metadata: sandboxRunMetadata(context, ws),
+            principal: context.principal?.(),
           });
           if (!result.ok) {
             return toolError(

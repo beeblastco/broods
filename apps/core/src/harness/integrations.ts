@@ -50,6 +50,11 @@ import {
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
+  delegatedChain,
+  type Principal,
+  type PrincipalLink,
+} from "../shared/domain/principal.ts";
+import {
   channelActorRoles,
   channelRecordMatchesWorkspace,
   channelRuntimeAgentConfig,
@@ -155,6 +160,7 @@ const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // The single runtime entry point; sync or background is a body field.
 const RUN_PATH = "/v1/runs";
 const RUN_PATH_PREFIX = `${RUN_PATH}/`;
+const RUN_TOKEN_SCOPE_CODE = "run_token_scope";
 
 // One receiver's reading of a delivery: an answer the provider needs right
 // away, nothing to run, or turns whose admission is still in flight.
@@ -248,6 +254,9 @@ export interface DirectInboundEvent {
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
+  // Who asked, as the router authenticated it: the key kind, or the chain of
+  // the run whose token started this one. Absent on a rebuilt envelope.
+  principalChain?: PrincipalLink[];
   // Answers to open ask_questions prompts. A request carrying these settles
   // the prompts and resumes the conversation; it runs no turn of its own.
   answers?: QuestionAnswer[];
@@ -544,7 +553,9 @@ async function handleHttpRequest(
   if (method === "GET" && request.path.startsWith(RUN_PATH_PREFIX)) {
     const auth = await context.authResolver(headers);
     const account =
-      auth?.kind === "account" || auth?.kind === "deployment"
+      auth?.kind === "account" ||
+      auth?.kind === "deployment" ||
+      auth?.kind === "agent"
         ? auth.account
         : null;
     if (!account) {
@@ -580,6 +591,18 @@ async function handleHttpRequest(
         if (denial) {
           return errorResponse(403, denial.message, { code: denial.code });
         }
+      }
+      if (
+        auth?.kind === "agent" &&
+        ingress.agentId !== auth.principal.agentId
+      ) {
+        return errorResponse(
+          403,
+          runTokenScopeMessage(auth.principal.agentId),
+          {
+            code: RUN_TOKEN_SCOPE_CODE,
+          },
+        );
       }
 
       return handlers.handleStatusRequest(parsed);
@@ -783,6 +806,13 @@ async function handleHttpRequest(
     });
   }
 
+  // A run token starts runs on /v1/runs and reads its own; nothing else.
+  if (auth?.kind === "agent" && request.path !== RUN_PATH) {
+    return errorResponse(403, runTokenScopeMessage(auth.principal.agentId), {
+      code: RUN_TOKEN_SCOPE_CODE,
+    });
+  }
+
   // Everything below dispatches a run, whatever path it arrived on. Keying
   // this on the recognized path shapes let a POST to a retired URL through.
   if (!context.directApiEnabled) {
@@ -799,13 +829,16 @@ async function handleHttpRequest(
     }
 
     try {
-      const parsed = await parseDirectPayload(
-        request.body,
-        request.headers,
-        auth.account,
-        context,
-        auth,
-      );
+      const parsed = {
+        ...(await parseDirectPayload(
+          request.body,
+          request.headers,
+          auth.account,
+          context,
+          auth,
+        )),
+        principalChain: [{ kind: "api", keyKind: "deployment" } as const],
+      };
       if (parsed.background) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
@@ -846,18 +879,33 @@ async function handleHttpRequest(
     return unauthorizedResponse();
   }
 
-  const account = auth?.kind === "account" ? auth.account : null;
-  if (!account) {
+  if (auth?.kind !== "account" && auth?.kind !== "agent") {
     return unauthorizedResponse();
   }
 
   try {
-    const parsed = await parseDirectPayload(
-      request.body,
-      request.headers,
-      account,
-      context,
-    );
+    const parsed = {
+      ...(await parseDirectPayload(
+        request.body,
+        request.headers,
+        auth.account,
+        context,
+      )),
+      principalChain:
+        auth.kind === "agent"
+          ? delegatedChain(auth.principal)
+          : [{ kind: "api", keyKind: "account" } as const],
+    };
+    // A run token reaches its own agent and the subagents that agent may
+    // delegate to, the same set `run_subagent` would give it.
+    if (
+      auth.kind === "agent" &&
+      !(await runTokenMayStart(auth.principal, parsed.agentId, context))
+    ) {
+      return errorResponse(403, runTokenScopeMessage(auth.principal.agentId), {
+        code: RUN_TOKEN_SCOPE_CODE,
+      });
+    }
     if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -2035,6 +2083,22 @@ export async function sendChannelReply(options: {
   };
 
   await adapter.actions(message).sendText(text);
+}
+
+/** Own agent, or one its config lists under `subagent.allowed`. */
+async function runTokenMayStart(
+  principal: Principal,
+  agentId: string,
+  context: Pick<HttpRoutingContext, "agentLoader">,
+): Promise<boolean> {
+  if (agentId === principal.agentId) return true;
+  const own = await context.agentLoader(principal.accountId, principal.agentId);
+
+  return own?.config.subagent?.allowed?.includes(agentId) === true;
+}
+
+function runTokenScopeMessage(agentId: string): string {
+  return `Run tokens may only POST /v1/runs for agent ${agentId} or a subagent it is allowed to run, and GET /v1/runs/{runId} for that agent's runs.`;
 }
 
 /** The two invoke shapes: project/stage scoped, and bare agent id. */

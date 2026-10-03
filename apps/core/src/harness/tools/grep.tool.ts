@@ -72,6 +72,7 @@ Usage notes:
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
             onSandboxCpu: context.onSandboxCpu,
             metadata: sandboxRunMetadata(context, ws),
+            principal: context.principal?.(),
           });
           // ripgrep: exit 0 = matches, 1 = no matches (not an error), >=2 = error.
           if (result.exitCode === 1 && result.stderr.trim().length === 0) {

@@ -4,6 +4,7 @@
  */
 
 import { isPlainObject } from "../../shared/object.ts";
+import type { SandboxRunPrincipal } from "./types.ts";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -12,9 +13,14 @@ const textDecoder = new TextDecoder();
 // per-machine suffix cannot run into a provider's undocumented name limit.
 const PREFIX_SLUG_LENGTH = 31;
 
-// Keys a per-call `request.envVars` may never set; account `config.envVars` is not filtered.
+// Keys a per-call `request.envVars` may never set; account `config.envVars` is not
+// filtered, but the BROODS_* identity is laid over both so neither can spoof it.
 export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
   "BASH_ENV",
+  "BROODS_ACCOUNT_ID",
+  "BROODS_AGENT_ID",
+  "BROODS_API_URL",
+  "BROODS_RUN_TOKEN",
   "ENV",
   "HOME",
   "LD_AUDIT",
@@ -98,16 +104,34 @@ export function isSandboxGoneError(error: unknown): boolean {
   );
 }
 
-// Account envVars under per-call overrides, reserved keys dropped from the overrides.
+// Account envVars under per-call overrides, reserved keys dropped from the
+// overrides, then the run's identity on top of both.
 export function mergeSandboxEnv(
   accountEnv: Record<string, string | undefined> | undefined,
   requestEnv: Record<string, string> | undefined,
+  principal?: SandboxRunPrincipal,
 ): Record<string, string> {
   const overrides = Object.entries(requestEnv ?? {}).filter(
     ([key]) => !RESERVED_SANDBOX_ENV_KEYS.has(key),
   );
 
-  return { ...stringRecord(accountEnv), ...Object.fromEntries(overrides) };
+  return {
+    ...stringRecord(accountEnv),
+    ...Object.fromEntries(overrides),
+    ...(principal ? principalEnv(principal) : {}),
+  };
+}
+
+/** The BROODS_* variables sandbox code reads to act as its run. */
+export function principalEnv(
+  principal: SandboxRunPrincipal,
+): Record<string, string> {
+  return {
+    BROODS_ACCOUNT_ID: principal.accountId,
+    BROODS_AGENT_ID: principal.agentId,
+    BROODS_RUN_TOKEN: principal.runToken,
+    ...(principal.apiUrl ? { BROODS_API_URL: principal.apiUrl } : {}),
+  };
 }
 
 export function requiredWorkspacePath(

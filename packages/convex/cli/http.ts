@@ -9,7 +9,9 @@
 
 import { httpAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
+import { bearerToken } from "../config/routes/shared";
 import { sha256Hex } from "../model/accountSecrets";
+import { RUN_TOKEN_PREFIX } from "../model/principal";
 import {
   handleEnvListRoute,
   handleEnvRoute,
@@ -26,6 +28,10 @@ import { jsonError } from "../model/httpJson";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
+    // A run token is scoped to one agent run on core; it never syncs a stage.
+    if (bearerToken(req)?.startsWith(RUN_TOKEN_PREFIX)) {
+      return jsonError(401, "run tokens cannot reach the config plane");
+    }
     const auth = await bearerAuth(req);
     if (!auth) {
       return jsonError(401, "Authorization Bearer token is required");
