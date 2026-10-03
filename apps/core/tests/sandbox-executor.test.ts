@@ -686,6 +686,29 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("boots an image variant as the default image's sibling at its latest version", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    process.env.MICROVM_IMAGE_VERSION = "3";
+    try {
+      await createSandboxExecutor({ provider: "lambda", image: "obscura" }).run(
+        {
+          code: "echo ok",
+          timeoutSeconds: 30,
+          outputLimitBytes: 4096,
+        },
+      );
+    } finally {
+      delete process.env.MICROVM_IMAGE_VERSION;
+    }
+
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
+    expect(microvmRunInput()).not.toHaveProperty("imageVersion");
+  });
+
   it("refuses a snapshot pin outside the platform image account and ignores image options", async () => {
     const {
       createSandboxExecutor,
@@ -882,6 +905,73 @@ describe("createSandboxExecutor", () => {
     expect(types).toContain("GetMicrovm");
     expect(types).not.toContain("RunMicrovm");
     expect(types).not.toContain("TerminateMicrovm");
+  });
+
+  it("replaces a reserved MicroVM that booted another image", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+        imageArn:
+          "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox:4",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    }).run({
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).toContain("TerminateMicrovm");
+    expect(types).toContain("RunMicrovm");
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
+  });
+
+  it("skips a cached endpoint once the sandbox image changes", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const request = {
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
+      request,
+    );
+    const lookups = getSandboxExternalIdMock.mock.calls.length;
+    await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    }).run(request);
+
+    // The cached VM booted the default image, so the run goes back to the
+    // reservation, where reconnect replaces it.
+    expect(getSandboxExternalIdMock.mock.calls.length).toBe(lookups + 1);
   });
 
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {

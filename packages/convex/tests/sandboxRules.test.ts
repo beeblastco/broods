@@ -43,6 +43,32 @@ describe("sandbox config", () => {
     ).toThrow("config.snapshot must be a string");
   });
 
+  it("accepts a platform image variant on lambda only, alone", () => {
+    expect(
+      normalizeSandboxConfig({ provider: "lambda", image: "obscura" }).image,
+    ).toBe("obscura");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "lambda", image: "firefox" }),
+    ).toThrow("config.image must be one of");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "sandbox", image: "obscura" }),
+    ).toThrow("config.image applies to the lambda provider only");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        image: "browser",
+        snapshot: "arn:aws:lambda:us-east-1:123456789012:microvm-image:x",
+      }),
+    ).toThrow("config.image and config.snapshot cannot both be set");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        image: "obscura",
+        fallbackProvider: "sandbox",
+      }),
+    ).toThrow("config.image cannot be set with config.fallbackProvider");
+  });
+
   it("accepts only the lambda options the MicroVM executor reads", () => {
     expect(
       normalizeSandboxConfig({

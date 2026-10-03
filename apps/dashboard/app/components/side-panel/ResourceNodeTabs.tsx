@@ -124,10 +124,11 @@ export function SandboxResourceDetailsTab({
             network: { mode: "allow-all" },
             persistent: undefined,
             size: undefined,
+            image: undefined,
             snapshot: undefined,
             memoryLimit: undefined,
           }
-        : { provider: provider },
+        : { provider: provider, image: undefined },
     );
   }
 
@@ -169,6 +170,26 @@ export function SandboxResourceDetailsTab({
             { value: "machine", label: "Your computer" },
           ]}
         />
+        {config.provider === "lambda" && (
+          <SelectField
+            label="Image"
+            disabled={managedByCode}
+            value={typeof config.image === "string" ? config.image : "default"}
+            onValueChange={(image) =>
+              setConfig({
+                image: image === "default" ? undefined : image,
+                // Exclusive with an image: an ARN pin, or a fallback that could not boot it.
+                snapshot: undefined,
+                fallbackProvider: undefined,
+              })
+            }
+            options={[
+              { value: "default", label: "Default" },
+              { value: "obscura", label: "Obscura browser" },
+              { value: "browser", label: "Chromium browser" },
+            ]}
+          />
+        )}
         <SelectField
           label="Permission mode"
           disabled={managedByCode}

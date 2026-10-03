@@ -7,17 +7,19 @@ import { sandboxDisplayConfig } from "../model/sandboxDisplayConfig";
 describe("sandboxDisplayConfig", () => {
   test("keeps the fields the canvas renders", () => {
     const display = sandboxDisplayConfig({
+      image: "obscura",
       network: { mode: "allow-all" },
       permissionMode: "bypass",
       persistent: true,
-      provider: "sandbox",
+      provider: "lambda",
     });
 
     expect(display).toEqual({
+      image: "obscura",
       network: { mode: "allow-all" },
       permissionMode: "bypass",
       persistent: true,
-      provider: "sandbox",
+      provider: "lambda",
     });
   });
 

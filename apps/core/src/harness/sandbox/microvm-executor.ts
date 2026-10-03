@@ -168,7 +168,7 @@ const mirrorWrites = new Map<string, Promise<void>>();
 // token cache: an executor is constructed per request, so an instance field never hits.
 const reservedEndpoints = new Map<
   string,
-  { microvmId: string; endpoint: string; expiresAt: number }
+  { microvmId: string; endpoint: string; image: string; expiresAt: number }
 >();
 
 // The proxy authenticates shell WebSocket upgrades with this header; the value
@@ -547,8 +547,22 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // so a `snapshot` pin may only name another image in the same AWS account and
   // region as the runtime default, and MICROVM_IMAGE_VERSION only versions that
   // default. Anything else would boot a foreign image under the platform role.
+  // An `image` variant is the default's sibling `<name>-<variant>`, which the
+  // sandbox image workflow publishes next to it.
   #image(): { imageIdentifier: string; imageVersion?: string } {
     const fallback = optionalEnv("MICROVM_IMAGE_IDENTIFIER");
+    if (this.#config.image) {
+      const variant = fallback
+        ? microvmImageVariant(fallback, this.#config.image)
+        : undefined;
+      if (!variant) {
+        throw new Error(
+          "config.image needs MICROVM_IMAGE_IDENTIFIER to be a MicroVM image ARN in the harness runtime.",
+        );
+      }
+
+      return { imageIdentifier: variant };
+    }
     const pinned = configString(this.#config.snapshot);
     if (!pinned) {
       if (!fallback) {
@@ -646,6 +660,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     const cached = key ? reservedEndpoints.get(key) : undefined;
     if (!cached || cached.expiresAt <= Date.now()) return null;
+    // A changed image goes through #acquire, whose reconnect replaces the VM.
+    if (cached.image !== microvmImageName(this.#image().imageIdentifier)) {
+      return null;
+    }
 
     return { microvmId: cached.microvmId, endpoint: cached.endpoint };
   }
@@ -777,6 +795,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const entry = { microvmId: target.microvmId, endpoint: target.endpoint };
     reservedEndpoints.set(key, {
       ...entry,
+      image: microvmImageName(this.#image().imageIdentifier),
       expiresAt: now + RESERVED_ENDPOINT_TTL_MS,
     });
 
@@ -817,6 +836,18 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     // after the resume too: a VM can reach a terminal state while we wait on it.
     if (isTerminalMicrovmState(info.state)) {
       throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
+    }
+    // A sandbox whose image changed must not keep reaching the VM the old image
+    // booted: stop it, and the caller creates one from the new image.
+    if (
+      info.imageArn &&
+      microvmImageName(info.imageArn) !==
+        microvmImageName(this.#image().imageIdentifier)
+    ) {
+      await this.#terminate(microvmId);
+      throw new MicrovmGoneError(
+        `MicroVM ${microvmId} runs ${info.imageArn}, not the sandbox's image`,
+      );
     }
     if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
 
@@ -1544,6 +1575,21 @@ function microvmImageScope(arn: string): string | undefined {
   if (parts[5] !== "microvm-image" || parts.length < 7) return undefined;
 
   return parts.slice(0, 6).join(":");
+}
+
+// `arn:aws:lambda:<region>:<account>:microvm-image:<name>[:...]` → the same ARN
+// for `<name>-<variant>`, dropping any version qualifier of the default.
+function microvmImageVariant(arn: string, variant: string): string | undefined {
+  const scope = microvmImageScope(arn);
+  const name = arn.split(":")[6];
+  if (!scope || !name) return undefined;
+
+  return `${scope}:${name}-${variant}`;
+}
+
+// An image ARN without any version qualifier, so two versions compare equal.
+function microvmImageName(arn: string): string {
+  return arn.split(":").slice(0, 7).join(":");
 }
 
 function microvmLocalNamespace(namespace: string): string {

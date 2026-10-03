@@ -43,6 +43,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `provider`             | `sandbox`              | Compute backend, from the table above                                                                             |
 | `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                          |
 | `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
+| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)       |
 | `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
 | `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
@@ -118,6 +119,24 @@ Set `snapshot` to boot a prebuilt image instead of the provider default. Bake he
 - `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
 
 The dashboard Snapshots view shows which image each running instance booted from.
+
+On `lambda`, `image` picks a platform image with a browser by name. It cannot be combined with `snapshot` or `fallbackProvider`.
+
+| `image`   | Adds                                                                                                      | Use it for                                                       |
+| --------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `obscura` | [Obscura](https://github.com/h4ckf0r0day/obscura), about 77 MB: page to markdown, text, links, screenshot | Reading the web. Markdown is 3 to 17x smaller than a page's HTML |
+| `browser` | Headless Chromium as `chromium`, about 770 MB                                                             | Screenshots that must match Chrome, heavy JavaScript apps        |
+
+```ts
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  network: { mode: "allow-all" },
+});
+```
+
+The agent then runs `obscura fetch https://example.com --dump markdown --quiet` through `bash`. Obscura refuses private and link-local addresses unless passed `--allow-private-network`.
 
 ## More than one sandbox
 

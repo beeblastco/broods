@@ -78,7 +78,7 @@ Mountpoint for S3 was chosen over S3 Files (`mount -t s3files`). S3 Files allows
 
 ### Image and build
 
-AWS builds the image from an S3 zip of a Dockerfile and sources with `create-microvm-image` and `update-microvm-image`. It is not an ECR image Lambda or a custom runtime. A build is a versioned Firecracker snapshot of memory and disk. Core selects it by ARN through `MICROVM_IMAGE_IDENTIFIER`, optionally pinned with `MICROVM_IMAGE_VERSION`. A config's `snapshot` overrides the image only with an ARN in the same account and region as that default, and `MICROVM_IMAGE_VERSION` then does not apply. Any other ARN fails the run, since tenants cannot build MicroVM images. Image CI lives in `../lambda-sanbdox`.
+AWS builds the image from an S3 zip of a Dockerfile and sources with `create-microvm-image` and `update-microvm-image`. It is not an ECR image Lambda or a custom runtime. A build is a versioned Firecracker snapshot of memory and disk. Core selects it by ARN through `MICROVM_IMAGE_IDENTIFIER`, optionally pinned with `MICROVM_IMAGE_VERSION`. A config's `image` names a variant the image CI publishes next to the default: `image: "obscura"` boots `<default name>-obscura` in the same account and region, at its latest version. A config's `snapshot` overrides the image only with an ARN in the same account and region as that default, and `MICROVM_IMAGE_VERSION` then does not apply. Any other ARN fails the run, since tenants cannot build MicroVM images. Image CI lives in `../lambda-sanbdox`.
 
 `apps/core/sst.config.ts` provisions the prerequisites in the core region, except in `ap-southeast-1` where the feature is not available yet (`microvmPrereqsEnabled()`):
 
