@@ -3492,6 +3492,12 @@ components:
         A stage session ticket (`fp_dts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
+        A run token (`fp_run_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)
+        works only on `POST /v1/runs` for its own agent or one of that agent's
+        allowed subagents, and on `GET /v1/runs/{runId}` for that agent's runs;
+        every other run route answers 403 `run_token_scope`, and every
+        config-plane route answers 401. It expires shortly after the run's
+        time budget.
     AdminAuth:
       type: http
       scheme: bearer
@@ -4901,6 +4907,33 @@ components:
               type: string
             agentId:
               type: string
+            chain:
+              type: array
+              description: >-
+                On an agent actor, the delegation chain behind the run, oldest
+                first: the person or key that asked, then each agent that
+                delegated. The actor's own `agentId` is not repeated in it.
+              items:
+                oneOf:
+                  - type: object
+                    required: [kind, id]
+                    properties:
+                      kind: { type: string, enum: [user] }
+                      id: { type: string }
+                      name: { type: string }
+                      channel: { type: string }
+                  - type: object
+                    required: [kind, keyKind]
+                    properties:
+                      kind: { type: string, enum: [api] }
+                      keyKind:
+                        type: string
+                        enum: [account, deployment, role, cli, cron]
+                  - type: object
+                    required: [kind, agentId]
+                    properties:
+                      kind: { type: string, enum: [agent] }
+                      agentId: { type: string }
         action:
           type: string
           description: >-

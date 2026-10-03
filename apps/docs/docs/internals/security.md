@@ -148,6 +148,33 @@ flowchart LR
 - Retention: `pruneExpired` sweeps every account with a ledger and deletes rows older than the account's `auditRetentionDays` (90 by default, settable through `PATCH /v1/account`). When the account has a sink, `exportedSeq` is a floor: a row the sink has not exported is never dropped, however old. The head row is never deleted, and rows go oldest first with no gap, so the kept range always verifies from its oldest row to the head.
 - Access: the account secret, or a role with `audit:read` for the ledger and `audit:write` for the sink. Setting `auditRetentionDays` takes `audit:write` on top of `account:write`, since it decides when rows are deleted.
 
+## Agent principal and run tokens
+
+Every run acts as one agent of one account, never "as the account". Core builds a `Principal` (`apps/core/src/shared/domain/principal.ts`) where the `Session` is constructed: `{ kind: "agent", accountId, agentId, runId, conversationKey, chain }`. The chain records who asked, oldest first:
+
+| Run                      | Chain                                                                |
+| ------------------------ | -------------------------------------------------------------------- |
+| Channel turn             | `[{ kind: "user", id, name?, channel }]` from the adapter's identity |
+| Direct API               | `[{ kind: "api", keyKind: "account" \| "deployment" }]`              |
+| Cron firing              | `[{ kind: "api", keyKind: "cron" }]`                                 |
+| Subagent                 | the parent's chain, then `{ kind: "agent", agentId: parent }`        |
+| Started with a run token | the token holder's chain, then `{ kind: "agent", agentId: holder }`  |
+
+The link shape is one validator, `principalLinkValidator` in `packages/convex/model/principal.ts`, so core and the ledger cannot drift. The principal appears in four places:
+
+- OPA input: `input.principal` next to the flat `agentId`, `userId` and `userRoles` fields. The rego resolves dotted paths, so a rule can condition on `principal.chain[0].kind` with no engine change.
+- Audit ledger: `run.completed` (appended by the usage write, which now takes `principalChain`) and `tool.denied` rows carry `actor.chain`. The row hash already covers `actor`, so the chain is tamper-evident like the rest.
+- Root span: `principal.agentId` and `principal.chain` (`user:U1>agent:a1`) on `agent.task`, `agent.cron` and `agent.subtask`.
+- Sandbox env and MCP requests, below.
+
+Run tokens (`fp_run_…`) let sandbox code call the API as its agent. A token is stateless: base64url JSON of the principal plus `exp`, HMAC-SHA256 signed with a key derived from `STAGE_TICKET_SECRET` by HKDF-SHA256 (empty salt, info `broods-run-token`, 32 bytes). No new secret, and the purpose separation means a run token can never open a stage ticket. Its TTL is the worker budget (`WORKER_TIMEOUT_BUDGET_MS`) plus five minutes, capped at two hours. Core mints one lazily, on the first sandbox exec of a run, so the per-turn Convex budget is untouched and a run with no exec never signs one.
+
+A run token resolves on core to auth kind `agent`. It may `POST /v1/runs` for its own agent or an agent listed in that agent's `subagent.allowed`, and `GET /v1/runs/{runId}` for that agent's runs. Every other route answers 403 `run_token_scope`; the config plane and the CLI routes answer 401 `run tokens cannot reach the config plane` on the prefix alone; the machine socket and the account verbs refuse it. A run it starts gets the holder's chain plus the holder as its own chain, so delegation through the API is recorded the same way as `run_subagent`.
+
+Sandbox code reads its identity from the exec env: `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID` and, when core knows its public base (`PUBLIC_BASE_URL`), `BROODS_API_URL`. `mergeSandboxEnv` lays them over both the account `envVars` and the per-call env, and the four names are in `RESERVED_SANDBOX_ENV_KEYS`, so nothing an account configures can spoof them.
+
+Remote MCP servers (`http` and `hosted` transports) receive `X-Broods-Agent-Id` and `X-Broods-Principal` (base64url JSON of the chain, the calling agent last) on every request. The hosted path forwards them inside each `requests[].mcpRequest.headers` of the Lambda payload, per request rather than per batch because one batch mixes calls from different agents; the bundle reads them off the synthesized `Request`. They are kept out of the tool-listing cache key, so a listing is still shared across callers.
+
 ## Limits
 
 - Upload URLs for hosted MCP bundles and workspace files are capped at 20 open grants per account per hour. Blobs uploaded but never registered are deleted after a day. A workspace file's size is read from the stored blob, never the client, and refused over 512 KB.

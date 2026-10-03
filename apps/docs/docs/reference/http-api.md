@@ -12,13 +12,33 @@ The base URL is `https://gateway.broods.app`, or your own gateway when self-host
 
 Every request sends `Authorization: Bearer <credential>`.
 
-| Endpoint                                           | Accepts                                                      |
-| -------------------------------------------------- | ------------------------------------------------------------ |
-| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Stage runtime key, account secret, or a stage session ticket |
-| `/v1/*` config routes                              | Account secret, or a role session within its policy          |
-| Logs and traces socket                             | Stage session ticket only. The runtime key is refused        |
+| Endpoint                                           | Accepts                                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------------------- |
+| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Stage runtime key, account secret, a stage session ticket, or a run token |
+| `/v1/*` config routes                              | Account secret, or a role session within its policy                       |
+| Logs and traces socket                             | Stage session ticket only. The runtime key is refused                     |
 
-The runtime key only reaches agents with `publicAccess: true` in its own stage. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
+The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`fp_run_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only starts runs for its own agent or one of its allowed subagents, and only reads that agent's runs; every other route answers `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
+
+### Calling the API from a sandbox
+
+Every `bash` command runs with the identity of the run that issued it:
+
+| Variable            | Value                                                            |
+| ------------------- | ---------------------------------------------------------------- |
+| `BROODS_RUN_TOKEN`  | Bearer for this run. Expires shortly after the run's time budget |
+| `BROODS_AGENT_ID`   | The agent the run acts as                                        |
+| `BROODS_ACCOUNT_ID` | Its account                                                      |
+| `BROODS_API_URL`    | The API base, when the deployment publishes one                  |
+
+```bash
+curl -sS "$BROODS_API_URL/v1/runs" \
+  -H "Authorization: Bearer $BROODS_RUN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"agentId\":\"$BROODS_AGENT_ID\",\"eventId\":\"$(uuidgen)\",\"conversationKey\":\"followup\",\"events\":[{\"role\":\"user\",\"content\":\"Summarize the build log.\"}]}"
+```
+
+Account `envVars` cannot override these names. A run started this way records the starting run's agent in its delegation chain, the same as a subagent would.
 
 ## Run an agent
 

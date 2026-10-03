@@ -56,7 +56,9 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                              |
 | `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                   |
 
-`envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND` and the background-job slots. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
+`envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, the background-job slots and the run identity `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID`, `BROODS_API_URL`. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
+
+Every command also receives that run identity, so a script can call the API as the agent that ran it: `BROODS_RUN_TOKEN` is a short-lived bearer scoped to this agent's runs, `BROODS_AGENT_ID` and `BROODS_ACCOUNT_ID` say who it is, and `BROODS_API_URL` is the API base when the deployment publishes one. See [Calling the API from a sandbox](../../reference/http-api.md#calling-the-api-from-a-sandbox).
 
 A call that blocks is capped at 600 seconds on every provider. Background jobs are not bound by the call timeout.
 

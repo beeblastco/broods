@@ -30,6 +30,7 @@ The CLI only works for owners and admins.
 | Account secret       | `fp_acct_`   | A backend creating agents, crons or files at runtime    | Put it in a frontend or hand it to an agent |
 | Role session         | `fp_sts_`    | Handing a tool or agent narrow API access               | Expect it to outlive 12 hours               |
 | Stage session ticket | `fp_dts_`    | Minted for you by the dashboard and `broods logs`       | Store it. It lasts 15 minutes.              |
+| Run token            | `fp_run_`    | Sandbox code calling back as the agent that ran it      | Expect it past the run, or on config routes |
 
 The runtime key is the one credential meant to sit in a frontend, so it is limited:
 
