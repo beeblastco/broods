@@ -17,6 +17,7 @@
 import {
   Client,
   isCallToolResult,
+  isSpecType,
   StreamableHTTPClientTransport,
   type CallToolResult,
   type DiscoverResult,
@@ -34,7 +35,6 @@ import {
   runMachineMcpCall,
   runMachineMcpList,
 } from "../sandbox/machine-executor.ts";
-import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
@@ -43,7 +43,7 @@ import {
   mcpAccessToken,
   type ResolvedMcpOauth,
 } from "./oauth.ts";
-import { sandboxMcpRequest } from "./sandbox.ts";
+import { sandboxMcpRequest, type SandboxMcpTarget } from "./sandbox.ts";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 
@@ -65,7 +65,7 @@ export interface McpConnection {
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
   uncached?: boolean;
   /** Set when a "machine" row names a lambda sandbox: its VM runs the server, not a daemon. */
-  sandbox?: SandboxExecutorConfig;
+  sandbox?: SandboxMcpTarget;
 }
 
 /** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
@@ -138,10 +138,15 @@ export async function callMcpToolResult(
     // The daemon's or VM's own SDK client produced this, but it crossed a
     // socket and the relay only checks the envelope, so the payload is checked here.
     const relayed = connection.sandbox
-      ? await sandboxMcpRequest(connection.sandbox, connection.record, {
-          method: "tools/call",
-          params: { name: toolName, arguments: args },
-        })
+      ? await sandboxMcpRequest(
+          connection.sandbox,
+          sandboxServer(connection.record),
+          {
+            method: "tools/call",
+            params: { name: toolName, arguments: args },
+          },
+          options.abortSignal,
+        )
       : await runMachineMcpCall(connection.record, toolName, args);
     if (!isCallToolResult(relayed)) {
       throw new Error(
@@ -180,15 +185,39 @@ export async function listMcpTools(
   // sandbox row is cached like a remote one, so a run does not wake its VM
   // just to learn a listing that changes only with the row.
   if (connection.record.transport === "machine" && !connection.sandbox) {
-    return (await runMachineMcpList(connection.record)) as Tool[];
+    const tools = await runMachineMcpList(connection.record);
+    if (!tools.every((tool) => isSpecType.Tool(tool))) {
+      throw new Error(
+        `MCP server ${connection.record.name} listed a tool this SDK does not accept`,
+      );
+    }
+
+    return tools;
   }
-  const fetchListing = (): Promise<{ tools: Tool[]; ttlMs?: unknown }> =>
-    connection.sandbox
-      ? (sandboxMcpRequest(connection.sandbox, connection.record, {
-          method: "tools/list",
-          params: {},
-        }) as Promise<{ tools: Tool[] }>)
-      : withClient(connection, (client) => client.listTools(), onCpuUsec);
+  const fetchListing = async (): Promise<{
+    tools: Tool[];
+    ttlMs?: unknown;
+  }> => {
+    if (!connection.sandbox) {
+      return await withClient(
+        connection,
+        (client) => client.listTools(),
+        onCpuUsec,
+      );
+    }
+    const listing = await sandboxMcpRequest(
+      connection.sandbox,
+      sandboxServer(connection.record),
+      { method: "tools/list", params: {} },
+    );
+    if (!isSpecType.ListToolsResult(listing)) {
+      throw new Error(
+        `MCP server ${connection.record.name} answered tools/list with a result this SDK does not accept`,
+      );
+    }
+
+    return listing;
+  };
   if (connection.uncached) {
     return (await fetchListing()).tools;
   }
@@ -273,7 +302,7 @@ function cacheKeyFor(connection: McpConnection): string {
     a < b ? -1 : 1,
   );
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${connection.sandbox?.reservationKey ?? ""}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -356,6 +385,11 @@ async function connectClient(
   }
 
   return client;
+}
+
+/** A lambda row's server as the sandbox image needs it; registration refused a row without a command. */
+function sandboxServer(record: McpRecord): { name: string; command: string[] } {
+  return { name: record.name, command: record.command ?? [] };
 }
 
 /** Drop oldest entries so a long-lived core process stays bounded. */

@@ -367,6 +367,9 @@ function updatePatch(
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,
+          // A patch that sets the sandbox states the whole connection, so a
+          // command it leaves out is cleared rather than kept.
+          command: args.command,
         }
       : {}),
     ...(args.sha256 !== undefined &&

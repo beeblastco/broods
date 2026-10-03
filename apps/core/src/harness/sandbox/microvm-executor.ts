@@ -1093,7 +1093,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     for (;;) {
       const warming = await this.#postExec(url, token, payload);
       if (!warming.retry) {
-        this.#reportBurst(microvmId, warming.response.burst);
+        this.reportBurst(microvmId, warming.response.burst);
 
         return warming.response;
       }
@@ -1111,7 +1111,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // last billed report. Convex bills only growth, so a repeat is harmless, and a
   // report is cached only once it billed a row, so a failed write or one that
   // beat the row is sent again on the next exec. Lower totals are a fresh VM.
-  #reportBurst(microvmId: string, burst: SandboxResponse["burst"]): void {
+  // Public so the MCP relay (mcp/sandbox.ts) bills /mcp answers the same way.
+  reportBurst(microvmId: string, burst: SandboxResponse["burst"]): void {
     const accountId = this.#config.controlPlane?.accountId;
     if (!burst || !accountId) return;
     const totals = {

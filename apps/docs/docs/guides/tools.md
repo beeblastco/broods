@@ -154,7 +154,8 @@ export const researcher = defineAgent({
 - The sandbox must be `persistent: true` and listed in the agent's `sandboxes`.
 - The server starts on the first call and keeps running for as long as the reserved sandbox lives, so its state, such as a browser session, carries over between calls and runs.
 - `command` is required on a `lambda` sandbox. A machine sandbox ignores it and uses its own `.mcp.json`.
-- Tool listings are not cached, so a run that enables the server starts the sandbox to list its tools.
+- The tool listing is kept until the server's definition changes, so a run does not start the sandbox just to list tools. The first call starts it.
+- The server shares the VM that `bash` uses on that sandbox, including its workspace.
 
 ## Approvals
 

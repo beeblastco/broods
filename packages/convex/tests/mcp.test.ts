@@ -556,6 +556,25 @@ describe("normalizeMcpInput", () => {
       sandbox: "web",
       command: ["obscura", "mcp"],
     });
+    // Restating the sandbox without a command clears it, as a sync that drops it does.
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "machine",
+      sandbox: "web",
+    });
+    const cleared = await tt.query(internal.account.mcp.getById, {
+      accountId: scope.accountId,
+      serverId: serverId,
+    });
+    expect(cleared?.command).toBeUndefined();
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "machine",
+      sandbox: "web",
+      command: ["obscura", "mcp"],
+    });
     await tt.mutation(internal.account.mcp.update, {
       accountId: scope.accountId,
       serverId: serverId,

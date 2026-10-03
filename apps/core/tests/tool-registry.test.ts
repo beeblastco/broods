@@ -1417,7 +1417,7 @@ describe("connected MCP servers", () => {
       listTools: async function (connection: McpConnection) {
         listed = connection;
 
-        return [{ name: "navigate", inputSchema: { type: "object" } }] as never;
+        return [{ name: "navigate", inputSchema: { type: "object" as const } }];
       },
     });
 
@@ -1426,12 +1426,19 @@ describe("connected MCP servers", () => {
     );
     const tools = await createTools(context, { mcp: { [serverId]: {} } });
     expect(Object.keys(tools)).toContain("obscura__navigate");
-    expect(listed?.sandbox).toEqual(web);
+    expect(listed?.sandbox).toEqual({
+      config: web,
+      reservationKey: "acct_test:web",
+    });
 
     setStorageForTests(storageWithMcp(mcpRecord(machineRow)));
-    await expect(
-      createTools(context, { mcp: { [serverId]: {} } }),
-    ).rejects.toThrow(
+    const refused = await createTools(context, {
+      mcp: { [serverId]: {} },
+    }).then(
+      (): string => "registered",
+      (error: unknown): string => String(error),
+    );
+    expect(refused).toContain(
       `config.mcp.${serverId} runs on lambda sandbox "web" and needs command`,
     );
   });

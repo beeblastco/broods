@@ -295,23 +295,26 @@ function normalizeBundle(value: unknown): string {
 
 /** A stdio server's argv: non-empty strings, bounded in count and length. */
 function normalizeCommand(value: unknown): string[] {
+  const args = Array.isArray(value)
+    ? value.filter(
+        (arg): arg is string =>
+          typeof arg === "string" &&
+          arg.length > 0 &&
+          arg.length <= MAX_COMMAND_ARG_LENGTH,
+      )
+    : [];
   if (
     !Array.isArray(value) ||
-    value.length === 0 ||
-    value.length > MAX_COMMAND_ARGS ||
-    value.some(
-      (arg) =>
-        typeof arg !== "string" ||
-        arg.length === 0 ||
-        arg.length > MAX_COMMAND_ARG_LENGTH,
-    )
+    args.length !== value.length ||
+    args.length === 0 ||
+    args.length > MAX_COMMAND_ARGS
   ) {
     throw new ClientError(
       `command must be 1-${MAX_COMMAND_ARGS} non-empty strings of at most ${MAX_COMMAND_ARG_LENGTH} characters, like ["obscura", "mcp"]`,
     );
   }
 
-  return value as string[];
+  return args;
 }
 
 /**
