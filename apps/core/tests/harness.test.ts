@@ -2628,6 +2628,38 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("routes Cloudflare through AI Gateway once gatewayId is set", async () => {
+    const { resolveConfiguredModel } =
+      await import("../src/harness/provider.ts");
+
+    resolveConfiguredModel({
+      provider: {
+        cloudflare: {
+          apiKey: "cf-token",
+          accountId: "acct",
+          gatewayId: "gw",
+          headers: {
+            Authorization: "Bearer upstream",
+            "cf-aig-authorization": "Bearer other",
+          },
+        },
+      },
+      model: { provider: "cloudflare", modelId: "openai/gpt-5-mini" },
+    });
+
+    expect(createOpenAICompatibleMock).toHaveBeenCalledWith({
+      name: "cloudflare",
+      baseURL: "https://gateway.ai.cloudflare.com/v1/acct/gw/compat",
+      headers: {
+        Authorization: "Bearer upstream",
+        "cf-aig-authorization": "Bearer cf-token",
+      },
+      fetch: expect.any(Function),
+      includeUsage: true,
+    });
+    expect(openAICompatibleModelMock).toHaveBeenCalledWith("openai/gpt-5-mini");
+  });
+
   it("creates an Anthropic provider from agent provider config", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");

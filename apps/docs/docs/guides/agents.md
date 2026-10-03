@@ -23,27 +23,27 @@ The full field list is in [Configuration](../reference/configuration.md).
 
 ## Model and provider
 
-`provider` holds credentials per provider. `model.provider` picks which one runs. Every Vercel AI SDK provider that ships language models works, plus the OpenRouter, LLM Gateway, Ollama and Cloudflare Workers AI community providers and any OpenAI-compatible endpoint:
+`provider` holds credentials per provider. `model.provider` picks which one runs. Every Vercel AI SDK provider that ships language models works, plus the OpenRouter, LLM Gateway, Ollama and Cloudflare community providers and any OpenAI-compatible endpoint:
 
-| Provider              | Key           | Provider          | Key          |
-| --------------------- | ------------- | ----------------- | ------------ |
-| Alibaba Qwen          | `alibaba`     | MiniMax           | `minimax`    |
-| Anthropic             | `anthropic`   | Mistral           | `mistral`    |
-| Azure OpenAI          | `azure`       | Moonshot AI Kimi  | `moonshotai` |
-| Baseten               | `baseten`     | Ollama            | `ollama`     |
-| Amazon Bedrock        | `bedrock`     | OpenAI            | `openai`     |
-| Cerebras              | `cerebras`    | OpenRouter        | `openrouter` |
-| Cloudflare Workers AI | `cloudflare`  | Perplexity        | `perplexity` |
-| Cohere                | `cohere`      | Together.ai       | `togetherai` |
-| DeepInfra             | `deepinfra`   | Vercel AI Gateway | `vercel`     |
-| DeepSeek              | `deepseek`    | Vercel v0         | `v0`         |
-| Fireworks             | `fireworks`   | Google Vertex AI  | `vertex`     |
-| Google Generative AI  | `google`      | xAI Grok          | `xai`        |
-| Groq                  | `groq`        | Z.ai GLM          | `zai`        |
-| Hugging Face          | `huggingface` | OpenAI-compatible | `custom`     |
-| LLM Gateway           | `llmgateway`  | ChatGPT plan      | `chatgpt`    |
+| Provider             | Key           | Provider          | Key          |
+| -------------------- | ------------- | ----------------- | ------------ |
+| Alibaba Qwen         | `alibaba`     | MiniMax           | `minimax`    |
+| Anthropic            | `anthropic`   | Mistral           | `mistral`    |
+| Azure OpenAI         | `azure`       | Moonshot AI Kimi  | `moonshotai` |
+| Baseten              | `baseten`     | Ollama            | `ollama`     |
+| Amazon Bedrock       | `bedrock`     | OpenAI            | `openai`     |
+| Cerebras             | `cerebras`    | OpenRouter        | `openrouter` |
+| Cloudflare           | `cloudflare`  | Perplexity        | `perplexity` |
+| Cohere               | `cohere`      | Together.ai       | `togetherai` |
+| DeepInfra            | `deepinfra`   | Vercel AI Gateway | `vercel`     |
+| DeepSeek             | `deepseek`    | Vercel v0         | `v0`         |
+| Fireworks            | `fireworks`   | Google Vertex AI  | `vertex`     |
+| Google Generative AI | `google`      | xAI Grok          | `xai`        |
+| Groq                 | `groq`        | Z.ai GLM          | `zai`        |
+| Hugging Face         | `huggingface` | OpenAI-compatible | `custom`     |
+| LLM Gateway          | `llmgateway`  | ChatGPT plan      | `chatgpt`    |
 
-Each provider needs an `apiKey`, except `chatgpt`, which runs on your ChatGPT plan through a [connection](connections.md) (below). Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. Any setting whose name ends in `url`, like `baseURL` or OpenRouter's `baseUrl`, must be a public https URL. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work. `cloudflare` takes `accountId`. `ollama` goes to Ollama Cloud unless `baseURL` points at a public Ollama host.
+Each provider needs an `apiKey`, except `chatgpt`, which runs on your ChatGPT plan through a [connection](connections.md) (below). Other settings pass straight to that provider's AI SDK factory, so the provider's own docs are the reference. Any setting whose name ends in `url`, like `baseURL` or OpenRouter's `baseUrl`, must be a public https URL. `bedrock` also takes `region`, `accessKeyId` and `secretAccessKey`. `vertex` takes `project` and `location` and uses [express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode), since an API key is required. Service-account credentials do not work. `ollama` goes to Ollama Cloud unless `baseURL` points at a public Ollama host.
 
 For a self-hosted or third-party OpenAI-compatible endpoint, use `custom`:
 
@@ -55,6 +55,22 @@ model: { provider: "custom", modelId: "gpt-oss-120b" },
 ```
 
 `base_url` and `baseURL` both work. `baseUrl` fails the sync with an error. For vLLM-style servers, Broods folds several system messages into one and turns cumulative reasoning chunks into increments, so thinking text is not duplicated.
+
+`cloudflare` takes `accountId` and a Cloudflare API token as `apiKey`, and runs Workers AI models. Add `gatewayId` to send every request through that [AI Gateway](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) instead, where `modelId` names any model the gateway routes:
+
+```ts
+provider: {
+  cloudflare: {
+    accountId: "your-account-id",
+    gatewayId: "my-gateway",
+    apiKey: env("CF_AIG_TOKEN"),
+    headers: { Authorization: "Bearer ${OPENAI_API_KEY}" }, // optional upstream key
+  },
+},
+model: { provider: "cloudflare", modelId: "openai/gpt-5-mini" },
+```
+
+On the gateway `apiKey` is sent as `cf-aig-authorization`. The upstream provider key goes in `headers.Authorization`. Leave it out and the gateway uses its stored key or unified billing. Workers AI models keep their `@cf/...` id and run on the token in `apiKey`, so that token needs both the AI Gateway Run and Workers AI permissions.
 
 ### ChatGPT plan
 
