@@ -73,6 +73,7 @@ const QUERY_SECRET_PATTERN =
 const RUNTIME_KEY_PATTERN =
   /\b(?:sk_[A-Za-z0-9_-]{43}|fp_agent_[A-Za-z0-9_-]+)\b/g;
 const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
+const WHITESPACE_PATTERN = /\s/g;
 
 const ENCODER = new TextEncoder();
 
@@ -177,18 +178,21 @@ export function redactSerialized(
     ]),
   );
   // A secret can straddle a window's end, so the last `overlap` chars of a
-  // scrubbed window are never kept. The window grows when replacements shrank
-  // it below `maxChars`.
+  // scrubbed window are never kept, and a window ends at whitespace so it
+  // never cuts a token the patterns match. The window grows when replacements
+  // shrank it below `maxChars`.
   const overlap = secrets[0]?.length ?? 0;
-  for (let window = maxChars + overlap; ; window *= 2) {
-    if (window >= text.length) {
+  for (let size = maxChars + overlap; ; size *= 2) {
+    WHITESPACE_PATTERN.lastIndex = size;
+    const end = WHITESPACE_PATTERN.exec(text)?.index ?? text.length;
+    if (end >= text.length) {
       const scrubbed = scrubSecrets(text, secrets);
 
       return scrubbed.length <= maxChars
         ? scrubbed
         : `${scrubbed.slice(0, maxChars)}...[truncated]`;
     }
-    const scrubbed = scrubSecrets(text.slice(0, window), secrets);
+    const scrubbed = scrubSecrets(text.slice(0, end), secrets);
     const kept = scrubbed.slice(0, scrubbed.length - overlap);
     if (kept.length >= maxChars) {
       return `${kept.slice(0, maxChars)}...[truncated]`;

@@ -229,8 +229,10 @@ describe("logging helpers", () => {
     // end and is pulled under the cut once the secret before it shrinks.
     const atCut = `${"x".repeat(45)}${secret}${"y".repeat(100)}`;
     const atWindow = `${secret}${"z".repeat(34)}${secret}${"y".repeat(100)}`;
+    // A token the patterns match, longer than any literal secret.
+    const atToken = `${"x".repeat(40)} sk_${"a".repeat(43)} ${"y".repeat(100)}`;
 
-    for (const text of [atCut, atWindow]) {
+    for (const text of [atCut, atWindow, atToken]) {
       const attribute = redactSerialized(text, [secret], 50);
       const whole = redact(text, [secret]) as string;
 

@@ -956,19 +956,24 @@ describe("context prepare", () => {
     ["after", true],
   ])(
     "keeps the turn's input once when the history read lands %s its write",
-    async (_when: string, readSeesWrite: boolean) => {
+    async (_when: string, readSeesWrite: boolean): Promise<void> => {
       const { runtime } = await import("../src/shared/convex/runtime.ts");
       const originalQuery = runtime.query;
       const originalMutate = runtime.mutate;
       const written: StoredConversationEventPage["page"] = [];
       const wrote = Promise.withResolvers<void>();
-      runtime.mutate = (async (_name: string, args: { events: [] }) => {
+      runtime.mutate = (async (
+        _name: string,
+        args: { events: [] },
+      ): Promise<null> => {
         written.push(...args.events);
         wrote.resolve();
 
         return null;
       }) as typeof runtime.mutate;
-      runtime.query = (async (name: string) => {
+      runtime.query = (async (
+        name: string,
+      ): Promise<StoredConversationEventPage | null> => {
         if (name !== "listConversationEvents") return null;
         if (readSeesWrite) await wrote.promise;
 
@@ -1004,6 +1009,46 @@ describe("context prepare", () => {
       }
     },
   );
+
+  it("keeps cursor order when a newer context row lands before the turn's input", async (): Promise<void> => {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalQuery = runtime.query;
+    const originalMutate = runtime.mutate;
+    // A context-only channel message, written without the lease after the
+    // input's cursor was minted but before the input's write landed.
+    const newer: StoredConversationEventPage["page"][number] = {
+      cursor: "9999-12-31T00:00:00.000Z#context#0000",
+      event: {
+        version: 1,
+        sourceEventId: "context",
+        message: { role: "user", content: "channel chatter" },
+      },
+    };
+    runtime.mutate = (async (): Promise<null> => null) as typeof runtime.mutate;
+    runtime.query = (async (
+      name: string,
+    ): Promise<StoredConversationEventPage | null> =>
+      name === "listConversationEvents"
+        ? { page: [...userRows(2), newer], isDone: true, continueCursor: null }
+        : null) as typeof runtime.query;
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext(
+        [],
+        [{ role: "user", content: "new question" }],
+      );
+
+      expect(turnContext.messages.map((message) => message.content)).toEqual([
+        "message 0",
+        "message 1",
+        "new question",
+        "channel chatter",
+      ]);
+    } finally {
+      runtime.query = originalQuery;
+      runtime.mutate = originalMutate;
+    }
+  });
 
   it("never compacts while preparing a turn, however long the history", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";

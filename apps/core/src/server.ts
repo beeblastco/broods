@@ -233,8 +233,11 @@ if (import.meta.main) {
     );
     const graceful = (async () => {
       await server.stop();
+      // A channel admission in flight can start a worker, and a finished
+      // worker leaves its usage write in flight, so drain in that order.
       await drainInFlight();
       await drainInProcessWorkers();
+      await drainInFlight();
       drained = true;
       shutdownIsolatePool();
       stopSandboxSweeper();

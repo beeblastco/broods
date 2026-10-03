@@ -1160,12 +1160,20 @@ export class Session {
     const entries = await timePhase(phases, "historyMs", () =>
       this.loadConversationEntries(),
     );
-    // The run holds the lease, so its own appended rows are the newest ones.
+    // A context-only channel message is written without the lease, so it can
+    // land with a newer cursor before this run's own rows: merge by cursor.
     const read = new Set(entries.map((entry): string => entry.createdAt));
-    for (const row of appended) {
-      if (!read.has(row.cursor)) {
-        entries.push({ createdAt: row.cursor, event: row.event });
-      }
+    const missing = appended.filter((row): boolean => !read.has(row.cursor));
+    if (missing.length > 0) {
+      entries.push(
+        ...missing.map((row): StoredConversationEntry => ({
+          createdAt: row.cursor,
+          event: row.event,
+        })),
+      );
+      entries.sort((left, right): number =>
+        left.createdAt < right.createdAt ? -1 : 1,
+      );
     }
     phases.historyRows = entries.length;
     const messages = await timePhase(phases, "mediaMs", () =>

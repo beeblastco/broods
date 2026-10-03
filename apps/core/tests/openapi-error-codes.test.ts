@@ -1,3 +1,8 @@
+/**
+ * Fails CI when a new `error.code` ships without a row in the API reference,
+ * or a row stays for a code nothing answers with any more.
+ */
+
 import { describe, expect, it } from "bun:test";
 import { CLIENT_ERROR_STATUS } from "@broods/convex/model/clientError";
 import {
@@ -30,21 +35,20 @@ interface OpenApiDocument {
   };
 }
 
-// Fails CI when a new `error.code` ships without a row in the API reference.
-describe("openapi error code catalogue", () => {
-  it("documents every code the API can answer with", async () => {
+describe("openapi error code catalogue", (): void => {
+  it("documents every code the API can answer with", async (): Promise<void> => {
     const documented = await documentedCodes();
     const missing = [...(await emittedCodes())].filter(
-      (code) => !documented.has(code),
+      (code): boolean => !documented.has(code),
     );
 
     expect(missing.sort()).toEqual([]);
   });
 
-  it("lists no code the API no longer answers with", async () => {
+  it("lists no code the API no longer answers with", async (): Promise<void> => {
     const emitted = await emittedCodes();
     const stale = [...(await documentedCodes())].filter(
-      (code) => !emitted.has(code),
+      (code): boolean => !emitted.has(code),
     );
 
     expect(stale.sort()).toEqual([]);
@@ -75,7 +79,8 @@ async function emittedCodes(): Promise<Set<string>> {
   for (const root of SOURCE_ROOTS) {
     const cwd = `${REPO_ROOT}${root}/`;
     for await (const path of new Bun.Glob("**/*.ts").scan({ cwd: cwd })) {
-      if (SKIPPED_DIRS.some((dir) => `/${path}`.includes(`/${dir}`))) continue;
+      if (SKIPPED_DIRS.some((dir): boolean => `/${path}`.includes(`/${dir}`)))
+        continue;
       const source = await Bun.file(`${cwd}${path}`).text();
       for (const code of matches(source, CODE_LITERAL)) {
         if (!NOT_ERROR_CODES.has(code)) codes.add(code);
@@ -87,5 +92,5 @@ async function emittedCodes(): Promise<Set<string>> {
 }
 
 function matches(text: string, pattern: RegExp): string[] {
-  return [...text.matchAll(pattern)].map((match) => match[1]!);
+  return [...text.matchAll(pattern)].map((match): string => match[1]!);
 }
