@@ -86,7 +86,7 @@ Rotation:
 
 - `TERMINAL_TICKET_SECRET` and `MEDIA_TICKET_SECRET` take a comma-separated list. The first entry seals, every entry opens. Prepend the new value, roll the pods, then drop the old one. A media link never expires, so dropping a value is what revokes the links it sealed.
 - `SERVICE_AUTH_SECRET` and `STAGE_TICKET_SECRET` are single values. Change core and Convex together. Stage tickets live 15 minutes, so rotating `STAGE_TICKET_SECRET` logs out open dashboard log streams and `broods logs` sessions until they mint a new ticket.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is set on core and Convex and must never change without a re-encryption migration. Stored agent and sandbox configs are unreadable under a new value.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is set on core and Convex and takes a comma-separated list. The first entry wraps account keys, every entry unwraps. Rotating it takes the steps in the [rotation runbook](security.md#rotation-runbook): add the new value last on both, then move it first, run `account/keys:rewrapAllKeys`, and drop the old one. Dropping a value before the rewrap finishes makes the keys it wrapped, and every config under them, unreadable.
 - `ADMIN_ACCOUNT_SECRET` is set on core and Convex. Rotating it only affects admin account creation and the account admin routes.
 
 ## Service token rules
@@ -131,7 +131,7 @@ Matrix specifics:
 | Core exits at boot naming a secret                                 | One of `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `MEDIA_TICKET_SECRET`, `TERMINAL_TICKET_SECRET` is missing. Set it in the pod env                                             |
 | Config-plane routes answer `503` through the gateway               | `BROODS_CONFIG_URL` is unset on the gateway. Point it at the Convex `*.convex.site` origin                                                                                         |
 | Crons never fire, or sandbox deletes leave reservations behind     | Convex cannot reach core with the service token. Check `BROODS_ACCOUNT_MANAGE_URL` is core's in-cluster URL, not the gateway, and that `SERVICE_AUTH_SECRET` matches on both sides |
-| Every agent config fails to decrypt                                | `ACCOUNT_CONFIG_ENCRYPTION_SECRET` differs from the value that encrypted the data. Restore the old value                                                                           |
+| Every agent config fails to decrypt                                | No entry in `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is the value that wrapped the account keys. Put the old value back in the list                                                      |
 | `deny-all` or `restricted` `lambda` sandboxes fail to launch       | `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN` is unset on core. Set it from the `microvmEgressNetworkConnectorArn` output                                                                 |
 | Discord agent answers `/new` but ignores mentions                  | The discord-forwarder is not running, or has no plane for that deployment. Check `/readyz`                                                                                         |
 | Discord socket stops with close code 4014                          | Message Content Intent is off in the Discord developer portal. The forwarder logs it by name and does not retry. Nothing on the Broods side fixes it                               |

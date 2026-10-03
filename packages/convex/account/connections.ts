@@ -16,12 +16,9 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
-import { configEncryptionSecret } from "../config/routes/shared";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-  type EncryptedAgentConfig,
-} from "../model/agentConfigCodec";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
+import { accountCipherForAction } from "../config/routes/shared";
+import type { AccountCipher, EncryptedBlob } from "../model/envelope";
 import { CONNECTION_TYPES, type ConnectionType } from "../model/connections";
 import { connectionsFields } from "../schema";
 
@@ -85,8 +82,12 @@ export const load = internalQuery({
   returns: v.union(v.null(), storedValidator),
   handler: async (ctx, args): Promise<StoredConnection | null> => {
     const row = await findRow(ctx, args.accountId, args.type);
+    if (!row) return null;
 
-    return row ? await decrypted(row) : null;
+    return {
+      ...statusOf(row),
+      ...(await decryptSecrets(await accountCipher(ctx, row.accountId), row)),
+    };
   },
 });
 
@@ -98,10 +99,10 @@ export const set = internalMutation({
     const { accessToken, refreshToken, ...metadata } = args;
     const fields = {
       ...metadata,
-      ...(await encryptSecrets({
-        accessToken: accessToken,
-        refreshToken: refreshToken,
-      })),
+      ...(await encryptSecrets(
+        await accountCipherForWrite(ctx, args.accountId),
+        { accessToken: accessToken, refreshToken: refreshToken },
+      )),
       updatedAt: Date.now(),
     };
     const existing = await findRow(ctx, args.accountId, args.type);
@@ -129,10 +130,10 @@ export const saveRefreshed = internalMutation({
     const row = await findRow(ctx, args.accountId, args.type);
     if (!row || row.updatedAt !== args.loadedUpdatedAt) return false;
     await ctx.db.patch(row._id, {
-      ...(await encryptSecrets({
-        accessToken: args.accessToken,
-        refreshToken: args.refreshToken,
-      })),
+      ...(await encryptSecrets(
+        await accountCipherForWrite(ctx, args.accountId),
+        { accessToken: args.accessToken, refreshToken: args.refreshToken },
+      )),
       expiresAt: args.expiresAt,
       updatedAt: Date.now(),
     });
@@ -153,6 +154,7 @@ export const disconnect = internalMutation({
     // The secrets stay encrypted in the scheduler; the action decrypts them.
     if (revokeUrl) {
       await ctx.scheduler.runAfter(0, internal.account.connections.revoke, {
+        accountId: row.accountId,
         revokeUrl: revokeUrl,
         clientId: row.clientId,
         ciphertext: row.ciphertext,
@@ -171,6 +173,7 @@ export const disconnect = internalMutation({
  */
 export const revoke = internalAction({
   args: {
+    accountId: v.id("accounts"),
     revokeUrl: v.string(),
     clientId: v.string(),
     ciphertext: connectionsFields.ciphertext,
@@ -178,9 +181,12 @@ export const revoke = internalAction({
     tag: connectionsFields.tag,
   },
   returns: v.null(),
-  handler: async (_ctx, args): Promise<null> => {
+  handler: async (ctx, args): Promise<null> => {
     try {
-      const secrets = await decryptSecrets(args);
+      const secrets = await decryptSecrets(
+        await accountCipherForAction(ctx, args.accountId, "read"),
+        args,
+      );
       const response = await fetch(args.revokeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -204,19 +210,12 @@ export const revoke = internalAction({
   },
 });
 
-/** The row with its tokens decrypted. */
-async function decrypted(row: Doc<"connections">): Promise<StoredConnection> {
-  return { ...statusOf(row), ...(await decryptSecrets(row)) };
-}
-
 /** The tokens out of a row's encrypted blob. */
 async function decryptSecrets(
-  blob: EncryptedAgentConfig,
+  cipher: AccountCipher,
+  blob: EncryptedBlob,
 ): Promise<ConnectionSecrets> {
-  const secrets = await decryptAgentConfigBlob(
-    { ciphertext: blob.ciphertext, iv: blob.iv, tag: blob.tag },
-    configEncryptionSecret(),
-  );
+  const secrets = await cipher.decrypt("connections:ciphertext", blob);
   if (
     typeof secrets?.accessToken !== "string" ||
     typeof secrets.refreshToken !== "string"
@@ -232,15 +231,13 @@ async function decryptSecrets(
 
 /** The tokens as one encrypted blob for the row. */
 async function encryptSecrets(
+  cipher: AccountCipher,
   secrets: ConnectionSecrets,
-): Promise<EncryptedAgentConfig> {
-  return await encryptAgentConfigBlob(
-    {
-      accessToken: secrets.accessToken,
-      refreshToken: secrets.refreshToken,
-    },
-    configEncryptionSecret(),
-  );
+): Promise<EncryptedBlob> {
+  return await cipher.encrypt("connections:ciphertext", {
+    accessToken: secrets.accessToken,
+    refreshToken: secrets.refreshToken,
+  });
 }
 
 /** The account's connection of a type, if any. */

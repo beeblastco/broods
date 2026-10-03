@@ -9,6 +9,7 @@ import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import { cipherFromKeys } from "../../model/accountKeys";
 import { sha256Hex } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
 import type {
@@ -24,6 +25,7 @@ import {
   rateLimitHeaders,
 } from "../../model/httpJson";
 import { ClientError } from "../../model/clientError";
+import type { AccountCipher, WrappedAccountKey } from "../../model/envelope";
 
 export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
@@ -36,6 +38,28 @@ export type ConfigAuth =
   | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
   | { kind: "deployment" }
   | { kind: "role"; account: Doc<"accounts">; role: RolePrincipal };
+
+/**
+ * The keyring from an HTTP action, which has no `ctx.db`. A `read` fetches the
+ * keys with a query; a `write` runs the mutation that mints the first key when
+ * the account has none. Build it once per request and pass it down.
+ */
+export async function accountCipherForAction(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  mode: "read" | "write",
+): Promise<AccountCipher> {
+  const keys: WrappedAccountKey[] =
+    mode === "write"
+      ? await ctx.runMutation(internal.account.keys.ensure, {
+          accountId: accountId,
+        })
+      : await ctx.runQuery(internal.account.keys.list, {
+          accountId: accountId,
+        });
+
+  return cipherFromKeys(accountId, keys);
+}
 
 /**
  * @param auth resolved config HTTP auth
@@ -55,14 +79,6 @@ export function bearerToken(req: Request): string | null {
   const match = header.match(/^Bearer\s+(.+)$/i);
 
   return match?.[1]?.trim() || null;
-}
-
-/** Read the account-config encryption secret, failing loudly when unset. */
-export function configEncryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");
-
-  return secret;
 }
 
 /**

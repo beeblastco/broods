@@ -20,25 +20,39 @@ flowchart TD
 - Sandbox config, including `envVars`, is encrypted at rest.
 - The workspace, skills, tool-bundles and MicroVM artifact buckets block public access. `denyUnlessProjectPrincipal()` in `apps/core/sst.config.ts` denies `s3:*` to every principal except the stage's `sandbox-s3mount`, `microvm-build` and `microvm-execution` roles, the `core-runtime` IAM user the core pods use, the `convex-aws` role the config plane assumes, the GitHub Actions deploy roles, and the account root.
 
-## Config encryption
+## Encryption at rest
 
 ```mermaid
 sequenceDiagram
   participant API as config plane
-  participant Crypto as AES-256-GCM
+  participant Keys as accountKeys
   participant CVX as Convex
   participant Core as core
 
-  API->>Crypto: encrypt with ACCOUNT_CONFIG_ENCRYPTION_SECRET
-  Crypto->>CVX: ciphertext + iv + auth tag
+  API->>Keys: unwrap the account DEK with the KEK
+  API->>CVX: AES-256-GCM(DEK, aad = account:table:field)
   Core->>CVX: load the selected agent
-  Core->>Crypto: decrypt
-  Core->>Core: verify webhooks, call providers
+  Core->>Keys: wrapped keys (cached 5 min)
+  Core->>Core: unwrap, decrypt, verify webhooks, call providers
 ```
 
-- AES-256-GCM encrypts config before the Convex write. The key is the SHA-256 of `ACCOUNT_CONFIG_ENCRYPTION_SECRET` (`src/shared/domain/agent-config.ts`); the config plane writes the same blob with Web Crypto.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is plain runtime env on core and on the Convex deployment, and both must hold the same value. Rotating it needs a re-encryption migration.
-- Core decrypts only when it needs a selected agent's runtime settings.
+Envelope encryption, one codec for both sides (`packages/convex/model/envelope.ts`):
+
+- Every account owns a 32-byte data encryption key (DEK), minted on its first write and stored in `accountKeys` wrapped under the key encryption key (KEK). The KEK is derived from `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; each key row records the `kekId` (first 8 hex of SHA-256 of the secret) it was wrapped under, so a KMS-backed KEK can replace the derived one later without a schema change.
+- A stored blob is AES-256-GCM under the DEK with `${accountId}:${table}:${field}` as additional data, and its `ciphertext` column reads `v2:<keyId>:<base64url>`. A ciphertext cannot be moved to another tenant, row kind or column, and names the key that opens it. The `iv` and `tag` columns are unchanged.
+- Encrypted columns: `agents.encryptedConfig` and `encryptedSourceConfig`, the same two on `sandboxConfigs`, `environmentVariables.ciphertext`, `accountEnvVars.ciphertext`, `agentRuntimeSecrets.ciphertext`, `agentDeployments.apiKeyCiphertext`, `channelEndpoints.tokenCiphertext` and `connections.ciphertext`.
+- `environmentVariables.valueDigest` is HMAC-SHA256 under the DEK, so a dump of the table cannot be brute-forced against short values. The CLI still compares plain SHA-256: `listEnvBySecretHash` computes that per request from the decrypted value.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is plain runtime env on core and on the Convex deployment, and both must hold the same value. It takes a comma-separated list: the first entry wraps new keys, every entry unwraps.
+- The cipher under the codec is swappable: Convex runs it on Web Crypto, core on the synchronous `node:crypto` (`src/shared/node-aead.ts`), which keeps a per-turn decrypt off a thread hop. The format is the same, so a blob sealed by either opens with the other.
+- Convex builds the keyring once per request (`accountCipher*` in `model/accountKeys.ts`) and never caches it across requests. Core caches unwrapped keys per account for five minutes (`src/shared/convex/account-keys.ts`) and refreshes once when a row names a key it has not seen.
+
+### Rotation runbook
+
+All three run with `bunx convex run` against the deployment, as the deployment admin. None has a UI. Each one is paginated with a self-reschedule and idempotent; call it with no continuation arguments and wait for the scheduled batches to drain. The value a call returns covers its first batch only, so `isDone: false` is the normal answer. A batch that throws stops the walk and shows as a failed scheduled function.
+
+1. **Legacy rows, once per deployment.** Blobs written before envelope encryption have no `v2:` prefix and still decrypt through the legacy branch in `envelope.ts`. Run `bunx convex run migrations:migrateToEnvelope` on dev and on production; it mints a key for every account that has none and rewrites every legacy blob under it. Each call returns `skipped`, the running count of rows whose project has no account yet; those stay legacy. Once both have run and `skipped` is zero, the legacy branch can be deleted. A legacy blob also opens under the whole unsplit env value, so a secret that holds a comma or outer whitespace keeps working after deploy; run this step before changing that value, since its pieces are what the list is read as from now on.
+2. **Rotate one account's DEK.** `bunx convex run account/keys:rotateAccountKey '{"accountId": "<id>"}'` mints a new key, which every write uses from that moment, rewrites every blob of the account under it table by table, then retires the older keys. Calling it again before it finishes, or after a batch failed, resumes the same rotation, and only the walk that began under the newest key retires the older ones. A retired key opens nothing, so a config that an HTTP action sealed under the old key is refused with a `409` and the caller retries under the new one.
+3. **Rotate the KEK.** Core and Convex pick up an env change at different moments, so the new secret goes in last before it goes first. Set `old,new` on both and deploy, so each side can unwrap under either. Then set `new,old` on both, run `bunx convex run account/keys:rewrapAllKeys`, and once the batches drain check that no `accountKeys` row still carries the old `kekId`. Only then drop `old` and deploy again. No blob is rewritten; only the wrapped keys change. Legacy blobs are keyed by the secret itself, so finish step 1 before dropping the secret they were written under.
 
 Reads recursively redact secret-like field names such as `token`, `secret`, `privateKey` and `apiKey` as `********`, including inside tool config. Sending `********` back in a patch keeps the stored value.
 
