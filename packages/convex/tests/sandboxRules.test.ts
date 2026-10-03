@@ -105,7 +105,7 @@ describe("sandbox config", () => {
     );
   });
 
-  it("redacts env vars and sensitive provider option names", () => {
+  it("redacts env vars, sensitive provider option names and credential headers", () => {
     const doc = {
       _id: "sb_1",
       _creationTime: 0,
@@ -133,6 +133,32 @@ describe("sandbox config", () => {
         credentials: "********",
         private_key: "********",
         workspaceRoot: "/mnt/workspaces",
+      },
+    });
+    // A code sync stores a custom server's credential header with its ref resolved.
+    expect(
+      toPublicSandboxConfigResponse(doc, {
+        provider: "custom",
+        options: {
+          endpoint: "https://sandbox.example.com",
+          headers: {
+            authorization: "Bearer sk_live_abc",
+            "x-api-key": "k_live_abc",
+            "x-auth-ref": "Bearer ${SANDBOX_TOKEN}",
+            "x-team": "ops",
+          },
+        },
+      }).config,
+    ).toEqual({
+      provider: "custom",
+      options: {
+        endpoint: "https://sandbox.example.com",
+        headers: {
+          authorization: "********",
+          "x-api-key": "********",
+          "x-auth-ref": "Bearer ${SANDBOX_TOKEN}",
+          "x-team": "ops",
+        },
       },
     });
   });

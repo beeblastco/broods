@@ -37,7 +37,7 @@ const MAX_URL_LENGTH = 2048;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
 /** Header names whose values carry credentials and so must use a ${NAME} ref. */
-const SENSITIVE_HEADER_NAME_PATTERN =
+export const SENSITIVE_HEADER_NAME_PATTERN =
   /auth|token|secret|key|cookie|password|credential/i;
 
 /**
