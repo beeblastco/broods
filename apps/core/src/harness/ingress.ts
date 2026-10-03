@@ -471,7 +471,8 @@ export async function loadChannelSessionConfig(options: {
  * The config a dispatched envelope runs on, rebuilt from the live rows the way
  * its admission built it: the channel session's narrowed config when the ref
  * names one, the agent's own config plus the request's model override
- * otherwise. One agent read per dispatch; nothing else in the dispatched run
+ * otherwise. One agent read per dispatch, plus the credential holder and the
+ * record when a channel session pins them; nothing else in the dispatched run
  * loads it. An envelope with no ref (a subagent control) runs on `fallback`,
  * the config its dispatch scope already holds. Throws when the agent is gone
  * or the channel session no longer binds to it, and the caller fails the

@@ -1864,13 +1864,19 @@ async function runChannelTurns(
           });
           break;
         } catch (err) {
+          const error = toErrorMessage(err);
+          logWarn("Queued channel turn failed: its config did not load", {
+            eventId: next.eventId,
+            conversationKey: event.conversationKey,
+            error: error,
+          });
           next = await takeNextIngress(
             {
               conversationKey: event.conversationKey,
               ownerEventId: next.eventId,
               ownerGeneration: next.ownerGeneration,
             },
-            { status: "failed", error: toErrorMessage(err) },
+            { status: "failed", error: error },
           );
         }
       }

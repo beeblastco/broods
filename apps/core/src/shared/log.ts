@@ -155,16 +155,34 @@ export function redact(
 }
 
 /**
- * Deep-redact a value against the sensitive env values plus the current run's
- * secrets, the list every log line is scrubbed with; `extra` adds a caller's
- * own. For what leaves the process or outlives the run: stream frames, stored
- * tool rows.
+ * Scrubs every nested string against the run's secret values and leaves keys
+ * alone, unlike `redact`. For tool data that is read back, stream frames and
+ * stored tool rows: a `nextPageToken` must reach the model as it was.
  */
 export function redactWithRunSecrets(
   value: unknown,
-  extra: readonly string[] = [],
+  secretValues: readonly string[] = runSecretValues(),
 ): unknown {
-  return redact(value, [...runSecretValues(), ...extra]);
+  if (typeof value === "string") return redactString(value, secretValues);
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactWithRunSecrets(item, secretValues));
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      redactWithRunSecrets(item, secretValues),
+    ]),
+  );
+}
+
+/** The sensitive env values plus the secrets the observability context holds for this run. */
+export function runSecretValues(): string[] {
+  return [
+    ...sensitiveEnvValues(),
+    ...(getObservabilityContext()?.secretValues ?? []),
+  ];
 }
 
 /** Redact a free-form string using sensitive env values plus task-local secrets. */
@@ -326,14 +344,6 @@ function redactString(value: string, secretValues: readonly string[]): string {
   redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
 
   return redacted;
-}
-
-/** The sensitive env values plus whatever the observability context holds for this run. */
-function runSecretValues(): string[] {
-  return [
-    ...sensitiveEnvValues(),
-    ...(getObservabilityContext()?.secretValues ?? []),
-  ];
 }
 
 function sensitiveEnvValues(): string[] {

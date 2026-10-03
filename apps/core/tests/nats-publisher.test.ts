@@ -136,7 +136,11 @@ describe("LiveNatsPublisher", (): void => {
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "bash",
-      output: { stdout: "hdr-secret-abc123\n", exitCode: 0 },
+      output: {
+        stdout: "hdr-secret-abc123\n",
+        exitCode: 0,
+        nextPageToken: "page-2",
+      },
     });
     await publisher.close();
 
@@ -154,16 +158,18 @@ describe("LiveNatsPublisher", (): void => {
         // Structural: left alone even when it carries the value.
         toolCallId: "call-hdr-secret-abc123",
         toolName: "bash",
-        input: {
-          command: "echo [redacted]",
-          token: "[redacted]",
-        },
+        // Values are scrubbed, keys never: a token that is no secret stays.
+        input: { command: "echo [redacted]", token: "t" },
       },
       {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "bash",
-        output: { stdout: "[redacted]\n", exitCode: 0 },
+        output: {
+          stdout: "[redacted]\n",
+          exitCode: 0,
+          nextPageToken: "page-2",
+        },
       },
     ]);
   });

@@ -5,7 +5,11 @@
  */
 
 import { headers as natsHeaders } from "nats.ws";
-import { logError, redactWithRunSecrets } from "../shared/log.ts";
+import {
+  logError,
+  redactWithRunSecrets,
+  runSecretValues,
+} from "../shared/log.ts";
 import {
   ensureResponseStream,
   getSharedNatsConn,
@@ -31,13 +35,10 @@ const TRUNCATED_FRAME_KEPT_FIELDS = [
 ] as const;
 // The frame's structure: never scrubbed, so a generated id that happens to
 // contain a secret substring still matches its stream. Every other field is.
-const STRUCTURAL_FRAME_FIELDS = new Set([
+const STRUCTURAL_FRAME_FIELDS = new Set<string>([
   "type",
-  "id",
-  "toolCallId",
-  "toolName",
   "approvalId",
-  "eventId",
+  ...TRUNCATED_FRAME_KEPT_FIELDS,
 ]);
 
 export class LiveNatsPublisher implements NatsPublisher {
@@ -145,11 +146,12 @@ export class LiveNatsPublisher implements NatsPublisher {
   private redactPayload(
     data: Record<string, unknown>,
   ): Record<string, unknown> {
+    const secretValues = [...runSecretValues(), ...this.secretValues];
     const safe: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(data)) {
       safe[field] = STRUCTURAL_FRAME_FIELDS.has(field)
         ? value
-        : redactWithRunSecrets(value, this.secretValues);
+        : redactWithRunSecrets(value, secretValues);
     }
 
     return safe;

@@ -7,6 +7,7 @@ import {
   logWarn,
   redact,
   redactSensitiveText,
+  redactWithRunSecrets,
 } from "../src/shared/log.ts";
 import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
 
@@ -202,6 +203,26 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
     );
+  });
+
+  it("scrubs run secret values from tool data and leaves its keys alone", () => {
+    process.env.ACCOUNT_GOOGLE_API_KEY = "env-secret-value";
+
+    // Read back by the model, so a key named like a secret keeps its value.
+    expect(
+      redactWithRunSecrets({
+        nextPageToken: "page-2",
+        credentials: { user: "ada" },
+        stdout: ["key env-secret-value"],
+      }),
+    ).toEqual({
+      nextPageToken: "page-2",
+      credentials: { user: "ada" },
+      stdout: ["key [redacted]"],
+    });
+    expect(
+      redactWithRunSecrets("a run-secret-value", ["run-secret-value"]),
+    ).toBe("a [redacted]");
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {
