@@ -19,6 +19,7 @@ import {
 } from "../model/r2Credentials";
 import {
   normalizeWorkspaceConfig,
+  normalizeWorkspacePrefix,
   workspaceStorageOwnAuth,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
@@ -262,7 +263,7 @@ export const r2Credentials = internalMutation({
     const auth = workspaceStorageOwnAuth(storage);
     if (auth?.type !== "r2" || !storage.bucket || !storage.endpoint)
       throw new Error("Workspace storage is not an R2 bucket");
-    const base = `${storage.prefix?.replace(/^\/+|\/+$/g, "")}/`;
+    const base = normalizeWorkspacePrefix(storage.prefix);
     if (!args.prefix.startsWith(base))
       throw new Error("R2 credential prefix is outside the workspace prefix");
     const values =
@@ -278,7 +279,7 @@ export const r2Credentials = internalMutation({
       const value = name ? values[name] : undefined;
       if (!value)
         throw new ClientError(
-          `R2 workspace credential ${reference} has no value; set it with broods env set`,
+          `R2 workspace credential ${reference} has no value; set it with ${workspace.stageId ? "broods env set" : "PUT /v1/env"}`,
         );
 
       return value;

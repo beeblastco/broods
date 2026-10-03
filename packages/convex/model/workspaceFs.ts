@@ -23,6 +23,7 @@ import {
 import {
   MAX_WORKSPACE_FILE_BYTES,
   normalizeFilePath,
+  normalizeWorkspacePrefix,
   workspaceNamespace,
   workspaceStorageOwnAuth,
   type WorkspaceStorageConfig,
@@ -284,7 +285,7 @@ export async function withR2Credentials<Ref extends WorkspaceFsRef>(
     {
       accountId: ref.accountId,
       workspaceId: ref.workspaceId,
-      prefix: normalizePrefix(ref.storage.prefix),
+      prefix: normalizeWorkspacePrefix(ref.storage.prefix),
     },
   );
 
@@ -318,12 +319,6 @@ export async function workspaceFileDownloadUrl(
   return await getS3ObjectUrl(target.bucket, key, {}, target.access);
 }
 
-function normalizePrefix(prefix: string | undefined): string {
-  const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
-
-  return trimmed.length > 0 ? `${trimmed}/` : "";
-}
-
 /**
  * Resolve where a workspace's files live, mirroring core's
  * `resolveS3MountIdentity` / `resolveS3ReadTarget`: the managed bucket is
@@ -343,7 +338,7 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   }
   const auth = workspaceStorageOwnAuth(storage);
   if (!auth) throw new Error("Workspace storage has no credentials of its own");
-  const prefix = normalizePrefix(storage.prefix);
+  const prefix = normalizeWorkspacePrefix(storage.prefix);
   const credentials =
     auth.type === "r2"
       ? ref.r2Credentials

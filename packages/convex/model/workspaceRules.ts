@@ -103,6 +103,16 @@ export function assertStorageEndpoint(value: string, label: string): void {
 }
 
 /**
+ * A workspace key prefix with no leading slash and one trailing slash, or ""
+ * for the bucket root. Shared by the file actions and the R2 credential grant.
+ */
+export function normalizeWorkspacePrefix(prefix: string | undefined): string {
+  const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
+
+  return trimmed.length > 0 ? `${trimmed}/` : "";
+}
+
+/**
  * The Cloudflare account id of an R2 S3 endpoint
  * (`https://<account>.r2.cloudflarestorage.com`), or undefined when the URL is
  * anything else. The R2 credential grant signs it as its subject.
