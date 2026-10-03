@@ -1267,26 +1267,31 @@ describe("connected MCP servers", () => {
     setMcpForTests({
       listTools: async function () {
         return [
-          { name: "screenshot", inputSchema: { type: "object" } },
-        ] as never;
+          { name: "screenshot", inputSchema: { type: "object" as const } },
+        ];
       },
       callTool: async function () {
         return {
           content: [
-            { type: "text", text: "Viewport of example.com" },
-            { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+            { type: "text" as const, text: "Viewport of example.com" },
+            {
+              type: "image" as const,
+              data: "iVBORw0KGgo=",
+              mimeType: "image/png",
+            },
           ],
           structuredContent: { width: 1280 },
-        } as never;
+        };
       },
     });
 
     const tools = await createTools(createToolContext(), {
       mcp: { [serverId]: { enabled: true } },
     });
-    const result = await (
-      tools.search__screenshot as unknown as ChannelTestTool
-    ).execute({}, {} as never);
+    const result = await tools.search__screenshot?.execute?.(
+      {},
+      { toolCallId: "call-1", messages: [] },
+    );
 
     expect(result).toEqual({
       type: "content",
