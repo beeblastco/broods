@@ -342,12 +342,18 @@ paths:
                     status: failed
                     error: Model provider returned 503
         "403":
-          description: Deployment-key caller polling an agent that has not opted into public access
+          description: Deployment-key caller polling an agent that has not opted into public access, or a run token reading a run of another agent
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token may only GET /v1/runs/{runId} for agent agent_...'s runs. Starting runs with a run token is not enabled yet."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
