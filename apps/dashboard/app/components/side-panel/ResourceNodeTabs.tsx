@@ -128,9 +128,7 @@ export function SandboxResourceDetailsTab({
             snapshot: undefined,
             memoryLimit: undefined,
           }
-        : provider === "lambda"
-          ? { provider: provider }
-          : { provider: provider, image: undefined },
+        : { provider: provider, image: undefined },
     );
   }
 
