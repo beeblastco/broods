@@ -6,15 +6,16 @@
  * what `broods dev` costs per agent to inject env.
  */
 
-import {
-  decodeStoredAgentConfig,
-  encryptConfigObject,
-} from "../../apps/core/src/shared/domain/agent-config.ts";
 import { normalizeAgentConfig } from "../../packages/convex/model/agentRules.ts";
+import {
+  AccountCipher,
+  createWrappedAccountKey,
+} from "../../packages/convex/model/envelope.ts";
 import { envCodec } from "../../packages/convex/bench/harness.bench.ts";
 import type { BenchCase } from "../runner.ts";
 
-const ENCRYPTION_SECRET = "bench-only-account-config-secret-0000";
+const ACCOUNT_ID = "bench_account";
+const ENCRYPTION_SECRETS = ["bench-only-account-config-secret-0000"];
 
 // An agent the way a real project defines one: a custom provider with env
 // refs, session tuning, a channel, hooks and a few tools. Wide enough that
@@ -95,18 +96,18 @@ export const coreConfigCases: readonly BenchCase[] = [
   {
     name: "core/config-encrypt-decrypt",
     iterations: 5_000,
-    setup: (): void => {
-      savedSecret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-      process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = ENCRYPTION_SECRET;
+    setup: async (): Promise<void> => {
+      cipher = new AccountCipher(ACCOUNT_ID, ENCRYPTION_SECRETS, [
+        await createWrappedAccountKey(ACCOUNT_ID, ENCRYPTION_SECRETS),
+      ]);
     },
-    teardown: (): void => {
-      if (savedSecret === undefined)
-        delete process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-      else process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = savedSecret;
-    },
-    // Write then read, the round trip an agent record makes through storage.
-    run: (): unknown =>
-      decodeStoredAgentConfig(encryptConfigObject(NORMALIZED_CONFIG)),
+    // Write then read under a warm keyring, the round trip an agent record
+    // makes through storage once the account's key is unwrapped.
+    run: async (): Promise<unknown> =>
+      cipher.decrypt(
+        "agents:encryptedConfig",
+        await cipher.encrypt("agents:encryptedConfig", NORMALIZED_CONFIG),
+      ),
   },
   {
     name: "core/config-env-inject",
@@ -126,4 +127,4 @@ export const coreConfigCases: readonly BenchCase[] = [
 ];
 
 const NORMALIZED_CONFIG = normalizeAgentConfig(RAW_CONFIG);
-let savedSecret: string | undefined;
+let cipher: AccountCipher;
