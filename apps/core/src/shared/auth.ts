@@ -1,16 +1,17 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (fp_sts_), stage runtime key
- * (fp_agent_, whose lastUsedAt is written here, throttled), and account-secret
- * hash lookup (fp_acct_). Each prefix goes straight to its one lookup; an
- * unknown prefix tries the runtime key, then the account secret. Persistence
- * is reached via `getStorage()` so the auth path is identical through the
- * Convex-backed store.
+ * server-side actions), assume-role session (fp_sts_), runtime key
+ * (sk_, whose lastUsedAt is written here, throttled), and account-key
+ * hash lookup (ask_). Each prefix goes straight to its one lookup; any other
+ * token tries the runtime key, then the account key, both by hash, which is
+ * how a key minted under an earlier prefix keeps working until it is rotated.
+ * Persistence is reached via `getStorage()` so the auth path is identical
+ * through the Convex-backed store.
  */
 
 import {
-  ACCOUNT_SECRET_PREFIX,
-  DEPLOYMENT_KEY_PREFIX,
+  ACCOUNT_KEY_PREFIX,
+  RUNTIME_KEY_PREFIX,
 } from "@broods/convex/model/accountSecrets";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
@@ -140,10 +141,10 @@ export async function resolveBearerAuth(
     return { kind: "account", account: account, viaServiceToken: true };
   }
 
-  if (token.startsWith(ACCOUNT_SECRET_PREFIX)) {
+  if (token.startsWith(ACCOUNT_KEY_PREFIX)) {
     return await resolveAccountSecretAuth(token, options);
   }
-  if (token.startsWith(DEPLOYMENT_KEY_PREFIX)) {
+  if (token.startsWith(RUNTIME_KEY_PREFIX)) {
     return await resolveRuntimeKeyAuth(token);
   }
 
@@ -164,7 +165,7 @@ export function timingSafeStringEqual(
   return timingSafeEqual(actualDigest, expectedDigest);
 }
 
-/** Resolve an account secret to its account; a disabled one only when the caller allows it. */
+/** Resolve an account key to its account; a disabled one only when the caller allows it. */
 async function resolveAccountSecretAuth(
   token: string,
   options: { allowDisabledAccountSecret?: boolean },
@@ -195,7 +196,7 @@ async function resolveRoleSessionAuth(
   return { kind: "role", account: account, role: principal };
 }
 
-/** Resolve a stage runtime key in one lookup, stamping its lastUsedAt (throttled). */
+/** Resolve a runtime key in one lookup, stamping its lastUsedAt (throttled). */
 async function resolveRuntimeKeyAuth(
   token: string,
 ): Promise<AuthContext | null> {

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The plaintext secret is shown exactly once after provision or rotate; only
+ * The plaintext account key is shown exactly once after provision or rotate; only
  * its hash is stored, so it can never be read back.
  */
 
@@ -98,8 +98,8 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             This organization is not yet provisioned with a broods account.
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Provisioning creates the backend tenant and issues a one-time Bearer
-            secret. Save it now. It will not be shown again.
+            Provisioning creates the backend tenant and issues a one-time
+            account key. Save it now. It will not be shown again.
           </p>
           {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
           {canWrite && (
@@ -165,7 +165,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
 
         <div className="grid gap-1">
           <Label variant="muted" className="text-xs">
-            Bearer secret
+            Account key
           </Label>
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
@@ -198,16 +198,16 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Secrets are hashed at rest. Rotating issues a new one and
-            invalidates the previous secret immediately.
+            The key is hashed at rest. Rotating issues a new one and invalidates
+            the previous key immediately.
           </p>
         </div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           <div>
-            <p className="text-sm font-medium text-foreground">Rotate secret</p>
+            <p className="text-sm font-medium text-foreground">Rotate key</p>
             <p className="text-xs text-muted-foreground">
-              The previous Bearer token will stop working.
+              The previous account key will stop working.
             </p>
           </div>
           {canWrite && (
@@ -230,9 +230,9 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
       <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rotate Bearer secret?</DialogTitle>
+            <DialogTitle>Rotate account key?</DialogTitle>
             <DialogDescription>
-              The current Bearer token will stop working immediately. Anything
+              The current account key will stop working immediately. Anything
               using it (curl scripts, integrations) must be updated.
             </DialogDescription>
           </DialogHeader>
@@ -291,9 +291,9 @@ function NewSecretDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Save your new Bearer secret</DialogTitle>
+          <DialogTitle>Save your new account key</DialogTitle>
           <DialogDescription>
-            Copy this token now. It will not be shown again.
+            Copy this key now. It will not be shown again.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 py-2">

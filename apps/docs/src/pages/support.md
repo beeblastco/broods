@@ -30,7 +30,7 @@ description: Where to get help with Broods and how fast to expect an answer.
 
 - The [quickstart](/quickstart) answers most first-day questions.
 - `broods logs --stage <stage>` and the Traces tab in the dashboard show what an agent did and why a run failed.
-- Never paste API keys, account secrets or deploy keys.
+- Never paste account keys, project keys, runtime keys or other API keys.
 
 ## Status
 

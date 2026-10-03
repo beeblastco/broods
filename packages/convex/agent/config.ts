@@ -250,7 +250,7 @@ export const remove = mutation({
       );
     }
 
-    // Note: the stage's runtime API key is shared across all its agents
+    // Note: the stage's runtime key is shared across all its agents
     // (stage-scoped), so deleting one agent config must NOT delete it. The key
     // is only removed when the whole stage is deleted (see stage.ts).
 

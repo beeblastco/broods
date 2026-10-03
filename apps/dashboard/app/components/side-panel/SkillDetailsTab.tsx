@@ -346,11 +346,11 @@ function GithubForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
+        <SectionHeader>Account key</SectionHeader>
         <p className="text-2xs text-muted-foreground">
-          Your broods Bearer token (starts with{" "}
-          <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in
-          session only.
+          Your account key (starts with{" "}
+          <code className="rounded bg-muted px-1">ask_</code>). Saved in session
+          only.
         </p>
         <TokenInput value={token} onChange={setToken} />
       </div>
@@ -479,9 +479,9 @@ function JsonForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
+        <SectionHeader>Account key</SectionHeader>
         <p className="text-2xs text-muted-foreground">
-          Your broods Bearer token. Saved in session only.
+          Your account key. Saved in session only.
         </p>
         <TokenInput value={token} onChange={setToken} />
       </div>
@@ -555,7 +555,7 @@ function TokenInput({
       <Input
         type={show ? "text" : "password"}
         value={value}
-        placeholder="fp_acct_…"
+        placeholder="ask_…"
         className="h-7 flex-1 font-mono text-2xs"
         onChange={(e) => onChange(e.target.value)}
       />
@@ -565,7 +565,7 @@ function TokenInput({
         className="cursor-pointer"
         type="button"
         onClick={() => setShow((v) => !v)}
-        aria-label={show ? "Hide token" : "Show token"}
+        aria-label={show ? "Hide key" : "Show key"}
       >
         {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
       </Button>

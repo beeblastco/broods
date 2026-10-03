@@ -550,7 +550,7 @@ async function handleScheduledCron(
 /**
  * Handle a background-job completion posted by the detached job itself.
  * Authenticated by the per-job token (matched against the stored row), so the
- * sandbox never needs an account secret. Reuses the same settle → continuation
+ * sandbox never needs an account key. Reuses the same settle → continuation
  * path as the account-auth async-tool completion endpoint.
  */
 async function handleSandboxJobCompletionRequest(

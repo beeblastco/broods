@@ -57,7 +57,7 @@ export function TestTab({
     return (
       <div className="flex flex-1 items-center justify-center p-4">
         <p className="text-center text-xs text-muted-foreground">
-          No runtime API key for this stage yet. Generate one in Details to test
+          No runtime key for this stage yet. Generate one in Details to test
           this agent.
         </p>
       </div>

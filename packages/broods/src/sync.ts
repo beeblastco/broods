@@ -47,7 +47,7 @@ export interface RemoteManifestResponse {
    */
   warnings?: { missingPolicies?: string[]; reservedResources?: string[] };
   /**
-   * The stage's runtime API key context. Deployments include the plaintext
+   * The stage's runtime key context. Deployments include the plaintext
    * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
    */
   deployment?: {
@@ -292,7 +292,7 @@ export class BroodsSyncClient {
   }
 
   /**
-   * Recovers the stage's runtime API key so the CLI can reconnect to a
+   * Recovers the stage's runtime key so the CLI can reconnect to a
    * dashboard-created project without redeploying. Returns null when the project/
    * stage is unknown.
    */

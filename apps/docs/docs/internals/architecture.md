@@ -223,7 +223,7 @@ sequenceDiagram
   CLI->>CLI: compile broods/ into a manifest
   CLI->>G: PUT /v1/account/projects/:project/stages/:stage/manifest
   G->>V: /v1/account/* goes to Convex
-  V->>V: authenticate login token or deploy key
+  V->>V: authenticate login token or project key
   V->>V: check the manifest's rules, before any write
   V->>V: cliSync: resolve env refs, encrypt agent config
   V->>S: skill and bundle bytes
@@ -232,24 +232,24 @@ sequenceDiagram
 ```
 
 1. `broods dev` or `broods deploy` compiles `broods/` into a manifest (`packages/broods/src/manifest.ts`). Hosted MCP handlers and code hooks are bundled here.
-2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it. The PUT's first mutation ensures the project and stage rows exist, then claims the stage's next manifest revision (`stageSyncs`). `broods dev` sends the revision it read, and a PUT whose revision another sync already moved past gets a 409 `manifest_conflict` before it writes resources. `broods deploy` sends none, so it can replace the last completed sync without reading its revision. Both commands receive 409 `manifest_conflict` while another manifest PUT holds the stage claim; retry after that sync finishes. The claim is released in `finally`, with abandoned claims expiring after 45 minutes.
-3. The sync first runs the manifest's rules on every resource, skills, hooks, MCP servers and crons included, so a manifest they refuse changes nothing. Checks against live rows (name conflicts, a channel place another record owns) still run inside the sync. It then resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the stage runtime key if the stage has none.
+2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or project key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it. The PUT's first mutation ensures the project and stage rows exist, then claims the stage's next manifest revision (`stageSyncs`). `broods dev` sends the revision it read, and a PUT whose revision another sync already moved past gets a 409 `manifest_conflict` before it writes resources. `broods deploy` sends none, so it can replace the last completed sync without reading its revision. Both commands receive 409 `manifest_conflict` while another manifest PUT holds the stage claim; retry after that sync finishes. The claim is released in `finally`, with abandoned claims expiring after 45 minutes.
+3. The sync first runs the manifest's rules on every resource, skills, hooks, MCP servers and crons included, so a manifest they refuse changes nothing. Checks against live rows (name conflicts, a channel place another record owns) still run inside the sync. It then resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the runtime key if the stage has none.
 4. The CLI writes `broods/_generated/` and `BROODS_API_KEY`.
 
 ## Credentials
 
-| Credential           | Prefix       | Verified by                                                                                      | Scope                                                                   |
-| -------------------- | ------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| Stage runtime key    | `fp_agent_`  | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
-| Stage session ticket | `fp_dts_`    | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
-| Account secret       | `fp_acct_`   | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
-| Role session         | `fp_sts_`    | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
-| CLI login            | `fp_cli_`    | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
-| Deploy key           | `fp_deploy_` | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
-| Admin secret         | none         | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
-| Service token        | none         | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
-| Terminal ticket      | sealed       | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
-| Per-job token        | none         | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
+| Credential           | Prefix    | Verified by                                                                                      | Scope                                                                   |
+| -------------------- | --------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Runtime key          | `sk_`     | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
+| Stage session ticket | `fp_dts_` | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
+| Account key          | `ask_`    | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
+| Role session         | `fp_sts_` | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
+| CLI login            | `fp_cli_` | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
+| Project key          | `pdk_`    | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
+| Admin secret         | none      | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
+| Service token        | none      | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
+| Terminal ticket      | sealed    | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
+| Per-job token        | none      | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
 
 Channel webhooks use each provider's own signature or secret, checked by the adapter. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
 

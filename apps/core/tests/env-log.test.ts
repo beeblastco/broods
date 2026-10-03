@@ -205,6 +205,24 @@ describe("logging helpers", () => {
     );
   });
 
+  it("redacts a runtime key under either prefix and leaves other sk_ identifiers", () => {
+    // The minted shape: the prefix plus 43 base64url chars.
+    const runtimeKey = `sk_${"aB3-_xYz".repeat(5)}abc`;
+
+    expect(redactSensitiveText(`run failed for ${runtimeKey} twice`)).toBe(
+      "run failed for [redacted] twice",
+    );
+    expect(redactSensitiveText("run failed for fp_agent_AbC-1 twice")).toBe(
+      "run failed for [redacted] twice",
+    );
+    expect(redactSensitiveText("column sk_id is null")).toBe(
+      "column sk_id is null",
+    );
+    expect(redactSensitiveText("job sk_abcdefghijklmnopqrst done")).toBe(
+      "job sk_abcdefghijklmnopqrst done",
+    );
+  });
+
   it("never leaks a secret that straddles a truncated attribute's cut", () => {
     const secret = "s3cr3t-value-long";
     // One straddles the cut itself; the other straddles the scrubbed window's

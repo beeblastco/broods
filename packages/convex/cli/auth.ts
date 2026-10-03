@@ -14,7 +14,7 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
 import { slugifyName } from "../lib/slug";
-import { sha256Hex } from "../model/accountSecrets";
+import { ACCOUNT_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -191,7 +191,7 @@ export const createOnboardingOrg = internalMutation({
       orgId: orgId,
       username: slug,
       description: `Broods org ${name}`,
-      secretHash: await sha256Hex(randomToken("fp_acct_")),
+      secretHash: await sha256Hex(randomToken(ACCOUNT_KEY_PREFIX)),
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -353,7 +353,7 @@ export const getOnboardingContext = internalMutation({
 });
 
 /**
- * Resolve a CLI token to the account secret hash used by existing sync code.
+ * Resolve a CLI token to the account key hash used by existing sync code.
  * Touches lastUsedAt at a coarse interval to avoid write contention.
  */
 export const resolveCliToken = internalMutation({

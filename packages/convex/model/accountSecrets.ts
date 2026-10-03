@@ -1,17 +1,21 @@
 /**
- * Account secret generation, plus the SHA-256 hashing every default-runtime
- * Convex path uses to store a bearer token as a digest instead of plaintext.
+ * Prefixes of the three user-held keys, account key generation, plus the
+ * SHA-256 hashing every default-runtime Convex path uses to store a bearer
+ * token as a digest instead of plaintext.
  */
 
-export const ACCOUNT_SECRET_PREFIX = "fp_acct_";
-/** A stage runtime key, minted by `agent/deployments`. */
-export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
+/** An account key: the whole account. Minted at provisioning and rotation. */
+export const ACCOUNT_KEY_PREFIX = "ask_";
+/** A project key: one project and stage, CLI sync. Minted by `deployKeys`. */
+export const PROJECT_KEY_PREFIX = "pdk_";
+/** A runtime key: one project and stage, runs agents. Minted by `agent/deployments`. */
+export const RUNTIME_KEY_PREFIX = "sk_";
 
 /**
- * @returns plaintext secret to show once to the caller
+ * @returns plaintext account key to show once to the caller
  */
 export function createAccountSecret(): string {
-  return randomToken(ACCOUNT_SECRET_PREFIX);
+  return randomToken(ACCOUNT_KEY_PREFIX);
 }
 
 /**

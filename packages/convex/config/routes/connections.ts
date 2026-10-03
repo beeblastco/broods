@@ -4,7 +4,7 @@
  * provider's consent screen, opens it, and PUTs the code the browser brought
  * back; this route trades it on the client OpenAI issued, checks the ID
  * token and stores the tokens. GET answers what is connected, never the
- * tokens; DELETE forgets, then revokes. Refresh is core's. The account secret
+ * tokens; DELETE forgets, then revokes. Refresh is core's. The account key
  * or a `broods login` token may call it; role sessions and runtime keys may
  * not.
  */
@@ -68,10 +68,7 @@ export async function handleConnectionsRoute(
   if (!caller) return await unauthorizedResponse(ctx, req);
   // A runtime key controls one stage; a connection acts for the whole account.
   if (caller.deploymentScope) {
-    return jsonError(
-      403,
-      "Connections require the account secret or a CLI login",
-    );
+    return jsonError(403, "Connections require the account key or a CLI login");
   }
   const accountId = caller.accountId;
 

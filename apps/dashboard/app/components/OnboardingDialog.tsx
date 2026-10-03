@@ -1,6 +1,6 @@
 "use client";
 
-/** Three-step first-login onboarding dialog: welcome, one-time account secret, first CLI project. */
+/** Three-step first-login onboarding dialog: welcome, one-time account key, first CLI project. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -23,7 +23,7 @@ const CLI_COMMANDS = [
 ];
 
 interface Props {
-  /** The one-time plaintext account secret to hand over on step two. */
+  /** The one-time plaintext account key to hand over on step two. */
   secret: string;
   /** Called when the user finishes the flow; the caller clears the secret and routes to /projects. */
   onDone: () => void;
@@ -42,7 +42,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
 
   const titles = [
     "Welcome to Broods",
-    "Save your account secret",
+    "Save your account key",
     "Start your first project",
   ];
   const descriptions = [
@@ -95,7 +95,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                   size="sm"
                   className="h-9 shrink-0 cursor-pointer"
                   onClick={() => setRevealed((value) => !value)}
-                  title={revealed ? "Hide secret" : "Reveal secret"}
+                  title={revealed ? "Hide key" : "Reveal key"}
                 >
                   {revealed ? (
                     <EyeOff className="size-3.5" />
@@ -118,8 +118,8 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                 </Button>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                This secret authenticates the API, so you can create agents,
-                crons, and workspaces from your own code.
+                This key authenticates the API, so you can create agents, crons,
+                and workspaces from your own code.
               </p>
               <div className="flex items-center gap-4">
                 <DocsLink href="https://docs.broods.app/reference/sdk">

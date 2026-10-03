@@ -1,6 +1,6 @@
 "use node";
 /**
- * Provision and rotate the per-org broods Bearer secret. The plaintext
+ * Provision and rotate the per-org account key. The plaintext
  * is returned to the caller exactly once at provisioning or rotation time;
  * only the SHA-256 hash is stored in the `accounts` row.
  */
@@ -10,9 +10,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { action } from "../_generated/server";
+import { ACCOUNT_KEY_PREFIX } from "../model/accountSecrets";
 import { ClientError } from "../model/clientError";
-
-const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 
 export const provision = action({
   args: { orgId: v.id("orgs") },
@@ -50,7 +49,7 @@ export const provision = action({
     });
 
     const identity = await ctx.auth.getUserIdentity();
-    console.log("AUDIT account secret provisioned", {
+    console.log("AUDIT account key provisioned", {
       orgId: args.orgId,
       accountId: account._id,
       actor: identity?.subject ?? "unknown",
@@ -85,7 +84,7 @@ export const rotateSecret = action({
     });
 
     const identity = await ctx.auth.getUserIdentity();
-    console.log("AUDIT account secret rotated", {
+    console.log("AUDIT account key rotated", {
       orgId: args.orgId,
       accountId: account._id,
       actor: identity?.subject ?? "unknown",
@@ -96,7 +95,7 @@ export const rotateSecret = action({
 });
 
 function generateAccountSecret(): { secret: string; secretHash: string } {
-  const secret = `${ACCOUNT_SECRET_PREFIX}${randomBytes(32).toString("base64url")}`;
+  const secret = `${ACCOUNT_KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
   const secretHash = createHash("sha256").update(secret).digest("hex");
 
   return { secret: secret, secretHash: secretHash };

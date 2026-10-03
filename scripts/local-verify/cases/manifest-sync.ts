@@ -9,7 +9,7 @@ import { assertStep, type VerifyContext } from "../harness.ts";
 
 /**
  * Concurrent SDK deploys leave one complete manifest; a stale revision cannot
- * overwrite it. The stage runtime key the deploy minted then authenticates on core.
+ * overwrite it. The runtime key the deploy minted then authenticates on core.
  */
 export async function manifestSync(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
@@ -106,7 +106,7 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
     .getAsyncStatus(`run_${"0".repeat(32)}`)
     .catch((error: unknown): string => String(error));
   assertStep(
-    "the stage runtime key authenticates on core",
+    "the runtime key authenticates on core",
     typeof status !== "string" && status.status === "not_found",
     JSON.stringify(status),
   );

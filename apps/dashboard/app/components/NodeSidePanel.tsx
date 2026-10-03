@@ -209,7 +209,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const ensureDeployment = useMutation(api.agent.deployments.ensureForStage);
   const rotateDeployment = useMutation(api.agent.deployments.rotate);
 
-  // The stage's runtime API key (shared by every agent in it). The agent
+  // The stage's runtime key (shared by every agent in it). The agent
   // itself is selected per request by its Agent ID. Created on demand here or on
   // the first `broods deploy`.
   const activeDeployment =

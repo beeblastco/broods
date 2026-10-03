@@ -273,7 +273,7 @@ export function SkillFilesTab({
       {promptMode && (
         <div className="shrink-0 p-2">
           <TokenPrompt
-            label="Bearer token to publish"
+            label="Account key to publish"
             onConfirm={(token) => void runWithToken(token)}
             onCancel={() => setPromptMode(null)}
           />
@@ -316,7 +316,7 @@ export function SkillFilesTab({
               : "Publish to account"}
           </Button>
           {getSkillsBearerToken() && (
-            <IconTooltip label="Clear saved Bearer token">
+            <IconTooltip label="Clear saved account key">
               <Button
                 size="icon-xs"
                 variant="ghost"
@@ -442,15 +442,14 @@ function TokenPrompt({
         </button>
       </div>
       <p className="text-3xs text-muted-foreground">
-        Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
-        session only.
+        Your account key (starts with <code>ask_</code>). Saved in session only.
       </p>
       <div className="flex items-center gap-1.5">
         <Input
           ref={ref}
           type={show ? "text" : "password"}
           value={draft}
-          placeholder="fp_acct_…"
+          placeholder="ask_…"
           className="h-7 flex-1 font-mono text-2xs"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -461,7 +460,7 @@ function TokenPrompt({
             }
           }}
         />
-        <IconTooltip label={show ? "Hide token" : "Show token"}>
+        <IconTooltip label={show ? "Hide key" : "Show key"}>
           <Button
             size="icon-xs"
             variant="ghost"

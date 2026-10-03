@@ -37,7 +37,7 @@ broods machine my-mac
 broods machine my-mac --cwd ~/Projects/app
 ```
 
-It needs a `broods login` and a deployed stage, like `broods logs`. The daemon trades your login for a fifteen-minute stage ticket and mints a new one before each reconnect. The machine socket also accepts an account secret or a [role session](../security.md), which needs `sandboxes:write` on the sandbox. It never accepts the stage runtime key, which is meant for frontends.
+It needs a `broods login` and a deployed stage, like `broods logs`. The daemon trades your login for a fifteen-minute stage ticket and mints a new one before each reconnect. The machine socket also accepts an account key or a [role session](../security.md), which needs `sandboxes:write` on the sandbox. It never accepts the runtime key, which is meant for frontends.
 
 The daemon prints each command with its exit code and reconnects after a network drop. While it holds the record, any other daemon on any computer is refused, and the refusal names the host that holds it:
 

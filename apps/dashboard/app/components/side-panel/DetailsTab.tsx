@@ -632,7 +632,7 @@ export function DetailsTab({
         {onUpdatePublicAccess && (
           <ToggleRow
             label="Public access"
-            description="Reachable over HTTP/SSE and WebSocket with the runtime API key"
+            description="Reachable over HTTP/SSE and WebSocket with the runtime key"
             checked={publicAccess}
             onCheckedChange={(next) => void onUpdatePublicAccess(next)}
           />
@@ -640,7 +640,7 @@ export function DetailsTab({
         <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
           <p className="text-2xs text-muted-foreground">
             {publicAccess
-              ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime API key. Select the agent per request with its Agent ID below."
+              ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime key. Select the agent per request with its Agent ID below."
               : "Secured by default. This agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
           </p>
         </div>
@@ -649,7 +649,7 @@ export function DetailsTab({
           <div className="flex flex-col gap-2 rounded-md border border-dashed border-border/70 bg-muted/40 p-3">
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
               <KeyRound className="size-3.5" />
-              No runtime API key yet
+              No runtime key yet
             </span>
             <p className="text-2xs text-muted-foreground">
               Generate the stage&apos;s key to reveal the endpoint URLs.{" "}
@@ -663,7 +663,7 @@ export function DetailsTab({
                 disabled={isSavingKey}
                 onClick={() => void onGenerateKey?.()}
               >
-                {isSavingKey ? "Generating…" : "Generate API key"}
+                {isSavingKey ? "Generating…" : "Generate runtime key"}
               </Button>
             )}
           </div>
@@ -726,7 +726,7 @@ export function DetailsTab({
 
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
-                <SectionHeader>API Key (stage-wide)</SectionHeader>
+                <SectionHeader>Runtime Key</SectionHeader>
                 {canWrite && (
                   <Button
                     variant="ghost"
@@ -754,7 +754,9 @@ export function DetailsTab({
                     tone="muted"
                     className="shrink-0 cursor-pointer"
                     onClick={() => setShowApiKey(!showApiKey)}
-                    aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                    aria-label={
+                      showApiKey ? "Hide runtime key" : "Show runtime key"
+                    }
                   >
                     {showApiKey ? (
                       <EyeOff className="size-3" />
@@ -762,7 +764,7 @@ export function DetailsTab({
                       <Eye className="size-3" />
                     )}
                   </Button>
-                  <CopyButton value={deploymentApiKey} label="API key" />
+                  <CopyButton value={deploymentApiKey} label="runtime key" />
                 </div>
               ) : (
                 <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
@@ -915,7 +917,7 @@ export function DetailsTab({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rotate the stage API key?</DialogTitle>
+            <DialogTitle>Rotate the runtime key?</DialogTitle>
             <DialogDescription>
               This key is stage-wide. Every agent, channel webhook, and SDK
               client authenticating with the current key stops working the

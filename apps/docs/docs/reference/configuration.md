@@ -72,7 +72,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
 | `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
 | `policies`          | Policies that gate the agent. Each carries its own mode                                                |
-| `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                               |
+| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                     |
 | `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                           |
 
 ```ts

@@ -256,7 +256,7 @@ Channels use the same coordinator.
 
 Authorization finishes before any envelope exists.
 
-- An account secret keeps its account and agent ownership checks.
+- An account key keeps its account and agent ownership checks.
 - A runtime key keeps its project, stage, endpoint and agent scope. The HTTP path must match it, and WebSocket `control` and `attach` inherit the socket's scope.
 - Channel ingress keeps provider authentication and the configured account and agent route.
 

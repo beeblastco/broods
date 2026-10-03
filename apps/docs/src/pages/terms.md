@@ -11,7 +11,7 @@ Broods is an agent platform operated by BeeBlast B.V., Amsterdam, the Netherland
 
 ## Your account
 
-- You need an organization to use the service. You are responsible for everyone you invite to it and for keeping your account secret, deploy keys and runtime keys private.
+- You need an organization to use the service. You are responsible for everyone you invite to it and for keeping your account key, project keys and runtime keys private.
 - You must be at least 18 years old and able to enter a contract.
 - One person may create one free organization. Creating organizations to multiply free allowances is not allowed.
 

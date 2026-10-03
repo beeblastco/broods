@@ -147,7 +147,7 @@ A client attaches with the values `run_subagent` returned. `taskId` becomes the 
 
 ### Attach authorization
 
-The gateway protocol is unchanged. What is specific to children is who may attach with a stage runtime key:
+The gateway protocol is unchanged. What is specific to children is who may attach with a runtime key:
 
 - `taskId` is server-issued. It embeds a base64url parent correlation, which is encoding, not encryption, and must never carry confidential data. Core persists the child event before `run_subagent` returns. Public requests cannot use the reserved `subagent~` event namespace.
 - A runtime-key status or attach succeeds only when the child status row, the child agent and conversation scope, the durable parent ingress row, the active public parent, and the key's account, project, stage and endpoint all agree. The client never supplies parent scope. A private child, virtual or predefined, can be watched through its authorized public parent without becoming publicly runnable.

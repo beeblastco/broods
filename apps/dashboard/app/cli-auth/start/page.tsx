@@ -102,7 +102,7 @@ function isLocalCallback(value: string): boolean {
 /**
  * Bootstraps the caller's org the way the dashboard home does, provisions its
  * API account on a first login, then mints the one-time code. A CLI signup
- * never sees the provisioned account secret; it can be rotated under
+ * never sees the provisioned account key; it can be rotated under
  * Organization > API Access.
  */
 async function mintLoginCode(

@@ -67,7 +67,7 @@ export default function ProjectsPage(): React.JSX.Element {
                 No projects yet
               </p>
               <p className="max-w-sm text-sm text-muted-foreground">
-                A project holds your agents, stages, and deploy keys.
+                A project holds your agents, stages, and project keys.
               </p>
             </div>
             {canWrite && (

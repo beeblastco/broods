@@ -754,7 +754,7 @@ async function createAccount(
   assertStep(
     "create account (core, admin bearer)",
     response.status === 201 && typeof body.secret === "string",
-    `status ${response.status}: ${body.error ?? "no account secret in response"}`,
+    `status ${response.status}: ${body.error ?? "no account key in response"}`,
   );
 
   return body.secret;

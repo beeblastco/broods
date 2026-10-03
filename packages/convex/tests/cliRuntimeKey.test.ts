@@ -74,7 +74,7 @@ async function sha256Hex(value: string): Promise<string> {
 // These three functions are the CLI/core wire for a stage's runtime key. Their
 // `returns` validators are runtime-only, so a key renamed on one side alone is
 // invisible to `bun run check` and only fails when the function runs.
-describe("stage runtime key wire", () => {
+describe("runtime key wire", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -123,6 +123,8 @@ describe("stage runtime key wire", () => {
     expect(deployment!.stageSlug).toBe("production");
     expect(deployment!.projectSlug).toBe("demo-app");
     expect(deployment!.endpointId).toBe(`stage-${seeded.stageId.slice(-8)}`);
+    expect(deployment!.apiKey).toMatch(/^sk_[A-Za-z0-9_-]{43}$/);
+    expect(deployment!.keyHint).toBe(`sk_…${deployment!.apiKey.slice(-4)}`);
   });
 
   test("getByApiKeyHash hands core the same stage slug", async () => {

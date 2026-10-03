@@ -86,7 +86,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
               <p className="text-xs text-muted-foreground">
                 {activeStage?.isDefault
                   ? "The default stage can't be deleted."
-                  : "All agents, services, variables, deploy keys, and webhooks in this stage will be removed."}
+                  : "All agents, services, variables, project keys, and webhooks in this stage will be removed."}
               </p>
             </div>
             {canWrite && (

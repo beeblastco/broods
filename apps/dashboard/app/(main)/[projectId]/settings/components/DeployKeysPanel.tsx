@@ -80,9 +80,9 @@ export function DeployKeysPanel({
 
   if (!stageId) {
     return (
-      <Section description="Scoped CLI tokens that deploy only to this stage.">
+      <Section description="Project keys deploy and set variables on this stage only.">
         <p className="text-sm text-muted-foreground">
-          Select a stage to manage its deploy keys.
+          Select a stage to manage its project keys.
         </p>
       </Section>
     );
@@ -90,11 +90,11 @@ export function DeployKeysPanel({
 
   return (
     <>
-      <Section description="Scoped CLI tokens that deploy only to this stage.">
+      <Section description="Project keys deploy and set variables on this stage only.">
         {revealed && (
           <div className="rounded-md border border-success/40 bg-success/5 p-3">
             <p className="mb-1 text-xs font-medium text-foreground">
-              Copy this token now. It won&apos;t be shown again.
+              Copy this key now. It won&apos;t be shown again.
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs">
@@ -104,7 +104,7 @@ export function DeployKeysPanel({
                 variant="outline"
                 size="sm"
                 className="cursor-pointer"
-                aria-label="Copy token"
+                aria-label="Copy project key"
                 onClick={copyToken}
               >
                 {copied ? (
@@ -124,7 +124,7 @@ export function DeployKeysPanel({
             </div>
             {failed ? (
               <p role="alert" className="mt-1 text-xs text-destructive">
-                Copy failed. Try again or select and copy the token manually.
+                Copy failed. Try again or select and copy the key manually.
               </p>
             ) : null}
             <DeployCommand
@@ -136,7 +136,7 @@ export function DeployKeysPanel({
         )}
 
         {deployKeys && deployKeys.length === 0 && (
-          <p className="text-sm text-muted-foreground">No deploy keys yet.</p>
+          <p className="text-sm text-muted-foreground">No project keys yet.</p>
         )}
         <div className="grid gap-2">
           {deployKeys?.map((key) => (
@@ -172,7 +172,7 @@ export function DeployKeysPanel({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Key name (e.g. CI staging)"
-              aria-label="Deploy key name"
+              aria-label="Project key name"
               className="flex-1 text-sm"
               autoFocus
             />
@@ -205,7 +205,7 @@ export function DeployKeysPanel({
             onClick={() => setAdding(true)}
           >
             <Plus className="mr-1 size-3.5" />
-            New Deploy Key
+            New Project Key
           </Button>
         ) : null}
       </Section>
@@ -217,7 +217,7 @@ export function DeployKeysPanel({
             if (!open) setDeletingKey(null);
           }}
           resourceName={deletingKey.name}
-          resourceType="deploy key"
+          resourceType="project key"
           critical={false}
           onConfirm={handleDeleteKey}
           isDeleting={isDeletingKey}

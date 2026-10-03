@@ -1,5 +1,5 @@
 /**
- * Project + stage scoped runtime API keys (`fp_agent_…`).
+ * Project + stage scoped runtime keys (`sk_…`).
  *
  * One key per stage invokes any deployed agent in it; the agent is chosen
  * per request by id. The dashboard surfaces the key/URLs; the CLI mints it on
@@ -30,7 +30,7 @@ import {
   type ConfigAuditActor,
 } from "../model/auditEvents";
 import { accountDoc } from "../account/accounts";
-import { DEPLOYMENT_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
+import { RUNTIME_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
@@ -177,7 +177,7 @@ export const getByAgentId = internalQuery({
   },
 });
 
-/** Resolve a runtime API key hash to the account and scope it invokes. */
+/** Resolve a runtime key hash to the account and scope it invokes. */
 export const getByApiKeyHash = internalQuery({
   args: { apiKeyHash: v.string() },
   // The account rides along so core authenticates a runtime key in one call.
@@ -405,7 +405,7 @@ export const rotate = mutation({
       stageId: stageId,
       action: "key-rotated",
       endpointId: result.endpointId,
-      summary: "Stage runtime key rotated",
+      summary: "Runtime key rotated",
     });
 
     return toEnsureReturn(result);
@@ -540,13 +540,13 @@ async function decryptApiKey(deployment: {
   const value = (decoded as { value?: unknown } | null)?.value;
 
   if (typeof value !== "string")
-    throw new Error("Stored runtime API key is invalid");
+    throw new Error("Stored runtime key is invalid");
 
   return value;
 }
 
 function deploymentKeyHint(token: string): string {
-  return `${DEPLOYMENT_KEY_PREFIX}…${token.slice(-4)}`;
+  return `${RUNTIME_KEY_PREFIX}…${token.slice(-4)}`;
 }
 
 async function encryptApiKey(rawApiKey: string): Promise<{
@@ -571,7 +571,7 @@ function encryptionSecret(): string {
   const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
   if (!secret) {
     throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime API keys",
+      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime keys",
     );
   }
 
@@ -592,7 +592,7 @@ function generateDeploymentKey(): string {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  return `${DEPLOYMENT_KEY_PREFIX}${base64url}`;
+  return `${RUNTIME_KEY_PREFIX}${base64url}`;
 }
 
 /** Record a dashboard deployment mutation without storing runtime keys. */

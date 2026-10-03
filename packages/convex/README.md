@@ -38,7 +38,7 @@ by the stage owner (`environmentVariables.reveal` / CLI `env get`), and
 each reveal is recorded in the `environmentVariableReveals` audit table. Config
 mutations write account-visible rows to `configAuditEvents`, which the dashboard
 reads reactively.
-Stage runtime API keys are also stored AES-GCM encrypted alongside their
+Runtime keys are also stored AES-GCM encrypted alongside their
 authentication hash. Owners can recover them through the dashboard or CLI login
 without rotating.
 

@@ -59,7 +59,7 @@ export function assertStep(
 
 /**
  * Creates a machine sandbox and runs its daemon in-process on the account
- * secret until `stop`, because the `broods machine` CLI needs a dashboard login.
+ * key until `stop`, because the `broods machine` CLI needs a dashboard login.
  */
 export async function connectMachine(
   context: VerifyContext,

@@ -221,7 +221,7 @@ broods login --dashboard-url https://dashboard.example.com
 broods dev
 ```
 
-`login` records `BROODS_BASE_URL` in `.env.local`, so `broods run`, `broods logs` and SDK clients in the project reach the same deployment. A runtime key only works on the deployment that issued it; pointing a client elsewhere answers `401`. In CI, set `BROODS_TOKEN` to a deploy key and `BROODS_BASE_URL` instead.
+`login` records `BROODS_BASE_URL` in `.env.local`, so `broods run`, `broods logs` and SDK clients in the project reach the same deployment. A runtime key only works on the deployment that issued it; pointing a client elsewhere answers `401`. In CI, set `BROODS_TOKEN` to a project key and `BROODS_BASE_URL` instead.
 
 ## Webhook URLs
 

@@ -104,7 +104,7 @@ type RuntimeKeyMeta = Omit<RevealedKey, "apiKey">;
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The plaintext runtime key (fp_agent_…) for the active stage. */
+  /** The plaintext runtime key (sk_…) for the active stage. */
   apiKey: string;
   /** Whether the key was just minted (changes the title). */
   justCreated?: boolean;
@@ -147,7 +147,7 @@ export function RuntimeKeyDialog({
   );
 }
 
-/** The dashboard's "API key" tab: gateway URL, runtime key and a quickstart in one card. */
+/** The dashboard's "Runtime key" tab: gateway URL, runtime key and a quickstart in one card. */
 export function RuntimeKeyView({
   apiKey,
   revealed,
