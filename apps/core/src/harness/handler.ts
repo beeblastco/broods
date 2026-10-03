@@ -36,9 +36,15 @@ import {
   type CronRunRecord,
 } from "../shared/domain/cron.ts";
 import {
+  channelPrincipalChain,
+  directPrincipalChain,
+  runPrincipal,
+} from "../shared/domain/principal.ts";
+import {
   booleanEnv,
   getHarnessPublicUrl,
   positiveIntegerEnv,
+  WORKER_TIMEOUT_BUDGET_MS,
 } from "../shared/env.ts";
 import {
   errorResponse,
@@ -165,10 +171,6 @@ const WAIT_DEADLINE_MARGIN_MS = 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
-  "WORKER_TIMEOUT_BUDGET_MS",
-  10 * 60 * 1000,
-);
 const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
@@ -1624,6 +1626,10 @@ export async function handleChannelRequest(
     stageSlug: event.stageSlug,
     ownerGeneration: admission.ownerGeneration,
     channelActions: event.channel,
+    principal: runPrincipal(
+      event,
+      channelPrincipalChain(event.identity, event.channelName),
+    ),
   });
   // A queued worker starts later, from whichever run frees its slot, so it
   // takes this message's observability context rather than inheriting that one.
@@ -1861,6 +1867,10 @@ async function runChannelTurns(
         stageSlug: event.stageSlug,
         ownerGeneration: next.ownerGeneration,
         channelActions: event.channelFactory?.(source) ?? event.channel,
+        principal: runPrincipal(
+          { ...event, eventId: next.eventId },
+          channelPrincipalChain(identity, event.channelName),
+        ),
       });
       incoming = next.events as ConversationIngressEvent[];
       incomingEphemeral = next.ephemeralSystem ?? [];
@@ -2066,6 +2076,7 @@ function directSession(event: DirectInboundEvent): Session {
         ) ?? undefined)
       : undefined,
     trigger: event.cronRun ? "cron" : undefined,
+    principal: runPrincipal(event, directPrincipalChain(event)),
   });
 }
 

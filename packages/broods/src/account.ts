@@ -182,6 +182,15 @@ export interface AccountRole {
   updatedAt: string;
 }
 
+/** One link of an agent actor's delegation chain: who asked, or an agent that delegated. */
+export type AuditPrincipalLink =
+  | { kind: "user"; id: string; name?: string; channel?: string }
+  | {
+      kind: "api";
+      keyKind: "account" | "deployment" | "role" | "cli" | "cron";
+    }
+  | { kind: "agent"; agentId: string };
+
 /**
  * One row of the account's hash-chained audit ledger, as `GET /v1/audit`
  * serves it. `hash` is sha256 over the canonical JSON of every field but
@@ -201,6 +210,8 @@ export interface AuditEvent {
     email?: string;
     name?: string;
     agentId?: string;
+    /** On an agent actor: who asked, then each agent that delegated, oldest first. */
+    chain?: AuditPrincipalLink[];
   };
   action: string;
   resource: { kind: string; id?: string; name?: string };

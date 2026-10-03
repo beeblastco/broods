@@ -14,6 +14,7 @@ import {
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
+import { delegatedChain, runPrincipal } from "../shared/domain/principal.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
@@ -724,6 +725,13 @@ export class SubagentCoordinator {
       trigger: this.parentSession.trigger,
       persist: task.persistent,
       policyDelivery: this.parentSession.policyDelivery,
+      // The child acts as its own agent, delegated to by the parent's chain.
+      principal: this.parentSession.principal
+        ? runPrincipal(
+            { ...task, accountId: this.parentSession.principal.accountId },
+            delegatedChain(this.parentSession.principal),
+          )
+        : undefined,
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;

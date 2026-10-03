@@ -23,12 +23,14 @@ import type {
   ChannelPartition,
   AgentConfig,
 } from "../shared/domain/agent-config.ts";
+import type { Principal } from "../shared/domain/principal.ts";
 import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
 import { logDebug, logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
+import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -268,6 +270,9 @@ export interface SessionOptions {
   trigger?: RunTrigger;
   // false keeps an ephemeral subagent's messages out of Convex.
   persist?: boolean;
+  // Who this run acts as and who asked. Set on every session that runs the
+  // agent loop; a context-only session (command, claim, failure) has none.
+  principal?: Principal;
 }
 
 /**
@@ -294,7 +299,9 @@ export class Session {
   readonly ownerGeneration: number | undefined;
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
+  readonly principal: Principal | undefined;
   private readonly agentConfig: AgentConfig;
+  private mintedRunToken: string | undefined;
   private readonly persist: boolean;
   private messageSequence = 0;
   private lastSystemCursor: string | null = null;
@@ -331,7 +338,16 @@ export class Session {
     this.ownerGeneration = options.ownerGeneration;
     this.channelActions = options.channelActions;
     this.trigger = options.trigger;
+    this.principal = options.principal;
     this.persist = options.persist ?? true;
+  }
+
+  /** The run's `fp_run_` bearer, minted on first use so a run with no sandbox exec never signs one. */
+  runToken(): string | undefined {
+    if (!this.principal) return undefined;
+    this.mintedRunToken ??= sealRunToken(this.principal);
+
+    return this.mintedRunToken;
   }
 
   /** Rejects a side effect when this run no longer owns the conversation. */

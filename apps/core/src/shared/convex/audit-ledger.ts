@@ -17,7 +17,11 @@ export const auditLedger: Storage["auditLedger"] = {
         {
           accountId: input.accountId,
           traceId: input.traceId,
-          actor: { kind: "agent", agentId: input.agentId },
+          actor: {
+            kind: "agent",
+            agentId: input.agentId,
+            chain: input.chain,
+          },
           action: input.action,
           resource: input.resource,
           summary: input.summary,
