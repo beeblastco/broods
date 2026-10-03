@@ -34,9 +34,10 @@ export async function handleSandboxConfigRoute(
   actor: ConfigAuditActor,
   sandboxId?: string,
 ): Promise<Response> {
-  const cipher = await accountCipherForAction(ctx, accountId);
   if (!sandboxId) {
     if (req.method === "GET") {
+      const cipher = await accountCipherForAction(ctx, accountId, "read");
+
       return collectionPage("sandboxes", req, {
         all: () =>
           ctx.runQuery(internal.sandbox.configs.list, {
@@ -56,6 +57,7 @@ export async function handleSandboxConfigRoute(
     }
     if (req.method === "POST") {
       const input = normalizeCreateSandboxConfigInput(await req.json());
+      const cipher = await accountCipherForAction(ctx, accountId, "write");
       const encrypted = await encryptSandboxConfig(cipher, input.config);
       const createdId: Id<"sandboxConfigs"> = await ctx.runMutation(
         internal.sandbox.configs.create,
@@ -112,7 +114,10 @@ export async function handleSandboxConfigRoute(
       ? json(
           toPublicSandboxConfigResponse(
             record,
-            await decryptSandboxConfig(cipher, record),
+            await decryptSandboxConfig(
+              await accountCipherForAction(ctx, accountId, "read"),
+              record,
+            ),
           ),
         )
       : jsonError(404, "Sandbox not found");
@@ -126,6 +131,7 @@ export async function handleSandboxConfigRoute(
       },
     );
     if (!existing) return jsonError(404, "Sandbox not found");
+    const cipher = await accountCipherForAction(ctx, accountId, "write");
     const existingConfig = await decryptSandboxConfig(cipher, existing);
     const patch = normalizeUpdateSandboxConfigInput(
       existingConfig,

@@ -318,11 +318,6 @@ export async function pushEncryptedConfigToAgentRow(
 ): Promise<void> {
   const config = await ctx.db.get(configId);
   if (!config?.agentId) return;
-  if (!hasEncryptionSecret()) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET must be configured before syncing agent runtime config.",
-    );
-  }
   const normalized = ctx.db.normalizeId("agents", config.agentId);
   if (!normalized) return;
   const agent = await ctx.db.get(normalized);

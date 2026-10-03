@@ -13,18 +13,14 @@ import {
   type MutationCtx,
 } from "../_generated/server";
 import {
-  ENVELOPE_TABLES,
-  type EnvelopeTable,
   encryptionSecrets,
   ensureWrappedKeys,
   listWrappedKeys,
+  mintKey,
   reencryptBatch,
+  reencryptWalkArgs,
 } from "../model/accountKeys";
-import {
-  createWrappedAccountKey,
-  rewrapAccountKey,
-  type WrappedAccountKey,
-} from "../model/envelope";
+import { rewrapAccountKey, type WrappedAccountKey } from "../model/envelope";
 
 const wrappedKeyValidator = v.object({
   keyId: v.string(),
@@ -32,10 +28,6 @@ const wrappedKeyValidator = v.object({
   wrappedKey: v.string(),
   retiredAt: v.optional(v.number()),
 });
-
-const envelopeTableValidator = v.union(
-  ...ENVELOPE_TABLES.map((table) => v.literal(table)),
-);
 
 /** The account's keys, minting the first when it has none. For actions, which cannot read `ctx.db`. */
 export const ensure = internalMutation({
@@ -76,11 +68,8 @@ export const rewrapAllKeys = internalMutation({
     let rewrapped = 0;
     for (const row of page.page) {
       const next = await rewrapAccountKey(row.accountId, secrets, row);
-      if (next.kekId === row.kekId) continue;
-      await ctx.db.patch(row._id, {
-        kekId: next.kekId,
-        wrappedKey: next.wrappedKey,
-      });
+      if (!next) continue;
+      await ctx.db.patch(row._id, next);
       rewrapped += 1;
     }
     if (!page.isDone) {
@@ -101,25 +90,15 @@ export const rewrapAllKeys = internalMutation({
  * @returns rows rewritten in this batch and whether the rotation finished
  */
 export const rotateAccountKey = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    table: v.optional(envelopeTableValidator),
-    cursor: v.optional(v.union(v.string(), v.null())),
-  },
+  args: { accountId: v.id("accounts"), ...reencryptWalkArgs },
   returns: v.object({ patched: v.number(), isDone: v.boolean() }),
   handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
     if (args.table === undefined) await mintKey(ctx, args.accountId);
-    const table: EnvelopeTable = args.table ?? ENVELOPE_TABLES[0];
-    const batch = await reencryptBatch(ctx, {
-      table: table,
-      cursor: args.cursor ?? null,
-      accountId: args.accountId,
-    });
-    const next = nextStep(table, batch);
-    if (next) {
+    const batch = await reencryptBatch(ctx, args);
+    if (batch.next) {
       await ctx.scheduler.runAfter(0, internal.account.keys.rotateAccountKey, {
         accountId: args.accountId,
-        ...next,
+        ...batch.next,
       });
 
       return { patched: batch.patched, isDone: false };
@@ -129,29 +108,6 @@ export const rotateAccountKey = internalMutation({
     return { patched: batch.patched, isDone: true };
   },
 });
-
-/** The walk's next `{table, cursor}`, or null once the last table is done. */
-export function nextStep(
-  table: EnvelopeTable,
-  batch: { isDone: boolean; continueCursor: string },
-): { table: EnvelopeTable; cursor: string | null } | null {
-  if (!batch.isDone) return { table: table, cursor: batch.continueCursor };
-  const following = ENVELOPE_TABLES[ENVELOPE_TABLES.indexOf(table) + 1];
-
-  return following ? { table: following, cursor: null } : null;
-}
-
-async function mintKey(
-  ctx: MutationCtx,
-  accountId: Id<"accounts">,
-): Promise<void> {
-  const created = await createWrappedAccountKey(accountId, encryptionSecrets());
-  await ctx.db.insert("accountKeys", {
-    ...created,
-    accountId: accountId,
-    createdAt: Date.now(),
-  });
-}
 
 /** Every key but the newest live one stops opening blobs. */
 async function retireOlderKeys(

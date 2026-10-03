@@ -31,11 +31,10 @@ export async function loadAgentRuntimeSecrets(
     ctx,
     await accountIdForConfig(ctx, configId),
   );
-  const decrypted = await cipher.decrypt("agentRuntimeSecrets:ciphertext", {
-    ciphertext: stored.ciphertext,
-    iv: stored.iv,
-    tag: stored.tag,
-  });
+  const decrypted = await cipher.decrypt(
+    "agentRuntimeSecrets:ciphertext",
+    stored,
+  );
   if (!decrypted) {
     throw new Error("Failed to decrypt runtime variables");
   }

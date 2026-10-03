@@ -84,7 +84,7 @@ export async function handleAgentChannelDirectoryRoute(
   // The resolved config (env placeholders substituted), not the public-read
   // source config. This is the same view the runtime uses to post messages.
   const config = await decryptAgentConfig(
-    await accountCipherForAction(ctx, accountId),
+    await accountCipherForAction(ctx, accountId, "read"),
     record,
   );
   const channels = isPlainObject(config.channels) ? config.channels : undefined;
@@ -133,13 +133,15 @@ export async function handleAgentConfigRoute(
         agentId: agentId,
       },
     );
-    const cipher = await accountCipherForAction(ctx, accountId);
 
     return record
       ? json(
           toPublicAgentResponse(
             record,
-            await decryptAgentConfigForPublicRead(cipher, record),
+            await decryptAgentConfigForPublicRead(
+              await accountCipherForAction(ctx, accountId, "read"),
+              record,
+            ),
           ),
         )
       : jsonError(404, "Agent not found");
@@ -221,8 +223,9 @@ async function handleAgentCollectionRoute(
   accountId: Id<"accounts">,
   actor: ConfigAuditActor,
 ): Promise<Response> {
-  const cipher = await accountCipherForAction(ctx, accountId);
   if (req.method === "GET") {
+    const cipher = await accountCipherForAction(ctx, accountId, "read");
+
     return collectionPage("agents", req, {
       all: () =>
         ctx.runQuery(internal.agent.agents.list, { accountId: accountId }),
@@ -260,7 +263,7 @@ async function handleAgentCollectionRoute(
     canonicalizeAgentSkillPaths(accountId, input.config);
     const config = await prepareAccountAgentConfig(
       ctx,
-      cipher,
+      await accountCipherForAction(ctx, accountId, "write"),
       accountId,
       input.config,
     );
@@ -329,7 +332,7 @@ async function patchAgentConfigRoute(
     },
   );
   if (!existing) return jsonError(404, "Agent not found");
-  const cipher = await accountCipherForAction(ctx, accountId);
+  const cipher = await accountCipherForAction(ctx, accountId, "write");
   const existingConfig = await decryptAgentConfigForPublicRead(
     cipher,
     existing,

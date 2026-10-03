@@ -6,6 +6,7 @@
  * functions that expose this live in `account/keys.ts` and `migrations.ts`.
  */
 
+import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
@@ -15,139 +16,87 @@ import {
   type BlobScope,
   createWrappedAccountKey,
   type EncryptedBlob,
-  parseEncryptionSecrets,
+  ENVELOPE_COLUMNS,
+  ENVELOPE_TABLES,
+  type EnvelopeTable,
   type WrappedAccountKey,
 } from "./envelope";
-
-/** Every table with an envelope-encrypted column, in the order a full walk visits them. */
-export const ENVELOPE_TABLES = [
-  "agents",
-  "sandboxConfigs",
-  "environmentVariables",
-  "accountEnvVars",
-  "agentRuntimeSecrets",
-  "agentDeployments",
-  "channelEndpoints",
-  "connections",
-] as const;
-
-export type EnvelopeTable = (typeof ENVELOPE_TABLES)[number];
 
 /** Rows one batch of a walk reads; each may cost several crypto operations. */
 const REENCRYPT_BATCH_SIZE = 50;
 
-/** The column triple holding one blob, and the scope it is bound to. */
-interface BlobColumns {
-  ciphertext: string;
-  iv: string;
-  tag: string;
-  scope: BlobScope;
-}
+/** A listed column with its three field names checked against the table's schema. */
+type SchemaColumn = {
+  [T in EnvelopeTable]: {
+    table: T;
+    scope: BlobScope;
+    ciphertext: keyof Doc<T>;
+    iv: keyof Doc<T>;
+    tag: keyof Doc<T>;
+  };
+}[EnvelopeTable];
 
-const BLOB_COLUMNS: Record<EnvelopeTable, BlobColumns[]> = {
-  accountEnvVars: [
-    {
-      ciphertext: "ciphertext",
-      iv: "iv",
-      tag: "tag",
-      scope: "accountEnvVars:ciphertext",
-    },
-  ],
-  agentDeployments: [
-    {
-      ciphertext: "apiKeyCiphertext",
-      iv: "apiKeyIv",
-      tag: "apiKeyTag",
-      scope: "agentDeployments:apiKeyCiphertext",
-    },
-  ],
-  agentRuntimeSecrets: [
-    {
-      ciphertext: "ciphertext",
-      iv: "iv",
-      tag: "tag",
-      scope: "agentRuntimeSecrets:ciphertext",
-    },
-  ],
-  agents: [
-    {
-      ciphertext: "encryptedConfig",
-      iv: "encryptionIv",
-      tag: "encryptionTag",
-      scope: "agents:encryptedConfig",
-    },
-    {
-      ciphertext: "encryptedSourceConfig",
-      iv: "sourceEncryptionIv",
-      tag: "sourceEncryptionTag",
-      scope: "agents:encryptedSourceConfig",
-    },
-  ],
-  channelEndpoints: [
-    {
-      ciphertext: "tokenCiphertext",
-      iv: "tokenIv",
-      tag: "tokenTag",
-      scope: "channelEndpoints:tokenCiphertext",
-    },
-  ],
-  connections: [
-    {
-      ciphertext: "ciphertext",
-      iv: "iv",
-      tag: "tag",
-      scope: "connections:ciphertext",
-    },
-  ],
-  environmentVariables: [
-    {
-      ciphertext: "ciphertext",
-      iv: "iv",
-      tag: "tag",
-      scope: "environmentVariables:ciphertext",
-    },
-  ],
-  sandboxConfigs: [
-    {
-      ciphertext: "encryptedConfig",
-      iv: "encryptionIv",
-      tag: "encryptionTag",
-      scope: "sandboxConfigs:encryptedConfig",
-    },
-    {
-      ciphertext: "encryptedSourceConfig",
-      iv: "sourceEncryptionIv",
-      tag: "sourceEncryptionTag",
-      scope: "sandboxConfigs:encryptedSourceConfig",
-    },
-  ],
+/** `ENVELOPE_COLUMNS` as the walk reads it; a column the schema does not have fails to compile here. */
+const SCHEMA_COLUMNS: readonly SchemaColumn[] = ENVELOPE_COLUMNS;
+
+/** Keyrings built so far in one request, so touching an account many times reads its keys once. */
+const requestCiphers = new WeakMap<
+  QueryCtx | MutationCtx,
+  Map<Id<"accounts">, AccountCipher>
+>();
+
+/** The continuation arguments of a walk; a first call passes neither. */
+export const reencryptWalkArgs = {
+  table: v.optional(
+    v.union(...ENVELOPE_TABLES.map((table) => v.literal(table))),
+  ),
+  cursor: v.optional(v.union(v.string(), v.null())),
 };
 
-/** A read-only keyring: decrypts every key the account holds, encrypts only once a key exists. */
+/**
+ * A read-only keyring: decrypts every key the account holds, encrypts only
+ * once a key exists. Built once per request and reused from then on.
+ */
 export async function accountCipher(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
 ): Promise<AccountCipher> {
-  return new AccountCipher(
-    accountId,
-    encryptionSecrets(),
-    await listWrappedKeys(ctx, accountId),
-  );
+  let ciphers = requestCiphers.get(ctx);
+  if (!ciphers) {
+    ciphers = new Map();
+    requestCiphers.set(ctx, ciphers);
+  }
+  let cipher = ciphers.get(accountId);
+  if (!cipher) {
+    cipher = new AccountCipher(
+      accountId,
+      encryptionSecrets(),
+      await listWrappedKeys(ctx, accountId),
+    );
+    ciphers.set(accountId, cipher);
+  }
+
+  return cipher;
 }
 
 /**
- * The keyring from an HTTP action, which has no `ctx.db`: one mutation call
- * fetches the keys and mints the first when the account has none. Build it
- * once per request and pass it down, not once per row.
+ * The keyring from an HTTP action, which has no `ctx.db`. A `read` fetches the
+ * keys with a query; a `write` runs the mutation that mints the first key when
+ * the account has none. Build it once per request and pass it down.
  */
 export async function accountCipherForAction(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
+  mode: "read" | "write",
 ): Promise<AccountCipher> {
-  const keys: WrappedAccountKey[] = await ctx.runMutation(
-    internal.account.keys.ensure,
-    { accountId: accountId },
-  );
+  const keys: WrappedAccountKey[] =
+    mode === "write"
+      ? await ctx.runMutation(internal.account.keys.ensure, {
+          accountId: accountId,
+        })
+      : await ctx.runQuery(internal.account.keys.list, {
+          accountId: accountId,
+        });
 
   return new AccountCipher(accountId, encryptionSecrets(), keys);
 }
@@ -157,11 +106,11 @@ export async function accountCipherForWrite(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
 ): Promise<AccountCipher> {
-  return new AccountCipher(
-    accountId,
-    encryptionSecrets(),
-    await ensureWrappedKeys(ctx, accountId),
-  );
+  const cipher = await accountCipher(ctx, accountId);
+  if (cipher.keyId !== null) return cipher;
+  await mintKey(ctx, accountId);
+
+  return await accountCipher(ctx, accountId);
 }
 
 /**
@@ -174,19 +123,28 @@ export async function ensureWrappedKeys(
 ): Promise<WrappedAccountKey[]> {
   const keys = await listWrappedKeys(ctx, accountId);
   if (keys.some((key) => key.retiredAt === undefined)) return keys;
-  const created = await createWrappedAccountKey(accountId, encryptionSecrets());
-  await ctx.db.insert("accountKeys", {
-    ...created,
-    accountId: accountId,
-    createdAt: Date.now(),
-  });
 
-  return [...keys, created];
+  return [...keys, await mintKey(ctx, accountId)];
 }
 
-/** `ACCOUNT_CONFIG_ENCRYPTION_SECRET` as a list: first wraps, all unwrap. */
+/**
+ * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` as a list, split the way core's
+ * `requireSecretsEnv` does: comma-separated, first wraps, every entry unwraps.
+ */
 export function encryptionSecrets(): string[] {
-  return parseEncryptionSecrets(process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET);
+  const secrets = [
+    ...new Set(
+      (process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (secrets.length === 0) {
+    throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");
+  }
+
+  return secrets;
 }
 
 /** True when the deployment holds an encryption secret at all. */
@@ -204,52 +162,82 @@ export async function listWrappedKeys(
     .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
     .collect();
 
-  return rows.map(wrappedKeyOf);
+  return rows.map((row) => ({
+    keyId: row.keyId,
+    kekId: row.kekId,
+    wrappedKey: row.wrappedKey,
+    retiredAt: row.retiredAt,
+  }));
+}
+
+/** Stores a fresh key for the account; every keyring built from here on seals under it. */
+export async function mintKey(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+): Promise<WrappedAccountKey> {
+  const created = await createWrappedAccountKey(accountId, encryptionSecrets());
+  await ctx.db.insert("accountKeys", {
+    ...created,
+    accountId: accountId,
+    createdAt: Date.now(),
+  });
+  requestCiphers.get(ctx)?.delete(accountId);
+
+  return created;
 }
 
 /**
- * One batch of a walk over `table`: every row whose blob is not under its
- * account's current key is decrypted and written back under it, so the same
- * walk serves the legacy migration and a key rotation. With `accountId` only
- * that account's rows are rewritten; the table is still paged in full since
- * two of them have no account index. A blob that does not decrypt throws, so
- * a bad secret stops the walk instead of skipping rows.
+ * One batch of a walk over every encrypted table: each row whose blob is not
+ * under its account's current key is decrypted and written back under it, so
+ * the same walk serves the legacy migration and a key rotation. With
+ * `accountId` only that account's rows are rewritten; the table is still paged
+ * in full since two of them have no account index. A blob that does not
+ * decrypt throws, so a bad secret stops the walk instead of skipping rows.
+ * @returns rows rewritten, and the arguments of the next batch or null once the last table is done
  */
 export async function reencryptBatch(
   ctx: MutationCtx,
   args: {
-    table: EnvelopeTable;
-    cursor: string | null;
+    table?: EnvelopeTable;
+    cursor?: string | null;
     accountId?: Id<"accounts">;
   },
-): Promise<{ patched: number; isDone: boolean; continueCursor: string }> {
+): Promise<{
+  patched: number;
+  next: { table: EnvelopeTable; cursor: string | null } | null;
+}> {
+  const table = args.table ?? ENVELOPE_COLUMNS[0].table;
   const page = await ctx.db
-    .query(args.table)
-    .paginate({ numItems: REENCRYPT_BATCH_SIZE, cursor: args.cursor });
-  const ciphers = new Map<Id<"accounts">, AccountCipher>();
+    .query(table)
+    .paginate({ numItems: REENCRYPT_BATCH_SIZE, cursor: args.cursor ?? null });
   let patched = 0;
   for (const row of page.page) {
     const accountId = await accountIdForRow(ctx, row);
     if (!accountId || (args.accountId && accountId !== args.accountId)) {
       continue;
     }
-    let cipher = ciphers.get(accountId);
-    if (!cipher) {
-      cipher = await accountCipherForWrite(ctx, accountId);
-      ciphers.set(accountId, cipher);
-    }
-    const patch = await reencryptRow(args.table, row, cipher);
+    const patch = await reencryptRow(
+      table,
+      row,
+      await accountCipherForWrite(ctx, accountId),
+    );
     if (!patch) continue;
-    // The column names come from the static table map above, which is what
-    // keeps the patch sound; the generic row type cannot express that.
+    // `SCHEMA_COLUMNS` proves the patched fields exist on the table; the
+    // row type of a table chosen at runtime cannot express that.
     await ctx.db.patch(row._id, patch as Partial<Doc<EnvelopeTable>>);
     patched += 1;
   }
+  if (!page.isDone) {
+    return {
+      patched: patched,
+      next: { table: table, cursor: page.continueCursor },
+    };
+  }
+  const following = ENVELOPE_TABLES[ENVELOPE_TABLES.indexOf(table) + 1];
 
   return {
     patched: patched,
-    isDone: page.isDone,
-    continueCursor: page.continueCursor,
+    next: following ? { table: following, cursor: null } : null,
   };
 }
 
@@ -284,10 +272,11 @@ async function reencryptRow(
   row: Doc<EnvelopeTable>,
   cipher: AccountCipher,
 ): Promise<Record<string, string> | null> {
-  const columns: Record<string, unknown> = row;
+  const fields: Record<string, unknown> = row;
   const patch: Record<string, string> = {};
-  for (const column of BLOB_COLUMNS[table]) {
-    const blob = blobAt(columns, column);
+  for (const column of SCHEMA_COLUMNS) {
+    if (column.table !== table) continue;
+    const blob = blobAt(fields, column);
     if (!blob || !cipher.needsRewrite(blob)) continue;
     const value = await cipher.decrypt(column.scope, blob);
     if (!value) {
@@ -308,7 +297,7 @@ async function reencryptRow(
 
 function blobAt(
   row: Record<string, unknown>,
-  column: BlobColumns,
+  column: SchemaColumn,
 ): EncryptedBlob | null {
   const ciphertext = row[column.ciphertext];
   const iv = row[column.iv];
@@ -319,13 +308,4 @@ function blobAt(
     typeof tag === "string"
     ? { ciphertext: ciphertext, iv: iv, tag: tag }
     : null;
-}
-
-function wrappedKeyOf(row: Doc<"accountKeys">): WrappedAccountKey {
-  return {
-    keyId: row.keyId,
-    kekId: row.kekId,
-    wrappedKey: row.wrappedKey,
-    ...(row.retiredAt !== undefined ? { retiredAt: row.retiredAt } : {}),
-  };
 }

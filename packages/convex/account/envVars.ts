@@ -147,11 +147,7 @@ async function loadValuesForAccount(
   const cipher = await accountCipher(ctx, accountId);
   const values: Record<string, string> = {};
   for (const row of rows) {
-    const decrypted = await cipher.decrypt("accountEnvVars:ciphertext", {
-      ciphertext: row.ciphertext,
-      iv: row.iv,
-      tag: row.tag,
-    });
+    const decrypted = await cipher.decrypt("accountEnvVars:ciphertext", row);
     // Fail loudly: silently resolving to "" would bake an empty secret
     // into an agent's live config instead of surfacing the corruption.
     if (typeof decrypted?.value !== "string") {

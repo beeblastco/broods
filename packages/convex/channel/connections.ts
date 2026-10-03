@@ -23,13 +23,11 @@
 
 import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
-import type { Id } from "../_generated/dataModel";
 import { accountCipher, encryptionSecrets } from "../model/accountKeys";
 import {
   channelEndpointBotToken,
   refreshAccountChannelEndpoints,
 } from "../model/channelEndpoints";
-import type { AccountCipher } from "../model/envelope";
 
 const channelConnectionValidator = v.object({
   agentId: v.string(),
@@ -61,16 +59,12 @@ export const listConnections = internalQuery({
       .query("channelEndpoints")
       .withIndex("by_platform", (q) => q.eq("platform", args.channel))
       .collect();
-    // Rows span every account, so each account's keyring is built once.
-    const ciphers = new Map<Id<"accounts">, AccountCipher>();
     const connections: ChannelConnection[] = [];
     for (const row of rows) {
-      let cipher = ciphers.get(row.accountId);
-      if (!cipher) {
-        cipher = await accountCipher(ctx, row.accountId);
-        ciphers.set(row.accountId, cipher);
-      }
-      const botToken = await channelEndpointBotToken(row, cipher);
+      const botToken = await channelEndpointBotToken(
+        row,
+        await accountCipher(ctx, row.accountId),
+      );
       if (!botToken) continue;
       connections.push({
         agentId: row.agentId,

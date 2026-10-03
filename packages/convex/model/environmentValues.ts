@@ -155,11 +155,10 @@ export async function loadEnvironmentVariableValues(
   );
   const values: Record<string, string> = {};
   for (const row of rows) {
-    const decrypted = await cipher.decrypt("environmentVariables:ciphertext", {
-      ciphertext: row.ciphertext,
-      iv: row.iv,
-      tag: row.tag,
-    });
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      row,
+    );
     const value = decrypted?.value;
     values[row.name] = typeof value === "string" ? value : "";
   }

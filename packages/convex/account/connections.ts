@@ -187,7 +187,7 @@ export const revoke = internalAction({
   handler: async (ctx, args): Promise<null> => {
     try {
       const secrets = await decryptSecrets(
-        await accountCipherForAction(ctx, args.accountId),
+        await accountCipherForAction(ctx, args.accountId, "read"),
         args,
       );
       const response = await fetch(args.revokeUrl, {
@@ -218,11 +218,7 @@ async function decryptSecrets(
   cipher: AccountCipher,
   blob: EncryptedBlob,
 ): Promise<ConnectionSecrets> {
-  const secrets = await cipher.decrypt("connections:ciphertext", {
-    ciphertext: blob.ciphertext,
-    iv: blob.iv,
-    tag: blob.tag,
-  });
+  const secrets = await cipher.decrypt("connections:ciphertext", blob);
   if (
     typeof secrets?.accessToken !== "string" ||
     typeof secrets.refreshToken !== "string"

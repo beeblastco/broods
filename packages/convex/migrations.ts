@@ -8,12 +8,7 @@
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { nextStep } from "./account/keys";
-import {
-  ENVELOPE_TABLES,
-  type EnvelopeTable,
-  reencryptBatch,
-} from "./model/accountKeys";
+import { reencryptBatch, reencryptWalkArgs } from "./model/accountKeys";
 
 /**
  * Move every legacy blob (AES-GCM under the global secret, no `v2:` prefix)
@@ -25,29 +20,19 @@ import {
  * @returns rows rewritten in this batch and whether the whole walk finished
  */
 export const migrateToEnvelope = internalMutation({
-  args: {
-    table: v.optional(
-      v.union(...ENVELOPE_TABLES.map((table) => v.literal(table))),
-    ),
-    cursor: v.optional(v.union(v.string(), v.null())),
-  },
+  args: reencryptWalkArgs,
   returns: v.object({ patched: v.number(), isDone: v.boolean() }),
   handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
-    const table: EnvelopeTable = args.table ?? ENVELOPE_TABLES[0];
-    const batch = await reencryptBatch(ctx, {
-      table: table,
-      cursor: args.cursor ?? null,
-    });
-    const next = nextStep(table, batch);
-    if (next) {
+    const batch = await reencryptBatch(ctx, args);
+    if (batch.next) {
       await ctx.scheduler.runAfter(
         0,
         internal.migrations.migrateToEnvelope,
-        next,
+        batch.next,
       );
     }
 
-    return { patched: batch.patched, isDone: next === null };
+    return { patched: batch.patched, isDone: batch.next === null };
   },
 });
 

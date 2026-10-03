@@ -75,13 +75,16 @@ describe("envelope codec", () => {
       VALUE,
     );
 
-    const rewrapped = await rewrapAccountKey(
+    const patch = await rewrapAccountKey(
       ACCOUNT,
       ["kek-new", "kek-old"],
       keys[0]!,
     );
-    expect(rewrapped.keyId).toBe(keys[0]!.keyId);
+    const rewrapped = { ...keys[0]!, ...patch };
     expect(rewrapped.kekId).toBe(await kekIdOf("kek-new"));
+    expect(
+      await rewrapAccountKey(ACCOUNT, ["kek-new", "kek-old"], rewrapped),
+    ).toBeNull();
     expect(
       await new AccountCipher(ACCOUNT, ["kek-new"], [rewrapped]).decrypt(
         "connections:ciphertext",

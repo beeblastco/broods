@@ -447,11 +447,10 @@ export const getEnvBySecretHash = internalMutation({
     if (!existing) return null;
 
     const cipher = await accountCipher(ctx, account._id);
-    const decrypted = await cipher.decrypt("environmentVariables:ciphertext", {
-      ciphertext: existing.ciphertext,
-      iv: existing.iv,
-      tag: existing.tag,
-    });
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      existing,
+    );
     const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {

@@ -11,10 +11,9 @@ import {
   AccountCipher,
   type BlobScope,
   type EncryptedBlob,
-  parseEncryptionSecrets,
   type WrappedAccountKey,
 } from "@broods/convex/model/envelope";
-import { requireEnv } from "../env.ts";
+import { requireSecretsEnv } from "../env.ts";
 import { getConvexClient } from "./client.ts";
 
 const KEYRING_TTL_MS = 5 * 60_000;
@@ -22,8 +21,9 @@ const KEYRING_TTL_MS = 5 * 60_000;
 /** Fetches an account's wrapped keys; swapped out by tests. */
 type WrappedKeyLoader = (accountId: string) => Promise<WrappedAccountKey[]>;
 
+/** The promise is cached, not its result, so concurrent decrypts share one load. */
 interface CachedKeyring {
-  cipher: AccountCipher;
+  cipher: Promise<AccountCipher>;
   expiresAt: number;
 }
 
@@ -71,17 +71,25 @@ export function resetAccountKeysForTests(
   loader = loaderOverride ?? loadFromConvex;
 }
 
-async function keyringFor(accountId: string): Promise<AccountCipher> {
+function keyringFor(accountId: string): Promise<AccountCipher> {
   const cached = keyrings.get(accountId);
   if (cached && cached.expiresAt > Date.now()) return cached.cipher;
-  const cipher = new AccountCipher(
-    accountId,
-    parseEncryptionSecrets(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET")),
-    await loader(accountId),
+  const cipher = loader(accountId).then(
+    (keys) =>
+      new AccountCipher(
+        accountId,
+        requireSecretsEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"),
+        keys,
+      ),
   );
-  keyrings.set(accountId, {
+  const entry: CachedKeyring = {
     cipher: cipher,
     expiresAt: Date.now() + KEYRING_TTL_MS,
+  };
+  keyrings.set(accountId, entry);
+  // A failed load is not kept for the whole window.
+  cipher.catch(() => {
+    if (keyrings.get(accountId) === entry) keyrings.delete(accountId);
   });
 
   return cipher;

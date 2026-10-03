@@ -155,11 +155,10 @@ export const reveal = mutation({
       ctx,
       await requireAccountIdForProject(ctx, projectId),
     );
-    const decrypted = await cipher.decrypt("environmentVariables:ciphertext", {
-      ciphertext: variable.ciphertext,
-      iv: variable.iv,
-      tag: variable.tag,
-    });
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      variable,
+    );
     const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {
