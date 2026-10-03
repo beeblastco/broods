@@ -37,6 +37,7 @@ import {
 } from "../shared/domain/cron.ts";
 import {
   channelPrincipalChain,
+  delegatedChain,
   directPrincipalChain,
   runPrincipal,
 } from "../shared/domain/principal.ts";
@@ -2386,6 +2387,10 @@ async function dispatchSessionMessage(
       channelName: delivery.channel,
       source: delivery.source ?? {},
     },
+    // The sending run asked, so the run it starts records that agent.
+    ...(session.principal
+      ? { principalChain: delegatedChain(session.principal) }
+      : {}),
   };
   const admission = await acceptIngress(candidate);
   await dispatchRecoveredIngress(event, admission);
