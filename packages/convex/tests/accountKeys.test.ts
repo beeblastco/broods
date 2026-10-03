@@ -7,6 +7,7 @@ import {
   accountCipher,
   accountCipherForWrite,
   listWrappedKeys,
+  mintKey,
   requireAccountIdForProject,
 } from "../model/accountKeys";
 import { clientErrorData } from "../model/clientError";
@@ -246,6 +247,57 @@ test("running rotateAccountKey again joins the rotation under way instead of min
     1,
   );
   expect(after.config).toEqual({ model: { provider: "deepseek" } });
+});
+
+test("a walk that finishes after a newer rotation began leaves the retiring to that rotation", async () => {
+  vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", SECRET);
+  vi.useFakeTimers();
+  const tt = convexTest(schema, modules);
+  const scope = await seedAccount(tt, "beeblast");
+  const rows = await seedEncryptedRows(tt, scope);
+  const agentConfig = async (): Promise<Record<string, unknown> | null> =>
+    await tt.run(async (ctx) => {
+      const agent = (await ctx.db.get(rows.agentId))!;
+
+      return await (
+        await accountCipher(ctx, scope.accountId)
+      ).decrypt("agents:encryptedConfig", {
+        ciphertext: agent.encryptedConfig!,
+        iv: agent.encryptionIv!,
+        tag: agent.encryptionTag!,
+      });
+    });
+
+  // The first rotation moves the agent row under its key, then a later one
+  // begins before the first walk has finished.
+  await tt.mutation(internal.account.keys.rotateAccountKey, {
+    accountId: scope.accountId,
+  });
+  const firstTarget = await tt.run(async (ctx) => {
+    const keyId = (await accountCipher(ctx, scope.accountId)).keyId!;
+    await mintKey(ctx, scope.accountId);
+
+    return keyId;
+  });
+  // The first walk reaches its last table: it must not retire its own key,
+  // which the later rotation has not finished replacing.
+  await tt.mutation(internal.account.keys.rotateAccountKey, {
+    accountId: scope.accountId,
+    table: "connections",
+    cursor: null,
+    target: firstTarget,
+  });
+  expect(await agentConfig()).toEqual({ model: { provider: "deepseek" } });
+
+  // The later rotation's own walk finishes the job and retires both.
+  await tt.mutation(internal.account.keys.rotateAccountKey, {
+    accountId: scope.accountId,
+  });
+  await tt.finishAllScheduledFunctions(vi.runAllTimers);
+  const keys = await tt.run((ctx) => listWrappedKeys(ctx, scope.accountId));
+  expect(keys).toHaveLength(3);
+  expect(keys.filter((key) => key.retiredAt === undefined)).toHaveLength(1);
+  expect(await agentConfig()).toEqual({ model: { provider: "deepseek" } });
 });
 
 test("a config sealed before a rotation is refused instead of stored under the retired key", async () => {

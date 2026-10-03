@@ -13,6 +13,7 @@ import {
   type MutationCtx,
 } from "../_generated/server";
 import {
+  accountCipher,
   encryptionSecrets,
   ensureWrappedKeys,
   listWrappedKeys,
@@ -87,10 +88,15 @@ export const rewrapAllKeys = internalMutation({
  * bounded batches, then retires the older keys. Call it with only
  * `accountId`; the other arguments are the walk's own continuation. Calling
  * it again before it finishes, or after a batch failed, resumes that rotation.
+ * Only the walk that began under the newest key retires the older ones.
  * @returns rows rewritten in this batch and whether the rotation finished
  */
 export const rotateAccountKey = internalMutation({
-  args: { accountId: v.id("accounts"), ...reencryptWalkArgs },
+  args: {
+    accountId: v.id("accounts"),
+    ...reencryptWalkArgs,
+    target: v.optional(v.string()),
+  },
   returns: v.object({ patched: v.number(), isDone: v.boolean() }),
   handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
     // Two live keys mean a rotation is already walking or stopped midway.
@@ -98,16 +104,22 @@ export const rotateAccountKey = internalMutation({
     if (args.table === undefined && (await liveKeys(ctx, args.accountId)) < 2) {
       await mintKey(ctx, args.accountId);
     }
+    // The key this walk moves every blob under: the newest when it began.
+    const current = (await accountCipher(ctx, args.accountId)).keyId;
+    const target = args.target ?? current ?? undefined;
     const batch = await reencryptBatch(ctx, args);
     if (batch.next) {
       await ctx.scheduler.runAfter(0, internal.account.keys.rotateAccountKey, {
         accountId: args.accountId,
+        target: target,
         ...batch.next,
       });
 
       return { patched: batch.patched, isDone: false };
     }
-    await retireOlderKeys(ctx, args.accountId);
+    // A newer key means a later rotation began; its own walk retires what it
+    // replaces, and this one has not covered the rows written since.
+    if (current === target) await retireOlderKeys(ctx, args.accountId);
 
     return { patched: batch.patched, isDone: true };
   },
