@@ -521,7 +521,7 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
 
 function vercelCreateOptions(
   config: SandboxExecutorConfig,
-  request: Pick<SandboxRunRequest, "envVars" | "principal" | "timeoutSeconds">,
+  request: { envVars?: Record<string, string>; timeoutSeconds: number },
   persistent: boolean,
 ): VercelCreateOptions {
   const options = isPlainObject(config.options) ? config.options : {};
@@ -537,7 +537,9 @@ function vercelCreateOptions(
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
       1000,
     networkPolicy: vercelNetworkPolicy(config),
-    env: mergeSandboxEnv(config.envVars, request.envVars, request.principal),
+    // No run identity here: a sandbox outlives the run that created it, and
+    // every exec lays its own over this env.
+    env: mergeSandboxEnv(config.envVars, request.envVars),
     tags: { app: "broods", provider: "vercel" },
   };
 }

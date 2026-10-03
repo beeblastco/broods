@@ -455,15 +455,13 @@ function daytonaClientOptions(
 
 async function daytonaCreateOptions(
   config: SandboxExecutorConfig,
-  request: Pick<SandboxRunRequest, "namespace" | "envVars" | "principal">,
+  request: { namespace?: string; envVars?: Record<string, string> },
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
-  const baseEnv = mergeSandboxEnv(
-    config.envVars,
-    request.envVars,
-    request.principal,
-  );
+  // No run identity here: a sandbox outlives the run that created it, and
+  // every exec lays its own over this env.
+  const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
   const envVars = await daytonaEnvVars(config, request, baseEnv);
   // Persistent: auto-stop on idle (filesystem persists, harness restarts on next
   // call); auto-delete after the grace if it stays stopped (leak backstop).
