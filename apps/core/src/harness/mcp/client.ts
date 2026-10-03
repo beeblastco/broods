@@ -23,6 +23,7 @@ import {
 } from "@modelcontextprotocol/client";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
+  chainWithoutNames,
   delegatedChain,
   type Principal,
 } from "../../shared/domain/principal.ts";
@@ -369,12 +370,12 @@ async function connectClient(
   return client;
 }
 
-/** The agent id and its chain (base64url JSON), so a server can authorize per agent. */
+/** The agent id and its chain (base64url JSON, ids and kinds only), so a server can authorize per agent. */
 function principalHeaders(principal: Principal): Record<string, string> {
   return {
     [MCP_AGENT_ID_HEADER]: principal.agentId,
     [MCP_PRINCIPAL_HEADER]: Buffer.from(
-      JSON.stringify(delegatedChain(principal)),
+      JSON.stringify(chainWithoutNames(delegatedChain(principal))),
     ).toString("base64url"),
   };
 }

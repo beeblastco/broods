@@ -32,6 +32,20 @@ export function channelPrincipalChain(
   return user ? [user] : [];
 }
 
+/**
+ * The chain as it leaves core for a reader the account does not control (the
+ * run token's payload, a remote MCP server): ids and kinds, never a display
+ * name. The ledger and the OPA input keep the name.
+ */
+export function chainWithoutNames(chain: PrincipalLink[]): PrincipalLink[] {
+  return chain.map((link): PrincipalLink => {
+    if (link.kind !== "user") return link;
+    const { name: _name, ...rest } = link;
+
+    return rest;
+  });
+}
+
 /** The chain a run this principal delegates to starts from: its own chain plus itself. */
 export function delegatedChain(principal: Principal): PrincipalLink[] {
   return [...principal.chain, { kind: "agent", agentId: principal.agentId }];

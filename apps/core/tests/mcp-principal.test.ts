@@ -32,7 +32,7 @@ describe("mcp principal headers", () => {
     kind: "agent",
     accountId: "acct_1",
     agentId: "agent_1",
-    chain: [{ kind: "user", id: "U1", channel: "slack" }],
+    chain: [{ kind: "user", id: "U1", name: "Ada Lovelace", channel: "slack" }],
   };
 
   it("sends the agent id and the chain on every request, outside the row headers", async () => {

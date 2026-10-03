@@ -8,7 +8,7 @@
 
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
-import type { Principal, PrincipalLink } from "./domain/principal.ts";
+import { chainWithoutNames, type Principal } from "./domain/principal.ts";
 import { requireEnv, WORKER_TIMEOUT_BUDGET_MS } from "./env.ts";
 
 const HKDF_INFO = "broods-run-token";
@@ -62,19 +62,12 @@ export function sealRunToken(
 ): string {
   const claims: RunTokenClaims = {
     ...principal,
-    chain: principal.chain.map(linkWithoutName),
+    chain: chainWithoutNames(principal.chain),
     exp: now + ttlMs,
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
 
   return `${RUN_TOKEN_PREFIX}${payload}.${sign(payload).toString("base64url")}`;
-}
-
-function linkWithoutName(link: PrincipalLink): PrincipalLink {
-  if (link.kind !== "user") return link;
-  const { name: _name, ...rest } = link;
-
-  return rest;
 }
 
 function runTokenKey(): Buffer {
