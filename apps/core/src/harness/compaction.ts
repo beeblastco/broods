@@ -21,6 +21,7 @@ const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 
 export interface SummarizeConversationInput {
+  accountId?: string;
   conversationKey: string;
   priorSummaries: SystemModelMessage[];
   messages: ModelMessage[];
@@ -68,7 +69,10 @@ export async function summarizeConversation(
     return null;
   }
 
-  const configuredModel = resolveConfiguredModel(input.agentConfig);
+  const configuredModel = resolveConfiguredModel(
+    input.agentConfig,
+    input.accountId,
+  );
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const startedAt = Date.now();
   const result = await generateText({

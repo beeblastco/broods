@@ -10,6 +10,8 @@
 
 import type * as account_accounts from "../account/accounts.js";
 import type * as account_budget from "../account/budget.js";
+import type * as account_connections from "../account/connections.js";
+import type * as account_connectionsPublic from "../account/connectionsPublic.js";
 import type * as account_envVars from "../account/envVars.js";
 import type * as account_hooks from "../account/hooks.js";
 import type * as account_mcp from "../account/mcp.js";
@@ -41,6 +43,7 @@ import type * as config_http from "../config/http.js";
 import type * as config_routes_accounts from "../config/routes/accounts.js";
 import type * as config_routes_agents from "../config/routes/agents.js";
 import type * as config_routes_channels from "../config/routes/channels.js";
+import type * as config_routes_connections from "../config/routes/connections.js";
 import type * as config_routes_crons from "../config/routes/crons.js";
 import type * as config_routes_envVars from "../config/routes/envVars.js";
 import type * as config_routes_hooks from "../config/routes/hooks.js";
@@ -86,6 +89,8 @@ import type * as model_cliSyncManifest from "../model/cliSyncManifest.js";
 import type * as model_cliSyncResources from "../model/cliSyncResources.js";
 import type * as model_clientError from "../model/clientError.js";
 import type * as model_configValues from "../model/configValues.js";
+import type * as model_connectionSignIn from "../model/connectionSignIn.js";
+import type * as model_connections from "../model/connections.js";
 import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_cronSchedules from "../model/cronSchedules.js";
 import type * as model_envRefs from "../model/envRefs.js";
@@ -153,6 +158,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   "account/accounts": typeof account_accounts;
   "account/budget": typeof account_budget;
+  "account/connections": typeof account_connections;
+  "account/connectionsPublic": typeof account_connectionsPublic;
   "account/envVars": typeof account_envVars;
   "account/hooks": typeof account_hooks;
   "account/mcp": typeof account_mcp;
@@ -184,6 +191,7 @@ declare const fullApi: ApiFromModules<{
   "config/routes/accounts": typeof config_routes_accounts;
   "config/routes/agents": typeof config_routes_agents;
   "config/routes/channels": typeof config_routes_channels;
+  "config/routes/connections": typeof config_routes_connections;
   "config/routes/crons": typeof config_routes_crons;
   "config/routes/envVars": typeof config_routes_envVars;
   "config/routes/hooks": typeof config_routes_hooks;
@@ -229,6 +237,8 @@ declare const fullApi: ApiFromModules<{
   "model/cliSyncResources": typeof model_cliSyncResources;
   "model/clientError": typeof model_clientError;
   "model/configValues": typeof model_configValues;
+  "model/connectionSignIn": typeof model_connectionSignIn;
+  "model/connections": typeof model_connections;
   "model/cronRules": typeof model_cronRules;
   "model/cronSchedules": typeof model_cronSchedules;
   "model/envRefs": typeof model_envRefs;
