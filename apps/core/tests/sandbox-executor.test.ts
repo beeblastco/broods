@@ -416,6 +416,16 @@ function persistentVercelRun(): SandboxRunRequest {
 // is constructed per request, so an instance field would never hit), which makes the
 // reservation key shared state. Every reserved-VM test takes a namespace of its own.
 let microvmNamespaceSeq = 0;
+// A typed fetch stand-in: `respond` answers every request.
+function stubFetch(
+  respond: (
+    url: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(respond, { preconnect: originalFetch.preconnect });
+}
+
 function microvmNamespace(): string {
   microvmNamespaceSeq += 1;
 
@@ -1185,12 +1195,15 @@ describe("createSandboxExecutor", () => {
 
   it("posts a guest route on the reserved VM, then through its cached endpoint", async () => {
     storedSandboxExternalId = "microvm-1";
-    const posts: Array<{ url: string; init: RequestInit }> = [];
-    globalThis.fetch = (async (url: string, init: RequestInit) => {
-      posts.push({ url: String(url), init: init });
+    const posts: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = stubFetch(async (url, init) => {
+      posts.push({
+        url: url instanceof Request ? url.url : url.toString(),
+        init: init,
+      });
 
       return Response.json({ jsonrpc: "2.0", id: "1", result: {} });
-    }) as unknown as typeof fetch;
+    });
     const {
       MicrovmSandboxExecutor,
     } = require("../src/harness/sandbox/microvm-executor.ts");
@@ -1218,22 +1231,22 @@ describe("createSandboxExecutor", () => {
       "https://microvm-1.lambda-microvm.us-east-1.on.aws/mcp",
       "https://microvm-1.lambda-microvm.us-east-1.on.aws/mcp",
     ]);
-    expect(posts[0]!.init.headers).toEqual({
+    expect(posts[0]!.init?.headers).toEqual({
       "content-type": "application/json",
       "X-aws-proxy-auth": "proxy-token",
       "X-aws-proxy-port": "8080",
     });
-    expect(posts[0]!.init.body).toBe(JSON.stringify({ server: "obscura" }));
+    expect(posts[0]!.init?.body).toBe(JSON.stringify({ server: "obscura" }));
   });
 
   it("never resends a guest POST the VM answered with an error", async () => {
     storedSandboxExternalId = "microvm-1";
     let posts = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = stubFetch(async () => {
       posts += 1;
 
       return new Response("boom", { status: 500 });
-    }) as unknown as typeof fetch;
+    });
     const {
       MicrovmSandboxExecutor,
     } = require("../src/harness/sandbox/microvm-executor.ts");
