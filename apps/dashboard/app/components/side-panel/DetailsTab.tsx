@@ -259,7 +259,7 @@ export function DetailsTab({
     : undefined;
   const keyVariable =
     apiKey === undefined
-      ? providerApiKeyEnvName(editProvider)
+      ? (providerApiKeyEnvName(editProvider) ?? undefined)
       : typeof apiKey === "string"
         ? ACCOUNT_ENV_PLACEHOLDER_PATTERN.exec(apiKey)?.[1]
         : undefined;

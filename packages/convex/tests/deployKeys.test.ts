@@ -4,18 +4,30 @@
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
 import schema from "../schema";
 
-vi.mock("../auth", () => ({
-  authKit: { getAuthUser: async () => ({ id: "auth_owner" }) },
-}));
-
 const modules = import.meta.glob("../**/*.ts");
 
-test("a project key is minted as pdk_ and resolves scoped to its stage", async () => {
+type Seeded = {
+  accountId: Id<"accounts">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+};
+
+vi.mock(
+  "../auth",
+  (): { authKit: { getAuthUser: () => Promise<{ id: string }> } } => ({
+    authKit: {
+      getAuthUser: async (): Promise<{ id: string }> => ({ id: "auth_owner" }),
+    },
+  }),
+);
+
+test("a project key is minted as pdk_ and resolves scoped to its stage", async (): Promise<void> => {
   const t = convexTest(schema, modules);
-  const seeded = await t.run(async (ctx) => {
+  const seeded = await t.run(async (ctx): Promise<Seeded> => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",

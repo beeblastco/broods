@@ -809,12 +809,11 @@ export const stepBoundary = internalMutation({
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return { renewal: "stopped" as const, steering: null };
     }
-    await renewHeldLease(ctx, coordinator, args.leaseTtlMs, now);
+    // A claimed steer extends the lease itself.
+    const steering = await claimSteering(ctx, coordinator, args, now);
+    if (!steering) await renewHeldLease(ctx, coordinator, args.leaseTtlMs, now);
 
-    return {
-      renewal: "renewed" as const,
-      steering: await claimSteering(ctx, coordinator, args, now),
-    };
+    return { renewal: "renewed" as const, steering: steering };
   },
 });
 

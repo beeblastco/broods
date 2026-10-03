@@ -207,7 +207,7 @@ export const list = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) return [];
 
-    return listProjects(ctx, authUser.id);
+    return listProjects(ctx, await getCallerActiveOrgId(ctx, authUser.id));
   },
 });
 
@@ -236,7 +236,7 @@ export const openHome = mutation({
     if (org.needsProvision) {
       return { ...org, projectId: null, stageId: null };
     }
-    const projects = await listProjects(ctx, user.id);
+    const projects = await listProjects(ctx, org.orgId);
     const linked = project
       ? await deepLinkTarget(ctx, projects, project, stage)
       : null;
@@ -437,13 +437,12 @@ async function getCallerActiveOrgId(
 
 /**
  * Lists the projects visible to the caller: their active org's, newest first.
- * Nothing before the caller has joined an org.
+ * Nothing before the caller has joined an org (`orgId` null).
  */
 async function listProjects(
   ctx: Ctx,
-  authId: string,
+  orgId: Id<"orgs"> | null,
 ): Promise<Doc<"projects">[]> {
-  const orgId = await getCallerActiveOrgId(ctx, authId);
   if (orgId === null) return [];
 
   const orgProjects = await ctx.db

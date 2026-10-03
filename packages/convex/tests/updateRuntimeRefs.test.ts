@@ -184,6 +184,35 @@ describe("provider key", () => {
       anthropic: { apiKey: "sk-ant-test" },
     });
   });
+
+  test("a literal key in place of the reference releases the stage variable", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = refsTest();
+    const { projectId, stageId } = await seed(t, []);
+    const variableId = await t.mutation(api.environmentVariables.set, {
+      projectId: projectId,
+      stageId: stageId,
+      name: "OPENAI_API_KEY",
+      value: "sk-test",
+    });
+    const configId = await t.mutation(api.agent.config.create, {
+      projectId: projectId,
+      stageId: stageId,
+      name: "keyed",
+      provider: "openai",
+      modelId: "gpt-4.1-mini",
+    });
+
+    await t.mutation(api.agent.config.update, {
+      configId: configId,
+      extraConfig: { provider: { openai: { apiKey: "sk-literal" } } },
+    });
+
+    expect((await docOf(t, configId))?.runtimeVariables).toEqual([]);
+    await t.mutation(api.environmentVariables.remove, {
+      variableId: variableId,
+    });
+  });
 });
 
 describe("updateRuntimeRefs", () => {

@@ -36,6 +36,7 @@ import { loadEnvironmentVariableValues } from "../model/environmentValues";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   providerApiKeyEnvName,
+  type AccountModelProviderName,
 } from "../model/modelProviders";
 import { agentConfigsFields } from "../schema";
 
@@ -118,19 +119,10 @@ export const create = mutation({
       provider: provider,
       modelId: modelId?.trim() || "gpt-4.1-mini",
       systemPrompt: systemPrompt?.trim() || undefined,
-      // The key is a `${NAME}` ref to a stage variable, as the CLI starter's
-      // env("OPENAI_API_KEY"); bindStageEnvRefs resolves it below.
       ...(provider
         ? {
             extraConfig: {
-              provider: {
-                [provider]: {
-                  apiKey: `\${${providerApiKeyEnvName(provider)}}`,
-                  ...(provider === "custom"
-                    ? { base_url: baseUrl, baseURL: baseUrl }
-                    : {}),
-                },
-              },
+              provider: { [provider]: newProviderSettings(provider, baseUrl) },
             },
           }
         : {}),
@@ -593,6 +585,7 @@ async function assertAgentConfigAdmin(
  * Binds every `${NAME}` the config references to the stage variable of that
  * name, as a CLI sync does, so setting the variable later re-resolves the
  * agent. A name the stage lacks keeps the agent's earlier value, else empty.
+ * A config with no reference left releases every variable it bound.
  */
 async function bindStageEnvRefs(
   ctx: MutationCtx,
@@ -601,12 +594,13 @@ async function bindStageEnvRefs(
   const config = await ctx.db.get(configId);
   if (!config) return;
   const names = [...collectEnvPlaceholderNames(config)].sort();
-  if (names.length === 0) return;
+  if (names.length === 0 && !config.runtimeVariables?.length) return;
 
   const values = await loadEnvironmentVariableValues(
     ctx,
     config.projectId,
     config.stageId,
+    names,
   );
   const runtimeVariables = await saveAgentRuntimeSecrets(
     ctx,
@@ -660,6 +654,23 @@ function maskRuntimeVariables<
       key: entry.key,
       value: MASKED_RUNTIME_VARIABLE_VALUE,
     })),
+  };
+}
+
+/**
+ * A new agent's provider settings. The key is a `${NAME}` ref to a stage
+ * variable, as the CLI starter's env("OPENAI_API_KEY"), which
+ * bindStageEnvRefs resolves.
+ */
+function newProviderSettings(
+  provider: AccountModelProviderName,
+  baseUrl: string | undefined,
+): Record<string, string | undefined> {
+  const keyVariable = providerApiKeyEnvName(provider);
+
+  return {
+    ...(keyVariable ? { apiKey: `\${${keyVariable}}` } : {}),
+    ...(provider === "custom" ? { base_url: baseUrl, baseURL: baseUrl } : {}),
   };
 }
 

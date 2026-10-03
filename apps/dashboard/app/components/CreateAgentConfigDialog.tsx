@@ -63,6 +63,7 @@ export function CreateAgentConfigDialog({
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const keyVariable = providerApiKeyEnvName(provider);
 
   function resetForm(): void {
     setName("");
@@ -158,8 +159,14 @@ export function CreateAgentConfigDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Reads its key from the stage variable{" "}
-                <code>{providerApiKeyEnvName(provider)}</code>.
+                {keyVariable ? (
+                  <>
+                    Reads its key from the stage variable{" "}
+                    <code>{keyVariable}</code>.
+                  </>
+                ) : (
+                  "Runs on the account's ChatGPT connection."
+                )}
               </p>
             </div>
             <div className="grid gap-2">
