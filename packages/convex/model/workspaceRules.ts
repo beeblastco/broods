@@ -15,7 +15,7 @@ import { ClientError } from "./clientError";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   type WorkspaceIsolation,
-  workspaceIsolation,
+  workspaceIsolationInput,
 } from "./workspaceIsolation";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
@@ -61,11 +61,15 @@ export interface WorkspaceStorageConfig {
   auth?: WorkspaceStorageAuth;
 }
 
+/** What the API accepts: the boolean spelling of isolation is stored as its level. */
+export type WorkspaceConfigInput = Omit<WorkspaceConfig, "isolation"> & {
+  isolation?: WorkspaceIsolation | boolean;
+};
+
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
-  // `true` is the first spelling of "conversation": the API still accepts it and
-  // rows written before the levels existed hold it. Read it with workspaceIsolation().
-  isolation?: WorkspaceIsolation | true;
+  // Stored as the level; read it with workspaceIsolation().
+  isolation?: WorkspaceIsolation;
   // Named harness features, each with its own options (no top-level enabled):
   // workspace = the <workspace> prompt, memory = structured memory.
   harness?: {
@@ -359,7 +363,7 @@ function normalizeWorkspaceIsolation(
     assertOptionalEnum(value, "config.isolation", WORKSPACE_ISOLATION_LEVELS);
   }
 
-  return workspaceIsolation(value);
+  return workspaceIsolationInput(value);
 }
 
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {

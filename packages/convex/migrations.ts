@@ -52,3 +52,42 @@ export const stripSessionNodes = internalMutation({
     return { patched: patched, isDone: page.isDone };
   },
 });
+
+/**
+ * Store workspace isolation as its level. Rows written before the levels
+ * existed hold `isolation: true`, which means "conversation". Run right after
+ * the deploy that adds the levels; `workspaceIsolation()` reads `true` as
+ * "conversation" until then. Idempotent and paginated with a self-reschedule,
+ * like the other backfills.
+ * @returns rows patched in this batch and whether the walk finished
+ */
+export const workspaceIsolationLevels = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({ patched: v.number(), isDone: v.boolean() }),
+  handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
+    const page = await ctx.db
+      .query("workspaceConfigs")
+      .paginate({ numItems: 100, cursor: args.cursor ?? null });
+
+    let patched = 0;
+    for (const row of page.page) {
+      const config: { isolation?: unknown } = row.config;
+      if (config.isolation !== true) continue;
+
+      await ctx.db.patch(row._id, {
+        config: { ...config, isolation: "conversation" },
+      });
+      patched += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.migrations.workspaceIsolationLevels,
+        { cursor: page.continueCursor },
+      );
+    }
+
+    return { patched: patched, isDone: page.isDone };
+  },
+});

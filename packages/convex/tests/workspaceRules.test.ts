@@ -133,11 +133,11 @@ describe("workspace config", () => {
     );
   });
 
-  it("reads a stored boolean isolation as the conversation level", () => {
-    expect(workspaceIsolation(true)).toBe("conversation");
+  it("reads a stored level, and a stored `true` as conversation until the migration has run", () => {
     expect(workspaceIsolation("agent")).toBe("agent");
     expect(workspaceIsolation(undefined)).toBeUndefined();
     expect(workspaceIsolation("channel")).toBeUndefined();
+    expect(workspaceIsolation(true)).toBe("conversation");
   });
 
   it("parses a bring-your-own bucket with assume-role auth", () => {

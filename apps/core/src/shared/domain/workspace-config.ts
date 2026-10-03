@@ -13,6 +13,7 @@ import type { WorkspaceConfig } from "@broods/convex/model/workspaceRules";
 export type { WorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 export type {
   WorkspaceConfig,
+  WorkspaceConfigInput,
   WorkspaceStorageAuth,
   WorkspaceStorageConfig,
   WorkspaceStorageProvider,

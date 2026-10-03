@@ -331,7 +331,12 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
           id === "ws_a"
-            ? { config: { storage: { provider: "s3" }, isolation: true } }
+            ? {
+                config: {
+                  storage: { provider: "s3" },
+                  isolation: "conversation",
+                },
+              }
             : null,
       },
     } as never);
@@ -359,7 +364,12 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
           id === "ws_a"
-            ? { config: { storage: { provider: "s3" }, isolation: true } }
+            ? {
+                config: {
+                  storage: { provider: "s3" },
+                  isolation: "conversation",
+                },
+              }
             : null,
       },
     } as never);

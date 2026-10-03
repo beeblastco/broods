@@ -38,6 +38,7 @@ import type {
 import type { SandboxConfig } from "../../../apps/core/src/shared/domain/sandbox-config.ts";
 import type {
   WorkspaceConfig,
+  WorkspaceConfigInput,
   WorkspaceIsolation,
 } from "../../../apps/core/src/shared/domain/workspace-config.ts";
 import type { PolicyDocument } from "../../../apps/core/src/shared/domain/policy.ts";
@@ -100,6 +101,7 @@ export type {
   SandboxConfig,
   UpdateCronInput,
   WorkspaceConfig,
+  WorkspaceConfigInput,
   WorkspaceIsolation,
 };
 

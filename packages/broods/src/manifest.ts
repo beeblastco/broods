@@ -27,7 +27,7 @@ import {
 import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
-  workspaceIsolation,
+  workspaceIsolationInput,
 } from "../../convex/model/workspaceIsolation.ts";
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
@@ -558,7 +558,8 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     // on its own.
     const partitionedWorkspaces = attachedWorkspaces.filter(
       (workspace) =>
-        workspaceIsolation(workspace.config.partitioned) === "conversation",
+        workspaceIsolationInput(workspace.config.partitioned) ===
+        "conversation",
     );
     const partitionedChannels = channelDefinitions.filter(
       (channel) => channel.partition,
@@ -1070,7 +1071,7 @@ async function normalizeConfig(
     const config = { ...(resource.config as Record<string, unknown>) };
     // Authoring says `partitioned`; storage reads `isolation` by level (the
     // shape check above already refused anything else).
-    const isolation = workspaceIsolation(config.partitioned);
+    const isolation = workspaceIsolationInput(config.partitioned);
     delete config.partitioned;
     if (isolation) config.isolation = isolation;
 
