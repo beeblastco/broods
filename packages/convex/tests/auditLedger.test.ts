@@ -155,6 +155,60 @@ describe("chain", () => {
     ).toEqual({ ok: false, brokenAtSeq: 2, checkedFrom: 1, checkedTo: 3 });
   });
 
+  test("moving a row to another project, stage or trace breaks its hash", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    await record(t, accountId, "first");
+    const [row] = await allRows(t, accountId);
+    const forged = await t.run(async (ctx) => {
+      const org = await ctx.db.query("orgs").first();
+      const projectId = await ctx.db.insert("projects", {
+        authId: AUTH_ID,
+        orgId: org!._id,
+        name: "other",
+        slug: "other",
+        updatedAt: Date.now(),
+      });
+      const stageId = await ctx.db.insert("stages", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        name: "dev",
+        kind: "development" as const,
+        isDefault: true,
+        updatedAt: Date.now(),
+      });
+
+      return { projectId: projectId, stageId: stageId, traceId: "other-trace" };
+    });
+
+    const forgeries = [
+      {
+        forge: { projectId: forged.projectId },
+        undo: { projectId: undefined },
+      },
+      { forge: { stageId: forged.stageId }, undo: { stageId: undefined } },
+      { forge: { traceId: forged.traceId }, undo: { traceId: undefined } },
+    ];
+    for (const { forge, undo } of forgeries) {
+      await t.run(async (ctx) => {
+        await ctx.db.patch(row!._id, forge);
+      });
+      expect(
+        await t.query(internal.audit.ledger.verifyChain, {
+          accountId: accountId,
+        }),
+      ).toMatchObject({ ok: false, brokenAtSeq: 1 });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(row!._id, undo);
+      });
+    }
+    expect(
+      await t.query(internal.audit.ledger.verifyChain, {
+        accountId: accountId,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   test("a row re-hashed to hide an edit breaks the next link", async () => {
     const t = ledgerTest();
     const accountId = await seedAccount(t);

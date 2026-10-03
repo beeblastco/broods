@@ -184,8 +184,8 @@ export interface AccountRole {
 
 /**
  * One row of the account's hash-chained audit ledger, as `GET /v1/audit`
- * serves it. `hash` is sha256 over the canonical JSON of the hashed fields
- * (everything but `hash`, `projectId`, `stageId` and `traceId`), with
+ * serves it. `hash` is sha256 over the canonical JSON of every field but
+ * `hash` itself (an absent optional field is left out, not null), with
  * `prevHash` linking it to the row before.
  */
 export interface AuditEvent {

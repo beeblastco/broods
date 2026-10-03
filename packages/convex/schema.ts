@@ -848,7 +848,7 @@ export const auditEventsFields = {
   seq: v.number(),
   /** Hash of the previous row, "" on the genesis row. */
   prevHash: v.string(),
-  /** sha256 hex over the canonical JSON of the hashed fields (`model/auditEvents.ts`). */
+  /** sha256 hex over the canonical JSON of every other field (`model/auditEvents.ts`). */
   hash: v.string(),
   at: v.number(),
   actor: v.object({

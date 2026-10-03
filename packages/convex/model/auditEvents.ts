@@ -31,18 +31,10 @@ export type AuditEventInput = {
   detailsJson?: string;
 };
 
-/** The fields the row hash covers, in the order `auditEventHash` serializes them. */
-export type AuditHashedFields = Pick<
+/** The fields the row hash covers: every stored field but the hash itself. */
+export type AuditHashedFields = Omit<
   Doc<"auditEvents">,
-  | "accountId"
-  | "seq"
-  | "prevHash"
-  | "at"
-  | "actor"
-  | "action"
-  | "resource"
-  | "summary"
-  | "detailsJson"
+  "_id" | "_creationTime" | "hash"
 >;
 
 /** The ledger tip; null for an account that has never written a row. */
@@ -125,15 +117,12 @@ export async function appendAuditEvent(
     ...(event.detailsJson === undefined
       ? {}
       : { detailsJson: capDetailsJson(event.detailsJson) }),
-  };
-  const hash = await auditEventHash(hashed);
-  const rowId = await db.insert("auditEvents", {
-    ...hashed,
-    hash: hash,
     projectId: event.projectId,
     stageId: event.stageId,
     traceId: event.traceId,
-  });
+  };
+  const hash = await auditEventHash(hashed);
+  const rowId = await db.insert("auditEvents", { ...hashed, hash: hash });
   if (head) {
     await db.patch(head._id, { seq: hashed.seq, hash: hash });
   } else {
@@ -173,9 +162,9 @@ export function auditDetailsJson(details: Record<string, unknown>): string {
 }
 
 /**
- * sha256 hex of the canonical JSON (sorted keys) of the hashed fields. Only
- * these fields count, so a row can carry ids and trace references the hash
- * does not need to pin.
+ * sha256 hex of the canonical JSON (sorted keys) of every row field but the
+ * hash. An absent optional field is left out of the JSON, never written as
+ * null, so a row hashes the same however it was read.
  */
 export async function auditEventHash(
   fields: AuditHashedFields,
@@ -191,6 +180,9 @@ export async function auditEventHash(
       resource: fields.resource,
       summary: fields.summary,
       detailsJson: fields.detailsJson,
+      projectId: fields.projectId,
+      stageId: fields.stageId,
+      traceId: fields.traceId,
     }),
   );
 }

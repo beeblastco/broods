@@ -4855,9 +4855,11 @@ components:
       type: object
       description: >-
         One ledger row. `hash` is sha256 hex over the canonical JSON (keys
-        sorted recursively by UTF-16 code unit, no whitespace) of `accountId`, `seq`, `prevHash`, `at`, `actor`,
-        `action`, `resource`, `summary` and `detailsJson`; `projectId`,
-        `stageId` and `traceId` ride beside the chain and are not hashed.
+        sorted recursively by UTF-16 code unit, no whitespace) of every
+        field but `hash`: `accountId`, `seq`, `prevHash`, `at`, `actor`,
+        `action`, `resource`, `summary`, `detailsJson`, `projectId`,
+        `stageId` and `traceId`. An optional field the row does not have is
+        left out of the JSON, never written as `null`.
       required:
         [accountId, seq, prevHash, hash, at, actor, action, resource, summary]
       properties:
