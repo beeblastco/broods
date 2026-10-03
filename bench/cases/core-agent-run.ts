@@ -275,6 +275,7 @@ function fakeStorage(): Storage {
     connections: { load: none, saveRefreshed: async () => false },
     roleSessions: { resolveByTokenHash: none },
     taskUsage: { record: async () => undefined },
+    auditLedger: { append: async () => undefined },
   };
 }
 

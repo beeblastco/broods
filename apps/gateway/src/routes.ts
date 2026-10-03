@@ -48,6 +48,11 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
     return upperMethod === "GET" || upperMethod === "HEAD";
   if (/^\/v1\/workspaces\/[^/]+\/download-links$/.test(pathname))
     return upperMethod === "POST";
+  // The audit ledger is read-only except for its one webhook sink.
+  if (pathname === "/v1/audit" || pathname === "/v1/audit/verify")
+    return upperMethod === "GET";
+  if (pathname === "/v1/audit/sink")
+    return ["GET", "PUT", "DELETE"].includes(upperMethod);
 
   return (
     /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||

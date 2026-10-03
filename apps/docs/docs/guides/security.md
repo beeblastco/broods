@@ -63,7 +63,7 @@ const session = await owner.assumeRole(role.roleId, { ttlSeconds: 900 });
 const scoped = new BroodsAccountClient({ sessionToken: session.token }); // can list and read agents, nothing else
 ```
 
-- Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills`, `tools` and `workspaces`.
+- Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `audit`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills`, `tools` and `workspaces`.
 - `resources.resourceIds` limits a rule to specific ids, `"*"` for all. A deny beats an allow, and no matching allow means `403`.
 - `projectId` and `stageId` pin a role to one stage.
 - Sessions last 1 hour by default, 12 at most. Only a hash is stored, and the token is shown once.

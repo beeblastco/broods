@@ -1473,6 +1473,14 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/policies/pol_1")).toBe(true);
   expect(isConfigHttpPath("/v1/roles")).toBe(true);
   expect(isConfigHttpPath("/v1/roles/fp_role_abc")).toBe(true);
+  expect(isConfigHttpPath("/v1/audit", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/audit", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/audit/verify", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/audit/sink", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/audit/sink", "PUT")).toBe(true);
+  expect(isConfigHttpPath("/v1/audit/sink", "DELETE")).toBe(true);
+  expect(isConfigHttpPath("/v1/audit/sink", "POST")).toBe(false);
+  expect(isConfigHttpPath("/v1/audit/other", "GET")).toBe(false);
   expect(isConfigHttpPath("/v1/account/assume-role", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/channels")).toBe(true);
   expect(isConfigHttpPath("/v1/channels/chan_1")).toBe(true);

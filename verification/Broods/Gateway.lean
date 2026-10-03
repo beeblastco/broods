@@ -89,6 +89,8 @@ where
     else if shape [.lit "v1", .lit "env", .any] p then m == .put || m == .delete
     else if shape [.lit "v1", .lit "downloads", .any] p then m == .get || m == .head
     else if shape [.lit "v1", .lit "workspaces", .any, .lit "download-links"] p then m == .post
+    else if p == ["v1", "audit"] || p == ["v1", "audit", "verify"] then m == .get
+    else if p == ["v1", "audit", "sink"] then m == .get || m == .put || m == .delete
     else
       rootOrItem "skills" p || rootOrItem "mcp" p || rootOrItem "hooks" p ||
       shape [.lit "v1", .lit "workspaces", .any, .lit "files"] p ||
@@ -201,6 +203,12 @@ example : route true false .get ["healthz", ""] = .health := by decide
 
 /-- An upgrade on a non-socket path is proxied as plain HTTP. -/
 example : route true true .get ["v1", "agents"] = .config := by decide
+
+/-- The audit ledger is read-only: a write to it is not a config route. -/
+example : route true false .post ["v1", "audit"] = .core := by decide
+
+/-- Its one sink takes a PUT on the config plane. -/
+example : route true false .put ["v1", "audit", "sink"] = .config := by decide
 
 /-- `/v1/internal/observability-scope` is public by design (tested in route.test.ts). -/
 example : route true false .post ["v1", "internal", "observability-scope"] = .core := by decide

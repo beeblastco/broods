@@ -292,6 +292,11 @@ http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
+// The audit ledger: list, verify, and the one webhook sink per account.
+http.route({ path: "/v1/audit", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "PUT", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "DELETE", handler: configHttp });
 
 export default http;
 
