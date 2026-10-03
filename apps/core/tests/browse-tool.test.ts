@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import {
   assertBrowseSandbox,
@@ -29,6 +30,32 @@ describe("browse tool", () => {
       }),
     ).toThrow("network.mode to allow-all");
     expect(() => assertBrowseSandbox(undefined)).toThrow('image: "obscura"');
+  });
+
+  it("asks before eval runs the model's JavaScript, unless the sandbox bypasses", () => {
+    const approval = (
+      mode: string,
+      permissionMode: "ask" | "bypass",
+    ): ReturnType<typeof compatibilityApprovalStatus> =>
+      compatibilityApprovalStatus(
+        "browse",
+        { url: "https://example.com", mode: mode },
+        {
+          configuredApprovals: new Map(),
+          workspaces: [],
+          sandboxes: [
+            {
+              name: "web",
+              sandbox: { ...OBSCURA_SANDBOX, permissionMode: permissionMode },
+            },
+          ],
+        },
+      );
+
+    expect(approval("eval", "ask")).toBe("user-approval");
+    expect(approval("eval", "bypass")).toBeUndefined();
+    expect(approval("markdown", "ask")).toBeUndefined();
+    expect(approval("screenshot", "ask")).toBeUndefined();
   });
 
   it("builds one quoted obscura command per mode, inside the exec timeout", () => {

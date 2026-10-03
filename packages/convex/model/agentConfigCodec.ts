@@ -317,6 +317,7 @@ function assembleNestedConfig(
     // the agent silently running without the policy it expected.
     ...(extra.policy ? { policy: extra.policy } : {}),
     ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
+    ...(extra.browser ? { browser: extra.browser } : {}),
     ...(extra.policies ? { policies: extra.policies } : {}),
     // Top-level scalar carried in extraConfig so it flows through every
     // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).

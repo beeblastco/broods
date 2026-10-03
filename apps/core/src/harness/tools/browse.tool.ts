@@ -121,7 +121,10 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
         return {
           type: "content",
           value: [
-            { type: "text", text: `Screenshot of ${url}, saved to ${path}` },
+            {
+              type: "text",
+              text: `Screenshot of ${url}, saved to ${path} in workspace ${workspace.name}`,
+            },
             {
               type: "image-data",
               data: Buffer.from(image).toString("base64"),

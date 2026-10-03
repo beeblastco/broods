@@ -191,7 +191,7 @@ export const researcher = defineAgent({
 - The first sandbox must be `lambda` with `image: "obscura"` and `network.mode: "allow-all"`, or a [machine](sandboxes/machine.md) with `obscura` installed. Anything else fails the run with a message saying what to change.
 - `screenshot` needs a workspace on that sandbox. The image reaches the model on the turn it was taken. Later turns keep the file path.
 - Private and internal addresses are refused. Layout can differ from Chrome on JavaScript-heavy pages. For pixel-exact screenshots, run Chromium through `bash` on a sandbox with `image: "browser"`.
-- `browse` needs no approval, since it only reads.
+- Reading needs no approval. `eval` runs the model's own JavaScript in the page, so it asks like `bash` unless the sandbox uses `permissionMode: "bypass"`.
 
 ## Background tools
 
