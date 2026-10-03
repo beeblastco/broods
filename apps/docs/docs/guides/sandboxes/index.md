@@ -138,6 +138,8 @@ export const web = defineSandbox({
 
 The agent then runs `obscura fetch https://example.com --dump markdown --quiet` through `bash`. Obscura refuses private and link-local addresses unless passed `--allow-private-network`.
 
+A persistent `lambda` sandbox can also run a stdio MCP server from its image, such as `obscura mcp`, and keep it alive between calls. See [Run a server in a sandbox](../tools.md#run-a-server-in-a-sandbox).
+
 ## More than one sandbox
 
 An agent lists its sandboxes in `sandboxes`. The first one is the default. `bash` without a workspace runs there, a workspace without its own sandbox mounts it, and a [harness](../agents.md) runs on it. Add more when one agent needs a second kind of machine, such as a browser image or a deny-all box.

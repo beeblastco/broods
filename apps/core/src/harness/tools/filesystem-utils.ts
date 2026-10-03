@@ -903,8 +903,9 @@ function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
 }
 
 // The reservation key a namespace-less run reconnects on, normally derived per
-// agent by resolveAgentRuntime rather than written by the author.
-function statelessReservationKeyFor(
+// agent by resolveAgentRuntime rather than written by the author. Lambda-hosted
+// MCP rows (tools/index.ts) reserve on it too, so they share bash's VM.
+export function statelessReservationKeyFor(
   config: SandboxExecutorConfig,
 ): string | undefined {
   const options = isPlainObject(config.options) ? config.options : {};

@@ -40,6 +40,7 @@ import {
   type McpConnection,
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
+import type { SandboxMcpTarget } from "../mcp/sandbox.ts";
 import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
@@ -57,10 +58,12 @@ import {
 } from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
+  agentOwnWorkspace,
   hasStandaloneSandbox,
   machineSandboxes,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  statelessReservationKeyFor,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
@@ -464,6 +467,42 @@ function isToolEnabled(
 }
 
 /**
+ * Where a lambda-hosted MCP row runs: the VM bash reaches on the same sandbox,
+ * which is the workspace's when one mounts the agent's first sandbox. A missing
+ * command or a non-persistent sandbox is a config error, not a quiet skip.
+ */
+function sandboxMcpTarget(
+  serverId: string,
+  command: string[] | undefined,
+  host: ResolvedAgentSandbox,
+  context: Omit<ToolContext, "config">,
+): SandboxMcpTarget {
+  if (!command) {
+    throw new Error(
+      `config.mcp.${serverId} runs on lambda sandbox "${host.name}" and needs command`,
+    );
+  }
+  const workspace =
+    host === context.sandboxes?.[0]
+      ? agentOwnWorkspace({
+          workspaces: context.workspaces ?? [],
+          sandboxes: context.sandboxes,
+        })
+      : undefined;
+  const config = workspace?.sandbox ?? host.sandbox;
+  const reservationKey = workspace
+    ? workspace.namespace
+    : statelessReservationKeyFor(host.sandbox);
+  if (config.persistent !== true || !reservationKey) {
+    throw new Error(
+      `config.mcp.${serverId} runs on lambda sandbox "${host.name}", which must be persistent`,
+    );
+  }
+
+  return { config: config, reservationKey: reservationKey, command: command };
+}
+
+/**
  * Register every enabled connected MCP server's tools (#331). Listings come
  * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
  * the discovery round-trip.
@@ -501,6 +540,22 @@ async function registerMcpTools(
           serverConfig.headers,
           serverConfig.oauth,
         );
+        // A machine row on a lambda sandbox runs in that VM; on a machine
+        // sandbox the daemon serves it from its own --mcp file.
+        const host = context.sandboxes?.find(
+          (entry) => entry.name === record.sandbox,
+        );
+        if (
+          record.transport === "machine" &&
+          host?.sandbox.provider === "lambda"
+        ) {
+          connection.sandbox = sandboxMcpTarget(
+            serverId,
+            record.command,
+            host,
+            context,
+          );
+        }
         // An unreachable server degrades to zero tools for this run instead
         // of killing every agent run that references it; config errors above
         // (unknown id, unresolved header) still throw.

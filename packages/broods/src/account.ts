@@ -264,8 +264,10 @@ export interface AccountMcp {
   transport: "http" | "hosted" | "machine";
   /** External servers only; a hosted row has no endpoint of its own. */
   url?: string;
-  /** Machine servers only: the machine sandbox (by name) whose daemon serves it. */
+  /** Machine servers only: the sandbox (by name) that serves it. */
   sandbox?: string;
+  /** Machine servers only: argv of the stdio server a lambda sandbox runs. */
+  command?: string[];
   /** Hosted servers only: content hash of the uploaded bundle. */
   sha256?: string;
   headers?: Record<string, string>;
@@ -281,13 +283,14 @@ export interface AccountMcp {
 /**
  * Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads inline
  * (≤10 MB); a larger bundle goes through `uploadMcpBundle` first; `sandbox`
- * runs it on that machine sandbox's daemon.
+ * runs it on that sandbox: a machine's daemon, or `command` on a lambda VM.
  */
 export interface CreateMcpInput {
   name: string;
   description?: string;
   url?: string;
   sandbox?: string;
+  command?: string[];
   bundle?: string;
   bundleStorageId?: string;
   sha256?: string;
@@ -302,6 +305,7 @@ export interface UpdateMcpInput {
   description?: string;
   url?: string;
   sandbox?: string;
+  command?: string[];
   bundle?: string;
   bundleStorageId?: string;
   sha256?: string;

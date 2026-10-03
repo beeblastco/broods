@@ -32,6 +32,7 @@ export const create = internalMutation({
     transport: v.optional(mcpFields.transport),
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
+    command: mcpFields.command,
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
@@ -74,6 +75,7 @@ export const create = internalMutation({
       transport: transport,
       url: args.url,
       sandbox: args.sandbox,
+      command: args.command,
       headers: args.headers,
       oauth: args.oauth,
     });
@@ -89,6 +91,7 @@ export const create = internalMutation({
       transport: transport,
       url: args.url,
       sandbox: args.sandbox,
+      command: args.command,
       bundleStorageKey: args.bundleStorageKey,
       sha256: args.sha256,
       headers: args.headers,
@@ -241,6 +244,7 @@ export const update = internalMutation({
     transport: v.optional(mcpFields.transport),
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
+    command: mcpFields.command,
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
@@ -307,6 +311,7 @@ function updatePatch(
     transport?: McpTransport;
     url?: string;
     sandbox?: string;
+    command?: string[];
     bundleStorageKey?: string;
     sha256?: string;
     headers?: Record<string, string>;
@@ -325,6 +330,7 @@ function updatePatch(
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
+    ...(args.command !== undefined ? { command: args.command } : {}),
     ...(args.bundleStorageKey !== undefined
       ? { bundleStorageKey: args.bundleStorageKey }
       : {}),
@@ -337,7 +343,12 @@ function updatePatch(
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
     ...(args.transport === "hosted"
-      ? { url: undefined, oauth: undefined, sandbox: undefined }
+      ? {
+          url: undefined,
+          oauth: undefined,
+          sandbox: undefined,
+          command: undefined,
+        }
       : {}),
     ...(args.transport === "http"
       ? {
@@ -345,6 +356,7 @@ function updatePatch(
           sha256: undefined,
           sourceCode: undefined,
           sandbox: undefined,
+          command: undefined,
         }
       : {}),
     ...(args.transport === "machine"
@@ -355,6 +367,9 @@ function updatePatch(
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,
+          // A patch that sets the sandbox states the whole connection, so a
+          // command it leaves out is cleared rather than kept.
+          command: args.command,
         }
       : {}),
     ...(args.sha256 !== undefined &&
