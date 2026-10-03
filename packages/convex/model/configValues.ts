@@ -7,6 +7,7 @@
 
 import { CREDENTIAL_HEADER_VALUE_PATTERN } from "./envRefs";
 import { isPlainObject } from "./objects";
+import { isSecretName } from "./secretNames";
 
 export const REDACTED_SECRET_VALUE = "********";
 
@@ -81,31 +82,11 @@ function redactSecrets(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
       key,
-      isSecretConfigKey(key) &&
+      isSecretName(key) &&
       typeof entry === "string" &&
       !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
         ? REDACTED_SECRET_VALUE
         : redactSecrets(entry),
     ]),
-  );
-}
-
-function isSecretConfigKey(key: string): boolean {
-  const normalized = key.toLowerCase();
-
-  return (
-    normalized.includes("secret") ||
-    normalized.includes("token") ||
-    normalized.includes("privatekey") ||
-    normalized.includes("private_key") ||
-    normalized.includes("credential") ||
-    normalized.includes("kubeconfig") ||
-    normalized.includes("certificate") ||
-    normalized.includes("accesskey") ||
-    normalized.includes("access_key") ||
-    normalized.includes("password") ||
-    normalized.includes("passwd") ||
-    normalized.endsWith("authorization") ||
-    /api[-_]?key$/.test(normalized)
   );
 }
