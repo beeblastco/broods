@@ -5,7 +5,7 @@
  * and saves the browser state plus the project id; every spec starts from
  * those files.
  */
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -74,10 +74,17 @@ export async function resolveProjectId(page: Page): Promise<string> {
     const empty = page.getByText("No projects yet");
     await card.or(empty).first().waitFor({ timeout: AUTH_TIMEOUT_MS });
     if (await card.isVisible()) {
-      await card.click();
-    } else {
-      await page.goto("/");
+      // The card renders before React hydrates it, and a click that early
+      // does nothing, so click until the project opens.
+      await expect(async () => {
+        await card.click();
+        await page.waitForURL((url) => PROJECT_PATH.test(url.pathname), {
+          timeout: 5_000,
+        });
+      }).toPass({ timeout: AUTH_TIMEOUT_MS });
+      continue;
     }
+    await page.goto("/");
     await page.waitForURL((url) => PROJECT_PATH.test(url.pathname), {
       timeout: AUTH_TIMEOUT_MS,
     });
