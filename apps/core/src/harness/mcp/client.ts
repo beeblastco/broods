@@ -370,13 +370,19 @@ async function connectClient(
   return client;
 }
 
-/** The agent id and its chain (base64url JSON, ids and kinds only), so a server can authorize per agent. */
+/** The agent id, and its chain when known (base64url JSON, ids and kinds only), so a server can authorize per agent. */
 function principalHeaders(principal: Principal): Record<string, string> {
+  const chain = delegatedChain(principal);
+
   return {
     [MCP_AGENT_ID_HEADER]: principal.agentId,
-    [MCP_PRINCIPAL_HEADER]: Buffer.from(
-      JSON.stringify(chainWithoutNames(delegatedChain(principal))),
-    ).toString("base64url"),
+    ...(chain
+      ? {
+          [MCP_PRINCIPAL_HEADER]: Buffer.from(
+            JSON.stringify(chainWithoutNames(chain)),
+          ).toString("base64url"),
+        }
+      : {}),
   };
 }
 

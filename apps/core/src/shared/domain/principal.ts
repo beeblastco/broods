@@ -18,18 +18,29 @@ export interface Principal {
   agentId: string;
   runId?: string;
   conversationKey?: string;
-  /** Oldest first: the requester, then every delegating agent before this one. */
-  chain: PrincipalLink[];
+  /**
+   * Oldest first: the requester, then every delegating agent before this one.
+   * Absent when core does not know who asked. It is never guessed, because the
+   * ledger hashes it.
+   */
+  chain?: PrincipalLink[];
 }
 
-/** The requester of a channel turn: the sender when the adapter identified one, else nobody. */
+/** The requester of a channel turn: the sender, when the adapter identified one. */
 export function channelPrincipalChain(
   identity: ChannelIdentity | undefined,
   channelName: string,
-): PrincipalLink[] {
-  const user = userPrincipalLink(identity, channelName);
+): PrincipalLink[] | undefined {
+  if (!identity?.userId) return undefined;
 
-  return user ? [user] : [];
+  return [
+    {
+      kind: "user",
+      id: identity.userId,
+      ...(identity.userName ? { name: identity.userName } : {}),
+      channel: channelName,
+    },
+  ];
 }
 
 /**
@@ -46,40 +57,43 @@ export function chainWithoutNames(chain: PrincipalLink[]): PrincipalLink[] {
   });
 }
 
-/** The chain a run this principal delegates to starts from: its own chain plus itself. */
-export function delegatedChain(principal: Principal): PrincipalLink[] {
-  return [...principal.chain, { kind: "agent", agentId: principal.agentId }];
+/** The chain a run this principal delegates to starts from: its own chain plus itself. Unknown stays unknown. */
+export function delegatedChain(
+  principal: Principal,
+): PrincipalLink[] | undefined {
+  return (
+    principal.chain && [
+      ...principal.chain,
+      { kind: "agent", agentId: principal.agentId },
+    ]
+  );
 }
 
 /**
- * Who asked for a direct run. The router sets the chain for a request it
- * authenticated; a rebuilt envelope, a cron firing and a channel-bound
- * continuation are told apart by what the event carries.
+ * Who asked for a direct run: the chain the router or a sending run set, the
+ * scheduler for a cron firing, or the sender a channel-bound envelope stored.
+ * A rebuilt envelope that carries none of these has no known requester.
  */
 export function directPrincipalChain(event: {
   principalChain?: PrincipalLink[];
   cronRun?: unknown;
   replyTarget?: { channelName: string; identity?: ChannelIdentity };
-  endpointId?: string;
-}): PrincipalLink[] {
+}): PrincipalLink[] | undefined {
   if (event.principalChain) return event.principalChain;
   if (event.cronRun) return [{ kind: "api", keyKind: "cron" }];
-  const user = event.replyTarget
-    ? userPrincipalLink(
-        event.replyTarget.identity,
-        event.replyTarget.channelName,
-      )
-    : undefined;
-  if (user) return [user];
 
-  return [
-    { kind: "api", keyKind: event.endpointId ? "deployment" : "account" },
-  ];
+  return (
+    event.replyTarget &&
+    channelPrincipalChain(
+      event.replyTarget.identity,
+      event.replyTarget.channelName,
+    )
+  );
 }
 
 /** `user:U1>agent:a1`, the chain and the principal as one span attribute. */
-export function principalChainLabel(principal: Principal): string {
-  return delegatedChain(principal).map(principalLinkLabel).join(">");
+export function principalChainLabel(principal: Principal): string | undefined {
+  return delegatedChain(principal)?.map(principalLinkLabel).join(">");
 }
 
 /** The principal a run acts as; undefined until the run names an account and an agent. */
@@ -90,7 +104,7 @@ export function runPrincipal(
     eventId: string;
     conversationKey: string;
   },
-  chain: PrincipalLink[],
+  chain: PrincipalLink[] | undefined,
 ): Principal | undefined {
   if (!run.accountId || !run.agentId) return undefined;
 
@@ -100,7 +114,7 @@ export function runPrincipal(
     agentId: run.agentId,
     runId: run.eventId,
     conversationKey: run.conversationKey,
-    chain: chain,
+    ...(chain ? { chain: chain } : {}),
   };
 }
 
@@ -113,19 +127,4 @@ function principalLinkLabel(link: PrincipalLink): string {
     case "agent":
       return `agent:${link.agentId}`;
   }
-}
-
-/** The requester link of a channel turn; an identity with no user id is nobody. */
-function userPrincipalLink(
-  identity: ChannelIdentity | undefined,
-  channel: string,
-): PrincipalLink | undefined {
-  if (!identity?.userId) return undefined;
-
-  return {
-    kind: "user",
-    id: identity.userId,
-    ...(identity.userName ? { name: identity.userName } : {}),
-    channel: channel,
-  };
 }

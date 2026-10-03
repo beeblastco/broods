@@ -1,6 +1,6 @@
 /**
  * Run tokens (`fp_run_…`): a stateless HMAC-signed bearer for one agent run,
- * handed to its sandbox code so it can call back into the API as that agent.
+ * handed to its sandbox code so it can read that agent's runs.
  * Signed with a key HKDF-derived from STAGE_TICKET_SECRET under its own info
  * string, so a run token can never open a stage ticket or the reverse. Core
  * is the only minter and verifier; the config plane refuses the prefix.
@@ -22,7 +22,11 @@ const RUN_TOKEN_TTL_MS = Math.min(
   TTL_MAX_MS,
 );
 
-type RunTokenClaims = Principal & { exp: number };
+// What the bearer carries. Nothing in here is unchecked on the way back in.
+type RunTokenClaims = Pick<
+  Principal,
+  "kind" | "accountId" | "agentId" | "chain"
+> & { exp: number };
 
 // One derived key per secret value, so a rotation re-derives and a test can swap it.
 let derivedKey: { secret: string; key: Buffer } | undefined;
@@ -61,8 +65,10 @@ export function sealRunToken(
   ttlMs = RUN_TOKEN_TTL_MS,
 ): string {
   const claims: RunTokenClaims = {
-    ...principal,
-    chain: chainWithoutNames(principal.chain),
+    kind: principal.kind,
+    accountId: principal.accountId,
+    agentId: principal.agentId,
+    ...(principal.chain ? { chain: chainWithoutNames(principal.chain) } : {}),
     exp: now + ttlMs,
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");

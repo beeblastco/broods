@@ -512,14 +512,14 @@ export async function runAgentLoop(
   );
   // Reassigned once the tool set is known, so the live root span carries the
   // tools injected into the model alongside its system prompt and messages.
+  const principalChain =
+    session.principal && principalChainLabel(session.principal);
   let rootRunningAttributes: Record<string, string | number | boolean> = {
     "agent.environment": traceAttribute(environment),
     ...(session.principal
-      ? {
-          "principal.agentId": session.principal.agentId,
-          "principal.chain": principalChainLabel(session.principal),
-        }
+      ? { "principal.agentId": session.principal.agentId }
       : {}),
+    ...(principalChain ? { "principal.chain": principalChain } : {}),
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",

@@ -22,30 +22,31 @@ const RUN = {
 };
 
 describe("principal chain", () => {
-  it("names the channel sender on a channel turn, nobody when the adapter gave none", () => {
+  it("names the channel sender on a channel turn, and no chain when the adapter gave none", () => {
     expect(
       channelPrincipalChain(
         { userId: "U1", userName: "Ada", channelId: "C1" },
         "slack",
       ),
     ).toEqual([{ kind: "user", id: "U1", name: "Ada", channel: "slack" }]);
-    expect(channelPrincipalChain({ channelId: "C1" }, "slack")).toEqual([]);
-    expect(channelPrincipalChain(undefined, "slack")).toEqual([]);
+    expect(channelPrincipalChain({ channelId: "C1" }, "slack")).toBeUndefined();
+    expect(channelPrincipalChain(undefined, "slack")).toBeUndefined();
   });
 
-  it("names the key kind on a direct run and the scheduler on a cron", () => {
-    expect(directPrincipalChain({})).toEqual([
-      { kind: "api", keyKind: "account" },
-    ]);
-    expect(directPrincipalChain({ endpointId: "env-endpoint" })).toEqual([
-      { kind: "api", keyKind: "deployment" },
-    ]);
+  it("names the scheduler on a cron and guesses nothing for a rebuilt envelope", () => {
     expect(
-      directPrincipalChain({
-        endpointId: "env-endpoint",
-        cronRun: { cronId: "cron_1", runId: "run_1" },
-      }),
+      directPrincipalChain({ cronRun: { cronId: "cron_1", runId: "run_1" } }),
     ).toEqual([{ kind: "api", keyKind: "cron" }]);
+    // No chain from the router, no cron, no stored sender: the requester is
+    // unknown, and the ledger row carries no chain rather than a guess.
+    expect(directPrincipalChain({})).toBeUndefined();
+    expect(
+      directPrincipalChain({ replyTarget: { channelName: "slack" } }),
+    ).toBeUndefined();
+    const unknown = runPrincipal(RUN, directPrincipalChain({}))!;
+    expect("chain" in unknown).toBe(false);
+    expect(delegatedChain(unknown)).toBeUndefined();
+    expect(principalChainLabel(unknown)).toBeUndefined();
   });
 
   it("keeps the router's chain and reads a channel continuation's sender", () => {
@@ -109,10 +110,25 @@ describe("run token", () => {
     else process.env.STAGE_TICKET_SECRET = previousSecret;
   });
 
-  it("opens what it sealed, with the principal intact", () => {
-    const token = sealRunToken(principal, 1_000, 60_000);
+  it("opens what it sealed: account, agent and chain, nothing unchecked", () => {
+    const token = sealRunToken(
+      { ...principal, conversationKey: RUN.conversationKey },
+      1_000,
+      60_000,
+    );
     expect(token.startsWith("fp_run_")).toBe(true);
-    expect(openRunToken(token, 60_999)).toEqual(principal);
+    expect(openRunToken(token, 60_999)).toEqual({
+      kind: "agent",
+      accountId: "acct_1",
+      agentId: "agent_1",
+      chain: [{ kind: "api", keyKind: "account" }],
+    });
+    const { chain: _chain, ...unknown } = principal;
+    expect(openRunToken(sealRunToken(unknown, 1_000, 60_000), 2_000)).toEqual({
+      kind: "agent",
+      accountId: "acct_1",
+      agentId: "agent_1",
+    });
   });
 
   it("carries chain ids and kinds, never a channel user's display name", () => {

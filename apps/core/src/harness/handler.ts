@@ -2371,6 +2371,7 @@ async function dispatchSessionMessage(
   });
   const { candidate, publicEventId, publicConversationKey } = prepared;
   const delivery = candidate.delivery;
+  const senderChain = session.principal && delegatedChain(session.principal);
   const event: DirectInboundEvent = {
     accountId: candidate.accountId,
     agentId: candidate.agentId,
@@ -2388,9 +2389,7 @@ async function dispatchSessionMessage(
       source: delivery.source ?? {},
     },
     // The sending run asked, so the run it starts records that agent.
-    ...(session.principal
-      ? { principalChain: delegatedChain(session.principal) }
-      : {}),
+    ...(senderChain ? { principalChain: senderChain } : {}),
   };
   const admission = await acceptIngress(candidate);
   await dispatchRecoveredIngress(event, admission);

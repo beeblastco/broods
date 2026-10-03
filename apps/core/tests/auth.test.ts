@@ -318,7 +318,6 @@ describe("resolveBearerAuth with a run token", () => {
     kind: "agent" as const,
     accountId: ACCOUNT.accountId,
     agentId: AGENT.agentId,
-    runId: "evt_1",
     chain: [{ kind: "api" as const, keyKind: "account" as const }],
   };
 

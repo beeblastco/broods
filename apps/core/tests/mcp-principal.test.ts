@@ -57,6 +57,13 @@ describe("mcp principal headers", () => {
     expect(
       await mcpRequestHeaders(mcpConnection(MCP_RECORD, undefined)),
     ).toEqual({ "X-Api-Key": "k" });
+    // An unknown requester sends the agent and no chain, never a partial one.
+    const { chain: _chain, ...unknown } = principal;
+    expect(
+      await mcpRequestHeaders(
+        mcpConnection(MCP_RECORD, undefined, undefined, unknown),
+      ),
+    ).toEqual({ "X-Api-Key": "k", [MCP_AGENT_ID_HEADER]: "agent_1" });
   });
 
   it("drops a row or config header that claims either principal name, in any case", async () => {
