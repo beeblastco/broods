@@ -115,6 +115,29 @@ describe("run token", () => {
     expect(openRunToken(token, 60_999)).toEqual(principal);
   });
 
+  it("carries chain ids and kinds, never a channel user's display name", () => {
+    const token = sealRunToken(
+      {
+        ...principal,
+        chain: [
+          { kind: "user", id: "U1", name: "Ada Lovelace", channel: "slack" },
+          { kind: "agent", agentId: "agent_0" },
+        ],
+      },
+      1_000,
+      60_000,
+    );
+    const payload = Buffer.from(
+      token.slice("fp_run_".length).split(".")[0]!,
+      "base64url",
+    ).toString("utf8");
+    expect(payload).not.toContain("Ada");
+    expect(openRunToken(token, 2_000)?.chain).toEqual([
+      { kind: "user", id: "U1", channel: "slack" },
+      { kind: "agent", agentId: "agent_0" },
+    ]);
+  });
+
   it("refuses an expired, tampered, foreign or malformed token", () => {
     const token = sealRunToken(principal, 1_000, 60_000);
     expect(openRunToken(token, 61_000)).toBeNull();

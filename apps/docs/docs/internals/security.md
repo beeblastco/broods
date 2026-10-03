@@ -152,13 +152,13 @@ flowchart LR
 
 Every run acts as one agent of one account, never "as the account". Core builds a `Principal` (`apps/core/src/shared/domain/principal.ts`) where the `Session` is constructed: `{ kind: "agent", accountId, agentId, runId, conversationKey, chain }`. The chain records who asked, oldest first:
 
-| Run                      | Chain                                                                |
-| ------------------------ | -------------------------------------------------------------------- |
-| Channel turn             | `[{ kind: "user", id, name?, channel }]` from the adapter's identity |
-| Direct API               | `[{ kind: "api", keyKind: "account" \| "deployment" }]`              |
-| Cron firing              | `[{ kind: "api", keyKind: "cron" }]`                                 |
-| Subagent                 | the parent's chain, then `{ kind: "agent", agentId: parent }`        |
-| Started with a run token | the token holder's chain, then `{ kind: "agent", agentId: holder }`  |
+| Run                      | Chain                                                                    |
+| ------------------------ | ------------------------------------------------------------------------ |
+| Channel turn             | `[{ kind: "user", id, name?, channel }]` from the adapter's identity     |
+| Direct API               | `[{ kind: "api", keyKind: "account" \| "deployment" }]`                  |
+| Cron firing              | `[{ kind: "api", keyKind: "cron" }]`                                     |
+| Subagent                 | the parent's chain, then `{ kind: "agent", agentId: parent }`            |
+| Started with a run token | the token's chain (no `name`), then `{ kind: "agent", agentId: holder }` |
 
 The link shape is one validator, `principalLinkValidator` in `packages/convex/model/principal.ts`, so core and the ledger cannot drift. The principal appears in four places:
 
@@ -167,7 +167,7 @@ The link shape is one validator, `principalLinkValidator` in `packages/convex/mo
 - Root span: `principal.agentId` and `principal.chain` (`user:U1>agent:a1`) on `agent.task`, `agent.cron` and `agent.subtask`.
 - Sandbox env and MCP requests, below.
 
-Run tokens (`fp_run_…`) let sandbox code call the API as its agent. A token is stateless: base64url JSON of the principal plus `exp`, HMAC-SHA256 signed with a key derived from `STAGE_TICKET_SECRET` by HKDF-SHA256 (empty salt, info `broods-run-token`, 32 bytes). No new secret, and the purpose separation means a run token can never open a stage ticket. Its TTL is the worker budget (`WORKER_TIMEOUT_BUDGET_MS`) plus five minutes, capped at two hours. Core mints one lazily, on the first sandbox exec of a run, so the per-turn Convex budget is untouched and a run with no exec never signs one.
+Run tokens (`fp_run_…`) let sandbox code call the API as its agent. A token is stateless: base64url JSON of the principal plus `exp`, HMAC-SHA256 signed with a key derived from `STAGE_TICKET_SECRET` by HKDF-SHA256 (empty salt, info `broods-run-token`, 32 bytes). No new secret, and the purpose separation means a run token can never open a stage ticket. The payload is signed, not encrypted, and sandbox code can read it, so its chain carries ids and kinds only: a channel user's display name stays on the ledger and the OPA input and never enters the token. Its TTL is the worker budget (`WORKER_TIMEOUT_BUDGET_MS`) plus five minutes, capped at two hours. Core mints one lazily, on the first sandbox exec of a run, so the per-turn Convex budget is untouched and a run with no exec never signs one.
 
 A run token resolves on core to auth kind `agent`. It may `POST /v1/runs` for its own agent or an agent listed in that agent's `subagent.allowed`, and `GET /v1/runs/{runId}` for that agent's runs. Every other route answers 403 `run_token_scope`; the config plane and the CLI routes answer 401 `run tokens cannot reach the config plane` on the prefix alone; the machine socket and the account verbs refuse it. A run it starts gets the holder's chain plus the holder as its own chain, so delegation through the API is recorded the same way as `run_subagent`.
 

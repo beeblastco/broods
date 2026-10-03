@@ -8,7 +8,7 @@
 
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
-import type { Principal } from "./domain/principal.ts";
+import type { Principal, PrincipalLink } from "./domain/principal.ts";
 import { requireEnv, WORKER_TIMEOUT_BUDGET_MS } from "./env.ts";
 
 const HKDF_INFO = "broods-run-token";
@@ -27,7 +27,7 @@ type RunTokenClaims = Principal & { exp: number };
 // One derived key per secret value, so a rotation re-derives and a test can swap it.
 let derivedKey: { secret: string; key: Buffer } | undefined;
 
-/** Verify signature and expiry; null for anything else. */
+/** Verify signature and expiry; null for anything else. The chain comes back without display names. */
 export function openRunToken(
   token: string,
   now = Date.now(),
@@ -54,15 +54,27 @@ export function openRunToken(
   return principal;
 }
 
+/** Sign a principal into a bearer. The payload is readable by its holder, so the chain carries ids and kinds, never a display name. */
 export function sealRunToken(
   principal: Principal,
   now = Date.now(),
   ttlMs = RUN_TOKEN_TTL_MS,
 ): string {
-  const claims: RunTokenClaims = { ...principal, exp: now + ttlMs };
+  const claims: RunTokenClaims = {
+    ...principal,
+    chain: principal.chain.map(linkWithoutName),
+    exp: now + ttlMs,
+  };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
 
   return `${RUN_TOKEN_PREFIX}${payload}.${sign(payload).toString("base64url")}`;
+}
+
+function linkWithoutName(link: PrincipalLink): PrincipalLink {
+  if (link.kind !== "user") return link;
+  const { name: _name, ...rest } = link;
+
+  return rest;
 }
 
 function runTokenKey(): Buffer {
