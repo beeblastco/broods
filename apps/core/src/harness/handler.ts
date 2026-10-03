@@ -2336,7 +2336,7 @@ export async function dispatchAppliedIngress(
     // Loaded below; an envelope whose config cannot load settles on this.
     agentConfig: {},
     configRef: next.configRef,
-    ...(base.subagent ? { subagent: true } : {}),
+    ...(base.subagentConfig ? { subagentConfig: base.subagentConfig } : {}),
     conversationKey: base.conversationKey,
     endpointId: base.endpointId,
     projectSlug: base.projectSlug,
@@ -2369,7 +2369,7 @@ export async function dispatchAppliedIngress(
       accountId: base.accountId,
       agentId: base.agentId,
       configRef: next.configRef,
-      ...(base.subagent ? { subagentConfig: base.agentConfig } : {}),
+      subagentConfig: base.subagentConfig,
     });
     if (delivery.kind === "websocket") {
       await invokeNatsWorker(event);

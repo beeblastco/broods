@@ -965,7 +965,7 @@ export class SubagentCoordinator {
     const transferred = await this.dispatchNextIngress(childSession, {
       accountId: requireParentAccountId(this.parentSession),
       agentId: task.agentId,
-      agentConfig: task.agentConfig,
+      subagentConfig: task.agentConfig,
       conversationKey: task.conversationKey,
       publicConversationKey: task.publicConversationKey,
       endpointId: this.parentSession.endpointId,

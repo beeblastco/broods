@@ -468,15 +468,11 @@ export async function loadChannelSessionConfig(options: {
 }
 
 /**
- * The config a dispatched envelope runs on, rebuilt from the live rows the way
- * its admission built it: the channel session's narrowed config when the ref
- * names one, the agent's own config plus the request's model override
- * otherwise. One agent read per dispatch, plus the credential holder and the
- * record when a channel session pins them; nothing else in the dispatched run
- * loads it. A subagent's envelope has no ref and runs on `subagentConfig`.
- * Throws when any other envelope has no ref (a core pod from before config
- * refs admitted it), when the agent is gone, or when the channel session no
- * longer binds to it; the caller fails the envelope with that reason.
+ * The config a dispatched envelope runs on, rebuilt from the live rows its
+ * ref names: the channel session's narrowed config, or the agent's own with
+ * the request's model override. A subagent's envelope has no ref and runs on
+ * `subagentConfig`. Throws for any other envelope without a ref, a deleted
+ * agent or an unbound channel session; the caller fails the envelope with it.
  */
 export async function loadAppliedIngressConfig(options: {
   accountId: string;
