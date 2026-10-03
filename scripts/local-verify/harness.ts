@@ -35,6 +35,8 @@ export interface VerifyContext {
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
   runId: string;
+  /** The stack's STAGE_TICKET_SECRET, which core derives its run-token key from. */
+  stageTicketSecret: string;
 }
 
 /** Thrown by assertStep; verify records the step as the failure. */
