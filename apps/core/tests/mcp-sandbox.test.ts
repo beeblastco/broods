@@ -2,7 +2,7 @@
 // reserved VM. These pin the wire shape the sandbox image reads, that a request
 // is never resent, that a warm VM is reused, and how replies are checked.
 
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import {
   sandboxMcpRequest,
   type SandboxMcpExecutor,
@@ -12,10 +12,16 @@ import {
 const SERVER = { name: "obscura", command: ["obscura", "mcp"] };
 const LIST = { method: "tools/list", params: {} };
 
-const fetchSpy = spyOn(globalThis, "fetch");
+// Installed per test and restored after, so no other test file sees a fake fetch.
+let fetchSpy = spyOn(globalThis, "fetch");
+fetchSpy.mockRestore();
+
+beforeEach(() => {
+  fetchSpy = spyOn(globalThis, "fetch");
+});
 
 afterEach(() => {
-  fetchSpy.mockReset();
+  fetchSpy.mockRestore();
 });
 
 // Each test reserves its own key, because a warm VM is remembered per key.
