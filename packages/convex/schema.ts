@@ -438,7 +438,7 @@ export const accountsFields = {
   description: v.optional(v.string()),
   secretHash: v.string(),
   status: v.union(v.literal("active"), v.literal("disabled")),
-  /** Days an exported audit ledger row is kept before pruning; 90 when unset. */
+  /** Days an audit ledger row is kept before pruning; 90 when unset. */
   auditRetentionDays: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),

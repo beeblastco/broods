@@ -922,8 +922,9 @@ paths:
                   minimum: 1
                   maximum: 3650
                   description: >-
-                    Days an audit ledger row is kept once the sink has exported
-                    it. `null` returns to the default of 90.
+                    Days an audit ledger row is kept. With a sink, a row it has
+                    not exported yet stays past that. `null` returns to the
+                    default of 90.
             examples:
               updateDescription:
                 value:
@@ -2996,7 +2997,7 @@ paths:
     delete:
       tags: [Audit]
       summary: Remove the audit sink
-      description: Exports stop; rows already in the ledger stay, and nothing is pruned until a sink exports again.
+      description: Exports stop. Rows already in the ledger stay until they pass the account's `auditRetentionDays`; with no sink there is no export watermark holding them longer.
       security: [{ BearerAuth: [] }]
       responses:
         "200":
@@ -4190,7 +4191,7 @@ components:
           enum: [active, disabled]
         auditRetentionDays:
           type: integer
-          description: Days an exported audit ledger row is kept. Absent means the default of 90.
+          description: Days an audit ledger row is kept. Absent means the default of 90.
         createdAt:
           type: string
           format: date-time

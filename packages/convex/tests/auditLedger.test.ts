@@ -212,7 +212,7 @@ describe("chain", () => {
 });
 
 describe("prune", () => {
-  test("deletes only exported rows past retention and keeps the head", async () => {
+  test("without a sink, rows past retention go and the head stays", async () => {
     const t = ledgerTest();
     const accountId = await seedAccount(t);
     for (let index = 0; index < 4; index += 1) {
@@ -220,17 +220,40 @@ describe("prune", () => {
     }
     await backdate(t, accountId, Date.now() - 100 * DAY_MS);
 
-    // No sink: nothing is exported, so nothing is pruned however old.
+    await t.mutation(internal.audit.ledger.pruneExpired, {});
+
+    expect((await allRows(t, accountId)).map((row) => row.seq)).toEqual([4]);
+    expect(
+      await t.query(internal.audit.ledger.verifyChain, {
+        accountId: accountId,
+      }),
+    ).toEqual({ ok: true, checkedFrom: 4, checkedTo: 4 });
+  });
+
+  test("with a sink, the export watermark is a floor", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    for (let index = 0; index < 4; index += 1) {
+      await record(t, accountId, `row ${index + 1}`);
+    }
+    await backdate(t, accountId, Date.now() - 100 * DAY_MS);
+    const sinkId = await seedSink(t, accountId);
+
+    // Nothing exported yet: every row is past retention and every row stays.
     await t.mutation(internal.audit.ledger.pruneExpired, {});
     expect((await allRows(t, accountId)).length).toBe(4);
 
-    const sinkId = await seedSink(t, accountId);
     await t.mutation(internal.audit.sinks.markExported, {
       sinkId: sinkId,
-      exportedSeq: 3,
+      exportedSeq: 2,
     });
     await t.mutation(internal.audit.ledger.pruneExpired, {});
-    expect((await allRows(t, accountId)).map((row) => row.seq)).toEqual([4]);
+    expect((await allRows(t, accountId)).map((row) => row.seq)).toEqual([3, 4]);
+    expect(
+      await t.query(internal.audit.ledger.verifyChain, {
+        accountId: accountId,
+      }),
+    ).toEqual({ ok: true, checkedFrom: 3, checkedTo: 4 });
 
     // Everything exported, the head still stays.
     await t.mutation(internal.audit.sinks.markExported, {

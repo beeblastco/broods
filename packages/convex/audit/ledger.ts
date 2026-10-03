@@ -26,7 +26,7 @@ import { auditEventsFields } from "../schema";
 const DEFAULT_RETENTION_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PRUNE_BATCH_SIZE = 200;
-const PRUNE_SINK_PAGE_SIZE = 20;
+const PRUNE_ACCOUNT_PAGE_SIZE = 20;
 const VERIFY_ROWS_MAX = 1000;
 
 const auditEventDoc = v.object({
@@ -70,10 +70,11 @@ export const list = internalQuery({
 });
 
 /**
- * Delete rows a sink already exported and that are older than the account's
- * retention window. The head row stays so the chain always has a tip to link
- * from. Accounts without a sink keep every row. Reschedules itself while a
- * batch fills.
+ * Delete rows older than each account's retention window, one page of
+ * accounts per invocation. A sink's `exportedSeq` is a floor, so a row it has
+ * not exported is never dropped, and the head row stays so the chain always
+ * has a tip to link from. Reschedules itself while a batch fills or accounts
+ * remain.
  */
 export const pruneExpired = internalMutation({
   args: {
@@ -83,21 +84,22 @@ export const pruneExpired = internalMutation({
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const now = args.now ?? Date.now();
-    const sinks = await ctx.db.query("auditSinks").paginate({
-      numItems: PRUNE_SINK_PAGE_SIZE,
+    // One head row per account that has ever written to its ledger.
+    const tips = await ctx.db.query("auditChainHeads").paginate({
+      numItems: PRUNE_ACCOUNT_PAGE_SIZE,
       cursor: args.cursor ?? null,
     });
     let deleted = 0;
     let batchFilled = false;
-    for (const sink of sinks.page) {
-      const count = await pruneAccount(ctx, sink, now);
+    for (const tip of tips.page) {
+      const count = await pruneAccount(ctx, tip, now);
       deleted += count;
       batchFilled ||= count === PRUNE_BATCH_SIZE;
     }
-    if (batchFilled || !sinks.isDone) {
+    if (batchFilled || !tips.isDone) {
       await ctx.scheduler.runAfter(0, internal.audit.ledger.pruneExpired, {
         now: now,
-        cursor: batchFilled ? args.cursor : sinks.continueCursor,
+        cursor: batchFilled ? args.cursor : tips.continueCursor,
       });
     }
 
@@ -205,27 +207,30 @@ async function chainHead(
 }
 
 /**
- * One batch of deletes for one sink's account: rows at or below the exported
- * watermark, older than retention, never the head. Returns the count deleted;
- * a full batch means there may be more.
+ * One batch of deletes for one account: rows older than its retention, never
+ * the head, and never past what its sink exported when it has one. Returns
+ * the count deleted; a full batch means there may be more.
  */
 async function pruneAccount(
   ctx: MutationCtx,
-  sink: Doc<"auditSinks">,
+  tip: Doc<"auditChainHeads">,
   now: number,
 ): Promise<number> {
-  const account = await ctx.db.get(sink.accountId);
-  const tip = await chainHead(ctx, sink.accountId);
-  if (!account || !tip) return 0;
+  const account = await ctx.db.get(tip.accountId);
+  if (!account) return 0;
+  const sink = await ctx.db
+    .query("auditSinks")
+    .withIndex("by_accountId", (q) => q.eq("accountId", tip.accountId))
+    .unique();
   const cutoff =
     now - (account.auditRetentionDays ?? DEFAULT_RETENTION_DAYS) * DAY_MS;
-  // Below the watermark and below the head: the head row is the chain tip
-  // and stays whatever its age.
-  const belowSeq = Math.min(sink.exportedSeq + 1, tip.seq);
+  // Below the head, which is the chain tip and stays whatever its age, and
+  // with a sink also at or below its watermark.
+  const belowSeq = sink ? Math.min(sink.exportedSeq + 1, tip.seq) : tip.seq;
   const rows = await ctx.db
     .query("auditEvents")
     .withIndex("by_accountId_and_seq", (q) =>
-      q.eq("accountId", sink.accountId).lt("seq", belowSeq),
+      q.eq("accountId", tip.accountId).lt("seq", belowSeq),
     )
     .take(PRUNE_BATCH_SIZE);
   let deleted = 0;

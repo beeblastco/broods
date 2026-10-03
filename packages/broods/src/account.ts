@@ -74,7 +74,7 @@ export interface BroodsAccount {
   accountId: string;
   username: string;
   status: string;
-  /** Days an exported audit row is kept; absent means the 90 day default. */
+  /** Days an audit row is kept; absent means the 90 day default. */
   auditRetentionDays?: number;
   [key: string]: unknown;
 }
@@ -1317,7 +1317,7 @@ export class BroodsAccountClient {
 
       return result;
     },
-    /** Remove the sink; exports stop and nothing more is pruned. Returns whether one existed. */
+    /** Remove the sink; exports stop and rows age out on retention alone. Returns whether one existed. */
     deleteSink: async (): Promise<boolean> => {
       const result = await this.request<{ deleted: boolean }>(
         "DELETE",
