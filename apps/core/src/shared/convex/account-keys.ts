@@ -15,6 +15,7 @@ import {
   type WrappedAccountKey,
 } from "@broods/convex/model/envelope";
 import { requireEnv, requireSecretsEnv } from "../env.ts";
+import { NODE_CRYPTO } from "../node-aead.ts";
 import { getConvexClient } from "./client.ts";
 
 const KEYRING_TTL_MS = 5 * 60_000;
@@ -54,19 +55,16 @@ export async function decryptAccountBlob(
   scope: BlobScope,
   blob: EncryptedBlob,
 ): Promise<Record<string, unknown>> {
-  let cipher =
+  const cipher =
     blobKeyId(blob) === null
       ? new AccountCipher(
           accountId,
           requireSecretsEnv(SECRETS_ENV),
           [],
           requireEnv(SECRETS_ENV),
+          NODE_CRYPTO,
         )
-      : await keyringFor(accountId);
-  if (!cipher.hasKey(blob)) {
-    keyrings.delete(accountId);
-    cipher = await keyringFor(accountId);
-  }
+      : await keyringHolding(accountId, blob);
   const value = await cipher.decrypt(scope, blob);
   if (!value) {
     throw new Error(`Stored ${scope} of account ${accountId} does not decrypt`);
@@ -83,9 +81,10 @@ export function resetAccountKeysForTests(
   loader = loaderOverride ?? loadFromConvex;
 }
 
-function keyringFor(accountId: string): Promise<AccountCipher> {
+/** The cached entry for the account, loading its keys when there is none or it expired. */
+function keyringFor(accountId: string): CachedKeyring {
   const cached = keyrings.get(accountId);
-  if (cached && cached.expiresAt > Date.now()) return cached.cipher;
+  if (cached && cached.expiresAt > Date.now()) return cached;
   const cipher = loader(accountId).then(
     (keys): AccountCipher =>
       new AccountCipher(
@@ -93,6 +92,7 @@ function keyringFor(accountId: string): Promise<AccountCipher> {
         requireSecretsEnv(SECRETS_ENV),
         keys,
         requireEnv(SECRETS_ENV),
+        NODE_CRYPTO,
       ),
   );
   const entry: CachedKeyring = {
@@ -105,7 +105,21 @@ function keyringFor(accountId: string): Promise<AccountCipher> {
     if (keyrings.get(accountId) === entry) keyrings.delete(accountId);
   });
 
-  return cipher;
+  return entry;
+}
+
+/** The account's keyring, reloaded once when `blob` names a key the cached one has not seen. */
+async function keyringHolding(
+  accountId: string,
+  blob: EncryptedBlob,
+): Promise<AccountCipher> {
+  const cached = keyringFor(accountId);
+  const cipher = await cached.cipher;
+  if (cipher.hasKey(blob)) return cipher;
+  // Rows decrypted together share one reload: only the first drops the stale entry.
+  if (keyrings.get(accountId) === cached) keyrings.delete(accountId);
+
+  return await keyringFor(accountId).cipher;
 }
 
 function loadFromConvex(accountId: string): Promise<WrappedAccountKey[]> {

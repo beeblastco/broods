@@ -6,8 +6,10 @@
  * DEK with `${accountId}:${table}:${field}` as additional data, so a
  * ciphertext cannot be moved to another tenant, row kind or column.
  *
- * Web Crypto only: Convex mutations run in a V8 isolate without `node:crypto`,
- * and core (Bun) has the same API. Key rows live in `accountKeys`; the Convex
+ * Web Crypto by default: Convex mutations run in a V8 isolate without
+ * `node:crypto`. The cipher itself is an `AeadPrimitive`, so core passes the
+ * synchronous `node:crypto` one and keeps a per-turn decrypt off a thread hop;
+ * the format, the additional data and the key ids stay in this one file. Key rows live in `accountKeys`; the Convex
  * side reads them in `./accountKeys.ts`, core caches them in
  * `apps/core/src/shared/convex/account-keys.ts`.
  */
@@ -22,6 +24,8 @@ const GCM_IV_BYTES = 12;
 const GCM_TAG_BYTES = 16;
 const KEY_ID_BYTES = 6;
 const KEK_ID_HEX_LENGTH = 8;
+const TEXT_DECODER = new TextDecoder();
+const TEXT_ENCODER = new TextEncoder();
 
 /**
  * Every encrypted column. The scope type, the table list and the
@@ -107,6 +111,46 @@ export const ENVELOPE_TABLES = [
   ...new Set(ENVELOPE_COLUMNS.map((column) => column.table)),
 ];
 
+/** Keys Web Crypto has imported, remembered per key object so a keyring imports each once. */
+const WEB_AES_KEYS = new WeakMap<Uint8Array, Promise<CryptoKey>>();
+const WEB_HMAC_KEYS = new WeakMap<Uint8Array, Promise<CryptoKey>>();
+
+/** Web Crypto, the only crypto a Convex isolate has. */
+export const WEB_CRYPTO: AeadPrimitive = {
+  hmac: async (key, data): Promise<Uint8Array> =>
+    new Uint8Array(
+      await crypto.subtle.sign(
+        "HMAC",
+        await webKey(WEB_HMAC_KEYS, key),
+        toArrayBuffer(data),
+      ),
+    ),
+  open: async (key, iv, aad, sealed): Promise<Uint8Array> =>
+    new Uint8Array(
+      await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: toArrayBuffer(iv),
+          additionalData: toArrayBuffer(aad),
+        },
+        await webKey(WEB_AES_KEYS, key),
+        toArrayBuffer(sealed),
+      ),
+    ),
+  seal: async (key, iv, aad, plaintext): Promise<Uint8Array> =>
+    new Uint8Array(
+      await crypto.subtle.encrypt(
+        {
+          name: "AES-GCM",
+          iv: toArrayBuffer(iv),
+          additionalData: toArrayBuffer(aad),
+        },
+        await webKey(WEB_AES_KEYS, key),
+        toArrayBuffer(plaintext),
+      ),
+    ),
+};
+
 /**
  * The three columns every encrypted row stores. `ciphertext` reads
  * `v2:<keyId>:<base64url>`; a bare base64url value is a legacy blob under the
@@ -134,10 +178,27 @@ export type EnvelopeTable = EnvelopeColumn["table"];
 /** `table:field` of the column a blob is bound to through the GCM additional data. */
 export type BlobScope = EnvelopeColumn["scope"];
 
-/** One unwrapped DEK, imported once for each use it has. */
-interface DataKey {
-  aes: CryptoKey;
-  hmac: CryptoKey;
+/**
+ * The cipher and MAC the codec runs on, over raw 32-byte keys. An
+ * implementation may answer synchronously; the codec awaits either way.
+ */
+export interface AeadPrimitive {
+  /** HMAC-SHA256 of `data`. */
+  hmac(key: Uint8Array, data: Uint8Array): Uint8Array | Promise<Uint8Array>;
+  /** AES-256-GCM open of `ciphertext || tag`; throws when the tag does not verify. */
+  open(
+    key: Uint8Array,
+    iv: Uint8Array,
+    aad: Uint8Array,
+    sealed: Uint8Array,
+  ): Uint8Array | Promise<Uint8Array>;
+  /** AES-256-GCM seal, answering `ciphertext || tag`. */
+  seal(
+    key: Uint8Array,
+    iv: Uint8Array,
+    aad: Uint8Array,
+    plaintext: Uint8Array,
+  ): Uint8Array | Promise<Uint8Array>;
 }
 
 /**
@@ -152,7 +213,8 @@ export class AccountCipher {
   private readonly legacySecrets: string[];
   private readonly keys: Map<string, WrappedAccountKey>;
   private readonly currentKeyId: string | null;
-  private readonly dataKeys = new Map<string, Promise<DataKey>>();
+  private readonly primitive: AeadPrimitive;
+  private readonly dataKeys = new Map<string, Promise<Uint8Array>>();
 
   /**
    * @param rawSecret the env value before it was split into `secrets`. Legacy
@@ -164,9 +226,11 @@ export class AccountCipher {
     secrets: string[],
     keys: WrappedAccountKey[],
     rawSecret?: string,
+    primitive: AeadPrimitive = WEB_CRYPTO,
   ) {
     this.accountId = accountId;
     this.secrets = secrets;
+    this.primitive = primitive;
     this.legacySecrets =
       rawSecret === undefined || secrets.includes(rawSecret)
         ? secrets
@@ -184,14 +248,12 @@ export class AccountCipher {
 
   /** HMAC-SHA256 hex of `value` under the current key, so a stored digest cannot be guessed offline. */
   async digest(value: string): Promise<string> {
-    const { hmac } = await this.dataKey(this.requireCurrentKeyId());
-    const mac = await crypto.subtle.sign(
-      "HMAC",
-      hmac,
-      new TextEncoder().encode(value),
+    const mac = await this.primitive.hmac(
+      await this.dataKey(this.requireCurrentKeyId()),
+      TEXT_ENCODER.encode(value),
     );
 
-    return hexFromBytes(new Uint8Array(mac));
+    return hexFromBytes(mac);
   }
 
   /**
@@ -207,7 +269,7 @@ export class AccountCipher {
     try {
       const plaintext =
         keyId === null
-          ? await decryptLegacyBlob(this.legacySecrets, blob)
+          ? await decryptLegacyBlob(this.legacySecrets, blob, this.primitive)
           : await this.decryptEnvelope(keyId, scope, blob);
       const parsed: unknown = JSON.parse(plaintext);
 
@@ -223,18 +285,12 @@ export class AccountCipher {
     value: Record<string, unknown>,
   ): Promise<EncryptedBlob> {
     const keyId = this.requireCurrentKeyId();
-    const { aes } = await this.dataKey(keyId);
     const iv = crypto.getRandomValues(new Uint8Array(GCM_IV_BYTES));
-    const sealed = new Uint8Array(
-      await crypto.subtle.encrypt(
-        {
-          name: "AES-GCM",
-          iv: iv,
-          additionalData: new TextEncoder().encode(this.aad(scope)),
-        },
-        aes,
-        new TextEncoder().encode(JSON.stringify(value)),
-      ),
+    const sealed = await this.primitive.seal(
+      await this.dataKey(keyId),
+      iv,
+      TEXT_ENCODER.encode(this.aad(scope)),
+      TEXT_ENCODER.encode(JSON.stringify(value)),
     );
     const split = sealed.length - GCM_TAG_BYTES;
 
@@ -261,8 +317,8 @@ export class AccountCipher {
     return `${this.accountId}:${scope}`;
   }
 
-  /** The key `keyId` names, unwrapped and imported once per keyring. A retired key opens nothing. */
-  private dataKey(keyId: string): Promise<DataKey> {
+  /** The key `keyId` names, unwrapped once per keyring. A retired key opens nothing. */
+  private dataKey(keyId: string): Promise<Uint8Array> {
     const cached = this.dataKeys.get(keyId);
     if (cached) return cached;
     const wrapped = this.keys.get(keyId);
@@ -274,7 +330,8 @@ export class AccountCipher {
       this.accountId,
       this.secrets,
       wrapped,
-    ).then(importDataKey);
+      this.primitive,
+    );
     this.dataKeys.set(keyId, dataKey);
 
     return dataKey;
@@ -285,24 +342,19 @@ export class AccountCipher {
     scope: BlobScope,
     blob: EncryptedBlob,
   ): Promise<string> {
-    const { aes } = await this.dataKey(keyId);
-    const sealed = concatBytes(
-      base64UrlToBytes(
-        blob.ciphertext.slice(BLOB_VERSION_PREFIX.length + keyId.length + 1),
+    const plaintext = await this.primitive.open(
+      await this.dataKey(keyId),
+      base64UrlToBytes(blob.iv),
+      TEXT_ENCODER.encode(this.aad(scope)),
+      concatBytes(
+        base64UrlToBytes(
+          blob.ciphertext.slice(BLOB_VERSION_PREFIX.length + keyId.length + 1),
+        ),
+        base64UrlToBytes(blob.tag),
       ),
-      base64UrlToBytes(blob.tag),
-    );
-    const plaintext = await crypto.subtle.decrypt(
-      {
-        name: "AES-GCM",
-        iv: toArrayBuffer(base64UrlToBytes(blob.iv)),
-        additionalData: new TextEncoder().encode(this.aad(scope)),
-      },
-      aes,
-      toArrayBuffer(sealed),
     );
 
-    return new TextDecoder().decode(plaintext);
+    return TEXT_DECODER.decode(plaintext);
   }
 
   private requireCurrentKeyId(): string {
@@ -351,13 +403,16 @@ export async function rewrapAccountKey(
   wrapped: WrappedAccountKey,
 ): Promise<Pick<WrappedAccountKey, "kekId" | "wrappedKey"> | null> {
   if (wrapped.kekId === (await kekIdOf(secrets[0]!))) return null;
-  const dek = await unwrapAccountKey(accountId, secrets, wrapped);
+  const dek = await unwrapAccountKey(accountId, secrets, wrapped, WEB_CRYPTO);
   const next = await wrapAccountKey(accountId, secrets, wrapped.keyId, dek);
 
   return { kekId: next.kekId, wrappedKey: next.wrappedKey };
 }
 
 function base64UrlToBytes(value: string): Uint8Array {
+  if (typeof Uint8Array.fromBase64 === "function") {
+    return Uint8Array.fromBase64(value, { alphabet: "base64url" });
+  }
   const padded =
     value.replace(/-/g, "+").replace(/_/g, "/") +
     "=".repeat((4 - (value.length % 4)) % 4);
@@ -369,8 +424,14 @@ function base64UrlToBytes(value: string): Uint8Array {
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
+  // Native where the runtime has it: building the string by hand costs
+  // several times the cipher itself.
+  if (typeof bytes.toBase64 === "function") {
+    return bytes.toBase64({ alphabet: "base64url", omitPadding: true });
+  }
   let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  for (let i = 0; i < bytes.length; i++)
+    binary += String.fromCharCode(bytes[i]!);
 
   return btoa(binary)
     .replace(/\+/g, "-")
@@ -393,18 +454,22 @@ function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
 async function decryptLegacyBlob(
   secrets: string[],
   blob: EncryptedBlob,
+  primitive: AeadPrimitive,
 ): Promise<string> {
-  const sealed = toArrayBuffer(
-    concatBytes(base64UrlToBytes(blob.ciphertext), base64UrlToBytes(blob.tag)),
+  const sealed = concatBytes(
+    base64UrlToBytes(blob.ciphertext),
+    base64UrlToBytes(blob.tag),
   );
-  const iv = toArrayBuffer(base64UrlToBytes(blob.iv));
+  const iv = base64UrlToBytes(blob.iv);
   for (const secret of secrets) {
-    const key = await importAesKey(new Uint8Array(await sha256(secret)), [
-      "decrypt",
-    ]);
     try {
-      return new TextDecoder().decode(
-        await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, sealed),
+      return TEXT_DECODER.decode(
+        await primitive.open(
+          new Uint8Array(await sha256(secret)),
+          iv,
+          new Uint8Array(0),
+          sealed,
+        ),
       );
     } catch {
       continue;
@@ -414,42 +479,13 @@ async function decryptLegacyBlob(
   throw new Error("Legacy blob does not decrypt under any listed secret");
 }
 
-function importAesKey(
-  bytes: Uint8Array,
-  usages: Array<"encrypt" | "decrypt">,
-): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    "raw",
-    toArrayBuffer(bytes),
-    { name: "AES-GCM" },
-    false,
-    usages,
-  );
-}
-
-async function importDataKey(dek: Uint8Array): Promise<DataKey> {
-  return {
-    aes: await importAesKey(dek, ["encrypt", "decrypt"]),
-    hmac: await crypto.subtle.importKey(
-      "raw",
-      toArrayBuffer(dek),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    ),
-  };
-}
-
 /** The KEK is a domain-separated hash of the secret, so it never equals the legacy blob key. */
-async function keyEncryptionKey(secret: string): Promise<CryptoKey> {
-  return await importAesKey(
-    new Uint8Array(await sha256(`broods-kek:${secret}`)),
-    ["encrypt", "decrypt"],
-  );
+async function keyEncryptionKey(secret: string): Promise<Uint8Array> {
+  return new Uint8Array(await sha256(`broods-kek:${secret}`));
 }
 
 function sha256(value: string): Promise<ArrayBuffer> {
-  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(value));
 }
 
 // A copy, since a view's `.buffer` may be a SharedArrayBuffer to the type system.
@@ -464,30 +500,52 @@ async function unwrapAccountKey(
   accountId: string,
   secrets: string[],
   wrapped: WrappedAccountKey,
+  primitive: AeadPrimitive,
 ): Promise<Uint8Array> {
   for (const secret of secrets) {
     if ((await kekIdOf(secret)) !== wrapped.kekId) continue;
     const [iv, sealed] = wrapped.wrappedKey.split(".");
     if (!iv || !sealed) throw new Error("Malformed wrapped account key");
 
-    return new Uint8Array(
-      await crypto.subtle.decrypt(
-        {
-          name: "AES-GCM",
-          iv: toArrayBuffer(base64UrlToBytes(iv)),
-          additionalData: new TextEncoder().encode(
-            wrapAad(accountId, wrapped.keyId),
-          ),
-        },
-        await keyEncryptionKey(secret),
-        toArrayBuffer(base64UrlToBytes(sealed)),
-      ),
+    return await primitive.open(
+      await keyEncryptionKey(secret),
+      base64UrlToBytes(iv),
+      TEXT_ENCODER.encode(wrapAad(accountId, wrapped.keyId)),
+      base64UrlToBytes(sealed),
     );
   }
 
   throw new Error(
     `No ACCOUNT_CONFIG_ENCRYPTION_SECRET entry derives KEK ${wrapped.kekId}`,
   );
+}
+
+function webKey(
+  cache: WeakMap<Uint8Array, Promise<CryptoKey>>,
+  key: Uint8Array,
+): Promise<CryptoKey> {
+  let imported = cache.get(key);
+  if (!imported) {
+    imported =
+      cache === WEB_HMAC_KEYS
+        ? crypto.subtle.importKey(
+            "raw",
+            toArrayBuffer(key),
+            { name: "HMAC", hash: "SHA-256" },
+            false,
+            ["sign"],
+          )
+        : crypto.subtle.importKey(
+            "raw",
+            toArrayBuffer(key),
+            { name: "AES-GCM" },
+            false,
+            ["encrypt", "decrypt"],
+          );
+    cache.set(key, imported);
+  }
+
+  return imported;
 }
 
 function wrapAad(accountId: string, keyId: string): string {
@@ -502,16 +560,11 @@ async function wrapAccountKey(
 ): Promise<WrappedAccountKey> {
   const secret = secrets[0]!;
   const iv = crypto.getRandomValues(new Uint8Array(GCM_IV_BYTES));
-  const sealed = new Uint8Array(
-    await crypto.subtle.encrypt(
-      {
-        name: "AES-GCM",
-        iv: iv,
-        additionalData: new TextEncoder().encode(wrapAad(accountId, keyId)),
-      },
-      await keyEncryptionKey(secret),
-      toArrayBuffer(dek),
-    ),
+  const sealed = await WEB_CRYPTO.seal(
+    await keyEncryptionKey(secret),
+    iv,
+    TEXT_ENCODER.encode(wrapAad(accountId, keyId)),
+    dek,
   );
 
   return {

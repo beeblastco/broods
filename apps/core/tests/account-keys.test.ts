@@ -16,10 +16,41 @@ import {
   decryptAccountBlob,
   resetAccountKeysForTests,
 } from "../src/shared/convex/account-keys.ts";
+import { NODE_CRYPTO } from "../src/shared/node-aead.ts";
 
 const SECRET = "core-test-secret";
 const ACCOUNT = "acct_core";
 const VALUE = { model: { provider: "deepseek" } };
+
+describe("node:crypto and Web Crypto primitives", () => {
+  test("a blob sealed by either opens with the other, and both refuse another column", async () => {
+    const keys = [await createWrappedAccountKey(ACCOUNT, [SECRET])];
+    const web = new AccountCipher(ACCOUNT, [SECRET], keys);
+    const node = new AccountCipher(
+      ACCOUNT,
+      [SECRET],
+      keys,
+      undefined,
+      NODE_CRYPTO,
+    );
+    const fromWeb = await web.encrypt("agents:encryptedConfig", VALUE);
+    const fromNode = await node.encrypt("agents:encryptedConfig", VALUE);
+
+    expect(await node.decrypt("agents:encryptedConfig", fromWeb)).toEqual(
+      VALUE,
+    );
+    expect(await web.decrypt("agents:encryptedConfig", fromNode)).toEqual(
+      VALUE,
+    );
+    expect(
+      await node.decrypt("sandboxConfigs:encryptedConfig", fromWeb),
+    ).toBeNull();
+    expect(
+      await web.decrypt("sandboxConfigs:encryptedConfig", fromNode),
+    ).toBeNull();
+    expect(await node.digest("hunter2")).toBe(await web.digest("hunter2"));
+  });
+});
 
 describe("account key cache", () => {
   let keys: WrappedAccountKey[];
@@ -79,9 +110,14 @@ describe("account key cache", () => {
     );
     keys = [{ ...keys[0]!, retiredAt: Date.now() }, rotated];
 
+    // A listing decrypts its rows together; they share the one refresh.
     expect(
-      await decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", fresh),
-    ).toEqual(VALUE);
+      await Promise.all(
+        [fresh, fresh, fresh].map((blob) =>
+          decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", blob),
+        ),
+      ),
+    ).toEqual([VALUE, VALUE, VALUE]);
     expect(loads).toBe(2);
     await expect(
       decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", stale),

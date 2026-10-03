@@ -6,6 +6,7 @@
  * what `broods dev` costs per agent to inject env.
  */
 
+import { NODE_CRYPTO } from "../../apps/core/src/shared/node-aead.ts";
 import { normalizeAgentConfig } from "../../packages/convex/model/agentRules.ts";
 import {
   AccountCipher,
@@ -97,12 +98,16 @@ export const coreConfigCases: readonly BenchCase[] = [
     name: "core/config-encrypt-decrypt",
     iterations: 5_000,
     setup: async (): Promise<void> => {
-      cipher = new AccountCipher(ACCOUNT_ID, ENCRYPTION_SECRETS, [
-        await createWrappedAccountKey(ACCOUNT_ID, ENCRYPTION_SECRETS),
-      ]);
+      cipher = new AccountCipher(
+        ACCOUNT_ID,
+        ENCRYPTION_SECRETS,
+        [await createWrappedAccountKey(ACCOUNT_ID, ENCRYPTION_SECRETS)],
+        undefined,
+        NODE_CRYPTO,
+      );
     },
-    // Write then read under a warm keyring, the round trip an agent record
-    // makes through storage once the account's key is unwrapped.
+    // Write then read under a warm keyring on core's `node:crypto` primitive,
+    // the round trip an agent record makes once the account's key is unwrapped.
     run: async (): Promise<unknown> =>
       cipher.decrypt(
         "agents:encryptedConfig",
