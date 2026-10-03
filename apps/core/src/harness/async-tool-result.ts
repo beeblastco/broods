@@ -3,6 +3,7 @@
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
+import { redactWithRunSecrets, runSecretValues } from "../shared/log.ts";
 import type { ReservedSandbox } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
@@ -69,6 +70,7 @@ export function createDetachedAsyncToolResult(options: {
 
   return runtime.mutate("createAsyncToolResult", {
     ...row,
+    input: redactWithRunSecrets(options.input),
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
   });
 }
@@ -83,7 +85,10 @@ export function createPendingAsyncToolResult(options: {
   delivery?: AsyncToolDelivery;
   completionToken?: string;
 }): Promise<boolean> {
-  return runtime.mutate("createAsyncToolResult", options);
+  return runtime.mutate("createAsyncToolResult", {
+    ...options,
+    input: redactWithRunSecrets(options.input),
+  });
 }
 /** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
@@ -99,7 +104,7 @@ export async function markAsyncToolResultCompleted(options: {
   await runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: "completed",
-    response: options.response,
+    response: redactWithRunSecrets(options.response),
     onlyWhenProcessing: true,
   });
 }
@@ -111,7 +116,7 @@ export async function markAsyncToolResultFailed(options: {
   await runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: "failed",
-    error: options.error,
+    error: redactWithRunSecrets(options.error),
     onlyWhenProcessing: true,
   });
 }
@@ -131,20 +136,32 @@ export function rootEventId(eventId: string): string {
 
   return index === -1 ? eventId : eventId.slice(0, index);
 }
-/** Settles a still-processing row from outside the run, for background job callbacks and question answers. Null when already settled. */
+/**
+ * Settles a still-processing row from outside the run, for background job
+ * callbacks and question answers. Null when already settled. `secretValues`
+ * are the run's own, from a caller that no run's context covers.
+ */
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";
   response?: JSONValue;
   error?: string;
+  secretValues?: readonly string[];
 }): Promise<AsyncToolResultRecord | null> {
+  const secretValues = [...runSecretValues(), ...(options.secretValues ?? [])];
+
   return runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
     status: options.status,
     onlyWhenProcessing: true,
     ...(options.status === "completed"
-      ? { response: options.response }
-      : { error: options.error ?? "Async tool call failed" }),
+      ? { response: redactWithRunSecrets(options.response, secretValues) }
+      : {
+          error: redactWithRunSecrets(
+            options.error ?? "Async tool call failed",
+            secretValues,
+          ),
+        }),
   });
 }
 /** Checks a callback's completion token against the row; the handler calls it before settling. */

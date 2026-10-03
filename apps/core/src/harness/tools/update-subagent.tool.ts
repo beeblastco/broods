@@ -200,7 +200,7 @@ function subagentDispatchScope(
   return {
     accountId: context.accountId,
     agentId: input.agentId,
-    agentConfig: agentConfig,
+    subagentConfig: agentConfig,
     conversationKey: conversationKey,
     publicConversationKey: publicConversationKeyFromScoped(
       conversationKey,
