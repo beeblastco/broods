@@ -22,7 +22,6 @@ import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { logWarn } from "../../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
-import { getHarnessPublicUrl } from "../../shared/env.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { getStorage } from "../../shared/storage.ts";
 import type {
@@ -142,22 +141,11 @@ export async function createTools(
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const sandboxes = context.sandboxes ?? [];
   const defaultSandbox = sandboxes[0]?.sandbox;
-  const principal = context.session?.principal;
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
     sandboxes: sandboxes,
-    ...(principal && context.session
-      ? {
-          principal: (): SandboxRunPrincipal => ({
-            accountId: principal.accountId,
-            agentId: principal.agentId,
-            runToken: context.session!.runToken()!,
-            ...(getHarnessPublicUrl()
-              ? { apiUrl: getHarnessPublicUrl()! }
-              : {}),
-          }),
-        }
-      : {}),
+    principal: (): SandboxRunPrincipal | undefined =>
+      context.session?.sandboxPrincipal(),
   };
   const sandboxOptions =
     typeof defaultSandbox?.options === "object" &&

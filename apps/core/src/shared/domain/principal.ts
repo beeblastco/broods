@@ -90,8 +90,19 @@ export function runPrincipal(
   };
 }
 
+function principalLinkLabel(link: PrincipalLink): string {
+  switch (link.kind) {
+    case "user":
+      return `user:${link.id}`;
+    case "api":
+      return `api:${link.keyKind}`;
+    case "agent":
+      return `agent:${link.agentId}`;
+  }
+}
+
 /** The requester link of a channel turn; an identity with no user id is nobody. */
-export function userPrincipalLink(
+function userPrincipalLink(
   identity: ChannelIdentity | undefined,
   channel: string,
 ): PrincipalLink | undefined {
@@ -103,15 +114,4 @@ export function userPrincipalLink(
     ...(identity.userName ? { name: identity.userName } : {}),
     channel: channel,
   };
-}
-
-function principalLinkLabel(link: PrincipalLink): string {
-  switch (link.kind) {
-    case "user":
-      return `user:${link.id}`;
-    case "api":
-      return `api:${link.keyKind}`;
-    case "agent":
-      return `agent:${link.agentId}`;
-  }
 }

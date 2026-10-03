@@ -160,7 +160,6 @@ const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // The single runtime entry point; sync or background is a body field.
 const RUN_PATH = "/v1/runs";
 const RUN_PATH_PREFIX = `${RUN_PATH}/`;
-const RUN_TOKEN_SCOPE_CODE = "run_token_scope";
 
 // One receiver's reading of a delivery: an answer the provider needs right
 // away, nothing to run, or turns whose admission is still in flight.
@@ -596,13 +595,7 @@ async function handleHttpRequest(
         auth?.kind === "agent" &&
         ingress.agentId !== auth.principal.agentId
       ) {
-        return errorResponse(
-          403,
-          runTokenScopeMessage(auth.principal.agentId),
-          {
-            code: RUN_TOKEN_SCOPE_CODE,
-          },
-        );
+        return runTokenScopeResponse(auth.principal.agentId);
       }
 
       return handlers.handleStatusRequest(parsed);
@@ -808,9 +801,7 @@ async function handleHttpRequest(
 
   // A run token starts runs on /v1/runs and reads its own; nothing else.
   if (auth?.kind === "agent" && request.path !== RUN_PATH) {
-    return errorResponse(403, runTokenScopeMessage(auth.principal.agentId), {
-      code: RUN_TOKEN_SCOPE_CODE,
-    });
+    return runTokenScopeResponse(auth.principal.agentId);
   }
 
   // Everything below dispatches a run, whatever path it arrived on. Keying
@@ -902,9 +893,7 @@ async function handleHttpRequest(
       auth.kind === "agent" &&
       !(await runTokenMayStart(auth.principal, parsed.agentId, context))
     ) {
-      return errorResponse(403, runTokenScopeMessage(auth.principal.agentId), {
-        code: RUN_TOKEN_SCOPE_CODE,
-      });
+      return runTokenScopeResponse(auth.principal.agentId);
     }
     if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
@@ -2097,8 +2086,13 @@ async function runTokenMayStart(
   return own?.config.subagent?.allowed?.includes(agentId) === true;
 }
 
-function runTokenScopeMessage(agentId: string): string {
-  return `Run tokens may only POST /v1/runs for agent ${agentId} or a subagent it is allowed to run, and GET /v1/runs/{runId} for that agent's runs.`;
+/** The one refusal a run token gets outside its two routes and its own agent. */
+function runTokenScopeResponse(agentId: string): Response {
+  return errorResponse(
+    403,
+    `Run tokens may only POST /v1/runs for agent ${agentId} or a subagent it is allowed to run, and GET /v1/runs/{runId} for that agent's runs.`,
+    { code: "run_token_scope" },
+  );
 }
 
 /** The two invoke shapes: project/stage scoped, and bare agent id. */

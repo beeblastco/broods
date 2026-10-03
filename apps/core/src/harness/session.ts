@@ -24,6 +24,7 @@ import type {
   AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { Principal } from "../shared/domain/principal.ts";
+import { getHarnessPublicUrl } from "../shared/env.ts";
 import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
@@ -73,6 +74,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import type { SandboxRunPrincipal } from "./sandbox/types.ts";
 import { truncateText } from "./sandbox/utils.ts";
 import {
   listConfiguredSkillMetadata,
@@ -342,12 +344,18 @@ export class Session {
     this.persist = options.persist ?? true;
   }
 
-  /** The run's `fp_run_` bearer, minted on first use so a run with no sandbox exec never signs one. */
-  runToken(): string | undefined {
+  /** The identity a sandbox exec runs with. Its `fp_run_` bearer is minted on first use, so a run with no exec never signs one. */
+  sandboxPrincipal(): SandboxRunPrincipal | undefined {
     if (!this.principal) return undefined;
     this.mintedRunToken ??= sealRunToken(this.principal);
+    const apiUrl = getHarnessPublicUrl();
 
-    return this.mintedRunToken;
+    return {
+      accountId: this.principal.accountId,
+      agentId: this.principal.agentId,
+      runToken: this.mintedRunToken,
+      ...(apiUrl ? { apiUrl: apiUrl } : {}),
+    };
   }
 
   /** Rejects a side effect when this run no longer owns the conversation. */

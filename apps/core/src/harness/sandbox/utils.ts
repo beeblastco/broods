@@ -122,18 +122,6 @@ export function mergeSandboxEnv(
   };
 }
 
-/** The BROODS_* variables sandbox code reads to act as its run. */
-export function principalEnv(
-  principal: SandboxRunPrincipal,
-): Record<string, string> {
-  return {
-    BROODS_ACCOUNT_ID: principal.accountId,
-    BROODS_AGENT_ID: principal.agentId,
-    BROODS_RUN_TOKEN: principal.runToken,
-    ...(principal.apiUrl ? { BROODS_API_URL: principal.apiUrl } : {}),
-  };
-}
-
 export function requiredWorkspacePath(
   request: { workspaceRoot?: string; namespace?: string },
   fallbackRoot: string,
@@ -224,4 +212,14 @@ export function workspacePath(
   }
 
   return request.namespace ? `${root}/${request.namespace}` : root;
+}
+
+/** The BROODS_* variables sandbox code reads to act as its run. */
+function principalEnv(principal: SandboxRunPrincipal): Record<string, string> {
+  return {
+    BROODS_ACCOUNT_ID: principal.accountId,
+    BROODS_AGENT_ID: principal.agentId,
+    BROODS_RUN_TOKEN: principal.runToken,
+    ...(principal.apiUrl ? { BROODS_API_URL: principal.apiUrl } : {}),
+  };
 }

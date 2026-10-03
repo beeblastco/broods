@@ -248,16 +248,6 @@ export function mcpConnection(
   };
 }
 
-/** The agent id and its chain (base64url JSON), so a server can authorize per agent. */
-export function principalHeaders(principal: Principal): Record<string, string> {
-  return {
-    [MCP_AGENT_ID_HEADER]: principal.agentId,
-    [MCP_PRINCIPAL_HEADER]: Buffer.from(
-      JSON.stringify(delegatedChain(principal)),
-    ).toString("base64url"),
-  };
-}
-
 /** Every header one request carries: row and config headers, the principal, then a minted bearer. */
 export async function mcpRequestHeaders(
   connection: McpConnection,
@@ -369,6 +359,16 @@ async function connectClient(
   }
 
   return client;
+}
+
+/** The agent id and its chain (base64url JSON), so a server can authorize per agent. */
+function principalHeaders(principal: Principal): Record<string, string> {
+  return {
+    [MCP_AGENT_ID_HEADER]: principal.agentId,
+    [MCP_PRINCIPAL_HEADER]: Buffer.from(
+      JSON.stringify(delegatedChain(principal)),
+    ).toString("base64url"),
+  };
 }
 
 /** Drop oldest entries so a long-lived core process stays bounded. */

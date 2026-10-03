@@ -112,7 +112,7 @@ export interface SandboxToolContext {
   sandboxMetadata?: SandboxRunMetadata;
   // The run's identity for the exec env. A function, so the run token is only
   // minted once a command actually runs.
-  principal?: () => SandboxRunPrincipal;
+  principal?: () => SandboxRunPrincipal | undefined;
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {

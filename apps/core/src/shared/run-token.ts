@@ -17,7 +17,7 @@ const TTL_MARGIN_MS = 5 * 60 * 1000;
 const TTL_MAX_MS = 2 * 60 * 60 * 1000;
 
 /** Outlives the run budget by a margin, capped: a leaked token stays short. */
-export const RUN_TOKEN_TTL_MS = Math.min(
+const RUN_TOKEN_TTL_MS = Math.min(
   WORKER_TIMEOUT_BUDGET_MS + TTL_MARGIN_MS,
   TTL_MAX_MS,
 );

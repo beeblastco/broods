@@ -2,8 +2,9 @@
  * Bearer-token auth: admin secret, service token (for cherry-coke
  * server-side actions), assume-role session (fp_sts_), run token (fp_run_,
  * minted by core for one agent run), stage runtime key (fp_agent_, whose
- * lastUsedAt is written here, throttled), and account-secret hash lookup. Persistence is reached via `getStorage().accounts.*` so the
- * auth path is identical through the Convex-backed account store.
+ * lastUsedAt is written here, throttled), and account-secret hash lookup.
+ * Persistence is reached via `getStorage().accounts.*` so the auth path is
+ * identical through the Convex-backed account store.
  */
 
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";

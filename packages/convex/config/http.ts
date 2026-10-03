@@ -18,7 +18,6 @@ import {
 import type { AuditActor } from "../model/auditEvents";
 import { CLIENT_ERROR_STATUS, clientErrorData } from "../model/clientError";
 import { POLICY_STILL_REFERENCED } from "../model/policyReferences";
-import { RUN_TOKEN_PREFIX } from "../model/principal";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
 import {
   handleAuditRoute,
@@ -43,9 +42,9 @@ import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
 import {
   auditActorForAuth,
-  bearerToken,
   jsonError,
   requireAccount,
+  runTokenRefusal,
 } from "./routes/shared";
 import { handleSkillRoute } from "./routes/skills";
 import {
@@ -83,10 +82,8 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const pathname = new URL(req.url).pathname;
 
-    // A run token is scoped to one agent run on core; nothing here is a run.
-    if (bearerToken(req)?.startsWith(RUN_TOKEN_PREFIX)) {
-      return jsonError(401, "run tokens cannot reach the config plane");
-    }
+    const refusal = runTokenRefusal(req);
+    if (refusal) return refusal;
 
     // The exchange authenticates its own caller kinds (account secret, CLI
     // token, runtime key), so it runs before the shared bearer funnel.
