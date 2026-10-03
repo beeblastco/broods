@@ -26,7 +26,10 @@ import type {
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
 import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
-import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
+import {
+  agentNamespaceFolder,
+  normalizeFilesystemNamespace,
+} from "./runtime-keys.ts";
 import { resolveSandboxLifecycle } from "./sandbox.ts";
 import {
   resolveSandboxSpecs,
@@ -160,7 +163,7 @@ export function isolatedWorkspaceNamespace(
       throw new Error('Workspace isolation "agent" requires an agent identity');
     }
 
-    return `${baseNamespace}/agent/${normalizeFilesystemNamespace(scope.agentId)}`;
+    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
   }
 
   const partition = scope.partition;

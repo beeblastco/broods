@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { agentNamespaceFolder } from "../src/shared/runtime-keys.ts";
 
 let lastAssumeRoleInput: Record<string, unknown> | undefined;
 const assumeRoleSendMock = mock(async () => ({
@@ -20,6 +21,7 @@ mock.module("@aws-sdk/client-sts", () => ({
 }));
 
 const {
+  mountAttribution,
   mountRoleArn,
   resolveS3Mount,
   resolveS3MountIdentity,
@@ -178,6 +180,32 @@ describe("resolveS3MountIdentity", () => {
     expect(() =>
       resolveS3MountIdentity({ storage: undefined, namespace: NS }),
     ).toThrow("workspace S3 mount requires storage.bucket or a managed bucket");
+  });
+});
+
+describe("mountAttribution", () => {
+  it("names the agent only on that agent's own folder, and the account on a mount another agent can reuse", () => {
+    const config = { controlPlane: { accountId: "acct_1" } };
+    const metadata = { agentId: "agent_1" };
+    const own = `${NS}/${agentNamespaceFolder("agent_1")}`;
+
+    expect(
+      mountAttribution(config, { namespace: own, metadata: metadata }),
+    ).toEqual({ accountId: "acct_1", agentId: "agent_1" });
+    // A shared root or a conversation folder outlives one run's credentials,
+    // so the next agent on the same sandbox would carry this agent's name.
+    for (const namespace of [
+      NS,
+      `${NS}/support/fs-conversation`,
+      `${NS}/${agentNamespaceFolder("agent_2")}`,
+    ]) {
+      expect(
+        mountAttribution(config, { namespace: namespace, metadata: metadata }),
+      ).toEqual({ accountId: "acct_1", agentId: undefined });
+    }
+    expect(
+      mountAttribution({}, { namespace: own, metadata: metadata }),
+    ).toBeUndefined();
   });
 });
 

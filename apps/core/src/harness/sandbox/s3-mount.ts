@@ -14,9 +14,11 @@
  * Credentials are always short-lived and scoped to the mount's own prefix, so the
  * harness's broad creds never reach a sandbox (any code the agent runs can read
  * the mount env). mount-s3 reads them from the standard env credential chain.
- * A session minted for a sandbox names the agent it serves: the session name on
- * every role, and SourceIdentity plus session tags on the platform role, so
- * CloudTrail ties each S3 call back to one account and agent.
+ * A session minted for a sandbox names who it serves: the agent on that agent's
+ * own folder, the account on a mount other agents can reuse. The name is on
+ * every role, SourceIdentity plus session tags on the platform role, so
+ * CloudTrail ties each S3 call back to an account, and to one agent where the
+ * mount is one agent's alone.
  */
 
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
@@ -26,9 +28,11 @@ import {
 } from "@broods/convex/model/workspaceRules";
 import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { agentNamespaceFolder } from "../../shared/runtime-keys.ts";
 import type { S3Access } from "../../shared/s3.ts";
+import type { SandboxControlPlane } from "../../shared/sandbox-sizes.ts";
 import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
-import type { SandboxExecutorConfig, SandboxRunRequest } from "./types.ts";
+import type { SandboxRunRequest } from "./types.ts";
 
 // A cached bring-your-own read target is reused until its credentials are this
 // close to expiry: longer than the 300s presign a read target can back, plus
@@ -176,17 +180,24 @@ export async function assumeScopedMountCredentials(params: {
   };
 }
 
-// The attribution an executor attaches to a sandbox mount, from the config's
-// control-plane account and the run's agent. Undefined when the config carries
-// no account (synthetic or stateless configs), so the session stays unnamed.
+// The attribution an executor attaches to a sandbox mount: the config's
+// control-plane account, plus the run's agent when the mount is that agent's
+// own folder. A shared or per-conversation mount outlives one run's credentials
+// and the next agent on the same sandbox reuses them, so it names the account
+// only. Undefined when the config carries no account (synthetic or stateless
+// configs), so the session stays unnamed.
 export function mountAttribution(
-  config: Pick<SandboxExecutorConfig, "controlPlane">,
-  request: Pick<SandboxRunRequest, "metadata">,
+  config: { controlPlane?: Pick<SandboxControlPlane, "accountId"> },
+  request: Pick<SandboxRunRequest, "namespace" | "metadata">,
 ): S3MountAttribution | undefined {
   const accountId = config.controlPlane?.accountId;
   if (!accountId) return undefined;
+  const agentId = request.metadata?.agentId;
+  const ownFolder =
+    agentId !== undefined &&
+    request.namespace?.endsWith(`/${agentNamespaceFolder(agentId)}`);
 
-  return { accountId: accountId, agentId: request.metadata?.agentId };
+  return { accountId: accountId, agentId: ownFolder ? agentId : undefined };
 }
 
 // The mount role for a workspace: its own role for a bucket it names, else the
