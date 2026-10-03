@@ -5,9 +5,9 @@ description: The terms under which BeeBlast provides the Broods hosted service.
 
 # Terms of Service
 
-Last updated: 2 October 2026
+Last updated: 3 October 2026
 
-Broods is an agent platform operated by BeeBlast ("we"). These terms cover the hosted service at `broods.app`, `dashboard.broods.app` and the public API. The open-source `broods` package is licensed separately under the [Functional Source License](https://github.com/beeblastco/broods/blob/dev/LICENSE.md).
+Broods is an agent platform operated by BeeBlast B.V., Amsterdam, the Netherlands ("we"). These terms cover the hosted service at `broods.app`, `dashboard.broods.app` and the public API. The open-source `broods` package is licensed separately under the [Functional Source License](https://github.com/beeblastco/broods/blob/dev/LICENSE.md).
 
 ## Your account
 
@@ -62,4 +62,4 @@ We will post changes here and, for material changes, email the organization owne
 
 ## Contact
 
-Questions about these terms go to the channels on the [Support](/support) page.
+BeeBlast B.V., Amsterdam, the Netherlands. Questions about these terms go to [business@beeblast.co](mailto:business@beeblast.co) or the channels on the [Support](/support) page.

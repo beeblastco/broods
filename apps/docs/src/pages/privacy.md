@@ -5,9 +5,9 @@ description: What Broods stores, where, for how long, and who else touches it.
 
 # Privacy Policy
 
-Last updated: 2 October 2026
+Last updated: 3 October 2026
 
-This policy covers the hosted Broods service operated by BeeBlast. It is written to be read, not skimmed: every section says what we store and why.
+This policy covers the hosted Broods service operated by BeeBlast B.V., Amsterdam, the Netherlands, which is the controller of the data described here. Reach us at [business@beeblast.co](mailto:business@beeblast.co). It is written to be read, not skimmed: every section says what we store and why.
 
 ## What we store
 
@@ -51,7 +51,7 @@ Model providers, channels and third-party sandboxes only receive data when you c
 
 ## Your rights
 
-You can see and change your data in the dashboard, export it through the API, and delete it yourself. For anything the dashboard does not cover, including a full export or a correction, use the [Support](/support) page and we answer within 30 days. If you are in the EU or UK you can also complain to your data protection authority.
+You can see and change your data in the dashboard, export it through the API, and delete it yourself. For anything the dashboard does not cover, including a full export or a correction, email [business@beeblast.co](mailto:business@beeblast.co) or use the [Support](/support) page and we answer within 30 days. If you are in the EU or UK you can also complain to your data protection authority.
 
 ## Security
 
