@@ -2,13 +2,19 @@
  * AWS Lambda entry for the hosted MCP runner. Resolves the uploaded bundle,
  * runs one batch of requests (#397) in a child Node process with a scrubbed
  * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
- * frames to core. The child stays warm keyed by accountId + sha256 (#189),
- * bounded and retired on any batch-level failure. The function is shared by
+ * frames to core. The child stays warm keyed by tenantId + sha256 (#189),
+ * bounded and retired on any batch-level failure. Core sets tenantId to
+ * `accountId:agentId` (the accountId alone for an account-surface probe), so
+ * two agents of one account never share a child. The function is shared by
  * default, so warm environments can serve several accounts. With
- * MCP_TENANT_ISOLATION it runs PER_TENANT: core invokes with TenantId =
- * accountId, and Lambda gives each account its own execution environments.
- * The child stays a containment layer, not a trust boundary. Same-UID, so keep
- * the execution role empty.
+ * MCP_TENANT_ISOLATION it runs PER_TENANT: core invokes with that same
+ * tenantId as the Lambda TenantId, and Lambda gives each tenant its own
+ * execution environments. The child stays a containment layer, not a trust
+ * boundary. Same-UID, so keep the execution role empty.
+ *
+ * Event: { mode: "mcp", toolName, tenantId, expectedSha256,
+ * bundleUrl | bundleSourceB64, requests: [{ id, mcpRequest }] }. Core builds it
+ * in apps/core/src/harness/mcp/hosted.ts (McpHostPayload); the two roll together.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */
@@ -388,7 +394,7 @@ function lineStartsWith(linePrefix, linePrefixLen, prefix) {
   );
 }
 
-// Only the exact accountId + sha256 the child was spawned for, and never past
+// Only the exact tenantId + sha256 the child was spawned for, and never past
 // its call or idle bounds.
 function matchesWarm(key) {
   if (!warm || warm.dead || warm.key !== key) return false;
@@ -443,18 +449,19 @@ function retire(state) {
   killGroup(state.child);
 }
 
-// Reuse needs the tenant identity in the key: without accountId the call runs
-// in a one-shot child exactly as before.
+// Reuse needs the tenant identity in the key: without tenantId the call runs
+// in a one-shot child exactly as before. Core's batch key is the same string,
+// so a child only ever serves one agent's calls.
 function reuseKey(event) {
   if (process.env.MCP_CHILD_REUSE === "0") return null;
   if (
-    typeof event.accountId !== "string" ||
+    typeof event.tenantId !== "string" ||
     typeof event.expectedSha256 !== "string"
   ) {
     return null;
   }
 
-  return `${event.accountId}:${event.expectedSha256}`;
+  return `${event.tenantId}:${event.expectedSha256}`;
 }
 
 // A minimal, credential-free env. Explicitly no AWS_*/Lambda vars so user code

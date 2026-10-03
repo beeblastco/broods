@@ -36,7 +36,11 @@ import type {
   UpdateCronInput,
 } from "../../../apps/core/src/shared/domain/cron.ts";
 import type { SandboxConfig } from "../../../apps/core/src/shared/domain/sandbox-config.ts";
-import type { WorkspaceConfig } from "../../../apps/core/src/shared/domain/workspace-config.ts";
+import type {
+  WorkspaceConfig,
+  WorkspaceConfigInput,
+  WorkspaceIsolation,
+} from "../../../apps/core/src/shared/domain/workspace-config.ts";
 import type { PolicyDocument } from "../../../apps/core/src/shared/domain/policy.ts";
 import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channel-record.ts";
 
@@ -97,6 +101,8 @@ export type {
   SandboxConfig,
   UpdateCronInput,
   WorkspaceConfig,
+  WorkspaceConfigInput,
+  WorkspaceIsolation,
 };
 
 export type ProjectDoc = Doc<"projects">;

@@ -60,7 +60,11 @@ import {
   statusScript,
   stopScript,
 } from "./jobs.ts";
-import { type S3MountContext, resolveS3Mount } from "./s3-mount.ts";
+import {
+  type S3MountContext,
+  mountAttribution,
+  resolveS3Mount,
+} from "./s3-mount.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -967,7 +971,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
   ): Promise<string | undefined> {
     if (!request.namespace) return undefined;
-    const mount = await resolveS3Mount(this.#s3Context(request.namespace));
+    const mount = await resolveS3Mount(
+      this.#s3Context(request.namespace, request),
+    );
     const workspaceRoot = (
       request.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT
     ).replace(/\/+$/, "");
@@ -988,12 +994,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  #s3Context(namespace: string): S3MountContext {
+  #s3Context(namespace: string, request: SandboxRunRequest): S3MountContext {
     return {
       storage: this.#config.storage,
       namespace: namespace,
       managedBucket: optionalEnv("FILESYSTEM_BUCKET_NAME"),
       region: optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
+      attribution: mountAttribution(this.#config, request),
     };
   }
 
@@ -1337,7 +1344,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const refreshed = mountCredentialRefreshes.get(key);
     if (refreshed && refreshed.expiresAt > Date.now()) return;
     try {
-      const mount = await resolveS3Mount(this.#s3Context(request.namespace));
+      const mount = await resolveS3Mount(
+        this.#s3Context(request.namespace, request),
+      );
       // No credentials means no mount role, so there is nothing to rotate. Start
       // the clock anyway instead of re-resolving the mount on every single exec.
       if (!mount.credentials) {

@@ -3,9 +3,12 @@
  *
  * Agents reference standalone, account-scoped sandbox / workspace records by id.
  * This module resolves those references into concrete runtime configs and derives
- * each workspace's filesystem namespace. The namespace is scoped by
- * `accountId:workspaceId`, NOT agent or conversation, so agents that share a
- * workspaceId read and write the SAME files.
+ * each workspace's filesystem namespace. The base namespace is scoped by
+ * `accountId:workspaceId`, so agents that share a workspaceId read and write the
+ * SAME files unless the record sets `isolation`: "conversation" adds a folder per
+ * channel partition, "agent" a folder per agent. The full namespace is what a
+ * sandbox reserves on and what the mount's STS session is scoped to, so an
+ * isolated folder is its own VM and its own S3 prefix.
  */
 
 import type {
@@ -19,9 +22,14 @@ import type {
 } from "./domain/sandbox-config.ts";
 import type {
   WorkspaceConfig,
+  WorkspaceIsolation,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
-import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
+import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
+import {
+  agentNamespaceFolder,
+  normalizeFilesystemNamespace,
+} from "./runtime-keys.ts";
 import { resolveSandboxLifecycle } from "./sandbox.ts";
 import {
   resolveSandboxSpecs,
@@ -75,6 +83,7 @@ export interface ResolvedAgentRuntime {
 }
 
 export interface WorkspaceIsolationScope {
+  agentId?: string;
   channelName?: string;
   channelScopeKey?: string;
   conversationKey?: string;
@@ -135,13 +144,26 @@ export function agentSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
 }
 
+/**
+ * The namespace one run mounts: the base for a shared workspace, a folder per
+ * agent under `agent/` for "agent" isolation, or the channel partition's folder
+ * for "conversation" isolation. Cleanup derives the same string to find what a
+ * run left behind.
+ */
 export function isolatedWorkspaceNamespace(
   baseNamespace: string,
-  isolation: boolean | undefined,
+  isolation: WorkspaceIsolation | undefined,
   scope: WorkspaceIsolationScope = {},
 ): string {
-  if (isolation !== true) {
+  if (isolation === undefined) {
     return baseNamespace;
+  }
+  if (isolation === "agent") {
+    if (!scope.agentId) {
+      throw new Error('Workspace isolation "agent" requires an agent identity');
+    }
+
+    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
   }
 
   const partition = scope.partition;
@@ -301,8 +323,8 @@ export async function resolveAgentRuntime(
         workspaceId: ref.workspaceId,
         namespace: isolatedWorkspaceNamespace(
           workspaceNamespace(accountId, ref.workspaceId),
-          record.config.isolation,
-          isolationScope,
+          workspaceIsolation(record.config.isolation),
+          { ...isolationScope, agentId: identity.agentId },
         ),
         ...(record.description ? { description: record.description } : {}),
         config: record.config,

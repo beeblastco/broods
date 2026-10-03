@@ -56,6 +56,8 @@ let testOverrides: McpTestOverrides | null = null;
 export interface McpConnection {
   record: McpRecord;
   headers: Record<string, string>;
+  /** The agent whose run calls; a hosted row runs as `accountId:agentId`. Unset on an account-surface probe. */
+  agentId?: string;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
@@ -203,12 +205,14 @@ export async function listMcpTools(
 /**
  * Build the connection for a server row: row headers and oauth overlaid with
  * the agent config's (those resolved their ${NAME} refs at sync). A value
- * still carrying a placeholder never reaches the wire.
+ * still carrying a placeholder never reaches the wire. agentId is the agent
+ * whose run calls, unset on an account-surface probe.
  */
 export function mcpConnection(
   record: McpRecord,
   configHeaders: Record<string, string> | undefined,
   configOauth?: AgentMcpEntry["oauth"],
+  agentId?: string,
 ): McpConnection {
   const headers: Record<string, string> = {
     ...record.headers,
@@ -234,6 +238,7 @@ export function mcpConnection(
   return {
     record: record,
     headers: headers,
+    agentId: agentId,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
   };
 }
@@ -249,14 +254,17 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 /**
  * One cache identity per server row version, resolved header set and oauth
  * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL.
+ * data for a TTL. A hosted row adds the agent: its answers come from that
+ * agent's own child, so one agent never reads what another agent's child said.
  */
 function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
+  const agent =
+    connection.record.transport === "hosted" ? (connection.agentId ?? "") : "";
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}:${agent}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -301,9 +309,7 @@ async function connectClient(
         requestInit: { headers: headers },
         // A tenant url is dialed from inside the cluster, so it gets the same
         // resolve, refuse-private and pin treatment as a model endpoint.
-        fetch: hosted
-          ? hostedMcpFetch(connection.record, onCpuUsec)
-          : publicHostFetch,
+        fetch: hosted ? hostedMcpFetch(connection, onCpuUsec) : publicHostFetch,
       },
     );
     const client = new Client(CLIENT_INFO, {

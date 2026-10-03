@@ -492,6 +492,7 @@ async function registerMcpTools(
           record,
           serverConfig.headers,
           serverConfig.oauth,
+          context.session?.agentId,
         );
         // An unreachable server degrades to zero tools for this run instead
         // of killing every agent run that references it; config errors above

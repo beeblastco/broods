@@ -17,6 +17,7 @@ import {
   normalizeWorkspaceConfig,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
+import { workspaceIsolation } from "../model/workspaceIsolation";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -108,13 +109,19 @@ describe("workspace config", () => {
     ).toThrow("config.harness.memory.enabled must be a boolean");
   });
 
-  it("accepts boolean workspace isolation and rejects old string modes", () => {
+  it("stores the isolation level, folds `true` into conversation and rejects unknown modes", () => {
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
         isolation: true,
       }),
-    ).toEqual({ storage: { provider: "s3" }, isolation: true });
+    ).toEqual({ storage: { provider: "s3" }, isolation: "conversation" });
+    expect(
+      normalizeWorkspaceConfig({
+        storage: { provider: "s3" },
+        isolation: "agent",
+      }),
+    ).toEqual({ storage: { provider: "s3" }, isolation: "agent" });
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
@@ -122,8 +129,15 @@ describe("workspace config", () => {
       }),
     ).toEqual({ storage: { provider: "s3" } });
     expect(() => normalizeWorkspaceConfig({ isolation: "channel" })).toThrow(
-      "config.isolation must be a boolean",
+      "config.isolation must be one of: conversation, agent",
     );
+  });
+
+  it("reads a stored level, and a stored `true` as conversation until the migration has run", () => {
+    expect(workspaceIsolation("agent")).toBe("agent");
+    expect(workspaceIsolation(undefined)).toBeUndefined();
+    expect(workspaceIsolation("channel")).toBeUndefined();
+    expect(workspaceIsolation(true)).toBe("conversation");
   });
 
   it("parses a bring-your-own bucket with assume-role auth", () => {
