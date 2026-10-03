@@ -38,6 +38,10 @@ tags:
     description: Account-owned agent configuration.
   - name: Environment Variables
     description: Write-only account-scoped secrets referenced by dynamic agent configs.
+  - name: Connections
+    description: >-
+      External accounts signed in once by `broods connect` and refreshed by
+      Broods. Today the ChatGPT plan, for the `chatgpt` model provider.
   - name: Skills
     description: Account-owned skill package management.
   - name: Cron Jobs
@@ -977,6 +981,127 @@ paths:
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: fp_acct_new...
+
+  /v1/account/connections:
+    get:
+      tags:
+        - Connections
+      summary: List connections
+      description: >-
+        External accounts the account's agents act through, one of each type,
+        signed in by `broods connect`.
+        Never returns tokens. Accepts the account secret or a CLI login token;
+        role sessions and runtime keys are refused.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The account's connections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connections]
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Connection"
+
+  /v1/account/connections/{type}/start:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionTypePath"
+    post:
+      tags:
+        - Connections
+      summary: Start a sign-in
+      description: >-
+        Answers the provider's consent screen for `broods connect` to open.
+        The CLI keeps the PKCE verifier, state and nonce; the redirect must be
+        a loopback address. The managed service refuses `chatgpt`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionStart"
+      responses:
+        "200":
+          description: The consent screen
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionStartResult"
+        "400":
+          description: A missing field or a redirect off loopback
+        "403":
+          description: A role session or runtime key, or `chatgpt` on the managed service
+
+  /v1/account/connections/{type}:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionTypePath"
+    get:
+      tags:
+        - Connections
+      summary: Get a connection
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "404":
+          description: No connection of this type
+    put:
+      tags:
+        - Connections
+      summary: Finish a sign-in
+      description: >-
+        Trades the code the browser brought back on the client OpenAI issued, checks
+        the ID token (signature, issuer, audience, expiry, nonce) and the
+        grant, then keeps the connection, replacing the type's previous one.
+        Broods refreshes the access token from then on. A `chatgpt` grant must
+        include `chatgpt.tokens.use.direct`; the answer lists the plan's models.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionCode"
+      responses:
+        "200":
+          description: Connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "400":
+          description: A missing field, a failed exchange or verification, or a grant missing its required scope
+        "403":
+          description: A role session or runtime key, or `chatgpt` on the managed service
+    delete:
+      tags:
+        - Connections
+      summary: Disconnect
+      description: >-
+        Deletes the connection, then revokes the refresh token at the provider
+        (best effort).
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: "Deleted, or `deleted: false` when there was none"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResponse"
 
   /v1/account/assume-role:
     post:
@@ -3287,6 +3412,12 @@ components:
         example: GET, POST
 
   parameters:
+    ConnectionTypePath:
+      name: type
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ConnectionType"
     PageLimit:
       name: limit
       in: query
@@ -3348,13 +3479,20 @@ components:
           type: string
           enum: [reject, followup, collect, steer]
           default: steer
-          description: Busy-conversation behavior. When omitted, steer combines the contiguous FIFO steer prefix and injects it at the next AI SDK step boundary; it falls back to followup if the active run has no boundary left.
+          description: Busy-conversation behavior. When omitted, steer combines the contiguous FIFO steer prefix and injects it at the next AI SDK step boundary; it falls back to followup if the active run has no boundary left. A `/compact` request always runs as followup, whatever mode is sent.
         idempotencyKey:
           type: string
           description: Stable retry identity scoped to account, agent, and conversation. Defaults to eventId and remains bound for the seven-day status window.
         events:
           type: array
-          description: Vercel AI SDK-style messages. Required unless `answers` is sent.
+          description: >-
+            Vercel AI SDK-style messages. Required unless `answers` is sent. A
+            single text-only user message of `/compact [instructions]` (beside
+            any system messages) is a command, not model input: it waits behind
+            the running turn and any messages queued before it, then summarizes
+            the stored history instead of calling the model. The summary reply
+            is the run's response (`text-delta` parts on SSE, `response` when
+            polled), and a failed summary fails the run.
           items:
             $ref: "#/components/schemas/Message"
         answers:
@@ -4658,7 +4796,9 @@ components:
       description: >-
         Constructor settings for the Vercel AI SDK provider, keyed by provider
         name. The provider named by `model.provider` must have an entry here,
-        and that entry must carry its `apiKey`. Everything else is handed to
+        and that entry must carry its `apiKey`, except `chatgpt`, which runs on
+        the account's `chatgpt` connection (`/v1/account/connections`) and
+        needs no entry. Everything else is handed to
         that provider's AI SDK factory unchanged, so whatever the factory
         accepts is accepted here. Secret-like fields are encrypted at rest and
         redacted from reads.
@@ -4670,6 +4810,7 @@ components:
           - baseten
           - bedrock
           - cerebras
+          - chatgpt
           - cloudflare
           - cohere
           - custom
@@ -4695,6 +4836,87 @@ components:
           - zai
       additionalProperties:
         $ref: "#/components/schemas/ProviderSettings"
+
+    ConnectionType:
+      type: string
+      enum: [chatgpt]
+      description: "`chatgpt` backs the `chatgpt` model provider."
+
+    Connection:
+      type: object
+      required: [type, clientId, hostId, scopes, expiresAt, updatedAt]
+      properties:
+        type:
+          $ref: "#/components/schemas/ConnectionType"
+        clientId:
+          type: string
+          description: The OAuth client OpenAI issued
+        hostId:
+          type: string
+          description: This deployment's `ext_agent_host_id`, kept across sign-ins
+        email:
+          type: string
+        scopes:
+          type: array
+          items: { type: string }
+        expiresAt:
+          type: string
+          format: date-time
+          description: Access-token expiry; Broods refreshes it before then
+        updatedAt:
+          type: string
+          format: date-time
+        models:
+          type: array
+          items: { type: string }
+          description: Answered by a sign-in only
+
+    ConnectionStart:
+      type: object
+      required: [redirectUri, codeChallenge, state, nonce]
+      properties:
+        redirectUri:
+          type: string
+          description: The CLI's loopback callback
+        codeChallenge:
+          type: string
+          description: S256 PKCE challenge; the CLI keeps the verifier
+        state:
+          type: string
+        nonce:
+          type: string
+
+    ConnectionStartResult:
+      type: object
+      required: [authorizeUrl, clientId, hostId]
+      properties:
+        authorizeUrl:
+          type: string
+        clientId:
+          type: string
+          description: The client the consent runs on; send it on the PUT when the redirect has no client_id
+        hostId:
+          type: string
+          description: Echo it back on the PUT
+
+    ConnectionCode:
+      type: object
+      required: [code, codeVerifier, redirectUri, nonce, clientId, hostId]
+      properties:
+        code:
+          type: string
+        codeVerifier:
+          type: string
+        redirectUri:
+          type: string
+        nonce:
+          type: string
+        clientId:
+          type: string
+          description: The client OpenAI issued on the redirect, else the start answer's
+        hostId:
+          type: string
+          description: From the start answer
 
     ProviderSettings:
       type: object
@@ -4723,7 +4945,10 @@ components:
       properties:
         provider:
           type: string
-          description: Provider constructor key matching `provider` config
+          description: >-
+            Provider constructor key matching `provider` config. `chatgpt` runs
+            on the account's `chatgpt` connection instead and needs no
+            `provider` entry.
         modelId:
           type: string
           description: Provider-specific model identifier
@@ -4911,15 +5136,21 @@ components:
             enabled:
               type: boolean
               description: "Automatic history pruning (default: `true`)"
-        compaction:
+        autoCompaction:
           type: object
+          description: >-
+            Summarizes the stored history after a finished turn, once the model
+            answered with no tool call left, before the next queued message
+            runs. `/compact` works whatever this says.
           properties:
             enabled:
               type: boolean
-              description: "Context compaction (default: `false`)"
+              description: "Auto-compaction (default: `true`)"
             maxContextLength:
               type: integer
-              description: Serialized character-length threshold
+              minimum: 1
+              maximum: 10000000
+              description: "Input tokens of the turn's last model call that start a compaction (default: `500000`)"
 
     ToolsConfig:
       type: object

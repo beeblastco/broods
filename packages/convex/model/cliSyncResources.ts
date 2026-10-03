@@ -843,7 +843,7 @@ async function deleteOwnedAgent(
 }
 
 /** Whether any instance row still references this sandbox config. */
-async function hasReservation(
+export async function hasReservation(
   ctx: QueryCtx,
   sandboxConfigId: Id<"sandboxConfigs">,
 ): Promise<boolean> {

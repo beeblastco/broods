@@ -212,6 +212,7 @@ function reasoningSlot(
   provider: string,
 ): "openai" | "anthropic" | "google" | undefined {
   if (provider === "minimax") return "anthropic";
+  if (provider === "chatgpt") return "openai";
   if (
     provider === "openai" ||
     provider === "anthropic" ||

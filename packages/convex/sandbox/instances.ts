@@ -18,6 +18,7 @@
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
+import { pruneReleasedDashboardSandbox } from "../canvas";
 import type { Doc } from "../_generated/dataModel";
 import {
   internalMutation,
@@ -130,6 +131,7 @@ export const listForActiveOrg = query({
  * Drops an instance row when broods terminates the sandbox or releases the
  * reservation. No-op when the key is unknown, belongs to another account, or
  * (when `externalId` is given) has since been repointed at another machine.
+ * A dashboard sandbox config the canvas kept only for this instance goes with it.
  * @param accountId the owning account.
  * @param reservationKey the broods reconnection key.
  * @param externalId the provider id the caller tore down, when the row must still name it.
@@ -158,6 +160,9 @@ export const remove = internalMutation({
     ) {
       await accrue(ctx, instance, Date.now());
       await ctx.db.delete(instance._id);
+      if (instance.sandboxConfigId) {
+        await pruneReleasedDashboardSandbox(ctx, instance.sandboxConfigId);
+      }
     }
 
     return null;

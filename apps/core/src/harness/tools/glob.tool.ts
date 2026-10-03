@@ -3,7 +3,8 @@
  * returning paths sorted by modification time (newest first), Claude-Code-style.
  * Sandbox-backed workspaces match through the mount; a read-only workspace lists
  * through a service-managed read-only mount by default (readMount), or directly
- * from S3 when the ref opts out with `sandbox: null`.
+ * from S3 when the ref opts out with `sandbox: null` or the workspace brings its
+ * own bucket.
  */
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";

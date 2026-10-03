@@ -256,7 +256,7 @@ export interface AgentWorkspaceRef {
 
 export interface AgentSessionConfig {
   pruning?: AgentSessionPruningConfig;
-  compaction?: AgentSessionCompactionConfig;
+  autoCompaction?: AgentSessionAutoCompactionConfig;
   [key: string]: unknown;
 }
 
@@ -265,7 +265,12 @@ export interface AgentSessionPruningConfig {
   [key: string]: unknown;
 }
 
-export interface AgentSessionCompactionConfig {
+/**
+ * Compaction after a finished turn, on unless `enabled: false`. It runs once
+ * the turn's last model call read `maxContextLength` input tokens or more
+ * (default 500000). `/compact` works whatever this says.
+ */
+export interface AgentSessionAutoCompactionConfig {
   enabled?: boolean;
   maxContextLength?: number;
   [key: string]: unknown;

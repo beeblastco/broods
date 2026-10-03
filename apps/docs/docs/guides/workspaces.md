@@ -50,6 +50,7 @@ That lets one agent give different workspaces different sandboxes and approval r
 | a sandbox             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save`         |
 | none                  | `read` and `glob` through a read-only mount, which sees writes at once |
 | none, `sandbox: null` | `read` and `glob` straight from storage, no cold start, reads can lag  |
+| none, your own bucket | `read` and `glob` straight from storage, reads can lag                 |
 
 | Agent has                | Tools                                                              |
 | ------------------------ | ------------------------------------------------------------------ |
