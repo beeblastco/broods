@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 
 let lastAssumeRoleInput: Record<string, unknown> | undefined;
 const assumeRoleSendMock = mock(async () => ({
@@ -19,6 +27,7 @@ mock.module("@aws-sdk/client-sts", () => ({
   },
 }));
 
+const { getStorage } = await import("../src/shared/storage.ts");
 const {
   mountRoleArn,
   resolveS3Mount,
@@ -191,7 +200,7 @@ describe("mountRoleArn", () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
     const storage = { provider: "s3" as const, bucket: "acme", prefix: "a/" };
     const expected =
-      '"assumeRole" is required when config.storage.bucket is set';
+      '"assumeRole" or "r2" is required when config.storage.bucket is set';
     expect(() => mountRoleArn(storage)).toThrow(expected);
     expect(() =>
       mountRoleArn({ ...storage, auth: { type: "managed" } }),
@@ -378,5 +387,87 @@ describe("resolveS3ReadTarget", () => {
     await resolveS3ReadTarget({ storage: byoStorage, namespace: NS });
 
     expect(assumeRoleSendMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("R2 storage", () => {
+  const R2_STORAGE = {
+    provider: "s3" as const,
+    bucket: "agent-files",
+    prefix: "broods/",
+    endpoint:
+      "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+    auth: {
+      type: "r2" as const,
+      accessKeyId: "${R2_ACCESS_KEY_ID}",
+      secretAccessKey: "${R2_SECRET_ACCESS_KEY}",
+    },
+    owner: { accountId: "acct_1", workspaceId: "ws_1" },
+  };
+  const mints: string[][] = [];
+  let mint: { mockRestore(): void } | undefined;
+
+  beforeEach(() => {
+    mints.length = 0;
+    mint = spyOn(
+      getStorage().workspaceConfigs,
+      "mintR2Credentials",
+    ).mockImplementation(async (accountId, workspaceId, prefix) => {
+      mints.push([accountId, workspaceId, prefix]);
+
+      return {
+        accessKeyId: "parent-id",
+        secretAccessKey: "derived-secret",
+        sessionToken: "session",
+        expiration: new Date(Date.now() + 3600_000).toISOString(),
+      };
+    });
+  });
+
+  afterEach(() => {
+    mint?.mockRestore();
+  });
+
+  it("mounts on credentials the config plane minted for the run's own folder", async () => {
+    const mount = await resolveS3Mount({
+      storage: R2_STORAGE,
+      namespace: `${NS}/conversation/abc`,
+      region: "us-east-1",
+    });
+
+    expect(mints).toEqual([["acct_1", "ws_1", "broods/conversation/abc/"]]);
+    expect(mount).toMatchObject({
+      bucket: "agent-files",
+      prefix: "broods/conversation/abc/",
+      region: "auto",
+      endpoint: R2_STORAGE.endpoint,
+      credentials: {
+        AWS_ACCESS_KEY_ID: "parent-id",
+        AWS_SECRET_ACCESS_KEY: "derived-secret",
+        AWS_SESSION_TOKEN: "session",
+      },
+    });
+    expect(mountRoleArn(R2_STORAGE)).toBeUndefined();
+    expect(() =>
+      resolveS3MountIdentity({
+        storage: { ...R2_STORAGE, region: "eu-west-1" },
+        namespace: NS,
+      }),
+    ).toThrow('config.storage.region must be "auto" or omitted for R2');
+    expect(assumeRoleSendMock).not.toHaveBeenCalled();
+  });
+
+  it("never shares a cached read target between two workspaces on one bucket", async () => {
+    await resolveS3ReadTarget({ storage: R2_STORAGE, namespace: NS });
+    await resolveS3ReadTarget({ storage: R2_STORAGE, namespace: NS });
+    await resolveS3ReadTarget({
+      storage: {
+        ...R2_STORAGE,
+        owner: { accountId: "acct_2", workspaceId: "ws_2" },
+      },
+      namespace: NS,
+    });
+
+    expect(mints.map((mint) => mint[0])).toEqual(["acct_1", "acct_2"]);
   });
 });

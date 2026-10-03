@@ -48,9 +48,10 @@ One known exception exists. `Session.loadMemoryFile` reads `memory/MEMORY.md` th
 
 ## Bring-your-own bucket
 
-A workspace can set `storage.bucket`, `region`, `prefix`, optional `endpoint`, and `auth: { type: "assumeRole", roleArn, externalId }`. Platform credentials only ever reach the managed bucket, so validation refuses a BYO bucket unless:
+A workspace can set `storage.bucket`, `region`, `prefix`, optional `endpoint`, and `auth: { type: "assumeRole", roleArn, externalId }` or `auth: { type: "r2", accessKeyId, secretAccessKey }`. Platform credentials only ever reach the managed bucket, so validation refuses a BYO bucket unless:
 
-- `auth.type` is `assumeRole`. `managed` or missing auth is valid only without a `bucket`.
+- `auth.type` is `assumeRole` or `r2`. `managed` or missing auth is valid only without a `bucket`.
+- for `r2`, both keys are a single `${NAME}` env ref and `endpoint` is the account's `https://<account id>.r2.cloudflarestorage.com`.
 - `bucket` is not one of the platform's own buckets, compared case-insensitively.
 - `auth.roleArn` is an IAM role outside the platform AWS account.
 - `prefix` is set. Mount credentials are scoped to `bucket/prefix/*`, a directory boundary.
@@ -63,14 +64,16 @@ flowchart TD
   Storage["workspace.storage"] --> Resolve["resolveS3Mount()<br/>sandbox/s3-mount.ts"]
   Resolve -->|"managed"| Managed["FILESYSTEM_BUCKET_NAME<br/>prefix namespace/<br/>harness role"]
   Resolve -->|"bring your own"| STS["STS AssumeRole<br/>session policy: bucket/prefix*"]
+  Resolve -->|"r2"| Mint["Convex workspace.configs.r2Credentials<br/>JWT signed with the parent key"]
   STS --> Byo["your bucket, short-lived scoped creds"]
+  Mint --> Byo
   Managed --> Mount["sandbox mount + harness reads"]
   Byo --> Mount
 ```
 
-`resolveS3Mount()` has three credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`. The managed bucket assumes the platform `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN`. Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session, named `fp-sandbox-mount` and lasting one hour, carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target. Bring-your-own read targets are cached until 10 minutes before their credentials expire. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
+`resolveS3Mount()` has four credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`, or for `r2` asks Convex to mint R2 temporary credentials. The managed bucket assumes the platform `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN`. Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session, named `fp-sandbox-mount` and lasting one hour, carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target. Bring-your-own read targets are cached until 10 minutes before their credentials expire. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
 
-Workspace config is stored in plaintext, so no access keys are ever stored in it. Static access keys for non-AWS stores, such as R2 or MinIO tokens, are not supported yet, and `assumeRole` is an AWS STS call. `provider` stays `s3` for every S3-compatible vendor. It is reserved for a different protocol such as native Azure Blob or GCS.
+Workspace config is stored in plaintext, so no access keys are ever stored in it. R2 keys are `${NAME}` refs to stage env vars (CLI-synced workspace) or account env vars (API workspace). `workspace.configs.r2Credentials`, a mutation so no cached result outlives its credentials, checks the row belongs to the account, refuses a prefix outside `storage.prefix`, decrypts the two values and signs Cloudflare's local temporary-credential JWT (`model/r2Credentials.ts`: HS256 over bucket, `object-read-write`, `prefixPaths: [prefix]`, one hour). The parent secret stays in Convex. Core finds the row through `storage.owner`, which it stamps on its own view of the storage when it loads the row and which Convex never stores or accepts. The Convex file actions mint through the same mutation (`withR2Credentials`). R2 signs for region `auto`. Static access keys for other stores such as MinIO are not supported, since they would hand the parent key to the sandbox. `provider` stays `s3` for every S3-compatible vendor. It is reserved for a different protocol such as native Azure Blob or GCS.
 
 Under `deny-all` or `restricted` networking, a MicroVM reaches S3 only through the gateway endpoint, whose policy names the managed bucket alone. BYO-bucket workspaces on `lambda` therefore need `allow-all`.
 
@@ -155,7 +158,7 @@ Design rules:
 
 ## Future external storage
 
-S3-compatible stores such as R2, MinIO, Wasabi and B2 need an access-key auth type that references account env vars. `endpoint` is already in the BYO contract for them. Non-S3 providers such as Google Drive, native GCS and Azure Blob would go behind a new `storage.provider`, and must still:
+S3-compatible stores such as MinIO, Wasabi and B2 need a way to scope credentials per mount, as R2 does with temporary credentials. `endpoint` is already in the BYO contract for them. Non-S3 providers such as Google Drive, native GCS and Azure Blob would go behind a new `storage.provider`, and must still:
 
 - keep one logical namespace for memory, staged skills and files,
 - mount or sync that namespace into the sandbox's workspace root,

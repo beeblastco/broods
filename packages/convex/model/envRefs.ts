@@ -14,3 +14,6 @@ export const ACCOUNT_ENV_PLACEHOLDER_PATTERN = /\$\{([A-Z][A-Z0-9_]*)\}/;
  * material.
  */
 export const ACCOUNT_ENV_REFS_ONLY_PATTERN = /^(?:\$\{[A-Z][A-Z0-9_]*\})+$/;
+
+/** A value that is exactly one `${NAME}` ref; group 1 is the name. */
+export const ACCOUNT_ENV_REF_PATTERN = /^\$\{([A-Z][A-Z0-9_]*)\}$/;

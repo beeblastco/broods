@@ -7,6 +7,7 @@ import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
+import { r2Workspace } from "./r2-workspace.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
@@ -23,6 +24,7 @@ export const verifyCases: readonly VerifyCase[] = [
   ownBucketSandbox,
   trailingSlash,
   manifestSync,
+  r2Workspace,
   workToolWebhooks,
   webhookHandshake,
   connections,

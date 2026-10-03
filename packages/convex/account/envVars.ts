@@ -146,15 +146,29 @@ function encryptionSecret(): string {
   return secret;
 }
 
-/** Decrypt every account variable into the map used for write-time substitution. */
-async function loadValuesForAccount(
+/** Decrypt the account variables, all of them or only `names`, into the map used for write-time substitution. */
+export async function loadValuesForAccount(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
+  names?: string[],
 ): Promise<Record<string, string>> {
-  const rows = await ctx.db
-    .query("accountEnvVars")
-    .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
-    .collect();
+  const rows = names
+    ? (
+        await Promise.all(
+          names.map((name) =>
+            ctx.db
+              .query("accountEnvVars")
+              .withIndex("by_accountId_and_name", (q) =>
+                q.eq("accountId", accountId).eq("name", name),
+              )
+              .unique(),
+          ),
+        )
+      ).filter((row) => row !== null)
+    : await ctx.db
+        .query("accountEnvVars")
+        .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+        .collect();
   const secret = encryptionSecret();
   const values: Record<string, string> = {};
   for (const row of rows) {

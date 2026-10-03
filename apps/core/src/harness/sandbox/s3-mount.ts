@@ -3,9 +3,11 @@
  * and later daytona). Turns a workspace's storage config (bucket / region /
  * endpoint / prefix / auth) plus the managed defaults into a concrete mount
  * target with credentials. Platform credentials only ever reach the managed
- * bucket (`workspaceStorageOwnAuth`). Three credential sources, in precedence:
+ * bucket (`workspaceStorageOwnAuth`). Four credential sources, in precedence:
  *   - `assumeRole` (bring-your-own bucket): assume the developer's cross-account
  *     role, scoped to their bucket/prefix. Keyless; pair with an ExternalId.
+ *   - `r2` (bring-your-own R2 bucket): the config plane signs R2 temporary
+ *     credentials scoped to bucket/prefix. The parent keys never leave Convex.
  *   - managed + platform role (SANDBOX_MOUNT_ROLE_ARN): assume the broods role,
  *     scoped to the namespace prefix of the managed bucket.
  *   - managed + no role: no harness-resolved credentials. The provider supplies
@@ -25,18 +27,19 @@ import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-confi
 import { optionalEnv } from "../../shared/env.ts";
 import type { S3Access } from "../../shared/s3.ts";
 import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
+import { getStorage } from "../../shared/storage.ts";
 
 // A cached bring-your-own read target is reused until its credentials are this
 // close to expiry: longer than the 300s presign a read target can back, plus
 // room for clock skew.
 const READ_TARGET_REFRESH_MARGIN_MS = 10 * 60 * 1000;
-// Bring-your-own read targets keyed by everything the STS session is scoped to.
+// Bring-your-own read targets keyed by everything the session is scoped to.
 // The pending promise is cached, so parallel first reads of one workspace share
-// a single STS round trip and, through s3.ts, a single S3 client.
+// a single STS (or R2 mint) round trip and, through s3.ts, a single S3 client.
 const readTargetCache = new Map<string, Promise<S3ReadTarget>>();
 
 export interface ResolvedS3Mount extends S3MountIdentity {
-  // Present when the harness resolved credentials (assume-role / platform role).
+  // Present when the harness resolved credentials (assume-role / R2 / platform role).
   // Absent => the provider must supply credentials itself (workdir declarative
   // org secrets, or static keys in the sandbox envVars).
   credentials?: S3MountCredentials;
@@ -142,19 +145,42 @@ export async function assumeScopedMountCredentials(params: {
 
 // The mount role for a workspace: its own role for a bucket it names, else the
 // platform role (SANDBOX_MOUNT_ROLE_ARN). Undefined => no role; the provider
-// supplies credentials another way. Sync, so the mount strategy can branch on it.
+// supplies credentials another way, or the bucket is R2. Sync, so the mount
+// strategy can branch on it.
 export function mountRoleArn(
   storage: WorkspaceStorageConfig | undefined,
 ): string | undefined {
-  return storage?.bucket
-    ? workspaceStorageOwnAuth(storage)?.roleArn
-    : optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
+  if (!storage?.bucket) return optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
+  const auth = workspaceStorageOwnAuth(storage);
+
+  return auth?.type === "assumeRole" ? auth.roleArn : undefined;
 }
 
 export async function resolveS3Mount(
   ctx: S3MountContext,
 ): Promise<ResolvedS3Mount> {
   const identity = resolveS3MountIdentity(ctx);
+  if (ctx.storage?.auth?.type === "r2") {
+    const owner = ctx.storage.owner;
+    if (!owner) throw new Error("R2 workspace storage has no owner");
+    const minted = await getStorage().workspaceConfigs.mintR2Credentials(
+      owner.accountId,
+      owner.workspaceId,
+      identity.prefix,
+    );
+
+    return {
+      ...identity,
+      // R2 signs for region "auto"; validation refuses any other.
+      region: "auto",
+      credentials: {
+        AWS_ACCESS_KEY_ID: minted.accessKeyId,
+        AWS_SECRET_ACCESS_KEY: minted.secretAccessKey,
+        AWS_SESSION_TOKEN: minted.sessionToken,
+        AWS_CREDENTIAL_EXPIRATION: minted.expiration,
+      },
+    };
+  }
   const roleArn = mountRoleArn(ctx.storage);
   const credentials = roleArn
     ? await assumeScopedMountCredentials({
@@ -208,8 +234,8 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
 
 // Resolve a harness read target. The managed bucket is read directly on the
 // harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
-// assumes the configured role for short-lived, prefix-scoped cross-account creds,
-// reused until they near expiry.
+// gets short-lived, prefix-scoped creds (its role, or minted R2 creds), reused
+// until they near expiry.
 export async function resolveS3ReadTarget(
   ctx: S3MountContext,
 ): Promise<S3ReadTarget> {
@@ -218,8 +244,8 @@ export async function resolveS3ReadTarget(
     return { bucket: identity.bucket, prefix: identity.prefix };
   }
   const cacheKey = JSON.stringify([
-    mountRoleArn(ctx.storage),
-    mountExternalId(ctx.storage),
+    ctx.storage.auth,
+    ctx.storage.owner,
     identity.bucket,
     identity.prefix,
     identity.region,
@@ -265,7 +291,9 @@ function joinPrefix(
 function mountExternalId(
   storage: WorkspaceStorageConfig | undefined,
 ): string | undefined {
-  return storage && workspaceStorageOwnAuth(storage)?.externalId;
+  const auth = storage && workspaceStorageOwnAuth(storage);
+
+  return auth?.type === "assumeRole" ? auth.externalId : undefined;
 }
 
 function namespaceIsolationSuffix(namespace: string): string | undefined {

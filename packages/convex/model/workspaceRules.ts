@@ -2,7 +2,8 @@
  * Workspace-config validation for the Convex config plane. Ports core's
  * former storage/workspace-config.ts normalizer so the public /v1/workspaces
  * contract is unchanged. Workspace config holds no secrets (a roleArn is not
- * a secret), so it is stored and returned in plaintext. Pure module, safe
+ * a secret, and R2 keys are `${NAME}` env refs), so it is stored and returned
+ * in plaintext. Pure module, safe
  * for the default Convex runtime. The public projection lives in
  * ./responses.ts. Core runs the storage access rule too, so it reads the env
  * names of both sides.
@@ -10,6 +11,10 @@
 
 import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
+import {
+  ACCOUNT_ENV_PLACEHOLDER_PATTERN,
+  ACCOUNT_ENV_REF_PATTERN,
+} from "./envRefs";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
 
@@ -29,6 +34,10 @@ const PLATFORM_ROLE_ARN_ENV_NAMES = [
   "MICROVM_BUILD_ROLE_ARN",
 ];
 const ROLE_ARN_PATTERN = /^arn:[a-z-]+:iam::(\d+):role\/.+$/;
+// An account's R2 S3 endpoint, optionally in a jurisdiction; group 1 is the
+// Cloudflare account id.
+const R2_HOSTNAME_PATTERN =
+  /^([a-f0-9]{32})(?:\.(?:eu|fedramp))?\.r2\.cloudflarestorage\.com$/;
 
 /** Per-file cap, enforced on the S3 write path and on dashboard uploads. */
 export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
@@ -39,12 +48,19 @@ export type WorkspaceStorageProvider =
 
 export type WorkspaceStorageAuth =
   | { type: "managed" }
-  | { type: "assumeRole"; roleArn: string; externalId?: string };
+  | { type: "assumeRole"; roleArn: string; externalId?: string }
+  | {
+      type: "r2";
+      /** `${NAME}` ref to the parent R2 token's access key id. */
+      accessKeyId: string;
+      /** `${NAME}` ref to the parent R2 token's secret access key. */
+      secretAccessKey: string;
+    };
 
-/** The only auth that reaches a bucket the workspace names itself. */
+/** The auth that reaches a bucket the workspace names itself. */
 export type WorkspaceStorageOwnAuth = Extract<
   WorkspaceStorageAuth,
-  { type: "assumeRole" }
+  { type: "assumeRole" | "r2" }
 >;
 
 export interface WorkspaceStorageConfig {
@@ -79,6 +95,42 @@ export function assertStorageEndpoint(value: string, label: string): void {
   )
     return;
   assertPublicHttpsUrl(value, label);
+}
+
+/**
+ * A workspace key prefix with no leading slash and one trailing slash, or ""
+ * for the bucket root. Shared by the file actions and the R2 credential grant.
+ */
+export function normalizeWorkspacePrefix(prefix: string | undefined): string {
+  const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
+
+  return trimmed.length > 0 ? `${trimmed}/` : "";
+}
+
+/**
+ * The Cloudflare account id of an R2 S3 endpoint
+ * (`https://<account>.r2.cloudflarestorage.com`), or undefined when the URL is
+ * anything else. The R2 credential grant signs it as its subject.
+ */
+export function r2AccountId(endpoint: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return undefined;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.search ||
+    url.hash ||
+    url.pathname !== "/"
+  )
+    return undefined;
+
+  return R2_HOSTNAME_PATTERN.exec(url.hostname)?.[1];
 }
 
 /**
@@ -205,7 +257,15 @@ export function workspaceStorageOwnAuth(
     }
     assertStorageEndpoint(storage.endpoint, "config.storage.endpoint");
   }
-  if (!storage.bucket) return undefined;
+  if (!storage.bucket) {
+    if (storage.auth?.type === "r2") {
+      throw new ClientError(
+        'config.storage.auth.type "r2" requires config.storage.bucket; R2 has no managed bucket',
+      );
+    }
+
+    return undefined;
+  }
   const bucket = storage.bucket.toLowerCase();
   if (
     PLATFORM_BUCKET_ENV_NAMES.some(
@@ -216,9 +276,23 @@ export function workspaceStorageOwnAuth(
       "config.storage.bucket must be a bucket you own; omit it to use the managed bucket",
     );
   }
+  if (storage.auth?.type === "r2") {
+    if (!storage.endpoint || !r2AccountId(storage.endpoint)) {
+      throw new ClientError(
+        'config.storage.auth.type "r2" requires config.storage.endpoint to be your account R2 endpoint, https://<account id>.r2.cloudflarestorage.com',
+      );
+    }
+    if (storage.region !== undefined && storage.region !== "auto") {
+      throw new ClientError(
+        'config.storage.region must be "auto" or omitted for R2',
+      );
+    }
+
+    return storage.auth;
+  }
   if (storage.auth?.type !== "assumeRole") {
     throw new ClientError(
-      'config.storage.auth.type "assumeRole" is required when config.storage.bucket is set; a named bucket is only reached with its own credentials',
+      'config.storage.auth.type "assumeRole" or "r2" is required when config.storage.bucket is set; a named bucket is only reached with its own credentials',
     );
   }
   const roleAccountId = ROLE_ARN_PATTERN.exec(storage.auth.roleArn)?.[1];
@@ -372,6 +446,26 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
     );
   }
   const auth = normalizeWorkspaceStorageAuth(value.auth);
+  // Only R2 keys are resolved; a ref anywhere else would be kept as literal text.
+  const literals = {
+    "config.storage.bucket": bucket,
+    "config.storage.region": region,
+    "config.storage.endpoint": endpoint,
+    "config.storage.prefix": prefix,
+    ...(auth?.type === "assumeRole"
+      ? {
+          "config.storage.auth.roleArn": auth.roleArn,
+          "config.storage.auth.externalId": auth.externalId,
+        }
+      : {}),
+  };
+  for (const [name, literal] of Object.entries(literals)) {
+    if (literal && ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(literal)) {
+      throw new ClientError(
+        `${name} cannot be an env reference; only R2 keys take env()`,
+      );
+    }
+  }
   const storage: WorkspaceStorageConfig = {
     provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
     ...(bucket ? { bucket: bucket } : {}),
@@ -397,6 +491,30 @@ function normalizeWorkspaceStorageAuth(
   if (value.type === "managed") {
     return { type: "managed" };
   }
+  if (value.type === "r2") {
+    const accessKeyId = requireString(
+      value.accessKeyId,
+      "config.storage.auth.accessKeyId",
+    );
+    const secretAccessKey = requireString(
+      value.secretAccessKey,
+      "config.storage.auth.secretAccessKey",
+    );
+    if (
+      !ACCOUNT_ENV_REF_PATTERN.test(accessKeyId) ||
+      !ACCOUNT_ENV_REF_PATTERN.test(secretAccessKey)
+    ) {
+      throw new ClientError(
+        "config.storage.auth.accessKeyId and secretAccessKey must each be one ${NAME} env reference; workspace config never stores key values",
+      );
+    }
+
+    return {
+      type: "r2",
+      accessKeyId: accessKeyId,
+      secretAccessKey: secretAccessKey,
+    };
+  }
   if (value.type === "assumeRole") {
     const roleArn = requireString(value.roleArn, "config.storage.auth.roleArn");
     const externalId = optionalString(
@@ -411,7 +529,7 @@ function normalizeWorkspaceStorageAuth(
     };
   }
   throw new ClientError(
-    "config.storage.auth.type must be one of: managed, assumeRole",
+    "config.storage.auth.type must be one of: managed, assumeRole, r2",
   );
 }
 
