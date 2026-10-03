@@ -18,7 +18,6 @@ import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
 import { isPlainObject } from "@/app/lib/utils";
 import type { UIMessage } from "ai";
-import Image from "next/image";
 import {
   ArrowUp,
   ChevronRight,
@@ -394,19 +393,20 @@ function splitToolImages(output: unknown): { images: string[]; rest: unknown } {
     return { images: [], rest: output };
   }
   const images: string[] = [];
-  const text: string[] = [];
+  const rest: unknown[] = [];
   for (const part of output.value) {
-    if (!isPlainObject(part)) continue;
-    if (part.type === "image-data" && typeof part.data === "string") {
+    if (
+      isPlainObject(part) &&
+      part.type === "image-data" &&
+      typeof part.data === "string"
+    ) {
       images.push(`data:${String(part.mediaType)};base64,${part.data}`);
-    } else if (part.type === "text" && typeof part.text === "string") {
-      text.push(part.text);
+    } else {
+      rest.push(part);
     }
   }
 
-  return images.length > 0
-    ? { images: images, rest: text.join("\n") }
-    : { images: [], rest: output };
+  return { images: images, rest: { ...output, value: rest } };
 }
 
 function formatToolValue(value: unknown): string {
@@ -774,15 +774,13 @@ function ToolInvocationBlock({
                 {isError ? "Error" : "Result"}
               </p>
               {result.images.map((src, index) => (
-                <Image
+                // A data URL from the tool result: next/image has nothing to optimize.
+                // oxlint-disable-next-line nextjs/no-img-element
+                <img
                   key={index}
                   src={src}
                   alt={`${toolName} result ${index + 1}`}
-                  // Data URLs from the tool result; nothing for the optimizer to fetch.
-                  unoptimized
-                  width={1280}
-                  height={800}
-                  className="mb-1.5 h-auto max-h-64 w-auto rounded-md border"
+                  className="mb-1.5 max-h-64 w-auto rounded-md border"
                 />
               ))}
               <pre className="max-h-40 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap wrap-break-word font-mono text-xs text-foreground">

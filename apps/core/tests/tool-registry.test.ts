@@ -1274,6 +1274,7 @@ describe("connected MCP servers", () => {
             { type: "text", text: "Viewport of example.com" },
             { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
           ],
+          structuredContent: { width: 1280 },
         } as never;
       },
     });
@@ -1290,6 +1291,7 @@ describe("connected MCP servers", () => {
       value: [
         { type: "text", text: "Viewport of example.com" },
         { type: "image-data", data: "iVBORw0KGgo=", mediaType: "image/png" },
+        { type: "text", text: '{"width":1280}' },
       ],
     });
   });

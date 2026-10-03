@@ -110,7 +110,7 @@ export async function callMcpTool(
   // An image is something the model can look at, so a result carrying one goes
   // through as content parts instead of being flattened to text.
   if (result.content.some((block): boolean => block.type === "image")) {
-    return imageContentOutput(result.content);
+    return imageContentOutput(result.content, result.structuredContent);
   }
 
   return result.structuredContent ?? renderContent(result.content);
@@ -357,17 +357,30 @@ function pruneCache(cache: Map<string, unknown>): void {
   }
 }
 
-/** A result's content as model content parts: images as image data, the rest as text. */
+/**
+ * A result's content as model content parts: images as image data, the rest as
+ * text, and any structuredContent as one more JSON text part.
+ */
 function imageContentOutput(
   content: CallToolResult["content"],
+  structured: CallToolResult["structuredContent"],
 ): ToolResultOutput {
   return {
     type: "content",
-    value: content.map((block) =>
-      block.type === "image"
-        ? { type: "image-data", data: block.data, mediaType: block.mimeType }
-        : { type: "text", text: renderContent([block]) },
-    ),
+    value: [
+      ...content.map((block) =>
+        block.type === "image"
+          ? {
+              type: "image-data" as const,
+              data: block.data,
+              mediaType: block.mimeType,
+            }
+          : { type: "text" as const, text: renderContent([block]) },
+      ),
+      ...(structured
+        ? [{ type: "text" as const, text: JSON.stringify(structured) }]
+        : []),
+    ],
   };
 }
 
