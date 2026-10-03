@@ -110,6 +110,21 @@ describe("HttpSandboxExecutor", () => {
     });
   });
 
+  it("holds a non-2xx body to the output limit in the error", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+      const error = await executor
+        .run(run({ code: "big-fail", outputLimitBytes: 16 }))
+        .then(
+          (): string => "",
+          (caught: unknown): string => String(caught),
+        );
+
+      expect(error).toContain("custom sandbox exec failed (502)");
+      expect(error.length).toBeLessThan(200);
+    });
+  });
+
   it("refuses an answer that is not the exec contract", async () => {
     await withExecServer([], async (endpoint) => {
       const executor = new HttpSandboxExecutor(config(endpoint), seams());
@@ -118,13 +133,19 @@ describe("HttpSandboxExecutor", () => {
         "custom sandbox exec response must be a JSON object",
       );
     });
-    await withExecServer({ status: "queued" }, async (endpoint) => {
-      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+    for (const answer of [
+      { status: "queued" },
+      { ...OK_RESPONSE, exit_code: "0" },
+      { ...OK_RESPONSE, cpu_usec: "4200" },
+    ]) {
+      await withExecServer(answer, async (endpoint) => {
+        const executor = new HttpSandboxExecutor(config(endpoint), seams());
 
-      await expect(executor.run(run())).rejects.toThrow(
-        "custom sandbox exec response is not a sandbox exec response",
-      );
-    });
+        await expect(executor.run(run())).rejects.toThrow(
+          "custom sandbox exec response is not a sandbox exec response",
+        );
+      });
+    }
   });
 
   it("refuses an endpoint whose name resolves to a private address", async () => {
@@ -195,7 +216,8 @@ function seams(): HttpSandboxExecutorSeams {
 }
 
 // A null answer never responds, so the client deadline is what ends the call.
-// A request whose code is "fail" is answered 401, like a server refusing a token.
+// A request whose code is "fail" is answered 401, like a server refusing a token,
+// and "big-fail" 502 with a page-sized body, like a proxy in front of it.
 async function withExecServer(
   answer: SandboxExecResponse | Record<string, unknown> | unknown[] | null,
   test: (endpoint: string, received: Received[]) => Promise<void>,
@@ -213,6 +235,12 @@ async function withExecServer(
           path: request.url ?? "",
         });
         if (answer === null) return;
+        if (body.includes('"code":"big-fail"')) {
+          response.writeHead(502);
+          response.end("x".repeat(100_000));
+
+          return;
+        }
         if (body.includes('"code":"fail"')) {
           response.writeHead(401);
           response.end("bad token");

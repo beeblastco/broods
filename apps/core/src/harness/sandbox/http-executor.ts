@@ -26,6 +26,7 @@ import {
   mergeSandboxEnv,
   parseExecResponse,
   stringRecord,
+  truncateText,
 } from "./utils.ts";
 
 const PROVIDER = "custom" as const;
@@ -61,7 +62,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
     // Refs resolve when the sandbox syncs from code. One left over would go out
     // as the credential itself.
     if (
-      [token ?? "", ...Object.values(headers)].some((value) =>
+      [token ?? "", ...Object.values(headers)].some((value): boolean =>
         ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value),
       )
     ) {
@@ -100,7 +101,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
     );
     if (response.status < 200 || response.status >= 300) {
       throw new Error(
-        `custom sandbox exec failed (${response.status}): ${response.bodyText}`,
+        `custom sandbox exec failed (${response.status}): ${truncateText(response.bodyText, request.outputLimitBytes).value}`,
       );
     }
 

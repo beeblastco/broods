@@ -259,21 +259,27 @@ export function workspacePath(
 }
 
 function isExecResponse(value: object): value is SandboxExecResponse {
-  const fields: Record<keyof SandboxExecResponse, string | undefined> = {
-    ok: "boolean",
-    runtime: undefined,
-    exit_code: undefined,
-    timed_out: "boolean",
-    duration_ms: "number",
-    stdout: "string",
-    stderr: "string",
-    truncated: undefined,
-    cpu_usec: undefined,
-    burst: undefined,
+  // Every field the run result reads, by the type it must have. A required
+  // one must be there; an optional one is checked only when the server sent it.
+  const fields: Record<
+    Exclude<keyof SandboxExecResponse, "burst">,
+    [type: string, required: boolean]
+  > = {
+    ok: ["boolean", true],
+    runtime: ["string", false],
+    exit_code: ["number", false],
+    timed_out: ["boolean", true],
+    duration_ms: ["number", true],
+    stdout: ["string", true],
+    stderr: ["string", true],
+    truncated: ["boolean", false],
+    cpu_usec: ["number", false],
   };
   const record: Record<string, unknown> = { ...value };
 
   return Object.entries(fields).every(
-    ([field, type]): boolean => !type || typeof record[field] === type,
+    ([field, [type, required]]): boolean =>
+      typeof record[field] === type ||
+      (!required && (record[field] === undefined || record[field] === null)),
   );
 }

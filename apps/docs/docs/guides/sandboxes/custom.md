@@ -67,7 +67,7 @@ Response, always HTTP 200 once the request was understood:
 | `truncated`        | boolean        | True when you cut the output                                        |
 | `cpu_usec`         | number         | CPU time in microseconds, shown in usage. Optional                  |
 
-Answer a bad token with 401 and a malformed body with 400. Broods surfaces any non-2xx status with its body as the tool error. On the client side Broods waits `timeout_ms` plus fifteen seconds, then gives up on the call, and cuts `stdout` and `stderr` to the sandbox's `outputLimitBytes` whatever the server sent.
+Answer a bad token with 401 and a malformed body with 400. Broods surfaces any non-2xx status with its body as the tool error. On the client side Broods waits `timeout_ms` plus fifteen seconds, then gives up on the call, and cuts `stdout`, `stderr` and an error body to the sandbox's `outputLimitBytes`. A response body over 5 MB fails the call instead, so truncate on the server.
 
 ## A server in Bun
 
