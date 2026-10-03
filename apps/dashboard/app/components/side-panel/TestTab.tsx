@@ -16,7 +16,6 @@ import {
 import { QuestionCard } from "@/app/components/side-panel/QuestionCard";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
-import { isPlainObject } from "@/app/lib/utils";
 import type { UIMessage } from "ai";
 import {
   ArrowUp,
@@ -28,6 +27,18 @@ import {
 } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
+import * as z from "zod/mini";
+
+// A content tool result and its image part, as the AI SDK's ToolResultOutput.
+const contentToolOutput = z.looseObject({
+  type: z.literal("content"),
+  value: z.array(z.unknown()),
+});
+const toolImagePart = z.object({
+  type: z.literal("image-data"),
+  data: z.string(),
+  mediaType: z.string(),
+});
 
 type SubagentPanelEvent = {
   phase: "started" | "tool_call" | "tool_result";
@@ -385,28 +396,22 @@ function AgentAvatar({
  * screenshots) as data URLs, so the card shows the picture and not its base64.
  */
 function splitToolImages(output: unknown): { images: string[]; rest: unknown } {
-  if (
-    !isPlainObject(output) ||
-    output.type !== "content" ||
-    !Array.isArray(output.value)
-  ) {
+  const content = contentToolOutput.safeParse(output);
+  if (!content.success) {
     return { images: [], rest: output };
   }
   const images: string[] = [];
   const rest: unknown[] = [];
-  for (const part of output.value) {
-    if (
-      isPlainObject(part) &&
-      part.type === "image-data" &&
-      typeof part.data === "string"
-    ) {
-      images.push(`data:${String(part.mediaType)};base64,${part.data}`);
+  for (const part of content.data.value) {
+    const image = toolImagePart.safeParse(part);
+    if (image.success) {
+      images.push(`data:${image.data.mediaType};base64,${image.data.data}`);
     } else {
       rest.push(part);
     }
   }
 
-  return { images: images, rest: { ...output, value: rest } };
+  return { images: images, rest: { ...content.data, value: rest } };
 }
 
 function formatToolValue(value: unknown): string {
