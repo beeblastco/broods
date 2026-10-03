@@ -36,7 +36,7 @@ A tool that your code would execute, such as the Tavily AI SDK package, cannot g
 
 ## MCP servers
 
-Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`.
+Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at. Other non-text blocks are named in the text.
 
 ### Connect a server
 

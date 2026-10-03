@@ -25,8 +25,20 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
+import * as z from "zod/mini";
+
+// A content tool result and its image part, as the AI SDK's ToolResultOutput.
+const contentToolOutput = z.looseObject({
+  type: z.literal("content"),
+  value: z.array(z.unknown()),
+});
+const toolImagePart = z.object({
+  type: z.literal("image-data"),
+  data: z.string(),
+  mediaType: z.string(),
+});
 
 type SubagentPanelEvent = {
   phase: "started" | "tool_call" | "tool_result";
@@ -379,6 +391,29 @@ function AgentAvatar({
   );
 }
 
+/**
+ * Pulls the images out of a content tool result (browse, computer, MCP
+ * screenshots) as data URLs, so the card shows the picture and not its base64.
+ */
+function splitToolImages(output: unknown): { images: string[]; rest: unknown } {
+  const content = contentToolOutput.safeParse(output);
+  if (!content.success) {
+    return { images: [], rest: output };
+  }
+  const images: string[] = [];
+  const rest: unknown[] = [];
+  for (const part of content.data.value) {
+    const image = toolImagePart.safeParse(part);
+    if (image.success) {
+      images.push(`data:${image.data.mediaType};base64,${image.data.data}`);
+    } else {
+      rest.push(part);
+    }
+  }
+
+  return { images: images, rest: { ...content.data, value: rest } };
+}
+
 function formatToolValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -680,6 +715,9 @@ function ToolInvocationBlock({
   isError: boolean;
 }): React.JSX.Element {
   const hasOutput = output !== undefined;
+  // Memoized: a streaming message re-renders every finished tool block per
+  // chunk, and a screenshot's data URL is hundreds of KB.
+  const result = useMemo(() => splitToolImages(output), [output]);
   const isRunning = state === "input-available" || state === "input-streaming";
   const elapsed = useElapsedTime(isRunning);
 
@@ -742,8 +780,18 @@ function ToolInvocationBlock({
                 <Terminal className="size-2.5" />
                 {isError ? "Error" : "Result"}
               </p>
+              {result.images.map((src, index) => (
+                // A data URL from the tool result: next/image has nothing to optimize.
+                // oxlint-disable-next-line nextjs/no-img-element
+                <img
+                  key={index}
+                  src={src}
+                  alt={`${toolName} result ${index + 1}`}
+                  className="mb-1.5 max-h-64 w-auto rounded-md border"
+                />
+              ))}
               <pre className="max-h-40 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap wrap-break-word font-mono text-xs text-foreground">
-                {formatToolValue(output)}
+                {formatToolValue(result.rest)}
               </pre>
             </div>
           )}

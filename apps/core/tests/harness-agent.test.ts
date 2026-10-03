@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, expect, it, mock } from "bun:test";
+import type { ModelMessage } from "ai";
 import {
   harnessSteersMidTurn,
   type AiSdkHarnessType,
@@ -9,7 +10,10 @@ import * as harnessIndex from "../src/harness/ai-sdk-harness/index.ts";
 interface HarnessStreamCall {
   abortSignal?: AbortSignal;
   onEnd?: unknown;
-  onStepStart?: (event: { stepNumber: number }) => Promise<void>;
+  onStepStart?: (event: {
+    stepNumber: number;
+    messages: ModelMessage[];
+  }) => Promise<void>;
   [hook: string]: unknown;
 }
 
@@ -88,7 +92,7 @@ it.each(["claude-code", "codex"] as const)(
     await runHarnessTurn(type, applySteeringIngress, appended);
 
     queued = true;
-    await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
+    await streamCalls[0]?.onStepStart?.({ stepNumber: 1, messages: [] });
 
     expect(applySteeringIngress).toHaveBeenLastCalledWith({ textOnly: true });
     expect(steeredTexts).toEqual(["focus on the tests"]);
@@ -103,7 +107,7 @@ it("leaves steering queued for the next turn on an adapter that cannot take it",
   await runHarnessTurn("deepagents", applySteeringIngress);
   const callsBeforeTurn = applySteeringIngress.mock.calls.length;
 
-  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
+  await streamCalls[0]?.onStepStart?.({ stepNumber: 1, messages: [] });
 
   expect(applySteeringIngress).toHaveBeenCalledTimes(callsBeforeTurn);
   expect(steeredTexts).toEqual([]);
@@ -128,7 +132,7 @@ it("fails the run when a claimed steer cannot be saved", async () => {
   );
 
   queued = true;
-  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
+  await streamCalls[0]?.onStepStart?.({ stepNumber: 1, messages: [] });
 
   expect(streamCalls[0]?.abortSignal?.aborted).toBe(true);
   expect(steeredTexts).toEqual([]);
@@ -152,7 +156,7 @@ it("fails the run but keeps a steer the turn did not take", async () => {
 
   queued = true;
   steerFailure = new Error("no running turn to steer");
-  await streamCalls[0]?.onStepStart?.({ stepNumber: 1 });
+  await streamCalls[0]?.onStepStart?.({ stepNumber: 1, messages: [] });
 
   expect(streamCalls[0]?.abortSignal?.aborted).toBe(true);
   expect(appended).toEqual([[{ role: "user", content: "focus" }]]);
