@@ -418,15 +418,36 @@ describe("agent rules", () => {
         provider: { cloudflare: { gatewayId: "broods-dev_1" } },
       }),
     ).not.toThrow();
-    // An upstream key in a literal header is as secret as an apiKey.
+    // An upstream key in a literal header is as secret as an apiKey; a header
+    // made only of an env ref is not.
     expect(
       redactConfigSecrets({
         provider: {
-          cloudflare: { headers: { Authorization: "Bearer sk-live" } },
+          cloudflare: {
+            headers: {
+              Authorization: "Bearer sk-live",
+              "Proxy-Authorization": "Bearer sk-live${X}",
+              "x-api-key": "sk-ant-live",
+              "cf-aig-authorization": "Bearer ${CF_AIG_TOKEN}",
+              "X-Bot-Authorization": "Bot ${BOT_TOKEN}",
+            },
+          },
         },
+        tools: { search: { serperApiKey: "sk-serper" } },
       }),
     ).toEqual({
-      provider: { cloudflare: { headers: { Authorization: "********" } } },
+      provider: {
+        cloudflare: {
+          headers: {
+            Authorization: "********",
+            "Proxy-Authorization": "********",
+            "x-api-key": "********",
+            "cf-aig-authorization": "Bearer ${CF_AIG_TOKEN}",
+            "X-Bot-Authorization": "Bot ${BOT_TOKEN}",
+          },
+        },
+      },
+      tools: { search: { serperApiKey: "********" } },
     });
     // Inherited Object keys are not provider names, however `in` reads them.
     for (const inherited of ["constructor", "__proto__", "toString"]) {

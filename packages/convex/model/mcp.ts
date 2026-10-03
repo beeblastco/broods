@@ -13,7 +13,10 @@
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
-import { ACCOUNT_ENV_REFS_ONLY_PATTERN } from "./envRefs";
+import {
+  ACCOUNT_ENV_REFS_ONLY_PATTERN,
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+} from "./envRefs";
 import { ClientError } from "./clientError";
 
 const MAX_ALLOWED_TOOLS = 256;
@@ -39,14 +42,6 @@ const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 /** Header names whose values carry credentials and so must use a ${NAME} ref. */
 const SENSITIVE_HEADER_NAME_PATTERN =
   /auth|token|secret|key|cookie|password|credential/i;
-
-/**
- * A credential header value with no inline secret: `${NAME}` refs only, after
- * an optional auth scheme word (`Bearer ${TOKEN}`). Anchored, so a literal
- * beside a ref (`Bearer sk-live ${X}`) is refused. Members see only these.
- */
-export const CREDENTIAL_HEADER_VALUE_PATTERN =
-  /^(?:[A-Za-z]+ )?(?:\$\{[A-Z][A-Z0-9_]*\})+$/;
 
 /**
  * Server names become the `server__tool` namespace prefix inside provider
