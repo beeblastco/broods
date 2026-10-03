@@ -51,7 +51,7 @@ export interface SandboxExecRequest {
   timeout_ms: number;
   /** Positional arguments for `code`. */
   args?: string[];
-  /** The whole process environment: the server must not add its own. */
+  /** The process environment, set over an empty one or the server's start-up defaults (HOME, TMPDIR, PATH). */
   env: Record<string, string>;
 }
 
