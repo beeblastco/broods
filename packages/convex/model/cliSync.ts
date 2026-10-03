@@ -11,6 +11,7 @@ import type { CliManifestResource } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
 import {
+  assertEnvVarName,
   decryptAgentConfigBlob,
   toNestedAgentConfig,
 } from "./agentConfigCodec";
@@ -367,11 +368,10 @@ export async function ensureStage(
   return created;
 }
 
+/** A stage env var name from the CLI, trimmed and held to the one env name rule. */
 export function envName(value: string): string {
   const trimmed = value.trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
-    throw new ClientError(`Invalid environment variable name: ${value}`);
-  }
+  assertEnvVarName(trimmed);
 
   return trimmed;
 }

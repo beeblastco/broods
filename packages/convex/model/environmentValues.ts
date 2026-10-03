@@ -7,6 +7,7 @@ import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
 import {
+  assertEnvVarName,
   decryptAgentConfigBlob,
   encryptAgentConfigBlob,
 } from "./agentConfigCodec";
@@ -34,6 +35,7 @@ export async function upsertEnvironmentVariable(
     value: string;
   },
 ): Promise<EnvironmentVariableWrite> {
+  assertEnvVarName(args.name);
   const existing = await ctx.db
     .query("environmentVariables")
     .withIndex("by_stageId_and_name", (q) =>

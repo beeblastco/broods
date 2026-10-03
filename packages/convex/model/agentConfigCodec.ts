@@ -22,8 +22,8 @@ const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
 );
-/** Account config-plane environment variable names accepted in `${NAME}` references. */
-export const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+/** Account and stage environment variable names, the ones `${NAME}` references reach. */
+const ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const ENV_PLACEHOLDER_PATTERN_G = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 // Every AgentConfig branch with no flat column. One missing here is dropped from
@@ -56,6 +56,18 @@ const NESTED_BRANCHES = [
  * lives here, not in agentRules, so the dashboard bundle that imports this codec
  * does not pull in the rules' server-side imports.
  */
+/**
+ * Refuses an env var name a `${NAME}` ref could not reach. The account env
+ * route, every stage env write and the CLI's stage env names call it.
+ */
+export function assertEnvVarName(name: string): void {
+  if (!ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
+    throw new ClientError(
+      `env name must match ${ENV_VAR_NAME_PATTERN} and be at most 64 characters`,
+    );
+  }
+}
+
 export const SANDBOX_REMOVED_MESSAGE =
   "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default";
 
