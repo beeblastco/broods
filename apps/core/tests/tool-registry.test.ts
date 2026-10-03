@@ -11,6 +11,8 @@ import {
 } from "../src/shared/storage.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import {
+  callMcpTool,
+  mcpConnection,
   setMcpForTests,
   type McpConnection,
 } from "../src/harness/mcp/client.ts";
@@ -1265,14 +1267,7 @@ describe("connected MCP servers", () => {
   });
 
   it("hands an image result to the model as image data, not as text", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-    setStorageForTests(storageWithMcp(mcpRecord()));
     setMcpForTests({
-      listTools: async function () {
-        return [
-          { name: "screenshot", inputSchema: { type: "object" as const } },
-        ];
-      },
       callTool: async function () {
         return {
           content: [
@@ -1288,12 +1283,11 @@ describe("connected MCP servers", () => {
       },
     });
 
-    const tools = await createTools(createToolContext(), {
-      mcp: { [serverId]: { enabled: true } },
-    });
-    const result = await (
-      tools.search__screenshot as unknown as ChannelTestTool
-    ).execute({}, {} as never);
+    const result = await callMcpTool(
+      mcpConnection(mcpRecord(), undefined),
+      "screenshot",
+      {},
+    );
 
     expect(result).toEqual({
       type: "content",
