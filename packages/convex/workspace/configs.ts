@@ -266,20 +266,26 @@ export const r2Credentials = internalMutation({
     const base = normalizeWorkspacePrefix(storage.prefix);
     if (!args.prefix.startsWith(base))
       throw new Error("R2 credential prefix is outside the workspace prefix");
-    const values =
-      workspace.projectId && workspace.stageId
-        ? await loadEnvironmentVariableValues(
-            ctx,
-            workspace.projectId,
-            workspace.stageId,
-          )
-        : await loadValuesForAccount(ctx, workspace.accountId);
-    const resolve = (reference: string): string => {
+    // Normalization keeps both keys one `${NAME}` ref each.
+    const refName = (reference: string): string => {
       const name = ACCOUNT_ENV_REF_PATTERN.exec(reference)?.[1];
-      const value = name ? values[name] : undefined;
+      if (!name) throw new Error("R2 workspace key is not an env reference");
+
+      return name;
+    };
+    const accessKeyName = refName(auth.accessKeyId);
+    const secretName = refName(auth.secretAccessKey);
+    const names = [...new Set([accessKeyName, secretName])];
+    const { projectId, stageId } = workspace;
+    const values =
+      projectId && stageId
+        ? await loadEnvironmentVariableValues(ctx, projectId, stageId, names)
+        : await loadValuesForAccount(ctx, workspace.accountId, names);
+    const resolve = (name: string): string => {
+      const value = values[name];
       if (!value)
         throw new ClientError(
-          `R2 workspace credential ${reference} has no value; set it with ${workspace.stageId ? "broods env set" : "PUT /v1/env"}`,
+          `R2 workspace credential \${${name}} has no value; set it with ${projectId && stageId ? "broods env set" : "PUT /v1/env"}`,
         );
 
       return value;
@@ -289,8 +295,8 @@ export const r2Credentials = internalMutation({
       endpoint: storage.endpoint,
       bucket: storage.bucket,
       prefix: args.prefix,
-      accessKeyId: resolve(auth.accessKeyId),
-      secretAccessKey: resolve(auth.secretAccessKey),
+      accessKeyId: resolve(accessKeyName),
+      secretAccessKey: resolve(secretName),
     });
   },
 });

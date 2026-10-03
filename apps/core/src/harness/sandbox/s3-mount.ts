@@ -160,12 +160,12 @@ export async function resolveS3Mount(
   ctx: S3MountContext,
 ): Promise<ResolvedS3Mount> {
   const identity = resolveS3MountIdentity(ctx);
-  const auth = ctx.storage?.auth;
-  if (auth?.type === "r2") {
-    if (!auth.owner) throw new Error("R2 workspace storage has no owner");
+  if (ctx.storage?.auth?.type === "r2") {
+    const owner = ctx.storage.owner;
+    if (!owner) throw new Error("R2 workspace storage has no owner");
     const minted = await getStorage().workspaceConfigs.mintR2Credentials(
-      auth.owner.accountId,
-      auth.owner.workspaceId,
+      owner.accountId,
+      owner.workspaceId,
       identity.prefix,
     );
 
@@ -245,6 +245,7 @@ export async function resolveS3ReadTarget(
   }
   const cacheKey = JSON.stringify([
     ctx.storage.auth,
+    ctx.storage.owner,
     identity.bucket,
     identity.prefix,
     identity.region,

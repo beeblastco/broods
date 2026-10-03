@@ -31,10 +31,8 @@ import type {
   SandboxConfig,
   SandboxConfigRecord,
 } from "../domain/sandbox-config.ts";
-import type {
-  WorkspaceConfig,
-  WorkspaceConfigRecord,
-} from "../domain/workspace-config.ts";
+import type { WorkspaceConfigRecord } from "../domain/workspace-config.ts";
+import type { WorkspaceConfig as StoredWorkspaceConfig } from "@broods/convex/model/workspaceRules";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type {
   AgentDeploymentScope,
@@ -437,7 +435,7 @@ interface ConvexWorkspaceConfigDoc {
   accountId: string;
   name: string;
   description?: string;
-  config: WorkspaceConfig;
+  config: StoredWorkspaceConfig;
   createdAt: number;
   updatedAt: number;
 }
@@ -447,7 +445,6 @@ function workspaceConfigFromConvex(
 ): WorkspaceConfigRecord | null {
   if (!doc) return null;
   const config = doc.config ?? { storage: { provider: "s3" } };
-  const auth = config.storage?.auth;
 
   return {
     accountId: doc.accountId,
@@ -456,15 +453,12 @@ function workspaceConfigFromConvex(
     ...(doc.description ? { description: doc.description } : {}),
     // An R2 mount mints its credentials per workspace, so it carries the row's identity.
     config:
-      auth?.type === "r2"
+      config.storage?.auth?.type === "r2"
         ? {
             ...config,
             storage: {
               ...config.storage,
-              auth: {
-                ...auth,
-                owner: { accountId: doc.accountId, workspaceId: doc._id },
-              },
+              owner: { accountId: doc.accountId, workspaceId: doc._id },
             },
           }
         : config,

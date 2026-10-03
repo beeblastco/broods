@@ -401,8 +401,8 @@ describe("R2 storage", () => {
       type: "r2" as const,
       accessKeyId: "${R2_ACCESS_KEY_ID}",
       secretAccessKey: "${R2_SECRET_ACCESS_KEY}",
-      owner: { accountId: "acct_1", workspaceId: "ws_1" },
     },
+    owner: { accountId: "acct_1", workspaceId: "ws_1" },
   };
   const mints: string[][] = [];
   let mint: { mockRestore(): void } | undefined;
@@ -463,10 +463,7 @@ describe("R2 storage", () => {
     await resolveS3ReadTarget({
       storage: {
         ...R2_STORAGE,
-        auth: {
-          ...R2_STORAGE.auth,
-          owner: { accountId: "acct_2", workspaceId: "ws_2" },
-        },
+        owner: { accountId: "acct_2", workspaceId: "ws_2" },
       },
       namespace: NS,
     });

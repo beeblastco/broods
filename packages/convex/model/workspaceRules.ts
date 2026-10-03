@@ -55,11 +55,6 @@ export type WorkspaceStorageAuth =
       accessKeyId: string;
       /** `${NAME}` ref to the parent R2 token's secret access key. */
       secretAccessKey: string;
-      /**
-       * Never stored or accepted. Core stamps the row's identity on load so a
-       * mount can ask Convex to mint credentials for this workspace.
-       */
-      owner?: { accountId: string; workspaceId: string };
     };
 
 /** The auth that reaches a bucket the workspace names itself. */

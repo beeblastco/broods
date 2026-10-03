@@ -17,6 +17,7 @@ import {
   normalizeWorkspaceConfig,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
+import { upsertEnvironmentVariable } from "../model/environmentValues";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -628,5 +629,86 @@ describe("R2 workspace storage", () => {
         prefix: "broods/",
       }),
     ).rejects.toThrow("Workspace not found");
+  });
+
+  it("mints a CLI-synced workspace's credentials from its stage env vars", async (): Promise<void> => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    const { accountId, projectId, stageId, workspaceId } = await t.run(
+      async (ctx) => {
+        const orgId = await ctx.db.insert("orgs", {
+          name: "Beeblast",
+          slug: "beeblast",
+          ownerAuthId: "auth_owner",
+          plan: "free",
+          createdAt: now,
+        });
+        const accountId = await ctx.db.insert("accounts", {
+          orgId: orgId,
+          status: "active",
+          username: "beeblast",
+          secretHash: "hash",
+          createdAt: now,
+          updatedAt: now,
+        });
+        const projectId = await ctx.db.insert("projects", {
+          authId: "auth_owner",
+          orgId: orgId,
+          name: "app",
+          slug: "app",
+          updatedAt: now,
+        });
+        const stageId = await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectId,
+          name: "Development",
+          kind: "development",
+          isDefault: true,
+          updatedAt: now,
+        });
+        await upsertEnvironmentVariable(ctx, {
+          projectId: projectId,
+          stageId: stageId,
+          name: "R2_ACCESS_KEY_ID",
+          value: "stage-key-id",
+        });
+        const workspaceId = await ctx.db.insert("workspaceConfigs", {
+          accountId: accountId,
+          projectId: projectId,
+          stageId: stageId,
+          name: "r2",
+          config: { storage: R2_BUCKET },
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        return {
+          accountId: accountId,
+          projectId: projectId,
+          stageId: stageId,
+          workspaceId: workspaceId,
+        };
+      },
+    );
+    const mint = (): Promise<{ accessKeyId: string }> =>
+      t.mutation(internal.workspace.configs.r2Credentials, {
+        accountId: accountId,
+        workspaceId: workspaceId,
+        prefix: "broods/",
+      });
+
+    await expect(mint()).rejects.toThrow(
+      "${R2_SECRET_ACCESS_KEY} has no value; set it with broods env set",
+    );
+    await t.run(async (ctx) => {
+      await upsertEnvironmentVariable(ctx, {
+        projectId: projectId,
+        stageId: stageId,
+        name: "R2_SECRET_ACCESS_KEY",
+        value: "stage-secret",
+      });
+    });
+    expect((await mint()).accessKeyId).toBe("stage-key-id");
   });
 });

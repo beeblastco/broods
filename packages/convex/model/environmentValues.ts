@@ -157,21 +157,38 @@ export async function hashEnvironmentValue(value: string): Promise<string> {
 }
 
 /**
- * Reads every environment variable for a `(projectId, stageId)` and
- * returns a `name -> plaintext value` map. Non-string values decode to `""`.
+ * Reads the environment variables for a `(projectId, stageId)`, all of them
+ * or only `names`, and returns a `name -> plaintext value` map. Non-string
+ * values decode to `""`.
  * @throws when `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is not configured.
  */
 export async function loadEnvironmentVariableValues(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
+  names?: string[],
 ): Promise<Record<string, string>> {
-  const rows = await ctx.db
-    .query("environmentVariables")
-    .withIndex("by_projectId_and_stageId", (q) =>
-      q.eq("projectId", projectId).eq("stageId", stageId),
-    )
-    .collect();
+  const rows = names
+    ? (
+        await Promise.all(
+          names.map((name) =>
+            ctx.db
+              .query("environmentVariables")
+              .withIndex("by_stageId_and_name", (q) =>
+                q.eq("stageId", stageId).eq("name", name),
+              )
+              .unique(),
+          ),
+        )
+      )
+        .filter((row) => row !== null)
+        .filter((row) => row.projectId === projectId)
+    : await ctx.db
+        .query("environmentVariables")
+        .withIndex("by_projectId_and_stageId", (q) =>
+          q.eq("projectId", projectId).eq("stageId", stageId),
+        )
+        .collect();
 
   const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
   if (!secret) {

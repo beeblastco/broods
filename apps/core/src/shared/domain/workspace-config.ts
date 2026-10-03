@@ -7,14 +7,28 @@
  * in packages/convex/model/workspaceRules.ts.
  */
 
-import type { WorkspaceConfig } from "@broods/convex/model/workspaceRules";
+import type {
+  WorkspaceConfig as StoredWorkspaceConfig,
+  WorkspaceStorageConfig as StoredWorkspaceStorageConfig,
+} from "@broods/convex/model/workspaceRules";
 
 export type {
-  WorkspaceConfig,
   WorkspaceStorageAuth,
-  WorkspaceStorageConfig,
   WorkspaceStorageProvider,
 } from "@broods/convex/model/workspaceRules";
+
+/**
+ * Workspace storage as core carries it. An R2 bucket also carries its row's
+ * identity, which a mount sends to Convex to mint scoped credentials; it is
+ * stamped on load (shared/convex/storage.ts), never stored or accepted.
+ */
+export type WorkspaceStorageConfig = StoredWorkspaceStorageConfig & {
+  owner?: { accountId: string; workspaceId: string };
+};
+
+export type WorkspaceConfig = Omit<StoredWorkspaceConfig, "storage"> & {
+  storage: WorkspaceStorageConfig;
+};
 
 // The workspace harness is a set of named features, each with its own options
 // and each defaulting to on. There is deliberately no top-level enabled flag:
