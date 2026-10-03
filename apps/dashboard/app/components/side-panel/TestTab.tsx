@@ -26,7 +26,7 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
 type SubagentPanelEvent = {
@@ -710,7 +710,9 @@ function ToolInvocationBlock({
   isError: boolean;
 }): React.JSX.Element {
   const hasOutput = output !== undefined;
-  const result = splitToolImages(output);
+  // Memoized: a streaming message re-renders every finished tool block per
+  // chunk, and a screenshot's data URL is hundreds of KB.
+  const result = useMemo(() => splitToolImages(output), [output]);
   const isRunning = state === "input-available" || state === "input-streaming";
   const elapsed = useElapsedTime(isRunning);
 

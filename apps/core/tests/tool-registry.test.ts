@@ -1288,10 +1288,9 @@ describe("connected MCP servers", () => {
     const tools = await createTools(createToolContext(), {
       mcp: { [serverId]: { enabled: true } },
     });
-    const result = await tools.search__screenshot?.execute?.(
-      {},
-      { toolCallId: "call-1", messages: [] },
-    );
+    const result = await (
+      tools.search__screenshot as unknown as ChannelTestTool
+    ).execute({}, {} as never);
 
     expect(result).toEqual({
       type: "content",
