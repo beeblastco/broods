@@ -60,6 +60,10 @@ You can delete your organization at any time. We can end the agreement with 30 d
 
 We will post changes here and, for material changes, email the organization owners at least 14 days before they take effect. Continuing to use the service after that date means you accept the new terms.
 
+## Governing law
+
+Dutch law governs these terms. Disputes go to the competent court in Amsterdam. If you use the service as a consumer, you keep the mandatory protections of the country you live in.
+
 ## Contact
 
-BeeBlast B.V., Amsterdam, the Netherlands. Questions about these terms go to [business@beeblast.co](mailto:business@beeblast.co) or the channels on the [Support](/support) page.
+BeeBlast B.V., Amsterdam, the Netherlands, registered with the Dutch Chamber of Commerce (KvK) under number 98814737. Questions about these terms go to [business@beeblast.co](mailto:business@beeblast.co) or the channels on the [Support](/support) page.

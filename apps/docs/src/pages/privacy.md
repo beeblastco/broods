@@ -7,7 +7,7 @@ description: What Broods stores, where, for how long, and who else touches it.
 
 Last updated: 3 October 2026
 
-This policy covers the hosted Broods service operated by BeeBlast B.V., Amsterdam, the Netherlands, which is the controller of the data described here. Reach us at [business@beeblast.co](mailto:business@beeblast.co). It is written to be read, not skimmed: every section says what we store and why.
+This policy covers the hosted Broods service operated by BeeBlast B.V., Amsterdam, the Netherlands (KvK 98814737), which is the controller of the data described here. Reach us at [business@beeblast.co](mailto:business@beeblast.co). It is written to be read, not skimmed: every section says what we store and why.
 
 ## What we store
 
