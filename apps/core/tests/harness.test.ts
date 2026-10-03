@@ -9,7 +9,7 @@ import {
   spyOn,
 } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
-import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
+import { loopbackTransport, TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type {
   LanguageModel,
   ModelMessage,
@@ -24,7 +24,6 @@ import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
-import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import * as otel from "../src/shared/otel.ts";
 import {
   setStorageForTests,
@@ -1221,7 +1220,7 @@ describe("runAgentLoop", () => {
         },
       },
       undefined,
-      { webhookTransport: hookTransport() },
+      { webhookTransport: loopbackTransport() },
     );
 
     await stream.consumeStream();
@@ -3323,19 +3322,6 @@ describe("tool.call span duration", () => {
     expect(toolSpanDurationMs(1_000, 6_000, -12)).toBe(0);
   });
 });
-
-// The lifecycle webhook opens a pinned socket, so the test resolves the hook's
-// name to the loopback address its own TLS server listens on. Only loopback is
-// exempted; every other address still meets the real denylist.
-function hookTransport(): PinnedFetchTransport {
-  return {
-    allowAddresses: ["127.0.0.1"],
-    ca: TLS_CERT,
-    lookup: async (): Promise<{ address: string; family: number }[]> => [
-      { address: "127.0.0.1", family: 4 },
-    ],
-  };
-}
 
 interface HookDelivery {
   body: string;

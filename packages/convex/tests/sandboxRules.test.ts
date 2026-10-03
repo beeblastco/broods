@@ -105,7 +105,7 @@ describe("sandbox config", () => {
     );
   });
 
-  it("redacts env vars and sensitive provider option names", () => {
+  it("redacts env vars, sensitive provider option names and credential headers", () => {
     const doc = {
       _id: "sb_1",
       _creationTime: 0,
@@ -133,6 +133,32 @@ describe("sandbox config", () => {
         credentials: "********",
         private_key: "********",
         workspaceRoot: "/mnt/workspaces",
+      },
+    });
+    // A code sync stores a custom server's credential header with its ref resolved.
+    expect(
+      toPublicSandboxConfigResponse(doc, {
+        provider: "custom",
+        options: {
+          endpoint: "https://sandbox.example.com",
+          headers: {
+            authorization: "Bearer sk_live_abc",
+            "x-api-key": "k_live_abc",
+            "x-auth-ref": "Bearer ${SANDBOX_TOKEN}",
+            "x-team": "ops",
+          },
+        },
+      }).config,
+    ).toEqual({
+      provider: "custom",
+      options: {
+        endpoint: "https://sandbox.example.com",
+        headers: {
+          authorization: "********",
+          "x-api-key": "********",
+          "x-auth-ref": "Bearer ${SANDBOX_TOKEN}",
+          "x-team": "ops",
+        },
       },
     });
   });
@@ -496,6 +522,153 @@ describe("sandbox config update merge", () => {
     expect(() =>
       normalizeUpdateSandboxConfigInput(existing, { config: { timeout: 601 } }),
     ).toThrow("config.timeout must be an integer from 1 to 600");
+  });
+});
+
+describe("sandbox config custom provider", () => {
+  const custom = {
+    provider: "custom",
+    network: { mode: "allow-all" },
+    options: { endpoint: "https://sandbox.example.com" },
+  };
+
+  it("keeps the endpoint, token and headers", () => {
+    expect(
+      normalizeSandboxConfig({
+        ...custom,
+        options: {
+          ...custom.options,
+          token: "${SANDBOX_TOKEN}",
+          headers: { "x-team": "ops" },
+        },
+      }).options,
+    ).toEqual({
+      endpoint: "https://sandbox.example.com",
+      token: "${SANDBOX_TOKEN}",
+      headers: { "x-team": "ops" },
+    });
+  });
+
+  it("requires a public https endpoint", () => {
+    expect(() =>
+      normalizeSandboxConfig({ ...custom, options: undefined }),
+    ).toThrow("config.options.endpoint is required for the custom provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { endpoint: "http://sandbox.example.com" },
+      }),
+    ).toThrow("config.options.endpoint must use https");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { endpoint: "https://10.0.0.8/exec" },
+      }),
+    ).toThrow(
+      "config.options.endpoint must not point to a private or internal address",
+    );
+  });
+
+  it("refuses an endpoint with a query or fragment, since /exec is appended", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { endpoint: "https://sandbox.example.com/api?team=ops" },
+      }),
+    ).toThrow("config.options.endpoint must not carry a query or fragment");
+  });
+
+  it("refuses a malformed token or headers, and an inline secret in a header", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { ...custom.options, token: "" },
+      }),
+    ).toThrow("config.options.token must be a non-empty string");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { ...custom.options, headers: { "x-n": 1 } },
+      }),
+    ).toThrow("headers values must be single-line strings");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: { ...custom.options, headers: { "x-n": "a\r\nb" } },
+      }),
+    ).toThrow("headers values must be single-line strings");
+    expect(() =>
+      normalizeSandboxConfig({
+        ...custom,
+        options: {
+          ...custom.options,
+          headers: { authorization: "Bearer sk_live_abc" },
+        },
+      }),
+    ).toThrow("must reference an account env var");
+    expect(
+      normalizeSandboxConfig({
+        ...custom,
+        options: {
+          ...custom.options,
+          headers: { authorization: "Bearer ${SANDBOX_TOKEN}" },
+        },
+      }).options,
+    ).toEqual({
+      endpoint: "https://sandbox.example.com",
+      headers: { authorization: "Bearer ${SANDBOX_TOKEN}" },
+    });
+  });
+
+  // A code sync stores the header with its ref resolved, and an update merges into that.
+  it("keeps a resolved credential header through an update that leaves it alone", () => {
+    const synced = normalizeSandboxConfig({
+      ...custom,
+      options: {
+        ...custom.options,
+        headers: { authorization: "Bearer ${SANDBOX_TOKEN}" },
+      },
+    });
+    const resolved = {
+      ...synced,
+      options: {
+        ...synced.options,
+        headers: { authorization: "Bearer sk_live_abc" },
+      },
+    };
+
+    expect(
+      normalizeUpdateSandboxConfigInput(resolved, { config: { timeout: 60 } })
+        .config,
+    ).toEqual({ ...resolved, timeout: 60 });
+    expect(() =>
+      normalizeUpdateSandboxConfigInput(resolved, {
+        config: {
+          options: { headers: { authorization: "Bearer sk_live_other" } },
+        },
+      }),
+    ).toThrow("must reference an account env var");
+  });
+
+  it("is stateless: no persistence, sizing or snapshot, and never a fallback", () => {
+    expect(() =>
+      normalizeSandboxConfig({ ...custom, persistent: true }),
+    ).toThrow("config.persistent does not apply to the custom provider");
+    expect(() => normalizeSandboxConfig({ ...custom, size: "small" })).toThrow(
+      "config.size does not apply to the custom provider",
+    );
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "custom",
+      }),
+    ).toThrow("config.fallbackProvider cannot be custom");
+  });
+
+  it("must declare allow-all, since Broods cannot enforce egress on the server", () => {
+    expect(() =>
+      normalizeSandboxConfig({ ...custom, network: undefined }),
+    ).toThrow("custom cannot enforce egress restrictions");
   });
 });
 

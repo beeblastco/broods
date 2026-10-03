@@ -14,6 +14,13 @@ Every sandbox tool (`bash`, `read`, `write`, `edit`, `glob`, `grep`) compiles to
 | `e2b`     | `e2b-executor.ts`     | E2B                                                |
 | `vercel`  | `vercel-executor.ts`  | `@vercel/sandbox`, loaded lazily                   |
 | `machine` | `machine-executor.ts` | The `broods machine` daemon over `/v1/machines/ws` |
+| `custom`  | `http-executor.ts`    | The account's own server on `POST <endpoint>/exec` |
+
+`index.ts` holds the registry: `EXECUTORS`, a record from provider name to executor factory. The provider names are `SANDBOX_PROVIDERS` in `packages/convex/model/sandboxProviders.ts`, the one list the Convex validator, core's `SandboxProvider` type and the SDK derive from, and the record's key type fails the build when a name has no factory. `STATELESS_SANDBOX_PROVIDERS` beside it (`machine`, `custom`) is what the fallback, workspace and sizing rules refuse. The exec wire contract the MicroVM image and a custom server share is `SandboxExecRequest` / `SandboxExecResponse` in `src/shared/domain/sandbox-config.ts`; `parseExecResponse` and `execRunResult` in `utils.ts` turn that answer into a run result.
+
+### Contribute a provider
+
+One file plus one line. Write `src/harness/sandbox/<name>-executor.ts` implementing `SandboxExecutor` from `types.ts` (`run` is the only required method; reservation, jobs and lifecycle are optional and feature-detected), add the name to `SANDBOX_PROVIDERS`, then in `index.ts` import the file and add `<name>: (config) => new YourExecutor(config)` to `EXECUTORS`; the build fails until you do. The explicit import is what pulls the file into the compiled binary. A provider Broods never reserves also goes in `STATELESS_SANDBOX_PROVIDERS`. Validation for the provider's options goes in `sandboxRules.ts` beside the others, and `runsOnOwnCredentials` in `src/shared/workspaces.ts` says whether the platform meters it.
 
 Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 30 s and caps at 600 s, set by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`. `outputLimitBytes` defaults to 64 KiB and caps at 256 KiB, set by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. Every executor truncates stdout and stderr to it. `memoryLimit` caps at 8192 MB on `lambda`. A blocking call also stays inside the request budget, `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`, 10 minutes by default. Background jobs are bound by neither.
 
@@ -27,8 +34,9 @@ Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 
 | `e2b`     | not wired, rejected                                 | native pause/resume              | native launch and callback, no live logs or stop |
 | `vercel`  | not wired, rejected                                 | named persistent sandbox         | yes, with live logs and stop                     |
 | `machine` | not supported, rejected                             | no                               | no                                               |
+| `custom`  | not supported, rejected                             | no                               | no                                               |
 
-`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. Validation refuses a fallback equal to `provider`, a `machine` fallback, and any fallback on a `persistent` config.
+`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. Validation refuses a fallback equal to `provider`, a `machine` or `custom` fallback, and any fallback on a `persistent` config.
 
 Per-call `envVars` go through `mergeSandboxEnv()` in `utils.ts`, which drops the `RESERVED_SANDBOX_ENV_KEYS`. Those are `BASH_ENV`, `ENV`, `HOME`, `LD_AUDIT`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `LOGNAME`, `NODE_OPTIONS`, `PATH`, `PROMPT_COMMAND`, `PYTHONHOME`, `PYTHONPATH`, `PYTHONSTARTUP`, `SHELL`, `TMPDIR`, `USER` and the `__CB_*` job-callback slots. Account `config.envVars` is not filtered.
 
