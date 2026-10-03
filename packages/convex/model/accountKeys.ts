@@ -4,12 +4,13 @@
  * walks every encrypted table so a migration or a rotation can rewrite blobs
  * in bounded batches. The codec itself is `./envelope.ts`; the internal
  * functions that expose this live in `account/keys.ts` and `migrations.ts`.
+ * It must not import the generated api: the forwarders import a type through
+ * `channel/connections.ts`, and the api would pull every module into them.
  */
 
 import { v } from "convex/values";
-import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { accountIdForProject } from "./auditEvents";
 import {
   AccountCipher,
@@ -77,28 +78,6 @@ export async function accountCipher(
   }
 
   return cipher;
-}
-
-/**
- * The keyring from an HTTP action, which has no `ctx.db`. A `read` fetches the
- * keys with a query; a `write` runs the mutation that mints the first key when
- * the account has none. Build it once per request and pass it down.
- */
-export async function accountCipherForAction(
-  ctx: ActionCtx,
-  accountId: Id<"accounts">,
-  mode: "read" | "write",
-): Promise<AccountCipher> {
-  const keys: WrappedAccountKey[] =
-    mode === "write"
-      ? await ctx.runMutation(internal.account.keys.ensure, {
-          accountId: accountId,
-        })
-      : await ctx.runQuery(internal.account.keys.list, {
-          accountId: accountId,
-        });
-
-  return new AccountCipher(accountId, encryptionSecrets(), keys);
 }
 
 /** The keyring for a write: mints the account's first key when it has none. */

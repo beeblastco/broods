@@ -6,7 +6,6 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { accountCipherForAction } from "../../model/accountKeys";
 import {
   auditDetailsJson,
   type ConfigAuditActor,
@@ -19,6 +18,7 @@ import {
   type SandboxConfig,
 } from "../../model/sandboxRules";
 import {
+  accountCipherForAction,
   json,
   jsonError,
   methodNotAllowed,

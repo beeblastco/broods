@@ -16,11 +16,8 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
-import {
-  accountCipher,
-  accountCipherForAction,
-  accountCipherForWrite,
-} from "../model/accountKeys";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
+import { accountCipherForAction } from "../config/routes/shared";
 import type { AccountCipher, EncryptedBlob } from "../model/envelope";
 import { CONNECTION_TYPES, type ConnectionType } from "../model/connections";
 import { connectionsFields } from "../schema";

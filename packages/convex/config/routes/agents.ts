@@ -7,7 +7,6 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { accountCipherForAction } from "../../model/accountKeys";
 import {
   collectEnvPlaceholderNames,
   substituteAccountEnvPlaceholders,
@@ -26,6 +25,7 @@ import { isPlainObject } from "../../model/objects";
 import { toPublicAgentResponse } from "../../model/responses";
 import { fetchSlackChannelDirectory } from "../../model/slackDirectory";
 import {
+  accountCipherForAction,
   json,
   jsonError,
   methodNotAllowed,

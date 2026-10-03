@@ -9,6 +9,7 @@ import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import { encryptionSecrets } from "../../model/accountKeys";
 import { sha256Hex } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
 import type {
@@ -24,6 +25,7 @@ import {
   rateLimitHeaders,
 } from "../../model/httpJson";
 import { ClientError } from "../../model/clientError";
+import { AccountCipher, type WrappedAccountKey } from "../../model/envelope";
 
 export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
@@ -36,6 +38,28 @@ export type ConfigAuth =
   | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
   | { kind: "deployment" }
   | { kind: "role"; account: Doc<"accounts">; role: RolePrincipal };
+
+/**
+ * The keyring from an HTTP action, which has no `ctx.db`. A `read` fetches the
+ * keys with a query; a `write` runs the mutation that mints the first key when
+ * the account has none. Build it once per request and pass it down.
+ */
+export async function accountCipherForAction(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  mode: "read" | "write",
+): Promise<AccountCipher> {
+  const keys: WrappedAccountKey[] =
+    mode === "write"
+      ? await ctx.runMutation(internal.account.keys.ensure, {
+          accountId: accountId,
+        })
+      : await ctx.runQuery(internal.account.keys.list, {
+          accountId: accountId,
+        });
+
+  return new AccountCipher(accountId, encryptionSecrets(), keys);
+}
 
 /**
  * @param auth resolved config HTTP auth
