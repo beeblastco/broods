@@ -92,6 +92,19 @@ test("the cluster limits per address, except webhooks", (): void => {
   );
 });
 
+// A download link's token is its path, and it lives up to 30 days.
+test("the download route stays out of the access log", (): void => {
+  const { routers } = renderFileConfig(UPSTREAMS, "web").http;
+
+  expect(routers["broods-edge-download"]!.observability).toEqual({
+    accessLogs: false,
+  });
+  expect(routers["broods-edge-download-links"]!.observability).toBeUndefined();
+  expect(JSON.stringify(clusterResources())).toContain(
+    '"passHostHeader":false}],"observability":{"accessLogs":false}',
+  );
+});
+
 test("the file config has no per-address limits", (): void => {
   const { routers } = renderFileConfig(UPSTREAMS, "web").http;
 

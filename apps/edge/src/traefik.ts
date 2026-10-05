@@ -63,6 +63,7 @@ export interface FileRouter {
   entryPoints: string[];
   middlewares: string[];
   service: string;
+  observability?: { accessLogs: false };
 }
 
 export interface FileConfig {
@@ -111,6 +112,7 @@ export function renderFileConfig(
       entryPoints: [entryPoint],
       middlewares: routeMiddlewares(route, false).map(middlewareName),
       service: `${PREFIX}-${destination(route)}`,
+      ...observability(route),
     };
   });
   const services: FileConfig["http"]["services"] = {};
@@ -171,6 +173,7 @@ export function renderKubernetes(
               passHostHeader: false,
             },
           ],
+          ...observability(route),
         };
       }),
       tls: { secretName: stage.tlsSecret },
@@ -200,6 +203,10 @@ function destination(route: EdgeRoute): Destination {
 
 function middlewareName(name: string): string {
   return `${PREFIX}-${name}`;
+}
+
+function observability(route: EdgeRoute): Pick<FileRouter, "observability"> {
+  return route.secretPath ? { observability: { accessLogs: false } } : {};
 }
 
 function priority(index: number): number {

@@ -35,6 +35,8 @@ export interface EdgeRoute {
   limit: Limit;
   /** Matches only a WebSocket upgrade; any other route matches both. */
   upgrade?: boolean;
+  /** The path itself is a credential, so the access log skips this route. */
+  secretPath?: boolean;
 }
 
 const SEGMENT = "[^/]+";
@@ -97,7 +99,10 @@ export const ROUTES: readonly EdgeRoute[] = [
   config("env-item", `/v1/env/${SEGMENT}`, ["PUT", "DELETE"]),
   // Redeeming a workspace download link. Unauthenticated by design: the token
   // in the path is the credential, and the config plane answers with a 302.
-  config("download", `/v1/downloads/${SEGMENT}`, ["GET", "HEAD"]),
+  {
+    ...config("download", `/v1/downloads/${SEGMENT}`, ["GET", "HEAD"]),
+    secretPath: true,
+  },
   config("download-links", `/v1/workspaces/${SEGMENT}/download-links`, [
     "POST",
   ]),
