@@ -6,9 +6,9 @@ interface Answer {
 }
 
 /**
- * A trailing slash never moves a request to the other plane: the gateway strips
- * it before routing and before the upstream call, so config, health and the
- * internal-path deny answer the same with or without it.
+ * A trailing slash never moves a request to the other plane: the edge matches
+ * it on every route and strips it before the upstream call, so config, health
+ * and the internal-path block answer the same with or without it.
  */
 export async function trailingSlash(context: VerifyContext): Promise<void> {
   const send = async (method: string, path: string): Promise<Answer> => {
@@ -36,8 +36,8 @@ export async function trailingSlash(context: VerifyContext): Promise<void> {
 
   const internal = await send("POST", "/v1/cron-runs//");
   assertStep(
-    "an internal core path stays a 404 with trailing slashes",
-    internal.status === 404,
+    "an internal core path stays blocked with trailing slashes",
+    internal.status === 403,
     detail(internal),
   );
 }

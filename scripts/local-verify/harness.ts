@@ -29,12 +29,17 @@ export interface VerifyContext {
   account: BroodsAccountClient;
   accountSecret: string;
   client: BroodsClient;
+  /** The Convex site directly, as an in-cluster caller reaches it. */
+  configPlaneUrl: string;
   coreLogPath: string;
+  /** The public URL: Traefik, in front of core, the config plane and the gateway. */
   gatewayUrl: string;
   hasModelKey: boolean;
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
   runId: string;
+  /** The in-cluster service token; valid only on requests that skip the edge. */
+  serviceSecret: string;
 }
 
 /** Thrown by assertStep; verify records the step as the failure. */
