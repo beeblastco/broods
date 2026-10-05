@@ -1,13 +1,15 @@
 /**
- * The rendered Traefik routers pick the same route as the table for raw paths,
- * trailing slashes included, and every public route stamps the gateway marker.
+ * The rendered Traefik routers pick the router of the route the table picks,
+ * for raw paths with trailing slashes included, and every public router stamps
+ * the gateway marker.
  */
 
 import { expect, test } from "bun:test";
-import { ROUTES, resolveRoute } from "../src/routes.ts";
+import { resolveRoute } from "../src/routes.ts";
 import {
   renderFileConfig,
   renderKubernetes,
+  routerGroups,
   type KubeResource,
 } from "../src/traefik.ts";
 
@@ -22,6 +24,7 @@ const SAMPLES = [
   "/v1",
   "/v1/account",
   "/v1/account//",
+  "/v1/account//x",
   "/v1/account/stage-session",
   "/v1/accounts/a/rotate-secret/",
   "/v1/agents",
@@ -31,6 +34,7 @@ const SAMPLES = [
   "/v1/projects/p/stages/s/agents/a/ws",
   "/v1/projects/p/stages/s/observability/ws/",
   "/v1/sandboxes/terminal/ws",
+  "/v1/sandboxes/s",
   "/v1/machines/ws",
   "/v1/env/NAME",
   "/v1/downloads/t",
@@ -40,6 +44,7 @@ const SAMPLES = [
   "/v1/cron-runs/",
   "/v1/mcp-service/rpc",
   "/v1/webhooks/acct/slack",
+  "/v1/webhooks//",
   "/v1/runs",
   "/v2/agents",
 ];
@@ -49,6 +54,11 @@ test("rendered rules route like the table", (): void => {
   const routers = Object.entries(
     renderFileConfig(UPSTREAMS, "web").http.routers,
   ).sort(([, a], [, b]) => b.priority - a.priority);
+  const groupOf = new Map(
+    routerGroups().flatMap((group) =>
+      group.routes.map((route) => [route.name, `broods-edge-${group.name}`]),
+    ),
+  );
 
   for (const path of SAMPLES) {
     for (const method of METHODS) {
@@ -61,70 +71,76 @@ test("rendered rules route like the table", (): void => {
         );
         const expected = resolveRoute(method, path, upgrade);
         expect(`${method} ${path} ${upgrade}: ${matched?.[0] ?? "none"}`).toBe(
-          `${method} ${path} ${upgrade}: ${expected ? `broods-edge-${expected.name}` : "none"}`,
+          `${method} ${path} ${upgrade}: ${expected ? groupOf.get(expected.name) : "none"}`,
         );
       }
     }
   }
 });
 
-test("every route but the blocked one marks the request as public", (): void => {
+test("every router but the blocked one marks the request as public", (): void => {
   const { routers } = renderFileConfig(UPSTREAMS, "web").http;
 
-  for (const route of ROUTES) {
-    const middlewares = routers[`broods-edge-${route.name}`]!.middlewares;
-    expect(middlewares[0]).toBe(
-      route.upstream === "blocked"
+  for (const [name, router] of Object.entries(routers)) {
+    expect(router.middlewares[0]).toBe(
+      name === "broods-edge-blocked-none"
         ? "broods-edge-blocked"
         : "broods-edge-headers",
     );
   }
 });
 
-test("the cluster limits per address, except webhooks", (): void => {
-  const spec = JSON.stringify(clusterResources());
+// Traefik keeps a bucket per router, so the per-address limit holds only if
+// few routers count against it.
+test("the cluster limits HTTP in three routers and upgrades in one", (): void => {
+  const routes = clusterRoutes(true);
+  const limited = (name: string): string[] =>
+    routes
+      .filter((route) => JSON.stringify(route.middlewares).includes(name))
+      .map((route) => route.match);
 
-  expect(spec).toContain(
-    '"match":"Host(`gateway.dev.example`) && PathRegexp(`^/v1/webhooks/.*[^/]/*$`)","priority":1002,"middlewares":[{"name":"broods-edge-headers"},{"name":"broods-edge-strip-trailing-slash"}]',
-  );
-  expect(spec).toContain(
-    '"match":"Host(`gateway.dev.example`) && PathRegexp(`^/v1(?:/.*)?/*$`)","priority":1001,"middlewares":[{"name":"broods-edge-headers"},{"name":"broods-edge-limit-http"}',
-  );
+  expect(limited("limit-http")).toHaveLength(3);
+  expect(limited("limit-upgrade")).toHaveLength(1);
+  expect(limited("limit-http").join()).not.toContain("webhooks");
+});
+
+test("the cluster limits nothing until asked to", (): void => {
+  expect(JSON.stringify(clusterRoutes(false))).not.toContain("limit-");
 });
 
 // A download link's token is its path, and it lives up to 30 days.
 test("the download route stays out of the access log", (): void => {
   const { routers } = renderFileConfig(UPSTREAMS, "web").http;
+  const unlogged = Object.entries(routers).filter(
+    ([, router]) => router.observability?.accessLogs === false,
+  );
 
-  expect(routers["broods-edge-download"]!.observability).toEqual({
-    accessLogs: false,
-  });
-  expect(routers["broods-edge-download-links"]!.observability).toBeUndefined();
-  expect(JSON.stringify(clusterResources())).toContain(
-    '"passHostHeader":false}],"observability":{"accessLogs":false}',
+  expect(unlogged).toHaveLength(1);
+  expect(unlogged[0]![1].rule).toBe(
+    "PathRegexp(`^/v1/downloads/[^/]+/*$`) && (Method(`GET`) || Method(`HEAD`))",
   );
 });
 
-test("the file config has no per-address limits", (): void => {
-  const { routers } = renderFileConfig(UPSTREAMS, "web").http;
+test("a self-hosted install allows its own origins", (): void => {
+  const { middlewares } = renderFileConfig(UPSTREAMS, "web", [
+    "agents.example.com",
+    "*.example.org",
+  ]).http;
+  const origins = JSON.stringify(middlewares["broods-edge-headers"]);
 
-  for (const router of Object.values(routers)) {
-    expect(router.middlewares.join()).not.toContain("limit");
-  }
-});
-
-test("each stage gets its own host and the shared middlewares once", (): void => {
-  const resources = clusterResources();
-  const route = resources.find((resource) => resource.kind === "IngressRoute");
-
-  expect(resources.filter((r) => r.kind === "Middleware")).toHaveLength(5);
-  expect(JSON.stringify(route?.spec)).toContain(
-    "Host(`gateway.dev.example`) && PathRegexp(`^/v1(?:/.*)?/*$`)",
+  expect(origins).toContain(
+    "^https?://agents\\\\.example\\\\.com(?::\\\\d+)?$",
   );
+  expect(origins).toContain(
+    "^https?://(?:[a-z0-9-]+\\\\.)+example\\\\.org(?::\\\\d+)?$",
+  );
+  expect(origins).not.toContain("broods\\\\.app");
 });
 
-function clusterResources(): KubeResource[] {
-  return renderKubernetes(
+function clusterRoutes(
+  limits: boolean,
+): { match: string; middlewares: { name: string }[] }[] {
+  const resources: KubeResource[] = renderKubernetes(
     [
       {
         name: "development",
@@ -138,25 +154,61 @@ function clusterResources(): KubeResource[] {
       },
     ],
     "beeblast",
+    limits,
   );
+  const ingress = resources.find(
+    (resource) => resource.kind === "IngressRoute",
+  );
+
+  return (
+    ingress?.spec as {
+      routes: { match: string; middlewares: { name: string }[] }[];
+    }
+  ).routes;
 }
 
-// Evaluates the three matchers the renderer emits. Go's `(?i)` prefix becomes
-// the JavaScript `i` flag; the rest of the syntax used is shared.
+// Evaluates the matchers the renderer emits: OR'ed groups of PathRegexp,
+// Method and HeaderRegexp. Go's `(?i)` prefix becomes the JavaScript `i` flag;
+// the rest of the regex syntax used is shared.
 function ruleMatches(
   rule: string,
   method: string,
   path: string,
   headers: Record<string, string>,
 ): boolean {
-  const pathRegex = rule.match(/PathRegexp\(`([^`]+)`\)/)![1]!;
-  if (!new RegExp(pathRegex).test(path)) return false;
-  const methods = [...rule.matchAll(/Method\(`([A-Z]+)`\)/g)].map((m) => m[1]);
-  if (methods.length && !methods.includes(method)) return false;
-  const header = rule.match(/HeaderRegexp\(`([^`]+)`, `\(\?i\)([^`]+)`\)/);
-  if (header) {
-    return new RegExp(header[2]!, "i").test(headers[header[1]!] ?? "");
-  }
+  return topLevelAlternatives(rule).some((member) => {
+    const pathRegex = member.match(/PathRegexp\(`([^`]+)`\)/)![1]!;
+    if (!new RegExp(pathRegex).test(path)) return false;
+    const methods = [...member.matchAll(/Method\(`([A-Z]+)`\)/g)].map(
+      (m) => m[1],
+    );
+    if (methods.length && !methods.includes(method)) return false;
+    const header = member.match(/HeaderRegexp\(`([^`]+)`, `\(\?i\)([^`]+)`\)/);
 
-  return true;
+    return header
+      ? new RegExp(header[2]!, "i").test(headers[header[1]!] ?? "")
+      : true;
+  });
+}
+
+// Splits a rule on the `||` outside any parentheses or backticks.
+function topLevelAlternatives(rule: string): string[] {
+  const members: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i < rule.length; i++) {
+    const char = rule[i];
+    if (char === "`") quoted = !quoted;
+    if (quoted) continue;
+    if (char === "(") depth++;
+    if (char === ")") depth--;
+    if (depth === 0 && rule.startsWith(" || ", i)) {
+      members.push(rule.slice(start, i));
+      start = i + 4;
+    }
+  }
+  members.push(rule.slice(start));
+
+  return members;
 }

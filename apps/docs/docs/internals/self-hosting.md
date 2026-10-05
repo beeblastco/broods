@@ -169,12 +169,15 @@ Model and tool API keys are never deployment-wide. Accounts set them in agent co
 
 ### Traefik
 
-Traefik routes each request on the public host to core, the config plane or the gateway, and sets CORS. Generate its file-provider config from the route table, with each upstream's base URL:
+Traefik routes each request on the public host to core, the config plane or the gateway, and sets CORS. Generate its file-provider config from the route table, with each upstream's base URL, then the hostnames your dashboard is served from (`*.` for subdomains; the default is the broods.app ones and localhost):
 
 ```bash
 bun run --filter @broods/edge generate file \
-  http://core:3000 https://your-deployment.convex.site http://gateway:3000 > edge.yaml
+  http://core:3000 https://your-deployment.convex.site http://gateway:3000 \
+  agents.example.com localhost > edge.yaml
 ```
+
+Set the same hostnames in the gateway's `GATEWAY_ALLOWED_ORIGINS`, which guards WebSocket upgrades.
 
 Load it with `--providers.file.filename=edge.yaml` on an entry point named `web`, and put TLS in front. Regenerate it when you upgrade Broods: a new route that is missing lands on the wrong plane. This file has no per-address rate limits, since a self-hosted install mostly serves its owner. The managed service's limits are the `rateLimit` middlewares in `apps/edge/src/traefik.ts` if you want them.
 

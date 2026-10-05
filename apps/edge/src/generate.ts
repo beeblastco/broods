@@ -1,8 +1,12 @@
 /**
  * Prints Traefik config generated from the route table.
  *
- *   bun src/generate.ts kubernetes [stage...]   cluster resources for ../infra
- *   bun src/generate.ts file <core> <config> <gateway>   file provider, self-hosting
+ *   bun src/generate.ts kubernetes [--limits] [stage...]
+ *     cluster resources for ../infra; --limits once PROXY protocol keeps the
+ *     client address at the load balancer
+ *   bun src/generate.ts file <core> <config> <gateway> [origin...]
+ *     file provider for self-hosting; origins are hostnames, `*.` for
+ *     subdomains, replacing the broods.app defaults
  */
 import {
   renderFileConfig,
@@ -42,27 +46,35 @@ const HEADER =
 
 const [mode, ...rest] = process.argv.slice(2);
 if (mode === "kubernetes") {
-  const stages = rest.length
-    ? STAGES.filter((stage) => rest.includes(stage.name))
+  const limits = rest.includes("--limits");
+  const names = rest.filter((arg) => arg !== "--limits");
+  const stages = names.length
+    ? STAGES.filter((stage) => names.includes(stage.name))
     : STAGES;
-  if (stages.length !== (rest.length || STAGES.length)) {
+  if (stages.length !== (names.length || STAGES.length)) {
     throw new Error(
-      `Unknown stage in ${rest.join(", ")}; expected ${STAGES.map((s) => s.name).join(", ")}`,
+      `Unknown stage in ${names.join(", ")}; expected ${STAGES.map((s) => s.name).join(", ")}`,
     );
   }
-  const documents = renderKubernetes(stages, NAMESPACE).map((resource) =>
-    Bun.YAML.stringify(resource, null, 2),
+  const documents = renderKubernetes(stages, NAMESPACE, limits).map(
+    (resource) => Bun.YAML.stringify(resource, null, 2),
   );
   process.stdout.write(`${HEADER}---\n${documents.join("\n---\n")}\n`);
-} else if (mode === "file" && rest.length === 3) {
-  const [core, config, gateway] = rest as [string, string, string];
+} else if (mode === "file" && rest.length >= 3) {
+  const [core, config, gateway, ...origins] = rest as [
+    string,
+    string,
+    string,
+    ...string[],
+  ];
   const file = renderFileConfig(
     { config: config, core: core, gateway: gateway },
     "web",
+    origins.length ? origins : undefined,
   );
   process.stdout.write(`${Bun.YAML.stringify(file, null, 2)}\n`);
 } else {
   throw new Error(
-    "Usage: generate.ts kubernetes [stage...] | file <core-url> <config-url> <gateway-url>",
+    "Usage: generate.ts kubernetes [--limits] [stage...] | file <core-url> <config-url> <gateway-url> [origin...]",
   );
 }
