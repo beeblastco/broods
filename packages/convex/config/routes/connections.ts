@@ -233,39 +233,32 @@ async function signInResponse(
   const code = readCode(await parseJsonRequest(req));
   // OpenAI issued the client on this sign-in's redirect.
   const client = { clientId: code.clientId, hostId: code.hostId };
-  let stored: ConnectionStatus;
-  let models: string[];
-  try {
-    const tokens = await exchangeCode(ref.type, client, code);
-    const claims = await verifyIdToken(
-      ref.type,
-      tokens.idToken,
-      client.clientId,
-      code.nonce,
+  // A failed sign-in throws a ClientError the config plane answers with its
+  // reason; anything unexpected is a logged 500 that names nothing internal.
+  const tokens = await exchangeCode(ref.type, client, code);
+  const claims = await verifyIdToken(
+    ref.type,
+    tokens.idToken,
+    client.clientId,
+    code.nonce,
+  );
+  // A grant without the scope the type is for is no use: refuse it here
+  // rather than at the first run.
+  if (meta.requiredScope && !tokens.scopes.includes(meta.requiredScope))
+    throw new ClientError(
+      `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
     );
-    // A grant without the scope the type is for is no use: refuse it here
-    // rather than at the first run.
-    if (meta.requiredScope && !tokens.scopes.includes(meta.requiredScope))
-      throw new Error(
-        `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
-      );
-    stored = await ctx.runMutation(internal.account.connections.set, {
-      ...ref,
-      clientId: client.clientId,
-      hostId: client.hostId,
-      ...(claims.email ? { email: claims.email } : {}),
-      scopes: tokens.scopes,
-      expiresAt: tokens.expiresAt,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    });
-    models = await listModels(ref.type, tokens.accessToken);
-  } catch (error) {
-    return jsonError(
-      400,
-      "Sign-in failed. Check the provided credentials and try again.",
-    );
-  }
+  const stored = await ctx.runMutation(internal.account.connections.set, {
+    ...ref,
+    clientId: client.clientId,
+    hostId: client.hostId,
+    ...(claims.email ? { email: claims.email } : {}),
+    scopes: tokens.scopes,
+    expiresAt: tokens.expiresAt,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+  });
+  const models = await listModels(ref.type, tokens.accessToken);
   await writeAudit(ctx, {
     accountId: ref.accountId,
     actor: actor,
