@@ -140,14 +140,12 @@ export function renderFileConfig(
 }
 
 /**
- * The shared Middlewares, then one IngressRoute per stage. `limits` turns on the
- * per-address limits; leave it off until the client address survives the load
- * balancer, or every client shares one bucket.
+ * The shared Middlewares, then one IngressRoute per stage, limited per client
+ * address: Traefik binds the node's ports, so it sees each client's own address.
  */
 export function renderKubernetes(
   stages: readonly KubeStage[],
   namespace: string,
-  limits: boolean,
 ): KubeResource[] {
   const resources: KubeResource[] = Object.entries(
     middlewares(DEFAULT_ORIGINS),
@@ -171,7 +169,7 @@ export function renderKubernetes(
             kind: "Rule",
             match: `Host(\`${stage.host}\`) && (${routerRule(router)})`,
             priority: priority(index),
-            middlewares: routerMiddlewares(router, limits).map((name) => ({
+            middlewares: routerMiddlewares(router, true).map((name) => ({
               name: middlewareName(name),
             })),
             services: [

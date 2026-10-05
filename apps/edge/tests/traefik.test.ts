@@ -81,17 +81,13 @@ test("every router marks the request as public first", (): void => {
 // few routers count against it.
 test("the cluster limits HTTP in three routers and upgrades in one", (): void => {
   const limited = (name: string): string[] =>
-    clusterRoutes(true)
+    clusterRoutes()
       .filter((route) => JSON.stringify(route.middlewares).includes(name))
       .map((route) => route.match);
 
   expect(limited("limit-http")).toHaveLength(3);
   expect(limited("limit-upgrade")).toHaveLength(1);
   expect(limited("limit-http").join()).not.toMatch(/webhooks|media/);
-});
-
-test("the cluster limits nothing until asked to", (): void => {
-  expect(JSON.stringify(clusterRoutes(false))).not.toContain("limit-");
 });
 
 // Download and media links carry their credential in the path.
@@ -119,7 +115,7 @@ test("a self-hosted install allows its own origins", (): void => {
   expect(origins(["agents.example.com"])).not.toContain("broods\\\\.app");
 });
 
-function clusterRoutes(limits: boolean): KubeRoute[] {
+function clusterRoutes(): KubeRoute[] {
   const resources: KubeResource[] = renderKubernetes(
     [
       {
@@ -134,7 +130,6 @@ function clusterRoutes(limits: boolean): KubeRoute[] {
       },
     ],
     "beeblast",
-    limits,
   );
   for (const resource of resources) {
     if (resource.kind === "IngressRoute") return resource.spec.routes;

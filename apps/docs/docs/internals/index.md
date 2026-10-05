@@ -47,7 +47,7 @@ flowchart TB
   end
 
   subgraph K3s["Hetzner k3s cluster, nbg1 (../infra)"]
-    Ingress["Hetzner load balancer<br/>Traefik, cert-manager TLS"]
+    Ingress["Traefik on the node's 80/443<br/>cert-manager TLS"]
 
     subgraph NsApp["namespace beeblast"]
       GW["gateway, gateway-dev"]
