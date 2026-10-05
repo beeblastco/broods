@@ -263,7 +263,7 @@ async function signInResponse(
   } catch (error) {
     return jsonError(
       400,
-      error instanceof Error ? error.message : String(error),
+      "Sign-in failed. Check the provided credentials and try again.",
     );
   }
   await writeAudit(ctx, {
