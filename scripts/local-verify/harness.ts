@@ -29,12 +29,17 @@ export interface VerifyContext {
   account: BroodsAccountClient;
   accountSecret: string;
   client: BroodsClient;
+  /** The Convex site directly, as an in-cluster caller reaches it. */
+  configPlaneUrl: string;
   coreLogPath: string;
-  gatewayUrl: string;
+  /** The public URL: Traefik, in front of core, the config plane and the gateway. */
+  edgeUrl: string;
   hasModelKey: boolean;
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
   runId: string;
+  /** The in-cluster service token; valid only on requests that skip the edge. */
+  serviceSecret: string;
 }
 
 /** Thrown by assertStep; verify records the step as the failure. */
@@ -76,7 +81,7 @@ export async function connectMachine(
   let output = "";
   const controller = new AbortController();
   const daemon = runMachineDaemon({
-    baseUrl: context.gatewayUrl,
+    baseUrl: context.edgeUrl,
     computer: options.computer,
     credential: async (): Promise<string> => context.accountSecret,
     cwd: process.cwd(),

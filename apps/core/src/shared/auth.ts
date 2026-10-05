@@ -95,7 +95,7 @@ export function extractBearerToken(
   return token;
 }
 
-/** The service token is in-cluster only: never valid on a gateway-proxied request. */
+/** The service token is in-cluster only: never valid on a request through the public door. */
 export function isServiceToken(
   headers: Record<string, string>,
   token: string,

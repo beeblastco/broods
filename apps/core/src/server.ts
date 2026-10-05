@@ -3,8 +3,8 @@
  *
  * One Bun.serve process builds a transport-neutral CoreRequest per HTTP request
  * and routes by path to the account or harness handler, streaming their Web
- * Response back (SSE included). By path, never Host: the gateway strips Host on
- * proxy. There is no Lambda runtime.
+ * Response back (SSE included). By path, never Host: Traefik does not pass the
+ * client's Host. There is no Lambda runtime.
  */
 
 import {
@@ -19,7 +19,10 @@ import {
   requireSecretsEnv,
 } from "./shared/env.ts";
 import { drainInFlight, waitUntil } from "./shared/in-flight.ts";
-import { resolveRequestId, withRequestId } from "./shared/request-id.ts";
+import {
+  resolveRequestId,
+  withRequestId,
+} from "@broods/convex/model/requestId";
 import { logError, logInfo } from "./shared/log.ts";
 import { flushObservabilityNats } from "./shared/nats.ts";
 import { forceFlushOtel, initOtel } from "./shared/otel.ts";

@@ -13,7 +13,7 @@ import { assertStep, type VerifyContext } from "../harness.ts";
  */
 export async function manifestSync(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
-    baseUrl: context.gatewayUrl,
+    baseUrl: context.edgeUrl,
     token: context.accountSecret,
   });
   const project = `sync-${context.runId}`;
@@ -99,7 +99,7 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
   const runtimeKey = await client.getRuntimeKey(project, "development");
   const runtime = new BroodsClient({
     apiKey: runtimeKey?.apiKey,
-    baseUrl: context.gatewayUrl,
+    baseUrl: context.edgeUrl,
   });
   // A 401 throws; an unknown run is only reachable past auth.
   const status = await runtime

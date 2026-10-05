@@ -1,7 +1,7 @@
 /**
  * Public config-plane HTTP surface: agents, skills, mcp, hooks, workspace
  * files, crons, workspaces, sandboxes, policies, and roles served straight
- * from Convex. The gateway forwards these paths here; response shapes match
+ * from Convex. Traefik routes these paths here (`apps/edge`); response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
  * the account key, or an fp_sts_ role session checked against its
  * role's policy at this funnel. This file is the router; each resource
@@ -18,6 +18,7 @@ import {
 import type { ConfigAuditActor } from "../model/auditEvents";
 import { CLIENT_ERROR_STATUS, clientErrorData } from "../model/clientError";
 import { POLICY_STILL_REFERENCED } from "../model/policyReferences";
+import { resolveRequestId, withRequestId } from "../model/requestId";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
 import {
   handleAgentChannelDirectoryRoute,
@@ -64,7 +65,17 @@ type ConfigRoute =
 
 type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
 
-export const handle = httpAction(async (ctx, req): Promise<Response> => {
+export const handle = httpAction(async (ctx, req): Promise<Response> =>
+  withRequestId(
+    await handleConfigRequest(ctx, req),
+    resolveRequestId(req.headers.get("x-request-id")),
+  ),
+);
+
+async function handleConfigRequest(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response> {
   // Only a role is scoped below the account, so every other caller already
   // reads the resources a policy refusal would name.
   let readsPolicyReferences = true;
@@ -142,7 +153,7 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
 
     return jsonError(500, "Internal server error");
   }
-});
+}
 
 /** Build an `authorize()` resource, dropping an absent id. */
 function apiResource(

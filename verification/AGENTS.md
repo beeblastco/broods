@@ -2,7 +2,7 @@
 
 Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun workspace. No Mathlib, core Lean only.
 
-- `Broods/Gateway.lean`: `apps/gateway/src/routes.ts` + `route()` in `main.ts`. proves internal core paths are 404 for every method, and routing ignores trailing slashes.
+- `Broods/Gateway.lean`: the edge route table, `ROUTERS` + `resolveRouter` in `apps/edge/src/routes.ts`, which Traefik serves. proves routing ignores trailing slashes.
 - `Broods/Ingress.lean`: `packages/convex/runtimeIngress.ts` envelope lifecycle. proves terminal runs stay terminal, every step moves forward, settle is fenced, `/stop` hits only its generation, `maintain` never expires a run its owner still holds, a step boundary claims steers only behind its own fence and stop check, and an ownership proof holds for the rest of its lease.
 - `Broods/AsyncResults.lean`: the async result row, settled with its envelope in one `runtimeIngress.settle`, plus `runtimeAsyncToolResults`. proves envelope and result row agree at every throw point, including a callback throw the harness swallows, a recorded outcome survives later throws, a failed write never loses what the run produced, a tool row settles once.
 - `Broods/Cron.lean`: `packages/convex/agent/crons.ts` run rows. proves the first settle wins and a drained run settles as a no-op.

@@ -8,9 +8,11 @@ To try the stack on one machine first, skip to [Run it locally](#run-it-locally)
 
 ```mermaid
 flowchart LR
-  Client((Client, CLI,<br/>chat providers)) --> Gateway[gateway]
-  Gateway -->|runtime paths| Core[core]
-  Gateway -->|config paths| Site["Convex HTTP actions<br/>*.convex.site"]
+  Client((Client, CLI,<br/>chat providers)) --> Traefik
+  Traefik -->|runtime paths| Core[core]
+  Traefik -->|config paths| Site["Convex HTTP actions<br/>*.convex.site"]
+  Traefik -->|WebSockets| Gateway[gateway]
+  Gateway --> Core
   Dashboard[dashboard] --> Convex[(Convex)]
   Site --- Convex
   Core --> Convex
@@ -18,8 +20,8 @@ flowchart LR
   Core --> NATS[(NATS JetStream)]
   Core --> OPA[OPA]
   Gateway --> NATS
-  DFwd[discord-forwarder] --> Gateway
-  MFwd[matrix-forwarder] --> Gateway
+  DFwd[discord-forwarder] --> Traefik
+  MFwd[matrix-forwarder] --> Traefik
   Core -->|Matrix sends| MFwd
   Convex -->|cron trigger, in-cluster| Core
 ```
@@ -29,7 +31,8 @@ flowchart LR
 | AWS data plane              | `apps/core/sst.config.ts`                        | SST deploy into your AWS account                                  |
 | Convex backend              | `packages/convex`                                | Convex Cloud, or the self-hosted `convex-backend` image           |
 | core                        | `apps/core/Dockerfile`                           | Container, port 3000, cluster-internal only                       |
-| gateway                     | `apps/gateway/Dockerfile`                        | Container, port 3000, the only public door                        |
+| Traefik                     | upstream, routes from `apps/edge`                | The only public door                                              |
+| gateway                     | `apps/gateway/Dockerfile`                        | Container, port 3000, WebSockets behind Traefik                   |
 | dashboard                   | `apps/dashboard/Dockerfile`                      | Container, port 3000, needs WorkOS                                |
 | discord-forwarder           | `apps/discord-forwarder/Dockerfile`              | Container, one replica. Only for Discord agents                   |
 | matrix-forwarder            | `apps/matrix-forwarder/Dockerfile`               | Container, one replica, persistent volume. Only for Matrix agents |
@@ -136,7 +139,7 @@ Every image listens on port 3000 and answers `GET /healthz`.
 
 ### core
 
-Refuses to start without the four service secrets. Keep it cluster-internal; the gateway is the only public door.
+Refuses to start without the four service secrets. Keep it cluster-internal; Traefik is the only public door.
 
 | Variable                                                                                                                                                | Required               | Notes                                                                                          |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------- |
@@ -164,20 +167,33 @@ The tuning knobs and their defaults are `REQUEST_TIMEOUT_BUDGET_MS` 600000, `WOR
 
 Model and tool API keys are never deployment-wide. Accounts set them in agent config or as stage env vars.
 
+### Traefik
+
+Traefik routes each request on the public host to core, the config plane or the gateway, and sets CORS. Generate its file-provider config from the route table, with each upstream's base URL, then the hostnames your dashboard is served from (`*.` for subdomains; the default is the broods.app ones and localhost):
+
+```bash
+bun run --filter @broods/edge generate file \
+  http://core:3000 https://your-deployment.convex.site http://gateway:3000 \
+  agents.example.com localhost > edge.yaml
+```
+
+Set the same hostnames in the gateway's `GATEWAY_ALLOWED_ORIGINS`, which guards WebSocket upgrades.
+
+Load it with `--providers.file.filename=edge.yaml` on an entry point named `web`, and put TLS in front. Regenerate it when you upgrade Broods: a new route that is missing lands on the wrong plane. This file has no per-address rate limits, since a self-hosted install mostly serves its owner. The managed service's limits are the `rateLimit` middlewares in `apps/edge/src/traefik.ts` if you want them.
+
 ### gateway
+
+The gateway serves only health checks and the four WebSockets.
 
 | Variable                                                                                                                                             | Required               | Notes                                                                                                         |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `BROODS_CORE_URLS`                                                                                                                                   | yes                    | Comma-separated core origins, tried in order                                                                  |
-| `BROODS_CONFIG_URL`                                                                                                                                  | yes                    | The Convex `*.convex.site` origin. Unset makes config-plane routes answer `503`                               |
+| `BROODS_CORE_URL`                                                                                                                                    | yes                    | Core's URL, for socket token checks, agent runs and the machine relay                                         |
 | `TERMINAL_TICKET_SECRET`                                                                                                                             | yes                    | Same list as core                                                                                             |
 | `NATS_URL`, `NATS_TOKEN`                                                                                                                             | for WebSocket and logs | Connected on first use                                                                                        |
 | `LOKI_URL`, `TEMPO_URL`                                                                                                                              | no                     | Log and trace history for the dashboard and `broods logs`                                                     |
-| `GATEWAY_FORWARD_ACCOUNT_ID`                                                                                                                         | no                     | Default off. Keep it off                                                                                      |
-| `GATEWAY_DENY_INTERNAL_PATHS`                                                                                                                        | no                     | Default on: `/v1/cron-runs` and `/v1/mcp-service/rpc` answer `404`                                            |
 | `GATEWAY_ALLOWED_ORIGINS`                                                                                                                            | no                     | WebSocket origin allow list. Default `broods.app`, `*.broods.app`, `localhost`, `127.0.0.1`. Set your domains |
 | `GATEWAY_MAX_CONNECTIONS`, `GATEWAY_MAX_PAYLOAD_BYTES`, `GATEWAY_BACKPRESSURE_BYTES`, `GATEWAY_IDLE_TIMEOUT_SECONDS`, `GATEWAY_RUN_START_TIMEOUT_MS` | no                     | Per-pod limits. See `apps/gateway/.env.example`                                                               |
-| `GATEWAY_UPGRADES_PER_MINUTE`, `GATEWAY_AUTH_FAILURES_PER_MINUTE`, `GATEWAY_HTTP_REQUESTS_PER_MINUTE`                                                | no                     | Per-IP rate limits. The HTTP one is off unless set                                                            |
+| `GATEWAY_AUTH_FAILURES_PER_MINUTE`                                                                                                                   | no                     | Failed socket logins per client address. Default 20                                                           |
 
 The gateway is stateless. Scale it with replicas.
 
@@ -254,11 +270,11 @@ bun install && bun run dev && bun run start
 
 ## Run it locally
 
-`bun run local:up` starts a self-hosted Convex in Docker plus core and gateway as watched Bun processes, with generated secrets. State, ports and logs live under `~/.broods-local/<instance>/`, keyed by worktree, so parallel checkouts get separate stacks.
+`bun run local:up` starts a self-hosted Convex and Traefik in Docker plus core and gateway as watched Bun processes, with generated secrets. State, ports and logs live under `~/.broods-local/<instance>/`, keyed by worktree, so parallel checkouts get separate stacks.
 
 ```bash
 bun run local:up        # --fresh wipes the instance first
-bun run local:verify    # admin-creates an account and agent, runs it through the gateway, polls the run
+bun run local:verify    # admin-creates an account and agent, runs it through Traefik, polls the run
 bun run local:status
 bun run local:down      # --purge deletes the instance state
 ```
