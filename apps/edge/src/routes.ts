@@ -1,11 +1,13 @@
 /**
  * The public route table: which upstream a request to the API host reaches.
- * `traefik.ts` renders it as Traefik routers for every environment, and
- * `verification/Broods/Gateway.lean` models it. A route added to core or the
- * config plane must be added here too, or it lands on the wrong upstream.
+ * `traefik.ts` renders each router as one Traefik router, and
+ * `verification/Broods/Gateway.lean` models the table. A route added to core or
+ * the config plane must be added here too, or it lands on the wrong upstream.
  *
- * Order is priority: the first route whose path, method and upgrade match wins.
+ * Order is priority: the first router with a matching rule wins. Each router is
+ * one rate-limit bucket in Traefik, so a new router means a new bucket.
  */
+import { stripTrailingSlashes } from "../../core/src/shared/paths.ts";
 
 export const METHODS = [
   "GET",
@@ -17,148 +19,134 @@ export const METHODS = [
   "OPTIONS",
 ] as const;
 
+const SEGMENT = "[^/]+";
+
 export type Method = (typeof METHODS)[number];
 
-/** `blocked` never reaches an upstream: in-cluster callers only. */
-export type Upstream = "blocked" | "config" | "core" | "gateway";
+export type Upstream = "config" | "core" | "gateway";
 
-/** Which per-address rate limit a route spends. */
+/** Which per-address limit a router spends. */
 export type Limit = "http" | "none" | "upgrade";
 
-export interface EdgeRoute {
-  name: string;
+/** One path a router matches. */
+export interface EdgeRule {
   /** Anchored path regex without `^` and `$`; trailing slashes are stripped first. */
   path: string;
   /** Every method when absent. */
   methods?: readonly Method[];
-  upstream: Upstream;
-  limit: Limit;
-  /** Matches only a WebSocket upgrade; any other route matches both. */
-  upgrade?: boolean;
-  /** The path itself is a credential, so the access log skips this route. */
-  secretPath?: boolean;
 }
 
-const SEGMENT = "[^/]+";
+export interface EdgeRouter {
+  name: string;
+  upstream: Upstream;
+  limit: Limit;
+  /** The path itself is a credential, so the access log skips this router. */
+  secretPath?: true;
+  rules: readonly EdgeRule[];
+}
 
-export const ROUTES: readonly EdgeRoute[] = [
+export const ROUTERS: readonly EdgeRouter[] = [
   {
     name: "health",
-    path: "/(?:healthz)?",
-    methods: ["GET"],
     upstream: "gateway",
     limit: "none",
+    rules: [{ path: "/(?:healthz)?", methods: ["GET"] }],
   },
+  // The gateway answers anything but an upgrade on these with a 404.
   {
-    name: "internal",
-    path: "/v1/(?:cron-runs|mcp-service/rpc)",
-    upstream: "blocked",
-    limit: "none",
-  },
-  {
-    name: "terminal-ws",
-    path: "/v1/sandboxes/terminal/ws",
+    name: "sockets",
     upstream: "gateway",
     limit: "upgrade",
-    upgrade: true,
+    rules: [
+      { path: "/v1/sandboxes/terminal/ws" },
+      { path: "/v1/machines/ws" },
+      { path: `/v1/projects/${SEGMENT}/stages/${SEGMENT}/observability/ws` },
+      {
+        path: `/v1/(?:projects/${SEGMENT}/stages/${SEGMENT}/)?agents/${SEGMENT}/ws`,
+      },
+    ],
   },
-  {
-    name: "machine-ws",
-    path: "/v1/machines/ws",
-    upstream: "gateway",
-    limit: "upgrade",
-    upgrade: true,
-  },
-  {
-    name: "observability-ws",
-    path: `/v1/projects/${SEGMENT}/stages/${SEGMENT}/observability/ws`,
-    upstream: "gateway",
-    limit: "upgrade",
-    upgrade: true,
-  },
-  {
-    name: "agent-ws",
-    path: `/v1/(?:projects/${SEGMENT}/stages/${SEGMENT}/)?agents/${SEGMENT}/ws`,
-    upstream: "gateway",
-    limit: "upgrade",
-    upgrade: true,
-  },
-  config("account", "/v1/account", ["GET", "PATCH"]),
-  config("account-sub", "/v1/account/.*[^/]"),
-  config("accounts", "/v1/accounts", ["GET"]),
-  config("account-item", `/v1/accounts/${SEGMENT}`, ["GET", "PATCH"]),
-  config("account-rotate", `/v1/accounts/${SEGMENT}/rotate-secret`, ["POST"]),
-  config("agents", "/v1/agents", ["GET", "POST"]),
-  config("agent-item", `/v1/agents/${SEGMENT}`, ["GET", "PATCH", "DELETE"]),
-  config(
-    "agent-directory",
-    `/v1/agents/${SEGMENT}/channels/${SEGMENT}/directory`,
-    ["GET"],
-  ),
-  config("env", "/v1/env", ["GET"]),
-  config("env-item", `/v1/env/${SEGMENT}`, ["PUT", "DELETE"]),
   // Redeeming a workspace download link. Unauthenticated by design: the token
   // in the path is the credential, and the config plane answers with a 302.
   {
-    ...config("download", `/v1/downloads/${SEGMENT}`, ["GET", "HEAD"]),
+    name: "downloads",
+    upstream: "config",
+    limit: "http",
     secretPath: true,
+    rules: [{ path: `/v1/downloads/${SEGMENT}`, methods: ["GET", "HEAD"] }],
   },
-  config("download-links", `/v1/workspaces/${SEGMENT}/download-links`, [
-    "POST",
-  ]),
-  config(
-    "resources",
-    `/v1/(?:skills|mcp|hooks|workspaces|sandboxes|policies|roles|channels|crons)(?:/${SEGMENT})?`,
-  ),
-  config("workspace-files", `/v1/workspaces/${SEGMENT}/files`),
-  config("cron-runs", `/v1/crons/${SEGMENT}/runs`),
+  // Method-aware: a method miss falls through to core.
+  {
+    name: "config",
+    upstream: "config",
+    limit: "http",
+    rules: [
+      { path: "/v1/account", methods: ["GET", "PATCH"] },
+      { path: "/v1/account/.*[^/]" },
+      { path: "/v1/accounts", methods: ["GET"] },
+      { path: `/v1/accounts/${SEGMENT}`, methods: ["GET", "PATCH"] },
+      { path: `/v1/accounts/${SEGMENT}/rotate-secret`, methods: ["POST"] },
+      { path: "/v1/agents", methods: ["GET", "POST"] },
+      { path: `/v1/agents/${SEGMENT}`, methods: ["GET", "PATCH", "DELETE"] },
+      {
+        path: `/v1/agents/${SEGMENT}/channels/${SEGMENT}/directory`,
+        methods: ["GET"],
+      },
+      { path: "/v1/env", methods: ["GET"] },
+      { path: `/v1/env/${SEGMENT}`, methods: ["PUT", "DELETE"] },
+      { path: `/v1/workspaces/${SEGMENT}/download-links`, methods: ["POST"] },
+      {
+        path: `/v1/(?:skills|mcp|hooks|workspaces|sandboxes|policies|roles|channels|crons)(?:/${SEGMENT})?`,
+      },
+      { path: `/v1/workspaces/${SEGMENT}/files` },
+      { path: `/v1/crons/${SEGMENT}/runs` },
+    ],
+  },
   // Channel providers post from shared egress addresses, so no per-address limit.
   {
     name: "webhooks",
-    path: "/v1/webhooks/.*[^/]",
     upstream: "core",
     limit: "none",
+    rules: [{ path: "/v1/webhooks/.*[^/]" }],
   },
-  { name: "core", path: "/v1(?:/.*)?", upstream: "core", limit: "http" },
+  // A media link never expires and its ticket is the path. Channel providers
+  // fetch it from shared egress addresses, like webhooks.
+  {
+    name: "media",
+    upstream: "core",
+    limit: "none",
+    secretPath: true,
+    rules: [{ path: "/v1/media/.*[^/]", methods: ["GET", "HEAD"] }],
+  },
+  // Includes the in-cluster-only paths (`/v1/cron-runs`, `/v1/mcp-service/rpc`):
+  // core refuses them without the service token, which is never valid on a
+  // request the edge stamped.
+  {
+    name: "core",
+    upstream: "core",
+    limit: "http",
+    rules: [{ path: "/v1(?:/.*)?" }],
+  },
 ];
 
 /**
- * The route a request takes, or null for a 404. Mirrors what the rendered
+ * The router a request takes, or null for a 404. Mirrors what the rendered
  * Traefik routers do, so tests and the Lean model can check the table itself.
  */
-export function resolveRoute(
+export function resolveRouter(
   method: string,
   pathname: string,
-  upgrade: boolean,
-): EdgeRoute | null {
-  const path = stripTrailingSlashes(pathname);
+): EdgeRouter | null {
+  const path = stripTrailingSlashes(pathname) || "/";
   const upper = method.toUpperCase();
 
   return (
-    ROUTES.find(
-      (route) =>
-        (upgrade || !route.upgrade) &&
-        (!route.methods || route.methods.some((m) => m === upper)) &&
-        new RegExp(`^${route.path}$`).test(path),
+    ROUTERS.find((router) =>
+      router.rules.some(
+        (rule) =>
+          (!rule.methods || rule.methods.some((m) => m === upper)) &&
+          new RegExp(`^${rule.path}$`).test(path),
+      ),
     ) ?? null
   );
-}
-
-/** `/v1/agents/` and `/v1/agents` are one route; `/` stays `/`. */
-export function stripTrailingSlashes(pathname: string): string {
-  return pathname.replace(/\/+$/, "") || "/";
-}
-
-function config(
-  name: string,
-  path: string,
-  methods?: readonly Method[],
-): EdgeRoute {
-  return {
-    name: name,
-    path: path,
-    ...(methods ? { methods: methods } : {}),
-    upstream: "config",
-    limit: "http",
-  };
 }

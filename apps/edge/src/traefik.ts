@@ -2,26 +2,24 @@
  * Renders the route table as Traefik configuration: a file-provider config for
  * the local stack and self-hosting, and IngressRoute plus Middleware resources
  * for the cluster. Both share the same routers and middlewares, so every
- * environment routes and stamps headers the same way.
- *
- * Routes that share an upstream, a limit and logging become one router, its
- * rule the OR of theirs. Traefik keeps a rate-limit bucket per router, so fewer
- * routers means a client's per-address limit holds across the API: one bucket
- * for core, one for the config plane, one for upgrades.
+ * environment routes and stamps headers the same way. Each table router is one
+ * Traefik router, so priority follows the table and each router is one
+ * rate-limit bucket.
  */
-import { ROUTES, type EdgeRoute, type Upstream } from "./routes.ts";
+import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
+import { DEFAULT_ORIGINS } from "./origins.ts";
+import {
+  METHODS,
+  ROUTERS,
+  type EdgeRouter,
+  type EdgeRule,
+  type Upstream,
+} from "./routes.ts";
 
+const ENTRY_POINT = "web";
+const PREFIX = "broods-edge";
 /** Above any default priority Traefik gives the per-host Ingress routers. */
 const PRIORITY_BASE = 1000;
-const PREFIX = "broods-edge";
-
-/** Browser origins allowed to call the API, as hostnames; `*.` matches subdomains. */
-export const DEFAULT_ORIGINS = [
-  "broods.app",
-  "*.broods.app",
-  "localhost",
-  "127.0.0.1",
-] as const;
 
 // Bodies of every middleware but `headers`, identical in the file provider and
 // the CRD `spec`.
@@ -33,23 +31,12 @@ const FIXED_MIDDLEWARES = {
   "strip-trailing-slash": {
     replacePathRegex: { regex: "^(/.*?)/+$", replacement: "$1" },
   },
-  // No address is in this range, so nothing passes.
-  blocked: { ipAllowList: { sourceRange: ["255.255.255.255/32"] } },
 } as const;
 
 type MiddlewareName = keyof typeof FIXED_MIDDLEWARES | "headers";
 type MiddlewareBody =
   | (typeof FIXED_MIDDLEWARES)[keyof typeof FIXED_MIDDLEWARES]
   | ReturnType<typeof headersMiddleware>;
-type Destination = Exclude<Upstream, "blocked">;
-
-/** Routes that render as one router. */
-interface RouterGroup {
-  name: string;
-  routes: EdgeRoute[];
-  /** Position of the group's first route in the table. */
-  index: number;
-}
 
 export interface FileRouter {
   rule: string;
@@ -83,15 +70,33 @@ export interface KubeStage {
   name: string;
   host: string;
   tlsSecret: string;
-  upstreams: Record<Destination, KubeService>;
+  upstreams: Record<Upstream, KubeService>;
 }
 
-export interface KubeResource {
-  apiVersion: "traefik.io/v1alpha1";
-  kind: "IngressRoute" | "Middleware";
-  metadata: { name: string; namespace: string };
-  spec: object;
+/** One route of an IngressRoute: a rendered router for one host. */
+export interface KubeRoute {
+  kind: "Rule";
+  match: string;
+  priority: number;
+  middlewares: { name: string }[];
+  services: (KubeService & { passHostHeader: false })[];
+  observability?: { accessLogs: false };
 }
+
+export type KubeResource = {
+  apiVersion: "traefik.io/v1alpha1";
+  metadata: { name: string; namespace: string };
+} & (
+  | { kind: "Middleware"; spec: MiddlewareBody }
+  | {
+      kind: "IngressRoute";
+      spec: {
+        entryPoints: string[];
+        routes: KubeRoute[];
+        tls: { secretName: string };
+      };
+    }
+);
 
 /**
  * File-provider config for one host, with each upstream's base URL and the
@@ -99,21 +104,20 @@ export interface KubeResource {
  * one address, and a self-hosted install mostly serves its owner.
  */
 export function renderFileConfig(
-  upstreams: Record<Destination, string>,
-  entryPoint: string,
+  upstreams: Record<Upstream, string>,
   origins: readonly string[] = DEFAULT_ORIGINS,
 ): FileConfig {
   const routers: Record<string, FileRouter> = {};
-  for (const group of routerGroups()) {
-    routers[`${PREFIX}-${group.name}`] = {
-      rule: groupRule(group),
-      priority: priority(group.index),
-      entryPoints: [entryPoint],
-      middlewares: groupMiddlewares(group, false).map(middlewareName),
-      service: `${PREFIX}-${destination(group)}`,
-      ...observability(group),
+  ROUTERS.forEach((router, index) => {
+    routers[`${PREFIX}-${router.name}`] = {
+      rule: routerRule(router),
+      priority: priority(index),
+      entryPoints: [ENTRY_POINT],
+      middlewares: routerMiddlewares(router, false).map(middlewareName),
+      service: `${PREFIX}-${router.upstream}`,
+      ...observability(router),
     };
-  }
+  });
   const services: FileConfig["http"]["services"] = {};
   for (const [name, url] of Object.entries(upstreams)) {
     services[`${PREFIX}-${name}`] = {
@@ -160,14 +164,14 @@ export function renderKubernetes(
       metadata: { name: `${PREFIX}-${stage.name}`, namespace: namespace },
       spec: {
         entryPoints: ["websecure"],
-        routes: routerGroups().map((group) => {
-          const service = stage.upstreams[destination(group)];
+        routes: ROUTERS.map((router, index): KubeRoute => {
+          const service = stage.upstreams[router.upstream];
 
           return {
             kind: "Rule",
-            match: `Host(\`${stage.host}\`) && (${groupRule(group)})`,
-            priority: priority(group.index),
-            middlewares: groupMiddlewares(group, limits).map((name) => ({
+            match: `Host(\`${stage.host}\`) && (${routerRule(router)})`,
+            priority: priority(index),
+            middlewares: routerMiddlewares(router, limits).map((name) => ({
               name: middlewareName(name),
             })),
             services: [
@@ -178,7 +182,7 @@ export function renderKubernetes(
                 passHostHeader: false,
               },
             ],
-            ...observability(group),
+            ...observability(router),
           };
         }),
         tls: { secretName: stage.tlsSecret },
@@ -187,67 +191,6 @@ export function renderKubernetes(
   }
 
   return resources;
-}
-
-/**
- * The routes grouped into routers, highest priority first. A group takes the
- * priority of its first route, which keeps the table's order as long as no
- * request matches a later route of an earlier group ahead of another group's
- * route; the edge tests check that against the table.
- */
-export function routerGroups(): RouterGroup[] {
-  const groups = new Map<string, RouterGroup>();
-  ROUTES.forEach((route, index) => {
-    const name = [
-      route.upstream,
-      route.limit,
-      ...(route.secretPath ? ["unlogged"] : []),
-    ].join("-");
-    const group = groups.get(name);
-    if (group) group.routes.push(route);
-    else groups.set(name, { name: name, routes: [route], index: index });
-  });
-
-  return [...groups.values()];
-}
-
-/** The Traefik rule for one route; trailing slashes match here and are stripped by a middleware. */
-export function routeRule(route: EdgeRoute): string {
-  const parts = [`PathRegexp(\`^${route.path}/*$\`)`];
-  if (route.methods) {
-    parts.push(
-      `(${route.methods.map((method) => `Method(\`${method}\`)`).join(" || ")})`,
-    );
-  }
-  if (route.upgrade) parts.push("HeaderRegexp(`Upgrade`, `(?i)^websocket$`)");
-
-  return parts.join(" && ");
-}
-
-// A blocked group still names a service, which it never reaches.
-function destination(group: RouterGroup): Destination {
-  const upstream = group.routes[0]!.upstream;
-
-  return upstream === "blocked" ? "core" : upstream;
-}
-
-// Headers first, so a 429 still carries CORS and the browser can read it.
-function groupMiddlewares(
-  group: RouterGroup,
-  limits: boolean,
-): MiddlewareName[] {
-  const { upstream, limit } = group.routes[0]!;
-  if (upstream === "blocked") return ["blocked"];
-  const limiter: MiddlewareName[] =
-    !limits || limit === "none" ? [] : [`limit-${limit}`];
-
-  return ["headers", ...limiter, "strip-trailing-slash"];
-}
-
-function groupRule(group: RouterGroup): string {
-  if (group.routes.length === 1) return routeRule(group.routes[0]!);
-
-  return group.routes.map((route) => `(${routeRule(route)})`).join(" || ");
 }
 
 // Core and the config plane refuse the in-cluster service token on any request
@@ -259,16 +202,8 @@ function headersMiddleware(origins: readonly string[]): {
 } {
   return {
     headers: {
-      customRequestHeaders: { "x-broods-via-gateway": "1", "X-Account-Id": "" },
-      accessControlAllowMethods: [
-        "GET",
-        "HEAD",
-        "POST",
-        "PUT",
-        "PATCH",
-        "DELETE",
-        "OPTIONS",
-      ],
+      customRequestHeaders: { [VIA_GATEWAY_HEADER]: "1", "X-Account-Id": "" },
+      accessControlAllowMethods: [...METHODS],
       accessControlAllowHeaders: [
         "authorization",
         "content-type",
@@ -291,14 +226,14 @@ function middlewares(
   return { headers: headersMiddleware(origins), ...FIXED_MIDDLEWARES };
 }
 
-function observability(group: RouterGroup): Pick<FileRouter, "observability"> {
-  return group.routes[0]!.secretPath
-    ? { observability: { accessLogs: false } }
-    : {};
+function observability(router: EdgeRouter): Pick<FileRouter, "observability"> {
+  return router.secretPath ? { observability: { accessLogs: false } } : {};
 }
 
-// Any scheme and port, as the gateway's origin check matches the hostname only.
+// Any scheme and port, as the gateway's origin check matches the hostname
+// only; `*` allows every origin, as it does there.
 function originRegex(hostname: string): string {
+  if (hostname === "*") return "^https?://.+$";
   const subdomains = hostname.startsWith("*.");
   const escaped = (subdomains ? hostname.slice(2) : hostname).replace(
     /[.*+?^${}()|[\]\\]/g,
@@ -309,5 +244,32 @@ function originRegex(hostname: string): string {
 }
 
 function priority(index: number): number {
-  return PRIORITY_BASE + ROUTES.length - index;
+  return PRIORITY_BASE + ROUTERS.length - index;
+}
+
+// Headers first, so a 429 still carries CORS and the browser can read it.
+function routerMiddlewares(
+  router: EdgeRouter,
+  limits: boolean,
+): MiddlewareName[] {
+  const limit: MiddlewareName[] =
+    !limits || router.limit === "none" ? [] : [`limit-${router.limit}`];
+
+  return ["headers", ...limit, "strip-trailing-slash"];
+}
+
+function routerRule(router: EdgeRouter): string {
+  if (router.rules.length === 1) return ruleMatcher(router.rules[0]!);
+
+  return router.rules.map((rule) => `(${ruleMatcher(rule)})`).join(" || ");
+}
+
+// The method check comes first: it is cheaper than the path regex. Trailing
+// slashes match here and are stripped by a middleware.
+function ruleMatcher(rule: EdgeRule): string {
+  const path = `PathRegexp(\`^${rule.path}/*$\`)`;
+  if (!rule.methods) return path;
+  const methods = rule.methods.map((method) => `Method(\`${method}\`)`);
+
+  return `(${methods.join(" || ")}) && ${path}`;
 }

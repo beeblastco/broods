@@ -47,29 +47,22 @@ const HEADER =
 const [mode, ...rest] = process.argv.slice(2);
 if (mode === "kubernetes") {
   const limits = rest.includes("--limits");
+  // A subset rolls a stage out first, as development was.
   const names = rest.filter((arg) => arg !== "--limits");
+  const unknown = names.filter((name) => !STAGES.some((s) => s.name === name));
+  if (unknown.length) throw new Error(`Unknown stage: ${unknown.join(", ")}`);
   const stages = names.length
     ? STAGES.filter((stage) => names.includes(stage.name))
     : STAGES;
-  if (stages.length !== (names.length || STAGES.length)) {
-    throw new Error(
-      `Unknown stage in ${names.join(", ")}; expected ${STAGES.map((s) => s.name).join(", ")}`,
-    );
-  }
   const documents = renderKubernetes(stages, NAMESPACE, limits).map(
     (resource) => Bun.YAML.stringify(resource, null, 2),
   );
   process.stdout.write(`${HEADER}---\n${documents.join("\n---\n")}\n`);
-} else if (mode === "file" && rest.length >= 3) {
-  const [core, config, gateway, ...origins] = rest as [
-    string,
-    string,
-    string,
-    ...string[],
-  ];
+} else if (mode === "file" && rest[0] && rest[1] && rest[2]) {
+  const [core, config, gateway] = [rest[0], rest[1], rest[2]];
+  const origins = rest.slice(3);
   const file = renderFileConfig(
     { config: config, core: core, gateway: gateway },
-    "web",
     origins.length ? origins : undefined,
   );
   process.stdout.write(`${Bun.YAML.stringify(file, null, 2)}\n`);

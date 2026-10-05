@@ -27,7 +27,12 @@ import {
   workdirConnection,
   workdirPtyUrl,
 } from "../harness/sandbox/workdir-executor.ts";
-import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import {
+  extractBearerToken,
+  isServiceToken,
+  resolveBearerAuth,
+  type AuthContext,
+} from "../shared/auth.ts";
 import { handleMcpServiceRpc } from "./mcp-service.ts";
 import {
   recordSandboxAuditEvent,
@@ -273,7 +278,16 @@ async function handleMcpServiceRoute(
   request: CoreRequest,
 ): Promise<Response | null> {
   if (method !== "POST" || rawPath !== "/v1/mcp-service/rpc") return null;
-  if (auth.kind !== "account") return errorResponse(403, "Forbidden");
+  // Only the config plane calls this, with the service token, which is never
+  // valid on a request that came through the edge.
+  const token = extractBearerToken(request.headers.authorization);
+  if (
+    auth.kind !== "account" ||
+    !token ||
+    !isServiceToken(request.headers, token)
+  ) {
+    return errorResponse(403, "Forbidden");
+  }
 
   return await handleMcpServiceRpc(auth.account.accountId, request);
 }

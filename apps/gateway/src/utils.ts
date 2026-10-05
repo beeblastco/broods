@@ -1,4 +1,5 @@
 import type { ApiError } from "../../../packages/convex/model/apiError.ts";
+import { DEFAULT_ORIGINS } from "../../edge/src/origins.ts";
 
 export {
   resolveRequestId,
@@ -109,7 +110,7 @@ export function allowedOriginPatternsFromEnv(
       .filter(Boolean);
   }
 
-  return ["broods.app", "*.broods.app", "localhost", "127.0.0.1"];
+  return [...DEFAULT_ORIGINS];
 }
 
 export function isOriginAllowed(
