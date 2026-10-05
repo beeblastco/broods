@@ -85,7 +85,7 @@ test("the cluster limits per address, except webhooks", (): void => {
   const spec = JSON.stringify(clusterResources());
 
   expect(spec).toContain(
-    '"match":"Host(`gateway.dev.example`) && PathRegexp(`^/v1/webhooks/[^/].*/*$`)","priority":1002,"middlewares":[{"name":"broods-edge-headers"},{"name":"broods-edge-strip-trailing-slash"}]',
+    '"match":"Host(`gateway.dev.example`) && PathRegexp(`^/v1/webhooks/.*[^/]/*$`)","priority":1002,"middlewares":[{"name":"broods-edge-headers"},{"name":"broods-edge-strip-trailing-slash"}]',
   );
   expect(spec).toContain(
     '"match":"Host(`gateway.dev.example`) && PathRegexp(`^/v1(?:/.*)?/*$`)","priority":1001,"middlewares":[{"name":"broods-edge-headers"},{"name":"broods-edge-limit-http"}',

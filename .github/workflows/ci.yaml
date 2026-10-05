@@ -208,8 +208,9 @@ jobs:
           retention-days: 30
 
   local-stack:
-    # Convex in docker plus core and gateway, driven through the gateway by
-    # scripts/local-verify. Pull requests only, so one push runs it once.
+    # Convex and Traefik in docker plus core and gateway, driven through the
+    # Traefik edge by scripts/local-verify. Pull requests only, so one push
+    # runs it once. Traefik's access log lands in the uploaded logs.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -232,7 +233,7 @@ jobs:
       - name: Start the local stack
         run: bun run local:up
 
-      - name: Verify through the gateway
+      - name: Verify through the edge
         run: bun run local:verify
 
       - name: Perf report
@@ -288,6 +289,9 @@ jobs:
       # check`, and the convex tests in its `bun run test`.
       - name: Test gateway
         run: bun run --filter @broods/gateway test
+
+      - name: Test edge routes
+        run: bun run --filter @broods/edge test
 
       - name: Test discord forwarder
         run: bun run --filter @broods/discord-forwarder test

@@ -84,7 +84,7 @@ export const ROUTES: readonly EdgeRoute[] = [
     upgrade: true,
   },
   config("account", "/v1/account", ["GET", "PATCH"]),
-  config("account-sub", "/v1/account/[^/].*"),
+  config("account-sub", "/v1/account/.*[^/]"),
   config("accounts", "/v1/accounts", ["GET"]),
   config("account-item", `/v1/accounts/${SEGMENT}`, ["GET", "PATCH"]),
   config("account-rotate", `/v1/accounts/${SEGMENT}/rotate-secret`, ["POST"]),
@@ -115,7 +115,7 @@ export const ROUTES: readonly EdgeRoute[] = [
   // Channel providers post from shared egress addresses, so no per-address limit.
   {
     name: "webhooks",
-    path: "/v1/webhooks/[^/].*",
+    path: "/v1/webhooks/.*[^/]",
     upstream: "core",
     limit: "none",
   },

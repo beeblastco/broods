@@ -195,7 +195,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     }
 
     // Other account CRUD lives in the Convex config plane
-    // (packages/convex/config/http.ts); the gateway routes those paths there.
+    // (packages/convex/config/http.ts); Traefik routes those paths there.
 
     const mcpServiceResponse = await handleMcpServiceRoute(
       auth,
