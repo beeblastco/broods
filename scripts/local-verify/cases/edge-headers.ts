@@ -30,7 +30,7 @@ export async function edgeHeaders(context: VerifyContext): Promise<void> {
     `status ${direct}`,
   );
   const viaEdge = await context.measure("service token via edge", () =>
-    asService(context.gatewayUrl),
+    asService(context.edgeUrl),
   );
   assertStep(
     "the service token is refused through the edge",
@@ -38,8 +38,26 @@ export async function edgeHeaders(context: VerifyContext): Promise<void> {
     `status ${viaEdge}`,
   );
 
+  // Hosted MCP calls are Convex's, in-cluster with the service token; an
+  // account key from outside reaches core and is turned away there.
+  const mcpRpc = await fetch(`${context.edgeUrl}/v1/mcp-service/rpc`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${context.accountSecret}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+    signal: AbortSignal.timeout(10_000),
+  });
+  await mcpRpc.body?.cancel();
+  assertStep(
+    "an account key cannot call the internal MCP service",
+    mcpRpc.status === 403,
+    `status ${mcpRpc.status}`,
+  );
+
   // The gateway used to stamp this; the config plane now issues its own.
-  const unauthenticated = await fetch(`${context.gatewayUrl}/v1/account`, {
+  const unauthenticated = await fetch(`${context.edgeUrl}/v1/account`, {
     headers: { "X-Request-Id": "verify-edge-1" },
     signal: AbortSignal.timeout(10_000),
   });
@@ -51,7 +69,7 @@ export async function edgeHeaders(context: VerifyContext): Promise<void> {
   );
 
   const preflight = async (origin: string): Promise<string | null> => {
-    const response = await fetch(`${context.gatewayUrl}/v1/agents`, {
+    const response = await fetch(`${context.edgeUrl}/v1/agents`, {
       method: "OPTIONS",
       headers: {
         Origin: origin,

@@ -33,7 +33,7 @@ export interface VerifyContext {
   configPlaneUrl: string;
   coreLogPath: string;
   /** The public URL: Traefik, in front of core, the config plane and the gateway. */
-  gatewayUrl: string;
+  edgeUrl: string;
   hasModelKey: boolean;
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
@@ -81,7 +81,7 @@ export async function connectMachine(
   let output = "";
   const controller = new AbortController();
   const daemon = runMachineDaemon({
-    baseUrl: context.gatewayUrl,
+    baseUrl: context.edgeUrl,
     computer: options.computer,
     credential: async (): Promise<string> => context.accountSecret,
     cwd: process.cwd(),

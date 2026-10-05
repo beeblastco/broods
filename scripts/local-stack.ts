@@ -59,14 +59,15 @@ const HEALTH_TIMEOUT_MS = 60_000;
 const PORT_BLOCK_BASE = 4300;
 const PORT_BLOCK_SIZE = 10;
 const STATE_ROOT = join(homedir(), ".broods-local");
+/** Every port of an instance, at a fixed offset from its block base. */
 interface InstancePorts {
   convexApi: number;
   convexSite: number;
   core: number;
-  /** The public port: Traefik. */
+  /** The public port: Traefik, in front of everything else. */
+  edge: number;
+  /** The WebSocket gateway process, behind Traefik. */
   gateway: number;
-  /** The gateway process, behind Traefik. */
-  gatewayWs: number;
 }
 
 interface InstanceSecrets {
@@ -86,7 +87,8 @@ interface InstanceState {
   instanceSecret: string;
   perf?: boolean;
   pids: { core?: number; gateway?: number };
-  ports: InstancePorts;
+  /** First port of the instance's block; `ports()` derives the rest. */
+  portBase: number;
   secrets: InstanceSecrets;
 }
 
@@ -180,17 +182,17 @@ async function status(): Promise<void> {
   console.log(`instance  ${instanceId}`);
   console.log(`convex    ${container ?? "not created"}`);
   console.log(
-    `traefik   ${dockerContainerState(traefikContainerName(instanceId)) ?? "not created"} (:${state.ports.gateway})`,
+    `traefik   ${dockerContainerState(traefikContainerName(instanceId)) ?? "not created"} (:${ports(state).edge})`,
   );
   console.log(
-    `core      ${processState(state.pids.core)} (:${state.ports.core})`,
+    `core      ${processState(state.pids.core)} (:${ports(state).core})`,
   );
   console.log(
-    `gateway   ${processState(state.pids.gateway)} (:${state.ports.gatewayWs})`,
+    `gateway   ${processState(state.pids.gateway)} (:${ports(state).gateway})`,
   );
 
   const health = await probeHttp(
-    `http://127.0.0.1:${state.ports.gateway}/healthz`,
+    `http://127.0.0.1:${ports(state).edge}/healthz`,
   );
   console.log(`healthz   ${health ?? "unreachable"}`);
 
@@ -217,21 +219,17 @@ async function up(fresh: boolean, perfMode: boolean): Promise<void> {
     await down(true);
   }
   const state = loadOrCreateState();
-  // A stack from before Traefik ran the gateway on the public port.
-  if (!state.ports.gatewayWs) {
-    await stopProcess(state.pids.gateway, "gateway");
-    state.pids.gateway = undefined;
-    state.ports.gatewayWs = state.ports.gateway + 4;
-    saveState(state);
-  }
+  // Traefik needs nothing from the other steps, so a first pull of its image
+  // runs alongside them.
+  const traefikImage = pullImage(TRAEFIK_IMAGE);
   console.log(
-    `[${state.instanceId}] edge :${state.ports.gateway} gateway :${state.ports.gatewayWs} core :${state.ports.core} convex :${state.ports.convexApi}/${state.ports.convexSite}`,
+    `[${state.instanceId}] edge :${ports(state).edge} gateway :${ports(state).gateway} core :${ports(state).core} convex :${ports(state).convexApi}/${ports(state).convexSite}`,
   );
 
   await measureStep(perf, "convex container", async () => {
     ensureConvexContainer(state);
     await waitForHttp(
-      `http://127.0.0.1:${state.ports.convexApi}/version`,
+      `http://127.0.0.1:${ports(state).convexApi}/version`,
       "convex backend",
     );
   });
@@ -272,29 +270,30 @@ async function up(fresh: boolean, perfMode: boolean): Promise<void> {
     state.pids.core = undefined;
   }
   state.perf = perfMode;
-  await measureStep(perf, "start core + gateway + edge", () => {
+  await measureStep(perf, "start core + gateway + edge", async () => {
     startCore(state);
     startGateway(state);
+    await traefikImage;
     ensureTraefikContainer(state);
     saveState(state);
   });
 
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   await measureStep(perf, "health checks", async () => {
-    await Promise.all([
-      waitForHttp(`${gatewayUrl}/healthz`, "gateway via edge"),
-      waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core"),
-    ]);
     // A 401 can only come from the config plane: Traefik answers 404 until it
     // loads the routes and 502 while an upstream is down.
-    await waitForHttp(`${gatewayUrl}/v1/agents`, "config plane via edge", 401);
+    await Promise.all([
+      waitForHttp(`${edgeUrl}/healthz`, "gateway via edge"),
+      waitForHttp(`http://127.0.0.1:${ports(state).core}/healthz`, "core"),
+      waitForHttp(`${edgeUrl}/v1/agents`, "config plane via edge", 401),
+    ]);
   });
 
   const totalMs = Date.now() - startedAt;
   recordPerf(state.instanceId, "up", perf, totalMs);
   printPerfBreakdown(perf, totalMs);
   console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
-  console.log(`  edge      ${gatewayUrl}`);
+  console.log(`  edge      ${edgeUrl}`);
   console.log(
     `  admin     read secrets.adminAccount in ${join(instanceDir(state.instanceId), "state.json")}`,
   );
@@ -319,10 +318,10 @@ async function perf(record: boolean): Promise<void> {
     process.exit(1);
   }
 
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   const runId = Date.now().toString(36);
   const accountSecret = await createAccount(
-    gatewayUrl,
+    edgeUrl,
     state.secrets.adminAccount,
     `perf-${runId}`,
   );
@@ -353,7 +352,7 @@ async function verify(): Promise<void> {
 
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   let currentCase = "";
   let currentStep = "";
   const measure = async <T>(step: string, fn: () => Promise<T>): Promise<T> => {
@@ -366,12 +365,12 @@ async function verify(): Promise<void> {
   let failedStep: string | undefined;
   try {
     await measure("gateway healthz", async (): Promise<void> => {
-      const health = await probeHttp(`${gatewayUrl}/healthz`);
+      const health = await probeHttp(`${edgeUrl}/healthz`);
       assertStep("gateway healthz", health === 200, `status ${health}`);
     });
     const runId = `${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
     await measure("create account", (): Promise<string> =>
-      createAccount(gatewayUrl, state.secrets.adminAccount, `smoke-${runId}`),
+      createAccount(edgeUrl, state.secrets.adminAccount, `smoke-${runId}`),
     );
     const accountSecret = await measure(
       "create manifest account",
@@ -408,7 +407,7 @@ function configureDeploymentEnv(state: InstanceState): void {
   const entries: Record<string, string> = {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
-    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${state.ports.core}`,
+    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
     SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     STAGE_TICKET_SECRET: state.secrets.stageTicket,
     WORKOS_API_KEY: "sk_local_dummy",
@@ -506,9 +505,9 @@ function ensureConvexContainer(state: InstanceState): void {
     "--name",
     name,
     "-p",
-    `${state.ports.convexApi}:3210`,
+    `${ports(state).convexApi}:3210`,
     "-p",
-    `${state.ports.convexSite}:3211`,
+    `${ports(state).convexSite}:3211`,
     "-v",
     `${dataVolumeName(state.instanceId)}:/convex/data`,
     "--add-host",
@@ -518,9 +517,9 @@ function ensureConvexContainer(state: InstanceState): void {
     "-e",
     `INSTANCE_SECRET=${state.instanceSecret}`,
     "-e",
-    `CONVEX_CLOUD_ORIGIN=http://127.0.0.1:${state.ports.convexApi}`,
+    `CONVEX_CLOUD_ORIGIN=http://127.0.0.1:${ports(state).convexApi}`,
     "-e",
-    `CONVEX_SITE_ORIGIN=http://127.0.0.1:${state.ports.convexSite}`,
+    `CONVEX_SITE_ORIGIN=http://127.0.0.1:${ports(state).convexSite}`,
     "-e",
     "DISABLE_BEACON=true",
     "-e",
@@ -545,14 +544,11 @@ function ensureTraefikContainer(state: InstanceState): void {
   writeFileSync(
     join(edgeDir, "routes.yaml"),
     Bun.YAML.stringify(
-      renderFileConfig(
-        {
-          config: upstream(state.ports.convexSite),
-          core: upstream(state.ports.core),
-          gateway: upstream(state.ports.gatewayWs),
-        },
-        "web",
-      ),
+      renderFileConfig({
+        config: upstream(ports(state).convexSite),
+        core: upstream(ports(state).core),
+        gateway: upstream(ports(state).gateway),
+      }),
       null,
       2,
     ),
@@ -574,7 +570,7 @@ function ensureTraefikContainer(state: InstanceState): void {
     "--name",
     name,
     "-p",
-    `${state.ports.gateway}:80`,
+    `${ports(state).edge}:80`,
     "-v",
     `${edgeDir}:/etc/broods-edge:ro`,
     "-v",
@@ -623,7 +619,7 @@ function runConvexCli(
       CONVEX_DEPLOY_KEY: undefined,
       CONVEX_DEPLOYMENT: "",
       CONVEX_SELF_HOSTED_ADMIN_KEY: state.adminKey,
-      CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${state.ports.convexApi}`,
+      CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${ports(state).convexApi}`,
     },
   });
 
@@ -704,10 +700,10 @@ function startCore(state: InstanceState): void {
       ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
       ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
       CONVEX_DEPLOY_KEY: state.adminKey ?? "",
-      CONVEX_URL: `http://127.0.0.1:${state.ports.convexApi}`,
+      CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
       MEDIA_TICKET_SECRET: state.secrets.mediaTicket,
-      PORT: String(state.ports.core),
-      PUBLIC_BASE_URL: `http://127.0.0.1:${state.ports.gateway}`,
+      PORT: String(ports(state).core),
+      PUBLIC_BASE_URL: `http://127.0.0.1:${ports(state).edge}`,
       SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
       SERVICE_NAME: `local-${state.instanceId}-core`,
       STAGE_TICKET_SECRET: state.secrets.stageTicket,
@@ -731,8 +727,8 @@ function startGateway(state: InstanceState): void {
     args: ["--watch", "src/main.ts"],
     cwd: join(repoRoot, "apps", "gateway"),
     env: {
-      BROODS_CORE_URL: `http://127.0.0.1:${state.ports.core}`,
-      PORT: String(state.ports.gatewayWs),
+      BROODS_CORE_URL: `http://127.0.0.1:${ports(state).core}`,
+      PORT: String(ports(state).gateway),
       TERMINAL_TICKET_SECRET: state.secrets.terminalTicket,
     },
     instanceId: state.instanceId,
@@ -823,15 +819,33 @@ function dockerContainerState(name: string): string | null {
   return output || null;
 }
 
+/** Pulls an image in the background unless it is already local; resolves once present. */
+function pullImage(image: string): Promise<void> {
+  if (docker(["image", "inspect", image], { allowFailure: true })) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolvePull, rejectPull): void => {
+    const child = spawn("docker", ["pull", "--quiet", image], {
+      stdio: "ignore",
+    });
+    child.on("error", rejectPull);
+    child.on("exit", (code): void => {
+      if (code === 0) resolvePull();
+      else rejectPull(new Error(`docker pull ${image} exited with ${code}`));
+    });
+  });
+}
+
 // --- http ---------------------------------------------------------------
 
 // Mints a verify account with the admin secret and returns its secret.
 async function createAccount(
-  gatewayUrl: string,
+  edgeUrl: string,
   adminSecret: string,
   username: string,
 ): Promise<string> {
-  const response = await fetch(`${gatewayUrl}/v1/accounts`, {
+  const response = await fetch(`${edgeUrl}/v1/accounts`, {
     method: "POST",
     signal: AbortSignal.timeout(15_000),
     headers: {
@@ -857,19 +871,19 @@ function verifyContext(
   runId: string,
   measure: VerifyContext["measure"],
 ): VerifyContext {
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
 
   return {
     ...smokeModel(),
     account: new BroodsAccountClient({
       accountSecret: accountSecret,
-      baseUrl: gatewayUrl,
+      baseUrl: edgeUrl,
     }),
     accountSecret: accountSecret,
-    client: new BroodsClient({ apiKey: accountSecret, baseUrl: gatewayUrl }),
-    configPlaneUrl: `http://127.0.0.1:${state.ports.convexSite}`,
+    client: new BroodsClient({ apiKey: accountSecret, baseUrl: edgeUrl }),
+    configPlaneUrl: `http://127.0.0.1:${ports(state).convexSite}`,
     coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
-    gatewayUrl: gatewayUrl,
+    edgeUrl: edgeUrl,
     measure: measure,
     runId: runId,
     serviceSecret: state.secrets.serviceAuth,
@@ -1021,25 +1035,17 @@ function recordPerf(
 
 // --- instance state -----------------------------------------------------
 
-function allocatePortBlock(): InstancePorts {
+function allocatePortBase(): number {
   const used = new Set<number>();
   if (existsSync(STATE_ROOT)) {
     for (const entry of readdirSync(STATE_ROOT)) {
       const other = loadState(entry);
-      if (other) used.add(other.ports.gateway);
+      if (other) used.add(other.portBase);
     }
   }
   for (let index = 0; index < 50; index += 1) {
     const base = PORT_BLOCK_BASE + index * PORT_BLOCK_SIZE;
-    if (used.has(base)) continue;
-
-    return {
-      convexApi: base + 2,
-      convexSite: base + 3,
-      core: base + 1,
-      gateway: base,
-      gatewayWs: base + 4,
-    };
+    if (!used.has(base)) return base;
   }
   throw new Error("no free port block under ~/.broods-local");
 }
@@ -1063,13 +1069,18 @@ function loadOrCreateState(): InstanceState {
       "this stack predates the per-purpose secrets; run `up --fresh` to recreate it",
     );
   }
+  if (existing && existing.portBase === undefined) {
+    throw new Error(
+      "this stack predates the Traefik edge; run `bun run local:up -- --fresh` to recreate it",
+    );
+  }
   if (existing) return existing;
 
   const state: InstanceState = {
     instanceId: instanceId,
     instanceSecret: randomBytes(32).toString("hex"),
     pids: {},
-    ports: allocatePortBlock(),
+    portBase: allocatePortBase(),
     secrets: {
       accountConfigEncryption: randomBytes(24).toString("hex"),
       adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
@@ -1089,6 +1100,18 @@ function loadState(instanceId: string): InstanceState | null {
   if (!existsSync(path)) return null;
 
   return JSON.parse(readFileSync(path, "utf8")) as InstanceState;
+}
+
+function ports(state: InstanceState): InstancePorts {
+  const base = state.portBase;
+
+  return {
+    convexApi: base + 2,
+    convexSite: base + 3,
+    core: base + 1,
+    edge: base,
+    gateway: base + 4,
+  };
 }
 
 // state.json carries the admin and encryption secrets, so the instance dir is

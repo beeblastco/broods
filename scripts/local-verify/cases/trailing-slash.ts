@@ -8,11 +8,11 @@ interface Answer {
 /**
  * A trailing slash never moves a request to the other plane: the edge matches
  * it on every route and strips it before the upstream call, so config, health
- * and the internal-path block answer the same with or without it.
+ * and core's refusal of an internal path answer the same with or without it.
  */
 export async function trailingSlash(context: VerifyContext): Promise<void> {
   const send = async (method: string, path: string): Promise<Answer> => {
-    const response = await fetch(`${context.gatewayUrl}${path}`, {
+    const response = await fetch(`${context.edgeUrl}${path}`, {
       method: method,
       headers: { Authorization: `Bearer ${context.accountSecret}` },
       signal: AbortSignal.timeout(10_000),
@@ -31,13 +31,14 @@ export async function trailingSlash(context: VerifyContext): Promise<void> {
     `${bare.status} ${detail(slashed)}`,
   );
 
-  const health = await probeHttp(`${context.gatewayUrl}/healthz/`);
+  const health = await probeHttp(`${context.edgeUrl}/healthz/`);
   assertStep("/healthz/ is the health check", health === 200, String(health));
 
+  // Only the in-cluster service token may call it, and never through the edge.
   const internal = await send("POST", "/v1/cron-runs//");
   assertStep(
-    "an internal core path stays blocked with trailing slashes",
-    internal.status === 403,
+    "an internal core path stays refused with trailing slashes",
+    internal.status === 401,
     detail(internal),
   );
 }
