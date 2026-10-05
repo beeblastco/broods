@@ -260,7 +260,7 @@ async function signInResponse(
       refreshToken: tokens.refreshToken,
     });
     models = await listModels(ref.type, tokens.accessToken);
-  } catch (error) {
+  } catch {
     return jsonError(
       400,
       "Sign-in failed. Check the provided credentials and try again.",
