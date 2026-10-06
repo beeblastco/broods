@@ -445,6 +445,22 @@ export const accountsFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * One account's data encryption keys, each wrapped under the KEK that
+ * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` derives (`model/envelope.ts`). Blobs name
+ * the key they were written under; the newest row without `retiredAt` seals
+ * new blobs, and a retired one no longer opens anything.
+ */
+export const accountKeysFields = {
+  accountId: v.id("accounts"),
+  keyId: v.string(),
+  /** First 8 hex of SHA-256 of the secret that wrapped this key. */
+  kekId: v.string(),
+  wrappedKey: v.string(),
+  createdAt: v.number(),
+  retiredAt: v.optional(v.number()),
+};
+
 /** Agent configuration, stored encrypted so the dashboard cannot read provider secrets. */
 export const agentsFields = {
   accountId: v.id("accounts"),
@@ -740,7 +756,7 @@ export const environmentVariablesFields = {
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
-  /** SHA-256 hex of the plaintext value. */
+  /** HMAC-SHA256 hex of the plaintext under the account key, so `env set` can skip an unchanged value without a guessable hash at rest. */
   valueDigest: v.string(),
   updatedAt: v.number(),
 };
@@ -759,7 +775,7 @@ export const accountEnvVarsFields = {
  * A connection: an external account (today the ChatGPT plan) signed in once
  * per account by `broods connect`, one of each type.
  * Core refreshes it in process and writes the rotated tokens back. Tokens are
- * encrypted with the agent-config codec and never leave through the API.
+ * sealed under the account's envelope key and never leave through the API.
  */
 export const connectionsFields = {
   accountId: v.id("accounts"),
@@ -883,7 +899,7 @@ export const auditChainHeadsFields = {
 
 /**
  * Where the ledger is exported to. One webhook per account; the signing secret
- * is stored with the agent-config codec and never read back.
+ * is sealed under the account's envelope key and never read back.
  */
 export const auditSinksFields = {
   accountId: v.id("accounts"),
@@ -1441,6 +1457,9 @@ export default defineSchema({
   accounts: defineTable(accountsFields)
     .index("by_orgId", ["orgId"])
     .index("by_secretHash", ["secretHash"]),
+  accountKeys: defineTable(accountKeysFields).index("by_accountId", [
+    "accountId",
+  ]),
   agents: defineTable(agentsFields).index("by_accountId_and_name", [
     "accountId",
     "name",
