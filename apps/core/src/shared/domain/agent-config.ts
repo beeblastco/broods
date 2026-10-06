@@ -80,13 +80,13 @@ export interface AgentConfig {
   scheduler?: AgentSchedulerConfig;
   /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
-  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
-  // runtime key). Off by default: when not `true` the deployment (public-key)
-  // request path is refused. Internal callers (account/admin secret, cron,
-  // async worker) and channel webhooks are never gated by this.
+  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the runtime
+  // key). Off by default: when not `true` the runtime-key request path is
+  // refused. Internal callers (account key, admin secret, cron, async worker)
+  // and channel webhooks are never gated by this.
   publicAccess?: boolean;
   // Lets the embeddable runtime key send `system` and `model` overrides. Off by
-  // default; stage tickets and account secrets ignore it.
+  // default; stage tickets and account keys ignore it.
   allowRunOverrides?: boolean;
   [key: string]: unknown;
 }

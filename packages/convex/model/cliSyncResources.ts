@@ -44,6 +44,7 @@ import {
   loadPolicyReferenceRows,
   type PolicyReferenceRows,
 } from "./policyReferences";
+import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
@@ -268,9 +269,10 @@ export function assertManifestResources(
   resources: CliResource[],
   envValues: Record<string, string>,
   mcpIds: Record<string, string>,
+  stage: string,
 ): void {
   assertSupportedWorkspaceSandboxMounts(resources);
-  assertEnvRefsResolved(resources, envValues);
+  assertEnvRefsResolved(resources, envValues, stage);
   const ids = {
     workspaces: placeholderIds(namesOf(resources, "workspace")),
     sandboxes: placeholderIds(namesOf(resources, "sandbox")),
@@ -599,7 +601,11 @@ export async function syncSandboxResources(
     // current values. We store both: resolved for core to read, source so
     // `refreshSandboxConfigsForEnvironmentVariable` can re-resolve on a later
     // env-var change without a CLI re-sync (parity with agent configs).
-    const sourceConfig = rewriteEnvRefs(asObject(resource.config), envNames);
+    // Core never defaults the provider, so a config without one gets it here.
+    const sourceConfig = rewriteEnvRefs(
+      { provider: DEFAULT_SANDBOX_PROVIDER, ...asObject(resource.config) },
+      envNames,
+    );
     const resolvedConfig = substituteEnvPlaceholders(sourceConfig, envValues);
     const runtimeVariables = [...envNames].map((key) => ({
       key: key,

@@ -33,7 +33,7 @@ description = "Truncated example value in the OpenAPI spec"
 targetRules = ["generic-api-key"]
 condition = "AND"
 paths = ['''(^|/)apps/docs/docs/api-reference/openapi\.yaml$''']
-regexes = ['''fp_acct_xyz789''']
+regexes = ['''ask_xyz789''']
 
 [[allowlists]]
 description = "Revoked GitHub token in 7664f775, history not rewritten"

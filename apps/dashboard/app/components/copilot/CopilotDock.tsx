@@ -116,6 +116,7 @@ export function CopilotDock(): React.JSX.Element | null {
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
             ref={composer}
+            aria-label="Message"
             value={input}
             onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) =>
               setInput(event.target.value)

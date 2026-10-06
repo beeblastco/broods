@@ -3,10 +3,9 @@
  * projection. Persistence is reached through `../storage.ts`.
  */
 
+import { ACCOUNT_KEY_PREFIX } from "@broods/convex/model/accountSecrets";
 import { createHash, randomBytes } from "node:crypto";
 import { isPlainObject } from "../object.ts";
-
-const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 
 export type AccountStatus = "active" | "disabled";
 
@@ -44,7 +43,7 @@ export function createAccountId(): string {
 }
 
 export function createAccountSecret(): string {
-  return `${ACCOUNT_SECRET_PREFIX}${randomBytes(32).toString("base64url")}`;
+  return `${ACCOUNT_KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
 }
 
 export function hashAccountSecret(secret: string): string {

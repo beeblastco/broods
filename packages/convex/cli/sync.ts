@@ -1,7 +1,7 @@
 /**
  * CLI manifest sync for code-defined Broods resources.
  *
- * Authenticates with the org Bearer secret and writes desired-state resources
+ * Authenticates with the account key and writes desired-state resources
  * into the SaaS project/stage model before syncing runtime agent rows. This
  * file holds the registered Convex functions; the sync passes and shared
  * helpers live in `model/cliSync*.ts`.
@@ -261,7 +261,7 @@ export const deleteTargetsBySecretHash = internalQuery({
 });
 
 /**
- * Creates the synced stage's runtime API key (`fp_agent_…`) when it has none,
+ * Creates the synced stage's runtime key (`sk_…`) when it has none,
  * so the CLI can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
  * so reconnecting clients do not need to rotate the key.
  */
@@ -852,9 +852,9 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
 });
 
 /**
- * Resolves a CLI Bearer token hash to the account secret hash it authorizes with.
- * The org Bearer secret grants full account access (`scoped: false`); a project +
- * stage deploy key grants access only when the route resolves to the exact
+ * Resolves a CLI Bearer token hash to the account key hash it authorizes with.
+ * The account key grants full account access (`scoped: false`); a project
+ * key grants access only when the route resolves to the exact
  * project/stage the key is bound to (`scoped: true`). Returns null when the
  * token is unknown, revoked, or out of scope.
  */
@@ -964,6 +964,7 @@ export const validateManifestForStage = internalQuery({
       args.manifest.resources,
       envValues,
       externalIds.mcp,
+      args.manifest.stage,
     );
 
     return null;
@@ -999,7 +1000,7 @@ export const syncManifestBySecretHash = internalMutation({
       projectDoc._id,
       stageDoc._id,
     );
-    assertEnvRefsResolved(manifest.resources, envValues);
+    assertEnvRefsResolved(manifest.resources, envValues, manifest.stage);
     const workspaceIds = await syncWorkspaceResources(
       ctx,
       account._id,

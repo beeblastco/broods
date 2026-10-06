@@ -103,3 +103,17 @@ export function isAccountModelProviderName(
 ): value is AccountModelProviderName {
   return Object.hasOwn(MODEL_PROVIDERS, value);
 }
+
+/**
+ * The stage variable a provider's `apiKey` reads by default, `OPENAI_API_KEY`
+ * as in the CLI starter's `env("OPENAI_API_KEY")`. A dashboard-created agent
+ * stores the same `${NAME}` ref, and the dashboard names it in its hints.
+ * Null for `chatgpt`, which runs on the account's ChatGPT login instead.
+ */
+export function providerApiKeyEnvName(
+  provider: AccountModelProviderName,
+): string | null {
+  if (provider === "chatgpt") return null;
+
+  return `${provider.toUpperCase()}_API_KEY`;
+}

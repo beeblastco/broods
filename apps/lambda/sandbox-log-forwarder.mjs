@@ -33,7 +33,11 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-const RUNTIME_KEY_PATTERN = /\bfp_agent_[A-Za-z0-9_-]+\b/g;
+// A runtime key is `sk_` plus exactly 43 base64url chars, so other `sk_`
+// identifiers stay readable. `fp_agent_` is the prefix keys minted
+// before the rename still carry.
+const RUNTIME_KEY_PATTERN =
+  /\b(?:sk_[A-Za-z0-9_-]{43}|fp_agent_[A-Za-z0-9_-]+)\b/g;
 const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
 
 /**

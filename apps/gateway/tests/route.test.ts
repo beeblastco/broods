@@ -50,42 +50,19 @@ test("healthz reports the socket count against the ceiling", async () => {
   });
 });
 
-test("a disallowed origin is refused before the upgrade limiter counts it", async () => {
-  const upgradeLimiter = new RateLimiter(1, 60_000);
+test("a disallowed origin is refused before the auth-failure budget is read", async () => {
+  const authFailureLimiter = new RateLimiter(1, 60_000);
+  authFailureLimiter.allow("10.0.0.1");
   const gateway = createGateway(
-    gatewayConfig({ upgradeLimiter: upgradeLimiter }),
+    gatewayConfig({ authFailureLimiter: authFailureLimiter }),
   );
-  const { server } = fakeServer();
 
   const refused = await gateway.fetch(
     upgradeRequest("/v1/agents/endpoint-1/ws", { origin: "https://evil.test" }),
-    server,
+    fakeServer().server,
   );
 
   expect(refused!.status).toBe(403);
-  // The limiter allows one per window. If the refused request had consumed it,
-  // this allowed-origin request would come back 429 instead of 401.
-  const next = await gateway.fetch(
-    upgradeRequest("/v1/agents/endpoint-1/ws"),
-    server,
-  );
-  expect(next!.status).toBe(401);
-});
-
-test("too many upgrades answers 429 with the retry headers", async () => {
-  const gateway = createGateway(
-    gatewayConfig({ upgradeLimiter: new RateLimiter(1, 60_000) }),
-  );
-  const { server } = fakeServer();
-
-  await gateway.fetch(upgradeRequest("/v1/agents/endpoint-1/ws"), server);
-  const limited = await gateway.fetch(
-    upgradeRequest("/v1/agents/endpoint-1/ws"),
-    server,
-  );
-
-  expect(limited!.status).toBe(429);
-  expect(limited!.headers.get("retry-after")).toBeTruthy();
 });
 
 test("a blocked auth-failure budget answers before the token check", async () => {
@@ -102,6 +79,7 @@ test("a blocked auth-failure budget answers before the token check", async () =>
   );
 
   expect(response!.status).toBe(429);
+  expect(response!.headers.get("retry-after")).toBeTruthy();
   expect(await response!.json()).toMatchObject({
     error: { message: "Too many failed authentication attempts" },
   });
@@ -237,98 +215,18 @@ test("an observability socket bound to another project is refused", async () => 
   expect(response!.status).toBe(403);
 });
 
-test("a config path with no config plane configured answers 503", async () => {
-  const gateway = createGateway(gatewayConfig({ configBaseUrl: undefined }));
+test("anything but a health check or a socket upgrade is a 404", async (): Promise<void> => {
+  const gateway = createGateway(gatewayConfig());
+  const { server } = fakeServer();
 
-  const response = await gateway.fetch(
+  const plain = await gateway.fetch(
     new Request("https://gw.example/v1/agents"),
-    fakeServer().server,
-  );
-
-  expect(response!.status).toBe(503);
-});
-
-test("a path on neither upstream is a 404", async () => {
-  const gateway = createGateway(gatewayConfig());
-
-  const response = await gateway.fetch(
-    new Request("https://gw.example/not-a-route"),
-    fakeServer().server,
-  );
-
-  expect(response!.status).toBe(404);
-});
-
-test("core routes only in-cluster callers use are a 404 at the public door", async () => {
-  const forwarded: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    forwarded.push(new URL(String(input)).pathname);
-
-    return new Response(null, { status: 204 });
-  }) as typeof fetch;
-  const gateway = createGateway(gatewayConfig());
-  const { server } = fakeServer();
-  const post = (path: string): Promise<Response | undefined> =>
-    gateway.fetch(
-      new Request(`https://gw.example${path}`, { method: "POST", body: "{}" }),
-      server,
-    );
-
-  expect((await post("/v1/cron-runs"))!.status).toBe(404);
-  expect((await post("/v1/cron-runs/"))!.status).toBe(404);
-  expect((await post("/v1/mcp-service/rpc"))!.status).toBe(404);
-  expect(forwarded).toEqual([]);
-
-  expect((await post("/v1/sandboxes/sbx_1/terminate"))!.status).toBe(204);
-  expect((await post("/v1/internal/observability-scope"))!.status).toBe(204);
-  expect(forwarded).toEqual([
-    "/v1/sandboxes/sbx_1/terminate",
-    "/v1/internal/observability-scope",
-  ]);
-});
-
-test("a trailing slash keeps a request on its plane and is stripped upstream", async (): Promise<void> => {
-  const forwarded: string[] = [];
-  globalThis.fetch = Object.assign(
-    async (input: RequestInfo | URL): Promise<Response> => {
-      forwarded.push(input instanceof Request ? input.url : input.toString());
-
-      return new Response(null, { status: 204 });
-    },
-    { preconnect: realFetch.preconnect },
-  );
-  const gateway = createGateway(gatewayConfig());
-  const { server } = fakeServer();
-  const send = (method: string, path: string): Promise<Response | undefined> =>
-    gateway.fetch(
-      new Request(`https://gw.example${path}`, { method: method }),
-      server,
-    );
-
-  await send("GET", "/v1/agents/");
-  await send("DELETE", "/v1/account/");
-  await send("PUT", "/v1/skills/x//?draft=1");
-
-  expect(forwarded).toEqual([
-    "https://config.example/v1/agents",
-    "https://core.example/v1/account",
-    "https://config.example/v1/skills/x?draft=1",
-  ]);
-});
-
-test("the opt-in HTTP ceiling meters the proxied branch", async () => {
-  const gateway = createGateway(
-    gatewayConfig({ httpLimiter: new RateLimiter(1, 60_000) }),
-  );
-  const { server } = fakeServer();
-
-  await gateway.fetch(new Request("https://gw.example/not-a-route"), server);
-  const limited = await gateway.fetch(
-    new Request("https://gw.example/not-a-route"),
     server,
   );
+  const upgrade = await gateway.fetch(upgradeRequest("/v1/agents"), server);
 
-  expect(limited!.status).toBe(429);
+  expect(plain!.status).toBe(404);
+  expect(upgrade!.status).toBe(404);
 });
 
 test("every response carries a request id, reusing a well-formed inbound one", async () => {
@@ -359,35 +257,24 @@ test("a router failure is a 500 that still carries its request id", async () => 
     upgrade: () => false,
   } as unknown as Bun.Server<GatewayData>;
 
-  const response = await gateway.fetch(
-    new Request("https://gw.example/not-a-route", {
-      headers: { "x-request-id": "req-boom" },
-    }),
-    server,
-  );
+  const request = upgradeRequest("/v1/agents/endpoint-1/ws");
+  request.headers.set("x-request-id", "req-boom");
+  const response = await gateway.fetch(request, server);
 
   expect(response!.status).toBe(500);
   expect(response!.headers.get("x-request-id")).toBe("req-boom");
 });
 
-test("the env config resolves the upstreams and limiters the router reads", () => {
+test("the env config resolves the core and limiter the router reads", () => {
   const keys = [
-    "BROODS_CORE_URLS",
-    "BROODS_CONFIG_URL",
-    "GATEWAY_UPGRADES_PER_MINUTE",
-    "GATEWAY_HTTP_REQUESTS_PER_MINUTE",
-    "GATEWAY_FORWARD_ACCOUNT_ID",
-    "GATEWAY_DENY_INTERNAL_PATHS",
+    "BROODS_CORE_URL",
+    "GATEWAY_AUTH_FAILURES_PER_MINUTE",
     "TERMINAL_TICKET_SECRET",
   ] as const;
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   try {
-    process.env.BROODS_CORE_URLS = "core.internal,https://core-2.internal/";
-    process.env.BROODS_CONFIG_URL = "config.internal";
-    process.env.GATEWAY_UPGRADES_PER_MINUTE = "7";
-    delete process.env.GATEWAY_HTTP_REQUESTS_PER_MINUTE;
-    delete process.env.GATEWAY_FORWARD_ACCOUNT_ID;
-    delete process.env.GATEWAY_DENY_INTERNAL_PATHS;
+    process.env.BROODS_CORE_URL = "core.internal/";
+    process.env.GATEWAY_AUTH_FAILURES_PER_MINUTE = "7";
     delete process.env.TERMINAL_TICKET_SECRET;
 
     expect(() => gatewayConfigFromEnv()).toThrow("TERMINAL_TICKET_SECRET");
@@ -395,17 +282,8 @@ test("the env config resolves the upstreams and limiters the router reads", () =
 
     const config = gatewayConfigFromEnv();
 
-    expect(config.coreBaseUrls).toEqual([
-      "https://core.internal",
-      "https://core-2.internal",
-    ]);
-    expect(config.configBaseUrl).toBe("https://config.internal");
-    expect(config.upgradeLimiter.limit).toBe(7);
-    // Off unless set, because channel webhooks arrive on the proxied branch
-    // from one provider's egress addresses.
-    expect(config.httpLimiter).toBeUndefined();
-    expect(config.proxyOptions.forwardAccountId).toBe(false);
-    expect(config.denyInternalPaths).toBe(true);
+    expect(config.coreBaseUrl).toBe("https://core.internal");
+    expect(config.authFailureLimiter.limit).toBe(7);
     expect(config.terminalTicketSecrets).toEqual(["next-secret", "old-secret"]);
   } finally {
     for (const [key, value] of saved) {
@@ -546,15 +424,10 @@ function gatewayConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
     allowedOrigins: ["broods.app", "*.broods.app"],
     authFailureLimiter: new RateLimiter(20, 60_000),
-    configBaseUrl: "https://config.example",
-    coreBaseUrls: ["https://core.example"],
-    denyInternalPaths: true,
-    httpLimiter: undefined,
+    coreBaseUrl: "https://core.example",
     limits: limits(),
-    proxyOptions: { forwardAccountId: false },
     spentTickets: memorySpentTickets(),
     terminalTicketSecrets: ["terminal-secret"],
-    upgradeLimiter: new RateLimiter(120, 60_000),
     ...overrides,
   };
 }
@@ -566,7 +439,6 @@ function limits(overrides: Partial<GatewayLimits> = {}): GatewayLimits {
     backpressureBytes: 1024,
     idleTimeoutSeconds: 60,
     runStartTimeoutMs: 1_000,
-    maxRequestBodyBytes: 1024,
     ...overrides,
   };
 }
