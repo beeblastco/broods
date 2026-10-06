@@ -17,6 +17,7 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { mcpDoc } from "./account/mcp";
+import { mcpFields } from "./schema";
 import { storeMcpBundle, type StoredMcpBundle } from "./model/bundles";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./model/envRefs";
 import { REDACTED_SECRET_VALUE } from "./model/configValues";
@@ -305,6 +306,7 @@ export const saveForNode = action({
     sourceCode: v.optional(v.string()),
     description: v.optional(v.string()),
     disabled: v.optional(v.boolean()),
+    runtime: mcpFields.runtime,
   },
   returns: v.object({
     serverId: v.id("mcp"),
@@ -330,6 +332,7 @@ export const saveForNode = action({
         headers: args.headers,
         description: args.description,
         disabled: args.disabled,
+        runtime: args.runtime,
       }),
       { requireConnection: context.existing === null },
     );
@@ -481,8 +484,9 @@ async function resolveConnection(
   input: McpInput,
 ): Promise<ResolvedConnection> {
   const existing = context.existing;
+  // A save that carries no connection (enabled, runtime) keeps the row's own.
   const transport: ResolvedConnection["transport"] =
-    input.transport === "hosted" ? "hosted" : "http";
+    (input.transport ?? existing?.transport) === "hosted" ? "hosted" : "http";
   if (transport === "http") {
     const url = input.url ?? existing?.url;
     if (!url) throw new Error("Provide the server url before saving it.");
@@ -546,6 +550,7 @@ async function writeRow(
     name: input.name,
     description: input.description,
     disabled: input.disabled,
+    runtime: input.runtime,
     sourceCode: sourceCode,
   });
   if (context.existing) {

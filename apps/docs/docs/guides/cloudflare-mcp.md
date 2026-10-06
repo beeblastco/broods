@@ -20,7 +20,7 @@ With `runtime: "auto"` the CLI tries a Workers build first (browser and `workerd
 
 A server that loads on Workers but fails while it serves a call stays there until its code changes.
 
-If the bundle fails to load on Cloudflare, or the runtime is down or unreachable, nothing has run yet, so Broods runs that batch on Lambda instead and logs a warning. A misconfigured runtime (a wrong key, a missing setting) fails the call instead of hiding behind Lambda. Once a call has started on Cloudflare it is never retried, because a tool may already have acted.
+If the bundle fails to load on Cloudflare, or the runtime cannot be reached at all, nothing has run yet, so Broods runs that batch on Lambda instead and logs a warning. Any other runtime error (a wrong key, a missing setting, a Cloudflare error page) fails the call, because Broods cannot be sure none of it ran. Once a call has started on Cloudflare it is never retried, because a tool may already have acted.
 
 ## What the server can reach on Cloudflare
 

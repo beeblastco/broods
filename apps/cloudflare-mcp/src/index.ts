@@ -19,6 +19,8 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const BUNDLE_FETCH_TIMEOUT_MS = 10_000;
 /** Bundle download plus module evaluation, before the batch is answered. */
 const LOAD_TIMEOUT_MS = BUNDLE_FETCH_TIMEOUT_MS + 2_000;
+/** Set only on this Worker's own refusals before any request ran; core reruns those on Lambda. */
+const NOTHING_RAN_HEADER = "x-broods-nothing-ran";
 const END_FRAME = new TextEncoder().encode(`${JSON.stringify({ t: "end" })}\n`);
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 /** Per request into the tenant isolate. */
@@ -137,8 +139,8 @@ export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
  * this runtime's R2 copy before S3, with no
  * bindings, no Node compatibility and egress through TenantOutbound. The
  * bundle loads before the batch is answered: a bundle that cannot load is a
- * 422 (504 when loading only timed out) with no request served, which core
- * reruns on Lambda. The response streams
+ * 422 (504 when loading only timed out) tagged NOTHING_RAN_HEADER, which
+ * core reruns on Lambda. The response streams
  * the NDJSON frames the Lambda runner speaks, each as soon as its request
  * settles, then `end`.
  */
@@ -149,9 +151,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     if (!env.MCP_API_KEY || !env.BUNDLE_ORIGIN) {
-      // 500, not 503: core reruns 502 and up on Lambda, and a misconfigured
-      // Worker should fail loudly instead.
-      return new Response("runtime is not configured", { status: 500 });
+      return new Response("runtime is not configured", { status: 503 });
     }
     if (!(await bearerMatches(request, env.MCP_API_KEY))) {
       return new Response("unauthorized", { status: 401 });
@@ -197,6 +197,7 @@ export default {
     } catch (error) {
       return new Response(boundedMessage("bundle failed to load", error), {
         status: error instanceof DeadlineError ? 504 : 422,
+        headers: { [NOTHING_RAN_HEADER]: "1" },
       });
     }
     const { readable, writable } = new TransformStream<

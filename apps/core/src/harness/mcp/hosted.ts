@@ -39,6 +39,8 @@ const CLOUDFLARE_REQUEST_TIMEOUT_MS = 45_000;
 const CLOUDFLARE_ERROR_BODY_CHARS = 512;
 // The Worker's answer for a bundle that cannot load there.
 const WORKER_UNLOADABLE_STATUS = 422;
+// The Worker sets it only when it refused before running any request.
+const WORKER_NOTHING_RAN_HEADER = "x-broods-nothing-ran";
 // How long such a bundle goes straight to Lambda. Content-addressed, so the
 // wait only lets a transient load failure (a bundle download) clear.
 const WORKER_UNLOADABLE_TTL_MS = 10 * 60_000;
@@ -56,8 +58,8 @@ const openBatches = new Map<string, OpenBatch>();
 const unloadableOnWorker = new Map<string, number>();
 
 /**
- * The Worker could not load the bundle, was down or was never reached, so no
- * tenant code ran there and sendBatch may run the same batch on Lambda.
+ * The Worker could not load the bundle or was never reached, so no tenant
+ * code ran there and sendBatch may run the same batch on Lambda.
  * `status` is the Worker's answer, absent when it was never reached.
  */
 class WorkerNotRunError extends Error {
@@ -307,13 +309,9 @@ async function drainBridgeStream(
       CLOUDFLARE_ERROR_BODY_CHARS,
     );
     const message = `cloudflare MCP runtime failed with HTTP ${response.status}${reason ? `: ${reason}` : ""}`;
-    // A bundle that cannot load there, or an outage (502 and up, a load
-    // timeout included), ran nothing and may rerun on Lambda. A 401, a 400 or
-    // the Worker's own 500 is a misconfiguration and fails loudly.
-    if (
-      response.status === WORKER_UNLOADABLE_STATUS ||
-      response.status >= 502
-    ) {
+    // Only the Worker's own tag proves no request ran. Any other error, a
+    // misconfiguration or a status Cloudflare wrote, fails loudly.
+    if (response.headers.has(WORKER_NOTHING_RAN_HEADER)) {
       throw new WorkerNotRunError(message, response.status);
     }
     throw new Error(message);
@@ -555,8 +553,8 @@ async function runBatch(
 
 // One invoke for one batch, on the row's runtime; a transport failure before
 // any terminal frame throws for every call. A Worker that could not load the
-// bundle, was down or was unreachable ran nothing, so the same batch reruns
-// on Lambda; a misconfigured Worker fails the batch.
+// bundle or was never reached ran nothing, so the same batch reruns on
+// Lambda; any other Worker error fails the batch.
 async function sendBatch(
   record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],

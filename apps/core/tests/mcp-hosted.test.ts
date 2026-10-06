@@ -288,35 +288,27 @@ describe("hosted MCP metering", () => {
     expect(recorded).toEqual([charge, charge]);
   });
 
-  it("runs the batch on Lambda when the Worker was down, and charges only Lambda", async (): Promise<void> => {
-    const bridge = mockBridge(
-      async (): Promise<Response> =>
-        new Response("Service Unavailable", { status: 503 }),
-    );
+  it("runs the batch on Lambda when the Worker was never reached, and charges only Lambda", async (): Promise<void> => {
+    const bridge = mockBridge(async (): Promise<Response> => {
+      throw Object.assign(new TypeError("Unable to connect"), {
+        code: "ConnectionRefused",
+      });
+    });
     const lambda = mockLambda("lambda");
 
     try {
       expect(await callWorkersRow()).toBe("lambda");
-      bridge.mockImplementation(
-        workerFetch(async (): Promise<Response> => {
-          throw Object.assign(new TypeError("Unable to connect"), {
-            code: "ConnectionRefused",
-          });
-        }),
-      );
-      expect(await callWorkersRow()).toBe("lambda");
-      expect(bridge).toHaveBeenCalledTimes(2);
-      expect(lambda).toHaveBeenCalledTimes(2);
+      expect(lambda).toHaveBeenCalledTimes(1);
       await Promise.resolve();
     } finally {
       bridge.mockRestore();
       lambda.mockRestore();
     }
 
-    expect(recorded).toHaveLength(2);
+    expect(recorded).toHaveLength(1);
   });
 
-  it("fails loudly instead of falling back when the Worker is misconfigured", async (): Promise<void> => {
+  it("fails loudly on any Worker error it did not tag as nothing ran", async (): Promise<void> => {
     const bridge = mockBridge(
       async (): Promise<Response> =>
         new Response("unauthorized", { status: 401 }),
@@ -328,10 +320,10 @@ describe("hosted MCP metering", () => {
       bridge.mockImplementation(
         workerFetch(
           async (): Promise<Response> =>
-            new Response("runtime is not configured", { status: 500 }),
+            new Response("Service Unavailable", { status: 503 }),
         ),
       );
-      await expect(callWorkersRow()).rejects.toThrow("HTTP 500");
+      await expect(callWorkersRow()).rejects.toThrow("HTTP 503");
       expect(lambda).not.toHaveBeenCalled();
     } finally {
       bridge.mockRestore();
@@ -342,7 +334,10 @@ describe("hosted MCP metering", () => {
   it("sends a bundle the Worker could not load straight to Lambda after that", async (): Promise<void> => {
     const bridge = mockBridge(
       async (): Promise<Response> =>
-        new Response("bundle failed to load: sha256", { status: 422 }),
+        new Response("bundle failed to load: sha256", {
+          status: 422,
+          headers: { "x-broods-nothing-ran": "1" },
+        }),
     );
     const lambda = mockLambda("lambda");
 
@@ -360,7 +355,10 @@ describe("hosted MCP metering", () => {
   it("tries the Worker again after a load that only timed out", async (): Promise<void> => {
     const bridge = mockBridge(
       async (): Promise<Response> =>
-        new Response("bundle failed to load: load timed out", { status: 504 }),
+        new Response("bundle failed to load: load timed out", {
+          status: 504,
+          headers: { "x-broods-nothing-ran": "1" },
+        }),
     );
     const lambda = mockLambda("lambda");
 
@@ -377,7 +375,10 @@ describe("hosted MCP metering", () => {
   it("keeps the Worker's reason when the Lambda fallback fails too", async (): Promise<void> => {
     const bridge = mockBridge(
       async (): Promise<Response> =>
-        new Response("bundle failed to load: sha256", { status: 422 }),
+        new Response("bundle failed to load: sha256", {
+          status: 422,
+          headers: { "x-broods-nothing-ran": "1" },
+        }),
     );
     delete process.env.TOOL_RUNNER_FUNCTION_NAME;
 

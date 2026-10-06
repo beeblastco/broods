@@ -89,6 +89,7 @@ it("refuses a wrong bearer before it downloads tenant code", async (): Promise<v
   const response = await send(batch("acct-a"), "wrong");
 
   expect(response.status).toBe(401);
+  expect(response.headers.has("x-broods-nothing-ran")).toBe(false);
   expect(bundleFetches).toBe(0);
 });
 
@@ -141,6 +142,7 @@ it("answers 422 before running anything when the bundle does not match its sha25
   });
 
   expect(response.status).toBe(422);
+  expect(response.headers.get("x-broods-nothing-ran")).toBe("1");
   expect(await response.text()).toContain("sha256");
 });
 
