@@ -164,7 +164,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Proposals",
       items: [
-        { type: "doc", id: "design/jev-judge", label: "Judge (proposal)" },
+        { type: "doc", id: "internals/jev-judge", label: "Judge (proposal)" },
       ],
     },
   ],

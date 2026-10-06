@@ -15,7 +15,7 @@ This is a design note, not shipped behavior. No `judge` config key exists, `ctx.
 
 Broods makes three kinds of runtime model call, and none of them is a decision. Every classify, route, gate, or rank today is either the full agent model spending a turn in its tool loop, or a regex.
 
-That leaves the cheap middle empty. Dropping an obvious spam message costs a whole agent run. Deciding which of four agents should answer costs a whole agent run. Scoring a tool result before it goes back into context costs a whole agent run, or it does not happen.
+That leaves the cheap middle empty. A hook can already drop a message that matches a keyword, but dropping one that is spam by meaning costs a whole agent run. Deciding which of four agents should answer costs a whole agent run. Scoring a tool result before it goes back into context costs a whole agent run, or it does not happen.
 
 ## What Jev is
 
@@ -23,11 +23,13 @@ Jev is TypeSafe AI's System One model. It answers a question instead of writing 
 
 It replaces nothing the agent model does. It fills the tier below it.
 
-| Question type | Criteria                          | Answer                               |
-| ------------- | --------------------------------- | ------------------------------------ |
-| `boolean`     | one statement                     | `probability`, 0 to 1                |
-| `choice`      | up to 255 labeled options         | `choice`, plus the full distribution |
-| `score`       | an ordered rubric, 2 to 10 levels | `score`, fractional                  |
+| Question type | Criteria                                        | Answer                               |
+| ------------- | ----------------------------------------------- | ------------------------------------ |
+| `boolean`     | optional `true` and `false` descriptions        | `probability`, 0 to 1                |
+| `choice`      | up to 255 labeled options                       | `choice`, plus the full distribution |
+| `score`       | an ordered list of 2 to 10 levels, from index 0 | `score`, fractional                  |
+
+Every question also carries `instructions`, the question itself.
 
 Questions in one request evaluate independently and in parallel, so asking five things costs about what asking one costs. That matters for the shape of the API below: batch the questions, do not chain the calls.
 
@@ -59,7 +61,7 @@ There is no separate `judges` table and no judge id to reference. A table that e
 
 ## Calling it
 
-In a hook, `judge` arrives on `ctx` next to `fetch`. It has to. The isolate rejects bare imports, so hook code cannot `import { experimental_evaluate } from "ai"` itself. Core holds the model and the key, and bridges one function across, exactly as it does for `ctx.fetch`.
+In a hook, `judge` arrives on `ctx` next to `fetch`. It has to. The isolate rejects bare imports, so hook code cannot `import { experimental_evaluate } from "ai"` itself. Core holds the model and the key, and bridges one function across, exactly as it does for `ctx.fetch`. The questions take the SDK's own shape, so core passes them straight through.
 
 ```ts
 hooks: {
@@ -67,7 +69,10 @@ hooks: {
     const { answers } = await ctx.judge({
       state: event.text,
       questions: {
-        spam: { type: "boolean", criteria: "Is this spam or an automated promotion?" },
+        spam: {
+          type: "boolean",
+          instructions: "Is this spam or an automated promotion?",
+        },
       },
     });
 
@@ -82,18 +87,20 @@ Several questions, one round trip:
 const { answers } = await ctx.judge({
   state: event.text,
   questions: {
-    spam: { type: "boolean", criteria: "Is this spam?" },
+    spam: { type: "boolean", instructions: "Is this spam?" },
     language: {
       type: "choice",
+      instructions: "Which language is this written in?",
       criteria: { en: "English", vi: "Vietnamese", other: "Anything else" },
     },
     urgency: {
       type: "score",
-      criteria: {
-        1: "Can wait days",
-        3: "Should be handled today",
-        5: "Needs an answer now",
-      },
+      instructions: "How soon does this need an answer?",
+      criteria: [
+        "Can wait days",
+        "Should be handled today",
+        "Needs an answer now",
+      ],
     },
   },
 });
