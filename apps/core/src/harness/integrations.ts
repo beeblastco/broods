@@ -136,6 +136,7 @@ import {
   getIngressStatusByEventId,
   type AppliedIngress,
   type ChannelTargetRefs,
+  type IngressConfigRef,
   type IngressMode,
   type IngressStatusRecord,
   type PublicDeploymentIngress,
@@ -202,6 +203,13 @@ export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
   agentConfig: AgentConfig;
+  // How a queued envelope rebuilds `agentConfig` when it runs; the stored
+  // envelope carries this, never the config. Absent on a subagent child.
+  configRef?: IngressConfigRef;
+  // Set on a subagent's run, to the config it runs on. That config derives
+  // from its parent, so no ref can rebuild it and its ref-less controls run on
+  // this.
+  subagentConfig?: AgentConfig;
   // Per-deployment id from the runtime key, when the request authenticated with
   // one. Scopes realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
@@ -257,17 +265,21 @@ export interface DirectInboundEvent {
   answers?: QuestionAnswer[];
 }
 
-/** The scope a queued envelope needs to be rebuilt into its own run. */
+/**
+ * The scope a queued envelope needs to be rebuilt into its own run. It names
+ * no config: the envelope's ref rebuilds one. Only a subagent's scope carries
+ * `subagentConfig`, for the ref-less controls of that subagent.
+ */
 export type IngressDispatchScope = Pick<
   DirectInboundEvent,
   | "accountId"
   | "agentId"
-  | "agentConfig"
   | "conversationKey"
   | "publicConversationKey"
   | "endpointId"
   | "projectSlug"
   | "stageSlug"
+  | "subagentConfig"
 >;
 
 export type DispatchAppliedIngress = (
@@ -2209,6 +2221,7 @@ async function parseDirectPayload(
       toRuntimeAgentConfig(agent.config),
       overrides,
     ),
+    configRef: { model: overrides?.model },
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
     runId: createRunId(),

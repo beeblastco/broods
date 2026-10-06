@@ -202,6 +202,28 @@ export function redactSerialized(
   }
 }
 
+/**
+ * Scrubs every nested string of the run's secret values and Broods' own key
+ * formats, and nothing else: keys are left alone and the log patterns for
+ * `Basic`, `Bearer` and query strings do not run, unlike `redact`. For text
+ * and tool data that is read back, stream frames and stored tool rows: prose
+ * and a `nextPageToken` must reach the reader as they were.
+ */
+export function redactWithRunSecrets(
+  value: unknown,
+  secretValues: readonly string[] = runSecretValues(),
+): unknown {
+  return redactRunValue(value, matchableSecrets(secretValues));
+}
+
+/** The sensitive env values plus the secrets the observability context holds for this run. */
+export function runSecretValues(): string[] {
+  return [
+    ...sensitiveEnvValues(),
+    ...(getObservabilityContext()?.secretValues ?? []),
+  ];
+}
+
 /** Redact a free-form string using sensitive env values plus task-local secrets. */
 export function redactSensitiveText(
   value: string,
@@ -243,7 +265,7 @@ function emit(
   const ctx = getObservabilityContext();
   const ts = Date.now();
   const service = process.env.SERVICE_NAME ?? "broods-core";
-  const secretValues = [...sensitiveEnvValues(), ...(ctx?.secretValues ?? [])];
+  const secretValues = runSecretValues();
 
   const redactedMessage = redactString(message, secretValues);
   const redactedData = data
@@ -357,6 +379,26 @@ function redactString(value: string, secretValues: readonly string[]): string {
   return scrubSecrets(value, matchableSecrets(secretValues));
 }
 
+/** Recurses for `redactWithRunSecrets` over secrets already from `matchableSecrets`. */
+function redactRunValue(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return replaceSecretValues(value, secrets);
+  if (value === null || typeof value !== "object") return value;
+  // What JSON.stringify would write: a Date is its ISO string, not `{}`.
+  if ("toJSON" in value && typeof value.toJSON === "function") {
+    return redactRunValue(value.toJSON(), secrets);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactRunValue(item, secrets));
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      redactRunValue(item, secrets),
+    ]),
+  );
+}
+
 function redactValue(value: unknown, secrets: readonly string[]): unknown {
   if (typeof value === "string") return scrubSecrets(value, secrets);
   if (value === null || typeof value !== "object") return value;
@@ -371,18 +413,28 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
   return out;
 }
 
-/** Replaces each secret (already from `matchableSecrets`) and every known token shape. */
-function scrubSecrets(value: string, secrets: readonly string[]): string {
+/** Replaces each secret (already from `matchableSecrets`) and Broods' own key formats. */
+function replaceSecretValues(
+  value: string,
+  secrets: readonly string[],
+): string {
   let redacted = value;
   for (const secret of secrets) {
     redacted = redacted.split(secret).join("[redacted]");
   }
-  redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
-  redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
-  redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
   redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
   redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
   redacted = redacted.replace(RUN_TOKEN_PATTERN, "[redacted]");
+
+  return redacted;
+}
+
+/** A log string: each secret (already from `matchableSecrets`), then anything shaped like a credential. */
+function scrubSecrets(value: string, secrets: readonly string[]): string {
+  let redacted = replaceSecretValues(value, secrets);
+  redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
+  redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
+  redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
 
   return redacted;
 }
