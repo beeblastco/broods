@@ -1,6 +1,7 @@
 /**
  * Provider-neutral sandbox executor helpers.
- * Keep small coercion, path, quoting, and output utilities here.
+ * Keep small coercion, path, quoting, and output utilities here, plus the
+ * per-sandbox queue that orders dashboard-row writes.
  */
 
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
@@ -192,8 +193,9 @@ export function mergeSandboxEnv(
 
 /**
  * Run `write` after every earlier write queued for this sandbox id. A failed
- * write never blocks the ones behind it. Used for an ephemeral sandbox's
- * dashboard row, so its removal cannot land before the upsert that created it.
+ * write never blocks the ones behind it. Every dashboard-row write for a sandbox
+ * (upsert, burst, remove) goes through it, so a burst never beats the row it
+ * bills and a removal never lands before the upsert that created the row.
  */
 export function queueMirrorWrite(
   sandboxId: string,

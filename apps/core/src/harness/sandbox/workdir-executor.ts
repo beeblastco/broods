@@ -202,15 +202,18 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         : undefined;
     void ephemeralMount?.catch((): void => {});
     const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
-    // An ephemeral sandbox is billable compute for the length of the call, so it
-    // gets a row keyed by its id; the teardown removes it, which meters the call.
-    const accountId = persistent
-      ? undefined
-      : this.#config.controlPlane?.accountId;
+    // A platform-paid ephemeral sandbox gets a row keyed by its id for the call;
+    // the teardown removes it, which meters the call. Own nodes are not billed and
+    // choose their own ids, so they get no row.
+    const controlPlane = this.#config.controlPlane;
+    const accountId =
+      persistent || controlPlane?.ownCredentials
+        ? undefined
+        : controlPlane?.accountId;
     if (accountId)
       void queueMirrorWrite(sandbox.id, () =>
         upsertSandboxInstance(
-          this.#config.controlPlane,
+          controlPlane,
           "sandbox",
           sandbox.id,
           sandbox.id,
@@ -284,7 +287,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         if (accountId)
           waitUntil(
             queueMirrorWrite(sandbox.id, () =>
-              removeSandboxInstance(accountId, sandbox.id),
+              removeSandboxInstance(accountId, sandbox.id, sandbox.id),
             ),
           );
       }

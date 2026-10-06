@@ -384,8 +384,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       if (!persistent) {
         void this.#terminate(microvmId);
         // Queued after the upsert and burst writes, off the tool-call clock;
-        // otherwise a slow upsert can recreate a deleted row.
-        void queueMirrorWrite(microvmId, () => this.#unmirror(microvmId));
+        // otherwise a slow upsert can recreate a deleted row. Shutdown drains it.
+        waitUntil(queueMirrorWrite(microvmId, () => this.#unmirror(microvmId)));
       }
     }
   }
