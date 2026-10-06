@@ -3144,6 +3144,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
         writes.push(input);
       },
     },
+    auditLedger: { append: async (): Promise<void> => {} },
   };
 }
 

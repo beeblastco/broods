@@ -5,7 +5,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
+import { accountCipher } from "../model/accountKeys";
 import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
@@ -172,13 +172,15 @@ describe("provider key", () => {
       t,
       (await docOf(t, configId))?.agentId as Id<"agents">,
     );
-    const resolved = await decryptAgentConfigBlob(
-      {
-        ciphertext: agent?.encryptedConfig ?? "",
-        iv: agent?.encryptionIv ?? "",
-        tag: agent?.encryptionTag ?? "",
-      },
-      "test-config-secret",
+    const resolved = await t.run(async (ctx) =>
+      (await accountCipher(ctx, agent!.accountId)).decrypt(
+        "agents:encryptedConfig",
+        {
+          ciphertext: agent?.encryptedConfig ?? "",
+          iv: agent?.encryptionIv ?? "",
+          tag: agent?.encryptionTag ?? "",
+        },
+      ),
     );
     expect(resolved?.provider).toEqual({
       anthropic: { apiKey: "sk-ant-test" },

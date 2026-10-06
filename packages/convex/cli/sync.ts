@@ -16,12 +16,13 @@ import {
   type MutationCtx,
 } from "../_generated/server";
 import { ensureStageDeployment } from "../agent/deployments";
-import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
+import { accountCipher } from "../model/accountKeys";
+import { sha256Hex } from "../model/accountSecrets";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
   auditDetailsJson,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
 import {
   accountFromSecretHash,
@@ -326,11 +327,11 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       rotate: args.rotate === true,
     });
     if (args.auditSync) {
-      const actor: ConfigAuditActor = {
+      const actor: AuditActor = {
         kind: args.auditSync.actorKind,
         id: args.auditSync.actorId,
       };
-      await insertConfigAuditEvent(ctx.db, {
+      await appendAuditEvent(ctx.db, {
         accountId: account._id,
         projectId: projectDoc._id,
         stageId: stageDoc._id,
@@ -445,18 +446,12 @@ export const getEnvBySecretHash = internalMutation({
       .unique();
     if (!existing) return null;
 
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-      throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables",
-      );
-    }
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: existing.ciphertext, iv: existing.iv, tag: existing.tag },
-      secret,
+    const cipher = await accountCipher(ctx, account._id);
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      existing,
     );
-    const revealed = decrypted as { value?: unknown } | null;
-    const value = typeof revealed?.value === "string" ? revealed.value : "";
+    const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: resolved.projectDoc._id,
@@ -521,6 +516,9 @@ export const getManifestBySecretHash = internalQuery({
 /**
  * Names, update times and value digests for the CLI `env list` / `env sync`.
  * Values are never returned, since they are encrypted at rest and write-only.
+ * The digest is SHA-256 of the plaintext computed per request, so the CLI can
+ * compare it to its own hash of `.env.local`; the stored `valueDigest` is an
+ * HMAC under the account key and would not match anything a client computes.
  */
 export const listEnvBySecretHash = internalQuery({
   args: {
@@ -556,13 +554,26 @@ export const listEnvBySecretHash = internalQuery({
       )
       .collect();
 
-    return variables
-      .map((variable) => ({
+    const cipher = await accountCipher(ctx, account._id);
+    const entries: Array<{
+      name: string;
+      updatedAt: number;
+      valueDigest: string;
+    }> = [];
+    for (const variable of variables) {
+      const decrypted = await cipher.decrypt(
+        "environmentVariables:ciphertext",
+        variable,
+      );
+      const value = typeof decrypted?.value === "string" ? decrypted.value : "";
+      entries.push({
         name: variable.name,
         updatedAt: variable.updatedAt,
-        valueDigest: variable.valueDigest,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+        valueDigest: await sha256Hex(value),
+      });
+    }
+
+    return entries.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 

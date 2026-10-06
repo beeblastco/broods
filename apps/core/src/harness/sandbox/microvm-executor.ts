@@ -75,6 +75,7 @@ import type {
   SandboxJobStatus,
   SandboxReleaseRequest,
   SandboxReservationRef,
+  SandboxRunPrincipal,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
@@ -1035,14 +1036,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       ...(request.args && request.args.length > 0
         ? { args: request.args }
         : {}),
-      env: this.#sandboxEnvVars(request.envVars),
+      env: this.#sandboxEnvVars(request.envVars, request.principal),
     };
   }
 
   #sandboxEnvVars(
     requestEnvVars?: Record<string, string>,
+    principal?: SandboxRunPrincipal,
   ): Record<string, string> {
-    return mergeSandboxEnv(this.#config.envVars, requestEnvVars);
+    return mergeSandboxEnv(this.#config.envVars, requestEnvVars, principal);
   }
 
   async #exec(

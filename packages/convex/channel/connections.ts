@@ -23,6 +23,7 @@
 
 import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
+import { accountCipher, encryptionSecrets } from "../model/accountKeys";
 import {
   channelEndpointBotToken,
   refreshAccountChannelEndpoints,
@@ -51,20 +52,19 @@ export const listConnections = internalQuery({
   args: { channel: v.string() },
   returns: v.array(channelConnectionValidator),
   handler: async (ctx, args): Promise<ChannelConnection[]> => {
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-      throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read channel bot tokens",
-      );
-    }
-
+    // Without the secret this must throw before reading: an empty answer would
+    // make the forwarder close every socket as "no agents configure it".
+    encryptionSecrets();
     const rows = await ctx.db
       .query("channelEndpoints")
       .withIndex("by_platform", (q) => q.eq("platform", args.channel))
       .collect();
     const connections: ChannelConnection[] = [];
     for (const row of rows) {
-      const botToken = await channelEndpointBotToken(row, secret);
+      const botToken = await channelEndpointBotToken(
+        row,
+        await accountCipher(ctx, row.accountId),
+      );
       if (!botToken) continue;
       connections.push({
         agentId: row.agentId,
