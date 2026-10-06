@@ -114,7 +114,7 @@ async function connect(options: BroodsMcpServerOptions): Promise<Client> {
 async function connectWithSecret(
   options: BroodsMcpServerOptions,
 ): Promise<Client> {
-  process.env.BROODS_ACCOUNT_SECRET = "fp_acct_test";
+  process.env.BROODS_ACCOUNT_SECRET = "ask_test";
 
   return await connect(options);
 }

@@ -222,6 +222,92 @@ describe("settling with takeNext", (): void => {
   });
 });
 
+describe("step boundary", (): void => {
+  it("stores the step, renews and claims steers in one fenced mutation that proves ownership", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    const steering: AppliedIngress = {
+      eventId: "event-1",
+      events: [{ role: "user", content: "new direction" }],
+      delivery: candidate().delivery,
+      requestedMode: "steer",
+      appliedMode: "steer",
+      appliedToEventId: "event-1",
+      contributingEventIds: ["steer-1"],
+      ownerGeneration: 1,
+    };
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: steering };
+    }) as typeof runtime.mutate;
+    const reads = mock(async (): Promise<boolean> => true);
+    runtime.query = reads as unknown as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+
+    const boundary = await session.stepBoundary([
+      { role: "assistant", content: "step answer" },
+    ]);
+    await session.assertRecentOwner();
+
+    expect(boundary).toEqual({ renewal: "renewed", steering: steering });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("stepIngressBoundary");
+    expect(calls[0]?.[1]).toMatchObject({
+      conversationKey: candidate().conversationKey,
+      ownerEventId: "event-1",
+      ownerGeneration: 1,
+      leaseTtlMs: 15 * 60 * 1000,
+      events: [
+        {
+          event: {
+            message: { role: "assistant", content: "step answer" },
+          },
+        },
+      ],
+    });
+    // The renewed boundary answered the owner check: no read.
+    expect(reads).not.toHaveBeenCalled();
+  });
+
+  it("sends no rows on a step with nothing new, and a stale boundary proves nothing", async (): Promise<void> => {
+    const calls: Record<string, unknown>[] = [];
+    runtime.mutate = (async (
+      _name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push(args);
+
+      return { renewal: "stale", steering: null };
+    }) as typeof runtime.mutate;
+    const reads = mock(async (): Promise<boolean> => false);
+    runtime.query = reads as unknown as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+
+    expect(await session.stepBoundary([])).toEqual({
+      renewal: "stale",
+      steering: null,
+    });
+    expect(calls[0]).not.toHaveProperty("events");
+    await expect(session.assertRecentOwner()).rejects.toThrow(
+      "Stale conversation owner generation",
+    );
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("async turn without model input", (): void => {
   afterEach((): void => {
     mock.restore();
@@ -231,7 +317,6 @@ describe("async turn without model input", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
     spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [{ role: "assistant", content: "already answered" }],
       system: [],
@@ -265,7 +350,6 @@ describe("async turn without model input", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     spyOn(ingress, "settleIngress").mockRejectedValue(new Error("convex down"));
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
     spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [],
       system: [],
@@ -524,7 +608,6 @@ describe("async turn that throws after it settles", (): void => {
     }) as never);
     spyOn(runtime, "query").mockResolvedValue(null as never);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
-    spyOn(Session.prototype, "appendIngressEvents").mockResolvedValue([]);
     spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
       messages: [{ role: "user", content: "hello" }],
       system: [],
@@ -570,7 +653,7 @@ describe("channel senders", (): void => {
     ownerGeneration: 2,
     configRef: { channel: { channelName: "slack" } },
   };
-  const originalAppend = Session.prototype.appendIngressEvents;
+  const originalCreate = Session.prototype.createTurnContext;
   let senders: unknown[];
 
   beforeEach((): void => {
@@ -582,7 +665,7 @@ describe("channel senders", (): void => {
     runtime.query = (async (name: string): Promise<[] | null> =>
       name === "listPendingAsyncToolResults" ? [] : null) as never;
     // Ends each turn before the model runs; only the session's sender matters.
-    Session.prototype.appendIngressEvents = async function (
+    Session.prototype.createTurnContext = async function (
       this: Session,
     ): Promise<never> {
       senders.push(
@@ -593,7 +676,7 @@ describe("channel senders", (): void => {
   });
 
   afterEach((): void => {
-    Session.prototype.appendIngressEvents = originalAppend;
+    Session.prototype.createTurnContext = originalCreate;
     resetStorageForTests();
   });
 
@@ -817,7 +900,7 @@ describe("channel commands", (): void => {
   }
 
   it("compacts right away on an idle conversation and never stores the command", async (): Promise<void> => {
-    const settles: Record<string, unknown>[] = [];
+    const settles: unknown[] = [];
     runtime.mutate = (async (
       name: string,
       args: Record<string, unknown>,
@@ -825,11 +908,11 @@ describe("channel commands", (): void => {
       if (name === "acceptIngress") {
         return { outcome: "owner", ownerGeneration: 1 };
       }
-      if (name === "settleIngress") settles.push(args);
+      if (name === "takeNextIngress") settles.push(args.settle);
 
       return null;
     }) as never;
-    const append = spyOn(Session.prototype, "appendIngressEvents");
+    const turn = spyOn(Session.prototype, "createTurnContext");
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
@@ -840,17 +923,17 @@ describe("channel commands", (): void => {
       await handleChannelRequest(compactMessage(replies));
       await drainInProcessWorkers();
     } finally {
-      append.mockRestore();
+      turn.mockRestore();
       compact.mockRestore();
     }
 
-    expect(append).not.toHaveBeenCalled();
+    expect(turn).not.toHaveBeenCalled();
     expect(replies).toEqual(["Context compacted. 7 message(s) summarized."]);
     expect(settles[0]).toMatchObject({ status: "completed" });
   });
 
   it("says a failed compaction failed and settles the run as failed", async (): Promise<void> => {
-    const settles: Record<string, unknown>[] = [];
+    const settles: unknown[] = [];
     runtime.mutate = (async (
       name: string,
       args: Record<string, unknown>,
@@ -858,7 +941,7 @@ describe("channel commands", (): void => {
       if (name === "acceptIngress") {
         return { outcome: "owner", ownerGeneration: 1 };
       }
-      if (name === "settleIngress") settles.push(args);
+      if (name === "takeNextIngress") settles.push(args.settle);
 
       return null;
     }) as never;
@@ -1044,7 +1127,7 @@ describe("queued /compact on an async run", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     const takeNext = spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    const append = spyOn(Session.prototype, "appendIngressEvents");
+    const turn = spyOn(Session.prototype, "createTurnContext");
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
@@ -1053,7 +1136,7 @@ describe("queued /compact on an async run", (): void => {
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
     expect(compact).toHaveBeenCalledWith("keep the deploy");
-    expect(append).not.toHaveBeenCalled();
+    expect(turn).not.toHaveBeenCalled();
     expect(settle.mock.calls[0]?.[0]).toMatchObject({
       status: "completed",
       result: "Context compacted. 5 message(s) summarized.",
@@ -1091,11 +1174,10 @@ describe("queued /compact on an async run", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
-    const append = spyOn(
+    const turn = spyOn(
       Session.prototype,
-      "appendIngressEvents",
-    ).mockResolvedValue([]);
-    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      "createTurnContext",
+    ).mockResolvedValue({
       messages: [],
       system: [],
       ephemeralSystem: [],
@@ -1111,7 +1193,7 @@ describe("queued /compact on an async run", (): void => {
     }).catch((): null => null);
 
     expect(compact).not.toHaveBeenCalled();
-    expect(append).toHaveBeenCalledTimes(1);
+    expect(turn).toHaveBeenCalledTimes(1);
   });
 });
 

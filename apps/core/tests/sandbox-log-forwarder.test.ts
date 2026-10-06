@@ -132,6 +132,12 @@ describe("redact", () => {
       "Authorization: Bearer [redacted] GET /x?token=[redacted] key [redacted] sts [redacted]",
     );
   });
+
+  it("redacts an sk_ runtime key and leaves a short sk_ identifier", () => {
+    expect(redact(`key sk_${"aB3-_xYz".repeat(5)}abc column sk_id`)).toBe(
+      "key [redacted] column sk_id",
+    );
+  });
 });
 
 describe("otlpLogsRequest", () => {

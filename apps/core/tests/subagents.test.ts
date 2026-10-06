@@ -1407,7 +1407,7 @@ describe("SubagentCoordinator", () => {
     });
     mock.module("ai", () => ({ ...ai, streamText: streamText }));
     const { Session } = await import("../src/harness/session.ts");
-    const renew = spyOn(Session.prototype, "renewConversationLease");
+    const boundary = spyOn(Session.prototype, "stepBoundary");
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
@@ -1427,12 +1427,12 @@ describe("SubagentCoordinator", () => {
         },
       });
 
-      expect(renew).toHaveBeenCalledTimes(1);
+      expect(boundary).toHaveBeenCalledTimes(1);
       expect(internals.completeSuccessfulRun).toHaveBeenCalledTimes(1);
       expect(mutations).toEqual([]);
       expect(queries).not.toContain("listConversationEvents");
     } finally {
-      renew.mockRestore();
+      boundary.mockRestore();
       mock.module("ai", () => ({ ...ai, streamText: previousStreamText }));
       globalThis.fetch = originalFetch;
       setStorageForTests(null);

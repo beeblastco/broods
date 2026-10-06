@@ -50,6 +50,7 @@ import {
   relativeTime,
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   instances: Array<Doc<"sandboxInstances">>;
@@ -196,7 +197,7 @@ export function SandboxInstancesTable({
       await (nextRunning ? resume(args) : suspend(args));
       setConfirming(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Lifecycle action failed");
+      setError(toErrorMessage(err));
     } finally {
       setPendingId(null);
     }
@@ -217,7 +218,7 @@ export function SandboxInstancesTable({
         ),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Refresh failed");
+      setError(toErrorMessage(err));
     } finally {
       setRefreshing(false);
     }
@@ -263,6 +264,7 @@ export function SandboxInstancesTable({
             value={search}
             onChange={(event) => setSearchAndReset(event.target.value)}
             placeholder="Search name, id, provider…"
+            aria-label="Search instances"
             className="h-8 pl-8 text-xs"
           />
         </div>
@@ -302,12 +304,10 @@ export function SandboxInstancesTable({
           size="sm"
           onClick={refreshVisible}
           disabled={refreshing || !pageInstances.some(controllable)}
-          className="cursor-pointer disabled:cursor-not-allowed"
+          className="cursor-pointer"
         >
-          <RefreshCw
-            className={refreshing ? "size-3.5 animate-spin" : "size-3.5"}
-          />
-          Refresh visible
+          <RefreshCw className="size-3.5" />
+          {refreshing ? "Refreshing…" : "Refresh visible"}
         </Button>
 
         {hasFilters && (
@@ -475,7 +475,7 @@ export function SandboxInstancesTable({
                     <Switch
                       checked={running}
                       disabled={!toggleable || !canWrite}
-                      className="cursor-pointer disabled:cursor-not-allowed"
+                      className="cursor-pointer"
                       onCheckedChange={(next) =>
                         next ? toggle(instance, true) : setConfirming(instance)
                       }
@@ -513,7 +513,7 @@ export function SandboxInstancesTable({
               onClick={() => setPage(safePage - 1)}
               disabled={safePage === 0}
               aria-label="Previous page"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
             >
               <ChevronLeft className="size-3.5" />
             </Button>
@@ -527,7 +527,7 @@ export function SandboxInstancesTable({
               onClick={() => setPage(safePage + 1)}
               disabled={safePage >= pageCount - 1}
               aria-label="Next page"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
             >
               <ChevronRight className="size-3.5" />
             </Button>
@@ -565,7 +565,7 @@ export function SandboxInstancesTable({
           <DialogFooter>
             <Button
               variant="ghost"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={pendingId !== null}
               onClick={() => setConfirming(null)}
             >
@@ -573,7 +573,7 @@ export function SandboxInstancesTable({
             </Button>
             <Button
               variant="destructive"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={pendingId !== null}
               onClick={() => confirming && toggle(confirming, false)}
             >

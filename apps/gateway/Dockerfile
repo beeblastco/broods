@@ -9,6 +9,7 @@ COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
+COPY apps/edge/package.json ./apps/edge/
 COPY apps/gateway/package.json ./apps/gateway/
 COPY apps/matrix-forwarder/package.json ./apps/matrix-forwarder/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
@@ -26,12 +27,12 @@ COPY packages/broods ./packages/broods
 COPY apps/core/src/shared/env.ts ./apps/core/src/shared/env.ts
 COPY apps/core/src/shared/machine-socket.ts ./apps/core/src/shared/machine-socket.ts
 COPY apps/core/src/shared/nats.ts ./apps/core/src/shared/nats.ts
-COPY apps/core/src/shared/request-id.ts ./apps/core/src/shared/request-id.ts
+COPY packages/convex/model/requestId.ts ./packages/convex/model/requestId.ts
 COPY packages/convex/model/apiError.ts ./packages/convex/model/apiError.ts
 COPY packages/convex/model/httpJson.ts ./packages/convex/model/httpJson.ts
 COPY packages/convex/model/serviceBridge.ts ./packages/convex/model/serviceBridge.ts
+COPY apps/edge/src/origins.ts ./apps/edge/src/origins.ts
 COPY apps/core/src/shared/object.ts ./apps/core/src/shared/object.ts
-COPY apps/core/src/shared/paths.ts ./apps/core/src/shared/paths.ts
 COPY apps/core/src/shared/terminal-ticket.ts ./apps/core/src/shared/terminal-ticket.ts
 COPY apps/gateway ./apps/gateway
 RUN bun build apps/gateway/src/main.ts --compile --minify --outfile /out/gateway

@@ -20,6 +20,8 @@ const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
 ]);
 /** Resource kinds whose config carries artifact bytes the server keeps apart. */
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
+/** How long a CLI request waits for the server to answer. */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface SyncClientOptions {
   /**
@@ -45,7 +47,7 @@ export interface RemoteManifestResponse {
    */
   warnings?: { missingPolicies?: string[]; reservedResources?: string[] };
   /**
-   * The stage's runtime API key context. Deployments include the plaintext
+   * The stage's runtime key context. Deployments include the plaintext
    * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
    */
   deployment?: {
@@ -152,6 +154,9 @@ export interface DiffEntry {
 /** A sync is already running or the stage revision changed: read it again and retry. */
 export class ManifestConflictError extends Error {}
 
+/** The server predates a route the CLI calls. */
+export class RouteNotMountedError extends Error {}
+
 export class BroodsSyncClient {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -203,6 +208,8 @@ export class BroodsSyncClient {
           ...(revision !== undefined ? { revision: revision } : {}),
         }),
       },
+      // A sync deploys MCP bundles and can hold the connection for minutes.
+      null,
     );
     await assertOk(response, "Sync manifest failed");
 
@@ -266,11 +273,16 @@ export class BroodsSyncClient {
       throw new Error(
         "Mint bundle upload URL failed: response omitted uploadUrl",
       );
-    const stored = await this.fetchImpl(uploadUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/javascript" },
-      body: bundle,
-    });
+    // Bundles run to tens of MB, so no fixed timeout fits a slow uplink.
+    const stored = await this.send(
+      uploadUrl,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/javascript" },
+        body: bundle,
+      },
+      null,
+    );
     await assertOk(stored, "Bundle upload failed");
     const { storageId } = (await stored.json()) as { storageId?: string };
     if (!storageId)
@@ -280,7 +292,7 @@ export class BroodsSyncClient {
   }
 
   /**
-   * Recovers the stage's runtime API key so the CLI can reconnect to a
+   * Recovers the stage's runtime key so the CLI can reconnect to a
    * dashboard-created project without redeploying. Returns null when the project/
    * stage is unknown.
    */
@@ -384,39 +396,34 @@ export class BroodsSyncClient {
   }
 
   async getOnboarding(): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(
-      `${this.baseUrl}/v1/account/onboarding`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-        },
+    const response = await this.send(`${this.baseUrl}/v1/account/onboarding`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
       },
-    );
+    });
+    assertRouteMounted(response, "/v1/account/onboarding", "broods org");
     await assertOk(response, "Fetch CLI onboarding context failed");
 
     return (await response.json()) as CliOnboardingContext;
   }
 
   async selectOnboardingOrg(orgId: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(
-      `${this.baseUrl}/v1/account/onboarding`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ orgId: orgId }),
+    const response = await this.send(`${this.baseUrl}/v1/account/onboarding`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({ orgId: orgId }),
+    });
     await assertOk(response, "Select CLI org failed");
 
     return (await response.json()) as CliOnboardingContext;
   }
 
   async listStages(project: string): Promise<CliStage[]> {
-    const response = await this.fetchImpl(
+    const response = await this.send(
       `${this.baseUrl}/v1/account/stages?project=${encodeURIComponent(project)}`,
       {
         method: "GET",
@@ -437,7 +444,7 @@ export class BroodsSyncClient {
     name: string,
     duplicateFrom?: string,
   ): Promise<{ stage: CliStage; clonedFrom: string | null }> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/stages`, {
+    const response = await this.send(`${this.baseUrl}/v1/account/stages`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -463,7 +470,7 @@ export class BroodsSyncClient {
     project: string,
     stage: string,
   ): Promise<CliStageSession> {
-    const response = await this.fetchImpl(
+    const response = await this.send(
       `${this.baseUrl}/v1/account/stage-session`,
       {
         method: "POST",
@@ -492,15 +499,12 @@ export class BroodsSyncClient {
 
   /** Every project in the logged-in account's org, empty ones sorted last. */
   async listProjects(): Promise<CliProject[]> {
-    const response = await this.fetchImpl(
-      `${this.baseUrl}/v1/account/projects`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-        },
+    const response = await this.send(`${this.baseUrl}/v1/account/projects`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
       },
-    );
+    });
     assertRouteMounted(response, "/v1/account/projects", "broods project");
     await assertOk(response, "List projects failed");
     const payload = (await response.json()) as { projects?: CliProject[] };
@@ -515,7 +519,7 @@ export class BroodsSyncClient {
    * matches nothing.
    */
   async deleteProject(projectId: string): Promise<CliProject | null> {
-    const response = await this.fetchImpl(
+    const response = await this.send(
       `${this.baseUrl}/v1/account/projects?projectId=${encodeURIComponent(projectId)}`,
       {
         method: "DELETE",
@@ -533,17 +537,14 @@ export class BroodsSyncClient {
   }
 
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(
-      `${this.baseUrl}/v1/account/onboarding`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ createOrgName: name }),
+    const response = await this.send(`${this.baseUrl}/v1/account/onboarding`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({ createOrgName: name }),
+    });
     await assertOk(response, "Create CLI org failed");
 
     return (await response.json()) as CliOnboardingContext;
@@ -554,18 +555,63 @@ export class BroodsSyncClient {
     stage: string,
     suffix: string,
     init: RequestInit,
+    timeoutMs?: number | null,
   ): Promise<Response> {
     const url =
       `${this.baseUrl}/v1/account/projects/${encodeURIComponent(project)}` +
       `/stages/${encodeURIComponent(stage)}${suffix}`;
 
-    return await this.fetchImpl(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        ...init.headers,
+    return await this.send(
+      url,
+      {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          ...init.headers,
+        },
       },
+      timeoutMs,
+    );
+  }
+
+  /** Every request goes through `cliFetch` with the injected fetch. */
+  private async send(
+    url: string,
+    init: RequestInit,
+    timeoutMs?: number | null,
+  ): Promise<Response> {
+    return await cliFetch(url, init, {
+      fetch: this.fetchImpl,
+      timeoutMs: timeoutMs,
     });
+  }
+}
+
+/**
+ * `fetch` for every CLI call to a broods server. Gives up after 30 s, or never
+ * with `timeoutMs: null`, and turns a network failure into "Cannot reach
+ * <origin>: <cause>" instead of a bare "fetch failed".
+ */
+export async function cliFetch(
+  url: string,
+  init: RequestInit,
+  options: { fetch?: typeof fetch; timeoutMs?: number | null } = {},
+): Promise<Response> {
+  const fetchImpl = options.fetch ?? fetch;
+  const timeoutMs =
+    options.timeoutMs === undefined ? REQUEST_TIMEOUT_MS : options.timeoutMs;
+  try {
+    return await fetchImpl(
+      url,
+      timeoutMs === null
+        ? init
+        : { ...init, signal: AbortSignal.timeout(timeoutMs) },
+    );
+  } catch (error) {
+    throw new Error(
+      `Cannot reach ${new URL(url).origin}: ${networkFailureReason(error, timeoutMs)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -792,7 +838,7 @@ function errorEnvelope(body: string): { message?: string; code?: string } {
 }
 
 /**
- * A 404 that is not JSON came from the router, not the handler: the deployment
+ * A 404 that is not JSON came from the router, not the handler: the server
  * predates the route. Says so, rather than letting it read as "not found".
  */
 function assertRouteMounted(
@@ -804,9 +850,28 @@ function assertRouteMounted(
   const contentType = response.headers.get("Content-Type") ?? "";
   if (contentType.includes("application/json")) return;
 
-  throw new Error(
-    `This broods deployment has no ${route} route yet. Update the backend to use \`${command}\`.`,
+  throw new RouteNotMountedError(
+    `This broods server is older than your CLI and does not support \`${command}\` yet (no ${route} route).`,
   );
+}
+
+/** Why a request got no answer, in the runtime's own words. */
+function networkFailureReason(
+  error: unknown,
+  timeoutMs: number | null,
+): string {
+  if (!(error instanceof Error)) return String(error);
+  if (error.name === "TimeoutError" && timeoutMs !== null) {
+    return `no answer within ${timeoutMs / 1000} s`;
+  }
+  // Node wraps the socket error in `cause` under a bare "fetch failed"; Bun throws it.
+  const cause = error.cause;
+  if (!(cause instanceof Error)) return error.message;
+  if (cause.message) return cause.message;
+
+  return "code" in cause && typeof cause.code === "string"
+    ? cause.code
+    : error.message;
 }
 
 /** The bundle source when the MCP resource must be externalized, else null. */

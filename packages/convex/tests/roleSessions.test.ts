@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /**
  * Config-plane HTTP tests for account roles: the assume-role exchange
- * (account secret and stage runtime key callers), session expiry, disabled
+ * (account key and runtime key callers), session expiry, disabled
  * roles, and route enforcement of a role session's policy.
  */
 
@@ -16,13 +16,13 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
+const ACCOUNT_SECRET = "ask_test-owner-secret";
 const AGENTS_READ_POLICY: PolicyDocument = {
   version: 1,
   rules: [{ id: "read-agents", effect: "allow", actions: ["agents:read"] }],
 };
 const AUTH_ID = "auth_owner";
-const RUNTIME_KEY = "fp_agent_test-runtime-key";
+const RUNTIME_KEY = "sk_stage-runtime-key";
 
 const roleTest = () => convexTest(schema, modules);
 
@@ -121,7 +121,7 @@ async function seed(t: T): Promise<Seeded> {
       projectSlug: "demo-app",
       stageSlug: "production",
       apiKeyHash: await sha256Hex(RUNTIME_KEY),
-      keyHint: "fp_agent_...-key",
+      keyHint: "sk_...-key",
       apiKeyCiphertext: "ct",
       apiKeyIv: "iv",
       apiKeyTag: "tag",
@@ -138,7 +138,7 @@ async function seed(t: T): Promise<Seeded> {
 }
 
 describe("POST /v1/account/assume-role", () => {
-  test("account secret mints a working fp_sts_ session", async () => {
+  test("account key mints a working fp_sts_ session", async () => {
     const t = roleTest();
     const seeded = await seed(t);
     const roleId = await createRole(t, seeded);

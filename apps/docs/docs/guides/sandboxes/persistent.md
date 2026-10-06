@@ -89,7 +89,7 @@ The model does not have to poll, though it can. `async_status` is added automati
 - `logs` and `stop` exist only where the provider exposes live job control. E2B launches jobs natively and offers `status` only.
 - `sandbox`, `daytona` and `vercel` run at most 10 background jobs at once.
 - A job killed because its machine was recreated reports `failed`, never "running forever".
-- No account secret enters the sandbox. The job reports back with a short-lived token of its own.
+- No account key enters the sandbox. The job reports back with a short-lived token of its own.
 - Discord delivers a late reply with the bot token, so the bot needs the Send Messages permission in that channel.
 
 ## Terminals
