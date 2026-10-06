@@ -1,8 +1,9 @@
 /**
  * Hosted MCP server transport (#331 phase 2, micro-batching #397). A hosted
  * row's endpoint is the Cloudflare Dynamic Workers runtime
- * (apps/cloudflare-mcp) when its bundle can run there and this deployment
- * runs that Worker, the mcp-runner Lambda otherwise: this fetch adapter serializes a web request,
+ * (apps/cloudflare-mcp) when its runtime is "auto", its bundle can run there
+ * and this deployment runs that Worker, the mcp-runner Lambda otherwise:
+ * this fetch adapter serializes a web request,
  * batches it with the sibling calls that arrive in the same window, sends
  * the batch once, and once the batch's terminal NDJSON frame (../frames.ts)
  * arrives settles each call off the frame tagged with its id.
@@ -194,7 +195,7 @@ export async function collectBatchFrames(
 
 /**
  * A FetchLike for the SDK's StreamableHTTPClientTransport that routes every
- * request through the Lambda host instead of the network. onCpuUsec reports
+ * request through the row's runtime (Worker or Lambda) instead of the network. onCpuUsec reports
  * this call's share of its batch's CPU for usage metering.
  */
 export function hostedMcpFetch(
@@ -553,8 +554,9 @@ async function runBatch(
 }
 
 // One invoke for one batch, on the row's runtime; a transport failure before
-// any terminal frame throws for every call. A Worker that ran nothing hands
-// the same batch to Lambda, so a broken Worker degrades instead of failing.
+// any terminal frame throws for every call. A Worker that could not load the
+// bundle, was down or was unreachable ran nothing, so the same batch reruns
+// on Lambda; a misconfigured Worker fails the batch.
 async function sendBatch(
   record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],

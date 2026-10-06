@@ -260,7 +260,7 @@ export const mcpFields = {
   description: v.optional(v.string()),
   /**
    * "http" connects to an external url; "hosted" runs an uploaded bundle on
-   * the Lambda host; "machine" is a stdio server on the user's own computer,
+   * Cloudflare Workers or the Lambda host (see `runtime`); "machine" is a stdio server on the user's own computer,
    * reached through the daemon of the machine sandbox named in `sandbox`.
    */
   transport: v.union(
@@ -268,7 +268,7 @@ export const mcpFields = {
     v.literal("hosted"),
     v.literal("machine"),
   ),
-  /** Required for "http"; absent on "hosted" rows (the Lambda is the endpoint). */
+  /** Required for "http"; absent on "hosted" rows (the platform hosts them). */
   url: v.optional(v.string()),
   /** Machine-only: name of the machine sandbox whose daemon serves it. */
   sandbox: v.optional(v.string()),

@@ -33,7 +33,7 @@ export interface McpRecord {
   workersCompatible?: boolean;
   /** Hosted-only, the owner's pick: "lambda" keeps it off Workers; absent means "auto". */
   runtime?: McpRuntime;
-  /** Present on "http" rows; a "hosted" row's endpoint is the Lambda host. */
+  /** Present on "http" rows; a "hosted" row's endpoint is the Worker or the Lambda host. */
   url?: string;
   /** "machine" rows: name of the machine sandbox whose daemon serves the server. */
   sandbox?: string;

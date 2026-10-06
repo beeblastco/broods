@@ -291,10 +291,13 @@ async function loadBundle(
   ctx: ExecutionContext,
 ): Promise<string> {
   const key = `${encodeURIComponent(batch.accountId)}/${batch.expectedSha256}.mjs`;
-  const copy = await bundles.get(key).catch((): null => null);
-  const bytes = copy
-    ? new Uint8Array(await copy.arrayBuffer())
-    : await downloadBundle(batch.bundleUrl);
+  const copy = await bundles
+    .get(key)
+    .then(async (object): Promise<Uint8Array | null> =>
+      object ? new Uint8Array(await object.arrayBuffer()) : null,
+    )
+    .catch((): null => null);
+  const bytes = copy ?? (await downloadBundle(batch.bundleUrl));
   const sha256 = hex(await crypto.subtle.digest("SHA-256", bytes));
   if (sha256 !== batch.expectedSha256) {
     throw new Error("bundle sha256 does not match the uploaded row");
