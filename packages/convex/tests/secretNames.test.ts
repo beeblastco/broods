@@ -32,6 +32,12 @@ describe("isSecretName", (): void => {
       "credentials",
       "kubeconfig",
       "CONVEX_DEPLOY_KEY",
+      "PGPASSWORD",
+      "clientsecret",
+      "accesstoken",
+      "APIToken",
+      "JWTToken",
+      "x-authtoken",
     ]) {
       expect(isSecretName(name), name).toBe(true);
     }
@@ -51,6 +57,9 @@ describe("isSecretName", (): void => {
       "maxOutputTokens",
       "accessKeyId",
       "credentialAgentId",
+      "oauth",
+      "monkey",
+      "invocations",
     ]) {
       expect(isSecretName(name), name).toBe(false);
     }

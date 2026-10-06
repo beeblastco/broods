@@ -71,15 +71,45 @@ const TOKEN_COUNT_NAMES = new Set([
   "totaltokens",
 ]);
 
+// Endings that make a run-together last word secret: PGPASSWORD, accesstoken,
+// clientsecret, x-authtoken. Not "key" or "auth": monkey, oauth.
+const SECRET_WORD_ENDINGS = [
+  "apikey",
+  "accesskey",
+  "credential",
+  "credentials",
+  "passwd",
+  "password",
+  "privatekey",
+  "secret",
+  "token",
+];
+// Log redaction asks for every key of every line, so each name is judged once.
+const MAX_CACHED_NAMES = 4096;
+const cachedNames = new Map<string, boolean>();
+
 /**
  * Whether a name holds a secret. The name is split into words (camelCase,
- * "-", "_", "." and spaces) and judged by its last word, so `tokenSecret`
- * and `X-App-Key` are secret while `tokenUrl` and `inputTokens` are not.
+ * acronyms, "-", "_", "." and spaces) and judged by its last word, so
+ * `tokenSecret`, `APIToken` and `X-App-Key` are secret while `tokenUrl` and
+ * `inputTokens` are not.
  * @param name a config field, header or env var name
  */
 export function isSecretName(name: string): boolean {
+  let secret = cachedNames.get(name);
+  if (secret === undefined) {
+    secret = judgeName(name);
+    if (cachedNames.size >= MAX_CACHED_NAMES) cachedNames.clear();
+    cachedNames.set(name, secret);
+  }
+
+  return secret;
+}
+
+function judgeName(name: string): boolean {
   const words = name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((word): boolean => word.length > 0);
@@ -88,7 +118,9 @@ export function isSecretName(name: string): boolean {
   if (words.some((word): boolean => ALWAYS_SECRET_WORDS.has(word))) {
     return true;
   }
-  if (!SECRET_LAST_WORDS.has(last)) return false;
+  if (!SECRET_LAST_WORDS.has(last)) {
+    return SECRET_WORD_ENDINGS.some((ending): boolean => last.endsWith(ending));
+  }
   if (last !== "key" && last !== "keys") return true;
   const qualifier = words.at(-2);
 

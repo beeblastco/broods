@@ -434,7 +434,12 @@ describe("agent rules", () => {
           },
         },
         tools: {
-          search: { serperApiKey: "sk-serper", apiKey: "sk-live ${SUFFIX}" },
+          search: {
+            serperApiKey: "sk-serper",
+            apiKey: "sk-live ${SUFFIX}",
+            apiKeys: ["sk-one", "${KEY_TWO}"],
+            credentials: { clientId: "id-1", refreshToken: "${REFRESH}" },
+          },
         },
       }),
     ).toEqual({
@@ -449,7 +454,14 @@ describe("agent rules", () => {
           },
         },
       },
-      tools: { search: { serperApiKey: "********", apiKey: "********" } },
+      tools: {
+        search: {
+          serperApiKey: "********",
+          apiKey: "********",
+          apiKeys: "********",
+          credentials: { clientId: "********", refreshToken: "${REFRESH}" },
+        },
+      },
     });
     // Inherited Object keys are not provider names, however `in` reads them.
     for (const inherited of ["constructor", "__proto__", "toString"]) {
