@@ -121,7 +121,7 @@ Signs an external account in through the browser and keeps it on your deployment
 broods connect [chatgpt]
 ```
 
-It uses the account key in `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` is self-hosted only; the managed service refuses it unless the deployment sets `CHATGPT_PLAN_ENABLED=true`.
+It uses the account key in `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` works on self-hosted deployments, and on the managed service when the deployment sets `CHATGPT_PLAN_ENABLED=true`.
 
 ## disconnect
 
