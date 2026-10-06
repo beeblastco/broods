@@ -6,11 +6,10 @@
  */
 
 import { v } from "convex/values";
-import { createHash, randomBytes } from "node:crypto";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { action } from "../_generated/server";
-import { ACCOUNT_KEY_PREFIX } from "../model/accountSecrets";
+import { createAccountSecret, sha256Hex } from "../model/accountSecrets";
 import { ClientError } from "../model/clientError";
 
 export const provision = action({
@@ -40,12 +39,12 @@ export const provision = action({
       );
     }
 
-    const { secret, secretHash } = generateAccountSecret();
+    const secret = createAccountSecret();
     const account = await ctx.runMutation(internal.account.accounts.create, {
       orgId: args.orgId,
       username: org.slug,
       description: `Cherry-coke org ${org.name}`,
-      secretHash: secretHash,
+      secretHash: await sha256Hex(secret),
     });
 
     const identity = await ctx.auth.getUserIdentity();
@@ -77,10 +76,10 @@ export const rotateSecret = action({
       throw new Error("Account not provisioned for this org");
     }
 
-    const { secret, secretHash } = generateAccountSecret();
+    const secret = createAccountSecret();
     await ctx.runMutation(internal.account.accounts.update, {
       accountId: account._id,
-      secretHash: secretHash,
+      secretHash: await sha256Hex(secret),
     });
 
     const identity = await ctx.auth.getUserIdentity();
@@ -93,10 +92,3 @@ export const rotateSecret = action({
     return { secret: secret };
   },
 });
-
-function generateAccountSecret(): { secret: string; secretHash: string } {
-  const secret = `${ACCOUNT_KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
-  const secretHash = createHash("sha256").update(secret).digest("hex");
-
-  return { secret: secret, secretHash: secretHash };
-}

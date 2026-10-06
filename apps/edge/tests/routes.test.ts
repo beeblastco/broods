@@ -74,7 +74,7 @@ const CASES: [string, string, Upstream | null][] = [
   ["GET", "/v1/sandboxes/sbx_1", "config"],
   ["GET", "/v1/sandboxes/sbx_1/exec", "core"],
   ["GET", "/v1/policies/pol_1", "config"],
-  ["GET", "/v1/roles/fp_role_abc", "config"],
+  ["GET", "/v1/roles/brole_abc", "config"],
   ["GET", "/v1/channels/chan_1", "config"],
   ["GET", "/v1/crons/cron_123/runs", "config"],
 

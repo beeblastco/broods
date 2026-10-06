@@ -9,7 +9,11 @@ import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { sha256Hex } from "../../model/accountSecrets";
+import {
+  ACCOUNT_KEY_PREFIX,
+  RUNTIME_KEY_PREFIX,
+  sha256Hex,
+} from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
 import type {
   ConfigAuditActor,
@@ -442,21 +446,9 @@ async function resolveBearerAuth(
   if (!token) return null;
   const tokenHash = await sha256Hex(token);
 
-  // fp_sts_ is prefix-routed: a role session resolves as a role or not at all.
+  // Every credential is prefix-routed: it resolves as its own kind or not at all.
   if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
-    const principal: RolePrincipal | null = await ctx.runQuery(
-      internal.account.roles.resolveSession,
-      { tokenHash: tokenHash },
-    );
-    if (!principal) return null;
-    const account: Doc<"accounts"> | null = await getAccountById(
-      ctx,
-      principal.accountId,
-    );
-
-    return account && account.status === "active"
-      ? { kind: "role", account: account, role: principal }
-      : null;
+    return await resolveRoleSessionAuth(ctx, tokenHash);
   }
 
   const adminSecret = process.env.ADMIN_ACCOUNT_SECRET;
@@ -482,15 +474,19 @@ async function resolveBearerAuth(
       : null;
   }
 
-  const deployment: {
-    accountId: Id<"accounts">;
-    endpointId: string;
-    projectSlug: string;
-    stageSlug: string;
-  } | null = await ctx.runQuery(internal.agent.deployments.getByApiKeyHash, {
-    apiKeyHash: tokenHash,
-  });
-  if (deployment) return { kind: "deployment" };
+  if (token.startsWith(RUNTIME_KEY_PREFIX)) {
+    const deployment: {
+      accountId: Id<"accounts">;
+      endpointId: string;
+      projectSlug: string;
+      stageSlug: string;
+    } | null = await ctx.runQuery(internal.agent.deployments.getByApiKeyHash, {
+      apiKeyHash: tokenHash,
+    });
+
+    return deployment ? { kind: "deployment" } : null;
+  }
+  if (!token.startsWith(ACCOUNT_KEY_PREFIX)) return null;
 
   const account: Doc<"accounts"> | null = await ctx.runQuery(
     internal.account.accounts.getBySecretHash,
@@ -499,6 +495,26 @@ async function resolveBearerAuth(
 
   return account && account.status === "active"
     ? { kind: "account", account: account }
+    : null;
+}
+
+/** Resolve a role session token hash to role auth on its active account. */
+async function resolveRoleSessionAuth(
+  ctx: ActionCtx,
+  tokenHash: string,
+): Promise<ConfigAuth | null> {
+  const principal: RolePrincipal | null = await ctx.runQuery(
+    internal.account.roles.resolveSession,
+    { tokenHash: tokenHash },
+  );
+  if (!principal) return null;
+  const account: Doc<"accounts"> | null = await getAccountById(
+    ctx,
+    principal.accountId,
+  );
+
+  return account && account.status === "active"
+    ? { kind: "role", account: account, role: principal }
     : null;
 }
 

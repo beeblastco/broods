@@ -9,7 +9,13 @@
 
 import { httpAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { sha256Hex } from "../model/accountSecrets";
+import { bearerToken } from "../config/routes/shared";
+import {
+  ACCOUNT_KEY_PREFIX,
+  PROJECT_KEY_PREFIX,
+  sha256Hex,
+} from "../model/accountSecrets";
+import { CLI_TOKEN_PREFIX } from "./auth";
 import {
   handleEnvListRoute,
   handleEnvRoute,
@@ -26,15 +32,15 @@ import { jsonError } from "../model/httpJson";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
-    const auth = await bearerAuth(req);
-    if (!auth) {
+    const token = bearerToken(req);
+    if (!token) {
       return jsonError(401, "Authorization Bearer token is required");
     }
 
     const route = parseRoute(new URL(req.url).pathname);
     if (!route) return jsonError(404, "Not found");
 
-    const authResult = await resolveCliRequestAuth(ctx, auth.secretHash, route);
+    const authResult = await resolveCliRequestAuth(ctx, token, route);
     if (!authResult)
       return jsonError(401, "Invalid or out-of-scope project key");
 
@@ -67,20 +73,6 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     return jsonError(500, "CLI request failed");
   }
 });
-
-async function bearerAuth(
-  req: Request,
-): Promise<{ secretHash: string } | null> {
-  const header = req.headers.get("Authorization") ?? "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  return {
-    secretHash: await sha256Hex(match[1]),
-  };
-}
 
 function isResourceKind(
   value: string,
@@ -131,36 +123,49 @@ function parseRoute(pathname: string): RouteParts | null {
 }
 
 /**
- * Resolve the token hash to an account key hash, enforcing project-key scope
- * against the route's project/stage. Cron sync runs natively against the crons
- * table and its registered schedules (agent/crons), so it works for account
- * keys and project keys alike.
+ * Resolve the bearer to an account key hash by its prefix, enforcing
+ * project-key scope against the route's project/stage. Any other prefix is
+ * refused without a lookup. Cron sync runs natively against the crons table
+ * and its registered schedules (agent/crons), so it works for account keys
+ * and project keys alike.
  */
 async function resolveCliRequestAuth(
   ctx: ActionCtx,
-  secretHash: string,
+  token: string,
   route: RouteParts,
 ): Promise<CliAuth | null> {
-  const resolved = await ctx.runQuery(internal.cli.sync.resolveCliAuth, {
-    tokenHash: secretHash,
+  const tokenHash = await sha256Hex(token);
+
+  if (token.startsWith(CLI_TOKEN_PREFIX)) {
+    const cliResolved = await ctx.runMutation(
+      internal.cli.auth.resolveCliToken,
+      { tokenHash: tokenHash },
+    );
+
+    return cliResolved
+      ? {
+          accountId: cliResolved.accountId,
+          secretHash: cliResolved.secretHash,
+          scoped: true,
+          cliTokenId: cliResolved.cliTokenId,
+          cliAuthId: cliResolved.authId,
+        }
+      : null;
+  }
+
+  const keyKind = token.startsWith(ACCOUNT_KEY_PREFIX)
+    ? "account"
+    : token.startsWith(PROJECT_KEY_PREFIX)
+      ? "project"
+      : null;
+  if (!keyKind) return null;
+
+  return await ctx.runQuery(internal.cli.sync.resolveCliAuth, {
+    tokenHash: tokenHash,
+    keyKind: keyKind,
     project: route.project,
     stage: route.stage,
   });
-  if (resolved) return resolved;
-
-  const cliResolved = await ctx.runMutation(internal.cli.auth.resolveCliToken, {
-    tokenHash: secretHash,
-  });
-
-  return cliResolved
-    ? {
-        accountId: cliResolved.accountId,
-        secretHash: cliResolved.secretHash,
-        scoped: true,
-        cliTokenId: cliResolved.cliTokenId,
-        cliAuthId: cliResolved.authId,
-      }
-    : null;
 }
 
 /** Match the shared `/v1/account/projects/{project}/stages/{stage}` prefix. */

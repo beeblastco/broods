@@ -25,11 +25,11 @@ import type {
 
 export const MACHINE_ACCOUNT_ID = "acct_machine";
 /** The account key the daemon connects with in these tests. */
-export const MACHINE_ACCOUNT_SECRET = crypto.randomUUID();
+export const MACHINE_ACCOUNT_SECRET = `bask_${crypto.randomUUID()}`;
 /** The runtime key, which sits in frontends and must be refused. */
-export const MACHINE_EMBEDDABLE_KEY = `sk_${crypto.randomUUID()}`;
+export const MACHINE_EMBEDDABLE_KEY = `bsk_${crypto.randomUUID()}`;
 /** A role session whose policy reads sandboxes and nothing more. */
-export const MACHINE_READ_ONLY_ROLE_TOKEN = `fp_sts_${crypto.randomUUID()}`;
+export const MACHINE_READ_ONLY_ROLE_TOKEN = `bsts_${crypto.randomUUID()}`;
 export const MACHINE_SANDBOX_ID = "sbx_machine";
 export const OTHER_MACHINE_SANDBOX_ID = "sbx_machine_other";
 

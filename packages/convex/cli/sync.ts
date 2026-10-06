@@ -260,7 +260,7 @@ export const deleteTargetsBySecretHash = internalQuery({
 });
 
 /**
- * Creates the synced stage's runtime key (`sk_…`) when it has none,
+ * Creates the synced stage's runtime key (`bsk_…`) when it has none,
  * so the CLI can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
  * so reconnecting clients do not need to rotate the key.
  */
@@ -842,13 +842,19 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
 
 /**
  * Resolves a CLI Bearer token hash to the account key hash it authorizes with.
+ * `keyKind` comes from the token's prefix, so each kind costs one lookup.
  * The account key grants full account access (`scoped: false`); a project
  * key grants access only when the route resolves to the exact
  * project/stage the key is bound to (`scoped: true`). Returns null when the
  * token is unknown, revoked, or out of scope.
  */
 export const resolveCliAuth = internalQuery({
-  args: { tokenHash: v.string(), project: v.string(), stage: v.string() },
+  args: {
+    tokenHash: v.string(),
+    keyKind: v.union(v.literal("account"), v.literal("project")),
+    project: v.string(),
+    stage: v.string(),
+  },
   returns: v.union(
     v.null(),
     v.object({
@@ -867,11 +873,15 @@ export const resolveCliAuth = internalQuery({
     scoped: boolean;
     deployKeyId?: Id<"deployKeys">;
   } | null> => {
-    const { tokenHash, project, stage } = args;
+    const { tokenHash, keyKind, project, stage } = args;
 
-    const account = await accountFromSecretHash(ctx, tokenHash);
-    if (account)
-      return { accountId: account._id, secretHash: tokenHash, scoped: false };
+    if (keyKind === "account") {
+      const account = await accountFromSecretHash(ctx, tokenHash);
+
+      return account
+        ? { accountId: account._id, secretHash: tokenHash, scoped: false }
+        : null;
+    }
 
     const deployKey = await ctx.db
       .query("deployKeys")

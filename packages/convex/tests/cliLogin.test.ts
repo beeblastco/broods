@@ -17,7 +17,7 @@ vi.mock("../auth", () => ({
 const modules = import.meta.glob("../**/*.ts");
 
 const AUTH_ID = "auth_admin";
-const CODE = "fp_code_test-code";
+const CODE = "bcode_test-code";
 const VERIFIER = "verifier-verifier-verifier-verifier-verifier-1234";
 
 const loginTest = () => convexTest(schema, modules);
@@ -77,7 +77,7 @@ describe("CLI login code exchange with PKCE", () => {
       code: CODE,
       codeVerifier: VERIFIER,
     });
-    expect(exchanged.token.startsWith("fp_cli_")).toBe(true);
+    expect(exchanged.token.startsWith("bcli_")).toBe(true);
   });
 
   test("a code minted without a challenge still exchanges for older CLIs", async () => {
@@ -87,7 +87,7 @@ describe("CLI login code exchange with PKCE", () => {
     const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
       code: CODE,
     });
-    expect(exchanged.token.startsWith("fp_cli_")).toBe(true);
+    expect(exchanged.token.startsWith("bcli_")).toBe(true);
   });
 
   test("the challenge is the base64url S256 of the verifier", async () => {

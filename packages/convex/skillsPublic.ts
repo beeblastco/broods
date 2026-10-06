@@ -7,12 +7,12 @@
  * resolve and verify the owning account before touching that account's skills.
  */
 
-import { createHash } from "node:crypto";
 import { v } from "convex/values";
 import { action, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { authKit } from "./auth";
+import { ACCOUNT_KEY_PREFIX, sha256Hex } from "./model/accountSecrets";
 import {
   createJsonSkillFiles,
   createOrReplaceSkill,
@@ -201,26 +201,24 @@ export const publishSkill = action({
   },
 });
 
-/** SHA-256 hex of the raw token, matching what the accounts table stores. */
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
 /**
  * Resolve the account a Bearer token belongs to.
  * @param ctx action context for the lookup query
  * @param bearerToken the caller's account key
  * @returns the matching account document
- * @throws when the token matches no account
+ * @throws when the token is not an account key or matches no account
  */
 async function requireAccountForToken(
   ctx: ActionCtx,
   bearerToken: string,
 ): Promise<Doc<"accounts">> {
+  if (!bearerToken.startsWith(ACCOUNT_KEY_PREFIX)) {
+    throw new Error("Invalid Bearer token.");
+  }
   const account = await ctx.runQuery(
     internal.account.accounts.getBySecretHash,
     {
-      secretHash: hashToken(bearerToken),
+      secretHash: await sha256Hex(bearerToken),
     },
   );
   if (!account) throw new Error("Invalid Bearer token.");

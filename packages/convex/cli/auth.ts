@@ -14,7 +14,12 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
 import { slugifyName } from "../lib/slug";
-import { ACCOUNT_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
+import { bearerToken } from "../config/routes/shared";
+import {
+  createAccountSecret,
+  randomToken,
+  sha256Hex,
+} from "../model/accountSecrets";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -24,9 +29,9 @@ import { ClientError } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { planValidator } from "../schema";
 
-const CLI_CODE_PREFIX = "fp_code_";
+const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
-export const CLI_TOKEN_PREFIX = "fp_cli_";
+export const CLI_TOKEN_PREFIX = "bcli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
 
 // RFC 7636: 43..128 unreserved characters, base64url without padding.
@@ -191,7 +196,7 @@ export const createOnboardingOrg = internalMutation({
       orgId: orgId,
       username: slug,
       description: `Broods org ${name}`,
-      secretHash: await sha256Hex(randomToken(ACCOUNT_KEY_PREFIX)),
+      secretHash: await sha256Hex(createAccountSecret()),
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -353,6 +358,17 @@ export const getOnboardingContext = internalMutation({
 });
 
 /**
+ * Hash of the request's `broods login` bearer token, for `resolveCliToken`.
+ * Null when the bearer is missing or carries another prefix, so the
+ * login-only CLI routes spend no lookup on it.
+ */
+export async function cliLoginTokenHash(req: Request): Promise<string | null> {
+  const token = bearerToken(req);
+
+  return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
+}
+
+/**
  * Resolve a CLI token to the account key hash used by existing sync code.
  * Touches lastUsedAt at a coarse interval to avoid write contention.
  */
@@ -512,14 +528,6 @@ async function onboardingContext(
       name: user.name,
     },
   };
-}
-
-function randomToken(prefix: string): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-
-  return `${prefix}${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
 }
 
 async function resolveActiveCliToken(

@@ -8,16 +8,16 @@ import {
 } from "../model/accountSecrets";
 
 describe("account keys", () => {
-  it("generates ask_-prefixed 32-byte base64url keys", () => {
+  it("generates bask_-prefixed 32-byte base64url keys", () => {
     const secret = createAccountSecret();
 
-    expect(secret.startsWith("ask_")).toBe(true);
-    expect(secret).toHaveLength("ask_".length + 43);
-    expect(secret.slice("ask_".length)).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(secret.startsWith("bask_")).toBe(true);
+    expect(secret).toHaveLength("bask_".length + 43);
+    expect(secret.slice("bask_".length)).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   it("hashes secrets with the same SHA-256 hex digest as Web Crypto", async () => {
-    const secret = "ask_test-secret";
+    const secret = "bask_test-secret";
     const digest = await crypto.subtle.digest(
       "SHA-256",
       new TextEncoder().encode(secret),

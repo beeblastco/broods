@@ -8,7 +8,11 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { RUNTIME_KEY_PREFIX, sha256Hex } from "../../model/accountSecrets";
+import {
+  ACCOUNT_KEY_PREFIX,
+  RUNTIME_KEY_PREFIX,
+  sha256Hex,
+} from "../../model/accountSecrets";
 import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import {
   auditDetailsJson,
@@ -40,7 +44,7 @@ type AccountCaller = {
 
 type CreatedRole = Omit<Doc<"accountRoles">, "_id" | "_creationTime">;
 
-/** Exchange a role for a short-lived fp_sts_ session token. */
+/** Exchange a role for a short-lived bsts_ session token. */
 export async function handleAssumeRoleRoute(
   ctx: ActionCtx,
   req: Request,
@@ -57,7 +61,7 @@ export async function handleAssumeRoleRoute(
   if (!role) return jsonError(404, "Role not found");
   if (role.status !== "active") return jsonError(403, "Role is disabled");
   // A runtime key may only assume roles pinned to its own stage: a leaked
-  // sk_ key must not widen past the stage it already controls.
+  // bsk_ key must not widen past the stage it already controls.
   if (caller.deploymentScope) {
     if (
       role.projectId !== caller.deploymentScope.projectId ||
@@ -207,10 +211,10 @@ export async function handleRoleRoute(
 }
 
 /**
- * Resolve an account-level caller: CLI login token or runtime key by
- * prefix, else an account key by hash. Assume-role and connections use
- * it; fp_sts_ sessions resolve to nothing, so a role session never mints
- * sessions or reads connections.
+ * Resolve an account-level caller by prefix: CLI login token, runtime key or
+ * account key, one lookup each. Assume-role and connections use it; any
+ * other prefix, a bsts_ role session included, resolves to nothing, so a role
+ * session never mints sessions or reads connections.
  */
 export async function resolveAccountCaller(
   ctx: ActionCtx,
@@ -250,8 +254,8 @@ export async function resolveAccountCaller(
     };
   }
 
-  // Last, like every config-plane route: an account key by its hash,
-  // whatever its prefix. A role session's hash never matches one.
+  if (!token.startsWith(ACCOUNT_KEY_PREFIX)) return null;
+
   const account: Doc<"accounts"> | null = await ctx.runQuery(
     internal.account.accounts.getBySecretHash,
     { secretHash: tokenHash },

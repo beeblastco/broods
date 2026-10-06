@@ -18,7 +18,7 @@ import type { BenchCase } from "../runner.ts";
 // A deployed core pod's environment, trimmed to the shape that matters: a few
 // dozen names, several sensitive, and two large JSON values the redactor parses.
 const ENV_FIXTURE: Readonly<Record<string, string>> = {
-  ADMIN_ACCOUNT_SECRET: "fp_admin_9d2f41ba7c3e5089bd6a",
+  ADMIN_ACCOUNT_SECRET: "badmin_9d2f41ba7c3e5089bd6a",
   AGENT_TABLE_NAME: "broods-dev-agents",
   ANTHROPIC_API_KEY: "sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6",
   AWS_REGION: "us-east-1",
@@ -45,7 +45,7 @@ const ENV_FIXTURE: Readonly<Record<string, string>> = {
     },
   }),
   SANDBOX_PROVIDER: "lambda",
-  SERVICE_AUTH_SECRET: "fp_svc_71c9e3a08d54b2f6",
+  SERVICE_AUTH_SECRET: "bsvc_71c9e3a08d54b2f6",
   SERVICE_NAME: "broods-core",
   STAGE: "production",
   TOOL_BUNDLES_BUCKET_NAME: "broods-prod-tool-bundles",
@@ -79,7 +79,7 @@ const LOG_PAYLOAD: Readonly<Record<string, unknown>> = {
     method: "POST",
     url: "https://gateway.broods.app/v1/agents/agt_7f3c9d21/invoke?api_key=abcd1234",
     headers: {
-      authorization: "Bearer sk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
+      authorization: "Bearer bsk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
       "x-api-key": "sk-proj-fixture-99887766554433221100",
       "content-type": "application/json",
     },
@@ -95,7 +95,7 @@ const LOG_PAYLOAD: Readonly<Record<string, unknown>> = {
 const LOG_LINE =
   "provider call failed for agent agt_7f3c9d21: POST https://api.anthropic.com/v1/messages " +
   "with Authorization: Bearer sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6 " +
-  "(runtime key sk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p) returned 529 overloaded_error after 3 retries";
+  "(runtime key bsk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p) returned 529 overloaded_error after 3 retries";
 
 // The decrypted agent record the runtime scans once per run to learn which
 // values must never reach a log line.
@@ -171,8 +171,8 @@ const PRECOMPUTED_SECRETS: readonly string[] = [
   "sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6",
   "sk-proj-1a2b3c4d5e6f708192a3b4c5d6e7f809",
   "sk-proj-fixture-99887766554433221100",
-  "fp_admin_9d2f41ba7c3e5089bd6a",
-  "fp_svc_71c9e3a08d54b2f6",
+  "badmin_9d2f41ba7c3e5089bd6a",
+  "bsvc_71c9e3a08d54b2f6",
   "nt_4b18c07d92ae5361f8b0",
   "xoxb-fixture-1029384756-abcdefghij",
   "lin_api_fixture_5a6b7c8d9e0f",

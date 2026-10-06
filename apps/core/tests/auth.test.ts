@@ -24,7 +24,7 @@ import {
 const ACCOUNT: AccountRecord = {
   accountId: "acct_1",
   username: "tester",
-  secretHash: hashAccountSecret("ask_known-secret"),
+  secretHash: hashAccountSecret("bask_known-secret"),
   status: "active",
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
@@ -37,16 +37,16 @@ const AGENT: AgentRecord = {
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
 };
-const DEPLOYMENT_API_KEY = "sk_known-key";
+const DEPLOYMENT_API_KEY = "bsk_known-key";
 const ROLE_PRINCIPAL: RolePrincipal = {
   accountId: "acct_1",
-  roleId: "fp_role_1",
+  roleId: "brole_1",
   policy: {
     version: 1,
     rules: [{ id: "r1", effect: "allow", actions: ["sandboxes:write"] }],
   },
 };
-const ROLE_SESSION_TOKEN = "fp_sts_known-session";
+const ROLE_SESSION_TOKEN = "bsts_known-session";
 
 let accountsById: Record<string, AccountRecord>;
 let accountsBySecretHash: Record<string, AccountRecord>;
@@ -135,7 +135,7 @@ describe("resolveBearerAuth", () => {
 
   it("resolves an account by secret hash", async () => {
     const auth = await resolveBearerAuth({
-      authorization: "Bearer ask_known-secret",
+      authorization: "Bearer bask_known-secret",
     });
     expect(auth).toMatchObject({
       kind: "account",
@@ -157,51 +157,60 @@ describe("resolveBearerAuth", () => {
     expect(auth).not.toHaveProperty("stageTicket");
   });
 
-  it("sends each known prefix to its one lookup, an unknown one to both", async () => {
+  it("sends each known prefix to its one lookup", async () => {
     const storage = getStorage();
     const keyLookup = spyOn(storage.agentDeployments, "getByApiKeyHash");
     const secretLookup = spyOn(storage.accounts, "getBySecretHash");
 
-    await resolveBearerAuth({ authorization: "Bearer ask_known-secret" });
+    await resolveBearerAuth({ authorization: "Bearer bask_known-secret" });
     await resolveBearerAuth({ authorization: `Bearer ${DEPLOYMENT_API_KEY}` });
     expect(secretLookup).toHaveBeenCalledTimes(1);
     expect(keyLookup).toHaveBeenCalledTimes(1);
-
-    await resolveBearerAuth({ authorization: "Bearer legacy-secret" });
-    expect(secretLookup).toHaveBeenCalledTimes(2);
-    expect(keyLookup).toHaveBeenCalledTimes(2);
   });
 
-  it("still resolves keys minted under the earlier prefixes, by hash", async () => {
-    runtimeKeyHashes.add(sha256Hex("fp_agent_issued-before"));
-    accountsBySecretHash[hashAccountSecret("fp_acct_issued-before")] = ACCOUNT;
+  it("refuses an old or unknown prefix without a lookup, even when its hash is stored", async () => {
+    const storage = getStorage();
+    const keyLookup = spyOn(storage.agentDeployments, "getByApiKeyHash");
+    const secretLookup = spyOn(storage.accounts, "getBySecretHash");
+    const sessionLookup = spyOn(storage.roleSessions, "resolveByTokenHash");
+    const oldTokens = [
+      "sk_issued-before",
+      "fp_agent_issued-before",
+      "ask_issued-before",
+      "fp_acct_issued-before",
+      "fp_sts_issued-before",
+      "unprefixed-secret",
+    ];
+    for (const token of oldTokens) {
+      runtimeKeyHashes.add(sha256Hex(token));
+      accountsBySecretHash[hashAccountSecret(token)] = ACCOUNT;
+      roleSessionsByTokenHash[sha256Hex(token)] = ROLE_PRINCIPAL;
+    }
 
-    expect(
-      await resolveBearerAuth({
-        authorization: "Bearer fp_agent_issued-before",
-      }),
-    ).toMatchObject({ kind: "deployment", endpointId: "env-endpoint" });
-    expect(
-      await resolveBearerAuth({
-        authorization: "Bearer fp_acct_issued-before",
-      }),
-    ).toMatchObject({ kind: "account", account: { accountId: "acct_1" } });
+    for (const token of oldTokens) {
+      expect(
+        await resolveBearerAuth({ authorization: `Bearer ${token}` }),
+      ).toBeNull();
+    }
+    expect(keyLookup).not.toHaveBeenCalled();
+    expect(secretLookup).not.toHaveBeenCalled();
+    expect(sessionLookup).not.toHaveBeenCalled();
   });
 
-  it("resolves an fp_sts_ role session to role auth", async () => {
+  it("resolves a bsts_ role session to role auth", async () => {
     const auth = await resolveBearerAuth({
       authorization: `Bearer ${ROLE_SESSION_TOKEN}`,
     });
     expect(auth).toMatchObject({
       kind: "role",
       account: { accountId: "acct_1" },
-      role: { roleId: "fp_role_1" },
+      role: { roleId: "brole_1" },
     });
   });
 
-  it("rejects unknown or foreign fp_sts_ tokens without falling through", async () => {
+  it("rejects unknown or foreign bsts_ tokens without falling through", async () => {
     expect(
-      await resolveBearerAuth({ authorization: "Bearer fp_sts_unknown" }),
+      await resolveBearerAuth({ authorization: "Bearer bsts_unknown" }),
     ).toBeNull();
   });
 
@@ -276,7 +285,7 @@ describe("resolveBearerAuth", () => {
       status: "disabled",
     };
     expect(
-      await resolveBearerAuth({ authorization: "Bearer ask_known-secret" }),
+      await resolveBearerAuth({ authorization: "Bearer bask_known-secret" }),
     ).toBeNull();
   });
 
@@ -285,7 +294,7 @@ describe("resolveBearerAuth", () => {
       ...ACCOUNT,
       status: "disabled",
     };
-    const headers = { authorization: "Bearer ask_known-secret" };
+    const headers = { authorization: "Bearer bask_known-secret" };
 
     expect(await resolveBearerAuth(headers)).toBeNull();
     expect(

@@ -1,5 +1,5 @@
 /**
- * Project + stage scoped runtime keys (`sk_…`).
+ * Project + stage scoped runtime keys (`bsk_…`).
  *
  * One key per stage invokes any deployed agent in it; the agent is chosen
  * per request by id. The dashboard surfaces the key/URLs; the CLI mints it on
@@ -30,7 +30,11 @@ import {
   type ConfigAuditActor,
 } from "../model/auditEvents";
 import { accountDoc } from "../account/accounts";
-import { RUNTIME_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
+import {
+  randomToken,
+  RUNTIME_KEY_PREFIX,
+  sha256Hex,
+} from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
@@ -466,17 +470,14 @@ export async function ensureStageDeployment(
     };
   }
 
-  const rawApiKey = generateDeploymentKey();
-  const apiKeyHash = await sha256Hex(rawApiKey);
-  const keyHint = deploymentKeyHint(rawApiKey);
-  const encryptedKey = await encryptApiKey(rawApiKey);
+  const rawApiKey = randomToken(RUNTIME_KEY_PREFIX);
+  const keyFields = await runtimeKeyFields(rawApiKey);
+  const keyHint = keyFields.keyHint;
   const now = Date.now();
 
   if (existing) {
     await ctx.db.patch(existing._id, {
-      apiKeyHash: apiKeyHash,
-      keyHint: keyHint,
-      ...encryptedKey,
+      ...keyFields,
       projectSlug: args.projectSlug,
       stageSlug: args.stageSlug,
       createdAt: now,
@@ -505,9 +506,7 @@ export async function ensureStageDeployment(
     endpointId: endpointId,
     projectSlug: args.projectSlug,
     stageSlug: args.stageSlug,
-    apiKeyHash: apiKeyHash,
-    keyHint: keyHint,
-    ...encryptedKey,
+    ...keyFields,
     createdAt: now,
     createdBy: args.createdBy,
     updatedAt: now,
@@ -524,7 +523,8 @@ export async function ensureStageDeployment(
   };
 }
 
-async function decryptApiKey(deployment: {
+/** Decrypt a deployment's stored runtime key. `migrations:runtimeKeyPrefix` uses it too. */
+export async function decryptApiKey(deployment: {
   apiKeyCiphertext: string;
   apiKeyIv: string;
   apiKeyTag: string;
@@ -545,21 +545,26 @@ async function decryptApiKey(deployment: {
   return value;
 }
 
-function deploymentKeyHint(token: string): string {
-  return `${RUNTIME_KEY_PREFIX}…${token.slice(-4)}`;
-}
-
-async function encryptApiKey(rawApiKey: string): Promise<{
-  apiKeyCiphertext: string;
-  apiKeyIv: string;
-  apiKeyTag: string;
-}> {
+/**
+ * The stored columns for a runtime key: its hash, masked hint and at-rest
+ * blob. Minting and `migrations:runtimeKeyPrefix` both write these.
+ */
+export async function runtimeKeyFields(
+  rawApiKey: string,
+): Promise<
+  Pick<
+    Doc<"agentDeployments">,
+    "apiKeyHash" | "keyHint" | "apiKeyCiphertext" | "apiKeyIv" | "apiKeyTag"
+  >
+> {
   const blob = await encryptAgentConfigBlob(
     { value: rawApiKey },
     encryptionSecret(),
   );
 
   return {
+    apiKeyHash: await sha256Hex(rawApiKey),
+    keyHint: `${RUNTIME_KEY_PREFIX}…${rawApiKey.slice(-4)}`,
     apiKeyCiphertext: blob.ciphertext,
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,
@@ -581,18 +586,6 @@ function encryptionSecret(): string {
 /** Stable opaque endpoint handle for a stage's runtime API. */
 function endpointIdForStage(stageId: Id<"stages">): string {
   return `stage-${stageId.slice(-8)}`;
-}
-
-function generateDeploymentKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const base64url = btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-  return `${RUNTIME_KEY_PREFIX}${base64url}`;
 }
 
 /** Record a dashboard deployment mutation without storing runtime keys. */
