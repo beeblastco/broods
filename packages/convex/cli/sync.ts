@@ -16,12 +16,13 @@ import {
   type MutationCtx,
 } from "../_generated/server";
 import { ensureStageDeployment } from "../agent/deployments";
-import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
+import { accountCipher } from "../model/accountKeys";
+import { sha256Hex } from "../model/accountSecrets";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
   auditDetailsJson,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
 import {
   accountFromSecretHash,
@@ -260,7 +261,7 @@ export const deleteTargetsBySecretHash = internalQuery({
 });
 
 /**
- * Creates the synced stage's runtime key (`sk_…`) when it has none,
+ * Creates the synced stage's runtime key (`bsk_…`) when it has none,
  * so the CLI can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
  * so reconnecting clients do not need to rotate the key.
  */
@@ -326,11 +327,11 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       rotate: args.rotate === true,
     });
     if (args.auditSync) {
-      const actor: ConfigAuditActor = {
+      const actor: AuditActor = {
         kind: args.auditSync.actorKind,
         id: args.auditSync.actorId,
       };
-      await insertConfigAuditEvent(ctx.db, {
+      await appendAuditEvent(ctx.db, {
         accountId: account._id,
         projectId: projectDoc._id,
         stageId: stageDoc._id,
@@ -445,18 +446,12 @@ export const getEnvBySecretHash = internalMutation({
       .unique();
     if (!existing) return null;
 
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-      throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables",
-      );
-    }
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: existing.ciphertext, iv: existing.iv, tag: existing.tag },
-      secret,
+    const cipher = await accountCipher(ctx, account._id);
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      existing,
     );
-    const revealed = decrypted as { value?: unknown } | null;
-    const value = typeof revealed?.value === "string" ? revealed.value : "";
+    const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: resolved.projectDoc._id,
@@ -521,6 +516,9 @@ export const getManifestBySecretHash = internalQuery({
 /**
  * Names, update times and value digests for the CLI `env list` / `env sync`.
  * Values are never returned, since they are encrypted at rest and write-only.
+ * The digest is SHA-256 of the plaintext computed per request, so the CLI can
+ * compare it to its own hash of `.env.local`; the stored `valueDigest` is an
+ * HMAC under the account key and would not match anything a client computes.
  */
 export const listEnvBySecretHash = internalQuery({
   args: {
@@ -556,13 +554,26 @@ export const listEnvBySecretHash = internalQuery({
       )
       .collect();
 
-    return variables
-      .map((variable) => ({
+    const cipher = await accountCipher(ctx, account._id);
+    const entries: Array<{
+      name: string;
+      updatedAt: number;
+      valueDigest: string;
+    }> = [];
+    for (const variable of variables) {
+      const decrypted = await cipher.decrypt(
+        "environmentVariables:ciphertext",
+        variable,
+      );
+      const value = typeof decrypted?.value === "string" ? decrypted.value : "";
+      entries.push({
         name: variable.name,
         updatedAt: variable.updatedAt,
-        valueDigest: variable.valueDigest,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+        valueDigest: await sha256Hex(value),
+      });
+    }
+
+    return entries.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 
@@ -842,13 +853,19 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
 
 /**
  * Resolves a CLI Bearer token hash to the account key hash it authorizes with.
+ * `keyKind` comes from the token's prefix, so each kind costs one lookup.
  * The account key grants full account access (`scoped: false`); a project
  * key grants access only when the route resolves to the exact
  * project/stage the key is bound to (`scoped: true`). Returns null when the
  * token is unknown, revoked, or out of scope.
  */
 export const resolveCliAuth = internalQuery({
-  args: { tokenHash: v.string(), project: v.string(), stage: v.string() },
+  args: {
+    tokenHash: v.string(),
+    keyKind: v.union(v.literal("account"), v.literal("project")),
+    project: v.string(),
+    stage: v.string(),
+  },
   returns: v.union(
     v.null(),
     v.object({
@@ -867,11 +884,15 @@ export const resolveCliAuth = internalQuery({
     scoped: boolean;
     deployKeyId?: Id<"deployKeys">;
   } | null> => {
-    const { tokenHash, project, stage } = args;
+    const { tokenHash, keyKind, project, stage } = args;
 
-    const account = await accountFromSecretHash(ctx, tokenHash);
-    if (account)
-      return { accountId: account._id, secretHash: tokenHash, scoped: false };
+    if (keyKind === "account") {
+      const account = await accountFromSecretHash(ctx, tokenHash);
+
+      return account
+        ? { accountId: account._id, secretHash: tokenHash, scoped: false }
+        : null;
+    }
 
     const deployKey = await ctx.db
       .query("deployKeys")

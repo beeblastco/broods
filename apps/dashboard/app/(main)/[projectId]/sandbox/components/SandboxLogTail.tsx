@@ -29,7 +29,7 @@ export type SandboxLogId = string & { readonly __brand: "sandboxLogId" };
 export interface SandboxObservabilityScope {
   projectSlug: string;
   stageSlug: string;
-  /** The stage session ticket (`fp_dts_…`). */
+  /** The stage session ticket (`bdts_…`). */
   apiKey: string | undefined;
 }
 

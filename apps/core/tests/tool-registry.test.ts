@@ -1522,6 +1522,7 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     connections: {} as never,
     roleSessions: {} as never,
     taskUsage: {} as never,
+    auditLedger: { append: async (): Promise<void> => {} },
   };
 }
 

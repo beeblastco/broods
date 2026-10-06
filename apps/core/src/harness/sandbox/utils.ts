@@ -3,7 +3,14 @@
  * Keep small coercion, path, quoting, and output utilities here.
  */
 
+import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import type {
+  SandboxProvider,
+  SandboxRunPrincipal,
+  SandboxRunRequest,
+  SandboxRunResult,
+} from "./types.ts";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -12,8 +19,18 @@ const textDecoder = new TextDecoder();
 // per-machine suffix cannot run into a provider's undocumented name limit.
 const PREFIX_SLUG_LENGTH = 31;
 
-// Keys a per-call `request.envVars` may never set; account `config.envVars` is not filtered.
+// The run identity. Only core sets these, so both env layers drop them.
+const IDENTITY_ENV_KEYS: ReadonlySet<string> = new Set([
+  "BROODS_ACCOUNT_ID",
+  "BROODS_AGENT_ID",
+  "BROODS_BASE_URL",
+  "BROODS_RUN_TOKEN",
+]);
+
+// Keys a per-call `request.envVars` may never set. Account `config.envVars` is
+// filtered for the identity names only.
 export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
+  ...IDENTITY_ENV_KEYS,
   "BASH_ENV",
   "ENV",
   "HOME",
@@ -51,6 +68,56 @@ export class SandboxCapacityError extends Error {}
  * would for a provider 404.
  */
 export class SandboxGoneError extends Error {}
+
+// Past the exec server's own `timeout_ms`: it answers `timed_out` itself, so
+// the client deadline only covers a server that never answers.
+export const EXEC_GRACE_MS = 15_000;
+
+// A `SandboxExecResponse` (the lambda-sandbox image's and a custom server's
+// answer) as a run result, with the output held to the request's limit.
+export function execRunResult(
+  request: SandboxRunRequest,
+  response: SandboxExecResponse,
+  provider: SandboxProvider,
+  startedAt: number,
+): SandboxRunResult {
+  const stdout = truncateText(response.stdout, request.outputLimitBytes);
+  const stderr = truncateText(response.stderr, request.outputLimitBytes);
+
+  return {
+    ok: response.ok,
+    runtime: request.runtime ?? "bash",
+    exitCode: response.exit_code ?? null,
+    stdout: stdout.value,
+    stderr: stderr.value,
+    durationMs: response.duration_ms || Date.now() - startedAt,
+    timedOut: response.timed_out,
+    truncated:
+      response.truncated === true || stdout.truncated || stderr.truncated,
+    provider: provider,
+    ...(typeof response.cpu_usec === "number" && response.cpu_usec > 0
+      ? { cpuUsec: response.cpu_usec }
+      : {}),
+  };
+}
+
+// The body of a 2xx exec answer as the contract. A custom server is a third
+// party, so the fields a run result is built from are checked, not assumed.
+export function parseExecResponse(
+  bodyText: string,
+  label: string,
+): SandboxExecResponse {
+  if (!bodyText) throw new Error(`${label} returned an empty response`);
+  const parsed: unknown = JSON.parse(bodyText);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} response must be a JSON object`);
+  }
+  if (!isExecResponse(parsed)) {
+    throw new Error(`${label} response is not a sandbox exec response`);
+  }
+
+  return parsed;
+}
 
 export function configString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -98,16 +165,25 @@ export function isSandboxGoneError(error: unknown): boolean {
   );
 }
 
-// Account envVars under per-call overrides, reserved keys dropped from the overrides.
+// Account envVars under per-call overrides, reserved keys dropped from the
+// overrides and the identity names from both, then the run's identity on top.
 export function mergeSandboxEnv(
   accountEnv: Record<string, string | undefined> | undefined,
   requestEnv: Record<string, string> | undefined,
+  principal?: SandboxRunPrincipal,
 ): Record<string, string> {
+  const account = Object.entries(stringRecord(accountEnv)).filter(
+    ([key]) => !IDENTITY_ENV_KEYS.has(key),
+  );
   const overrides = Object.entries(requestEnv ?? {}).filter(
     ([key]) => !RESERVED_SANDBOX_ENV_KEYS.has(key),
   );
 
-  return { ...stringRecord(accountEnv), ...Object.fromEntries(overrides) };
+  return {
+    ...Object.fromEntries(account),
+    ...Object.fromEntries(overrides),
+    ...(principal ? principalEnv(principal) : {}),
+  };
 }
 
 export function requiredWorkspacePath(
@@ -200,4 +276,40 @@ export function workspacePath(
   }
 
   return request.namespace ? `${root}/${request.namespace}` : root;
+}
+
+function isExecResponse(value: object): value is SandboxExecResponse {
+  // Every field the run result reads, by the type it must have. A required
+  // one must be there; an optional one is checked only when the server sent it.
+  const fields: Record<
+    Exclude<keyof SandboxExecResponse, "burst">,
+    [type: string, required: boolean]
+  > = {
+    ok: ["boolean", true],
+    runtime: ["string", false],
+    exit_code: ["number", false],
+    timed_out: ["boolean", true],
+    duration_ms: ["number", true],
+    stdout: ["string", true],
+    stderr: ["string", true],
+    truncated: ["boolean", false],
+    cpu_usec: ["number", false],
+  };
+  const record: Record<string, unknown> = { ...value };
+
+  return Object.entries(fields).every(
+    ([field, [type, required]]): boolean =>
+      typeof record[field] === type ||
+      (!required && (record[field] === undefined || record[field] === null)),
+  );
+}
+
+/** The BROODS_* variables sandbox code reads to act as its run. */
+function principalEnv(principal: SandboxRunPrincipal): Record<string, string> {
+  return {
+    BROODS_ACCOUNT_ID: principal.accountId,
+    BROODS_AGENT_ID: principal.agentId,
+    ...(principal.baseUrl ? { BROODS_BASE_URL: principal.baseUrl } : {}),
+    BROODS_RUN_TOKEN: principal.runToken,
+  };
 }

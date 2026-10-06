@@ -107,6 +107,7 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
           {
             onSandboxCpu: context.onSandboxCpu,
             metadata: sandboxRunMetadata(context, workspace),
+            principal: context.principal?.(),
           },
         );
         if (!result.ok || (result.exitCode ?? 0) !== 0) {

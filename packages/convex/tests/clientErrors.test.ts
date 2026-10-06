@@ -14,7 +14,7 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const ACCOUNT_SECRET = "ask_client-errors";
+const ACCOUNT_SECRET = "bask_client-errors";
 const AUTH_ID = "auth_owner";
 
 const errorTest = () => convexTest(schema, modules);

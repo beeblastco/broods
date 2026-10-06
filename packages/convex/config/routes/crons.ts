@@ -6,10 +6,7 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { toCronResponse, toCronRunResponse } from "../../model/responses";
 import {
@@ -28,7 +25,7 @@ export async function handleCronRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   cronId: string | undefined,
   runs: boolean,
 ): Promise<Response> {
@@ -90,7 +87,7 @@ async function handleCronCollectionRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   if (req.method === "GET") {
     return collectionPage("crons", req, {
@@ -167,7 +164,7 @@ async function patchCronRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   cronId: string,
 ): Promise<Response> {
   const cron = await ctx.runMutation(internal.agent.crons.update, {

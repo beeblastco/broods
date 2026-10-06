@@ -349,8 +349,8 @@ function GithubForm({
         <SectionHeader>Account key</SectionHeader>
         <p className="text-2xs text-muted-foreground">
           Your account key (starts with{" "}
-          <code className="rounded bg-muted px-1">ask_</code>). Saved in session
-          only.
+          <code className="rounded bg-muted px-1">bask_</code>). Saved in
+          session only.
         </p>
         <TokenInput value={token} onChange={setToken} />
       </div>
@@ -555,7 +555,7 @@ function TokenInput({
       <Input
         type={show ? "text" : "password"}
         value={value}
-        placeholder="ask_…"
+        placeholder="bask_…"
         className="h-7 flex-1 font-mono text-2xs"
         onChange={(e) => onChange(e.target.value)}
       />

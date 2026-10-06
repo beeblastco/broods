@@ -1,15 +1,17 @@
 /**
- * Prefixes of the three user-held keys, account key generation, plus the
- * SHA-256 hashing every default-runtime Convex path uses to store a bearer
- * token as a digest instead of plaintext.
+ * Prefixes of the three user-held keys, the random token generator every
+ * Convex credential is minted with, plus the SHA-256 hashing every
+ * default-runtime Convex path uses to store a bearer token as a digest
+ * instead of plaintext. Every Broods credential starts with `b`, so people
+ * and secret scanners can tell it from another vendor's key.
  */
 
 /** An account key: the whole account. Minted at provisioning and rotation. */
-export const ACCOUNT_KEY_PREFIX = "ask_";
+export const ACCOUNT_KEY_PREFIX = "bask_";
 /** A project key: one project and stage, CLI sync. Minted by `deployKeys`. */
-export const PROJECT_KEY_PREFIX = "pdk_";
+export const PROJECT_KEY_PREFIX = "bpdk_";
 /** A runtime key: one project and stage, runs agents. Minted by `agent/deployments`. */
-export const RUNTIME_KEY_PREFIX = "sk_";
+export const RUNTIME_KEY_PREFIX = "bsk_";
 
 /**
  * @returns plaintext account key to show once to the caller
@@ -20,7 +22,7 @@ export function createAccountSecret(): string {
 
 /**
  * Generate a prefixed random bearer credential (base64url payload).
- * @param prefix public token prefix, e.g. "fp_sts_"
+ * @param prefix public token prefix, e.g. "bsts_"
  * @param bytes entropy size
  * @returns plaintext token to show once to the caller
  */

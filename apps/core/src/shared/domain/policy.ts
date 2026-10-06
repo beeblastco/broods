@@ -10,6 +10,7 @@ import type {
   PolicyDocument,
 } from "@broods/convex/model/policyRules";
 import { randomBytes } from "node:crypto";
+import type { Principal } from "./principal.ts";
 
 export type {
   PolicyAction,
@@ -36,6 +37,8 @@ export interface PolicyDecisionInput {
   stage?: string;
   endpointId?: string;
   agentId?: string;
+  /** The agent the run acts as and its delegation chain (`principal.chain[0]` is the requester, when known). */
+  principal?: Principal;
   conversationKey?: string;
   delivery?: string;
   /** Adapter name, e.g. "slack". The place is `channelId`, not this. */

@@ -32,7 +32,10 @@ import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
-import type { SandboxCpuSample } from "../sandbox/types.ts";
+import type {
+  SandboxCpuSample,
+  SandboxRunPrincipal,
+} from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
 import {
   listMcpTools,
@@ -144,6 +147,8 @@ export async function createTools(
     workspaces: workspaces,
     sandboxes: sandboxes,
     ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
+    principal: (): SandboxRunPrincipal | undefined =>
+      context.session?.sandboxPrincipal(),
   };
   const sandboxOptions =
     typeof defaultSandbox?.options === "object" &&
@@ -500,6 +505,7 @@ async function registerMcpTools(
           record,
           serverConfig.headers,
           serverConfig.oauth,
+          context.session?.principal,
         );
         // An unreachable server degrades to zero tools for this run instead
         // of killing every agent run that references it; config errors above
