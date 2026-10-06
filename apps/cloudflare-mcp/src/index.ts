@@ -319,7 +319,10 @@ async function readBounded(
   return UTF8.decode(await readBoundedBytes(stream, budget));
 }
 
-/** Read a body, throwing as soon as it overdraws the budget. */
+/**
+ * Read a body, throwing as soon as it overdraws the budget. A failed read
+ * gives back what it took, so concurrent readers of one budget keep it.
+ */
 async function readBoundedBytes(
   stream: ReadableStream<Uint8Array> | null,
   budget: ByteBudget,
@@ -327,14 +330,19 @@ async function readBoundedBytes(
   if (!stream) return new Uint8Array();
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
+  let taken = 0;
   try {
     for (;;) {
       const next = await reader.read();
       if (next.done) break;
       budget.remaining -= next.value.byteLength;
+      taken += next.value.byteLength;
       if (budget.remaining < 0) throw new Error("body exceeds its size limit");
       chunks.push(next.value);
     }
+  } catch (error) {
+    budget.remaining += taken;
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -351,17 +359,18 @@ async function readBoundedBytes(
 }
 
 /**
- * One request into the tenant isolate, bounded by REQUEST_TIMEOUT_MS. Reads
- * at most `maxBodyBytes`, the most a frame could still take of the batch.
+ * One request into the tenant isolate, bounded by REQUEST_TIMEOUT_MS. Its
+ * body draws from the batch's shared budget as it arrives; `drawn` is what a
+ * final frame took, which streamFrames settles against the encoded line.
  */
 async function serveRequest(
   worker: WorkerStub,
   { id, mcpRequest }: BatchRequest,
-  maxBodyBytes: number,
-): Promise<Frame> {
+  budget: ByteBudget,
+): Promise<{ frame: Frame; drawn: number }> {
   try {
     return await withDeadline(
-      (async (): Promise<Frame> => {
+      (async (): Promise<{ frame: Frame; drawn: number }> => {
         const response = await worker.getEntrypoint().fetch(
           new Request("https://mcp.internal/mcp", {
             method: mcpRequest.method,
@@ -369,33 +378,35 @@ async function serveRequest(
             body: mcpRequest.body,
           }),
         );
-        const body = await readBounded(response.body, {
-          remaining: maxBodyBytes,
-        });
+        const bytes = await readBoundedBytes(response.body, budget);
 
         return {
-          t: "final",
-          id: id,
-          result: {
-            status: response.status,
-            headers: Object.fromEntries(response.headers),
-            body: body,
+          frame: {
+            t: "final",
+            id: id,
+            result: {
+              status: response.status,
+              headers: Object.fromEntries(response.headers),
+              body: UTF8.decode(bytes),
+            },
           },
+          drawn: bytes.byteLength,
         };
       })(),
       REQUEST_TIMEOUT_MS,
       "run timed out",
     );
   } catch (error) {
-    return errorFrame(id, error);
+    return { frame: errorFrame(id, error), drawn: 0 };
   }
 }
 
 /**
  * Serve every request concurrently and write each frame the moment it
- * settles, then `end`. Encoded frames share one MAX_OUTPUT_BYTES budget; the
- * end frame and one error frame per request are reserved up front, so a
- * final frame that would overrun the batch becomes an error instead.
+ * settles, then `end`. Bodies as they are read, and then their encoded
+ * frames, share one MAX_OUTPUT_BYTES budget, so the batch never buffers more
+ * than that; the end frame and one error frame per request are reserved up
+ * front, so a final frame that would overrun the batch becomes an error.
  */
 async function streamFrames(
   worker: WorkerStub,
@@ -412,14 +423,17 @@ async function streamFrames(
   try {
     await Promise.all(
       requests.map(async (request): Promise<void> => {
-        const frame = await serveRequest(worker, request, budget.remaining);
+        const { frame, drawn } = await serveRequest(worker, request, budget);
         let line = encodeFrame(frame);
-        if (frame.t === "final" && line.byteLength > budget.remaining) {
+        // The body already drew its raw bytes; the line also costs its escaping.
+        const overhead = line.byteLength - drawn;
+        if (frame.t === "final" && overhead > budget.remaining) {
+          budget.remaining += drawn;
           line = encodeFrame(
             errorFrame(request.id, "output exceeded the 16 MiB batch limit"),
           );
         } else if (frame.t === "final") {
-          budget.remaining -= line.byteLength;
+          budget.remaining -= overhead;
         }
         await writer.write(line);
       }),
