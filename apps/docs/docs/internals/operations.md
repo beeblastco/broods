@@ -8,13 +8,13 @@ The managed service runs on one k3s cluster, deployed from the infra repo (`kube
 
 | Release                                      | Namespace       | Image                      | Replicas           | Exposed                                                      |
 | -------------------------------------------- | --------------- | -------------------------- | ------------------ | ------------------------------------------------------------ |
-| `gateway`, `gateway-dev`                     | `beeblast`      | `broods-gateway`           | scale freely       | WebSockets on `gateway.broods.app`, `gateway.dev.broods.app` |
+| `gateway`, `gateway-dev`                     | `beeblast`      | `broods-gateway`           | 1, can scale       | WebSockets on `gateway.broods.app`, `gateway.dev.broods.app` |
 | `core`, `core-dev`                           | `beeblast`      | `broods-core`              | 1                  | cluster only: `http://core.beeblast.svc.cluster.local`       |
 | `dashboard`, `dashboard-dev`                 | `beeblast`      | `broods-dashboard`         | as needed          | `dashboard.broods.app`, `dashboard.dev.broods.app`           |
 | `discord-forwarder`                          | `beeblast`      | `broods-discord-forwarder` | 1, `Recreate`      | none                                                         |
 | `matrix-forwarder`                           | `beeblast`      | `broods-matrix-forwarder`  | 1, `Recreate`, PVC | cluster only, for core's sends                               |
 | `convex-prod`, `convex-dev`                  | `convex`        | self-hosted Convex         | 1                  | Convex API and site hosts                                    |
-| `nats`                                       | `nats`          | NATS with JetStream        | chart default      | in-cluster `nats://`, plus a `wss://` ingress                |
+| `nats`                                       | `nats`          | NATS with JetStream        | chart default      | cluster only: `nats://nats.nats.svc.cluster.local:4222`      |
 | `opa`                                        | `beeblast`      | OPA with the Broods rego   | chart default      | `opa.beeblast.co`                                            |
 | `otel-collector`, `loki`, `tempo`, `grafana` | `observability` | upstream                   | chart default      | OTLP ingress                                                 |
 
@@ -38,7 +38,7 @@ flowchart LR
 - Traefik is the front door. The `broods-edge` IngressRoute, generated from the route table in `apps/edge`, sends each request on the public host to core, the Convex config plane or the gateway, limits per client address, sets CORS and writes the access log. The gateway serves only health checks and the four WebSockets. A route added to core or the config plane needs a row in `apps/edge/src/routes.ts`, then the regenerated file in the infra repo.
 
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user that SST creates. The key lives in the `core-secrets` k8s secret.
-- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A run waiting for a slot keeps its conversation lease renewed, so a long queue does not expire it. A model that sends nothing for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before its first chunk, or `MODEL_CHUNK_TIMEOUT_MS` between chunks (both default 5 minutes), fails its run. Time spent inside a tool call does not count. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
+- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A run waiting for a slot keeps its conversation lease renewed, so a long queue does not expire it. A model that sends nothing for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before its first chunk, or `MODEL_CHUNK_TIMEOUT_MS` between chunks (both default 5 minutes), fails its run. Time spent inside a tool call does not count. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds; the managed releases set 60 seconds inside a 90-second termination grace period. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
 - Core runs as a single replica, because the machine sandbox registry and the worker queue live in memory.
 - On boot and every 30 seconds, `apps/core/src/harness/ingress-recovery.ts` starts queued work whose conversation has no live owner. Convex promotes each queue atomically, so an overlapping pod never runs one twice.
 
@@ -54,7 +54,7 @@ sequenceDiagram
   K->>Old: SIGTERM
   Old->>Old: stopIngressRecovery, server.stop()
   Old->>Old: drain in-flight requests and in-process workers
-  alt drained before SHUTDOWN_DEADLINE_MS (25 s)
+  alt drained before SHUTDOWN_DEADLINE_MS
     Old->>Old: stop isolate pool and sandbox sweeper
   else runs still going
     Old->>CVX: interruptLiveOwners, fail runs and release leases (3 s budget)
