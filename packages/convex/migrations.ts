@@ -9,11 +9,10 @@ import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { decryptApiKey, runtimeKeyFields } from "./agent/deployments";
-import { RUNTIME_KEY_PREFIX } from "./model/accountSecrets";
+import { randomToken, RUNTIME_KEY_PREFIX } from "./model/accountSecrets";
 import { ROLE_ID_PREFIX } from "./model/roleRules";
 
 const OLD_ROLE_ID_PREFIX = "fp_role_";
-const OLD_RUNTIME_KEY_PREFIXES = ["sk_", "fp_agent_"];
 
 /** What one batch of a prefix migration did, and whether its walk finished. */
 const prefixBatchValidator = v.object({
@@ -25,12 +24,12 @@ const prefixBatchValidator = v.object({
 type PrefixBatch = { migrated: number; skipped: number; isDone: boolean };
 
 /**
- * Rewrite every stored runtime key under the `bsk_` prefix, keeping its
- * random body: decrypt, swap the `sk_`/`fp_agent_` prefix, then store the new
- * hash, hint and at-rest blob. Callers then use the same key with `bsk_` in
- * front; `broods dev` and `broods stage use` write it to `.env.local`.
- * Idempotent: a row already on `bsk_` is skipped. Paginated with a
- * self-reschedule, like the other backfills.
+ * Replace every `sk_`/`fp_agent_` runtime key with a fresh `bsk_` key, the
+ * same way a rotation mints one. The body is new on purpose: an old key that
+ * sits in a log must not rebuild the live one. Holders get the new key from
+ * `broods dev`, `broods stage use` or the dashboard. Idempotent: a row already
+ * on `bsk_` is skipped. Paginated with a self-reschedule, like the other
+ * backfills.
  * @returns rows migrated and skipped in this batch and whether the walk finished
  */
 export const runtimeKeyPrefix = internalMutation({
@@ -45,17 +44,13 @@ export const runtimeKeyPrefix = internalMutation({
     let skipped = 0;
     for (const deployment of page.page) {
       const rawApiKey = await decryptApiKey(deployment);
-      const oldPrefix = OLD_RUNTIME_KEY_PREFIXES.find((prefix) =>
-        rawApiKey.startsWith(prefix),
-      );
-      if (!oldPrefix) {
+      if (rawApiKey.startsWith(RUNTIME_KEY_PREFIX)) {
         skipped += 1;
         continue;
       }
 
-      const rebranded = `${RUNTIME_KEY_PREFIX}${rawApiKey.slice(oldPrefix.length)}`;
       await ctx.db.patch(deployment._id, {
-        ...(await runtimeKeyFields(rebranded)),
+        ...(await runtimeKeyFields(randomToken(RUNTIME_KEY_PREFIX))),
         updatedAt: Date.now(),
       });
       migrated += 1;
@@ -72,58 +67,48 @@ export const runtimeKeyPrefix = internalMutation({
 });
 
 /**
- * Rewrite `fp_role_` role ids to `brole_` in `accountRoles`, then in
- * `roleSessions`, keeping the random body so a role keeps its identity. Code
- * that pins a role id must switch to the new one. Idempotent: a row already
- * on `brole_` is skipped. Paginated with a self-reschedule, one table after
- * the other.
- * @returns rows migrated and skipped in this batch and whether the walk finished
+ * Rewrite `fp_role_` role ids to `brole_`, keeping the random body so a role
+ * keeps its identity. Each role's sessions move in the same mutation, so a
+ * live session never points at a role id that is gone. Code that pins a role
+ * id must switch to the new one. Idempotent: a role already on `brole_` is
+ * skipped. Paginated with a self-reschedule, like the other backfills.
+ * @returns roles migrated and skipped in this batch and whether the walk finished
  */
 export const roleIdPrefix = internalMutation({
-  args: {
-    table: v.optional(
-      v.union(v.literal("accountRoles"), v.literal("roleSessions")),
-    ),
-    cursor: v.optional(v.union(v.string(), v.null())),
-  },
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: prefixBatchValidator,
   handler: async (ctx, args): Promise<PrefixBatch> => {
-    const table = args.table ?? "accountRoles";
     const page = await ctx.db
-      .query(table)
+      .query("accountRoles")
       .paginate({ numItems: 100, cursor: args.cursor ?? null });
 
     let migrated = 0;
     let skipped = 0;
-    for (const row of page.page) {
-      if (!row.roleId.startsWith(OLD_ROLE_ID_PREFIX)) {
+    for (const role of page.page) {
+      if (!role.roleId.startsWith(OLD_ROLE_ID_PREFIX)) {
         skipped += 1;
         continue;
       }
 
-      await ctx.db.patch(row._id, {
-        roleId: `${ROLE_ID_PREFIX}${row.roleId.slice(OLD_ROLE_ID_PREFIX.length)}`,
-      });
+      const roleId = `${ROLE_ID_PREFIX}${role.roleId.slice(OLD_ROLE_ID_PREFIX.length)}`;
+      const sessions = await ctx.db
+        .query("roleSessions")
+        .withIndex("by_roleId", (q) => q.eq("roleId", role.roleId))
+        .collect();
+      for (const session of sessions) {
+        await ctx.db.patch(session._id, { roleId: roleId });
+      }
+      await ctx.db.patch(role._id, { roleId: roleId });
       migrated += 1;
     }
 
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.migrations.roleIdPrefix, {
-        table: table,
         cursor: page.continueCursor,
-      });
-    } else if (table === "accountRoles") {
-      await ctx.scheduler.runAfter(0, internal.migrations.roleIdPrefix, {
-        table: "roleSessions",
-        cursor: null,
       });
     }
 
-    return {
-      migrated: migrated,
-      skipped: skipped,
-      isDone: page.isDone && table === "roleSessions",
-    };
+    return { migrated: migrated, skipped: skipped, isDone: page.isDone };
   },
 });
 

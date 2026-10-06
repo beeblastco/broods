@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 /**
- * The two credential prefix migrations: stored runtime keys move to `bsk_`
- * keeping their random body, and role ids move to `brole_`. Both are
- * idempotent.
+ * The two credential prefix migrations: stored runtime keys are replaced by
+ * fresh `bsk_` keys, and role ids move to `brole_` together with their live
+ * sessions. Both are idempotent.
  */
 
 import { convexTest, type TestConvex } from "convex-test";
@@ -37,11 +37,10 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  vi.useRealTimers();
 });
 
 describe("migrations:runtimeKeyPrefix", () => {
-  test("rebrands sk_ and fp_agent_ keys to bsk_ with the same body, once", async () => {
+  test("replaces sk_ and fp_agent_ keys with fresh bsk_ keys, once", async () => {
     const t = migrationTest();
     const seeded = await seed(t, 3);
     const keys = [`sk_${BODY}`, `fp_agent_${BODY}x`, `bsk_${BODY}y`];
@@ -55,25 +54,32 @@ describe("migrations:runtimeKeyPrefix", () => {
       isDone: true,
     });
 
-    const expected = [`bsk_${BODY}`, `bsk_${BODY}x`, `bsk_${BODY}y`];
     const rows = await t.run(
       async (ctx) => await ctx.db.query("agentDeployments").collect(),
     );
-    for (const [index, row] of rows.entries()) {
-      expect(await decryptApiKey(row)).toBe(expected[index]);
-      expect(row.apiKeyHash).toBe(await sha256Hex(expected[index]));
-      expect(row.keyHint).toBe(`bsk_…${expected[index].slice(-4)}`);
+    const migrated = await Promise.all(
+      rows.map(async (row) => await decryptApiKey(row)),
+    );
+    expect(migrated[2]).toBe(`bsk_${BODY}y`);
+    for (const [index, key] of migrated.slice(0, 2).entries()) {
+      // A fresh body: an old key seen in logs must not rebuild the live one.
+      expect(key).toMatch(/^bsk_[A-Za-z0-9_-]{43}$/);
+      expect(key).not.toContain(BODY);
+      expect(rows[index].apiKeyHash).toBe(await sha256Hex(key));
+      expect(rows[index].keyHint).toBe(`bsk_…${key.slice(-4)}`);
       expect(
         await t.query(internal.agent.deployments.getByApiKeyHash, {
-          apiKeyHash: await sha256Hex(expected[index]),
+          apiKeyHash: await sha256Hex(key),
         }),
       ).toMatchObject({ projectSlug: "demo-app" });
     }
-    expect(
-      await t.query(internal.agent.deployments.getByApiKeyHash, {
-        apiKeyHash: await sha256Hex(`sk_${BODY}`),
-      }),
-    ).toBeNull();
+    for (const stale of [`sk_${BODY}`, `bsk_${BODY}`, `bsk_${BODY}x`]) {
+      expect(
+        await t.query(internal.agent.deployments.getByApiKeyHash, {
+          apiKeyHash: await sha256Hex(stale),
+        }),
+      ).toBeNull();
+    }
 
     expect(await t.mutation(internal.migrations.runtimeKeyPrefix, {})).toEqual({
       migrated: 0,
@@ -85,7 +91,6 @@ describe("migrations:runtimeKeyPrefix", () => {
 
 describe("migrations:roleIdPrefix", () => {
   test("rewrites fp_role_ ids in roles and their sessions, once", async () => {
-    vi.useFakeTimers();
     const t = migrationTest();
     const seeded = await seed(t, 1);
     await t.run(async (ctx) => {
@@ -112,10 +117,11 @@ describe("migrations:roleIdPrefix", () => {
     expect(await t.mutation(internal.migrations.roleIdPrefix, {})).toEqual({
       migrated: 1,
       skipped: 1,
-      isDone: false,
+      isDone: true,
     });
-    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
 
+    // The batch that renames a role also renames its live sessions, so a
+    // session keeps resolving while the walk runs.
     const roleIds = await t.run(async (ctx) => ({
       roles: (await ctx.db.query("accountRoles").collect()).map(
         (row) => row.roleId,
@@ -128,12 +134,17 @@ describe("migrations:roleIdPrefix", () => {
       roles: ["brole_abc", "brole_def"],
       sessions: ["brole_abc"],
     });
-
     expect(
-      await t.mutation(internal.migrations.roleIdPrefix, {
-        table: "roleSessions",
+      await t.query(internal.account.roles.resolveSession, {
+        tokenHash: "session-hash",
       }),
-    ).toEqual({ migrated: 0, skipped: 1, isDone: true });
+    ).toMatchObject({ roleId: "brole_abc" });
+
+    expect(await t.mutation(internal.migrations.roleIdPrefix, {})).toEqual({
+      migrated: 0,
+      skipped: 2,
+      isDone: true,
+    });
   });
 });
 

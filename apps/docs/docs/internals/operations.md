@@ -153,11 +153,13 @@ bunx convex run migrations:runtimeKeyPrefix
 bunx convex run migrations:roleIdPrefix
 ```
 
-- `runtimeKeyPrefix` decrypts each stored runtime key, swaps `sk_` or `fp_agent_` for `bsk_` and keeps the random part, then rewrites the hash, hint and at-rest blob. A batch returns `{ migrated, skipped, isDone }` and reschedules itself until the table is done.
-- `roleIdPrefix` rewrites `fp_role_` to `brole_` in `accountRoles`, then `roleSessions`.
+- `runtimeKeyPrefix` replaces each stored `sk_` or `fp_agent_` runtime key with a fresh `bsk_` key, the same way a rotation does. The random part is new on purpose, so an old key left in a log cannot rebuild the live one. A batch returns `{ migrated, skipped, isDone }` and reschedules itself until the table is done.
+- `roleIdPrefix` rewrites `fp_role_` to `brole_` in `accountRoles` and moves each role's `roleSessions` in the same mutation, so a live session keeps resolving.
 - Both skip rows already on the new prefix, so a re-run is safe.
 
-Account keys, project keys and CLI logins cannot be migrated: their stored hash covers the old prefix and the plaintext is gone. Owners rotate the account key in the dashboard (an admin can use `POST /v1/accounts/{accountId}/rotate-secret`), create new project keys and run `broods login` again. Deployed apps update `BROODS_API_KEY` to the `bsk_` key; `broods dev`, `broods deploy` and `broods stage use` rewrite `.env.local`. Role sessions, stage tickets and login codes are short-lived and just expire. The user-facing note is in [Security](../guides/security.md#credentials).
+Run `runtimeKeyPrefix` right after the deploy. A `broods dev` sync that reads the key just before the migration rotates it writes the old key to `.env.local`; the next `broods dev` or `broods stage use` writes the new one.
+
+Account keys, project keys and CLI logins cannot be migrated: their stored hash covers the old prefix and the plaintext is gone. Owners rotate the account key in the dashboard (an admin can use `POST /v1/accounts/{accountId}/rotate-secret`), create new project keys and run `broods login` again. Deployed apps update `BROODS_API_KEY` to the new `bsk_` key from the dashboard; `broods dev`, `broods deploy` and `broods stage use` rewrite `.env.local`. Role sessions, stage tickets and login codes are short-lived and just expire. The user-facing note is in [Security](../guides/security.md#credentials).
 
 ## Drift cleanup
 
