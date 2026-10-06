@@ -10,7 +10,11 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { CliManifestResource } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
-import { assertEnvVarName, toNestedAgentConfig } from "./agentConfigCodec";
+import {
+  assertEnvVarName,
+  collectEnvPlaceholderNames,
+  toNestedAgentConfig,
+} from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
@@ -66,6 +70,17 @@ export function assertEnvRefsResolved(
   const referenced = new Set<string>();
   for (const resource of resources) {
     rewriteEnvRefs(asObject(resource.config), referenced);
+    // MCP headers and oauth name their values as `${NAME}` strings, not env() refs.
+    const config = asObject(resource.config);
+    if (resource.kind === "agent") {
+      collectEnvPlaceholderNames(config.mcp, referenced);
+    }
+    if (resource.kind === "mcp") {
+      collectEnvPlaceholderNames(
+        { headers: config.headers, oauth: config.oauth },
+        referenced,
+      );
+    }
   }
   const missing = [...referenced]
     .filter((name) => envValues[name] === undefined)
@@ -75,7 +90,7 @@ export function assertEnvRefsResolved(
   const flag = `--stage ${stage}`;
 
   throw new ClientError(
-    `env() references ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
+    `env() and \${NAME} references name ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
       `Set each one with \`broods env set <NAME> ${flag}\`, or put them in .env.local and run \`broods env sync ${flag}\`, then sync again.`,
   );
 }

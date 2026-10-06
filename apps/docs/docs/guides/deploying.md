@@ -53,7 +53,7 @@ broods env sync                               # push every referenced env("NAME"
 ```
 
 - Names are uppercase letters, digits and `_`, start with a letter, and are at most 64 characters, the same as account env vars.
-- Every `env("NAME")` must have a value on the stage, or the sync fails and names the missing variables.
+- Every `env("NAME")`, and every `${NAME}` in an MCP server header, must have a value on the stage, or the sync fails and names the missing variables. `broods dev` and `env sync` push both kinds.
 - `env rm` refuses while a synced agent or sandbox still reads the variable.
 - To rotate a secret, `env set` it again. Do not remove it first.
 - `broods dev` pushes referenced values from `.env.local` on every sync. `broods deploy` does not, so a stale local value never reaches production by accident. Use `env set` or `env sync --stage production`.
