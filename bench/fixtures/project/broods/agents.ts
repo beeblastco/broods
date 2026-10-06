@@ -41,6 +41,6 @@ export const oncall = defineAgent({
   },
   session: {
     pruning: { enabled: true },
-    compaction: { enabled: true, maxContextLength: 80_000 },
+    autoCompaction: { enabled: true, maxContextLength: 500_000 },
   },
 });

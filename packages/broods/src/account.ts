@@ -15,7 +15,7 @@
  * server runtimes, as well as Node and Bun.
  *
  * Auth: every call sends `Authorization: Bearer {accountSecret}` to
- * `{baseUrl}/v1/...`, or a short-lived `fp_sts_` role session token from
+ * `{baseUrl}/v1/...`, or a short-lived `bsts_` role session token from
  * `assumeRole()`, limited to what the role's policy allows. Secrets inside
  * agent configs are encrypted at rest by the platform and come back redacted
  * (`********`) on reads.
@@ -32,6 +32,13 @@ import type {
   WorkspaceConfig,
 } from "./contracts.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
+import type {
+  Connection,
+  ConnectionCode,
+  ConnectionStart,
+  ConnectionStartResult,
+  ConnectionType,
+} from "../../convex/model/connections.ts";
 
 /**
  * Managed gateway host, matching the OpenAPI `servers` entry and
@@ -51,11 +58,11 @@ export type ConfigPatch<T> = T extends readonly unknown[]
 export interface BroodsAccountClientOptions {
   /** Base URL of the broods gateway. Falls back to `BROODS_BASE_URL`, then `https://gateway.broods.app`. */
   baseUrl?: string;
-  /** Account secret used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
+  /** Account key used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
   accountSecret?: string;
   /**
-   * Short-lived `fp_sts_` role session token (from {@link BroodsAccountClient.assumeRole})
-   * used as the Bearer instead of the account secret. The session can only do
+   * Short-lived `bsts_` role session token (from {@link BroodsAccountClient.assumeRole})
+   * used as the Bearer instead of the account key. The session can only do
    * what its role's policy allows. Falls back to `BROODS_SESSION_TOKEN`.
    */
   sessionToken?: string;
@@ -67,6 +74,8 @@ export interface BroodsAccount {
   accountId: string;
   username: string;
   status: string;
+  /** Days an audit row is kept; absent means the 90 day default. */
+  auditRetentionDays?: number;
   [key: string]: unknown;
 }
 
@@ -95,6 +104,15 @@ export interface AccountEnvVar {
   /** ISO 8601, like every other timestamp in the API. */
   updatedAt: string;
 }
+
+// The connection wire types live with the server so they cannot drift.
+export type {
+  Connection,
+  ConnectionCode,
+  ConnectionStart,
+  ConnectionStartResult,
+  ConnectionType,
+};
 
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {
@@ -150,7 +168,7 @@ export interface AccountPolicy {
 /**
  * Public account-role record returned by the roles routes. The policy uses the
  * API action namespace (`"agents:read"`, `"crons:write"`, ...); `projectId` and
- * `stageId` bound which stage runtime keys may assume the role.
+ * `stageId` bound which runtime keys may assume the role.
  */
 export interface AccountRole {
   accountId: string;
@@ -164,9 +182,72 @@ export interface AccountRole {
   updatedAt: string;
 }
 
+/** One link of an agent actor's delegation chain: who asked, or an agent that delegated. */
+export type AuditPrincipalLink =
+  | { kind: "user"; id: string; name?: string; channel?: string }
+  | { kind: "api"; keyKind: "account" | "deployment" | "cron" }
+  | { kind: "agent"; agentId: string };
+
+/**
+ * One row of the account's hash-chained audit ledger, as `GET /v1/audit`
+ * serves it. `hash` is sha256 over the canonical JSON of every field but
+ * `hash` itself (an absent optional field is left out, not null), with
+ * `prevHash` linking it to the row before.
+ */
+export interface AuditEvent {
+  accountId: string;
+  seq: number;
+  prevHash: string;
+  hash: string;
+  /** Unix ms. */
+  at: number;
+  actor: {
+    kind: string;
+    id?: string;
+    email?: string;
+    name?: string;
+    agentId?: string;
+    /** On an agent actor: who asked, then each agent that delegated, oldest first. */
+    chain?: AuditPrincipalLink[];
+  };
+  action: string;
+  resource: { kind: string; id?: string; name?: string };
+  summary: string;
+  detailsJson?: string;
+  projectId?: string;
+  stageId?: string;
+  traceId?: string;
+}
+
+/** A page of ledger rows plus the chain head to compare the last row against. */
+export interface AuditPage {
+  events: AuditEvent[];
+  /** Pass as `since` to read the rows after this page. */
+  nextSince: number;
+  head: { seq: number; hash: string } | null;
+}
+
+/** Result of `GET /v1/audit/verify`: the chain recomputed over the checked range. */
+export interface AuditVerification {
+  ok: boolean;
+  brokenAtSeq?: number;
+  checkedFrom?: number;
+  checkedTo?: number;
+}
+
+/** The account's audit export target. The signing secret never comes back. */
+export interface AuditSink {
+  kind: "webhook";
+  url: string;
+  /** Highest seq the receiver acknowledged. */
+  exportedSeq: number;
+  lastError?: string;
+  updatedAt: string;
+}
+
 /** Short-lived role session minted by `POST /v1/account/assume-role`. */
 export interface AssumeRoleResult {
-  /** `fp_sts_` bearer token; pass it as `sessionToken` to a new client. */
+  /** `bsts_` bearer token; pass it as `sessionToken` to a new client. */
   token: string;
   /** ISO timestamp when the session stops working. */
   expiresAt: string;
@@ -237,6 +318,9 @@ export interface McpOauthInput {
   tokenUrl?: string;
 }
 
+/** Where a hosted MCP server may run. */
+export type McpRuntime = "auto" | "lambda";
+
 /** Public MCP server registration returned by the `/v1/mcp` routes (#331). */
 export interface AccountMcp {
   accountId: string;
@@ -252,6 +336,8 @@ export interface AccountMcp {
   sandbox?: string;
   /** Hosted servers only: content hash of the uploaded bundle. */
   sha256?: string;
+  /** Hosted servers only: "auto" or "lambda". */
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
@@ -278,6 +364,12 @@ export interface CreateMcpInput {
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
+  /**
+   * Hosted servers only. "auto" (the default) runs it on Cloudflare Workers
+   * when its bundle can run there, on Lambda otherwise; "lambda" always runs
+   * it on Lambda.
+   */
+  runtime?: McpRuntime;
 }
 
 /** Fields accepted by `PATCH /v1/mcp/{serverId}`; every field is optional. */
@@ -292,6 +384,12 @@ export interface UpdateMcpInput {
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
+  /**
+   * Hosted servers only. "auto" (the default) runs it on Cloudflare Workers
+   * when its bundle can run there, on Lambda otherwise; "lambda" always runs
+   * it on Lambda.
+   */
+  runtime?: McpRuntime;
   disabled?: boolean;
 }
 
@@ -309,7 +407,7 @@ export interface SkillUploadInput {
   url?: string;
 }
 
-/** Result of `POST /v1/account/rotate-secret`. The returned `secret` is shown once; the old secret stops working immediately. */
+/** Result of `POST /v1/account/rotate-secret`. The returned `secret` is the new account key, shown once; the old key stops working immediately. */
 export interface RotateSecretResult {
   account: BroodsAccount;
   secret: string;
@@ -368,7 +466,7 @@ export function envPlaceholder(name: string): string {
 
 /**
  * The credential the environment supplies, with a role session winning over
- * the account secret. The constructor throws through this same resolution, so
+ * the account key. The constructor throws through this same resolution, so
  * callers that can run without an account credential (`broods mcp` with only a
  * stored login) probe here instead of catching the constructor.
  */
@@ -425,6 +523,8 @@ export class BroodsAccountClient {
   async updateAccount(patch: {
     username?: string;
     description?: string | null;
+    /** 1 to 3650 days, or null to return to the 90 day default. */
+    auditRetentionDays?: number | null;
   }): Promise<BroodsAccount | null> {
     const result = await this.request<{ account: BroodsAccount }>(
       "PATCH",
@@ -436,8 +536,8 @@ export class BroodsAccountClient {
   }
 
   /**
-   * Exchange a role for a short-lived `fp_sts_` session token. Callable with
-   * the account secret, a CLI login token, or a stage runtime key (the latter
+   * Exchange a role for a short-lived `bsts_` session token. Callable with
+   * the account key, a CLI login token, or a runtime key (the latter
    * only into roles scoped to the key's own project/stage). Construct a new
    * client with `{ sessionToken: result.token }` to act as the role.
    */
@@ -466,7 +566,7 @@ export class BroodsAccountClient {
     return result;
   }
 
-  /** Rotate the account secret. The returned `secret` is shown once and the current secret stops working immediately, so persist it before the process exits. */
+  /** Rotate the account key. The returned `secret` is the new key, shown once, and the current key stops working immediately, so persist it before the process exits. */
   async rotateSecret(): Promise<RotateSecretResult> {
     const result = await this.request<RotateSecretResult>(
       "POST",
@@ -583,6 +683,76 @@ export class BroodsAccountClient {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/env/${encodeURIComponent(name)}`,
+    );
+
+    return result?.deleted ?? false;
+  }
+
+  /** The account's connections (`broods connect`), never their tokens. */
+  async listConnections(): Promise<Connection[]> {
+    const result = await this.request<{ connections: Connection[] }>(
+      "GET",
+      "/v1/account/connections",
+    );
+
+    return result?.connections ?? [];
+  }
+
+  /** The account's connection of one type, or null when there is none. */
+  async getConnection(type: ConnectionType): Promise<Connection | null> {
+    return await this.request<Connection>(
+      "GET",
+      `/v1/account/connections/${type}`,
+    );
+  }
+
+  /** Starts a sign-in: the provider's consent screen for `broods connect` to open. */
+  async startConnection(
+    type: ConnectionType,
+    start: ConnectionStart,
+  ): Promise<ConnectionStartResult> {
+    const result = await this.request<ConnectionStartResult>(
+      "POST",
+      `/v1/account/connections/${type}/start`,
+      start,
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "POST",
+        `/v1/account/connections/${type}/start`,
+        404,
+        "This deployment has no /v1/account/connections yet",
+      );
+
+    return result;
+  }
+
+  /** Finishes a sign-in with the code the browser brought back; the deployment keeps the tokens. */
+  async connect(
+    type: ConnectionType,
+    code: ConnectionCode,
+  ): Promise<Connection> {
+    const result = await this.request<Connection>(
+      "PUT",
+      `/v1/account/connections/${type}`,
+      code,
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "PUT",
+        `/v1/account/connections/${type}`,
+        404,
+        "This deployment has no /v1/account/connections yet",
+      );
+
+    return result;
+  }
+
+  /** Forget a connection and revoke it at the provider. False when there was none. */
+  async disconnect(type: ConnectionType): Promise<boolean> {
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/account/connections/${type}`,
     );
 
     return result?.deleted ?? false;
@@ -1115,6 +1285,78 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
+  /** The audit ledger: rows since a seq, chain verification, and the webhook sink. */
+  readonly audit = {
+    /** Rows with `seq > since`, oldest first, at most `limit` (default 100, max 500). */
+    list: async (
+      options: { since?: number; limit?: number } = {},
+    ): Promise<AuditPage> => {
+      const result = await this.request<AuditPage>(
+        "GET",
+        `/v1/audit${optionalQuery(options)}`,
+      );
+      if (!result)
+        throw new BroodsAccountApiError("GET", "/v1/audit", 404, "Not found");
+
+      return result;
+    },
+    /**
+     * Recompute the chain over `[fromSeq, toSeq]`, from the oldest kept row by
+     * default, at most 1000 rows per call. `ok` covers only `checkedFrom` to
+     * `checkedTo`; on a longer ledger call again with `fromSeq: checkedTo + 1`.
+     */
+    verify: async (
+      options: { fromSeq?: number; toSeq?: number } = {},
+    ): Promise<AuditVerification> => {
+      const result = await this.request<AuditVerification>(
+        "GET",
+        `/v1/audit/verify${optionalQuery(options)}`,
+      );
+      if (!result)
+        throw new BroodsAccountApiError(
+          "GET",
+          "/v1/audit/verify",
+          404,
+          "Not found",
+        );
+
+      return result;
+    },
+    /** The account's sink, or null when none is set. */
+    getSink: async (): Promise<AuditSink | null> => {
+      return await this.request<AuditSink>("GET", "/v1/audit/sink");
+    },
+    /** Set the one webhook sink. `url` must be public https; `secret` signs each batch. */
+    setSink: async (input: {
+      url: string;
+      secret: string;
+    }): Promise<AuditSink> => {
+      const result = await this.request<AuditSink>(
+        "PUT",
+        "/v1/audit/sink",
+        input,
+      );
+      if (!result)
+        throw new BroodsAccountApiError(
+          "PUT",
+          "/v1/audit/sink",
+          404,
+          "Not found",
+        );
+
+      return result;
+    },
+    /** Remove the sink; exports stop and rows age out on retention alone. Returns whether one existed. */
+    deleteSink: async (): Promise<boolean> => {
+      const result = await this.request<{ deleted: boolean }>(
+        "DELETE",
+        "/v1/audit/sink",
+      );
+
+      return result?.deleted ?? false;
+    },
+  };
+
   async listChannels(): Promise<AccountChannel[]> {
     const result = await this.request<{ channels: AccountChannel[] }>(
       "GET",
@@ -1266,6 +1508,16 @@ export class BroodsAccountClient {
 
 function envVar(name: string): string | undefined {
   return typeof process !== "undefined" ? process?.env?.[name] : undefined;
+}
+
+/** `?a=1&b=2` from the defined entries, or "" when none is set. */
+function optionalQuery(params: Record<string, number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(name, String(value));
+  }
+
+  return query.size > 0 ? `?${query.toString()}` : "";
 }
 
 function stageScopeQuery(scope: StageScope): string {

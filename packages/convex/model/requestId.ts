@@ -1,7 +1,7 @@
 /**
- * The `X-Request-Id` both hops share. The gateway resolves one per inbound
- * request and forwards it; core reuses that value so one client request keeps a
- * single id through the logs of both services.
+ * The `X-Request-Id` every public response carries. Core, the config plane and
+ * the gateway each resolve one per request, reusing a well-formed inbound id so
+ * a client's id follows the request through every log.
  */
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -18,7 +18,7 @@ export function resolveRequestId(inbound: string | null | undefined): string {
 
 /**
  * Add the id unless the response already carries one, so an id core set
- * survives back out through the gateway. Streaming responses keep their body;
+ * survives back out through Traefik. Streaming responses keep their body;
  * only the header set is rebuilt.
  */
 export function withRequestId(response: Response, requestId: string): Response {

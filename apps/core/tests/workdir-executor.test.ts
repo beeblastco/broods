@@ -168,6 +168,10 @@ const getSandboxReservationRecordMock = mock(
 );
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+  getSandboxReleaseTarget: mock(async () => ({
+    externalId: null,
+    instance: null,
+  })),
   getSandboxExternalId: getSandboxExternalIdMock,
   getSandboxReservationRecord: getSandboxReservationRecordMock,
   claimSandboxInstance: claimSandboxInstanceMock,
@@ -181,6 +185,7 @@ mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: upsertSandboxInstanceMock,
   setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
+  recordSandboxBurst: mock(async (): Promise<boolean> => true),
   removeSandboxInstance: mock(async (): Promise<void> => {}),
 }));
 
@@ -542,11 +547,11 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
   });
 
-  it("launches from the config snapshot pin, preferring it over the options.image alias", async () => {
+  it("launches from the config snapshot pin", async () => {
     const executor = await newExecutor({
       provider: "sandbox",
       snapshot: "img_curated",
-      options: { workdirUrl: BASE, image: "img_legacy" },
+      options: { workdirUrl: BASE },
     });
     await executor.run({
       code: "echo ok",

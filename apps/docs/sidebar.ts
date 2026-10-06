@@ -24,6 +24,12 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: "doc", id: "guides/agents", label: "Agents" },
         { type: "doc", id: "guides/tools", label: "Tools and MCP" },
+        { type: "doc", id: "guides/connections", label: "Connections" },
+        {
+          type: "doc",
+          id: "guides/cloudflare-mcp",
+          label: "Cloudflare MCP runtime",
+        },
         {
           type: "doc",
           id: "guides/cloudflare-browser",
@@ -48,6 +54,11 @@ const sidebars: SidebarsConfig = {
               type: "doc",
               id: "guides/sandboxes/machine",
               label: "Your computer",
+            },
+            {
+              type: "doc",
+              id: "guides/sandboxes/custom",
+              label: "Your own server",
             },
           ],
         },

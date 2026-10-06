@@ -113,6 +113,24 @@ export BROODS_BASE_URL="https://gateway.your-domain.example"
 broods login --dashboard-url https://your-dashboard.example.com
 ```
 
+## connect
+
+Signs an external account in through the browser and keeps it on your deployment, so agents act through it. There is nothing to pass. Without a type, lists the account's connections. See [Connections](../guides/connections.md).
+
+```bash
+broods connect [chatgpt]
+```
+
+It uses the account key in `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` is self-hosted only; the managed service refuses it.
+
+## disconnect
+
+```bash
+broods disconnect <chatgpt>
+```
+
+Forgets the connection and revokes its refresh token at the provider.
+
 ## whoami
 
 Shows the login, server, organization, plan, project and stage the next command will use.
@@ -130,7 +148,7 @@ Server:      https://gateway.broods.app
 User:        you@example.com
 Org:         my-team (my-team, owner, free plan)
 Account:     my-team (active)
-Runtime key: fp_agent_…vK8s (matches this org and stage)
+Runtime key: bsk_…vK8s (matches this org and stage)
 ```
 
 It also checks the local `BROODS_API_KEY` against the key that org and stage serve and warns when they differ, which happens after switching organizations without resyncing. Before a project exists it prints `Project: none` and the folder name `dev` would suggest.
@@ -204,7 +222,7 @@ broods env <set|get|list|rm|sync> [name]
 | Subcommand   | Description                                                       |
 | ------------ | ----------------------------------------------------------------- |
 | `set <name>` | Store a value, read from a prompt or stdin                        |
-| `get <name>` | Reveal a value. Audited. Needs a login token or the org secret    |
+| `get <name>` | Reveal a value. Audited. Needs a login token or the account key   |
 | `list`       | List names. Values stay hidden                                    |
 | `rm <name>`  | Remove a variable                                                 |
 | `sync`       | Push every `env("NAME")` the project references from `.env.local` |
@@ -222,7 +240,7 @@ echo "$VALUE" | broods env set SOME_NAME
 1 referenced variable(s) live only on demo-app/production: SLACK_SIGNING_SECRET
 ```
 
-The stage stores a SHA-256 digest next to each value, so `sync` and `diff` compare without revealing secrets. A stage-scoped deploy key can set and list variables but not read them.
+The stage stores a SHA-256 digest next to each value, so `sync` and `diff` compare without revealing secrets. A project key can set and list variables but not read them.
 
 ## run
 
@@ -240,7 +258,7 @@ broods run my-agent "ping" > answer.txt   # plain text, no UI
 - The session streams reasoning, shows tool calls as cards with input and output, and stops for `y`/`n` on tools that need approval. It stays open for follow-ups.
 - Enter sends, arrows or PgUp and PgDn scroll, Ctrl+L repaints, and Esc or Ctrl+C leaves.
 - When stdin or stdout is not a terminal, `run` prints the answer as plain text. A prompt is then required.
-- `run` uses the stage runtime key over the public endpoint, so the agent needs `publicAccess: true`. Without it you get `403 public_access_disabled`.
+- `run` uses the runtime key over the public endpoint, so the agent needs `publicAccess: true`. Without it you get `403 public_access_disabled`.
 - Each turn is a normal run on one conversation. Tools, sandboxes and policies behave as in production.
 
 ## agent
@@ -307,7 +325,7 @@ Projects:
   abandoned-e2e: empty
 ```
 
-`delete` removes the project on every stage, including agent configs, canvas, environment variables, deploy keys, cron schedules, and workspace files with their stored blobs. It needs the org admin role. There is no undo. The prompt shows the counts first. `--yes` skips it. Without a TTY the prompt answers no, so a CI run without `--yes` deletes nothing.
+`delete` removes the project on every stage, including agent configs, canvas, environment variables, project keys, cron schedules, and workspace files with their stored blobs. It needs the org admin role. There is no undo. The prompt shows the counts first. `--yes` skips it. Without a TTY the prompt answers no, so a CI run without `--yes` deletes nothing.
 
 ## stage
 
@@ -363,11 +381,11 @@ With a stored `broods login`, it also registers `list-orgs`, `create-org`, `sele
 
 The server reads credentials from the environment once, at startup.
 
-| Credential                             | What the agent can reach                 |
-| -------------------------------------- | ---------------------------------------- |
-| `BROODS_SESSION_TOKEN`, a role session | What the role's policy allows. Preferred |
-| `BROODS_ACCOUNT_SECRET`                | The whole account                        |
-| Stored `broods login` only             | Org, project and stage tools only        |
+| Credential                               | What the agent can reach                 |
+| ---------------------------------------- | ---------------------------------------- |
+| `BROODS_SESSION_TOKEN`, a role session   | What the role's policy allows. Preferred |
+| `BROODS_ACCOUNT_SECRET`, the account key | The whole account                        |
+| Stored `broods login` only               | Org, project and stage tools only        |
 
 The server enforces these guards itself.
 

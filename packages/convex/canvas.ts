@@ -7,9 +7,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
-import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import {
+  accountCipherForWrite,
+  hasEncryptionSecret,
+} from "./model/accountKeys";
 import { stableJson } from "./model/objects";
 import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
+import { hasReservation } from "./model/cliSyncResources";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -332,15 +336,20 @@ function asRecord(value: unknown): Record<string, unknown> {
  * config-less rather than failing the whole canvas save).
  */
 async function encryptSandboxConfigFields(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
   config: Record<string, unknown>,
 ): Promise<{
   encryptedConfig: string;
   encryptionIv: string;
   encryptionTag: string;
 } | null> {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) return null;
-  const encrypted = await encryptAgentConfigBlob(config, secret);
+  if (!hasEncryptionSecret()) return null;
+  const cipher = await accountCipherForWrite(ctx, accountId);
+  const encrypted = await cipher.encrypt(
+    "sandboxConfigs:encryptedConfig",
+    config,
+  );
 
   return {
     encryptedConfig: encrypted.ciphertext,
@@ -427,7 +436,7 @@ async function materializeSandboxNode(
   const hasConfig = Object.keys(sandboxConfig).length > 0;
   const encrypted =
     changed && hasConfig
-      ? await encryptSandboxConfigFields(sandboxConfig)
+      ? await encryptSandboxConfigFields(ctx, account._id, sandboxConfig)
       : null;
   const normalized = resourceId
     ? ctx.db.normalizeId("sandboxConfigs", resourceId)
@@ -578,9 +587,12 @@ async function materializeWorkspaceNode(
  * Delete dashboard-owned workspace/sandbox rows in this stage that no
  * canvas node references anymore, making node deletion a real resource delete.
  * CLI-owned (`managedBy: "cli"`) rows are never touched. Code owns their
- * lifecycle and prune removes them via the CLI instead.
+ * lifecycle and prune removes them via the CLI instead. A sandbox config that
+ * still holds a reserved instance is kept, like the CLI prune does, so the
+ * instance never names a config that is gone; once the sweeper releases it,
+ * `pruneReleasedDashboardSandbox` drops the config.
  */
-async function pruneOrphanedDashboardRows(
+export async function pruneOrphanedDashboardRows(
   ctx: MutationCtx,
   account: Doc<"accounts"> | null,
   stageId: Id<"stages">,
@@ -603,12 +615,47 @@ async function pruneOrphanedDashboardRows(
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
 
-  for (const row of [...workspaces, ...sandboxes]) {
-    if (row.accountId !== account._id) continue;
-    if (row.managedBy === "cli" || row.managedBy === "api") continue;
-    if (referenced.has(row._id)) continue;
-    await ctx.db.delete(row._id);
+  const orphaned = (
+    row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
+  ): boolean =>
+    row.accountId === account._id &&
+    row.managedBy !== "cli" &&
+    row.managedBy !== "api" &&
+    !referenced.has(row._id);
+  for (const row of workspaces) {
+    if (orphaned(row)) await ctx.db.delete(row._id);
   }
+  for (const row of sandboxes) {
+    if (orphaned(row) && !(await hasReservation(ctx, row._id))) {
+      await ctx.db.delete(row._id);
+    }
+  }
+}
+
+/**
+ * Called when an instance row goes: deletes the dashboard sandbox config the
+ * canvas prune kept for it, once no card and no other instance holds it.
+ */
+export async function pruneReleasedDashboardSandbox(
+  ctx: MutationCtx,
+  sandboxConfigId: Id<"sandboxConfigs">,
+): Promise<void> {
+  const config = await ctx.db.get(sandboxConfigId);
+  if (!config?.projectId || !config.stageId) return;
+  if (config.managedBy === "cli" || config.managedBy === "api") return;
+  if (await hasReservation(ctx, config._id)) return;
+  const { projectId, stageId } = config;
+  const layout = await ctx.db
+    .query("canvasLayouts")
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
+    )
+    .unique();
+  if (!layout) return;
+  const referenced = layout.nodes.some(
+    (node) => asRecord(node.data).resourceId === config._id,
+  );
+  if (!referenced) await ctx.db.delete(config._id);
 }
 
 /** Compare only the node fields that materialize into runtime resource rows. */

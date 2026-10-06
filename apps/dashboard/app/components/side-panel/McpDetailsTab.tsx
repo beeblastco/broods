@@ -3,6 +3,14 @@
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/select";
 import { Switch } from "@/app/components/ui/switch";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
@@ -15,6 +23,13 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { useState } from "react";
+
+const RUNTIME_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "lambda", label: "Lambda" },
+];
+
+type McpRuntime = NonNullable<Doc<"mcp">["runtime"]>;
 
 export function McpDetailsTab({
   projectId,
@@ -52,9 +67,12 @@ export function McpDetailsTab({
 
   const isEnabled = server?.disabled !== true;
 
-  async function handleEnabledChange(nextEnabled: boolean): Promise<void> {
+  async function saveServer(patch: {
+    disabled?: boolean;
+    runtime?: McpRuntime;
+  }): Promise<void> {
     if (!projectId || !stageId) {
-      setStatusError("Select a stage before toggling this server.");
+      setStatusError("Select a stage before changing this server.");
 
       return;
     }
@@ -67,7 +85,7 @@ export function McpDetailsTab({
         stageId: stageId,
         nodeId: nodeId,
         nodeLabel: nodeLabel,
-        disabled: !nextEnabled,
+        ...patch,
       });
     } catch (error) {
       setStatusError(toErrorMessage(error));
@@ -119,6 +137,16 @@ export function McpDetailsTab({
         </code>
       </div>
 
+      {server?.transport === "hosted" && (
+        <RuntimeRow
+          runtime={server.runtime}
+          disabled={isSavingStatus || !canWrite}
+          onChange={(runtime): Promise<void> =>
+            saveServer({ runtime: runtime })
+          }
+        />
+      )}
+
       {server?.sha256 && (
         <div className="flex flex-col gap-1.5">
           <SectionHeader>Checksum</SectionHeader>
@@ -139,7 +167,9 @@ export function McpDetailsTab({
         </div>
         <Switch
           checked={isEnabled}
-          onCheckedChange={handleEnabledChange}
+          onCheckedChange={(nextEnabled): Promise<void> =>
+            saveServer({ disabled: !nextEnabled })
+          }
           disabled={isSavingStatus || !canQuery || !server}
           aria-label="Toggle MCP server enabled state"
         />
@@ -218,11 +248,49 @@ function AgentWireRow({
   );
 }
 
+/** Where a hosted server runs; "auto" picks Workers when its bundle can run there. */
+function RuntimeRow({
+  runtime,
+  disabled,
+  onChange,
+}: {
+  runtime: McpRuntime | undefined;
+  disabled: boolean;
+  onChange: (runtime: McpRuntime) => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <SectionHeader>Runtime</SectionHeader>
+      <Select
+        items={RUNTIME_OPTIONS}
+        value={runtime ?? "auto"}
+        onValueChange={(value): void => {
+          if (value === "auto" || value === "lambda") onChange(value);
+        }}
+        disabled={disabled}
+      >
+        <SelectTrigger className="h-8 w-full text-xs" aria-label="Runtime">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {RUNTIME_OPTIONS.map((option): React.JSX.Element => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 function transportLabel(server: Doc<"mcp"> | null | undefined): string {
   if (!server) return "set in the Server tab";
 
   if (server.transport === "hosted") {
-    return "hosted (Node bundle on the tool runner)";
+    return "hosted bundle";
   }
   if (server.transport === "machine") {
     return `on your computer (machine sandbox ${server.sandbox ?? ""})`;

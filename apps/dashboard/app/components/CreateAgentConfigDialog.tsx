@@ -23,6 +23,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   MODEL_PROVIDERS,
+  providerApiKeyEnvName,
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
@@ -62,6 +63,7 @@ export function CreateAgentConfigDialog({
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const keyVariable = providerApiKeyEnvName(provider);
 
   function resetForm(): void {
     setName("");
@@ -156,6 +158,16 @@ export function CreateAgentConfigDialog({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {keyVariable ? (
+                  <>
+                    Reads its key from the stage variable{" "}
+                    <code>{keyVariable}</code>.
+                  </>
+                ) : (
+                  "Runs on the account's ChatGPT connection."
+                )}
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="agent-model">Model ID</Label>

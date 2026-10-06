@@ -1,10 +1,10 @@
 # Sandbox providers
 
-Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here. The `machine` provider has its own page, [Your computer](machine.md).
+Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here. The `machine` provider has its own page, [Your computer](machine.md), and `custom`, a server you run on the sandbox HTTP contract, is on [Your own server](custom.md).
 
 ## `sandbox`
 
-The default provider runs Firecracker VMs on Broods-hosted machines. It supports workspace mounts, persistence with pause and resume, background jobs with logs and stop, the live dashboard terminal, and the Create snapshot action.
+Runs Firecracker VMs on a workdir node. The hosted service does not offer it yet, so use `lambda` there; a self-hosted deployment points it at its own node. It supports workspace mounts, persistence with pause and resume, background jobs with logs and stop, the live dashboard terminal, and the Create snapshot action.
 
 ```ts
 export const box = defineSandbox({
@@ -41,7 +41,7 @@ export const box = defineSandbox({
 - MicroVM images come in sizes from 0.5 GB with 0.25 vCPU up to 8 GB with 4 vCPU. The image sets the machine, so `size` only changes what the dashboard shows.
 - A MicroVM lives at most 8 hours. A persistent reservation is recreated after that.
 - `restricted` behaves like `deny-all`, and `allowDomains` or `allowCidrs` are rejected. Under `deny-all` the managed workspace bucket stays reachable.
-- A workspace that brings its own bucket cannot be reached under `deny-all`. Pair it with `allow-all`.
+- A workspace that brings its own bucket cannot be reached under `deny-all`, so the run is refused. Pair it with `allow-all`.
 - The workspace mount cannot append or edit in place. `>>` and in-place edits fail. The `write` and `edit` tools rewrite whole files, so tell the agent not to append.
 - The image, roles and log group are managed by the platform. `options` accepts only `workspaceRoot` and `reservationKey`.
 - Create snapshot is not available. MicroVM images are built ahead of time by the platform. `snapshot` can pin another platform image by ARN, in the same AWS account and region as the default. Any other ARN fails the run.

@@ -33,9 +33,12 @@ inductive Finish where
 
 /-- How `runAgentLoopUntilSubagentsIdle` ends, or the no-input branch. A failed loop
 always reaches `onErrorText`, so it is `error`; `silent` returns with no callback;
-`replayed` asks questions, then replays an earlier pass's final text. -/
+`replayed` asks questions, then replays an earlier pass's final text. A queued command
+(`commandOutcome`) runs instead of the loop and never throws: `commandReplied` when its
+reply went out, `commandFailed` when sending it failed. -/
 inductive Ending where
   | noInput | final | error | approval | questions | silent | replayed
+  | commandReplied | commandFailed
   deriving DecidableEq, Repr
 
 /-- One statement of a handler. -/
@@ -156,6 +159,8 @@ def program : Ending → List Act
   | .replayed =>
     [.finishSwallowed .awaitingInput, .finish .completed, .safe, .requireRecorded, .effect,
       .effect]
+  | .commandReplied => [.finish .completed, .requireRecorded, .effect, .effect]
+  | .commandFailed => [.finish .failed, .requireRecorded, .effect, .effect]
 
 /-- The catch block: nothing once the outcome is recorded; otherwise it records the
 outcome the run produced, or a failure when there is none: first through the settle,
@@ -251,7 +256,7 @@ either catch write lands, the polling row holds that outcome. -/
 theorem worker_keeps_produced (e : Ending) (catchSettles : Bool) :
     (worker catchSettles true e (some 0)).result =
       match e with
-      | .final => .completed
+      | .final | .commandReplied => .completed
       | .questions | .replayed => .awaitingInput
       | .approval => .awaitingApproval
       | _ => .failed := by

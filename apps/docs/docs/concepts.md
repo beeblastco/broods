@@ -15,7 +15,7 @@ flowchart LR
 
 | Level        | What it is                                                                                                                                  | Managed with                              |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Organization | Your team. Members read, admins and owners change things. Billing and the account secret live here.                                         | Dashboard, `broods org`                   |
+| Organization | Your team. Members read, admins and owners change things. Billing and the account key live here.                                            | Dashboard, `broods org`                   |
 | Project      | One product or repo. Groups its stages.                                                                                                     | `broods dev` creates it, `broods project` |
 | Stage        | A deploy target inside a project, such as `development` or `production`. Each has its own resources, environment variables and runtime key. | `broods stage`, `--stage`                 |
 
@@ -62,13 +62,13 @@ flowchart LR
 
 Use the narrowest credential that works. The three you meet first:
 
-| Credential        | Prefix      | Who holds it                   | What it can do                                                       |
-| ----------------- | ----------- | ------------------------------ | -------------------------------------------------------------------- |
-| Stage runtime key | `fp_agent_` | Your app or frontend           | Run agents with `publicAccess: true` in its own stage. Nothing else. |
-| Account secret    | `fp_acct_`  | Your backend, kept secret      | The whole config plane, to create agents, crons and files at runtime |
-| CLI login         | `fp_cli_`   | `broods login` on your machine | Everything the CLI does, for org owners and admins                   |
+| Credential  | Prefix  | Who holds it                   | What it can do                                                       |
+| ----------- | ------- | ------------------------------ | -------------------------------------------------------------------- |
+| Runtime key | `bsk_`  | Your app or frontend           | Run agents with `publicAccess: true` in its own stage. Nothing else. |
+| Account key | `bask_` | Your backend, kept secret      | The whole config plane, to create agents, crons and files at runtime |
+| CLI login   | `bcli_` | `broods login` on your machine | Everything the CLI does, for org owners and admins                   |
 
-`broods dev` and `broods deploy` write the runtime key to `.env.local` as `BROODS_API_KEY`. The account secret is shown once, when your organization is provisioned. Rotate it under Org Settings, API Access. Deploy keys, role sessions and stage tickets are in [Security](guides/security.md).
+`broods dev` and `broods deploy` write the runtime key to `.env.local` as `BROODS_API_KEY`. The account key is shown once, when your organization is provisioned. Rotate it under Org Settings, API Access. Project keys, role sessions and stage tickets are in [Security](guides/security.md).
 
 ## Config plane and runtime
 

@@ -2,13 +2,7 @@
  * Transactional persistence for the core runtime.
  */
 
-import {
-  getConvexSize,
-  type Infer,
-  type ObjectType,
-  v,
-  type Value,
-} from "convex/values";
+import { getConvexSize, type Infer, v, type Value } from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -50,13 +44,10 @@ const RUNTIME_DELETE_BATCH_SIZE = 100;
 // without deleting the sandbox first strands the machine.
 export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
 
-// `events` is a whole step in one write. `cursor` + `event` is the single-event
-// shape core sent before it batched, kept until that core has rolled out.
-export const conversationEventArgs = {
-  cursor: v.optional(v.string()),
-  event: v.optional(v.any()),
-  events: v.optional(v.array(v.object({ cursor: v.string(), event: v.any() }))),
-};
+/** A whole step's history rows in one write, in cursor order. */
+export const conversationEventsValidator = v.array(
+  v.object({ cursor: v.string(), event: v.any() }),
+);
 
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
@@ -88,6 +79,17 @@ const sandboxReservationSummary = v.object({
   ...reservedSandboxValidator.fields,
   accountId: v.id("accounts"),
   ttlSeconds: v.optional(v.number()),
+});
+
+const sandboxReleaseTarget = v.object({
+  externalId: v.union(v.string(), v.null()),
+  instance: v.union(
+    v.object({
+      ownCredentials: v.boolean(),
+      sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+    }),
+    v.null(),
+  ),
 });
 
 interface SandboxReservationPage {
@@ -157,34 +159,14 @@ export const releaseClaim = internalMutation({
 });
 
 /**
- * The events either accepted arg shape carries, in the order given.
- * @throws when the call carries no event at all
- */
-export function conversationEventsFromArgs(
-  args: ObjectType<typeof conversationEventArgs>,
-): { cursor: string; event: unknown }[] {
-  const entries = [
-    ...(args.events ?? []),
-    ...(args.cursor !== undefined
-      ? [{ cursor: args.cursor, event: args.event }]
-      : []),
-  ];
-  if (entries.length === 0) {
-    throw new Error("No conversation events given");
-  }
-
-  return entries;
-}
-
-/**
  * @returns null after the events are persisted
  */
 export const appendConversationEvent = internalMutation({
-  args: { conversationKey: v.string(), ...conversationEventArgs },
+  args: { conversationKey: v.string(), events: conversationEventsValidator },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
-    for (const entry of conversationEventsFromArgs(args)) {
+    for (const entry of args.events) {
       await ctx.db.insert("runtimeConversationEvents", {
         accountId: accountId,
         conversationKey: args.conversationKey,
@@ -680,6 +662,64 @@ export const getSandboxReservation = internalQuery({
         )
         .unique()
     )?.externalId ?? null,
+});
+
+/**
+ * What a release needs to pick credentials: the reserved machine, and the
+ * instance row's record of whose credentials it runs on and which config
+ * reserved it. The row is a best-effort mirror, so it is returned only while
+ * it still names `externalId`, or the reserved machine when none is given.
+ * With no reservation, the mirror row's own machine is the target.
+ * @returns the reserved provider id, or null, and the matching instance row, or null
+ */
+export const getSandboxReleaseTarget = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    provider: sandboxProviderValidator,
+    reservationKey: v.string(),
+    externalId: v.optional(v.string()),
+  },
+  returns: sandboxReleaseTarget,
+  handler: async (ctx, args): Promise<Infer<typeof sandboxReleaseTarget>> => {
+    const reservation = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    const instances = (
+      await ctx.db
+        .query("sandboxInstances")
+        .withIndex("by_reservationKey", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .collect()
+    ).filter(
+      (row) =>
+        row.accountId === args.accountId && row.provider === args.provider,
+    );
+    // A mirror row a failed teardown left behind still names its machine.
+    const externalId =
+      args.externalId ??
+      (reservation?.accountId === args.accountId
+        ? reservation.externalId
+        : instances[0]?.externalId) ??
+      null;
+    if (!externalId) return { externalId: null, instance: null };
+    const instance = instances.find((row) => row.externalId === externalId);
+
+    return {
+      externalId: externalId,
+      instance: instance
+        ? {
+            ownCredentials: instance.ownCredentials === true,
+            sandboxConfigId: instance.sandboxConfigId,
+          }
+        : null,
+    };
+  },
 });
 
 /**

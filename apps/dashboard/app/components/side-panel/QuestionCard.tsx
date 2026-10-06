@@ -101,19 +101,18 @@ export function QuestionCard({
                 </button>
               );
             })}
-            {question.allowFreeText && (
-              <Input
-                value={current?.kind === "text" ? current.text : ""}
-                onChange={(event) =>
-                  choose(question.id, {
-                    kind: "text",
-                    text: event.target.value,
-                  })
-                }
-                placeholder="Or type an answer"
-                className="h-7 text-xs"
-              />
-            )}
+            <Input
+              value={current?.kind === "text" ? current.text : ""}
+              onChange={(event) =>
+                choose(question.id, {
+                  kind: "text",
+                  text: event.target.value,
+                })
+              }
+              placeholder="Or type an answer"
+              aria-label={`Your answer to: ${question.question}`}
+              className="h-7 text-xs"
+            />
           </div>
         );
       })}

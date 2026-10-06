@@ -59,13 +59,11 @@ describe("runtime persistence", () => {
     const conversationKey = conversationKeyFor(accountId);
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
-      cursor: "002",
-      event: { message: "two" },
+      events: [{ cursor: "002", event: { message: "two" } }],
     });
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
-      cursor: "001",
-      event: { message: "one" },
+      events: [{ cursor: "001", event: { message: "one" } }],
     });
     expect(
       await t.query(internal.runtime.listConversationEvents, {
@@ -79,16 +77,6 @@ describe("runtime persistence", () => {
       isDone: true,
       continueCursor: null,
     });
-  });
-
-  test("refuses an append that carries no event", async () => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    await expect(
-      t.mutation(internal.runtime.appendConversationEvent, {
-        conversationKey: conversationKeyFor(accountId),
-      }),
-    ).rejects.toThrow("No conversation events given");
   });
 
   test("pages across the conversation boundary without dropping later events", async () => {
@@ -650,8 +638,7 @@ describe("runtime persistence", () => {
     });
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
-      cursor: "001",
-      event: { role: "user", content: "existing" },
+      events: [{ cursor: "001", event: { role: "user", content: "existing" } }],
     });
     await t.mutation(internal.runtime.createAsyncAgentResult, {
       eventId: `acct:${accountId}:async-agent`,
@@ -707,8 +694,9 @@ describe("runtime persistence", () => {
       () =>
         t.mutation(internal.runtime.appendConversationEvent, {
           conversationKey: conversationKey,
-          cursor: "002",
-          event: { role: "assistant", content: "late" },
+          events: [
+            { cursor: "002", event: { role: "assistant", content: "late" } },
+          ],
         }),
       () =>
         t.mutation(internal.runtime.clearConversation, {
@@ -790,8 +778,9 @@ describe("runtime persistence", () => {
     await expect(
       t.mutation(internal.runtime.appendConversationEvent, {
         conversationKey: conversationKey,
-        cursor: "003",
-        event: { role: "assistant", content: "orphan" },
+        events: [
+          { cursor: "003", event: { role: "assistant", content: "orphan" } },
+        ],
       }),
     ).rejects.toThrow(`Account is not active: ${accountId}`);
   });
@@ -976,6 +965,54 @@ describe("sandbox reservation expiry", () => {
         externalId: "sbx-abandoned",
       },
     ]);
+  });
+
+  // A release trusts a 404 only from the account that owns the machine, so the
+  // instance row counts only while it still names the reserved machine.
+  test("release target carries the instance row only while it names the machine", async () => {
+    const t = runtimeTest();
+    ACCOUNT = await createActiveAccount(t);
+    await reservation(t, "byo", Math.floor(Date.now() / 1000) - 60);
+    await t.run(async (ctx): Promise<void> => {
+      await ctx.db.insert("sandboxInstances", {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "byo",
+        externalId: "sbx-byo",
+        name: "byo",
+        status: "running",
+        specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        ownCredentials: true,
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+      });
+    });
+    const target = (externalId?: string) =>
+      t.query(internal.runtime.getSandboxReleaseTarget, {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "byo",
+        externalId: externalId,
+      });
+
+    expect(await target()).toEqual({
+      externalId: "sbx-byo",
+      instance: { ownCredentials: true },
+    });
+    expect(await target("sbx-replaced")).toEqual({
+      externalId: "sbx-replaced",
+      instance: null,
+    });
+    // A failed teardown can leave the mirror after the reservation is gone.
+    await t.run(async (ctx): Promise<void> => {
+      for (const row of await ctx.db.query("sandboxReservations").collect()) {
+        await ctx.db.delete(row._id);
+      }
+    });
+    expect(await target()).toEqual({
+      externalId: "sbx-byo",
+      instance: { ownCredentials: true },
+    });
   });
 
   test("deferral moves a row off the head of the expiry page", async () => {

@@ -32,13 +32,13 @@ The first run:
 2. Asks for an organization, a project name, a stage and a service region. Press Enter to keep each default.
 3. Creates `broods/index.ts` with a starter agent.
 4. Pushes `OPENAI_API_KEY` from `.env.local` to your `development` stage.
-5. Syncs your resources and writes the stage runtime key to `.env.local` as `BROODS_API_KEY`.
+5. Syncs your resources and writes the runtime key to `.env.local` as `BROODS_API_KEY`.
 6. Watches `broods/` and live-tails warnings and errors.
 
 ```text
 ✔ Created starter broods/
 ✔ Synced 2 resources to my-agents/development
-✔ Wrote BROODS_API_KEY (fp_agent_…vK8s) to .env.local
+✔ Wrote BROODS_API_KEY (bsk_…vK8s) to .env.local
 ```
 
 The starter agent:
@@ -61,14 +61,14 @@ export const myAgent = defineAgent({
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a helpful assistant." },
   sandboxes: [lambdaSandbox],
-  // Expose the public runtime endpoint (SSE/WebSocket) so the API key and
+  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key and
   // `broods run` can reach this agent. Off by default: a private agent is
   // only reachable via internal endpoints or channel webhooks.
   publicAccess: true,
 });
 ```
 
-`env("OPENAI_API_KEY")` is a reference that the server resolves. The key never lands in your synced config. `publicAccess: true` lets the stage runtime key reach this agent, which `broods run` and the SDK use.
+`env("OPENAI_API_KEY")` is a reference that the server resolves. The key never lands in your synced config. `publicAccess: true` lets the runtime key reach this agent, which `broods run` and the SDK use.
 
 Leave `broods dev` running. Every save re-syncs.
 

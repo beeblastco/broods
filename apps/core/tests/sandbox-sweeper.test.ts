@@ -22,7 +22,6 @@ const releaseMock = mock(
 mock.module("../src/shared/sandbox-cleanup.ts", () => ({
   releaseExpiredSandboxes: releaseMock,
   releaseReservedSandboxes: mock(async () => 0),
-  releaseSandboxConfigInstances: mock(async () => 0),
 }));
 
 const { sweepExpiredSandboxes } =

@@ -109,78 +109,6 @@ describe("runtime ingress", () => {
     ).toEqual(channelTarget);
   });
 
-  test("never keeps the resolved config an older core still sends", async (): Promise<void> => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
-    const source = { chatId: "chat-1" };
-    await t.mutation(internal.runtimeIngress.accept, {
-      ...admission({
-        accountId: accountId,
-        conversationKey: conversationKey,
-        eventId: "old-core",
-        mode: "followup",
-      }),
-      channelTarget: {
-        agentConfig: { channels: { telegram: { botToken: "secret" } } },
-        channelName: "telegram",
-        source: source,
-      },
-      delivery: { kind: "channel", channel: "telegram", source: source },
-    });
-
-    const stored = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query("runtimeConversationCoordinators")
-          .withIndex("by_conversationKey", (q) =>
-            q.eq("conversationKey", conversationKey),
-          )
-          .unique(),
-    );
-    expect(stored?.channelTarget).toEqual({
-      channelName: "telegram",
-      source: source,
-    });
-  });
-
-  test("reads a legacy channel target as no session", async (): Promise<void> => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
-    await t.mutation(internal.runtimeIngress.accept, {
-      ...admission({
-        accountId: accountId,
-        conversationKey: conversationKey,
-        eventId: "legacy",
-        mode: "followup",
-      }),
-    });
-    await t.run(async (ctx): Promise<void> => {
-      const coordinator = await ctx.db
-        .query("runtimeConversationCoordinators")
-        .withIndex("by_conversationKey", (q) =>
-          q.eq("conversationKey", conversationKey),
-        )
-        .unique();
-      await ctx.db.patch(coordinator!._id, {
-        channelTarget: {
-          agentConfig: { channels: { telegram: { botToken: "secret" } } },
-          channelName: "telegram",
-          source: { chatId: "chat-1" },
-        },
-      });
-    });
-
-    expect(
-      await t.query(internal.runtimeIngress.getConversationTarget, {
-        accountId: accountId,
-        agentId: "test-agent",
-        conversationKey: conversationKey,
-      }),
-    ).toBeNull();
-  });
-
   test("returns only narrowed public deployment ingress provenance from delivery", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -646,6 +574,169 @@ describe("runtime ingress", () => {
         }),
       ).toMatchObject({ status: "completed", result: "done" });
     }
+  });
+
+  test("stepBoundary stores the step and claims the waiting steer for its owner", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "steer-1",
+        mode: "steer",
+      }),
+    );
+
+    const boundary = await t.mutation(internal.runtimeIngress.stepBoundary, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      leaseTtlMs: 60_000,
+      events: [
+        { cursor: "001", event: { role: "assistant", content: "call" } },
+        { cursor: "002", event: { role: "tool", content: "result" } },
+      ],
+    });
+
+    expect(boundary.renewal).toBe("renewed");
+    expect(boundary.steering).toMatchObject({
+      appliedMode: "steer",
+      appliedToEventId: "owner",
+      contributingEventIds: ["steer-1"],
+    });
+    const stored = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
+    expect(stored.page.map((row) => row.cursor)).toEqual(["001", "002"]);
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_steer-1",
+      }),
+    ).toMatchObject({ status: "processing", appliedToEventId: "owner" });
+  });
+
+  test("stepBoundary from a moved owner is stale and writes nothing", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const first = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "first",
+        mode: "reject",
+      }),
+    );
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: conversationKey,
+      ownerEventId: "first",
+      ownerGeneration: first.ownerGeneration!,
+    });
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "second",
+        mode: "steer",
+      }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "steer-1",
+        mode: "steer",
+      }),
+    );
+
+    expect(
+      await t.mutation(internal.runtimeIngress.stepBoundary, {
+        conversationKey: conversationKey,
+        ownerEventId: "first",
+        ownerGeneration: first.ownerGeneration!,
+        leaseTtlMs: 60_000,
+        events: [
+          { cursor: "001", event: { role: "assistant", content: "stale" } },
+        ],
+      }),
+    ).toEqual({ renewal: "stale", steering: null });
+    const stored = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
+    expect(stored.page).toEqual([]);
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_steer-1",
+      }),
+    ).toMatchObject({ status: "queued" });
+  });
+
+  test("stepBoundary reports a stop with the step stored and the steer left queued", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "steer",
+      }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "steer-1",
+        mode: "steer",
+      }),
+    );
+    await t.mutation(internal.runtimeIngress.stopOwner, {
+      accountId: accountId,
+      agentId: "test-agent",
+      conversationKey: conversationKey,
+    });
+
+    expect(
+      await t.mutation(internal.runtimeIngress.stepBoundary, {
+        conversationKey: conversationKey,
+        ownerEventId: "owner",
+        ownerGeneration: owner.ownerGeneration!,
+        leaseTtlMs: 60_000,
+        events: [
+          { cursor: "001", event: { role: "assistant", content: "partial" } },
+        ],
+      }),
+    ).toEqual({ renewal: "stopped", steering: null });
+    const stored = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
+    expect(stored.page.map((row) => row.cursor)).toEqual(["001"]);
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_steer-1",
+      }),
+    ).toMatchObject({ status: "queued" });
   });
 
   test("claims only the plain-text steer prefix when asked", async () => {
@@ -1170,8 +1261,7 @@ describe("runtime ingress", () => {
         conversationKey: conversationKey,
         ownerEventId: "first",
         ownerGeneration: first.ownerGeneration!,
-        cursor: "001",
-        event: { role: "user", content: "stale" },
+        events: [{ cursor: "001", event: { role: "user", content: "stale" } }],
       }),
     ).rejects.toThrow("Stale conversation owner generation");
   });
@@ -1201,11 +1291,9 @@ describe("runtime ingress", () => {
         { cursor: "003", event: { role: "tool", content: "result" } },
       ],
     });
-    // Core from before the batch cutover still sends one cursor + event.
     await t.mutation(internal.runtimeIngress.appendConversationEvent, {
       ...fence,
-      cursor: "001",
-      event: { role: "user", content: "hello" },
+      events: [{ cursor: "001", event: { role: "user", content: "hello" } }],
     });
     await expect(
       t.mutation(internal.runtimeIngress.appendConversationEvent, {
@@ -1620,7 +1708,7 @@ describe("runtime ingress", () => {
         eventId: "queued-context",
         mode: "followup",
       }),
-      agentConfig: { model: { temperature: 0.9 } },
+      configRef: { model: { temperature: 0.9 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
 
@@ -1633,7 +1721,7 @@ describe("runtime ingress", () => {
     expect(next).toMatchObject({
       eventId: "queued-context",
       ownerGeneration: 2,
-      agentConfig: { model: { temperature: 0.9 } },
+      configRef: { model: { temperature: 0.9 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
   });

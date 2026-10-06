@@ -42,7 +42,7 @@ The routing below dates from the earlier S3 Files mount, where a mount write too
 
 The agent always reads through the mount, so it always sees its own writes. The choice only applies to harness-side reads.
 
-Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag.
+Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag. A read-only workspace on a bring-your-own bucket always reads S3 directly, because the mount's `deny-all` network only reaches the managed bucket.
 
 One known exception exists. `Session.loadMemoryFile` reads `memory/MEMORY.md` through the S3 API at the start of each turn, so a workspace with no sandbox still serves memory. A read that lands before the agent's last edit reached the bucket is stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
 
@@ -68,7 +68,7 @@ flowchart TD
   Byo --> Mount
 ```
 
-`resolveS3Mount()` has three credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`. The managed bucket assumes the platform `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN`. Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session, named `fp-sandbox-mount` and lasting one hour, carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target. Bring-your-own read targets are cached until 10 minutes before their credentials expire. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
+`resolveS3Mount()` has three credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`. The managed bucket assumes the platform `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN`. Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session, named `fp-sandbox-mount-<agentId>` on an agent-isolated mount and `fp-sandbox-mount-acct-<accountId>` on any other, and lasting one hour, carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. On the platform role the session also carries `SourceIdentity` and session tags for the account, and for the agent on an agent-isolated mount, see [sandboxes](sandboxes.md#isolation-levels). The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target. Bring-your-own read targets are cached until 10 minutes before their credentials expire. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
 
 Workspace config is stored in plaintext, so no access keys are ever stored in it. Static access keys for non-AWS stores, such as R2 or MinIO tokens, are not supported yet, and `assumeRole` is an AWS STS call. `provider` stays `s3` for every S3-compatible vendor. It is reserved for a different protocol such as native Azure Blob or GCS.
 
@@ -83,7 +83,6 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 - While visible, the panel lists S3 every 5 seconds, and again on focus, tab restore or Refresh. Overlapping lists dedup, and an older response cannot overwrite a newer optimistic change.
 - The panel cannot show an agent write before the mount has exported it to S3.
 - Dashboard uploads are capped at 512 KiB per file because the base64 payload crosses a Convex action. Agents can write larger files through the mount.
-- On first load, `migrateLegacy` copies files from the old canvas-node records into S3 and removes the records. Existing S3 paths win.
 
 `GET /v1/workspaces/:id/files?path=` returns a presigned URL, about 1.4 KB long and valid for 5 minutes. `POST /v1/workspaces/:id/download-links` mints a short token under `/v1/downloads/:token` that redirects to a fresh presigned URL, valid 24 hours by default and at most 30 days (`packages/convex/workspace/files.ts`). Tokens are stored in `workspaceDownloadTokens`, and deleting the workspace or account revokes them. Routes live in `packages/convex/config/routes/workspaceFiles.ts`.
 
@@ -94,7 +93,8 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 - An agent turn is deduplicated at admission, by its ingress identity. `claim()` in `runtimeClaims` only guards channel commands such as `/clear` and context-only messages, which never enter the queue.
 - The conversation lease serializes work per conversation, fenced by owner generation. See [queue and steer](queue-and-steer.md).
 - `appendIngressEvents()` persists incoming user, assistant, tool and persisted system messages to `runtimeConversationEvents`.
-- `createTurnContext()` loads history, builds system prompt parts, runs compaction when configured (`compaction.ts`) and prunes model-visible messages (`pruning.ts`).
+- `createTurnContext()` loads history, builds system prompt parts and prunes model-visible messages (`pruning.ts`).
+- `compactConversation()` folds the stored history into a summary (`compaction.ts`). It serves `/compact` and runs in `harness.ts` after a finished turn whose last model call read `session.autoCompaction.maxContextLength` input tokens.
 - `resolvedWorkspaces()`, backed by `resolveAgentRuntime()` in `src/shared/workspaces.ts`, resolves workspace and sandbox records, applies per-workspace overrides and hashes namespaces.
 
 What one turn reads and writes, and in which store:
@@ -117,7 +117,7 @@ sequenceDiagram
     S->>S3: memory/MEMORY.md per workspace (loadMemoryFile)
     S->>S: resolve workspaces, skill and subagent metadata
   end
-  S->>S: system prompt parts, compaction, pruning
+  S->>S: system prompt parts, pruning
   S-->>M: messages + system for streamText
   M->>CVX: persistModelMessages each step, fenced by ownerGeneration
 ```

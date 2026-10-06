@@ -61,8 +61,6 @@ describe("stage session tickets", () => {
     expect(
       await openStageSessionTicket(token, SECRET, TICKET.expiresAt + 1),
     ).toBeNull();
-    expect(await openStageSessionTicket("fp_agent_not-a-ticket", SECRET)).toBe(
-      null,
-    );
+    expect(await openStageSessionTicket("bsk_not-a-ticket", SECRET)).toBe(null);
   });
 });

@@ -45,6 +45,16 @@ const accountScopedReads: ReadonlyArray<
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
+      .query("connections")
+      .withIndex("by_accountId_and_type", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("accountKeys")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
       .query("accountRoles")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
@@ -105,6 +115,21 @@ const accountScopedReads: ReadonlyArray<
       .withIndex("by_accountId_and_reservationKey_and_createdAt", (q) =>
         q.eq("accountId", accountId),
       )
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditEvents")
+      .withIndex("by_accountId_and_seq", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditChainHeads")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditSinks")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
@@ -220,16 +245,6 @@ export async function deleteAccountContentsBatch(
     .take(ACCOUNT_DELETE_BATCH_SIZE);
   if (cronRuns.length > 0) {
     for (const run of cronRuns) await ctx.db.delete(run._id);
-
-    return false;
-  }
-
-  const auditEvents = await ctx.db
-    .query("configAuditEvents")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-    .take(ACCOUNT_DELETE_BATCH_SIZE);
-  if (auditEvents.length > 0) {
-    for (const event of auditEvents) await ctx.db.delete(event._id);
 
     return false;
   }

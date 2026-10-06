@@ -1,23 +1,28 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
   expect,
   it,
   mock,
-  spyOn,
 } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
-import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
-import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
+import { loopbackTransport, TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
+import type {
+  LanguageModel,
+  ModelMessage,
+  SystemModelMessage,
+  TextStreamPart,
+  ToolSet,
+} from "ai";
 import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
-import type { PinnedFetchTransport } from "../src/shared/http.ts";
-import * as otel from "../src/shared/otel.ts";
 import {
   setStorageForTests,
   type Storage,
@@ -30,6 +35,9 @@ import type {
 
 // mock.module("ai") below patches the namespace binding, so hold the real one.
 const realStreamText = actualAi.streamText;
+// Copied before the mocks patch them; afterAll hands them back to later files.
+const realAi = { ...actualAi };
+const realOpenAI = { ...actualOpenAI };
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
@@ -149,7 +157,7 @@ const streamTextMock = mock(
         outputTokens: number;
         totalTokens: number;
       };
-      steps: Array<{ content: unknown[] }>;
+      steps: Array<{ content: unknown[]; usage?: { inputTokens?: number } }>;
       toolCalls: unknown[];
       rawFinishReason?: string;
       totalUsage?: {
@@ -261,7 +269,7 @@ const streamTextMock = mock(
             text: "   ",
             finishReason: "tool-calls",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({
@@ -311,7 +319,7 @@ const streamTextMock = mock(
             text: "listed the files",
             finishReason: "stop",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({ type: "text-delta", text: "listed the files" });
@@ -605,6 +613,11 @@ mock.module("ai", () => ({
   streamText: streamTextMock,
 }));
 
+afterAll(async () => {
+  await mock.module("ai", () => realAi);
+  await mock.module("@ai-sdk/openai", () => realOpenAI);
+});
+
 beforeEach(() => {
   setStorageForTests(usageStorage([]));
 });
@@ -640,15 +653,18 @@ describe("runAgentLoop", () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const appendIngressEvents = mock(async () => []);
-    const applySteeringIngress = mock(async () => ({
-      eventId: "owner",
-      events: [{ role: "user", content: "new direction" }],
-      delivery: { kind: "http" },
-      requestedMode: "steer",
-      appliedMode: "steer",
-      appliedToEventId: "owner",
-      contributingEventIds: ["steer-1"],
-      ownerGeneration: 3,
+    const stepBoundary = mock(async () => ({
+      renewal: "renewed",
+      steering: {
+        eventId: "owner",
+        events: [{ role: "user", content: "new direction" }],
+        delivery: { kind: "http" },
+        requestedMode: "steer",
+        appliedMode: "steer",
+        appliedToEventId: "owner",
+        contributingEventIds: ["steer-1"],
+        ownerGeneration: 3,
+      },
     }));
     const stream = await runAgentLoop(
       {
@@ -659,8 +675,7 @@ describe("runAgentLoop", () => {
         sandboxes: () => [],
         environmentText: () => "<environment>",
         persistModelMessages: async () => [],
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: applySteeringIngress,
+        stepBoundary: stepBoundary,
         appendIngressEvents: appendIngressEvents,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -712,7 +727,7 @@ describe("runAgentLoop", () => {
       role: "user",
       content: "new direction",
     });
-    expect(applySteeringIngress).toHaveBeenCalledTimes(1);
+    expect(stepBoundary).toHaveBeenCalledTimes(1);
     expect(appendIngressEvents).toHaveBeenCalledWith([
       { role: "user", content: "new direction" },
     ]);
@@ -735,8 +750,7 @@ describe("runAgentLoop", () => {
         sandboxes: () => [],
         environmentText: () => "<environment>",
         persistModelMessages: async () => [],
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: async () => null,
+        stepBoundary: async () => ({ renewal: "renewed", steering: null }),
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -779,7 +793,7 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
   });
 
-  it("stops before the next model call when the owner requests a boundary stop, even if the same step's persist fails", async () => {
+  it("stops before the next model call when the owner requests a boundary stop", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const appendIngressEvents = mock(async () => []);
@@ -792,15 +806,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
         environmentText: () => "<environment>",
-        persistModelMessages: async (): Promise<string[]> => {
-          throw new Error("persist failed");
-        },
-        renewConversationLease: async () => "stopped",
-        applySteeringIngress: async () => ({
-          events: [{ role: "user", content: "late steer" }],
-          contributingEventIds: ["steer"],
-          appliedMode: "steer",
-        }),
+        stepBoundary: async () => ({ renewal: "stopped", steering: null }),
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -850,8 +856,11 @@ describe("runAgentLoop", () => {
         sandboxes: () => [],
         environmentText: () => "<environment>",
         persistModelMessages: persistModelMessages,
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: async () => null,
+        stepBoundary: async (messages: ModelMessage[]) => {
+          await persistModelMessages(messages);
+
+          return { renewal: "renewed", steering: null };
+        },
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -949,6 +958,25 @@ describe("runAgentLoop", () => {
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
   });
 
+  it("drops raw provider chunks so consumers only see stream parts", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const parts: TextStreamPart<ToolSet>[] = [
+      { type: "raw", rawValue: { type: "tool_progress" } },
+      { type: "text-delta", id: "t1", text: "hi" },
+      { type: "raw", rawValue: { type: "message_stop" } },
+      { type: "text-end", id: "t1" },
+    ];
+    const stream = {
+      stream: actualAi.simulateReadableStream({ chunks: parts }),
+      ensureFinalized: async (): Promise<void> => {},
+    };
+
+    const seen: unknown[] = [];
+    for await (const chunk of readAgentFullStream(stream)) seen.push(chunk);
+
+    expect(seen).toEqual([parts[1], parts[3]]);
+  });
+
   it("keeps a finished run completed when the reader leaves during onEnd", async () => {
     const writes: TaskUsageInput[] = [];
     setStorageForTests(usageStorage(writes));
@@ -968,27 +996,22 @@ describe("runAgentLoop", () => {
     expect(writes[0]).toMatchObject({ status: "completed", stepCount: 2 });
   });
 
-  it("settles the usage write before flushing telemetry", async () => {
+  it("closes the stream without waiting for the usage write", async () => {
     const order: string[] = [];
+    const written = Promise.withResolvers<void>();
     const store = usageStorage([]);
     store.taskUsage.record = async function (): Promise<void> {
       await Bun.sleep(30);
       order.push("usage");
+      written.resolve();
     };
     setStorageForTests(store);
-    const flush = spyOn(otel, "forceFlushOtel").mockImplementation(
-      async (): Promise<void> => {
-        order.push("flush");
-      },
-    );
-    try {
-      const stream = await startTwoStepTurn();
-      await stream.consumeStream();
-    } finally {
-      flush.mockRestore();
-    }
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+    order.push("closed");
+    await written.promise;
 
-    expect(order).toEqual(["usage", "flush"]);
+    expect(order).toEqual(["closed", "usage"]);
   });
 
   it("meters the steps an aborted run finished", async () => {
@@ -1186,7 +1209,7 @@ describe("runAgentLoop", () => {
         },
       },
       undefined,
-      { webhookTransport: hookTransport() },
+      { webhookTransport: loopbackTransport() },
     );
 
     await stream.consumeStream();
@@ -2827,6 +2850,128 @@ describe("runAgentLoop", () => {
   });
 });
 
+describe("auto-compaction after a turn", () => {
+  // Runs a turn on the real SDK loop with a session that records, in order,
+  // every final reply and auto-compaction the harness asks for.
+  async function runCompactingTurn(options: {
+    scenario: "real-two-step" | "approval-request";
+    autoCompaction: { enabled?: boolean; maxContextLength?: number };
+    compactConversation?: () => Promise<number>;
+  }): Promise<{ stream: AgentLoopStream; order: string[] }> {
+    installHarnessEnv();
+    streamTextScenario = options.scenario;
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const order: string[] = [];
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: (): ResolvedAgentSandbox[] =>
+          options.scenario === "approval-request"
+            ? [
+                {
+                  name: "agent-sandbox",
+                  sandbox: { provider: "lambda", permissionMode: "ask" },
+                },
+              ]
+            : [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async (): Promise<string[]> => [],
+        stepBoundary: async () => ({ renewal: "renewed", steering: null }),
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+        compactConversation: async (): Promise<number> => {
+          order.push("compact");
+
+          return (options.compactConversation ?? (async () => 4))();
+        },
+      } as never,
+      {
+        messages: [{ role: "user", content: "weather in Hanoi?" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+        session: { autoCompaction: options.autoCompaction },
+      },
+      {
+        onFinalText: async (): Promise<void> => {
+          order.push("final");
+        },
+        onErrorText: async (): Promise<void> => {
+          order.push("error");
+        },
+        onApprovalRequired: async (): Promise<void> => {
+          order.push("approval");
+        },
+      },
+    );
+    await stream.consumeStream();
+
+    return { stream: stream, order: order };
+  }
+
+  it("compacts once after the final reply, never between tool steps", async () => {
+    // Both steps read 10 input tokens; only the end of the turn may act on it.
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(order).toEqual(["final", "compact"]);
+  });
+
+  it("does not compact below the threshold or when turned off", async () => {
+    const below = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 11 },
+    });
+    const off = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { enabled: false, maxContextLength: 1 },
+    });
+    // The default threshold is 500000 tokens; this turn read 10.
+    const byDefault = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: {},
+    });
+
+    expect(below.order).toEqual(["final"]);
+    expect(off.order).toEqual(["final"]);
+    expect(byDefault.order).toEqual(["final"]);
+  });
+
+  it("does not compact a turn that stopped on a tool approval", async () => {
+    const { order } = await runCompactingTurn({
+      scenario: "approval-request",
+      autoCompaction: { maxContextLength: 1 },
+    });
+
+    expect(order).toEqual(["approval"]);
+  });
+
+  it("keeps the turn's outcome when the compaction fails", async () => {
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+      compactConversation: () =>
+        Promise.reject(new Error("summary model down")),
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(stream.failureText()).toBeNull();
+    expect(order).toEqual(["final", "compact"]);
+  });
+});
+
 describe("subagent policy input", () => {
   // A child replies to its parent and has no delivery of its own. Its policy
   // input must still name the parent's place and person, or a deny scoped by
@@ -2992,12 +3137,14 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     accountHooks: null as never,
     machineConnections: null as never,
     mcp: null as never,
+    connections: null as never,
     roleSessions: null as never,
     taskUsage: {
       record: async function (input) {
         writes.push(input);
       },
     },
+    auditLedger: { append: async (): Promise<void> => {} },
   };
 }
 
@@ -3023,8 +3170,7 @@ async function startTwoStepTurn(
       sandboxes: () => [],
       environmentText: () => "<environment>",
       persistModelMessages: persistModelMessages,
-      renewConversationLease: async () => "renewed",
-      applySteeringIngress: async () => null,
+      stepBoundary: async () => ({ renewal: "renewed", steering: null }),
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
@@ -3164,19 +3310,6 @@ describe("tool.call span duration", () => {
     expect(toolSpanDurationMs(1_000, 6_000, -12)).toBe(0);
   });
 });
-
-// The lifecycle webhook opens a pinned socket, so the test resolves the hook's
-// name to the loopback address its own TLS server listens on. Only loopback is
-// exempted; every other address still meets the real denylist.
-function hookTransport(): PinnedFetchTransport {
-  return {
-    allowAddresses: ["127.0.0.1"],
-    ca: TLS_CERT,
-    lookup: async (): Promise<{ address: string; family: number }[]> => [
-      { address: "127.0.0.1", family: 4 },
-    ],
-  };
-}
 
 interface HookDelivery {
   body: string;

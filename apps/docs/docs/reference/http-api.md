@@ -12,13 +12,32 @@ The base URL is `https://gateway.broods.app`, or your own gateway when self-host
 
 Every request sends `Authorization: Bearer <credential>`.
 
-| Endpoint                                           | Accepts                                                      |
-| -------------------------------------------------- | ------------------------------------------------------------ |
-| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Stage runtime key, account secret, or a stage session ticket |
-| `/v1/*` config routes                              | Account secret, or a role session within its policy          |
-| Logs and traces socket                             | Stage session ticket only. The runtime key is refused        |
+| Endpoint                                           | Accepts                                               |
+| -------------------------------------------------- | ----------------------------------------------------- |
+| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Runtime key, account key, or a stage session ticket   |
+| `GET /v1/runs/{runId}`                             | Also a run token, from inside a sandbox               |
+| `/v1/*` config routes                              | Account key, or a role session within its policy      |
+| Logs and traces socket                             | Stage session ticket only. The runtime key is refused |
 
-The runtime key only reaches agents with `publicAccess: true` in its own stage. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
+The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`brt_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md). Every credential starts with `b` (`bsk_`, `bask_`, ...).
+
+### Calling the API from a sandbox
+
+Every `bash` command that blocks runs with the identity of the run that issued it. A background job outlives the run and its token, so it gets none:
+
+| Variable            | Value                                                                            |
+| ------------------- | -------------------------------------------------------------------------------- |
+| `BROODS_RUN_TOKEN`  | Bearer that reads this agent's runs. Expires shortly after the run's time budget |
+| `BROODS_AGENT_ID`   | The agent the run acts as                                                        |
+| `BROODS_ACCOUNT_ID` | Its account                                                                      |
+| `BROODS_BASE_URL`   | The API base, when the deployment publishes one                                  |
+
+```bash
+curl -sS "$BROODS_BASE_URL/v1/runs/run_..." \
+  -H "Authorization: Bearer $BROODS_RUN_TOKEN"
+```
+
+The env carries no run id. Use one your script was handed, such as the `runId` returned to whoever started a background run of this agent. Account `envVars` cannot override these names. The token does not start runs yet.
 
 ## Run an agent
 
@@ -148,6 +167,7 @@ Branch on `code`, never on `message`. Each response also carries an `X-Request-I
 | 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope                                                        |
 | 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                                                                    |
 | 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true`                                                     |
+| 403    | `run_token_scope`        | A run token did anything but read its own agent's runs                                                         |
 | 403    | `status_access_denied`   | The run's status is not readable from this deployment, such as a subagent run started under another deployment |
 | 404    | `run_not_found`          | Unknown run id                                                                                                 |
 | 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                             |
