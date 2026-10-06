@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { principalLinkValidator } from "./model/principal";
+import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -531,12 +532,7 @@ export const sandboxConfigsFields = {
 
 /** Sandbox compute backends a persistent instance / snapshot can target. */
 export const sandboxProviderValidator = v.union(
-  v.literal("sandbox"),
-  v.literal("lambda"),
-  v.literal("daytona"),
-  v.literal("e2b"),
-  v.literal("vercel"),
-  v.literal("machine"),
+  ...SANDBOX_PROVIDERS.map((name) => v.literal(name)),
 );
 
 /**

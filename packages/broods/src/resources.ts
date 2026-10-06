@@ -122,9 +122,15 @@ export type ResourceInput<Name extends string, Config> = {
  * `persistent` sandbox reconnects to when no workspace is mounted; unset, each
  * agent gets its own, and pinning one string on two sandboxes shares a machine.
  * Keys are scoped to the account, so they cannot reach another account's machine.
+ * A `custom` sandbox names its server with `endpoint` (https, required), an
+ * optional bearer `token` and extra static `headers`; a credential header's
+ * value is an `env("NAME")` ref.
  */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
   reservationKey?: string;
+  endpoint?: string;
+  token?: string | EnvRef;
+  headers?: Record<string, string | EnvRef>;
 };
 
 /**
