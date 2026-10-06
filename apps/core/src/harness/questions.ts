@@ -72,8 +72,8 @@ export function answersFromChoice(
 
 /**
  * A typed reply against the first question: an option number or label picks
- * that option; anything else is free text when the question allows it, and
- * otherwise not an answer at all.
+ * that option, and anything else is the person's own answer. Every question
+ * takes one, so a reply never slips past an open question as a new turn.
  */
 export function answersFromText(
   pending: PendingQuestionInput,
@@ -89,7 +89,6 @@ export function answersFromText(
     (option): boolean => option.label.toLowerCase() === trimmed.toLowerCase(),
   );
   const chosen = byNumber ?? byLabel;
-  if (!chosen && question.allowFreeText !== true) return undefined;
 
   return {
     status: "answered",
@@ -112,9 +111,7 @@ export function formatQuestionsText(questions: ChannelQuestion[]): string {
           `${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ""}`,
         );
       });
-      if (question.allowFreeText) {
-        lines.push("Or reply with your own answer.");
-      }
+      lines.push("Or reply with your own answer.");
 
       return lines.join("\n");
     })

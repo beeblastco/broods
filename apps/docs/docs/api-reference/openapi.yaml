@@ -3905,8 +3905,6 @@ components:
                       type: string
                     description:
                       type: string
-              allowFreeText:
-                type: boolean
 
     QuestionAnswer:
       type: object
