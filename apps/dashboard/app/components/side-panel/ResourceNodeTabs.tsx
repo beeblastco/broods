@@ -164,7 +164,7 @@ export function SandboxResourceDetailsTab({
           onValueChange={setProvider}
           options={[
             { value: "sandbox", label: "Sandbox" },
-            { value: "lambda", label: "Managed VM" },
+            { value: "lambda", label: "Lambda" },
             { value: "e2b", label: "e2b" },
             { value: "daytona", label: "Daytona" },
             { value: "machine", label: "Your computer" },
