@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
   AccountCipher,
-  blobKeyId,
   createWrappedAccountKey,
   kekIdOf,
   rewrapAccountKey,
@@ -28,7 +27,6 @@ describe("envelope codec", () => {
     const blob = await cipher.encrypt("agents:encryptedConfig", VALUE);
 
     expect(blob.ciphertext.startsWith(`v2:${keys[0]!.keyId}:`)).toBe(true);
-    expect(blobKeyId(blob)).toBe(keys[0]!.keyId);
     expect(cipher.needsRewrite(blob)).toBe(false);
     expect(await cipher.decrypt("agents:encryptedConfig", blob)).toEqual(VALUE);
   });
@@ -54,7 +52,6 @@ describe("envelope codec", () => {
       ciphertext: blob.ciphertext.slice(`v2:${keys[0]!.keyId}:`.length),
     };
 
-    expect(blobKeyId(bare)).toBeNull();
     expect(cipher.hasKey(bare)).toBe(false);
     expect(cipher.needsRewrite(bare)).toBe(true);
     expect(await cipher.decrypt("agents:encryptedConfig", bare)).toBeNull();

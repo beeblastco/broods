@@ -105,7 +105,6 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     "config.isolation",
     WORKSPACE_ISOLATION_LEVELS,
   );
-  const isolation = config.isolation;
   let harness:
     | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
     | undefined;
@@ -131,7 +130,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   return {
     storage: storage,
-    ...(isolation ? { isolation: isolation } : {}),
+    ...(config.isolation ? { isolation: config.isolation } : {}),
     ...(harness ? { harness: harness } : {}),
   };
 }

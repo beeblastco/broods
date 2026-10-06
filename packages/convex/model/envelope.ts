@@ -361,18 +361,6 @@ export class AccountCipher {
   }
 }
 
-/** The key id a blob names, or null when it carries no `v2:` key id. */
-export function blobKeyId(
-  blob: Pick<EncryptedBlob, "ciphertext">,
-): string | null {
-  if (!blob.ciphertext.startsWith(BLOB_VERSION_PREFIX)) return null;
-  const end = blob.ciphertext.indexOf(":", BLOB_VERSION_PREFIX.length);
-
-  return end === -1
-    ? null
-    : blob.ciphertext.slice(BLOB_VERSION_PREFIX.length, end);
-}
-
 /** A fresh random DEK wrapped under the first secret, the one that seals. */
 export async function createWrappedAccountKey(
   accountId: string,
@@ -416,6 +404,16 @@ function base64UrlToBytes(value: string): Uint8Array {
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
 
   return out;
+}
+
+/** The key id a blob names, or null when it carries no `v2:` key id. */
+function blobKeyId(blob: Pick<EncryptedBlob, "ciphertext">): string | null {
+  if (!blob.ciphertext.startsWith(BLOB_VERSION_PREFIX)) return null;
+  const end = blob.ciphertext.indexOf(":", BLOB_VERSION_PREFIX.length);
+
+  return end === -1
+    ? null
+    : blob.ciphertext.slice(BLOB_VERSION_PREFIX.length, end);
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
