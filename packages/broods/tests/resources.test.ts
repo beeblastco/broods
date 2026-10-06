@@ -1481,6 +1481,41 @@ export const search = defineMcp({
   expect(collectEnvRefNames(manifest)).toEqual(["SEARCH_TOKEN"]);
 });
 
+test("compileProject copies a server's headers into each agent that connects it", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineMcp } from "${RESOURCES_MODULE}";
+
+export const search = defineMcp({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: "Bearer \${SEARCH_TOKEN}", "X-Team": "\${TEAM_ID}" },
+});
+
+export const reader = defineAgent({
+  name: "reader",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  mcp: { search: { enabled: true, headers: { "X-Team": "\${READER_TEAM}" } } },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+
+  // Core resolves a server's secret headers from the agent config only.
+  expect((agent?.config as { mcp: unknown }).mcp).toEqual({
+    search: {
+      enabled: true,
+      headers: {
+        Authorization: "Bearer ${SEARCH_TOKEN}",
+        "X-Team": "${READER_TEAM}",
+      },
+    },
+  });
+});
+
 test("collectEnvRefNames returns nothing when no env refs are present", async () => {
   const cwd = await fixtureProject(
     "",

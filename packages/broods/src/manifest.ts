@@ -212,7 +212,8 @@ export async function compileProject(
     )
   )
     .flat()
-    .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
+    .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`))
+    .map(withMcpServerHeaders);
   assertUniqueResources(manifestResources);
 
   return {
@@ -1782,6 +1783,43 @@ function sdkStubPlugin(): Plugin {
         contents: SDK_STUB_SOURCE,
         loader: "js",
       }));
+    },
+  };
+}
+
+/**
+ * Copies each connected MCP server's headers under the agent's own entry
+ * headers. Core reads a server's secret headers only from the agent config,
+ * where the sync resolves their `${NAME}` refs; the agent's own value wins.
+ */
+function withMcpServerHeaders(
+  resource: CliManifestResource,
+  _index: number,
+  resources: CliManifestResource[],
+): CliManifestResource {
+  const mcp = (
+    resource.config as {
+      mcp?: Record<string, { headers?: Record<string, unknown> }>;
+    }
+  ).mcp;
+  if (resource.kind !== "agent" || !mcp) return resource;
+  const entries = Object.entries(mcp).map(([server, entry]) => {
+    const headers = (
+      resources.find((other) => other.kind === "mcp" && other.name === server)
+        ?.config as { headers?: Record<string, string> } | undefined
+    )?.headers;
+
+    return [
+      server,
+      headers ? { ...entry, headers: { ...headers, ...entry.headers } } : entry,
+    ];
+  });
+
+  return {
+    ...resource,
+    config: {
+      ...(resource.config as Record<string, unknown>),
+      mcp: Object.fromEntries(entries),
     },
   };
 }

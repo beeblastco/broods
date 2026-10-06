@@ -69,9 +69,9 @@ export function assertEnvRefsResolved(
   const referenced = new Set<string>();
   for (const resource of resources) {
     rewriteEnvRefs(asObject(resource.config), referenced);
-    // An MCP server's `${NAME}` headers resolve into each agent that connects it.
-    if (resource.kind === "mcp") {
-      collectEnvPlaceholderNames(asObject(resource.config).headers, referenced);
+    // MCP headers name their values as `${NAME}` strings, not env() refs.
+    if (resource.kind === "agent") {
+      collectEnvPlaceholderNames(asObject(resource.config).mcp, referenced);
     }
   }
   const missing = [...referenced]

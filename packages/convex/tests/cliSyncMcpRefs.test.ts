@@ -7,6 +7,10 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifestResource } from "../cli/types";
 import { accountCipher } from "../model/accountKeys";
+import {
+  REDACTED_SECRET_VALUE,
+  redactConfigSecrets,
+} from "../model/configValues";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -124,7 +128,6 @@ function storedMcpServers(tt: T): Promise<Record<string, unknown>> {
 const syncMcpServers = (
   tt: T,
   mcp: Record<string, unknown>,
-  headers?: Record<string, string>,
 ): Promise<unknown> =>
   tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
@@ -132,15 +135,7 @@ const syncMcpServers = (
       version: 1 as const,
       project: PROJECT,
       stage: STAGE,
-      resources: [
-        headers
-          ? {
-              ...mcpResource,
-              config: { ...mcpResource.config, headers: headers },
-            }
-          : mcpResource,
-        agentResource(mcp),
-      ],
+      resources: [mcpResource, agentResource(mcp)],
     },
   });
 
@@ -247,7 +242,8 @@ describe("cli sync resolves an mcp server's secret headers per agent", () => {
     vi.unstubAllEnvs();
   });
 
-  test("bakes a server's ${NAME} header into the agent's runtime config", async () => {
+  // The CLI copies a server's headers into each agent that connects it.
+  test("bakes a ${NAME} header into the runtime config only", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
     const serverId = await seedMcpServer(tt, accountId, TOKEN_HEADER);
@@ -259,31 +255,60 @@ describe("cli sync resolves an mcp server's secret headers per agent", () => {
       value: "tok-1",
     });
 
-    await syncMcpServers(
-      tt,
-      { [SERVER_NAME]: { enabled: true } },
-      TOKEN_HEADER,
-    );
+    await syncMcpServers(tt, {
+      [SERVER_NAME]: { enabled: true, headers: TOKEN_HEADER },
+    });
 
     // Core refuses a run whose header still carries the ref.
     expect((await runtimeMcpServers(tt, accountId))[serverId]).toEqual({
       enabled: true,
       headers: { Authorization: "Bearer tok-1" },
     });
-    // The stored config stays what the code declares, so diff stays clean.
     expect(await storedMcpServers(tt)).toEqual({
-      [serverId]: { enabled: true },
+      [serverId]: { enabled: true, headers: TOKEN_HEADER },
     });
   });
 
-  test("refuses the sync when a server header names an unset variable", async () => {
+  test("refuses the sync when a header names an unset variable", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
     await seedMcpServer(tt, accountId, TOKEN_HEADER);
 
     await expect(
-      syncMcpServers(tt, { [SERVER_NAME]: { enabled: true } }, TOKEN_HEADER),
+      syncMcpServers(tt, {
+        [SERVER_NAME]: { enabled: true, headers: TOKEN_HEADER },
+      }),
     ).rejects.toThrow("SEARCH_TOKEN");
+  });
+});
+
+describe("public config projection", () => {
+  test("masks resolved credential headers and keeps refs", () => {
+    expect(
+      redactConfigSecrets({
+        mcp: {
+          search: {
+            headers: {
+              Accept: "application/json",
+              Authorization: "Bearer tok-1",
+              "X-Api-Key": "fc-1",
+              "X-Other-Key": "Bearer ${OTHER_KEY}",
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      mcp: {
+        search: {
+          headers: {
+            Accept: "application/json",
+            Authorization: REDACTED_SECRET_VALUE,
+            "X-Api-Key": REDACTED_SECRET_VALUE,
+            "X-Other-Key": "Bearer ${OTHER_KEY}",
+          },
+        },
+      },
+    });
   });
 });
 

@@ -38,9 +38,15 @@ export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
         kind: "agent",
         name: "reader",
         config: {
-          model: context.model.model,
+          ...context.model,
           agent: { system: "Reply with the single word OK." },
-          mcp: { search: { enabled: true } },
+          // The CLI copies the server's headers here; core reads them from the agent.
+          mcp: {
+            search: {
+              enabled: true,
+              headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
+            },
+          },
         },
       },
     ],

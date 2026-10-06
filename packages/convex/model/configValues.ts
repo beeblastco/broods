@@ -6,6 +6,10 @@
  */
 
 import { ACCOUNT_ENV_REFS_ONLY_PATTERN } from "./envRefs";
+import {
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+  SENSITIVE_HEADER_NAME_PATTERN,
+} from "./mcp";
 import { isPlainObject } from "./objects";
 
 export const REDACTED_SECRET_VALUE = "********";
@@ -70,9 +74,11 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-function redactSecrets(value: unknown): unknown {
+// Inside a `headers` map, a credential-named header (Authorization, X-Api-Key)
+// is a secret too: a sync resolves its `${NAME}` ref into the stored config.
+function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
-    return value.map(redactSecrets);
+    return value.map((entry) => redactSecrets(entry));
   }
   if (!isPlainObject(value)) {
     return value;
@@ -81,11 +87,13 @@ function redactSecrets(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
       key,
-      isSecretConfigKey(key) &&
       typeof entry === "string" &&
-      !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry)
+      (inHeaders
+        ? SENSITIVE_HEADER_NAME_PATTERN.test(key) &&
+          !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
+        : isSecretConfigKey(key) && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry))
         ? REDACTED_SECRET_VALUE
-        : redactSecrets(entry),
+        : redactSecrets(entry, key === "headers"),
     ]),
   );
 }
