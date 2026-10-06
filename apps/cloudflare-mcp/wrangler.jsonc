@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-29",
   "worker_loaders": [{ "binding": "LOADER" }],
-  // One bucket per Cloudflare account: keys are accountId/sha256, so stages can share it.
+  // One bucket per Cloudflare account: keys are content hashes, so stages can share it.
   "r2_buckets": [{ "binding": "BUNDLES", "bucket_name": "broods-mcp-bundles" }],
   "observability": { "enabled": true },
 }

@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { principalLinkValidator } from "./model/principal";
+import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -535,12 +536,7 @@ export const sandboxConfigsFields = {
 
 /** Sandbox compute backends a persistent instance / snapshot can target. */
 export const sandboxProviderValidator = v.union(
-  v.literal("sandbox"),
-  v.literal("lambda"),
-  v.literal("daytona"),
-  v.literal("e2b"),
-  v.literal("vercel"),
-  v.literal("machine"),
+  ...SANDBOX_PROVIDERS.map((name) => v.literal(name)),
 );
 
 /**
@@ -1047,6 +1043,15 @@ export const ingressStatusValidator = v.union(
   v.literal("failed"),
   v.literal("expired"),
 );
+/**
+ * The rows a channel session's config is narrowed by. `credentialAgentId` is
+ * the agent whose channel credentials verified the delivery, when it is not
+ * the agent that runs the conversation.
+ */
+export const channelTargetRefsFields = {
+  credentialAgentId: v.optional(v.string()),
+  channelRecordId: v.optional(v.string()),
+};
 /** Fenced ownership and FIFO counters for one runtime conversation. */
 export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
@@ -1059,8 +1064,7 @@ export const runtimeConversationCoordinatorsFields = {
     v.object({
       channelName: v.string(),
       source: v.record(v.string(), v.any()),
-      credentialAgentId: v.optional(v.string()),
-      channelRecordId: v.optional(v.string()),
+      ...channelTargetRefsFields,
       agentConfig: v.optional(v.any()),
     }),
   ),
@@ -1074,6 +1078,18 @@ export const runtimeConversationCoordinatorsFields = {
   queuedBytes: v.number(),
   updatedAt: v.number(),
 };
+/**
+ * What an envelope keeps to rebuild its run config at dispatch, never the
+ * resolved config: the request's own model override (call settings only), and
+ * for a channel session the channel and rows its config is narrowed by.
+ */
+export const ingressConfigRefValidator = v.object({
+  model: v.optional(v.record(v.string(), v.any())),
+  channel: v.optional(
+    v.object({ channelName: v.string(), ...channelTargetRefsFields }),
+  ),
+});
+
 /** One accepted transport-neutral ingress item in the conversation FIFO. */
 export const runtimeIngressEnvelopesFields = {
   accountId: v.id("accounts"),
@@ -1095,7 +1111,11 @@ export const runtimeIngressEnvelopesFields = {
   requestedMode: ingressModeValidator,
   ownerTaskId: v.optional(v.string()),
   // Per-request execution context so a queued envelope runs with its own
-  // resolved config and one-turn system, never the previous owner's.
+  // config and one-turn system, never the previous owner's. The config itself
+  // is rebuilt from the ref at dispatch; it never sits here with its secrets.
+  configRef: v.optional(ingressConfigRefValidator),
+  // Written by a core pod from before this rollout, never read. Cleared on
+  // every terminal patch; remove once no live envelope predates the rollout.
   agentConfig: v.optional(v.any()),
   ephemeralSystem: v.optional(v.array(v.any())),
   appliedMode: v.optional(ingressModeValidator),

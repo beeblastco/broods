@@ -33,15 +33,16 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `e2b`     | E2B template                 | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
 | `vercel`  | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
 | `machine` | Your own computer            | no              | no                    | no                      | `allow-all` only               |
+| `custom`  | Your own server over HTTP    | no              | no                    | no                      | `allow-all` only               |
 
-`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel` or `machine` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and the `machine` provider has its own page, [Your computer](machine.md).
+`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md). The `machine` provider has its own page, [Your computer](machine.md), and so does `custom`, [Your own server](custom.md).
 
 ## Configuration
 
 | Field                  | Default                | What it does                                                                                                      |
 | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `provider`             | `lambda`               | Compute backend, from the table above                                                                             |
-| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                          |
+| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`              |
 | `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
 | `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
@@ -96,6 +97,7 @@ network: {
 | `vercel`  | allowed     | denied     | domain and CIDR allowlist                                    |
 | `e2b`     | allowed     | rejected   | rejected                                                     |
 | `machine` | allowed     | rejected   | rejected                                                     |
+| `custom`  | allowed     | rejected   | rejected                                                     |
 
 A provider that cannot enforce a mode rejects the config instead of quietly granting more access. Background jobs report back to the platform over the network, so under `deny-all` a job still runs but its result has to be polled. See [Persistent sandboxes](persistent.md#background-jobs).
 

@@ -8,6 +8,7 @@ import {
   redact,
   redactSerialized,
   redactSensitiveText,
+  redactWithRunSecrets,
 } from "../src/shared/log.ts";
 import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
 
@@ -209,6 +210,34 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("curl sent brt_eyJhIjoxfQ.c2ln twice")).toBe(
       "curl sent [redacted] twice",
     );
+  });
+
+  it("scrubs run secret values from tool data and leaves its keys alone", () => {
+    process.env.ACCOUNT_GOOGLE_API_KEY = "env-secret-value";
+
+    // Read back by the model, so a key named like a secret keeps its value.
+    expect(
+      redactWithRunSecrets({
+        nextPageToken: "page-2",
+        credentials: { user: "ada" },
+        stdout: ["key env-secret-value"],
+      }),
+    ).toEqual({
+      nextPageToken: "page-2",
+      credentials: { user: "ada" },
+      stdout: ["key [redacted]"],
+    });
+    expect(
+      redactWithRunSecrets("a run-secret-value", ["run-secret-value"]),
+    ).toBe("a [redacted]");
+    // The log patterns stay out: prose and a paging url are not credentials.
+    const prose = "a basic setup, see https://api.test/items?page=2&token=next";
+    expect(redactWithRunSecrets(prose)).toBe(prose);
+    expect(redactWithRunSecrets("key fp_agent_abc123")).toBe("key [redacted]");
+    // A frame's timestamp stays what JSON.stringify would have written.
+    expect(
+      redactWithRunSecrets({ timestamp: new Date("2026-01-02T03:04:05Z") }),
+    ).toEqual({ timestamp: "2026-01-02T03:04:05.000Z" });
   });
 
   it("redacts a runtime key under either prefix and leaves other sk_ identifiers", () => {

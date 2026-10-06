@@ -44,7 +44,10 @@ import {
   loadPolicyReferenceRows,
   type PolicyReferenceRows,
 } from "./policyReferences";
-import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
+import {
+  DEFAULT_SANDBOX_PROVIDER,
+  normalizeSandboxConfig,
+} from "./sandboxRules";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
@@ -606,6 +609,14 @@ export async function syncSandboxResources(
       { provider: DEFAULT_SANDBOX_PROVIDER, ...asObject(resource.config) },
       envNames,
     );
+    // Same rules as the config API for a custom server, on the placeholder
+    // form its credential headers are written in.
+    if (
+      sourceConfig.provider === "custom" ||
+      sourceConfig.fallbackProvider === "custom"
+    ) {
+      normalizeSandboxConfig(sourceConfig);
+    }
     const resolvedConfig = substituteEnvPlaceholders(sourceConfig, envValues);
     const runtimeVariables = [...envNames].map((key) => ({
       key: key,

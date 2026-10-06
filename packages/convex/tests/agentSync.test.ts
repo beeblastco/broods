@@ -302,7 +302,7 @@ describe("syncApiAgentCanvasWiring", () => {
       const workspaceId = await ctx.db.insert("workspaceConfigs", {
         accountId: accountId,
         name: "beeblast-ws-cust1",
-        config: { storage: { provider: "s3" }, isolation: true },
+        config: { storage: { provider: "s3" }, isolation: "conversation" },
         createdAt: now,
         updatedAt: now,
       });

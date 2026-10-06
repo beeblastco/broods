@@ -1678,9 +1678,18 @@ paths:
                     provider:
                       {
                         type: string,
-                        enum: [sandbox, lambda, e2b, daytona, vercel, machine],
+                        enum:
+                          [
+                            sandbox,
+                            lambda,
+                            e2b,
+                            daytona,
+                            vercel,
+                            machine,
+                            custom,
+                          ],
                         default: lambda,
-                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
+                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec), stateless and on your compute, so never metered; see the Your own server guide for what it refuses.",
                       }
                     network:
                       type: object
@@ -1720,7 +1729,7 @@ paths:
                       {
                         type: string,
                         enum: [sandbox, lambda, e2b, daytona, vercel],
-                        description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
+                        description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine or custom. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:
                       type: object
@@ -1763,7 +1772,7 @@ paths:
                     options:
                       {
                         type: object,
-                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account.",
+                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers).",
                       }
             examples:
               lambda:
@@ -2114,8 +2123,11 @@ paths:
                                 roleArn: { type: string }
                                 externalId: { type: string }
                     isolation:
-                      type: boolean
-                      description: Enables hierarchical workspace folders. Omit or set false to share the workspace root.
+                      oneOf:
+                        - type: string
+                          enum: [conversation, agent]
+                        - type: boolean
+                      description: "How the workspace splits its files. `conversation` mounts a folder per channel partition, `agent` a folder per attached agent (its own sandbox, S3 prefix and mount session). `true` is accepted as `conversation`. Omit or set false to share the workspace root."
                     harness:
                       type: object
                       description: Named harness features, each defaulting to enabled. No top-level enabled flag.
@@ -2134,7 +2146,7 @@ paths:
               notes:
                 value:
                   name: notes
-                  config: { storage: { provider: s3 }, isolation: true }
+                  config: { storage: { provider: s3 }, isolation: conversation }
               ownBucket:
                 value:
                   name: reports
@@ -5766,7 +5778,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5820,7 +5832,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5866,7 +5878,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5907,7 +5919,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5960,7 +5972,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6013,7 +6025,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6047,7 +6059,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6106,7 +6118,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6147,7 +6159,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6201,7 +6213,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6251,7 +6263,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6306,7 +6318,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6358,7 +6370,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6407,7 +6419,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:

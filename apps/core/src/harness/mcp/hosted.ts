@@ -15,6 +15,7 @@ import {
 } from "@aws-sdk/client-lambda";
 import { HOSTED_MCP_MEMORY_GB } from "@broods/convex/model/pricing";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
+import type { McpConnection } from "./client.ts";
 import {
   booleanEnv,
   optionalEnv,
@@ -104,13 +105,16 @@ export interface HostedMcpBatchRequest {
 
 /**
  * mcp-mode invoke payload; the Lambda handler dispatches on `mode`.
- * `accountId` + `expectedSha256` key the handler's warm-child reuse (#189),
- * and the Cloudflare runtime's isolate cache. Both runtimes take this body.
+ * `tenantId` + `expectedSha256` key the handler's warm-child reuse (#189),
+ * core's batches and the Cloudflare runtime's isolate cache alike, so two
+ * agents of one account never share a child. Both runtimes take this body.
  */
 export interface McpHostPayload {
   mode: "mcp";
   toolName: string;
-  accountId: string;
+  // `accountId:agentId`, or the account alone for an account-surface probe. The
+  // Lambda TenantId under MCP_TENANT_ISOLATION, see hostedMcpTenantId.
+  tenantId: string;
   expectedSha256: string;
   bundleUrl: string;
   requests: HostedMcpBatchRequest[];
@@ -138,12 +142,13 @@ interface PendingCall {
 
 interface OpenBatch {
   record: HostedBundleRecord;
+  tenantId: string;
   calls: PendingCall[];
   timer: ReturnType<typeof setTimeout>;
 }
 
 type HostedMcpSendBatch = (
-  record: HostedBundleRecord,
+  batch: Pick<OpenBatch, "record" | "tenantId">,
   requests: HostedMcpBatchRequest[],
   abortSignal: AbortSignal,
 ) => Promise<HostedMcpBatchResult>;
@@ -201,9 +206,12 @@ export async function collectBatchFrames(
  * this call's share of its batch's CPU for usage metering.
  */
 export function hostedMcpFetch(
-  record: McpRecord,
+  connection: Pick<McpConnection, "record" | "agentId">,
   onCpuUsec?: (cpuUsec: number) => void,
 ): typeof fetch {
+  const record = connection.record;
+  const tenantId = hostedMcpTenantId(record.accountId, connection.agentId);
+
   return (async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -222,6 +230,7 @@ export function hostedMcpFetch(
     const body = await request.text();
     const result = await enqueueCall(
       record,
+      tenantId,
       {
         method: request.method,
         headers: Object.fromEntries(request.headers),
@@ -345,7 +354,7 @@ async function drainInvokeStream(
       // other function refuses one with it. Off by default, matching the SST
       // deploy; set MCP_TENANT_ISOLATION=true on both sides together.
       ...(booleanEnv("MCP_TENANT_ISOLATION", false)
-        ? { TenantId: payload.accountId }
+        ? { TenantId: payload.tenantId }
         : {}),
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),
@@ -375,6 +384,7 @@ async function drainInvokeStream(
 // flushes it. A call that misses the window opens the next batch.
 function enqueueCall(
   record: McpRecord,
+  tenantId: string,
   request: HostedMcpRequest,
   abortSignal: AbortSignal,
   onCpuUsec: ((cpuUsec: number) => void) | undefined,
@@ -392,11 +402,12 @@ function enqueueCall(
   abortSignal.addEventListener("abort", () => reject(abortSignal.reason), {
     once: true,
   });
-  const key = `${record.accountId}:${workersUrl(record) ?? "lambda"}:${record.sha256}`;
+  const key = `${tenantId}:${workersUrl(record) ?? "lambda"}:${record.sha256}`;
   let batch = openBatches.get(key);
   if (!batch) {
     const opened: OpenBatch = {
       record: record,
+      tenantId: tenantId,
       calls: [],
       timer: setTimeout(
         () => flushBatch(key, opened),
@@ -467,7 +478,7 @@ function flushBatch(key: string, batch: OpenBatch): void {
     mcpRequest: call.request,
   }));
   const send = sendOverride ?? sendBatch;
-  void send(batch.record, requests, controller.signal).then(
+  void send(batch, requests, controller.signal).then(
     (result) => {
       const settled = live.filter(({ call }) => !call.abortSignal.aborted);
       // Reported before any call resolves: the harness reads a call's compute
@@ -498,6 +509,18 @@ function flushBatch(key: string, batch: OpenBatch): void {
 
 function hasBundle(record: McpRecord): record is HostedBundleRecord {
   return Boolean(record.bundleStorageKey && record.sha256);
+}
+
+// The tenant one hosted call runs as: the agent within its account, or the
+// account alone for a call with no agent. It is the Lambda TenantId under
+// MCP_TENANT_ISOLATION and the prefix of every warm-child and batch key, so the
+// same string decides both what shares a child and what shares an execution
+// environment. The handler (apps/lambda/handler.mjs reuseKey) keys on it as is.
+function hostedMcpTenantId(
+  accountId: string,
+  agentId: string | undefined,
+): string {
+  return agentId ? `${accountId}:${agentId}` : accountId;
 }
 
 // Collect one runtime's frames for the batch and meter what it ran.
@@ -556,14 +579,15 @@ async function runBatch(
 // bundle or was never reached ran nothing, so the same batch reruns on
 // Lambda; any other Worker error fails the batch.
 async function sendBatch(
-  record: HostedBundleRecord,
+  batch: Pick<OpenBatch, "record" | "tenantId">,
   requests: HostedMcpBatchRequest[],
   abortSignal: AbortSignal,
 ): Promise<HostedMcpBatchResult> {
+  const record = batch.record;
   const payload: McpHostPayload = {
     mode: "mcp",
     toolName: record.name,
-    accountId: record.accountId,
+    tenantId: batch.tenantId,
     expectedSha256: record.sha256,
     bundleUrl: await getS3ObjectUrl(
       toolBundlesBucket(),

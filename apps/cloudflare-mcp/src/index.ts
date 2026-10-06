@@ -43,7 +43,8 @@ export default {
   },
 };`;
 const BATCH_SCHEMA = z.object({
-  accountId: z.string().min(1).max(128),
+  /** `accountId:agentId`, or the account alone; keys the isolate like Lambda's warm child. */
+  tenantId: z.string().min(1).max(256),
   expectedSha256: z.string().regex(/^[0-9a-f]{64}$/),
   bundleUrl: z.url({ protocol: /^https$/ }),
   requests: z
@@ -134,8 +135,8 @@ export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
 
 /**
  * Core's hosted MCP transport POSTs one batch to `/mcp` with the shared
- * bearer (apps/core/src/harness/mcp/hosted.ts). Each account bundle runs in
- * its own Dynamic Worker, cached by account and content hash and read from
+ * bearer (apps/core/src/harness/mcp/hosted.ts). Each tenant's bundle runs in
+ * its own Dynamic Worker, cached by tenant and content hash and read from
  * this runtime's R2 copy before S3, with no
  * bindings, no Node compatibility and egress through TenantOutbound. The
  * bundle loads before the batch is answered: a bundle that cannot load is a
@@ -177,7 +178,7 @@ export default {
       });
     }
     const worker = env.LOADER.get(
-      `${batch.accountId}:${batch.expectedSha256}`,
+      `${batch.tenantId}:${batch.expectedSha256}`,
       async (): Promise<WorkerLoaderWorkerCode> => ({
         compatibilityDate: COMPATIBILITY_DATE,
         mainModule: "entry.js",
@@ -291,7 +292,9 @@ async function loadBundle(
   bundles: R2Bucket,
   ctx: ExecutionContext,
 ): Promise<string> {
-  const key = `${encodeURIComponent(batch.accountId)}/${batch.expectedSha256}.mjs`;
+  // Content-addressed: the bytes are re-hashed on every load, so one copy
+  // serves every tenant whose row carries this sha256.
+  const key = `${batch.expectedSha256}.mjs`;
   const copy = await bundles
     .get(key)
     .then(async (object): Promise<Uint8Array | null> =>

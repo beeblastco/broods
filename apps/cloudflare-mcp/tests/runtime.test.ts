@@ -118,17 +118,17 @@ it("runs a verified bundle with no secrets in reach and no path to the bundle st
   expect(bundleFetches).toBe(1);
 });
 
-it("keeps a verified copy in R2 and loads from it instead of S3", async (): Promise<void> => {
+it("keeps a verified copy in R2 and loads the next tenant from it instead of S3", async (): Promise<void> => {
   const bundles = await runtime.getR2Bucket("BUNDLES");
-  await framesOf(await send(batch("acct-d")));
+  await bundles.delete(`${TENANT_SHA256}.mjs`);
+  await framesOf(await send(batch("acct-d:agent-1")));
 
   expect(bundleFetches).toBe(1);
-  expect(await (await bundles.get(`acct-d/${TENANT_SHA256}.mjs`))?.text()).toBe(
+  expect(await (await bundles.get(`${TENANT_SHA256}.mjs`))?.text()).toBe(
     TENANT_SOURCE,
   );
 
-  await bundles.put(`acct-e/${TENANT_SHA256}.mjs`, TENANT_SOURCE);
-  const frames = await framesOf(await send(batch("acct-e")));
+  const frames = await framesOf(await send(batch("acct-d:agent-2")));
 
   expect(frames.map((frame): string => frame.t)).toEqual(["final", "end"]);
   expect(bundleFetches).toBe(1);
@@ -190,16 +190,16 @@ it("budgets encoded frames, escaping included, against the 16 MiB batch cap", as
 
 /** A batch whose request bodies pick the tenant's behaviour; `PATCH` sends `{}` as a PATCH. */
 function batch(
-  accountId: string,
+  tenantId: string,
   bodies: string[] = ["{}"],
   sha256: string = TENANT_SHA256,
 ): Record<string, unknown> {
   return {
     mode: "mcp",
     toolName: "tools",
-    accountId: accountId,
+    tenantId: tenantId,
     expectedSha256: sha256,
-    bundleUrl: `${BUNDLE_ORIGIN}/account-mcp/${accountId}/bundles/${sha256}.mjs`,
+    bundleUrl: `${BUNDLE_ORIGIN}/account-mcp/${tenantId}/bundles/${sha256}.mjs`,
     requests: bodies.map((body, index): Record<string, unknown> => ({
       id: String(index + 1),
       mcpRequest: {

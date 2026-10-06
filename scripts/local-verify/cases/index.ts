@@ -3,6 +3,7 @@ import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { connections } from "./connections.ts";
+import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
@@ -15,6 +16,7 @@ import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { workToolWebhooks } from "./work-tool-webhooks.ts";
+import { workspaceIsolation } from "./workspace-isolation.ts";
 
 /** Every case `local-stack.ts verify` runs, in order. A new end-to-end feature adds one here. */
 export const verifyCases: readonly VerifyCase[] = [
@@ -26,6 +28,7 @@ export const verifyCases: readonly VerifyCase[] = [
   autoCompaction,
   machineSandbox,
   ownBucketSandbox,
+  customSandbox,
   trailingSlash,
   edgeHeaders,
   manifestSync,
@@ -34,4 +37,5 @@ export const verifyCases: readonly VerifyCase[] = [
   connections,
   auditLedger,
   runToken,
+  workspaceIsolation,
 ];

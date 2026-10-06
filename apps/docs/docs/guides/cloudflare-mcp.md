@@ -24,7 +24,7 @@ If the bundle fails to load on Cloudflare, or the runtime cannot be reached at a
 
 ## What the server can reach on Cloudflare
 
-- Each account's bundle runs in its own isolate. Broods checks the bundle against its sha256 before it runs.
+- Each agent's copy of a server runs in its own isolate, so two agents of one account never share one. Broods checks the bundle against its sha256 before it runs.
 - The runtime keeps its own copy of each bundle in R2, so a cold start reads it inside Cloudflare. S3 stays the source of truth: the first load, and the first after a copy's 30-day expiry, downloads it from S3.
 - The isolate has no bindings and no platform secrets. Pass credentials through `headers` with `${NAME}` env refs, exactly as on Lambda.
 - Outbound `fetch` reaches the public internet. Raw TCP sockets (`connect()`) are not available.

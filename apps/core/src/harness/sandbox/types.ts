@@ -11,6 +11,11 @@
  */
 
 import type { Readable } from "node:stream";
+import type {
+  SandboxNetworkMode,
+  SandboxProvider,
+  SandboxRuntimeName as SandboxRuntime,
+} from "../../shared/domain/sandbox-config.ts";
 import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
 import type {
   SandboxControlPlane,
@@ -18,15 +23,14 @@ import type {
   SandboxSize,
 } from "../../shared/sandbox-sizes.ts";
 
-export type SandboxProvider =
-  | "sandbox"
-  | "lambda"
-  | "e2b"
-  | "daytona"
-  | "vercel"
-  | "machine";
-export type SandboxRuntime = "bash" | "python" | "node";
-export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
+// The provider, runtime and network lists are the config plane's
+// (`packages/convex/model/sandboxRules.ts`); the registry in index.ts is keyed
+// by the provider one.
+export type {
+  SandboxNetworkMode,
+  SandboxProvider,
+  SandboxRuntimeName as SandboxRuntime,
+} from "../../shared/domain/sandbox-config.ts";
 
 export interface SandboxNetworkConfig {
   mode: SandboxNetworkMode;
