@@ -14,6 +14,7 @@ import {
   isExternalResourceKind,
   placeholderIds,
   resourceName,
+  rewriteEnvRefs,
   type ExternalResourceKind,
 } from "../model/cliSync";
 import { reservedBy } from "../model/cliSyncResources";
@@ -21,7 +22,12 @@ import {
   normalizeAccountHookUpload,
   type RequiredAccountHookUpload,
 } from "../model/accountHooks";
-import { assertMcpRow, normalizeMcpInput, type McpInput } from "../model/mcp";
+import {
+  assertMcpRow,
+  MCP_CLEARABLE_FIELDS,
+  normalizeMcpInput,
+  type McpInput,
+} from "../model/mcp";
 import { normalizeCreateCronInput } from "../model/cronRules";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
@@ -1011,7 +1017,11 @@ async function prepareExternalResources(
   for (const resource of manifest.resources.filter(
     (entry) => entry.kind === "mcp",
   )) {
-    const config = asRecord(resource.config, `mcp:${resource.name}`);
+    // env() refs (an oauth secret) register as `${NAME}`, never the value.
+    const config = rewriteEnvRefs(
+      asRecord(resource.config, `mcp:${resource.name}`),
+      new Set(),
+    );
     const input = await normalizeMcpInput(
       {
         name: resource.name,
@@ -1080,17 +1090,24 @@ async function syncMcpResources(
         : {}),
     };
     if (current) {
+      // The manifest is the whole server, so a field it dropped is cleared.
+      const clear = MCP_CLEARABLE_FIELDS.filter(
+        (field) => input[field] === undefined && current[field] !== undefined,
+      );
       // An identical patch is skipped: a write would bump updatedAt, which is
       // core's MCP cache identity, and re-probe every server on the next run.
       const row = current as unknown as Record<string, unknown>;
-      const unchanged = Object.entries(patch).every(
-        ([key, value]) => stableJson(value) === stableJson(row[key]),
-      );
+      const unchanged =
+        clear.length === 0 &&
+        Object.entries(patch).every(
+          ([key, value]) => stableJson(value) === stableJson(row[key]),
+        );
       if (!unchanged) {
         await ctx.runMutation(internal.account.mcp.update, {
           accountId: accountId,
           serverId: current._id,
           ...patch,
+          clear: clear,
         });
       }
       ids[name] = current._id;

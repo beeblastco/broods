@@ -1469,6 +1469,110 @@ export const billing = defineAgent({
   ]);
 });
 
+test("collectEnvRefNames includes ${NAME} refs in MCP server headers", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineMcp } from "${RESOURCES_MODULE}";
+
+export const search = defineMcp({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: "Bearer \${SEARCH_TOKEN}" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  // `broods dev` pushes these from .env.local, or the run fails on the ref.
+  expect(collectEnvRefNames(manifest)).toEqual(["SEARCH_TOKEN"]);
+});
+
+test("compileProject copies a server's headers into each agent that connects it", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineMcp } from "${RESOURCES_MODULE}";
+
+export const search = defineMcp({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: "Bearer \${SEARCH_TOKEN}", "X-Team": "\${TEAM_ID}" },
+});
+
+export const reader = defineAgent({
+  name: "reader",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  mcp: { search: { enabled: true, headers: { "x-team": "\${READER_TEAM}" } } },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+
+  // `broods dev` pushes the agent's own ref too, or the sync refuses it.
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "READER_TEAM",
+    "SEARCH_TOKEN",
+    "TEAM_ID",
+  ]);
+  // Core resolves a server's secret headers from the agent config only.
+  expect((agent?.config as { mcp: unknown }).mcp).toEqual({
+    search: {
+      enabled: true,
+      // Header names compare case-insensitively; the agent's spelling wins.
+      headers: {
+        Authorization: "Bearer ${SEARCH_TOKEN}",
+        "x-team": "${READER_TEAM}",
+      },
+    },
+  });
+});
+
+test("compileProject copies a server's oauth, not its token endpoint", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineMcp, env } from "${RESOURCES_MODULE}";
+
+export const gmail = defineMcp({
+  name: "gmail",
+  url: "https://gmailmcp.googleapis.com/mcp/v1",
+  oauth: {
+    clientId: "1234.apps.googleusercontent.com",
+    clientSecret: env("GMAIL_CLIENT_SECRET"),
+    refreshToken: env("GMAIL_REFRESH_TOKEN"),
+    tokenUrl: "https://oauth2.googleapis.com/token",
+  },
+});
+
+export const assistant = defineAgent({
+  name: "assistant",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  mcp: { gmail: { enabled: true } },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+  const oauth = (
+    agent?.config as { mcp: { gmail: { oauth: Record<string, unknown> } } }
+  ).mcp.gmail.oauth;
+
+  expect(Object.keys(oauth).sort()).toEqual([
+    "clientId",
+    "clientSecret",
+    "refreshToken",
+  ]);
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "GMAIL_CLIENT_SECRET",
+    "GMAIL_REFRESH_TOKEN",
+  ]);
+});
+
 test("collectEnvRefNames returns nothing when no env refs are present", async () => {
   const cwd = await fixtureProject(
     "",

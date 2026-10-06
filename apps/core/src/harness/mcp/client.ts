@@ -231,8 +231,15 @@ export function mcpConnection(
   configOauth?: AgentMcpEntry["oauth"],
   principal?: Principal,
 ): McpConnection {
+  // Header names are case-insensitive: the agent's spelling replaces the row's.
+  const overridden = new Set(
+    Object.keys(configHeaders ?? {}).map((name) => name.toLowerCase()),
+  );
+  const rowHeaders = Object.entries(record.headers ?? {}).filter(
+    ([name]) => !overridden.has(name.toLowerCase()),
+  );
   const headers: Record<string, string> = Object.fromEntries(
-    Object.entries({ ...record.headers, ...configHeaders }).filter(
+    [...rowHeaders, ...Object.entries(configHeaders ?? {})].filter(
       ([name]) => !PRINCIPAL_HEADER_NAMES.has(name.toLowerCase()),
     ),
   );

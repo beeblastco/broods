@@ -10,6 +10,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizePolicyDocument } from "../agent/policies";
 import { accountCipherForWrite } from "./accountKeys";
 import {
+  collectEnvPlaceholderNames,
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
 } from "./agentConfigCodec";
@@ -363,6 +364,8 @@ export async function syncAgentResources(
     const name = resourceName(resource.name);
     const envNames = new Set<string>();
     const withEnvRefs = rewriteEnvRefs(asObject(resource.config), envNames);
+    // MCP headers name their values as `${NAME}` strings, not env() refs.
+    collectEnvPlaceholderNames(withEnvRefs.mcp, envNames);
     // A policy ref that names no policy resource in this deploy stays a raw
     // string. Unless it is an existing policy id, the runtime refuses every
     // action for that agent, so the deploy warns about it.
