@@ -61,6 +61,7 @@ Rules:
 - `name` is 1 to 32 lowercase letters, digits or hyphens, starts with a letter, and is unique per stage.
 - The URL must be public. Private, loopback, link-local and metadata addresses are refused, and so are redirects. For a server on `localhost` or your network, run it on your computer with the [machine sandbox](sandboxes/machine.md).
 - Credential headers such as `Authorization` or `X-Api-Key` must name an environment variable inside a plain string, `"Bearer ${SEARCH_TOKEN}"`. Inline secrets are rejected. A template literal around `env()` sends `[object Object]`.
+- Reads show a header's value only while it is `${NAME}` refs. Any other value reads back as `********`, since a sync stores refs resolved. Sending `********` back keeps the stored value.
 - Every agent that connects the server gets its headers and `oauth`, and an agent's own value wins. Header names compare case-insensitively. `broods dev` pushes the named variables from `.env.local`, and a sync is refused while one has no value on the stage.
 - Removing `headers` or `allowedTools` from `defineMcp` removes them from the server on the next sync.
 - Tool lists are cached for the time the server's listing allows. Server-pushed list changes are not supported.
