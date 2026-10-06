@@ -442,14 +442,15 @@ function TokenPrompt({
         </button>
       </div>
       <p className="text-3xs text-muted-foreground">
-        Your account key (starts with <code>ask_</code>). Saved in session only.
+        Your account key (starts with <code>bask_</code>). Saved in session
+        only.
       </p>
       <div className="flex items-center gap-1.5">
         <Input
           ref={ref}
           type={show ? "text" : "password"}
           value={draft}
-          placeholder="ask_…"
+          placeholder="bask_…"
           className="h-7 flex-1 font-mono text-2xs"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {

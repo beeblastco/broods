@@ -15,7 +15,7 @@
  * server runtimes, as well as Node and Bun.
  *
  * Auth: every call sends `Authorization: Bearer {accountSecret}` to
- * `{baseUrl}/v1/...`, or a short-lived `fp_sts_` role session token from
+ * `{baseUrl}/v1/...`, or a short-lived `bsts_` role session token from
  * `assumeRole()`, limited to what the role's policy allows. Secrets inside
  * agent configs are encrypted at rest by the platform and come back redacted
  * (`********`) on reads.
@@ -62,7 +62,7 @@ export interface BroodsAccountClientOptions {
   /** Account key used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
   accountSecret?: string;
   /**
-   * Short-lived `fp_sts_` role session token (from {@link BroodsAccountClient.assumeRole})
+   * Short-lived `bsts_` role session token (from {@link BroodsAccountClient.assumeRole})
    * used as the Bearer instead of the account key. The session can only do
    * what its role's policy allows. Falls back to `BROODS_SESSION_TOKEN`.
    */
@@ -248,7 +248,7 @@ export interface AuditSink {
 
 /** Short-lived role session minted by `POST /v1/account/assume-role`. */
 export interface AssumeRoleResult {
-  /** `fp_sts_` bearer token; pass it as `sessionToken` to a new client. */
+  /** `bsts_` bearer token; pass it as `sessionToken` to a new client. */
   token: string;
   /** ISO timestamp when the session stops working. */
   expiresAt: string;
@@ -520,7 +520,7 @@ export class BroodsAccountClient {
   }
 
   /**
-   * Exchange a role for a short-lived `fp_sts_` session token. Callable with
+   * Exchange a role for a short-lived `bsts_` session token. Callable with
    * the account key, a CLI login token, or a runtime key (the latter
    * only into roles scoped to the key's own project/stage). Construct a new
    * client with `{ sessionToken: result.token }` to act as the role.

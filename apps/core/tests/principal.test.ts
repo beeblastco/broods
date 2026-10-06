@@ -128,7 +128,7 @@ describe("run token", () => {
     expect(openRunToken(`brt_${forged}.${signature}`, 1)).toBeNull();
     expect(openRunToken(`brt_${payload}.${signature}x`, 1)).toBeNull();
     expect(openRunToken(`brt_${payload}`, 1)).toBeNull();
-    expect(openRunToken(`fp_dts_${payload}.${signature}`, 1)).toBeNull();
+    expect(openRunToken(`bdts_${payload}.${signature}`, 1)).toBeNull();
     process.env.STAGE_TICKET_SECRET = "rotated";
     expect(openRunToken(token, 1)).toBeNull();
   });

@@ -42,7 +42,7 @@ const INVOKE_BODY = JSON.stringify({
   ],
 });
 const INVOKE_HEADERS: Readonly<Record<string, string>> = {
-  authorization: "Bearer sk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
+  authorization: "Bearer bsk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
   "content-type": "application/json",
   "x-forwarded-for": "198.51.100.7, 10.0.4.21",
   "x-request-id": "req_01J8ZQ4Y2K",

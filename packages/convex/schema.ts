@@ -159,7 +159,7 @@ export const canvasLayoutsFields = {
 };
 
 /**
- * Project + stage scoped runtime key (`sk_…`). One key per
+ * Project + stage scoped runtime key (`bsk_…`). One key per
  * stage invokes ANY deployed agent in it; the agent is selected per request
  * by id. The SHA-256 hash authenticates runtime calls; the plaintext is also kept
  * AES-GCM encrypted at rest so the owner can recover it for dashboard streaming
@@ -189,7 +189,7 @@ export const agentDeploymentsFields = {
 };
 
 /**
- * Project + stage scoped project key (`pdk_…`). Authorizes the `broods`
+ * Project + stage scoped project key (`bpdk_…`). Authorizes the `broods`
  * CLI against exactly one project/stage, unlike the account key
  * which grants the whole account. Only the SHA-256 hash is stored.
  */
@@ -358,7 +358,7 @@ export const accountRolesFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
-  /** Public role id: "fp_role_" + random. */
+  /** Public role id: "brole_" + random. */
   roleId: v.string(),
   name: v.string(),
   status: v.union(v.literal("active"), v.literal("disabled")),
@@ -369,7 +369,7 @@ export const accountRolesFields = {
 };
 
 /**
- * Short-lived assume-role session backing an `fp_sts_` bearer token. Only the
+ * Short-lived assume-role session backing a `bsts_` bearer token. Only the
  * SHA-256 hash is stored, same pattern as cliTokens. Rows die by `expiresAt`;
  * revocation is disabling or deleting the role.
  */

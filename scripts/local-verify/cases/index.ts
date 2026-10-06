@@ -3,6 +3,7 @@ import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { connections } from "./connections.ts";
+import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { manifestSync } from "./manifest-sync.ts";
@@ -31,6 +32,7 @@ export const verifyCases: readonly VerifyCase[] = [
   customSandbox,
   trailingSlash,
   edgeHeaders,
+  credentialPrefixes,
   manifestSync,
   workToolWebhooks,
   webhookHandshake,

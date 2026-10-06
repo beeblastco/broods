@@ -52,7 +52,7 @@ const client = new BroodsClient();
 | `host`    | Hostname form of `baseUrl`. `gateway.broods.app` becomes `https://gateway.broods.app` |
 | `fetch`   | Global `fetch`                                                                        |
 
-The runtime key, `sk_...`, is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
+The runtime key, `bsk_...`, is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
 
 ### Methods
 
@@ -229,12 +229,12 @@ const account = new BroodsAccountClient({
 });
 ```
 
-| Option          | Default                                                                  |
-| --------------- | ------------------------------------------------------------------------ |
-| `accountSecret` | The account key. `BROODS_ACCOUNT_SECRET`, an `ask_...` value             |
-| `sessionToken`  | `BROODS_SESSION_TOKEN`, an `fp_sts_...` value. Wins over the account key |
-| `baseUrl`       | `BROODS_BASE_URL`, then `https://gateway.broods.app`                     |
-| `fetch`         | Global `fetch`                                                           |
+| Option          | Default                                                               |
+| --------------- | --------------------------------------------------------------------- |
+| `accountSecret` | The account key. `BROODS_ACCOUNT_SECRET`, a `bask_...` value          |
+| `sessionToken`  | `BROODS_SESSION_TOKEN`, a `bsts_...` value. Wins over the account key |
+| `baseUrl`       | `BROODS_BASE_URL`, then `https://gateway.broods.app`                  |
+| `fetch`         | Global `fetch`                                                        |
 
 The entry point has no dependencies and uses plain `fetch`, so it runs in Convex actions, Cloudflare Workers and other edge runtimes where the main `broods` entry cannot load.
 

@@ -24,22 +24,36 @@ The CLI only works for owners and admins.
 
 Three keys are yours to hold. Use the narrowest one that works.
 
-| Key         | Prefix | Scope                 | What it can do                                                           | Never                                       |
-| ----------- | ------ | --------------------- | ------------------------------------------------------------------------ | ------------------------------------------- |
-| Account key | `ask_` | The whole account     | Everything: create and change agents, crons, files and roles, run agents | Put it in a frontend or hand it to an agent |
-| Project key | `pdk_` | One project and stage | Deploy, and set and list environment variables                           | Expect it to read a variable's value        |
-| Runtime key | `sk_`  | One project and stage | Run agents with `publicAccess: true`                                     | Expect it to read logs or change config     |
+| Key         | Prefix  | Scope                 | What it can do                                                           | Never                                       |
+| ----------- | ------- | --------------------- | ------------------------------------------------------------------------ | ------------------------------------------- |
+| Account key | `bask_` | The whole account     | Everything: create and change agents, crons, files and roles, run agents | Put it in a frontend or hand it to an agent |
+| Project key | `bpdk_` | One project and stage | Deploy, and set and list environment variables                           | Expect it to read a variable's value        |
+| Runtime key | `bsk_`  | One project and stage | Run agents with `publicAccess: true`                                     | Expect it to read logs or change config     |
 
 `BROODS_ACCOUNT_SECRET` holds the account key, `BROODS_TOKEN` a project key, and `BROODS_API_KEY` the runtime key.
 
 The rest are issued for you and expire or follow your membership:
 
-| Credential           | Prefix    | Use it for                                        | Never                                          |
-| -------------------- | --------- | ------------------------------------------------- | ---------------------------------------------- |
-| CLI login            | `fp_cli_` | Your own machine                                  | Share it                                       |
-| Role session         | `fp_sts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours                  |
-| Stage session ticket | `fp_dts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes.                 |
-| Run token            | `brt_`    | Sandbox code reading its agent's runs             | Start a run with it, or expect it past the run |
+| Credential           | Prefix  | Use it for                                        | Never                                          |
+| -------------------- | ------- | ------------------------------------------------- | ---------------------------------------------- |
+| CLI login            | `bcli_` | Your own machine                                  | Share it                                       |
+| Role session         | `bsts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours                  |
+| Stage session ticket | `bdts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes.                 |
+| Run token            | `brt_`  | Sandbox code reading its agent's runs             | Start a run with it, or expect it past the run |
+
+Every Broods credential starts with `b`, so you and a secret scanner can tell it from another vendor's key.
+
+:::warning Breaking: keys from before the `b` prefix stop working
+
+Keys minted as `sk_`, `ask_`, `pdk_` or `fp_*` get `401`. Replace them:
+
+- Account key: rotate it in the dashboard under Organization → API Access, then update `BROODS_ACCOUNT_SECRET`. The old key cannot call `POST /v1/account/rotate-secret` any more.
+- Project keys: create new ones in the dashboard and update `BROODS_TOKEN`.
+- CLI: run `broods login` again.
+- Runtime key: the cutover replaces it with a new `bsk_` key. `broods dev`, `broods deploy` and `broods stage use` rewrite `BROODS_API_KEY` in `.env.local`. Copy the new key from the dashboard into deployed apps.
+- Role ids are now `brole_` plus the same characters. Update code that pins one.
+
+:::
 
 The runtime key is the one key meant to sit in a frontend, so it is limited:
 

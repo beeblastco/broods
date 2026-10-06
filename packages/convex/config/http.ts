@@ -3,7 +3,7 @@
  * files, crons, workspaces, sandboxes, policies, and roles served straight
  * from Convex. Traefik routes these paths here (`apps/edge`); response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
- * the account key, or an fp_sts_ role session checked against its
+ * the account key, or a bsts_ role session checked against its
  * role's policy at this funnel. This file is the router; each resource
  * family's handlers live in `config/routes/`.
  */

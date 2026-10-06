@@ -20,6 +20,8 @@ import {
 } from "../../lambda/sandbox-log-forwarder.mjs";
 
 // The OTLP client line doubles as the stream-name signing key on both sides.
+// A minted credential body: 43 base64url chars.
+const BODY = `${"aB3-_xYz".repeat(5)}abc`;
 const KEY = "Authorization=Basic dXNlcjpwYXNz";
 const STREAM = signed("acct-1/proj/dev/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b");
 const LOG_GROUP = "/broods/dev/microvms";
@@ -126,16 +128,29 @@ describe("redact", () => {
   it("applies core's string patterns", () => {
     expect(
       redact(
-        "Authorization: Bearer abc.def GET /x?token=s3cret key fp_agent_AbC-1 sts fp_sts_Z9",
+        `Authorization: Bearer abc.def GET /x?token=s3cret key bsk_${BODY} sts bsts_${BODY}`,
       ),
     ).toBe(
       "Authorization: Bearer [redacted] GET /x?token=[redacted] key [redacted] sts [redacted]",
     );
   });
 
-  it("redacts an sk_ runtime key and leaves a short sk_ identifier", () => {
-    expect(redact(`key sk_${"aB3-_xYz".repeat(5)}abc column sk_id`)).toBe(
-      "key [redacted] column sk_id",
+  it("redacts every Broods credential prefix and leaves short identifiers", () => {
+    for (const prefix of [
+      "bsk_",
+      "bask_",
+      "bpdk_",
+      "bcli_",
+      "bcode_",
+      "bsts_",
+      "brt_",
+    ]) {
+      expect(redact(`key ${prefix}${BODY} column bsk_id`)).toBe(
+        "key [redacted] column bsk_id",
+      );
+    }
+    expect(redact(`ticket bdts_${BODY}.${BODY} role brole_${BODY}`)).toBe(
+      `ticket [redacted] role brole_${BODY}`,
     );
   });
 });

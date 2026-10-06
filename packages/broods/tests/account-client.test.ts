@@ -188,7 +188,7 @@ test("account metadata: update unwraps, delete returns cleanup, rotate returns t
       status: 200,
       body: {
         account: { accountId: "acc_1", username: "renamed", status: "active" },
-        secret: "ask_new",
+        secret: "bask_new",
       },
     },
   ]);
@@ -202,7 +202,7 @@ test("account metadata: update unwraps, delete returns cleanup, rotate returns t
   expect(deleted.cleanup?.agentsDeleted).toBe(2);
 
   const rotated = await client.rotateSecret();
-  expect(rotated.secret).toBe("ask_new");
+  expect(rotated.secret).toBe("bask_new");
   expect(calls[2]?.url).toBe(
     "https://gateway.example.com/v1/account/rotate-secret",
   );
@@ -292,15 +292,15 @@ test("policies: list/create unwrap and get returns null on 404", async () => {
 
 test("roles: list/create unwrap, assumeRole posts the exchange body", async () => {
   const { client, calls } = mockClient([
-    { status: 200, body: { roles: [{ roleId: "fp_role_1", name: "reader" }] } },
-    { status: 201, body: { roleId: "fp_role_2", name: "writer" } },
+    { status: 200, body: { roles: [{ roleId: "brole_1", name: "reader" }] } },
+    { status: 201, body: { roleId: "brole_2", name: "writer" } },
     {
       status: 200,
-      body: { token: "fp_sts_abc", expiresAt: "2026-08-28T00:00:00.000Z" },
+      body: { token: "bsts_abc", expiresAt: "2026-08-28T00:00:00.000Z" },
     },
   ]);
 
-  expect((await client.listRoles())[0]?.roleId).toBe("fp_role_1");
+  expect((await client.listRoles())[0]?.roleId).toBe("brole_1");
   expect(
     (
       await client.createRole({
@@ -308,16 +308,16 @@ test("roles: list/create unwrap, assumeRole posts the exchange body", async () =
         policy: { version: 1, rules: [] } as never,
       })
     ).roleId,
-  ).toBe("fp_role_2");
+  ).toBe("brole_2");
 
-  const session = await client.assumeRole("fp_role_2", { ttlSeconds: 900 });
-  expect(session.token).toBe("fp_sts_abc");
+  const session = await client.assumeRole("brole_2", { ttlSeconds: 900 });
+  expect(session.token).toBe("bsts_abc");
   expect(calls[2]?.url).toBe(
     "https://gateway.example.com/v1/account/assume-role",
   );
   expect(calls[2]?.method).toBe("POST");
   expect(JSON.parse(calls[2]?.body ?? "{}")).toEqual({
-    roleId: "fp_role_2",
+    roleId: "brole_2",
     ttlSeconds: 900,
   });
 });
@@ -326,7 +326,7 @@ test("a sessionToken is accepted as the bearer instead of the account key", asyn
   const calls: Call[] = [];
   const client = new BroodsAccountClient({
     baseUrl: "https://gateway.example.com",
-    sessionToken: "fp_sts_session-1",
+    sessionToken: "bsts_session-1",
     fetch: async (input, init) => {
       calls.push({
         url: String(input),
@@ -339,7 +339,7 @@ test("a sessionToken is accepted as the bearer instead of the account key", asyn
   });
 
   await client.listAgents();
-  expect(calls[0]?.headers.Authorization).toBe("Bearer fp_sts_session-1");
+  expect(calls[0]?.headers.Authorization).toBe("Bearer bsts_session-1");
 });
 
 test("skills: list unwraps, upload uses PUT, delete returns the flag", async () => {
@@ -416,7 +416,7 @@ test("baseUrl defaults to the managed gateway when option and env var are absent
   const savedBaseUrl = process.env.BROODS_BASE_URL;
   delete process.env.BROODS_BASE_URL;
   try {
-    const client = new BroodsAccountClient({ accountSecret: "ask_test" });
+    const client = new BroodsAccountClient({ accountSecret: "bask_test" });
     expect(client.webhookUrl("acc1", "slack")).toBe(
       "https://gateway.broods.app/v1/webhooks/acc1/slack",
     );

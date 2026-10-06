@@ -1,6 +1,6 @@
 /**
  * Account-role validation for the Convex config plane: role CRUD input,
- * assume-role input, and the fp_role_/fp_sts_ identifier generation. Role
+ * assume-role input, and the brole_/bsts_ identifier generation. Role
  * policies reuse the PolicyDocument shape (model/policyRules.ts) restricted to
  * the API action namespace.
  */
@@ -15,11 +15,11 @@ import {
 import { ClientError } from "./clientError";
 
 const ROLE_ID_BYTES = 16;
-const ROLE_ID_PREFIX = "fp_role_";
+export const ROLE_ID_PREFIX = "brole_";
 
 export const ROLE_SESSION_DEFAULT_TTL_SECONDS = 60 * 60;
 export const ROLE_SESSION_MAX_TTL_SECONDS = 12 * 60 * 60;
-export const ROLE_SESSION_TOKEN_PREFIX = "fp_sts_";
+export const ROLE_SESSION_TOKEN_PREFIX = "bsts_";
 
 export interface AssumeRoleInput {
   roleId: string;
@@ -39,7 +39,7 @@ export interface UpdateRoleInput {
   status?: "active" | "disabled";
 }
 
-/** Generate a public role id: "fp_role_" + random base64url. */
+/** Generate a public role id: "brole_" + random base64url. */
 export function createRoleId(): string {
   return randomToken(ROLE_ID_PREFIX, ROLE_ID_BYTES);
 }

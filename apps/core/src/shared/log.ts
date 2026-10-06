@@ -67,14 +67,11 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-// A runtime key is `sk_` plus exactly 43 base64url chars, so other `sk_`
-// identifiers stay readable. `fp_agent_` is the prefix keys minted
-// before the rename still carry.
-const RUNTIME_KEY_PATTERN =
-  /\b(?:sk_[A-Za-z0-9_-]{43}|fp_agent_[A-Za-z0-9_-]+)\b/g;
-const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
-// payload.signature, so the dot is part of the token.
-const RUN_TOKEN_PATTERN = /\bbrt_[A-Za-z0-9_.-]+/g;
+// Every Broods credential: its b-prefix plus a long base64url body (signed
+// tickets add a dot), so short identifiers like `bsk_id` stay readable.
+// Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
+const BROODS_CREDENTIAL_PATTERN =
+  /\bb(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
 const WHITESPACE_PATTERN = /\s/g;
 
 const ENCODER = new TextEncoder();
@@ -422,9 +419,7 @@ function replaceSecretValues(
   for (const secret of secrets) {
     redacted = redacted.split(secret).join("[redacted]");
   }
-  redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
-  redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
-  redacted = redacted.replace(RUN_TOKEN_PATTERN, "[redacted]");
+  redacted = redacted.replace(BROODS_CREDENTIAL_PATTERN, "[redacted]");
 
   return redacted;
 }

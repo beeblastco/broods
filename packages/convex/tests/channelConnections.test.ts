@@ -121,7 +121,7 @@ async function seedDeployment(
       projectSlug: "tracy",
       stageSlug: "development",
       apiKeyHash: `hash-${endpointId}`,
-      keyHint: "sk_…abcd",
+      keyHint: "bsk_…abcd",
       apiKeyCiphertext: "ct",
       apiKeyIv: "iv",
       apiKeyTag: "tag",
