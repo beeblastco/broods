@@ -1496,7 +1496,7 @@ export const search = defineMcp({
 export const reader = defineAgent({
   name: "reader",
   model: { provider: "openai", modelId: "gpt-5-mini" },
-  mcp: { search: { enabled: true, headers: { "X-Team": "\${READER_TEAM}" } } },
+  mcp: { search: { enabled: true, headers: { "x-team": "\${READER_TEAM}" } } },
 });
 `,
   );
@@ -1514,12 +1514,55 @@ export const reader = defineAgent({
   expect((agent?.config as { mcp: unknown }).mcp).toEqual({
     search: {
       enabled: true,
+      // Header names compare case-insensitively; the agent's spelling wins.
       headers: {
         Authorization: "Bearer ${SEARCH_TOKEN}",
-        "X-Team": "${READER_TEAM}",
+        "x-team": "${READER_TEAM}",
       },
     },
   });
+});
+
+test("compileProject copies a server's oauth, not its token endpoint", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineMcp, env } from "${RESOURCES_MODULE}";
+
+export const gmail = defineMcp({
+  name: "gmail",
+  url: "https://gmailmcp.googleapis.com/mcp/v1",
+  oauth: {
+    clientId: "1234.apps.googleusercontent.com",
+    clientSecret: env("GMAIL_CLIENT_SECRET"),
+    refreshToken: env("GMAIL_REFRESH_TOKEN"),
+    tokenUrl: "https://oauth2.googleapis.com/token",
+  },
+});
+
+export const assistant = defineAgent({
+  name: "assistant",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  mcp: { gmail: { enabled: true } },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+  const oauth = (
+    agent?.config as { mcp: { gmail: { oauth: Record<string, unknown> } } }
+  ).mcp.gmail.oauth;
+
+  expect(Object.keys(oauth).sort()).toEqual([
+    "clientId",
+    "clientSecret",
+    "refreshToken",
+  ]);
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "GMAIL_CLIENT_SECRET",
+    "GMAIL_REFRESH_TOKEN",
+  ]);
 });
 
 test("collectEnvRefNames returns nothing when no env refs are present", async () => {

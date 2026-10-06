@@ -91,3 +91,15 @@ describe("mcp principal headers", () => {
     }
   });
 });
+
+describe("mcp connection headers", () => {
+  it("lets the agent's header replace the row's whatever its case", () => {
+    const connection = mcpConnection(
+      { ...MCP_RECORD, headers: { Authorization: "Bearer ${ROW_TOKEN}" } },
+      { authorization: "Bearer resolved" },
+    );
+
+    // The row's unresolved ref would otherwise refuse the run.
+    expect(connection.headers).toEqual({ authorization: "Bearer resolved" });
+  });
+});

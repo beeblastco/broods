@@ -213,7 +213,7 @@ export async function compileProject(
   )
     .flat()
     .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`))
-    .map(withMcpServerHeaders);
+    .map(withMcpServerAuth);
   assertUniqueResources(manifestResources);
 
   return {
@@ -1797,30 +1797,52 @@ function sdkStubPlugin(): Plugin {
 }
 
 /**
- * Copies each connected MCP server's headers under the agent's own entry
- * headers. Core reads a server's secret headers only from the agent config,
- * where the sync resolves their `${NAME}` refs; the agent's own value wins.
+ * Copies each connected MCP server's headers and oauth credentials under the
+ * agent's own entry. Core reads a server's secrets only from the agent config,
+ * where the sync resolves their refs; the agent's own value wins, and header
+ * names compare case-insensitively.
  */
-function withMcpServerHeaders(
+function withMcpServerAuth(
   resource: CliManifestResource,
   _index: number,
   resources: CliManifestResource[],
 ): CliManifestResource {
   const mcp = (
     resource.config as {
-      mcp?: Record<string, { headers?: Record<string, unknown> }>;
+      mcp?: Record<
+        string,
+        {
+          headers?: Record<string, unknown>;
+          oauth?: Record<string, unknown>;
+        }
+      >;
     }
   ).mcp;
   if (resource.kind !== "agent" || !mcp) return resource;
   const entries = Object.entries(mcp).map(([server, entry]) => {
-    const headers = (
-      resources.find((other) => other.kind === "mcp" && other.name === server)
-        ?.config as { headers?: Record<string, string> } | undefined
-    )?.headers;
+    const config = resources.find(
+      (other) => other.kind === "mcp" && other.name === server,
+    )?.config as
+      | { headers?: Record<string, unknown>; oauth?: Record<string, unknown> }
+      | undefined;
+    const own = new Set(
+      Object.keys(entry.headers ?? {}).map((name) => name.toLowerCase()),
+    );
+    const headers = Object.entries(config?.headers ?? {}).filter(
+      ([name]) => !own.has(name.toLowerCase()),
+    );
+    // The token endpoint stays on the server row, where registration checked it.
+    const { tokenUrl: _tokenUrl, ...oauth } = config?.oauth ?? {};
 
     return [
       server,
-      headers ? { ...entry, headers: { ...headers, ...entry.headers } } : entry,
+      {
+        ...entry,
+        ...(headers.length > 0
+          ? { headers: { ...Object.fromEntries(headers), ...entry.headers } }
+          : {}),
+        ...(config?.oauth ? { oauth: { ...oauth, ...entry.oauth } } : {}),
+      },
     ];
   });
 

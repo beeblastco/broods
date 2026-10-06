@@ -89,7 +89,7 @@ function redactSecrets(value: unknown, inHeaders = false): unknown {
       key,
       typeof entry === "string" &&
       (inHeaders
-        ? SENSITIVE_HEADER_NAME_PATTERN.test(key) &&
+        ? (SENSITIVE_HEADER_NAME_PATTERN.test(key) || isSecretConfigKey(key)) &&
           !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
         : isSecretConfigKey(key) && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry))
         ? REDACTED_SECRET_VALUE
