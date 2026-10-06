@@ -6,6 +6,7 @@ import {
   logInfo,
   logWarn,
   redact,
+  redactSerialized,
   redactSensitiveText,
 } from "../src/shared/log.ts";
 import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
@@ -202,6 +203,45 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
     );
+  });
+
+  it("redacts a runtime key under either prefix and leaves other sk_ identifiers", () => {
+    // The minted shape: the prefix plus 43 base64url chars.
+    const runtimeKey = `sk_${"aB3-_xYz".repeat(5)}abc`;
+
+    expect(redactSensitiveText(`run failed for ${runtimeKey} twice`)).toBe(
+      "run failed for [redacted] twice",
+    );
+    expect(redactSensitiveText("run failed for fp_agent_AbC-1 twice")).toBe(
+      "run failed for [redacted] twice",
+    );
+    expect(redactSensitiveText("column sk_id is null")).toBe(
+      "column sk_id is null",
+    );
+    expect(redactSensitiveText("job sk_abcdefghijklmnopqrst done")).toBe(
+      "job sk_abcdefghijklmnopqrst done",
+    );
+  });
+
+  it("never leaks a secret that straddles a truncated attribute's cut", () => {
+    const secret = "s3cr3t-value-long";
+    // One straddles the cut itself; the other straddles the scrubbed window's
+    // end and is pulled under the cut once the secret before it shrinks.
+    const atCut = `${"x".repeat(45)}${secret}${"y".repeat(100)}`;
+    const atWindow = `${secret}${"z".repeat(34)}${secret}${"y".repeat(100)}`;
+    // A token the patterns match, longer than any literal secret.
+    const atToken = `${"x".repeat(40)} sk_${"a".repeat(43)} ${"y".repeat(100)}`;
+
+    for (const text of [atCut, atWindow, atToken]) {
+      const attribute = redactSerialized(text, [secret], 50);
+      const whole = redact(text, [secret]) as string;
+
+      expect(attribute).not.toContain(secret.slice(0, 4));
+      expect(attribute).toBe(`${whole.slice(0, 50)}...[truncated]`);
+    }
+    expect(
+      redactSerialized({ note: 'pa"ss-word', apiKey: "k" }, ['pa"ss-word'], 50),
+    ).toBe('{"note":"[redacted]","apiKey":"[redacted]"}');
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {

@@ -1,3 +1,4 @@
+import { BroodsClient } from "../../../packages/broods/src/client.ts";
 import type { CliManifest } from "../../../packages/broods/src/contracts.ts";
 import {
   BroodsSyncClient,
@@ -6,10 +7,13 @@ import {
 } from "../../../packages/broods/src/sync.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/** Concurrent SDK deploys leave one complete manifest; a stale revision cannot overwrite it. */
+/**
+ * Concurrent SDK deploys leave one complete manifest; a stale revision cannot
+ * overwrite it. The runtime key the deploy minted then authenticates on core.
+ */
 export async function manifestSync(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
-    baseUrl: context.gatewayUrl,
+    baseUrl: context.edgeUrl,
     token: context.accountSecret,
   });
   const project = `sync-${context.runId}`;
@@ -91,5 +95,19 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
     after !== null &&
       diffManifests(remote.manifest, after.manifest).length === 0,
     "stale sync changed resources",
+  );
+  const runtimeKey = await client.getRuntimeKey(project, "development");
+  const runtime = new BroodsClient({
+    apiKey: runtimeKey?.apiKey,
+    baseUrl: context.edgeUrl,
+  });
+  // A 401 throws; an unknown run is only reachable past auth.
+  const status = await runtime
+    .getAsyncStatus(`run_${"0".repeat(32)}`)
+    .catch((error: unknown): string => String(error));
+  assertStep(
+    "the runtime key authenticates on core",
+    typeof status !== "string" && status.status === "not_found",
+    JSON.stringify(status),
   );
 }

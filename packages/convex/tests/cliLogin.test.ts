@@ -1,11 +1,18 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
-import { internal } from "../_generated/api";
+import { describe, expect, test, vi } from "vitest";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { pkceChallenge } from "../cli/auth";
 import { sha256Hex } from "../model/accountSecrets";
+import { ClientError } from "../model/clientError";
 import schema from "../schema";
+
+// The WorkOS component is not registered in the test runtime; the org admin
+// below is the caller.
+vi.mock("../auth", () => ({
+  authKit: { getAuthUser: async () => ({ id: "auth_admin" }) },
+}));
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -87,5 +94,39 @@ describe("CLI login code exchange with PKCE", () => {
     expect(
       await pkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
     ).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+  });
+});
+
+describe("CLI login code minting", () => {
+  test("an org with no API account fails with a reason the CLI can show", async () => {
+    const t = loginTest();
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        authId: AUTH_ID,
+        email: "admin@example.com",
+        name: "admin",
+        plan: "free",
+      });
+      const orgId = await ctx.db.insert("orgs", {
+        name: "beeblast",
+        slug: "beeblast",
+        ownerAuthId: AUTH_ID,
+        plan: "free",
+        createdAt: 1,
+      });
+      await ctx.db.insert("orgMembers", {
+        orgId: orgId,
+        userId: userId,
+        role: "owner",
+        createdAt: 1,
+      });
+    });
+
+    const minting = t.mutation(api.cli.auth.createLoginCode, {});
+
+    await expect(minting).rejects.toBeInstanceOf(ClientError);
+    await expect(minting).rejects.toThrow(
+      "beeblast has no active API account. Set it up under Organization > API Access in the dashboard.",
+    );
   });
 });

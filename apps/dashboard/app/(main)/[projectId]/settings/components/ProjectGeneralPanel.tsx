@@ -10,6 +10,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   projectId: Id<"projects">;
@@ -59,7 +60,7 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
         description: trimmedDesc || undefined,
       });
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed");
+      setSaveError(toErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -114,7 +115,7 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
           {canWrite && (
             <Button
               size="sm"
-              className="cursor-pointer disabled:cursor-not-allowed ml-auto"
+              className="cursor-pointer ml-auto"
               disabled={!dirty || !trimmedName || saving}
               onClick={handleSave}
             >

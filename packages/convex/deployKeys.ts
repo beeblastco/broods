@@ -1,6 +1,6 @@
 /**
- * Project + stage scoped deploy keys for the `broods` CLI. Unlike the org
- * Bearer secret (Settings → API Access), a deploy key authorizes only one
+ * Project + stage scoped project keys (`pdk_…`) for the `broods` CLI. Unlike
+ * the account key (Settings → API Access), a project key authorizes only one
  * project/stage. The plaintext token is returned once at creation; only its
  * SHA-256 hash is stored.
  */
@@ -9,12 +9,10 @@ import { type Infer, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
-import { sha256Hex } from "./model/accountSecrets";
+import { PROJECT_KEY_PREFIX, sha256Hex } from "./model/accountSecrets";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
-
-const DEPLOY_KEY_PREFIX = "fp_deploy_";
 
 // What `list` sends to the browser: the row minus `keyHash`.
 const { keyHash: _keyHash, ...deployKeyListFields } = deployKeysFields;
@@ -53,7 +51,7 @@ export const create = mutation({
       throw new Error("Stage not found.");
     }
 
-    // A deploy key resolves to the project's org account, so that account must
+    // A project key resolves to the project's org account, so that account must
     // already be provisioned (Settings → API Access).
     const account = await ctx.db
       .query("accounts")
@@ -72,7 +70,7 @@ export const create = mutation({
       accountId: account._id,
       projectId: projectId,
       stageId: stageId,
-      name: name.trim() || "Deploy key",
+      name: name.trim() || "Project key",
       keyHash: keyHash,
       keyHint: deployKeyHint(token),
       status: "active",
@@ -126,7 +124,7 @@ export const remove = mutation({
     }
 
     const deployKey = await ctx.db.get(deployKeyId);
-    if (!deployKey) throw new Error("Deploy key not found.");
+    if (!deployKey) throw new Error("Project key not found.");
 
     const project = await getProjectForRole(
       ctx,
@@ -134,10 +132,10 @@ export const remove = mutation({
       deployKey.projectId,
       "admin",
     );
-    if (!project) throw new Error("Deploy key not found.");
+    if (!project) throw new Error("Project key not found.");
     const stage = await getOwnedStage(ctx, user.id, deployKey.stageId);
     if (!stage || stage.projectId !== deployKey.projectId)
-      throw new Error("Deploy key not found.");
+      throw new Error("Project key not found.");
 
     await ctx.db.delete(deployKeyId);
 
@@ -147,7 +145,7 @@ export const remove = mutation({
 
 /** Masked label for listing a key without revealing it: prefix + last four chars. */
 function deployKeyHint(token: string): string {
-  return `${DEPLOY_KEY_PREFIX}…${token.slice(-4)}`;
+  return `${PROJECT_KEY_PREFIX}…${token.slice(-4)}`;
 }
 
 function generateDeployToken(): string {
@@ -159,5 +157,5 @@ function generateDeployToken(): string {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  return `${DEPLOY_KEY_PREFIX}${base64url}`;
+  return `${PROJECT_KEY_PREFIX}${base64url}`;
 }

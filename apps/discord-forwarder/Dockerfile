@@ -9,6 +9,7 @@ COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
+COPY apps/edge/package.json ./apps/edge/
 COPY apps/gateway/package.json ./apps/gateway/
 COPY apps/matrix-forwarder/package.json ./apps/matrix-forwarder/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
