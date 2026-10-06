@@ -1044,7 +1044,8 @@ paths:
       description: >-
         Answers the provider's consent screen for `broods connect` to open.
         The CLI keeps the PKCE verifier, state and nonce; the redirect must be
-        a loopback address. The managed service refuses `chatgpt`.
+        a loopback address. The managed service refuses `chatgpt` unless
+        the deployment sets `CHATGPT_PLAN_ENABLED=true`.
       security:
         - BearerAuth: []
       requestBody:
@@ -1063,7 +1064,7 @@ paths:
         "400":
           description: A missing field or a redirect off loopback
         "403":
-          description: A role session or runtime key, or `chatgpt` on the managed service
+          description: A role session or runtime key, or `chatgpt` on a managed service without `CHATGPT_PLAN_ENABLED`
 
   /v1/account/connections/{type}:
     parameters:
@@ -1111,7 +1112,7 @@ paths:
         "400":
           description: A missing field, a failed exchange or verification, or a grant missing its required scope
         "403":
-          description: A role session or runtime key, or `chatgpt` on the managed service
+          description: A role session or runtime key, or `chatgpt` on a managed service without `CHATGPT_PLAN_ENABLED`
     delete:
       tags:
         - Connections
