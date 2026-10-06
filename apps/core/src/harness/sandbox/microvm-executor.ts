@@ -813,6 +813,20 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     let info = await this.#client.send(
       new GetMicrovmCommand({ microvmIdentifier: microvmId }),
     );
+    // A sandbox whose image changed must not keep reaching the VM the old image
+    // booted: stop it, before any resume, and the caller creates one from the new
+    // image. GetMicrovm always reports the image, so a missing one is a mismatch.
+    if (
+      !isTerminalMicrovmState(info.state) &&
+      (!info.imageArn ||
+        microvmImageName(info.imageArn) !==
+          microvmImageName(this.#image().imageIdentifier))
+    ) {
+      await this.#terminate(microvmId);
+      throw new MicrovmGoneError(
+        `MicroVM ${microvmId} runs ${info.imageArn ?? "an unknown image"}, not the sandbox's image`,
+      );
+    }
     if (info.state === "SUSPENDED" || info.state === "SUSPENDING") {
       await this.#client.send(
         new ResumeMicrovmCommand({ microvmIdentifier: microvmId }),
@@ -836,18 +850,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     // after the resume too: a VM can reach a terminal state while we wait on it.
     if (isTerminalMicrovmState(info.state)) {
       throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
-    }
-    // A sandbox whose image changed must not keep reaching the VM the old image
-    // booted: stop it, and the caller creates one from the new image.
-    if (
-      info.imageArn &&
-      microvmImageName(info.imageArn) !==
-        microvmImageName(this.#image().imageIdentifier)
-    ) {
-      await this.#terminate(microvmId);
-      throw new MicrovmGoneError(
-        `MicroVM ${microvmId} runs ${info.imageArn}, not the sandbox's image`,
-      );
     }
     if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
 
