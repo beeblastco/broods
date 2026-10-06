@@ -225,6 +225,214 @@ describe("hosted MCP metering", () => {
     ]);
   });
 
+  it("keeps a Workers-capable row on Lambda when the deployment runs no Worker", async (): Promise<void> => {
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+    delete process.env.CLOUDFLARE_MCP_URL;
+    const frames = new TextEncoder().encode(
+      `${JSON.stringify({ t: "final", id: "1", result: ok("lambda") })}\n{"t":"end"}\n`,
+    );
+    const send = spyOn(LambdaClient.prototype, "send").mockImplementation(
+      async (): Promise<{
+        EventStream: InvokeWithResponseStreamResponseEvent[];
+      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+    );
+
+    try {
+      const response = await hostedMcpFetch({
+        record: { ...hostedRecord(), workersCompatible: true },
+      })(URL, { method: "POST", body: "{}" });
+      expect(await response.text()).toBe("lambda");
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("keeps a row its owner pinned to Lambda off the Worker", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("unexpected", { status: 500 }),
+    );
+    const lambda = mockLambda("lambda");
+
+    try {
+      const response = await hostedMcpFetch({
+        record: {
+          ...hostedRecord(),
+          workersCompatible: true,
+          runtime: "lambda",
+        },
+      })(URL, { method: "POST", body: "{}" });
+      expect(await response.text()).toBe("lambda");
+      expect(bridge).not.toHaveBeenCalled();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+  });
+
+  it("sends a Workers-capable row to the Cloudflare runtime and meters it like Lambda", async (): Promise<void> => {
+    let reply = async (): Promise<Response> =>
+      new Response(
+        `${JSON.stringify({ t: "final", id: "1", result: ok("cloudflare") })}\n{"t":"end"}\n`,
+      );
+    const bridge = mockBridge(async (): Promise<Response> => await reply());
+    const lambda = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      expect(await callWorkersRow()).toBe("cloudflare");
+      await Promise.resolve();
+      const [target, init] = bridge.mock.calls[0] ?? [];
+      expect(target).toBe("https://mcp.example.workers.dev/mcp");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer bridge-key",
+      );
+      expect(JSON.parse(await new Response(init?.body).text())).toMatchObject({
+        tenantId: "acct_test:agent_1",
+        expectedSha256: "a".repeat(64),
+      });
+      expect(lambda).not.toHaveBeenCalled();
+
+      reply = async (): Promise<Response> =>
+        new Response(
+          `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
+        );
+      await expect(callWorkersRow()).rejects.toThrow("without an end frame");
+      // Answered 200, so a tool may have run: never retried on Lambda.
+      expect(lambda).not.toHaveBeenCalled();
+      await Promise.resolve();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+
+    const charge = {
+      accountId: "acct_test",
+      usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
+    };
+    expect(recorded).toEqual([charge, charge]);
+  });
+
+  it("runs the batch on Lambda when the Worker was never reached, and charges only Lambda", async (): Promise<void> => {
+    const bridge = mockBridge(async (): Promise<Response> => {
+      throw Object.assign(new TypeError("Unable to connect"), {
+        code: "ConnectionRefused",
+      });
+    });
+    const lambda = mockLambda("lambda");
+
+    try {
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(lambda).toHaveBeenCalledTimes(1);
+      await Promise.resolve();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+
+    expect(recorded).toHaveLength(1);
+  });
+
+  it("fails loudly on any Worker error it did not tag as nothing ran", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("unauthorized", { status: 401 }),
+    );
+    const lambda = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      await expect(callWorkersRow()).rejects.toThrow("HTTP 401: unauthorized");
+      bridge.mockImplementation(
+        workerFetch(
+          async (): Promise<Response> =>
+            new Response("Service Unavailable", { status: 503 }),
+        ),
+      );
+      await expect(callWorkersRow()).rejects.toThrow("HTTP 503");
+      expect(lambda).not.toHaveBeenCalled();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+  });
+
+  it("sends a bundle the Worker could not load straight to Lambda after that", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("bundle failed to load: sha256", {
+          status: 422,
+          headers: { "x-broods-nothing-ran": "1" },
+        }),
+    );
+    const lambda = mockLambda("lambda");
+
+    try {
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(bridge).toHaveBeenCalledTimes(1);
+      expect(lambda).toHaveBeenCalledTimes(2);
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+  });
+
+  it("tries the Worker again after a load that only timed out", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("bundle failed to load: load timed out", {
+          status: 504,
+          headers: { "x-broods-nothing-ran": "1" },
+        }),
+    );
+    const lambda = mockLambda("lambda");
+
+    try {
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(bridge).toHaveBeenCalledTimes(2);
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+  });
+
+  it("keeps the Worker's reason when the Lambda fallback fails too", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("bundle failed to load: sha256", {
+          status: 422,
+          headers: { "x-broods-nothing-ran": "1" },
+        }),
+    );
+    delete process.env.TOOL_RUNNER_FUNCTION_NAME;
+
+    try {
+      await expect(callWorkersRow()).rejects.toThrow(
+        /TOOL_RUNNER_FUNCTION_NAME.*Lambda fallback after: .*HTTP 422: bundle failed to load: sha256/,
+      );
+    } finally {
+      bridge.mockRestore();
+    }
+  });
+
+  it("never retries on Lambda when the Worker connection broke after sending", async (): Promise<void> => {
+    const bridge = mockBridge(async (): Promise<Response> => {
+      throw Object.assign(new TypeError("socket closed"), {
+        code: "ECONNRESET",
+      });
+    });
+    const lambda = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      await expect(callWorkersRow()).rejects.toThrow("socket closed");
+      expect(lambda).not.toHaveBeenCalled();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+  });
+
   it("charges nothing when no invoke starts", async () => {
     delete process.env.TOOL_RUNNER_FUNCTION_NAME;
     const send = spyOn(LambdaClient.prototype, "send");
@@ -623,4 +831,47 @@ function hostedRecord(): McpRecord {
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
   };
+}
+
+/** One call by agent_1 through a Workers-capable row; the response body as text. */
+async function callWorkersRow(): Promise<string> {
+  const response = await hostedMcpFetch({
+    record: { ...hostedRecord(), workersCompatible: true },
+    agentId: "agent_1",
+  })(URL, { method: "POST", body: "{}" });
+
+  return await response.text();
+}
+
+/** Point core at a stub Worker that answers with `reply`; restore the spy after. */
+function mockBridge(
+  reply: () => Promise<Response>,
+): ReturnType<typeof spyOn<typeof globalThis, "fetch">> {
+  process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
+  process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
+
+  return spyOn(globalThis, "fetch").mockImplementation(workerFetch(reply));
+}
+
+/** A Lambda that answers every batch with one final frame carrying `body`. */
+function mockLambda(
+  body: string,
+): ReturnType<typeof spyOn<LambdaClient, "send">> {
+  process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+  const frames = new TextEncoder().encode(
+    `${JSON.stringify({ t: "final", id: "1", result: ok(body) })}\n{"t":"end"}\n`,
+  );
+
+  return spyOn(LambdaClient.prototype, "send").mockImplementation(
+    async (): Promise<{
+      EventStream: InvokeWithResponseStreamResponseEvent[];
+    }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+  );
+}
+
+/** `reply` shaped as the global fetch, which Bun types with `preconnect`. */
+function workerFetch(reply: () => Promise<Response>): typeof fetch {
+  return Object.assign(async (): Promise<Response> => await reply(), {
+    preconnect: (): void => {},
+  });
 }

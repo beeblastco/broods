@@ -42,6 +42,7 @@ import type {
   MessengerSource,
   WhatsAppSource,
 } from "./contracts.ts";
+import type { McpRuntime } from "./account.ts";
 
 export type { ChannelPartition };
 
@@ -194,9 +195,17 @@ export interface McpDefinitionConfig {
    * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
    * right next to the `defineMcp` call. The CLI bundles the defining module
-   * and the mcp-runner Lambda hosts it, one invoke per batch of requests.
+   * and the platform hosts it, one invocation per batch of requests: with
+   * `runtime` "auto" on Cloudflare Workers when the bundle builds for them,
+   * on Lambda otherwise.
    */
   handler?: McpHandler;
+  /**
+   * Hosted servers only. "auto" (the default) runs the handler on Cloudflare
+   * Workers when it builds for them; "lambda" always ships the Node build to
+   * Lambda, for a server that needs Node APIs Workers lack.
+   */
+  runtime?: McpRuntime;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
    * X-Api-Key, ...) must reference an account env var by name inside a plain
@@ -887,13 +896,13 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
 >;
 /**
  * Code-first workspace config. Says `partitioned` where storage says
- * `isolation`. `true` or "conversation" permits a per-conversation split that
- * a channel's `partition` performs; "agent" splits the workspace per attached
+ * `isolation`. "conversation" permits a per-conversation split that a
+ * channel's `partition` performs; "agent" splits the workspace per attached
  * agent on its own, with no partition needed.
  */
 export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
-  /** How to split this workspace: per conversation (`true`) or per agent. */
-  partitioned?: boolean | WorkspaceIsolation;
+  /** How to split this workspace: per conversation or per agent. */
+  partitioned?: WorkspaceIsolation;
 };
 
 export type WorkspaceResource<Name extends string = string> =

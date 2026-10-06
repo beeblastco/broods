@@ -25,7 +25,8 @@ export default async function CliAuthStartPage({
   const params = await searchParams;
   const callback = firstParam(params.callback);
   const state = firstParam(params.state);
-  if (!callback || !state || !isLocalCallback(callback)) {
+  const codeChallenge = firstParam(params.code_challenge);
+  if (!callback || !state || !codeChallenge || !isLocalCallback(callback)) {
     return (
       <StatusPage
         title="broods login failed"
@@ -46,10 +47,7 @@ export default async function CliAuthStartPage({
   const target = new URL(callback);
   target.searchParams.set("state", state);
   try {
-    const code = await mintLoginCode(
-      auth.accessToken,
-      firstParam(params.code_challenge),
-    );
+    const code = await mintLoginCode(auth.accessToken, codeChallenge);
     target.searchParams.set("code", code);
     // BROODS_BASE_URL advertises the unified public domain (the gateway,
     // which proxies /v1/account/* to Convex); without it we point the CLI at
@@ -107,7 +105,7 @@ function isLocalCallback(value: string): boolean {
  */
 async function mintLoginCode(
   accessToken: string,
-  codeChallenge: string | undefined,
+  codeChallenge: string,
 ): Promise<string> {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl) throw new Error("The login backend is not configured.");
@@ -128,10 +126,9 @@ async function mintLoginCode(
         throw error;
     }
   }
-  const { code } = await client.mutation(
-    api.cli.auth.createLoginCode,
-    codeChallenge ? { codeChallenge: codeChallenge } : {},
-  );
+  const { code } = await client.mutation(api.cli.auth.createLoginCode, {
+    codeChallenge: codeChallenge,
+  });
 
   return code;
 }

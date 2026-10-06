@@ -82,9 +82,8 @@ export const listConnections = internalQuery({
 /**
  * Rebuilds the projection for every account that has an active deployment or a
  * stored row. The write seams keep the projection live; this hourly sweep is
- * the self-healing pass that seeds it at cutover and repairs any seam a future
- * writer forgets, so a missed seam costs an hour of staleness, not a silent
- * drift forever.
+ * the self-healing pass that repairs any seam a future writer forgets, so a
+ * missed seam costs an hour of staleness, not a silent drift forever.
  */
 export const reconcile = internalMutation({
   args: {},

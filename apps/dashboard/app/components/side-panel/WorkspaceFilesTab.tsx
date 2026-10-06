@@ -71,7 +71,6 @@ export function WorkspaceFilesTab({
   const removeFolderMut = useMutation(api.workspace.files.removeFolder);
   const renameMut = useMutation(api.workspace.files.rename);
   const listRuntimeFiles = useAction(api.workspace.filesPublic.list);
-  const migrateLegacyFiles = useAction(api.workspace.filesPublic.migrateLegacy);
   const uploadRuntimeFile = useAction(api.workspace.filesPublic.upload);
   const removeRuntimePath = useAction(api.workspace.filesPublic.remove);
   const renameRuntimePath = useAction(api.workspace.filesPublic.rename);
@@ -149,9 +148,8 @@ export function WorkspaceFilesTab({
       });
     }
     const request = ++refreshRequestRef.current;
-    const pending = migrateLegacyFiles({
+    const pending = listRuntimeFiles({
       projectId: projectId,
-      nodeId: nodeId,
       workspaceId: workspaceId,
     });
     refreshPromiseRef.current = pending;
@@ -174,14 +172,7 @@ export function WorkspaceFilesTab({
     return () => {
       cancelled = true;
     };
-  }, [
-    applyRuntimeFiles,
-    cacheKey,
-    migrateLegacyFiles,
-    nodeId,
-    projectId,
-    workspaceId,
-  ]);
+  }, [applyRuntimeFiles, cacheKey, listRuntimeFiles, projectId, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) return;

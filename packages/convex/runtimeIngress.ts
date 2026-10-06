@@ -15,8 +15,7 @@ import {
 import { isPlainObject } from "./model/objects";
 import {
   asyncAgentOutcomeValidator,
-  conversationEventArgs,
-  conversationEventsFromArgs,
+  conversationEventsValidator,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -52,7 +51,6 @@ const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
 const RELEASED_PAYLOAD = {
   events: [],
   configRef: undefined,
-  agentConfig: undefined,
   ephemeralSystem: undefined,
 };
 
@@ -109,13 +107,6 @@ const channelTargetFields = {
 };
 
 const channelTargetValidator = v.object(channelTargetFields);
-
-const admittedChannelTargetValidator = v.object({
-  ...channelTargetFields,
-  // Still sent by a core pod from before this rollout. Accepted and dropped so
-  // Convex can deploy first; remove once core has rolled.
-  agentConfig: v.optional(v.any()),
-});
 
 const ingressStatusResultValidator = v.object({
   eventId: v.string(),
@@ -183,10 +174,7 @@ export const accept = internalMutation({
     delivery: v.any(),
     requestedMode: ingressModeValidator,
     configRef: v.optional(ingressConfigRefValidator),
-    // Still sent by a core pod from before this rollout. Accepted and dropped
-    // so Convex can deploy first; remove once core has rolled.
-    agentConfig: v.optional(v.any()),
-    channelTarget: v.optional(admittedChannelTargetValidator),
+    channelTarget: v.optional(channelTargetValidator),
     ephemeralSystem: v.optional(v.array(v.any())),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
@@ -359,12 +347,12 @@ export const appendConversationEvent = internalMutation({
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
-    ...conversationEventArgs,
+    events: conversationEventsValidator,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
-    await insertOwnedEvents(ctx, coordinator, conversationEventsFromArgs(args));
+    await insertOwnedEvents(ctx, coordinator, args.events);
 
     return null;
   },
@@ -449,12 +437,8 @@ export const getConversationTarget = internalQuery({
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const coordinator = await getCoordinator(ctx, args.conversationKey);
     const target = coordinator?.channelTarget;
-    // A target still carrying `agentConfig` predates the rows core rebuilds
-    // from, so rebuilding would drop its record's narrowing. It names no
-    // session until the next channel turn repins it.
     if (
       !target ||
-      target.agentConfig !== undefined ||
       coordinator.accountId !== args.accountId ||
       coordinator.agentId !== args.agentId
     ) {
@@ -795,7 +779,7 @@ export const stepBoundary = internalMutation({
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
-    events: conversationEventArgs.events,
+    events: v.optional(conversationEventsValidator),
   },
   returns: stepBoundaryResultValidator,
   handler: async (
@@ -1386,7 +1370,7 @@ async function prepareAdmissionCoordinator(
     accountId: Id<"accounts">;
     agentId: string;
     conversationKey: string;
-    channelTarget?: Infer<typeof admittedChannelTargetValidator>;
+    channelTarget?: Infer<typeof channelTargetValidator>;
   },
   now: number,
 ): Promise<{
@@ -1408,14 +1392,13 @@ async function prepareAdmissionCoordinator(
     throw new Error("Conversation coordinator scope mismatch");
   }
   if (args.channelTarget !== undefined) {
-    const { agentConfig: _legacyConfig, ...channelTarget } = args.channelTarget;
     await ctx.db.patch(coordinator._id, {
-      channelTarget: channelTarget,
+      channelTarget: args.channelTarget,
       updatedAt: now,
     });
     coordinator = {
       ...coordinator,
-      channelTarget: channelTarget,
+      channelTarget: args.channelTarget,
       updatedAt: now,
     };
   }

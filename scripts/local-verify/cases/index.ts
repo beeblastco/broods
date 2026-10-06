@@ -7,6 +7,7 @@ import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { manifestSync } from "./manifest-sync.ts";
+import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
@@ -34,6 +35,7 @@ export const verifyCases: readonly VerifyCase[] = [
   edgeHeaders,
   credentialPrefixes,
   manifestSync,
+  mcpHeaderEnv,
   workToolWebhooks,
   webhookHandshake,
   connections,

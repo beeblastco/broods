@@ -77,6 +77,7 @@ import {
   loadEnvironmentVariableValues,
   upsertEnvironmentVariable,
 } from "../model/environmentValues";
+import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
 import { ClientError } from "../model/clientError";
@@ -825,10 +826,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
         q.eq("projectId", resolved.projectDoc._id).eq("nodeId", nodeId),
       )
       .collect();
-    for (const file of existing) {
-      if (file.storageId) await ctx.storage.delete(file.storageId);
-      await ctx.db.delete(file._id);
-    }
+    for (const file of existing) await deleteWorkspaceFile(ctx, file);
 
     const now = Date.now();
     for (const file of args.files) {
@@ -931,7 +929,8 @@ export const setEnvBySecretHash = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { secretHash, project, stage, name, value } = args;
+    const { secretHash, project, stage, value } = args;
+    const name = envName(args.name);
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, project);
@@ -939,7 +938,7 @@ export const setEnvBySecretHash = internalMutation({
     await upsertEnvironmentVariable(ctx, {
       projectId: projectDoc._id,
       stageId: stageDoc._id,
-      name: envName(name),
+      name: name,
       value: value,
     });
 

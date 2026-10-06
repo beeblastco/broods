@@ -141,7 +141,7 @@ function addDefaultEdge(
   target: string,
 ): void {
   const id = `xy-edge__${source}-${target}`;
-  edges.set(id, { id: id, source: source, target: target, animated: true });
+  edges.set(id, { id: id, source: source, target: target });
 }
 
 /**
@@ -158,7 +158,6 @@ function addMountEdge(
     id: id,
     source: workspaceNodeId,
     target: sandboxNodeId,
-    animated: false,
   });
 }
 
@@ -203,7 +202,6 @@ function indexExistingCanvas(layout: Doc<"canvasLayouts">): ExistingApiCanvas {
       id: String(edge.id),
       source: String(edge.source),
       target: String(edge.target),
-      animated: edge.animated,
     }),
   );
   const nextById = new Map(existingNodes.map((node) => [node.id, node]));
@@ -497,7 +495,6 @@ function wireAgentSubagents(
         id: id,
         source: options.agentNodeId,
         target: calleeNodeId,
-        animated: false,
       });
     }
   }

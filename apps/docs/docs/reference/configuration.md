@@ -266,7 +266,7 @@ Persistent files, mounted into a sandbox. See [Workspaces](../guides/workspaces.
 | Field         | Default              | Description                                                                                              |
 | ------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
 | `storage`     | `{ provider: "s3" }` | Managed bucket, or your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`                        |
-| `partitioned` | `false`              | `true` lets channels split the workspace per conversation, `"agent"` gives each attached agent its own   |
+| `partitioned` |                      | `"conversation"` lets channels split the workspace per conversation, `"agent"` gives each agent its own  |
 | `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default |
 
 ```ts
@@ -305,6 +305,7 @@ An MCP server whose tools the agent sees as `<name>__<tool>`. Give exactly one o
 | `headers`      | Request headers. Credentials must be `"Bearer ${NAME}"` refs                                                 |
 | `oauth`        | `{ clientId, clientSecret, refreshToken, tokenUrl? }` for expiring tokens. No Authorization header alongside |
 | `allowedTools` | Tools to register. Omit for all                                                                              |
+| `runtime`      | `handler` only. `"auto"` (default) runs it on Cloudflare Workers when it builds for them; `"lambda"` never   |
 
 ```ts
 export const search = defineMcp({

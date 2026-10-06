@@ -31,6 +31,7 @@ interface McpProbe {
   headers?: Record<string, string>;
   bundleStorageKey?: string;
   sha256?: string;
+  workersCompatible?: boolean;
 }
 
 /**
@@ -94,7 +95,15 @@ export async function handleMcpServiceRpc(
  */
 function parseProbe(value: unknown): McpProbe | string {
   if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
-  const { name, transport, url, headers, bundleStorageKey, sha256 } = value;
+  const {
+    name,
+    transport,
+    url,
+    headers,
+    bundleStorageKey,
+    sha256,
+    workersCompatible,
+  } = value;
   if (typeof name !== "string" || !name) return "probe needs a name";
   if (headers !== undefined && !isStringRecord(headers)) {
     return "probe headers must be a string record";
@@ -112,12 +121,21 @@ function parseProbe(value: unknown): McpProbe | string {
     if (typeof bundleStorageKey !== "string" || typeof sha256 !== "string") {
       return "a hosted probe needs bundleStorageKey and sha256";
     }
+    if (
+      workersCompatible !== undefined &&
+      typeof workersCompatible !== "boolean"
+    ) {
+      return "probe workersCompatible must be a boolean";
+    }
 
     return {
       ...shared,
       transport: transport,
       bundleStorageKey: bundleStorageKey,
       sha256: sha256,
+      ...(workersCompatible !== undefined
+        ? { workersCompatible: workersCompatible }
+        : {}),
     };
   }
 
@@ -138,6 +156,9 @@ function probeRecord(accountId: string, probe: McpProbe): McpRecord {
     stageId: "probe",
     name: probe.name,
     transport: probe.transport,
+    ...(probe.workersCompatible !== undefined
+      ? { workersCompatible: probe.workersCompatible }
+      : {}),
     ...(probe.url !== undefined ? { url: probe.url } : {}),
     ...(probe.headers !== undefined ? { headers: probe.headers } : {}),
     ...(probe.bundleStorageKey !== undefined

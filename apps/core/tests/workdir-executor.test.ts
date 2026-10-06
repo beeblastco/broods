@@ -188,8 +188,8 @@ mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: upsertSandboxInstanceMock,
   setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
-  removeSandboxInstance: removeSandboxInstanceMock,
   recordSandboxBurst: mock(async (): Promise<boolean> => true),
+  removeSandboxInstance: removeSandboxInstanceMock,
 }));
 
 // Assume-role S3 mount path: stub STS so it returns fixed temporary credentials
@@ -579,11 +579,11 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
   });
 
-  it("launches from the config snapshot pin, preferring it over the options.image alias", async () => {
+  it("launches from the config snapshot pin", async () => {
     const executor = await newExecutor({
       provider: "sandbox",
       snapshot: "img_curated",
-      options: { workdirUrl: BASE, image: "img_legacy" },
+      options: { workdirUrl: BASE },
     });
     await executor.run({
       code: "echo ok",

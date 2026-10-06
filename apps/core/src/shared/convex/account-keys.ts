@@ -9,12 +9,11 @@
 import type { FunctionReference } from "convex/server";
 import {
   AccountCipher,
-  blobKeyId,
   type BlobScope,
   type EncryptedBlob,
   type WrappedAccountKey,
 } from "@broods/convex/model/envelope";
-import { requireEnv, requireSecretsEnv } from "../env.ts";
+import { requireSecretsEnv } from "../env.ts";
 import { NODE_CRYPTO } from "../node-aead.ts";
 import { getConvexClient } from "./client.ts";
 
@@ -46,8 +45,6 @@ let loader: WrappedKeyLoader = loadFromConvex;
 /**
  * Decrypts one stored blob of `accountId`. A blob under a key the cached
  * keyring has not seen (a rotation since the last read) refreshes it once.
- * A legacy blob needs no keyring, so core can roll out before the backend
- * that serves the key list.
  * @throws when the blob does not decrypt under any key the account holds
  */
 export async function decryptAccountBlob(
@@ -55,10 +52,7 @@ export async function decryptAccountBlob(
   scope: BlobScope,
   blob: EncryptedBlob,
 ): Promise<Record<string, unknown>> {
-  const cipher =
-    blobKeyId(blob) === null
-      ? cipherFromKeys(accountId, [])
-      : await keyringHolding(accountId, blob);
+  const cipher = await keyringHolding(accountId, blob);
   const value = await cipher.decrypt(scope, blob);
   if (!value) {
     throw new Error(`Stored ${scope} of account ${accountId} does not decrypt`);
@@ -75,13 +69,12 @@ export function resetAccountKeysForTests(
   loader = loaderOverride ?? loadFromConvex;
 }
 
-/** A keyring over `keys` on `node:crypto`, under this process's secrets, legacy blobs included. */
+/** A keyring over `keys` on `node:crypto`, under this process's secrets. */
 function cipherFromKeys(
   accountId: string,
   keys: WrappedAccountKey[],
 ): AccountCipher {
   return new AccountCipher(accountId, requireSecretsEnv(SECRETS_ENV), keys, {
-    rawSecret: requireEnv(SECRETS_ENV),
     primitive: NODE_CRYPTO,
   });
 }
