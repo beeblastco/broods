@@ -30,11 +30,11 @@ import {
   EyeOff,
   FolderOpen,
   GitBranch,
-  Loader2,
   RotateCcw,
   Sparkles,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 type SkillSource = "files" | "github" | "json";
 
@@ -318,7 +318,7 @@ function GithubForm({
       });
       onSuccess(result.path);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
+      const msg = toErrorMessage(err);
       if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
         clearSkillsBearerToken();
         setToken("");
@@ -346,10 +346,10 @@ function GithubForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
+        <SectionHeader>Account key</SectionHeader>
         <p className="text-2xs text-muted-foreground">
-          Your broods Bearer token (starts with{" "}
-          <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in
+          Your account key (starts with{" "}
+          <code className="rounded bg-muted px-1">bask_</code>). Saved in
           session only.
         </p>
         <TokenInput value={token} onChange={setToken} />
@@ -364,14 +364,11 @@ function GithubForm({
       {canWrite && (
         <Button
           size="sm"
-          className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
+          className="h-8 cursor-pointer text-xs"
           disabled={!url.trim() || !token.trim() || status.type === "busy"}
           onClick={() => void handleImport()}
         >
-          {status.type === "busy" && (
-            <Loader2 className="size-3.5 animate-spin" />
-          )}
-          Import from GitHub
+          {status.type === "busy" ? "Importing…" : "Import from GitHub"}
         </Button>
       )}
     </div>
@@ -420,7 +417,7 @@ function JsonForm({
       setStatus({ type: "success", message: `Skill "${result.name}" saved.` });
       onSuccess(result.path);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
+      const msg = toErrorMessage(err);
       if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
         clearSkillsBearerToken();
         setToken("");
@@ -482,9 +479,9 @@ function JsonForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
+        <SectionHeader>Account key</SectionHeader>
         <p className="text-2xs text-muted-foreground">
-          Your broods Bearer token. Saved in session only.
+          Your account key. Saved in session only.
         </p>
         <TokenInput value={token} onChange={setToken} />
       </div>
@@ -504,14 +501,15 @@ function JsonForm({
       {canWrite && (
         <Button
           size="sm"
-          className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
+          className="h-8 cursor-pointer text-xs"
           disabled={!canSubmit}
           onClick={() => void handleSubmit()}
         >
-          {status.type === "busy" && (
-            <Loader2 className="size-3.5 animate-spin" />
-          )}
-          {isUpdate ? "Update skill" : "Create skill"}
+          {status.type === "busy"
+            ? "Saving…"
+            : isUpdate
+              ? "Update skill"
+              : "Create skill"}
         </Button>
       )}
     </div>
@@ -557,7 +555,7 @@ function TokenInput({
       <Input
         type={show ? "text" : "password"}
         value={value}
-        placeholder="fp_acct_…"
+        placeholder="bask_…"
         className="h-7 flex-1 font-mono text-2xs"
         onChange={(e) => onChange(e.target.value)}
       />
@@ -567,7 +565,7 @@ function TokenInput({
         className="cursor-pointer"
         type="button"
         onClick={() => setShow((v) => !v)}
-        aria-label={show ? "Hide token" : "Show token"}
+        aria-label={show ? "Hide key" : "Show key"}
       >
         {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
       </Button>

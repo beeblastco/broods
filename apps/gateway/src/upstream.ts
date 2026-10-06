@@ -1,30 +1,13 @@
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import type { ObservabilityScope } from "./observability.ts";
-import { jsonError } from "./utils.ts";
-
-// Headers that describe the client's hop, not the request, so never forwarded.
-const HOP_BY_HOP_HEADERS = [
-  "connection",
-  "host",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-];
-// Safe to resend to the next core after a network error. A POST may already
-// have run on the first one, so it is never replayed.
-const RETRYABLE_METHODS = new Set(["DELETE", "GET", "HEAD", "OPTIONS", "PUT"]);
 
 /**
- * A socket credential checked against core. `invalid` means every core refused
- * the token; `unavailable` means one could not answer, which is an outage and
- * not the caller's fault.
+ * A socket credential checked against core. `invalid` means core refused the
+ * token; `unavailable` means core could not answer, which is an outage and not
+ * the caller's fault.
  */
 export type SocketScope =
-  | { kind: "resolved"; scope: ObservabilityScope; coreBaseUrl: string }
+  | { kind: "resolved"; scope: ObservabilityScope }
   | { kind: "invalid" }
   | { kind: "unavailable" };
 
@@ -33,103 +16,36 @@ type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-export type ProxyOptions = {
-  /** Request id forwarded to core so both hops log the same one. */
-  requestId?: string;
-  /** Forward a client `X-Account-Id`. Off unless `GATEWAY_FORWARD_ACCOUNT_ID=true`. */
-  forwardAccountId?: boolean;
-  /** Upstream path and query, as routing normalized them. */
-  path: string;
-};
-
-/**
- * Forwards one request to the first core that accepts it. The client's
- * `Accept-Encoding` goes along and the body comes back undecoded, so a
- * compressed answer reaches the client as core sent it.
- */
-export async function proxyHttp(
-  request: Request,
-  coreBaseUrls: string[],
-  options: ProxyOptions,
-): Promise<Response> {
-  const headers = new Headers(request.headers);
-  // Only a 401 failover sends the body twice, so only then is it buffered. A
-  // single upstream gets the client's stream, so an unauthenticated upload
-  // never sits whole in gateway memory.
-  const body =
-    request.method === "GET" || request.method === "HEAD"
-      ? undefined
-      : coreBaseUrls.length > 1
-        ? await request.arrayBuffer()
-        : request.body;
-  let response: Response | null = null;
-  let unreachable = false;
-
-  if (options.requestId) headers.set("x-request-id", options.requestId);
-  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
-  if (options.forwardAccountId !== true) headers.delete("x-account-id");
-  // `set`, not `append`: a client copy must never survive.
-  headers.set(VIA_GATEWAY_HEADER, "1");
-
-  for (const coreBaseUrl of coreBaseUrls) {
-    try {
-      response = await fetch(`${coreBaseUrl}${options.path}`, {
-        method: request.method,
-        headers: headers,
-        body: body,
-        redirect: "manual",
-        signal: request.signal,
-        decompress: false,
-      });
-    } catch {
-      unreachable = true;
-      if (!RETRYABLE_METHODS.has(request.method)) break;
-      continue;
-    }
-
-    if (response.status !== 401) return response;
-  }
-
-  if (response) return response;
-  if (unreachable) return jsonError(502, "Upstream is unreachable");
-
-  return jsonError(503, "No core upstream is configured");
-}
-
-/** Resolves the scope a socket token grants, from the first core that knows it. */
+/** Resolves the scope a socket token grants, before the upgrade opens. */
 export async function resolveSocketScope(
   token: string,
-  coreBaseUrls: string[],
+  coreBaseUrl: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<SocketScope> {
-  let unavailable = false;
-  for (const coreBaseUrl of coreBaseUrls) {
-    try {
-      const response = await fetchImpl(
-        `${coreBaseUrl}/v1/internal/observability-scope`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-            [VIA_GATEWAY_HEADER]: "1",
-          },
-          signal: AbortSignal.timeout(5_000),
+  try {
+    const response = await fetchImpl(
+      `${coreBaseUrl}/v1/internal/observability-scope`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          [VIA_GATEWAY_HEADER]: "1",
         },
-      );
-      if (response.ok) {
-        return {
-          kind: "resolved",
-          scope: (await response.json()) as ObservabilityScope,
-          coreBaseUrl: coreBaseUrl,
-        };
-      }
-      if (response.status !== 401 && response.status !== 403)
-        unavailable = true;
-    } catch {
-      unavailable = true;
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (response.ok) {
+      return {
+        kind: "resolved",
+        scope: (await response.json()) as ObservabilityScope,
+      };
     }
-  }
 
-  return unavailable ? { kind: "unavailable" } : { kind: "invalid" };
+    return response.status === 401 || response.status === 403
+      ? { kind: "invalid" }
+      : { kind: "unavailable" };
+  } catch {
+    return { kind: "unavailable" };
+  }
 }

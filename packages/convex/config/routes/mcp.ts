@@ -1,17 +1,14 @@
 /**
  * MCP server CRUD (`/v1/mcp*`): list/create on the stage-scoped
  * collection, get/patch/delete by id. A `url` registers an external server
- * core connects to; a `bundle` uploads a hosted one for the Lambda host.
+ * core connects to; a `bundle` uploads a hosted one, which the platform runs on Lambda or Workers.
  * Secrets stay in account env vars as ${NAME} refs on the header values.
  */
 
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { normalizeMcpInput } from "../../model/mcp";
 import { storeMcpBundle } from "../../model/bundles";
 import { uploadQuotaResponse } from "../../model/uploads";
@@ -32,7 +29,7 @@ export async function handleMcpRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   serverId?: string,
 ): Promise<Response> {
   if (!serverId)
@@ -105,7 +102,7 @@ async function handleMcpCollectionRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   // Servers belong to one stage, so the collection routes need a scope.
   const scope = await resolveMcpScope(ctx, req, accountId);
@@ -129,7 +126,7 @@ async function handleMcpCollectionRoute(
     const input = await normalizeMcpInput(await req.json(), {
       requireConnection: true,
     });
-    const bundleStorageKey = await storeMcpBundle(ctx, accountId, input, null);
+    const storedBundle = await storeMcpBundle(ctx, accountId, input, null);
     const createdId = await ctx.runMutation(internal.account.mcp.create, {
       accountId: accountId,
       projectId: scope.projectId,
@@ -138,9 +135,7 @@ async function handleMcpCollectionRoute(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-      ...(bundleStorageKey !== undefined
-        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-        : {}),
+      ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),
@@ -149,6 +144,7 @@ async function handleMcpCollectionRoute(
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),
+      ...(input.runtime !== undefined ? { runtime: input.runtime } : {}),
     });
     const created = await ctx.runQuery(internal.account.mcp.getById, {
       accountId: accountId,
@@ -180,7 +176,7 @@ async function patchMcpRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   serverId: string,
 ): Promise<Response> {
   const existing = await ctx.runQuery(internal.account.mcp.getById, {
@@ -191,12 +187,7 @@ async function patchMcpRoute(
   const input = await normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
-  const bundleStorageKey = await storeMcpBundle(
-    ctx,
-    accountId,
-    input,
-    existing,
-  );
+  const storedBundle = await storeMcpBundle(ctx, accountId, input, existing);
   await ctx.runMutation(internal.account.mcp.update, {
     accountId: accountId,
     serverId: serverId,
@@ -207,14 +198,13 @@ async function patchMcpRoute(
     ...(input.transport !== undefined ? { transport: input.transport } : {}),
     ...(input.url !== undefined ? { url: input.url } : {}),
     ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-    ...(bundleStorageKey !== undefined
-      ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-      : {}),
+    ...storedBundle,
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
     ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
     ...(input.allowedTools !== undefined
       ? { allowedTools: input.allowedTools }
       : {}),
+    ...(input.runtime !== undefined ? { runtime: input.runtime } : {}),
     ...(input.disabled !== undefined ? { disabled: input.disabled } : {}),
   });
   const updated = await ctx.runQuery(internal.account.mcp.getById, {
@@ -294,6 +284,9 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
     ...(record.url !== undefined ? { url: record.url } : {}),
     ...(record.sandbox !== undefined ? { sandbox: record.sandbox } : {}),
     ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
+    ...(record.transport === "hosted"
+      ? { runtime: record.runtime ?? "auto" }
+      : {}),
     ...(record.headers !== undefined ? { headers: record.headers } : {}),
     // Safe to echo like headers: the secret fields hold ${NAME} refs.
     ...(record.oauth !== undefined ? { oauth: record.oauth } : {}),

@@ -1,0 +1,24 @@
+{
+  "name": "@broods/cloudflare-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit && tsc --noEmit -p tests",
+    "test": "bun test",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/bun": "^1.3.14",
+    "miniflare": "5.20260930.0-alpha",
+    "wrangler": "^4.145.0"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

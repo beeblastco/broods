@@ -2,13 +2,13 @@ import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import Link from "next/link";
 
-// Rendered full page for a malformed id and under the header for a project the
-// caller cannot read. The gallery lists the active org's projects either way.
+// Any unknown route, a malformed project id included. A well-formed project id
+// the caller cannot read gets its own copy in `[projectId]/layout.tsx`.
 export default function NotFound(): React.JSX.Element {
   return (
     <StatusPage
-      title="Project not found"
-      description="It was deleted, or you are not a member of its org."
+      title="Page not found"
+      description="Check the address, or start from your projects."
     >
       <Button
         nativeButton={false}

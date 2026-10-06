@@ -10,7 +10,12 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
+import {
+  assertMcpRow,
+  type McpOauth,
+  type McpRuntime,
+  type McpTransport,
+} from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
@@ -30,6 +35,8 @@ export const create = internalMutation({
     name: v.string(),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    workersCompatible: mcpFields.workersCompatible,
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -74,6 +81,7 @@ export const create = internalMutation({
       transport: transport,
       url: args.url,
       sandbox: args.sandbox,
+      runtime: args.runtime,
       headers: args.headers,
       oauth: args.oauth,
     });
@@ -87,6 +95,8 @@ export const create = internalMutation({
       name: args.name,
       description: args.description,
       transport: transport,
+      workersCompatible: args.workersCompatible,
+      runtime: args.runtime,
       url: args.url,
       sandbox: args.sandbox,
       bundleStorageKey: args.bundleStorageKey,
@@ -239,6 +249,8 @@ export const update = internalMutation({
     name: v.optional(v.string()),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    workersCompatible: mcpFields.workersCompatible,
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -293,6 +305,28 @@ async function requireNameFree(
   }
 }
 
+/** The other transports' connection fields, cleared when a row switches to `transport`. */
+function transportClears(
+  transport: McpTransport | undefined,
+): Partial<Doc<"mcp">> {
+  if (transport === "hosted") {
+    return { url: undefined, oauth: undefined, sandbox: undefined };
+  }
+  const hosted = {
+    workersCompatible: undefined,
+    runtime: undefined,
+    bundleStorageKey: undefined,
+    sha256: undefined,
+    sourceCode: undefined,
+  };
+  if (transport === "http") return { ...hosted, sandbox: undefined };
+  if (transport === "machine") {
+    return { ...hosted, url: undefined, oauth: undefined, headers: undefined };
+  }
+
+  return {};
+}
+
 /**
  * The fields an update writes. Provided args win; a transport switch clears
  * the other side's connection fields so a hosted row never carries a stale
@@ -305,6 +339,8 @@ function updatePatch(
     name?: string;
     description?: string;
     transport?: McpTransport;
+    workersCompatible?: boolean;
+    runtime?: McpRuntime;
     url?: string;
     sandbox?: string;
     bundleStorageKey?: string;
@@ -323,6 +359,10 @@ function updatePatch(
       ? { description: args.description }
       : {}),
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
+    ...(args.workersCompatible !== undefined
+      ? { workersCompatible: args.workersCompatible }
+      : {}),
+    ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
     ...(args.bundleStorageKey !== undefined
@@ -336,27 +376,7 @@ function updatePatch(
       : {}),
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
-    ...(args.transport === "hosted"
-      ? { url: undefined, oauth: undefined, sandbox: undefined }
-      : {}),
-    ...(args.transport === "http"
-      ? {
-          bundleStorageKey: undefined,
-          sha256: undefined,
-          sourceCode: undefined,
-          sandbox: undefined,
-        }
-      : {}),
-    ...(args.transport === "machine"
-      ? {
-          url: undefined,
-          oauth: undefined,
-          headers: undefined,
-          bundleStorageKey: undefined,
-          sha256: undefined,
-          sourceCode: undefined,
-        }
-      : {}),
+    ...transportClears(args.transport),
     ...(args.sha256 !== undefined &&
     args.sha256 !== doc.sha256 &&
     args.sourceCode === undefined

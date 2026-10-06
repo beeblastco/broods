@@ -26,6 +26,7 @@ import type {
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
+  WorkspaceIsolation,
   TelegramSource,
   GoogleChatSource,
   GitHubSource,
@@ -41,6 +42,7 @@ import type {
   MessengerSource,
   WhatsAppSource,
 } from "./contracts.ts";
+import type { McpRuntime } from "./account.ts";
 
 export type { ChannelPartition };
 
@@ -122,9 +124,15 @@ export type ResourceInput<Name extends string, Config> = {
  * `persistent` sandbox reconnects to when no workspace is mounted; unset, each
  * agent gets its own, and pinning one string on two sandboxes shares a machine.
  * Keys are scoped to the account, so they cannot reach another account's machine.
+ * A `custom` sandbox names its server with `endpoint` (https, required), an
+ * optional bearer `token` and extra static `headers`; a credential header's
+ * value is an `env("NAME")` ref.
  */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
   reservationKey?: string;
+  endpoint?: string;
+  token?: string | EnvRef;
+  headers?: Record<string, string | EnvRef>;
 };
 
 /**
@@ -187,9 +195,17 @@ export interface McpDefinitionConfig {
    * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
    * right next to the `defineMcp` call. The CLI bundles the defining module
-   * and the mcp-runner Lambda hosts it, one invoke per batch of requests.
+   * and the platform hosts it, one invocation per batch of requests: with
+   * `runtime` "auto" on Cloudflare Workers when the bundle builds for them,
+   * on Lambda otherwise.
    */
   handler?: McpHandler;
+  /**
+   * Hosted servers only. "auto" (the default) runs the handler on Cloudflare
+   * Workers when it builds for them; "lambda" always ships the Node build to
+   * Lambda, for a server that needs Node APIs Workers lack.
+   */
+  runtime?: McpRuntime;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
    * X-Api-Key, ...) must reference an account env var by name inside a plain
@@ -857,7 +873,7 @@ export type AgentDefinitionConfig = EnvRefString<
   policies?: readonly (PolicyResource | string)[];
   /**
    * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
-   * stage runtime key). Off by default: when unset the public endpoint
+   * runtime key). Off by default: when unset the public endpoint
    * refuses requests for this agent. Reach a private agent through an
    * internal endpoint or a channel webhook. See issue #65.
    */
@@ -880,12 +896,13 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
 >;
 /**
  * Code-first workspace config. Says `partitioned` where storage says
- * `isolation`: the flag permits a split, it does not perform one. A channel's
- * `partition` decides which folder a run mounts.
+ * `isolation`. "conversation" permits a per-conversation split that a
+ * channel's `partition` performs; "agent" splits the workspace per attached
+ * agent on its own, with no partition needed.
  */
 export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
-  /** Allow this workspace to be split into per-conversation folders. */
-  partitioned?: boolean;
+  /** How to split this workspace: per conversation or per agent. */
+  partitioned?: WorkspaceIsolation;
 };
 
 export type WorkspaceResource<Name extends string = string> =

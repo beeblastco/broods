@@ -5,12 +5,12 @@
 
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { sha256Hex } from "./accountSecrets";
 import {
-  assertEnvVarName,
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "./agentConfigCodec";
+  accountCipher,
+  accountCipherForWrite,
+  requireAccountIdForProject,
+} from "./accountKeys";
+import { assertEnvVarName } from "./agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./sandboxConfigSync";
 import { ClientError } from "./clientError";
@@ -42,17 +42,17 @@ export async function upsertEnvironmentVariable(
       q.eq("stageId", args.stageId).eq("name", args.name),
     )
     .unique();
-  const valueDigest = await hashEnvironmentValue(args.value);
+  const cipher = await accountCipherForWrite(
+    ctx,
+    await requireAccountIdForProject(ctx, args.projectId),
+  );
+  const valueDigest = await cipher.digest(args.value);
   if (existing?.valueDigest === valueDigest) {
     return { id: existing._id, change: "unchanged" };
   }
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
-    );
-  }
-  const encrypted = await encryptAgentConfigBlob({ value: args.value }, secret);
+  const encrypted = await cipher.encrypt("environmentVariables:ciphertext", {
+    value: args.value,
+  });
   const fields = {
     ciphertext: encrypted.ciphertext,
     iv: encrypted.iv,
@@ -134,44 +134,50 @@ export async function assertEnvironmentVariableUnreferenced(
   );
 }
 
-/** SHA-256 hex of a plaintext value; the CLI hashes `.env.local` the same way to spot drift. */
-export async function hashEnvironmentValue(value: string): Promise<string> {
-  return await sha256Hex(value);
-}
-
 /**
- * Reads every environment variable for a `(projectId, stageId)` and
- * returns a `name -> plaintext value` map. Non-string values decode to `""`.
+ * Reads the environment variables for a `(projectId, stageId)`, every one or
+ * only `names`, and returns a `name -> plaintext value` map. A name the stage
+ * lacks is absent. Non-string values decode to `""`.
  * @throws when `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is not configured.
  */
 export async function loadEnvironmentVariableValues(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
+  names?: readonly string[],
 ): Promise<Record<string, string>> {
-  const rows = await ctx.db
-    .query("environmentVariables")
-    .withIndex("by_projectId_and_stageId", (q) =>
-      q.eq("projectId", projectId).eq("stageId", stageId),
-    )
-    .collect();
+  const rows = names
+    ? (
+        await Promise.all(
+          names.map((name) =>
+            ctx.db
+              .query("environmentVariables")
+              .withIndex("by_stageId_and_name", (q) =>
+                q.eq("stageId", stageId).eq("name", name),
+              )
+              .unique(),
+          ),
+        )
+      ).filter((row) => row !== null)
+    : await ctx.db
+        .query("environmentVariables")
+        .withIndex("by_projectId_and_stageId", (q) =>
+          q.eq("projectId", projectId).eq("stageId", stageId),
+        )
+        .collect();
 
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables",
-    );
-  }
-
+  const cipher = await accountCipher(
+    ctx,
+    await requireAccountIdForProject(ctx, projectId),
+  );
+  const decrypted = await Promise.all(
+    rows.map((row) => cipher.decrypt("environmentVariables:ciphertext", row)),
+  );
   const values: Record<string, string> = {};
-  for (const row of rows) {
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
-      secret,
-    );
-    const value = decrypted?.value;
+  rows.forEach((row, index) => {
+    const value = decrypted[index]?.value;
     values[row.name] = typeof value === "string" ? value : "";
-  }
+  });
 
   return values;
 }

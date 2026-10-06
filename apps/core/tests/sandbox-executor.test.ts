@@ -433,18 +433,35 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  it("creates E2B, Daytona, and Vercel executor adapters", () => {
+  it("resolves every built-in provider from the registry", () => {
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
-    expect(createSandboxExecutor({ provider: "e2b" }).constructor.name).toBe(
-      "E2BSandboxExecutor",
-    );
+    const executorOf = (provider: string, options = {}): string =>
+      createSandboxExecutor({ provider: provider, options: options })
+        .constructor.name;
+    expect(executorOf("e2b")).toBe("E2BSandboxExecutor");
+    expect(executorOf("daytona")).toBe("DaytonaSandboxExecutor");
+    expect(executorOf("vercel")).toBe("VercelSandboxExecutor");
+    expect(executorOf("machine")).toBe("MachineSandboxExecutor");
+    expect(executorOf("custom")).toBe("HttpSandboxExecutor");
     expect(
-      createSandboxExecutor({ provider: "daytona" }).constructor.name,
-    ).toBe("DaytonaSandboxExecutor");
-    expect(createSandboxExecutor({ provider: "vercel" }).constructor.name).toBe(
-      "VercelSandboxExecutor",
+      executorOf("sandbox", {
+        workdirUrl: "https://workdir.example.com",
+        apiKey: "key",
+      }),
+    ).toBe("WorkdirSandboxExecutor");
+  });
+
+  it("throws on a stored provider this build does not know", () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    expect(() => createSandboxExecutor({ provider: "nope" })).toThrow(
+      "sandbox provider nope is not supported",
+    );
+    expect(() => createSandboxExecutor({ provider: "constructor" })).toThrow(
+      "sandbox provider constructor is not supported",
     );
   });
 
@@ -2480,6 +2497,60 @@ describe("mergeSandboxEnv", () => {
       "ENV",
       "PROMPT_COMMAND",
       "__CB_TOKEN",
+    ]) {
+      expect(RESERVED_SANDBOX_ENV_KEYS.has(key)).toBe(true);
+    }
+  });
+});
+
+describe("mergeSandboxEnv with a run principal", () => {
+  it("lays the BROODS_* identity over account and request env, and reserves the names", async () => {
+    const { mergeSandboxEnv, RESERVED_SANDBOX_ENV_KEYS } =
+      await import("../src/harness/sandbox/utils.ts");
+    const principal = {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      runToken: "brt_token",
+      baseUrl: "https://api.example.test",
+    };
+    expect(
+      mergeSandboxEnv(
+        { BROODS_RUN_TOKEN: "spoofed-by-account", KEEP: "yes" },
+        { BROODS_AGENT_ID: "spoofed-by-request", NEW: "1" },
+        principal,
+      ),
+    ).toEqual({
+      KEEP: "yes",
+      NEW: "1",
+      BROODS_ACCOUNT_ID: "acct_1",
+      BROODS_AGENT_ID: "agent_1",
+      BROODS_RUN_TOKEN: "brt_token",
+      BROODS_BASE_URL: "https://api.example.test",
+    });
+    // Only core sets the names: neither layer plants one where core sets none.
+    const planted = {
+      BROODS_AGENT_ID: "spoofed",
+      BROODS_BASE_URL: "https://elsewhere.example.test",
+    };
+    expect(mergeSandboxEnv({ ...planted, KEEP: "yes" }, planted)).toEqual({
+      KEEP: "yes",
+    });
+    expect(
+      mergeSandboxEnv(planted, undefined, {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        runToken: "brt_token",
+      }),
+    ).toEqual({
+      BROODS_ACCOUNT_ID: "acct_1",
+      BROODS_AGENT_ID: "agent_1",
+      BROODS_RUN_TOKEN: "brt_token",
+    });
+    for (const key of [
+      "BROODS_ACCOUNT_ID",
+      "BROODS_AGENT_ID",
+      "BROODS_BASE_URL",
+      "BROODS_RUN_TOKEN",
     ]) {
       expect(RESERVED_SANDBOX_ENV_KEYS.has(key)).toBe(true);
     }

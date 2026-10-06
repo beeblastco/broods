@@ -215,7 +215,7 @@ describe("direct API ingress", () => {
           ],
         },
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
         },
         {
           rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
@@ -235,7 +235,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -279,7 +279,7 @@ describe("direct API ingress", () => {
           ],
         },
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
         },
         {
           rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
@@ -299,7 +299,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -328,7 +328,7 @@ describe("direct API ingress", () => {
           conversationKey: "acct:acct_test:agent:agent_test:tg:42",
           continue: true,
         },
-        { authorization: "Bearer fp_agent_test" },
+        { authorization: "Bearer bsk_example" },
         {
           rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
           addDefaultAgentId: false,
@@ -343,7 +343,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -376,7 +376,7 @@ describe("direct API ingress", () => {
           conversationKey: "acct:acct_test:agent:agent_private:tg:42",
           continue: true,
         },
-        { authorization: "Bearer fp_dts_test" },
+        { authorization: "Bearer bdts_test" },
         {
           rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
           addDefaultAgentId: false,
@@ -391,7 +391,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers): Promise<AuthContext | null> =>
-          headers.authorization === "Bearer fp_dts_test"
+          headers.authorization === "Bearer bdts_test"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -543,7 +543,7 @@ describe("direct API ingress", () => {
           ],
         },
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
         },
         {
           rawPath:
@@ -554,7 +554,7 @@ describe("direct API ingress", () => {
       createHandlers(),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -584,7 +584,7 @@ describe("direct API ingress", () => {
           ],
         },
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
         },
         {
           rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
@@ -594,7 +594,7 @@ describe("direct API ingress", () => {
       createHandlers(),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -972,13 +972,13 @@ describe("direct API ingress", () => {
           ],
         },
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
         },
       ),
       createHandlers(),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -1512,7 +1512,7 @@ describe("direct API ingress", () => {
           ],
         },
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
           host: "example.lambda-url.aws",
           "x-forwarded-proto": "https",
         },
@@ -1534,7 +1534,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -1576,7 +1576,7 @@ describe("direct API ingress", () => {
           ],
         },
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
           host: "gateway.broods.app",
           "x-forwarded-proto": "https",
         },
@@ -1598,7 +1598,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -1799,7 +1799,7 @@ describe("direct API ingress", () => {
       createEvent(
         undefined,
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
         },
         {
           method: "GET",
@@ -1820,7 +1820,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -1858,7 +1858,7 @@ describe("direct API ingress", () => {
       createEvent(
         undefined,
         {
-          authorization: "Bearer fp_agent_test",
+          authorization: "Bearer bsk_example",
         },
         {
           method: "GET",
@@ -1878,7 +1878,7 @@ describe("direct API ingress", () => {
       }),
       {
         authResolver: async (headers) =>
-          headers.authorization === "Bearer fp_agent_test"
+          headers.authorization === "Bearer bsk_example"
             ? {
                 kind: "deployment",
                 account: TEST_ACCOUNT,
@@ -2357,7 +2357,7 @@ async function deploymentStatusRequest(
   return routeIncomingEvent(
     createEvent(
       undefined,
-      { authorization: "Bearer fp_agent_test" },
+      { authorization: "Bearer bsk_example" },
       {
         method: "GET",
         rawPath: `/v1/runs/${encodeURIComponent(runId)}`,
@@ -2385,7 +2385,7 @@ async function runtimeKeyRequest(
   return routeIncomingEvent(
     createEvent(
       { agentId: TEST_AGENT.agentId, ...body },
-      { authorization: "Bearer fp_agent_test" },
+      { authorization: "Bearer bsk_example" },
       {
         rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
         addDefaultAgentId: false,
@@ -2552,3 +2552,136 @@ async function responseToShape(response: Response): Promise<ResponseShape> {
     body: await response.text(),
   };
 }
+
+describe("run token (auth kind agent)", () => {
+  const agentAuth = async (): Promise<AuthContext> => ({
+    kind: "agent",
+    account: TEST_ACCOUNT,
+    agentId: TEST_AGENT.agentId,
+  });
+
+  it("starts no run: POST /v1/runs is refused, its own agent included", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer brt_x" }),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handled.push(event);
+
+          return { statusCode: 200, body: "ok" };
+        },
+      }),
+      { authResolver: agentAuth },
+    );
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        code: "run_token_scope",
+        message: expect.stringContaining("not enabled yet"),
+      },
+    });
+    expect(handled).toEqual([]);
+  });
+
+  it("leaves the router naming the key that asked on every run it does start", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const handlers = createHandlers({
+      handleDirectRequest: async (event) => {
+        handled.push(event);
+
+        return { statusCode: 200, body: "ok" };
+      },
+    });
+    await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer secret" }),
+      handlers,
+    );
+    await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer token" }),
+      handlers,
+      {
+        authResolver: async (): Promise<AuthContext> => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          stageTicket: true,
+        }),
+        deploymentLoader: async () => ({
+          accountId: TEST_ACCOUNT.accountId,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+        }),
+      },
+    );
+    expect(handled.map((event) => event.principalChain)).toEqual([
+      [{ kind: "api", keyKind: "account" }],
+      [{ kind: "api", keyKind: "deployment" }],
+    ]);
+  });
+
+  it("reads its own agent's runs and nothing else", async () => {
+    const own = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer brt_x" },
+        {
+          method: "GET",
+          rawPath: `/v1/runs/${TEST_RUN_ID}`,
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({ statusCode: 200, body: "{}" }),
+      }),
+      { authResolver: agentAuth },
+    );
+    expect(own.statusCode).toBe(200);
+
+    const other = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer brt_x" },
+        {
+          method: "GET",
+          rawPath: `/v1/runs/${TEST_RUN_ID}`,
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({ statusCode: 200, body: "{}" }),
+      }),
+      {
+        authResolver: agentAuth,
+        ingressStatusLoader: async ({ runId }) =>
+          ingressStatus(
+            scopedDirectEventId(
+              TEST_ACCOUNT.accountId,
+              TEST_AGENT_PRIVATE.agentId,
+              "one",
+            ),
+            "alpha",
+            TEST_AGENT_PRIVATE.agentId,
+            runId,
+          ),
+      },
+    );
+    expect(other.statusCode).toBe(403);
+
+    const endpoint = await routeIncomingEvent(
+      createEvent(
+        USER_TURN,
+        { authorization: "Bearer brt_x" },
+        {
+          rawPath: "/v1/agents/env-endpoint",
+        },
+      ),
+      createHandlers(),
+      { authResolver: agentAuth },
+    );
+    expect(endpoint.statusCode).toBe(403);
+    expect(responseJson(endpoint)).toMatchObject({
+      error: { code: "run_token_scope" },
+    });
+  });
+});

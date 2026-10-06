@@ -10,14 +10,12 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { CliManifestResource } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
-import {
-  assertEnvVarName,
-  decryptAgentConfigBlob,
-  toNestedAgentConfig,
-} from "./agentConfigCodec";
+import { assertEnvVarName, toNestedAgentConfig } from "./agentConfigCodec";
+import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
+import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
 import { ClientError } from "./clientError";
 
 // Exceeds Convex's 30-minute HTTP action limit plus a 10-minute child Node action.
@@ -56,11 +54,13 @@ export function asObject(value: unknown): Record<string, unknown> {
 
 /**
  * Rejects a manifest whose `env("NAME")` has no value stored for the stage,
- * which would otherwise reach the runtime as a literal `${NAME}`.
+ * which would otherwise reach the runtime as a literal `${NAME}`. `stage` names
+ * the stage in the suggested commands.
  */
 export function assertEnvRefsResolved(
   resources: CliResource[],
   envValues: Record<string, string>,
+  stage: string,
 ): void {
   // Reuses the rewrite walker so collection cannot drift from substitution.
   const referenced = new Set<string>();
@@ -71,10 +71,12 @@ export function assertEnvRefsResolved(
     .filter((name) => envValues[name] === undefined)
     .sort();
   if (missing.length === 0) return;
+  // `broods env` defaults to the dev stage, so the commands must name this one.
+  const flag = `--stage ${stage}`;
 
   throw new ClientError(
     `env() references ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
-      "Set each one with `broods env set <NAME>` (or put it in .env.local and run `broods dev`), then sync again.",
+      `Set each one with \`broods env set <NAME> ${flag}\`, or put them in .env.local and run \`broods env sync ${flag}\`, then sync again.`,
   );
 }
 
@@ -209,51 +211,46 @@ export async function claimManifestRevision(
 
 export async function decryptSandboxConfig(
   sandbox: Doc<"sandboxConfigs">,
-  secret: string | undefined,
+  cipher: AccountCipher,
 ): Promise<Record<string, unknown>> {
   if (
-    !secret ||
     !sandbox.encryptedConfig ||
     !sandbox.encryptionIv ||
     !sandbox.encryptionTag
   ) {
     return {};
   }
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: sandbox.encryptedConfig,
-      iv: sandbox.encryptionIv,
-      tag: sandbox.encryptionTag,
-    },
-    secret,
-  );
+  const decrypted = await cipher.decrypt("sandboxConfigs:encryptedConfig", {
+    ciphertext: sandbox.encryptedConfig,
+    iv: sandbox.encryptionIv,
+    tag: sandbox.encryptionTag,
+  });
 
   return decrypted ?? {};
 }
 
 export async function decryptSandboxManifestConfig(
   sandbox: Doc<"sandboxConfigs">,
-  secret: string | undefined,
+  cipher: AccountCipher,
 ): Promise<Record<string, unknown>> {
   if (
-    secret &&
     sandbox.encryptedSourceConfig &&
     sandbox.sourceEncryptionIv &&
     sandbox.sourceEncryptionTag
   ) {
-    const decrypted = await decryptAgentConfigBlob(
+    const decrypted = await cipher.decrypt(
+      "sandboxConfigs:encryptedSourceConfig",
       {
         ciphertext: sandbox.encryptedSourceConfig,
         iv: sandbox.sourceEncryptionIv,
         tag: sandbox.sourceEncryptionTag,
       },
-      secret,
     );
 
     return decrypted ?? {};
   }
 
-  return await decryptSandboxConfig(sandbox, secret);
+  return await decryptSandboxConfig(sandbox, cipher);
 }
 
 export function displayStageName(name: string): string {
@@ -676,7 +673,7 @@ function rewriteRefList(
 function sandboxProvider(sandbox: CliResource): string {
   const provider = plainRecord(sandbox.config).provider;
 
-  return typeof provider === "string" ? provider : "sandbox";
+  return typeof provider === "string" ? provider : DEFAULT_SANDBOX_PROVIDER;
 }
 
 async function stageSyncRow(

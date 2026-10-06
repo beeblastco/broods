@@ -10,7 +10,7 @@ How code in `broods/` reaches a stage, how secrets get there, and how to run it 
 | `broods dev --once` | same                                  | yes                        | no                  |
 | `broods deploy`     | `production`, or `stages.deploy`      | no                         | no                  |
 
-Both commands compile `broods/`, validate it, sync it, regenerate `broods/_generated/`, and write the stage runtime key to `.env.local` as `BROODS_API_KEY`. A broken config fails before anything is written.
+Both commands compile `broods/`, validate it, sync it, regenerate `broods/_generated/`, and write the runtime key to `.env.local` as `BROODS_API_KEY`. A broken config fails before anything is written.
 
 `deploy` ignores `BROODS_STAGE`. After `broods stage use staging`, `broods deploy` still writes to production, or to the stage `defineBroods({ stages: { deploy } })` names. Pass `--stage staging` to deploy elsewhere.
 
@@ -61,7 +61,7 @@ broods env sync                               # push every referenced env("NAME"
 
 ## The runtime key
 
-Each stage has one runtime key, `fp_agent_...`, that your app uses to run agents. `broods dev` and `broods deploy` write it to `.env.local` as `BROODS_API_KEY`. `broods deploy --rotate-key` mints a new one and invalidates the old one.
+Each stage has one runtime key, `bsk_...`, that your app uses to run agents. `broods dev` and `broods deploy` write it to `.env.local` as `BROODS_API_KEY`. `broods deploy --rotate-key` mints a new one and invalidates the old one.
 
 The key only reaches agents in its own stage that set `publicAccess: true`. It cannot read logs or change config. See [Security](security.md).
 
@@ -71,7 +71,7 @@ Server, organization, project and stage together decide where a command writes. 
 
 ## Deploying from CI
 
-Create a deploy key for the project and stage in the dashboard. It can sync only that stage. It can set and list environment variables but never read them, and it cannot replace skills or hooks another stage manages.
+Create a project key (`bpdk_...`) for the project and stage in the dashboard. It can sync only that stage. It can set and list environment variables but never read them, and it cannot replace skills or hooks another stage manages.
 
 ```yaml title=".github/workflows/deploy.yaml"
 - run: bunx broods deploy
@@ -81,7 +81,7 @@ Create a deploy key for the project and stage in the dashboard. It can sync only
     BROODS_PROJECT: my-agents
 ```
 
-`BROODS_TOKEN` and `BROODS_BASE_URL` together replace a stored login. Set production secrets with `broods env set` from a trusted machine, or from CI with an org admin login.
+`BROODS_TOKEN` holds the project key. With `BROODS_BASE_URL` it replaces a stored login. Set production secrets with `broods env set` from a trusted machine, or from CI with an org admin login.
 
 ## Checking a deployment
 

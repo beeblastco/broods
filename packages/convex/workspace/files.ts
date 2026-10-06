@@ -252,42 +252,6 @@ export const getFileDownloadUrl = query({
 });
 
 /**
- * Internal: create a signed download URL for one legacy file during migration.
- * @param authId WorkOS auth id of the caller that started the migration
- * @param projectId owning project
- * @param nodeId canvas node ID of the workspace
- * @param path file path inside the legacy workspace tree
- * @returns signed URL or null when the file cannot be read
- */
-export const getFileDownloadUrlInternal = internalQuery({
-  args: {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    path: v.string(),
-  },
-  returns: v.union(v.string(), v.null()),
-  handler: async (ctx, args): Promise<string | null> => {
-    const project = await getProjectForRole(ctx, args.authId, args.projectId);
-    if (!project) return null;
-
-    const file = await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_nodeId_and_path", (q) =>
-        q
-          .eq("projectId", args.projectId)
-          .eq("nodeId", args.nodeId)
-          .eq("path", args.path),
-      )
-      .first();
-
-    if (!file?.storageId) return null;
-
-    return await ctx.storage.getUrl(file.storageId);
-  },
-});
-
-/**
  * @param projectId owning project
  * @param nodeId canvas node ID of the workspace
  * @returns flat array of file metadata records
@@ -316,33 +280,6 @@ export const list = query({
       .query("workspaceFiles")
       .withIndex("by_projectId_nodeId_and_path", (q) =>
         q.eq("projectId", projectId).eq("nodeId", nodeId),
-      )
-      .collect();
-  },
-});
-
-/**
- * Internal: list legacy Convex-storage files after checking project ownership.
- * @param authId WorkOS auth id of the caller that started the migration
- * @param projectId owning project
- * @param nodeId canvas node ID of the workspace
- * @returns legacy file metadata rows for migration
- */
-export const listForMigrationInternal = internalQuery({
-  args: {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-  },
-  returns: v.array(workspaceFileDoc),
-  handler: async (ctx, args): Promise<Doc<"workspaceFiles">[]> => {
-    const project = await getProjectForRole(ctx, args.authId, args.projectId);
-    if (!project) return [];
-
-    return await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_nodeId_and_path", (q) =>
-        q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
       )
       .collect();
   },
@@ -427,33 +364,6 @@ export const removeFolder = mutation({
       }
       await ctx.db.delete(doc._id);
     }
-
-    return null;
-  },
-});
-
-/**
- * Internal: remove one legacy file row and storage object after S3 migration.
- * @param authId WorkOS auth id of the caller that started the migration
- * @param fileId legacy workspaceFiles row to delete
- */
-export const removeForMigrationInternal = internalMutation({
-  args: {
-    authId: v.string(),
-    fileId: v.id("workspaceFiles"),
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const file = await ctx.db.get(args.fileId);
-    if (!file) return null;
-
-    const project = await getProjectForRole(ctx, args.authId, file.projectId);
-    if (!project) return null;
-
-    if (file.storageId) {
-      await ctx.storage.delete(file.storageId);
-    }
-    await ctx.db.delete(args.fileId);
 
     return null;
   },

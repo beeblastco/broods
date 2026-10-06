@@ -15,6 +15,14 @@ const BUNDLE_CONTENT_TYPE = "application/javascript";
 
 type PutBundleAction = typeof internal.aws.bundles.putHookBundle;
 
+/** A hosted MCP bundle in S3: the row fields a write stores together. */
+export interface StoredMcpBundle {
+  bundleStorageKey: string;
+  sha256: string;
+  /** Absent only when carried forward from a row stored before placement existed. */
+  workersCompatible?: boolean;
+}
+
 export async function putHookBundle(
   ctx: ActionCtx,
   options: { accountId: Id<"accounts">; sha256: string; bundle: string },
@@ -26,26 +34,40 @@ export async function putHookBundle(
  * Content-addressed store for a hosted MCP server's bundle: a sha256 matching
  * the existing row reuses its stored key; a connection-only input stores
  * nothing. Large bundles arrive pre-uploaded as `bundleStorageId` (#190) and
- * the S3 writer verifies their declared sha256 against the bytes.
+ * the S3 writer verifies their declared sha256 against the bytes and marks
+ * whether Cloudflare Dynamic Workers can run them.
  */
 export async function storeMcpBundle(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   input: Pick<McpInput, "bundle" | "bundleStorageId" | "sha256">,
-  existing: Pick<Doc<"mcp">, "sha256" | "bundleStorageKey"> | null,
-): Promise<string | undefined> {
+  existing: Pick<
+    Doc<"mcp">,
+    "sha256" | "bundleStorageKey" | "workersCompatible"
+  > | null,
+): Promise<StoredMcpBundle | undefined> {
   if (
     (input.bundle === undefined && input.bundleStorageId === undefined) ||
     input.sha256 === undefined
   ) {
     return undefined;
   }
-  if (existing?.sha256 === input.sha256 && existing.bundleStorageKey) {
+  // A row stored before placement existed has no flag; storing its bundle
+  // again scans it.
+  if (
+    existing?.sha256 === input.sha256 &&
+    existing.bundleStorageKey &&
+    existing.workersCompatible !== undefined
+  ) {
     if (input.bundleStorageId !== undefined) {
       await ctx.storage.delete(input.bundleStorageId as Id<"_storage">);
     }
 
-    return existing.bundleStorageKey;
+    return {
+      bundleStorageKey: existing.bundleStorageKey,
+      sha256: input.sha256,
+      workersCompatible: existing.workersCompatible,
+    };
   }
   // One courier path for both inputs: an inline bundle is stored first, a
   // pre-uploaded one already lives there; the blob is deleted pass or fail.
@@ -56,11 +78,17 @@ export async function storeMcpBundle(
           new Blob([input.bundle!], { type: BUNDLE_CONTENT_TYPE }),
         );
   try {
-    return await ctx.runAction(internal.aws.bundles.putMcpBundle, {
+    const stored = await ctx.runAction(internal.aws.bundles.putMcpBundle, {
       accountId: accountId,
       sha256: input.sha256,
       storageId: storageId,
     });
+
+    return {
+      bundleStorageKey: stored.key,
+      sha256: input.sha256,
+      workersCompatible: stored.workersCompatible,
+    };
   } finally {
     await ctx.storage.delete(storageId);
   }

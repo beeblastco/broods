@@ -53,7 +53,7 @@ export default function CronsPage({
         <div className="flex justify-end pb-6">
           <Button
             size="sm"
-            className="cursor-pointer disabled:cursor-not-allowed"
+            className="cursor-pointer"
             disabled={!canCreate}
             onClick={() => setCreateOpen(true)}
           >
