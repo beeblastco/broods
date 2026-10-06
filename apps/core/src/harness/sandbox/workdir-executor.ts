@@ -15,7 +15,10 @@ import {
   type Sandbox,
   SandboxError,
 } from "@mv37/workdir";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
+import {
+  removeSandboxInstance,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
@@ -198,6 +201,18 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         : undefined;
     void ephemeralMount?.catch((): void => {});
     const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
+    // An ephemeral sandbox is billable compute for the length of the call, so it
+    // gets a row keyed by its id; the teardown removes it, which meters the call.
+    const mirrored = persistent
+      ? undefined
+      : upsertSandboxInstance(
+          this.#config.controlPlane,
+          "sandbox",
+          sandbox.id,
+          sandbox.id,
+          request.metadata,
+          { ephemeral: true },
+        );
 
     try {
       if (execMount)
@@ -252,7 +267,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       // The delete leaves the tool clock but not the process: shutdown drains it, so
       // a rolling deploy cannot strand the VM at workdir, which has no TTL of its own.
       // The next call's create can now overlap this delete at the admission ceiling.
-      if (!persistent)
+      if (!persistent) {
         waitUntil(
           sandbox.delete().catch((error: unknown): void => {
             logWarn("workdir sandbox delete failed", {
@@ -261,6 +276,15 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
             });
           }),
         );
+        // Removed after the upsert lands, or a slow upsert would recreate the row.
+        const accountId = this.#config.controlPlane?.accountId;
+        if (mirrored && accountId)
+          waitUntil(
+            mirrored.then((): Promise<void> =>
+              removeSandboxInstance(accountId, sandbox.id),
+            ),
+          );
+      }
     }
   }
 
