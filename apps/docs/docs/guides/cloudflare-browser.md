@@ -10,18 +10,23 @@ Install the MCP server SDK and zod in your project:
 bun add @modelcontextprotocol/server zod
 ```
 
-Store your Cloudflare account ID and an API token with the **Browser Rendering - Edit** permission:
+Store your Cloudflare account ID, an API token with the **Browser Rendering - Edit** permission, and your model key on the stage you deploy. Each command prompts for the value:
 
 ```bash
-broods env set CLOUDFLARE_ACCOUNT_ID <account-id>
-broods env set CLOUDFLARE_API_TOKEN <api-token>
+broods env set CLOUDFLARE_ACCOUNT_ID --stage production
+broods env set CLOUDFLARE_API_TOKEN --stage production
+broods env set GOOGLE_API_KEY --stage production
 ```
 
 Define the server and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import { defineAgent, defineMcp } from "broods";
+import {
+  createMcpHandler,
+  McpServer,
+  type CallToolResult,
+} from "@modelcontextprotocol/server";
+import { defineAgent, defineMcp, env } from "broods";
 import { z } from "zod";
 
 const BROWSER_RUN_URL = "https://api.cloudflare.com/client/v4/accounts";
@@ -30,7 +35,7 @@ const MARKDOWN_RESPONSE = z.object({ result: z.string() });
 export const browser = defineMcp({
   name: "browser",
   description: "Cloudflare Browser Run on Kitesurf.",
-  handler: createMcpHandler(({ requestInfo }) => {
+  handler: createMcpHandler(({ requestInfo }): McpServer => {
     const server = new McpServer({ name: "kitesurf", version: "1.0.0" });
     server.registerTool(
       "markdown",
@@ -38,40 +43,13 @@ export const browser = defineMcp({
         description: "Open a URL and return the page as Markdown.",
         inputSchema: z.object({ url: z.url() }),
       },
-      async ({ url }) => {
+      async ({ url }): Promise<CallToolResult> => {
         const response = await quickAction(requestInfo, "markdown", {
           url: url,
         });
         const { result } = MARKDOWN_RESPONSE.parse(await response.json());
 
         return { content: [{ type: "text", text: result }] };
-      },
-    );
-    server.registerTool(
-      "screenshot",
-      {
-        description: "Open a URL and return a PNG screenshot.",
-        inputSchema: z.object({
-          url: z.url(),
-          fullPage: z.boolean().optional(),
-        }),
-      },
-      async ({ url, fullPage }) => {
-        const response = await quickAction(requestInfo, "screenshot", {
-          url: url,
-          screenshotOptions: { fullPage: fullPage ?? false },
-        });
-        const bytes = Buffer.from(await response.arrayBuffer());
-
-        return {
-          content: [
-            {
-              type: "image",
-              data: bytes.toString("base64"),
-              mimeType: "image/png",
-            },
-          ],
-        };
       },
     );
 
@@ -82,6 +60,8 @@ export const browser = defineMcp({
 export const researcher = defineAgent({
   name: "researcher",
   agent: { system: "Use the browser tools to read web pages." },
+  provider: { google: { apiKey: env("GOOGLE_API_KEY") } },
+  model: { provider: "google", modelId: "gemini-3-flash" },
   mcp: {
     [browser.name]: {
       enabled: true,
@@ -126,28 +106,27 @@ async function quickAction(
 }
 ```
 
-Run `broods deploy`. The agent gets `browser__markdown` and `browser__screenshot`. Add other quick actions the same way:
+Run `broods deploy`. The agent gets `browser__markdown`. Add other quick actions the same way:
 
-| Quick action | Request body                 | Response                   |
-| ------------ | ---------------------------- | -------------------------- |
-| `markdown`   | `{ url }` or `{ html }`      | `{ success, result }` JSON |
-| `content`    | `{ url }`                    | `{ success, result }` HTML |
-| `links`      | `{ url }`                    | `{ success, result }` URLs |
-| `screenshot` | `{ url, screenshotOptions }` | PNG bytes                  |
-| `pdf`        | `{ url }`                    | PDF bytes                  |
+| Quick action | Request body            | Response                   |
+| ------------ | ----------------------- | -------------------------- |
+| `markdown`   | `{ url }` or `{ html }` | `{ success, result }` JSON |
+| `content`    | `{ url }`               | `{ success, result }` HTML |
+| `links`      | `{ url }`               | `{ success, result }` URLs |
 
 Gotchas:
 
 - Secrets reach a hosted server only as request headers. It has no `process.env`.
-- Calls from one model step share a 30 second deadline and 16 MB of output. A full-page screenshot of a long page can hit either.
+- Calls from one model step share a 30 second deadline and 16 MB of output.
+- Only text results reach the model. An image, such as a `screenshot` quick action, arrives as `[image content (image/png) omitted]`.
 - Drop `?browser=kitesurf` to run the same actions on Browser Run's default Chromium.
 
 ## Other routes
 
-| Route                    | Setup                                                                                                                                                      | Gives you                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| Cloudflare's MCP server  | `defineMcp` with `url: "https://browser.mcp.cloudflare.com/mcp"`, and `Authorization: "Bearer ${CLOUDFLARE_API_TOKEN}"` in the agent's `mcp` entry headers | Markdown and screenshots, no Kitesurf flag |
-| Full CDP on your machine | `chrome-devtools-mcp` pointed at the Kitesurf DevTools WebSocket, run through a [machine sandbox](sandboxes/machine.md)                                    | Clicks, typing, multi-step sessions        |
+| Route                    | Setup                                                                                                                                                      | Gives you                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Cloudflare's MCP server  | `defineMcp` with `url: "https://browser.mcp.cloudflare.com/mcp"`, and `Authorization: "Bearer ${CLOUDFLARE_API_TOKEN}"` in the agent's `mcp` entry headers | Markdown, no Kitesurf flag          |
+| Full CDP on your machine | `chrome-devtools-mcp` pointed at the Kitesurf DevTools WebSocket, run through a [machine sandbox](sandboxes/machine.md)                                    | Clicks, typing, multi-step sessions |
 
 :::note Unverified
 
