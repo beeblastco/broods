@@ -231,6 +231,7 @@ broods env <set|get|list|rm|sync> [name]
 echo "$VALUE" | broods env set SOME_NAME
 ```
 
+- Names are uppercase letters, digits and `_`, start with a letter, and are at most 64 characters. `env("NAME")` refs follow the same rule.
 - `rm` refuses while a synced agent or sandbox still references the name, and says which. Remove the reference and sync first. To rotate a secret, run `set` again instead.
 - `sync` only touches names the project references. It skips values the stage already holds, never deletes, and never touches `BROODS_*` variables. It reports names that exist only on the stage.
 
