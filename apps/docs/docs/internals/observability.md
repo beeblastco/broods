@@ -72,7 +72,7 @@ sequenceDiagram
 
 Traces take the same path, with a Tempo search in place of the Loki query.
 
-- It refuses the stage runtime key. Clients connect with a fifteen-minute stage session ticket (`fp_dts_`), which the CLI mints from a login token at `POST /v1/account/stage-session` and refreshes before each reconnect.
+- It refuses the runtime key. Clients connect with a fifteen-minute stage session ticket (`fp_dts_`), which the CLI mints from a login token at `POST /v1/account/stage-session` and refreshes before each reconnect.
 - A `subscribe` with `backfill` always gets a closing `backfill` message, even when Loki or Tempo failed; that message then carries `error`, so a client can tell an empty stage from a failed query.
 - Logs come back in one message. The Loki query widens in steps. It tries the last hour with a 5 s budget, then a day with 10 s, then 30 days with 15 s, stopping at the first step that fills a page. A step that times out ends the backfill, since a wider window only costs more. 30 days is Loki's own range cap.
 - Traces come from a Tempo search over 7 days, Tempo's cap, with a 15 s budget. Each trace then needs its own lookup, with a 5 s budget and 6 at a time, so traces arrive newest first in chunks of 12 flagged `more: true`, and the closing message carries the failure count.
@@ -144,8 +144,8 @@ Prompts, full tool inputs and outputs, request and response bodies, and response
 
 ## Security
 
-- One redaction chokepoint. `log.ts` redacts by key name, using exact, prefix and suffix deny lists with an allow list for known-safe keys, and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens.
-- Scoped STS mount credentials are never logged. The MicroVM forwarder applies the pattern half of redaction, covering `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens. It cannot know a run's own secret values. A guest that echoes an injected secret prints it to the owning account's view and to operators. Treat sandbox stdout as untrusted.
+- One redaction chokepoint. `log.ts` redacts by key name, using exact, prefix and suffix deny lists with an allow list for known-safe keys, and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, runtime keys and `fp_sts_` tokens.
+- Scoped STS mount credentials are never logged. The MicroVM forwarder applies the pattern half of redaction, covering `Bearer` and `Basic` values, query-string secrets, runtime keys and `fp_sts_` tokens. It cannot know a run's own secret values. A guest that echoes an injected secret prints it to the owning account's view and to operators. Treat sandbox stdout as untrusted.
 - A sandbox tail is scoped like every other observability socket. The gateway builds the Loki selector from the ticket's server-derived account, project and stage, and the client's `sandboxId` only narrows inside that. It must be the UUID shape core mints, or the wire rejects it before it reaches LogQL.
 
 ## Retention and follow-ups

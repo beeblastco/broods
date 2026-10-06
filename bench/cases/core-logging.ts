@@ -79,7 +79,7 @@ const LOG_PAYLOAD: Readonly<Record<string, unknown>> = {
     method: "POST",
     url: "https://gateway.broods.app/v1/agents/agt_7f3c9d21/invoke?api_key=abcd1234",
     headers: {
-      authorization: "Bearer fp_agent_1a2b3c4d5e6f7g8h",
+      authorization: "Bearer sk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
       "x-api-key": "sk-proj-fixture-99887766554433221100",
       "content-type": "application/json",
     },
@@ -95,7 +95,7 @@ const LOG_PAYLOAD: Readonly<Record<string, unknown>> = {
 const LOG_LINE =
   "provider call failed for agent agt_7f3c9d21: POST https://api.anthropic.com/v1/messages " +
   "with Authorization: Bearer sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6 " +
-  "(runtime key fp_agent_1a2b3c4d5e6f7g8h) returned 529 overloaded_error after 3 retries";
+  "(runtime key sk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p) returned 529 overloaded_error after 3 retries";
 
 // The decrypted agent record the runtime scans once per run to learn which
 // values must never reach a log line.

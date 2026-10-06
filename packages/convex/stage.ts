@@ -278,7 +278,7 @@ export const remove = mutation({
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
  * deployments and linked broods `agents` rows with their crons), the canvas
- * layout, MCP servers, env vars, and deploy keys. A linked `agents` row goes
+ * layout, MCP servers, env vars, and project keys. A linked `agents` row goes
  * only when the project's account owns it.
  */
 export async function deleteStageContents(
@@ -318,7 +318,7 @@ export async function deleteStageContents(
     await ctx.db.delete(config._id);
   }
 
-  // The stage's runtime API key is scoped to (project, stage), not
+  // The stage's runtime key is scoped to (project, stage), not
   // to an agent config, so it must be deleted here or it would keep
   // authenticating requests against a deleted stage.
   const stageDeployments = await ctx.db

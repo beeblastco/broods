@@ -6,7 +6,6 @@ import {
   expect,
   it,
   mock,
-  spyOn,
 } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
@@ -25,7 +24,6 @@ import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
-import * as otel from "../src/shared/otel.ts";
 import {
   setStorageForTests,
   type Storage,
@@ -656,15 +654,18 @@ describe("runAgentLoop", () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const appendIngressEvents = mock(async () => []);
-    const applySteeringIngress = mock(async () => ({
-      eventId: "owner",
-      events: [{ role: "user", content: "new direction" }],
-      delivery: { kind: "http" },
-      requestedMode: "steer",
-      appliedMode: "steer",
-      appliedToEventId: "owner",
-      contributingEventIds: ["steer-1"],
-      ownerGeneration: 3,
+    const stepBoundary = mock(async () => ({
+      renewal: "renewed",
+      steering: {
+        eventId: "owner",
+        events: [{ role: "user", content: "new direction" }],
+        delivery: { kind: "http" },
+        requestedMode: "steer",
+        appliedMode: "steer",
+        appliedToEventId: "owner",
+        contributingEventIds: ["steer-1"],
+        ownerGeneration: 3,
+      },
     }));
     const stream = await runAgentLoop(
       {
@@ -675,8 +676,7 @@ describe("runAgentLoop", () => {
         sandboxes: () => [],
         environmentText: () => "<environment>",
         persistModelMessages: async () => [],
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: applySteeringIngress,
+        stepBoundary: stepBoundary,
         appendIngressEvents: appendIngressEvents,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -728,7 +728,7 @@ describe("runAgentLoop", () => {
       role: "user",
       content: "new direction",
     });
-    expect(applySteeringIngress).toHaveBeenCalledTimes(1);
+    expect(stepBoundary).toHaveBeenCalledTimes(1);
     expect(appendIngressEvents).toHaveBeenCalledWith([
       { role: "user", content: "new direction" },
     ]);
@@ -751,8 +751,7 @@ describe("runAgentLoop", () => {
         sandboxes: () => [],
         environmentText: () => "<environment>",
         persistModelMessages: async () => [],
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: async () => null,
+        stepBoundary: async () => ({ renewal: "renewed", steering: null }),
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -795,7 +794,7 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
   });
 
-  it("stops before the next model call when the owner requests a boundary stop, even if the same step's persist fails", async () => {
+  it("stops before the next model call when the owner requests a boundary stop", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const appendIngressEvents = mock(async () => []);
@@ -808,15 +807,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
         environmentText: () => "<environment>",
-        persistModelMessages: async (): Promise<string[]> => {
-          throw new Error("persist failed");
-        },
-        renewConversationLease: async () => "stopped",
-        applySteeringIngress: async () => ({
-          events: [{ role: "user", content: "late steer" }],
-          contributingEventIds: ["steer"],
-          appliedMode: "steer",
-        }),
+        stepBoundary: async () => ({ renewal: "stopped", steering: null }),
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -866,8 +857,11 @@ describe("runAgentLoop", () => {
         sandboxes: () => [],
         environmentText: () => "<environment>",
         persistModelMessages: persistModelMessages,
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: async () => null,
+        stepBoundary: async (messages: ModelMessage[]) => {
+          await persistModelMessages(messages);
+
+          return { renewal: "renewed", steering: null };
+        },
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -1003,27 +997,22 @@ describe("runAgentLoop", () => {
     expect(writes[0]).toMatchObject({ status: "completed", stepCount: 2 });
   });
 
-  it("settles the usage write before flushing telemetry", async () => {
+  it("closes the stream without waiting for the usage write", async () => {
     const order: string[] = [];
+    const written = Promise.withResolvers<void>();
     const store = usageStorage([]);
     store.taskUsage.record = async function (): Promise<void> {
       await Bun.sleep(30);
       order.push("usage");
+      written.resolve();
     };
     setStorageForTests(store);
-    const flush = spyOn(otel, "forceFlushOtel").mockImplementation(
-      async (): Promise<void> => {
-        order.push("flush");
-      },
-    );
-    try {
-      const stream = await startTwoStepTurn();
-      await stream.consumeStream();
-    } finally {
-      flush.mockRestore();
-    }
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+    order.push("closed");
+    await written.promise;
 
-    expect(order).toEqual(["usage", "flush"]);
+    expect(order).toEqual(["closed", "usage"]);
   });
 
   it("meters the steps an aborted run finished", async () => {
@@ -2891,8 +2880,7 @@ describe("auto-compaction after a turn", () => {
             : [],
         environmentText: () => "<environment>",
         persistModelMessages: async (): Promise<string[]> => [],
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: async () => null,
+        stepBoundary: async () => ({ renewal: "renewed", steering: null }),
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -3183,8 +3171,7 @@ async function startTwoStepTurn(
       sandboxes: () => [],
       environmentText: () => "<environment>",
       persistModelMessages: persistModelMessages,
-      renewConversationLease: async () => "renewed",
-      applySteeringIngress: async () => null,
+      stepBoundary: async () => ({ renewal: "renewed", steering: null }),
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
         system: [],

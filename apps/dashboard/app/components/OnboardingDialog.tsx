@@ -1,6 +1,6 @@
 "use client";
 
-/** Three-step first-login onboarding dialog: welcome, one-time account secret, first CLI project. */
+/** Three-step first-login onboarding dialog: welcome, one-time account key, first CLI project. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -14,11 +14,16 @@ import { cn } from "@/app/lib/utils";
 import { ArrowUpRight, Check, Copy, Eye, EyeOff } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-const CLI_COMMAND =
-  "npm install -g broods && mkdir broods-demo && cd broods-demo && broods dev";
+// The starter agent reads env("OPENAI_API_KEY"); `broods dev` pushes it from
+// .env.local, as in the docs quickstart.
+const CLI_COMMANDS = [
+  "npm install -g broods && mkdir broods-demo && cd broods-demo",
+  `echo 'OPENAI_API_KEY="sk-..."' >> .env.local`,
+  "broods dev",
+];
 
 interface Props {
-  /** The one-time plaintext account secret to hand over on step two. */
+  /** The one-time plaintext account key to hand over on step two. */
   secret: string;
   /** Called when the user finishes the flow; the caller clears the secret and routes to /projects. */
   onDone: () => void;
@@ -37,7 +42,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
 
   const titles = [
     "Welcome to Broods",
-    "Save your account secret",
+    "Save your account key",
     "Start your first project",
   ];
   const descriptions = [
@@ -90,7 +95,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                   size="sm"
                   className="h-9 shrink-0 cursor-pointer"
                   onClick={() => setRevealed((value) => !value)}
-                  title={revealed ? "Hide secret" : "Reveal secret"}
+                  title={revealed ? "Hide key" : "Reveal key"}
                 >
                   {revealed ? (
                     <EyeOff className="size-3.5" />
@@ -113,8 +118,8 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                 </Button>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                This secret authenticates the API, so you can create agents,
-                crons, and workspaces from your own code.
+                This key authenticates the API, so you can create agents, crons,
+                and workspaces from your own code.
               </p>
               <div className="flex items-center gap-4">
                 <DocsLink href="https://docs.broods.app/reference/sdk">
@@ -129,13 +134,17 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
 
           {step === 2 && (
             <div className="grid gap-3">
-              <CommandBlock command={CLI_COMMAND} />
+              <CommandBlock commands={CLI_COMMANDS} />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                On Bun, swap the first step for <Mono>bun add -g broods</Mono>.
-                The CLI walks you through login and scaffolding, then keeps your
-                config in sync while it runs. Once it&apos;s up,{" "}
+                Put your OpenAI key in place of <Mono>sk-...</Mono>. On Bun,
+                swap the first step for <Mono>bun add -g broods</Mono>. The CLI
+                walks you through login and scaffolding, then keeps your config
+                in sync while it runs. Once it&apos;s up,{" "}
                 <Mono>broods-demo</Mono> appears on your projects page.
               </p>
+              <DocsLink href="https://docs.broods.app/quickstart">
+                Full quickstart
+              </DocsLink>
             </div>
           )}
         </div>
@@ -173,8 +182,8 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
   );
 }
 
-/** A one-line command block with a corner copy control. */
-function CommandBlock({ command }: { command: string }): React.JSX.Element {
+/** A shell command block, one prompt per line, with a corner control that copies them all. */
+function CommandBlock({ commands }: { commands: string[] }): React.JSX.Element {
   const { copied, copy } = useCopy();
 
   return (
@@ -182,13 +191,17 @@ function CommandBlock({ command }: { command: string }): React.JSX.Element {
     // intrinsic width and push the whole card past its edge.
     <div className="relative min-w-0">
       <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-2.5 pr-12 font-mono text-xs leading-relaxed text-foreground">
-        <span className="select-none text-muted-foreground">$ </span>
-        {command}
+        {commands.map((command) => (
+          <div key={command}>
+            <span className="select-none text-muted-foreground">$ </span>
+            {command}
+          </div>
+        ))}
       </pre>
       <button
         type="button"
-        title="Copy command"
-        onClick={() => copy(command)}
+        title="Copy commands"
+        onClick={() => copy(commands.join("\n"))}
         className="absolute right-1.5 top-1.5 flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         {copied ? (

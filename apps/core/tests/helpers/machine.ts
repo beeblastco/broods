@@ -24,10 +24,10 @@ import type {
 } from "../../src/shared/storage.ts";
 
 export const MACHINE_ACCOUNT_ID = "acct_machine";
-/** The account secret the daemon connects with in these tests. */
+/** The account key the daemon connects with in these tests. */
 export const MACHINE_ACCOUNT_SECRET = crypto.randomUUID();
-/** The stage runtime key, which sits in frontends and must be refused. */
-export const MACHINE_EMBEDDABLE_KEY = `fp_agent_${crypto.randomUUID()}`;
+/** The runtime key, which sits in frontends and must be refused. */
+export const MACHINE_EMBEDDABLE_KEY = `sk_${crypto.randomUUID()}`;
 /** A role session whose policy reads sandboxes and nothing more. */
 export const MACHINE_READ_ONLY_ROLE_TOKEN = `fp_sts_${crypto.randomUUID()}`;
 export const MACHINE_SANDBOX_ID = "sbx_machine";
@@ -163,6 +163,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
               endpointId: "endpoint",
               projectSlug: "demo",
               stageSlug: "development",
+              account: account,
             }
           : null,
       touchLastUsed: async (): Promise<void> => {},

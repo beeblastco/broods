@@ -15,10 +15,11 @@ export const GET = handleAuth({
   onError: ({ error, request }): NextResponse<unknown> => {
     if (request.cookies.has(RETRY_COOKIE_NAME)) {
       console.error("[auth/callback] sign-in retry also failed", error);
+      // Dropping the guard gives "Sign in again" its own automatic retry.
+      const failed = NextResponse.redirect(new URL("/auth/error", appOrigin));
+      failed.cookies.delete({ name: RETRY_COOKIE_NAME, path: "/auth" });
 
-      return new NextResponse("Sign-in failed. Visit /auth/sign-in to retry.", {
-        status: 500,
-      });
+      return failed;
     }
 
     const response = NextResponse.redirect(new URL("/auth/sign-in", appOrigin));

@@ -56,7 +56,7 @@ http.route({
 });
 
 // Bare `/v1/account/projects` only: the `/v1/account/projects/` prefix routes
-// below carry a project name and belong to the deploy-key handler.
+// below carry a project name and belong to the project-key handler.
 http.route({
   path: "/v1/account/projects",
   method: "GET",

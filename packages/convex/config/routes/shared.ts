@@ -461,7 +461,7 @@ async function resolveBearerAuth(
     return { kind: "admin" };
   }
 
-  // In-cluster only: never valid on a gateway-proxied request.
+  // In-cluster only: never valid on a request through the public door.
   const serviceSecret = process.env.SERVICE_AUTH_SECRET;
   if (
     serviceSecret &&

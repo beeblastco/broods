@@ -13,7 +13,7 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
+const ACCOUNT_SECRET = "ask_test-owner-secret";
 const AUTH_ID = "auth_owner";
 
 const pageTest = () => convexTest(schema, modules);
