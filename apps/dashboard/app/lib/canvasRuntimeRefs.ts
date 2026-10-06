@@ -116,7 +116,7 @@ export function defaultRuntimeNodeData(
       label: label,
       status: "idle",
       resourceId: `sb_${id}`,
-      config: { provider: "sandbox", permissionMode: "ask" },
+      config: { provider: "lambda", permissionMode: "ask" },
     };
   }
 

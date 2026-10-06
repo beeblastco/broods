@@ -72,7 +72,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
 | `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
 | `policies`          | Policies that gate the agent. Each carries its own mode                                                |
-| `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                               |
+| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                     |
 | `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                           |
 
 ```ts
@@ -231,7 +231,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 
 | Field                  | Default    | Description                                                                                                                    |
 | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`             | `sandbox`  | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`, `custom`                                                           |
+| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`, `custom`                                                           |
 | `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                      |
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |

@@ -22,6 +22,9 @@ export {
   type SandboxProvider,
 } from "./sandboxProviders";
 
+/** The provider a config without one runs on: AWS MicroVM, until `sandbox` has hosts everywhere. */
+export const DEFAULT_SANDBOX_PROVIDER: SandboxProvider = "lambda";
+
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
 export const SANDBOX_PERMISSION_MODES = ["edit", "ask", "bypass"] as const;
 
@@ -154,7 +157,7 @@ export function normalizeSandboxConfig(
 ): SandboxConfig {
   if (value == null) {
     return {
-      provider: "sandbox",
+      provider: DEFAULT_SANDBOX_PROVIDER,
       permissionMode: "ask",
       network: { mode: "deny-all" },
     };
@@ -171,7 +174,7 @@ export function normalizeSandboxConfig(
   }
   const provider =
     assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS) ??
-    "sandbox";
+    DEFAULT_SANDBOX_PROVIDER;
   const fallbackProvider = assertOptionalEnum(
     config.fallbackProvider,
     "config.fallbackProvider",

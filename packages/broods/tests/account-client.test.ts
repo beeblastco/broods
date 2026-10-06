@@ -188,7 +188,7 @@ test("account metadata: update unwraps, delete returns cleanup, rotate returns t
       status: 200,
       body: {
         account: { accountId: "acc_1", username: "renamed", status: "active" },
-        secret: "fp_acct_new",
+        secret: "ask_new",
       },
     },
   ]);
@@ -202,7 +202,7 @@ test("account metadata: update unwraps, delete returns cleanup, rotate returns t
   expect(deleted.cleanup?.agentsDeleted).toBe(2);
 
   const rotated = await client.rotateSecret();
-  expect(rotated.secret).toBe("fp_acct_new");
+  expect(rotated.secret).toBe("ask_new");
   expect(calls[2]?.url).toBe(
     "https://gateway.example.com/v1/account/rotate-secret",
   );
@@ -322,7 +322,7 @@ test("roles: list/create unwrap, assumeRole posts the exchange body", async () =
   });
 });
 
-test("a sessionToken is accepted as the bearer instead of the account secret", async () => {
+test("a sessionToken is accepted as the bearer instead of the account key", async () => {
   const calls: Call[] = [];
   const client = new BroodsAccountClient({
     baseUrl: "https://gateway.example.com",
@@ -416,7 +416,7 @@ test("baseUrl defaults to the managed gateway when option and env var are absent
   const savedBaseUrl = process.env.BROODS_BASE_URL;
   delete process.env.BROODS_BASE_URL;
   try {
-    const client = new BroodsAccountClient({ accountSecret: "fp_acct_test" });
+    const client = new BroodsAccountClient({ accountSecret: "ask_test" });
     expect(client.webhookUrl("acc1", "slack")).toBe(
       "https://gateway.broods.app/v1/webhooks/acc1/slack",
     );

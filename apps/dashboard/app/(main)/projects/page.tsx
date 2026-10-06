@@ -67,7 +67,7 @@ export default function ProjectsPage(): React.JSX.Element {
                 No projects yet
               </p>
               <p className="max-w-sm text-sm text-muted-foreground">
-                A project holds your agents, stages, and deploy keys.
+                A project holds your agents, stages, and project keys.
               </p>
             </div>
             {canWrite && (
@@ -86,6 +86,7 @@ export default function ProjectsPage(): React.JSX.Element {
               <button
                 key={project._id}
                 type="button"
+                aria-label={`Open ${project.name}`}
                 onClick={() => openProject(project._id)}
                 onMouseEnter={() => prefetchProject(project._id)}
                 onFocus={() => prefetchProject(project._id)}

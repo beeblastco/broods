@@ -125,10 +125,10 @@ Details are in [Memory and sessions](memory-and-sessions.md).
 
 | Setting                   | Default | Effect                                                                                                                        |
 | ------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `publicAccess: true`      | off     | The stage runtime key may run this agent. Without it, runtime-key requests get `403 public_access_disabled`.                  |
+| `publicAccess: true`      | off     | The runtime key may run this agent. Without it, runtime-key requests get `403 public_access_disabled`.                        |
 | `allowRunOverrides: true` | off     | A runtime-key caller may send `system` messages and `model` overrides. Without it, the run gets `403 run_overrides_disabled`. |
 
-Channels, cron jobs and callers with the account secret are never gated by these flags. A private agent is still reachable from Slack.
+Channels, cron jobs and callers with the account key are never gated by these flags. A private agent is still reachable from Slack.
 
 ## Harness adapters
 

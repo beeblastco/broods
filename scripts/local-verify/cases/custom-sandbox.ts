@@ -52,7 +52,7 @@ export async function customSandbox(context: VerifyContext): Promise<void> {
 
   // A code sync resolves the ref, so the stored header holds the secret itself.
   const sync = new BroodsSyncClient({
-    baseUrl: context.gatewayUrl,
+    baseUrl: context.edgeUrl,
     token: context.accountSecret,
   });
   const synced = `${key}-synced`;

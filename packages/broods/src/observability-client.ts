@@ -32,10 +32,18 @@ export interface ObservabilitySubscribeOptions {
   // sheet, or `logStream` on the instance row).
   sandboxId?: string;
   signal?: AbortSignal;
+  /** Called before each reconnect, so a terminal can say the tail is down. */
+  onReconnect?: (attempt: number, reason: string) => void;
+  /** Never give up after a minute down, for a tail that lives as long as its session. */
+  keepReconnecting?: boolean;
 }
 
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
+/** How long the stream may stay down before reconnecting gives up. */
+const RECONNECT_GIVE_UP_MS = 60_000;
+/** How long a new socket may wait for the gateway's first answer. */
+const READY_TIMEOUT_MS = 15_000;
 
 /** Resolves after `ms`, or at once when `signal` aborts; never rejects. */
 export function reconnectDelay(
@@ -73,46 +81,74 @@ export function resolveWebSocket(): new (
 /** The server refused to mint a stage credential. Reconnecting cannot fix it. */
 export class StageSessionRefusedError extends Error {}
 
-/** Continuously stream logs, reconnecting transient socket failures until aborted. */
+/**
+ * Continuously stream logs, reconnecting transient socket failures until
+ * aborted. Throws once the stream has been down for a minute.
+ */
 export async function* subscribeObservabilityLogs(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions = {},
 ): AsyncGenerator<ObservabilityLogEntry> {
   const seen = new Set<string>();
   let retryMs = 500;
+  let attempt = 0;
+  let downSince = Date.now();
   while (!subscribeOptions.signal?.aborted) {
+    let live = false;
+    let reason = "the log stream closed";
     try {
       for await (const entry of subscribeObservabilityLogsOnce(
         options,
         subscribeOptions,
+        (): void => {
+          live = true;
+        },
       )) {
         const key = `${entry.ts}|${entry.eventType}|${entry.message}`;
         if (seen.has(key)) continue;
         seen.add(key);
         if (seen.size > 5_000) seen.delete(seen.values().next().value!);
-        retryMs = 500;
         yield entry;
       }
     } catch (error) {
       if (subscribeOptions.signal?.aborted) return;
-      const message = error instanceof Error ? error.message : String(error);
+      reason = error instanceof Error ? error.message : String(error);
       if (
         error instanceof StageSessionRefusedError ||
         /unauthorized|invalid websocket token|scope does not match/i.test(
-          message,
+          reason,
         )
       )
         throw error;
     }
+    if (subscribeOptions.signal?.aborted) return;
+    // A stream that went live was up until now, so the outage starts here.
+    if (live) {
+      retryMs = 500;
+      attempt = 0;
+      downSince = Date.now();
+    }
+    if (
+      !subscribeOptions.keepReconnecting &&
+      Date.now() - downSince >= RECONNECT_GIVE_UP_MS
+    ) {
+      throw new Error(
+        `Gave up reconnecting to the live logs after ${RECONNECT_GIVE_UP_MS / 1000} s. Last error: ${reason}`,
+      );
+    }
+    attempt += 1;
+    subscribeOptions.onReconnect?.(attempt, reason);
     await reconnectDelay(retryMs, subscribeOptions.signal);
     retryMs = Math.min(retryMs * 2, 5_000);
   }
 }
 
 // One socket lifecycle. The exported wrapper above owns reconnect and dedupe.
+// `onLive` fires once the gateway accepts the subscription.
 async function* subscribeObservabilityLogsOnce(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions,
+  onLive: () => void,
 ): AsyncGenerator<ObservabilityLogEntry> {
   const { baseUrl, credential, project, stage } = options;
   const { backfill = 0, minLevel, sandboxId, signal } = subscribeOptions;
@@ -140,7 +176,18 @@ async function* subscribeObservabilityLogsOnce(
     webSocketSubprotocols(await credential()),
   );
 
+  // A socket that opens but never answers would wait forever, out of reach of
+  // the reconnect loop above.
+  const readyTimer = setTimeout((): void => {
+    socketError = new Error(
+      `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
+    );
+    done = true;
+    notify();
+  }, READY_TIMEOUT_MS);
+
   const cleanup = (): void => {
+    clearTimeout(readyTimer);
     if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING) {
       socket.close(1000, "client closed");
     }
@@ -175,6 +222,8 @@ async function* subscribeObservabilityLogsOnce(
   socket.onmessage = (event: MessageEvent): void => {
     const msg = parseServerMessage(event.data);
     if (!msg) return;
+    clearTimeout(readyTimer);
+    if (msg.type !== "error") onLive();
 
     switch (msg.type) {
       case "backfill":
@@ -195,7 +244,7 @@ async function* subscribeObservabilityLogsOnce(
         notify();
         break;
       case "ready":
-        // No-op: the gateway is now live. Nothing to push to the consumer.
+        // The gateway is now live; `onLive` above already recorded it.
         break;
       default:
         break;

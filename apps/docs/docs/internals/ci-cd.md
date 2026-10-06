@@ -15,7 +15,8 @@ flowchart LR
   Dev -->|push| DevDeploys["deploy-convex, deploy,<br/>build-* + rollout"]
   Dev -->|"Promote dev to main"| Main["main branch"]
   Main --> Convex["deploy-convex.yaml"]
-  Convex --> Parallel["deploy, build-core, build-gateway,<br/>build-dashboard, deploy-docs, publish-npm"]
+  Convex --> Parallel["deploy, build-core, build-gateway,<br/>build-dashboard, deploy-docs"]
+  Parallel --> Npm["publish-npm.yaml"]
 ```
 
 ## Workflows
@@ -44,7 +45,7 @@ flowchart LR
 
 `lean-verification`, `validate`, `app-surfaces` and the other required checks on `dev` report on every pull request, so `ci.yaml` has no path filter on `pull_request`. A filtered workflow would never report and a docs-only pull request would wait forever.
 
-Promote dispatches `deploy-convex.yaml` first and waits for it, then `deploy.yaml`, `build-core.yaml`, `build-gateway.yaml`, `build-dashboard.yaml`, `build-discord-forwarder.yaml`, `build-matrix-forwarder.yaml`, `deploy-docs.yaml` and `publish-npm.yaml` in parallel. Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it and promote is what rolls it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked. That serves prod traffic too.
+Promote dispatches `deploy-convex.yaml` first and waits for it, then `deploy.yaml`, `build-core.yaml`, `build-gateway.yaml`, `build-dashboard.yaml`, `build-discord-forwarder.yaml`, `build-matrix-forwarder.yaml` and `deploy-docs.yaml` in parallel, and `publish-npm.yaml` only after every one of them succeeded, so a published SDK never runs ahead of the backend it talks to. Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it and promote is what rolls it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked. That serves prod traffic too.
 
 ## Lean verification
 
@@ -88,7 +89,7 @@ sequenceDiagram
   R->>I: gh run watch until done
 ```
 
-Gateway, dashboard, docs, npm and both forwarders are dispatched in the same parallel step. Only core and the dashboard gate their rollout on prerequisites.
+Gateway, dashboard, docs and both forwarders are dispatched in the same parallel step. Only core and the dashboard gate their rollout on prerequisites. npm is dispatched after that step completes.
 
 ## Deploy stages
 

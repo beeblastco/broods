@@ -123,7 +123,7 @@ export function MountEdge({
           // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
           // and the width goes through xyflow's own variable.
           className={cn(
-            "animate-dashdraw opacity-(--edge-opacity)",
+            "opacity-(--edge-opacity)",
             deleteHover ? "stroke-destructive/90!" : "stroke-canvas-mount/80!",
           )}
           style={{

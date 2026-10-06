@@ -40,7 +40,7 @@ const WORKSPACE_DEFAULT_CONFIG = {
 };
 
 const SANDBOX_DEFAULT_CONFIG = {
-  provider: "sandbox",
+  provider: "lambda",
   permissionMode: "ask",
 };
 
@@ -158,7 +158,7 @@ export function SandboxResourceDetailsTab({
           label="Provider"
           disabled={managedByCode}
           value={
-            typeof config.provider === "string" ? config.provider : "sandbox"
+            typeof config.provider === "string" ? config.provider : "lambda"
           }
           onValueChange={setProvider}
           options={[
