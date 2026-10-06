@@ -2123,11 +2123,9 @@ paths:
                                 roleArn: { type: string }
                                 externalId: { type: string }
                     isolation:
-                      oneOf:
-                        - type: string
-                          enum: [conversation, agent]
-                        - type: boolean
-                      description: "How the workspace splits its files. `conversation` mounts a folder per channel partition, `agent` a folder per attached agent (its own sandbox, S3 prefix and mount session). `true` is accepted as `conversation`. Omit or set false to share the workspace root."
+                      type: string
+                      enum: [conversation, agent]
+                      description: "How the workspace splits its files. `conversation` mounts a folder per channel partition, `agent` a folder per attached agent (its own sandbox, S3 prefix and mount session). Omit to share the workspace root."
                     harness:
                       type: object
                       description: Named harness features, each defaulting to enabled. No top-level enabled flag.
