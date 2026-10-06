@@ -219,3 +219,48 @@ test("project deletion drains cron run history in scheduled batches", async () =
     vi.useRealTimers();
   }
 });
+
+test("project deletion skips a workspace file whose blob is already gone", async () => {
+  const t = convexTest(schema, modules);
+  const { projectId, fileId } = await t.run(async (ctx) => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free",
+      createdAt: now,
+    });
+    const projectId = await ctx.db.insert("projects", {
+      authId: "auth_owner",
+      orgId: orgId,
+      name: "demo-app",
+      slug: "demo-app",
+      updatedAt: now,
+    });
+    const storageId = await ctx.storage.store(new Blob(["# skill"]));
+    const fileId = await ctx.db.insert("workspaceFiles", {
+      authId: "auth_owner",
+      projectId: projectId,
+      nodeId: "node-1",
+      path: "SKILL.md",
+      name: "SKILL.md",
+      isFolder: false,
+      storageId: storageId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.storage.delete(storageId);
+
+    return { projectId: projectId, fileId: fileId };
+  });
+
+  await t.run(async (ctx) => {
+    await purgeProject(ctx, projectId);
+  });
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.get(fileId)).toBeNull();
+    expect(await ctx.db.get(projectId)).toBeNull();
+  });
+});

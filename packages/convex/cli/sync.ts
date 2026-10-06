@@ -77,6 +77,7 @@ import {
   loadEnvironmentVariableValues,
   upsertEnvironmentVariable,
 } from "../model/environmentValues";
+import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
 import { ClientError } from "../model/clientError";
@@ -825,10 +826,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
         q.eq("projectId", resolved.projectDoc._id).eq("nodeId", nodeId),
       )
       .collect();
-    for (const file of existing) {
-      if (file.storageId) await ctx.storage.delete(file.storageId);
-      await ctx.db.delete(file._id);
-    }
+    for (const file of existing) await deleteWorkspaceFile(ctx, file);
 
     const now = Date.now();
     for (const file of args.files) {
