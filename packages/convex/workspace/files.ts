@@ -18,6 +18,7 @@ import {
   query,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { deleteWorkspaceFile } from "../model/cascade";
 import { getProjectForRole } from "../model/ownership/project";
 import {
   claimUploadedBlob,
@@ -311,10 +312,7 @@ export const remove = mutation({
     );
     if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
-    if (file.storageId) {
-      await ctx.storage.delete(file.storageId);
-    }
-    await ctx.db.delete(fileId);
+    await deleteWorkspaceFile(ctx, file);
 
     return null;
   },
@@ -359,10 +357,7 @@ export const removeFolder = mutation({
     for (const doc of descendants) {
       if (doc.path !== folderPath && !doc.path.startsWith(folderPath + "/"))
         continue;
-      if (doc.storageId) {
-        await ctx.storage.delete(doc.storageId);
-      }
-      await ctx.db.delete(doc._id);
+      await deleteWorkspaceFile(ctx, doc);
     }
 
     return null;
