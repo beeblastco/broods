@@ -122,7 +122,7 @@ A judge answer may narrow what the agent does. It may never grant capability the
 | `drop` a message              | un-drop one the policy dropped     |
 | `deny` a tool call            | allow a tool the policy denies     |
 | lower a confidence or a score | approve an action awaiting a human |
-| route to a narrower agent     | widen a subagent's visibility      |
+| block a reply before it sends | widen a subagent's visibility      |
 
 Bounded that way, a manipulated answer costs availability at worst. The agent declines something it would have done. It never does something it could not.
 
