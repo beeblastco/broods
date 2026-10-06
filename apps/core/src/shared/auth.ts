@@ -1,12 +1,12 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (fp_sts_), run token (brt_,
- * minted by core for one agent run), runtime key (sk_, whose lastUsedAt is
- * written here, throttled), and account-key hash lookup (ask_). Each prefix
- * goes straight to its one lookup; any other token tries the runtime key, then
- * the account key, both by hash, which is how a key minted under an earlier
- * prefix keeps working until it is rotated. Persistence is reached via
- * `getStorage()` so the auth path is identical through the Convex-backed store.
+ * server-side actions), assume-role session (bsts_), stage session ticket
+ * (bdts_), run token (brt_, minted by core for one agent run), runtime key
+ * (bsk_, whose lastUsedAt is written here, throttled), and account-key hash
+ * lookup (bask_). Each prefix goes straight to its one lookup; any other
+ * token is refused without one.
+ * Persistence is reached via `getStorage()` so the auth path is identical
+ * through the Convex-backed store.
  */
 
 import {
@@ -46,7 +46,7 @@ export type AuthContext =
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
-      // Set for a member-minted fp_dts_ ticket, unset for the embeddable key.
+      // Set for a member-minted bdts_ ticket, unset for the embeddable key.
       stageTicket?: true;
     }
   | {
@@ -124,11 +124,11 @@ export async function resolveBearerAuth(
   const token = extractBearerToken(headers.authorization);
   if (!token) return null;
 
-  // fp_sts_ is prefix-routed: a role session resolves as a role or not at all.
+  // bsts_ is prefix-routed: a role session resolves as a role or not at all.
   if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
     return await resolveRoleSessionAuth(token);
   }
-  // fp_dts_ likewise: a dashboard stage session is a deployment or nothing.
+  // bdts_ likewise: a dashboard stage session is a deployment or nothing.
   if (token.startsWith(STAGE_SESSION_TICKET_PREFIX)) {
     return await resolveStageSessionAuth(token);
   }
@@ -161,10 +161,7 @@ export async function resolveBearerAuth(
     return await resolveRuntimeKeyAuth(token);
   }
 
-  return (
-    (await resolveRuntimeKeyAuth(token)) ??
-    (await resolveAccountSecretAuth(token, options))
-  );
+  return null;
 }
 
 // Hashing both sides keeps the comparison constant-time regardless of length.
@@ -205,7 +202,7 @@ async function resolveRunTokenAuth(token: string): Promise<AuthContext | null> {
   return { kind: "agent", account: account, agentId: subject.agentId };
 }
 
-/** Resolve an fp_sts_ token to role auth via the config-plane session store. */
+/** Resolve a bsts_ token to role auth via the config-plane session store. */
 async function resolveRoleSessionAuth(
   token: string,
 ): Promise<AuthContext | null> {
@@ -242,7 +239,7 @@ async function resolveRuntimeKeyAuth(
 }
 
 /**
- * Resolve an fp_dts_ ticket the config plane minted for an org member. It is
+ * Resolve a bdts_ ticket the config plane minted for an org member. It is
  * the stage's deployment credential for its lifetime, so it lands on the same
  * `deployment` branch a runtime key does, marked so the embeddable-key limits
  * skip it.

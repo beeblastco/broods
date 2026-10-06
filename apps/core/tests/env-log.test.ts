@@ -11,7 +11,18 @@ import {
   redactWithRunSecrets,
 } from "../src/shared/log.ts";
 import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
+import { sealRunToken } from "../src/shared/run-token.ts";
 
+const BROODS_CREDENTIAL_PREFIXES = [
+  "bsk_",
+  "bask_",
+  "bpdk_",
+  "bcli_",
+  "bcode_",
+  "bsts_",
+  "bdts_",
+  "brt_",
+];
 const ORIGINAL_ENV = { ...process.env };
 const REAL_DATE = Date;
 const FIXED_TIME = "2024-01-02T03:04:05.678Z";
@@ -204,10 +215,12 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
     );
-    expect(redactSensitiveText("BROODS_RUN_TOKEN=brt_aaaa.bbbb_-a next")).toBe(
+    process.env.STAGE_TICKET_SECRET = "run-token-test-secret";
+    const runToken = sealRunToken({ accountId: "acct_1", agentId: "agent_1" });
+    expect(redactSensitiveText(`BROODS_RUN_TOKEN=${runToken} next`)).toBe(
       "BROODS_RUN_TOKEN=[redacted] next",
     );
-    expect(redactSensitiveText("curl sent brt_eyJhIjoxfQ.c2ln twice")).toBe(
+    expect(redactSensitiveText(`curl sent ${runToken} twice`)).toBe(
       "curl sent [redacted] twice",
     );
   });
@@ -233,28 +246,34 @@ describe("logging helpers", () => {
     // The log patterns stay out: prose and a paging url are not credentials.
     const prose = "a basic setup, see https://api.test/items?page=2&token=next";
     expect(redactWithRunSecrets(prose)).toBe(prose);
-    expect(redactWithRunSecrets("key fp_agent_abc123")).toBe("key [redacted]");
+    expect(redactWithRunSecrets(`key bsk_${"a".repeat(43)}`)).toBe(
+      "key [redacted]",
+    );
     // A frame's timestamp stays what JSON.stringify would have written.
     expect(
       redactWithRunSecrets({ timestamp: new Date("2026-01-02T03:04:05Z") }),
     ).toEqual({ timestamp: "2026-01-02T03:04:05.000Z" });
   });
 
-  it("redacts a runtime key under either prefix and leaves other sk_ identifiers", () => {
-    // The minted shape: the prefix plus 43 base64url chars.
-    const runtimeKey = `sk_${"aB3-_xYz".repeat(5)}abc`;
-
-    expect(redactSensitiveText(`run failed for ${runtimeKey} twice`)).toBe(
-      "run failed for [redacted] twice",
+  it("redacts every Broods credential prefix and leaves short identifiers", () => {
+    // The minted shape: the prefix plus 43 base64url chars; signed tickets add a dot.
+    const body = `${"aB3-_xYz".repeat(5)}abc`;
+    for (const prefix of BROODS_CREDENTIAL_PREFIXES) {
+      expect(redactSensitiveText(`run failed for ${prefix}${body} twice`)).toBe(
+        "run failed for [redacted] twice",
+      );
+    }
+    expect(redactSensitiveText(`ticket bdts_${body}.${body} sent`)).toBe(
+      "ticket [redacted] sent",
     );
-    expect(redactSensitiveText("run failed for fp_agent_AbC-1 twice")).toBe(
-      "run failed for [redacted] twice",
+    expect(redactSensitiveText("column bsk_id is null")).toBe(
+      "column bsk_id is null",
     );
-    expect(redactSensitiveText("column sk_id is null")).toBe(
-      "column sk_id is null",
+    expect(redactSensitiveText("role brole_abcdefghijklmnopqrstuvwxyz")).toBe(
+      "role brole_abcdefghijklmnopqrstuvwxyz",
     );
-    expect(redactSensitiveText("job sk_abcdefghijklmnopqrst done")).toBe(
-      "job sk_abcdefghijklmnopqrst done",
+    expect(redactSensitiveText("job bsk_abcdefghijklmnopqrs done")).toBe(
+      "job bsk_abcdefghijklmnopqrs done",
     );
   });
 
@@ -265,7 +284,7 @@ describe("logging helpers", () => {
     const atCut = `${"x".repeat(45)}${secret}${"y".repeat(100)}`;
     const atWindow = `${secret}${"z".repeat(34)}${secret}${"y".repeat(100)}`;
     // A token the patterns match, longer than any literal secret.
-    const atToken = `${"x".repeat(40)} sk_${"a".repeat(43)} ${"y".repeat(100)}`;
+    const atToken = `${"x".repeat(40)} bsk_${"a".repeat(43)} ${"y".repeat(100)}`;
 
     for (const text of [atCut, atWindow, atToken]) {
       const attribute = redactSerialized(text, [secret], 50);

@@ -16,7 +16,7 @@ function principalWith(policy: PolicyDocument): ApiPrincipal {
   return {
     kind: "role",
     accountId: "account-1",
-    roleId: "fp_role_test",
+    roleId: "brole_test",
     policy: policy,
   };
 }

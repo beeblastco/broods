@@ -23,7 +23,7 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
+const ACCOUNT_SECRET = "bask_test-owner-secret";
 const AUTH_ID = "auth_owner";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SINK_SECRET = "whsec_test";

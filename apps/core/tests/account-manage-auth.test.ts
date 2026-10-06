@@ -73,5 +73,7 @@ function deploymentStorage(): Storage {
 }
 
 function event(method: string, rawPath: string): CoreRequest {
-  return coreRequest(method, rawPath, { authorization: "Bearer runtime-key" });
+  return coreRequest(method, rawPath, {
+    authorization: "Bearer bsk_runtime-key",
+  });
 }

@@ -15,9 +15,9 @@ info:
 
     Every core and config-plane response carries `X-Request-Id`. Every non-2xx body from core and the config plane is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and core and config-plane 429s also carry the IETF `RateLimit-*` fields. The edge may also limit requests per client address, and answers its own 429 as plain text with only `Retry-After`.
 
-    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`fp_dts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket, never the runtime key.
+    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket, never the runtime key.
 
-    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`fp_role_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `fp_sts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
+    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
 
 servers:
@@ -62,9 +62,9 @@ tags:
       it to an agent with its own instructions, workspaces, policies and roles.
   - name: Roles
     description: >-
-      Scoped API roles (`fp_role_...`). A role carries a policy over the
+      Scoped API roles (`brole_...`). A role carries a policy over the
       `<resource>:read`/`<resource>:write` API action namespace and is exchanged
-      via assume-role for a short-lived `fp_sts_...` session token.
+      via assume-role for a short-lived `bsts_...` session token.
   - name: Audit
     description: >-
       The account's hash-chained, append-only audit ledger: config mutations,
@@ -258,7 +258,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "401":
-          description: Missing or unknown credential, or one that cannot run agents (a role session `fp_sts_...` or the admin secret)
+          description: Missing or unknown credential, or one that cannot run agents (a role session `bsts_...` or the admin secret)
           content:
             application/json:
               schema:
@@ -374,7 +374,7 @@ paths:
                       type: not_found_error
                       code: run_not_found
         "401":
-          description: Missing or unknown credential, or one that cannot poll runs (a role session `fp_sts_...` or the admin secret)
+          description: Missing or unknown credential, or one that cannot poll runs (a role session `bsts_...` or the admin secret)
           content:
             application/json:
               schema:
@@ -720,7 +720,7 @@ paths:
                       accountId: acct_abc123
                       username: company-a
                       description: Company A account
-                    secret: ask_xyz789...
+                    secret: bask_xyz789...
         "401":
           description: Missing or invalid bearer token
         "403":
@@ -891,7 +891,7 @@ paths:
                       status: active
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
-                    secret: ask_new...
+                    secret: bask_new...
 
   /v1/account:
     get:
@@ -1006,7 +1006,7 @@ paths:
                       status: active
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
-                    secret: ask_new...
+                    secret: bask_new...
 
   /v1/account/connections:
     get:
@@ -1134,9 +1134,9 @@ paths:
       tags: [Roles]
       summary: Assume a role
       description: >-
-        Exchange a role for a short-lived `fp_sts_...` session token. Accepted
-        callers are the account key (`ask_...`), a CLI login token
-        (`fp_cli_...`), and a runtime key (`sk_...`). A runtime
+        Exchange a role for a short-lived `bsts_...` session token. Accepted
+        callers are the account key (`bask_...`), a CLI login token
+        (`bcli_...`), and a runtime key (`bsk_...`). A runtime
         key may only assume roles scoped to its own project/stage. Session
         tokens cannot chain into new sessions. Default TTL 3600 seconds,
         maximum 43200.
@@ -1170,7 +1170,7 @@ paths:
               examples:
                 minted:
                   value:
-                    token: fp_sts_abc...
+                    token: bsts_abc...
                     expiresAt: "2026-05-01T01:00:00.000Z"
         "403":
           description: Role disabled, or not scoped to the caller's stage
@@ -1182,8 +1182,8 @@ paths:
         - Accounts
       summary: Mint a stage session ticket
       description: >-
-        Exchange a CLI login token (`fp_cli_...`) for a fifteen-minute stage
-        session ticket (`fp_dts_...`) on one deployed project stage. `broods
+        Exchange a CLI login token (`bcli_...`) for a fifteen-minute stage
+        session ticket (`bdts_...`) on one deployed project stage. `broods
         logs`, `broods stream`, `broods dev` live logs and `broods machine` use
         it for the observability and machine WebSockets, which refuse the
         runtime key. Mint a new ticket before `expiresAt` to reconnect.
@@ -1228,7 +1228,7 @@ paths:
               examples:
                 minted:
                   value:
-                    token: fp_dts_abc...
+                    token: bdts_abc...
                     expiresAt: 1777597200000
                     projectSlug: demo-app
                     stageSlug: development
@@ -1525,7 +1525,7 @@ paths:
         - Direct API
       summary: Run an agent through its public endpoint
       description: |
-        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the runtime key rather than an account key. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`fp_dts_...`) from a member of the stage's project may run any agent of the stage.
+        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the runtime key rather than an account key. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`bdts_...`) from a member of the stage's project may run any agent of the stage.
 
         A runtime key is safe to embed, so it carries three limits an account key does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
 
@@ -3503,19 +3503,19 @@ components:
       scheme: bearer
       description: >-
         Which credential a route takes depends on the route.
-        The account key (`ask_...`, from account creation or rotation)
+        The account key (`bask_...`, from account creation or rotation)
         works on every account route and on `/v1/runs`; the endpoint-addressed
         run URLs (`POST /v1/agents/{endpointId}` and its scoped form) take only
         a stage credential.
-        A role session token (`fp_sts_...`, minted by
+        A role session token (`bsts_...`, minted by
         `POST /v1/account/assume-role`) works on the config-plane routes,
         limited to its role's policy; it gets 401 on `/v1/runs` and every run
         URL, and role management under `/v1/roles*` refuses it.
-        A runtime key (`sk_...`) works only on `/v1/runs`,
+        A runtime key (`bsk_...`) works only on `/v1/runs`,
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
         config-plane route answers it with 401.
-        A stage session ticket (`fp_dts_...`) runs agents like the runtime key,
+        A stage session ticket (`bdts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
         A run token (`brt_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)

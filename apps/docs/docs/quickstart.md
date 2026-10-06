@@ -38,7 +38,7 @@ The first run:
 ```text
 ✔ Created starter broods/
 ✔ Synced 2 resources to my-agents/development
-✔ Wrote BROODS_API_KEY (sk_…vK8s) to .env.local
+✔ Wrote BROODS_API_KEY (bsk_…vK8s) to .env.local
 ```
 
 The starter agent:

@@ -286,7 +286,7 @@ interface ConnectionStore {
   ): Promise<boolean>;
 }
 
-/** Assume-role sessions, keyed by fp_sts_ token hash. Minted by the config plane. */
+/** Assume-role sessions, keyed by bsts_ token hash. Minted by the config plane. */
 interface RoleSessionStore {
   /** Resolve a live session to its role principal; null when unknown/expired/disabled. */
   resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;

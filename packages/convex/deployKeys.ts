@@ -1,5 +1,5 @@
 /**
- * Project + stage scoped project keys (`pdk_…`) for the `broods` CLI. Unlike
+ * Project + stage scoped project keys (`bpdk_…`) for the `broods` CLI. Unlike
  * the account key (Settings → API Access), a project key authorizes only one
  * project/stage. The plaintext token is returned once at creation; only its
  * SHA-256 hash is stored.
@@ -9,7 +9,11 @@ import { type Infer, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
-import { PROJECT_KEY_PREFIX, sha256Hex } from "./model/accountSecrets";
+import {
+  PROJECT_KEY_PREFIX,
+  randomToken,
+  sha256Hex,
+} from "./model/accountSecrets";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
@@ -63,7 +67,7 @@ export const create = mutation({
       );
     }
 
-    const token = generateDeployToken();
+    const token = randomToken(PROJECT_KEY_PREFIX);
     const keyHash = await sha256Hex(token);
     const now = Date.now();
     const _id = await ctx.db.insert("deployKeys", {
@@ -146,16 +150,4 @@ export const remove = mutation({
 /** Masked label for listing a key without revealing it: prefix + last four chars. */
 function deployKeyHint(token: string): string {
   return `${PROJECT_KEY_PREFIX}…${token.slice(-4)}`;
-}
-
-function generateDeployToken(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const base64url = btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-  return `${PROJECT_KEY_PREFIX}${base64url}`;
 }

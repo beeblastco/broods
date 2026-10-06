@@ -42,7 +42,7 @@ test("org deletion drains account contents in scheduled batches", async () => {
       });
       await ctx.db.insert("accountRoles", {
         accountId: accountId,
-        roleId: "fp_role_test",
+        roleId: "brole_test",
         name: "reader",
         status: "active",
         policy: { version: 1, rules: [] },
