@@ -1,6 +1,6 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (fp_sts_), run token (fp_run_,
+ * server-side actions), assume-role session (fp_sts_), run token (brt_,
  * minted by core for one agent run), runtime key (sk_, whose lastUsedAt is
  * written here, throttled), and account-key hash lookup (ask_). Each prefix
  * goes straight to its one lookup; any other token tries the runtime key, then
@@ -57,7 +57,7 @@ export type AuthContext =
       role: RolePrincipal;
     }
   | {
-      // One agent run, from the fp_run_ token core handed its sandbox. It may
+      // One agent run, from the brt_ token core handed its sandbox. It may
       // only read its own agent's runs; integrations.ts refuses the rest.
       kind: "agent";
       account: AccountRecord;
@@ -132,7 +132,7 @@ export async function resolveBearerAuth(
   if (token.startsWith(STAGE_SESSION_TICKET_PREFIX)) {
     return await resolveStageSessionAuth(token);
   }
-  // fp_run_ likewise: a run token is its agent or nothing.
+  // brt_ likewise: a run token is its agent or nothing.
   if (token.startsWith(RUN_TOKEN_PREFIX)) {
     return await resolveRunTokenAuth(token);
   }
@@ -195,7 +195,7 @@ async function resolveAccountSecretAuth(
   return { kind: "account", account: account };
 }
 
-/** Resolve an fp_run_ token to the agent it was minted for. */
+/** Resolve a brt_ token to the agent it was minted for. */
 async function resolveRunTokenAuth(token: string): Promise<AuthContext | null> {
   const subject = openRunToken(token);
   if (!subject) return null;

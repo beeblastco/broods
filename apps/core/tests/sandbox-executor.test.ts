@@ -2493,7 +2493,7 @@ describe("mergeSandboxEnv with a run principal", () => {
     const principal = {
       accountId: "acct_1",
       agentId: "agent_1",
-      runToken: "fp_run_token",
+      runToken: "brt_token",
       baseUrl: "https://api.example.test",
     };
     expect(
@@ -2507,7 +2507,7 @@ describe("mergeSandboxEnv with a run principal", () => {
       NEW: "1",
       BROODS_ACCOUNT_ID: "acct_1",
       BROODS_AGENT_ID: "agent_1",
-      BROODS_RUN_TOKEN: "fp_run_token",
+      BROODS_RUN_TOKEN: "brt_token",
       BROODS_BASE_URL: "https://api.example.test",
     });
     // Only core sets the names: neither layer plants one where core sets none.
@@ -2522,12 +2522,12 @@ describe("mergeSandboxEnv with a run principal", () => {
       mergeSandboxEnv(planted, undefined, {
         accountId: "acct_1",
         agentId: "agent_1",
-        runToken: "fp_run_token",
+        runToken: "brt_token",
       }),
     ).toEqual({
       BROODS_ACCOUNT_ID: "acct_1",
       BROODS_AGENT_ID: "agent_1",
-      BROODS_RUN_TOKEN: "fp_run_token",
+      BROODS_RUN_TOKEN: "brt_token",
     });
     for (const key of [
       "BROODS_ACCOUNT_ID",

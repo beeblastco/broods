@@ -8,7 +8,7 @@
 import { v, type Infer } from "convex/values";
 
 /** Bearer prefix of the run token core mints for one run. The config plane refuses it. */
-export const RUN_TOKEN_PREFIX = "fp_run_";
+export const RUN_TOKEN_PREFIX = "brt_";
 
 export const principalLinkValidator = v.union(
   v.object({

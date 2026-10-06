@@ -274,7 +274,7 @@ export async function requireSelfAccount(
 }
 
 /**
- * The 401 a run token (`fp_run_`) gets on every config-plane and CLI route,
+ * The 401 a run token (`brt_`) gets on every config-plane and CLI route,
  * on the prefix alone: it is a core credential for one agent run. Null for
  * any other bearer.
  */

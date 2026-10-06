@@ -106,12 +106,12 @@ describe("run token", () => {
       1_000,
       60_000,
     );
-    expect(token.startsWith("fp_run_")).toBe(true);
+    expect(token.startsWith("brt_")).toBe(true);
     expect(openRunToken(token, 60_999)).toEqual(subject);
     expect(
       JSON.parse(
         Buffer.from(
-          token.slice("fp_run_".length).split(".")[0]!,
+          token.slice("brt_".length).split(".")[0]!,
           "base64url",
         ).toString("utf8"),
       ),
@@ -121,13 +121,13 @@ describe("run token", () => {
   it("refuses an expired, tampered, foreign or malformed token", () => {
     const token = sealRunToken(subject, 1_000, 60_000);
     expect(openRunToken(token, 61_000)).toBeNull();
-    const [payload, signature] = token.slice("fp_run_".length).split(".");
+    const [payload, signature] = token.slice("brt_".length).split(".");
     const forged = Buffer.from(
       JSON.stringify({ ...subject, agentId: "agent_2", exp: 61_000 }),
     ).toString("base64url");
-    expect(openRunToken(`fp_run_${forged}.${signature}`, 1)).toBeNull();
-    expect(openRunToken(`fp_run_${payload}.${signature}x`, 1)).toBeNull();
-    expect(openRunToken(`fp_run_${payload}`, 1)).toBeNull();
+    expect(openRunToken(`brt_${forged}.${signature}`, 1)).toBeNull();
+    expect(openRunToken(`brt_${payload}.${signature}x`, 1)).toBeNull();
+    expect(openRunToken(`brt_${payload}`, 1)).toBeNull();
     expect(openRunToken(`fp_dts_${payload}.${signature}`, 1)).toBeNull();
     process.env.STAGE_TICKET_SECRET = "rotated";
     expect(openRunToken(token, 1)).toBeNull();

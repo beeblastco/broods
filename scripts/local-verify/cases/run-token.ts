@@ -7,7 +7,7 @@ interface Answer {
 }
 
 /**
- * A run token (`fp_run_`) is a core credential for one agent run. The config
+ * A run token (`brt_`) is a core credential for one agent run. The config
  * plane refuses the prefix outright and core refuses one it did not sign. A
  * genuine one reads its own agent's run, and is refused another agent's run
  * and starting a run of its own.
@@ -31,7 +31,7 @@ export async function runToken(context: VerifyContext): Promise<void> {
 
     return { status: response.status, body: await response.text() };
   };
-  const forged = "fp_run_e30.forged";
+  const forged = "brt_e30.forged";
 
   const config = await context.measure("run token on config plane", () =>
     send("GET", "/v1/agents", forged),

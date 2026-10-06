@@ -1,5 +1,5 @@
 /**
- * Run tokens (`fp_run_…`): a stateless HMAC-signed bearer for one agent run,
+ * Run tokens (`brt_…`): a stateless HMAC-signed bearer for one agent run,
  * handed to its sandbox code so it can read that agent's runs.
  * Signed with a key HKDF-derived from STAGE_TICKET_SECRET under its own info
  * string, so a run token can never open a stage ticket or the reverse. Core

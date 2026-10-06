@@ -359,7 +359,7 @@ export class Session {
     this.persist = options.persist ?? true;
   }
 
-  /** The identity a sandbox exec runs with. Its `fp_run_` bearer is minted on first use, so a run with no exec never signs one. */
+  /** The identity a sandbox exec runs with. Its `brt_` bearer is minted on first use, so a run with no exec never signs one. */
   sandboxPrincipal(): SandboxRunPrincipal | undefined {
     if (!this.principal) return undefined;
     this.mintedRunToken ??= sealRunToken(this.principal);

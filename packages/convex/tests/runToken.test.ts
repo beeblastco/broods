@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * A run token (`fp_run_`) is a core credential for one agent run: the config
+ * A run token (`brt_`) is a core credential for one agent run: the config
  * plane and the CLI routes refuse it on the prefix alone.
  */
 
@@ -18,7 +18,7 @@ test("refuses a run token on the config plane and the CLI routes", async () => {
     "/v1/account/projects/demo/stages/development/manifest",
   ]) {
     const response = await t.fetch(path, {
-      headers: { Authorization: "Bearer fp_run_abc.def" },
+      headers: { Authorization: "Bearer brt_abc.def" },
     });
     expect(response.status, path).toBe(401);
     expect(await response.json(), path).toMatchObject({

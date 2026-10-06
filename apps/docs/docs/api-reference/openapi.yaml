@@ -3506,7 +3506,7 @@ components:
         A stage session ticket (`fp_dts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
-        A run token (`fp_run_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)
+        A run token (`brt_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)
         works only on `GET /v1/runs/{runId}` for its own agent's runs. Starting
         a run with it is not enabled yet: `POST /v1/runs` and every other run
         route answer 403 `run_token_scope`, and every config-plane route

@@ -2563,7 +2563,7 @@ describe("run token (auth kind agent)", () => {
   it("starts no run: POST /v1/runs is refused, its own agent included", async () => {
     const handled: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(
-      createEvent(USER_TURN, { authorization: "Bearer fp_run_x" }),
+      createEvent(USER_TURN, { authorization: "Bearer brt_x" }),
       createHandlers({
         handleDirectRequest: async (event) => {
           handled.push(event);
@@ -2626,7 +2626,7 @@ describe("run token (auth kind agent)", () => {
     const own = await routeIncomingEvent(
       createEvent(
         undefined,
-        { authorization: "Bearer fp_run_x" },
+        { authorization: "Bearer brt_x" },
         {
           method: "GET",
           rawPath: `/v1/runs/${TEST_RUN_ID}`,
@@ -2642,7 +2642,7 @@ describe("run token (auth kind agent)", () => {
     const other = await routeIncomingEvent(
       createEvent(
         undefined,
-        { authorization: "Bearer fp_run_x" },
+        { authorization: "Bearer brt_x" },
         {
           method: "GET",
           rawPath: `/v1/runs/${TEST_RUN_ID}`,
@@ -2671,7 +2671,7 @@ describe("run token (auth kind agent)", () => {
     const endpoint = await routeIncomingEvent(
       createEvent(
         USER_TURN,
-        { authorization: "Bearer fp_run_x" },
+        { authorization: "Bearer brt_x" },
         {
           rawPath: "/v1/agents/env-endpoint",
         },

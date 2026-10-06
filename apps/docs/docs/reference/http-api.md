@@ -19,7 +19,7 @@ Every request sends `Authorization: Bearer <credential>`.
 | `/v1/*` config routes                              | Account key, or a role session within its policy      |
 | Logs and traces socket                             | Stage session ticket only. The runtime key is refused |
 
-The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`fp_run_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
+The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`brt_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
 
 ### Calling the API from a sandbox
 
