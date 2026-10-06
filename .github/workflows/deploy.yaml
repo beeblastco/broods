@@ -292,8 +292,11 @@ jobs:
               return 0
             fi
             local worker bundles
-            worker="$(jq -r .cloudflareMcpWorkerName .sst/outputs.json)"
-            bundles="$(jq -r .toolBundlesBucketName .sst/outputs.json)"
+            if ! worker="$(jq -er .cloudflareMcpWorkerName .sst/outputs.json)" ||
+              ! bundles="$(jq -er .toolBundlesBucketName .sst/outputs.json)"; then
+              echo "::warning::SST outputs missing for $target_stage; Cloudflare MCP runtime not deployed"
+              return 0
+            fi
             if ! (cd ../cloudflare-mcp &&
               { bunx wrangler r2 bucket info broods-mcp-bundles >/dev/null 2>&1 ||
                 bunx wrangler r2 bucket create broods-mcp-bundles; } &&

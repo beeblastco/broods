@@ -33,13 +33,6 @@ If the bundle fails to load on Cloudflare, or the runtime cannot be reached at a
 
 A Cloudflare call is billed like a Lambda call: one request per batch, plus the batch's wall time at the hosted MCP rate. The Compute panel shows no CPU figure for these calls, because the runtime does not report one.
 
-## Running it on a self-hosted deployment
+## Self-hosted deployments
 
-The runtime is `apps/cloudflare-mcp`, a Worker with a `LOADER` [Worker Loader](https://developers.cloudflare.com/dynamic-workers/) binding. Dynamic Workers needs a Workers Paid plan.
-
-1. Create the R2 bucket `broods-mcp-bundles` (the `BUNDLES` binding), ideally with a 30-day expiry rule.
-2. Set the Worker secret `MCP_API_KEY` and the var `BUNDLE_ORIGIN`: the exact `https://` origin of your tool-bundles S3 bucket's presigned URLs.
-3. Deploy the Worker with Wrangler.
-4. Set core's `CLOUDFLARE_MCP_URL` to `https://<worker-host>/mcp` and `CLOUDFLARE_MCP_API_KEY` to the same secret.
-
-Until `CLOUDFLARE_MCP_URL` is set, every server runs on Lambda.
+A self-hosted Broods runs every server on Lambda until it deploys the Cloudflare runtime. See [self-hosting](../internals/self-hosting.md#cloudflare-mcp-runtime-optional).

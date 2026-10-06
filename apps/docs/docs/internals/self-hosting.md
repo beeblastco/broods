@@ -216,6 +216,17 @@ Run these only for Discord or Matrix agents. Each is one release for every Conve
 
 Run each with one replica and `strategy: Recreate`.
 
+### Cloudflare MCP runtime (optional)
+
+Runs [hosted MCP servers on Cloudflare Workers](../guides/cloudflare-mcp.md). The runtime is `apps/cloudflare-mcp`, a Worker with a `LOADER` [Worker Loader](https://developers.cloudflare.com/dynamic-workers/) binding. Dynamic Workers needs a Workers Paid plan.
+
+1. Create the R2 bucket `broods-mcp-bundles` (the `BUNDLES` binding), ideally with a 30-day expiry rule.
+2. Set the Worker secret `MCP_API_KEY` and the var `BUNDLE_ORIGIN`: the exact `https://` origin of your tool-bundles S3 bucket's presigned URLs.
+3. Deploy the Worker with Wrangler.
+4. Set core's `CLOUDFLARE_MCP_URL` to `https://<worker-host>/mcp` and `CLOUDFLARE_MCP_API_KEY` to the same secret.
+
+Until `CLOUDFLARE_MCP_URL` is set, every server runs on Lambda.
+
 ## 5. Create an account
 
 With the dashboard, sign in and the account is provisioned for your organization. Without it, create one with the admin secret:
