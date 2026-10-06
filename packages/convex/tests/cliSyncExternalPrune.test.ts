@@ -26,7 +26,7 @@ vi.mock("../model/skills", async (importOriginal) => ({
 const modules = import.meta.glob("../**/*.ts");
 
 const PROJECT = "prune-external";
-const SECRET = "fp_secret_prune_external";
+const SECRET = "bask_secret_prune_external";
 const STAGE = "development";
 const OTHER_STAGE = "production";
 

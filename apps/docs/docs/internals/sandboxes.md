@@ -14,6 +14,13 @@ Every sandbox tool (`bash`, `read`, `write`, `edit`, `glob`, `grep`) compiles to
 | `e2b`     | `e2b-executor.ts`     | E2B                                                |
 | `vercel`  | `vercel-executor.ts`  | `@vercel/sandbox`, loaded lazily                   |
 | `machine` | `machine-executor.ts` | The `broods machine` daemon over `/v1/machines/ws` |
+| `custom`  | `http-executor.ts`    | The account's own server on `POST <endpoint>/exec` |
+
+`index.ts` holds the registry: `EXECUTORS`, a record from provider name to executor factory. The provider names are `SANDBOX_PROVIDERS` in `packages/convex/model/sandboxProviders.ts`, the one list the Convex validator, core's `SandboxProvider` type and the SDK derive from, and the record's key type fails the build when a name has no factory. `STATELESS_SANDBOX_PROVIDERS` beside it (`machine`, `custom`) is what the fallback, workspace and sizing rules refuse. The exec wire contract the MicroVM image and a custom server share is `SandboxExecRequest` / `SandboxExecResponse` in `src/shared/domain/sandbox-config.ts`; `parseExecResponse` and `execRunResult` in `utils.ts` turn that answer into a run result.
+
+### Contribute a provider
+
+One file plus one line. Write `src/harness/sandbox/<name>-executor.ts` implementing `SandboxExecutor` from `types.ts` (`run` is the only required method; reservation, jobs and lifecycle are optional and feature-detected), add the name to `SANDBOX_PROVIDERS`, then in `index.ts` import the file and add `<name>: (config) => new YourExecutor(config)` to `EXECUTORS`; the build fails until you do. The explicit import is what pulls the file into the compiled binary. A provider Broods never reserves also goes in `STATELESS_SANDBOX_PROVIDERS`. Validation for the provider's options goes in `sandboxRules.ts` beside the others, and `runsOnOwnCredentials` in `src/shared/workspaces.ts` says whether the platform meters it.
 
 Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 30 s and caps at 600 s, set by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`. `outputLimitBytes` defaults to 64 KiB and caps at 256 KiB, set by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. Every executor truncates stdout and stderr to it. `memoryLimit` caps at 8192 MB on `lambda`. A blocking call also stays inside the request budget, `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`, 10 minutes by default. Background jobs are bound by neither.
 
@@ -27,8 +34,9 @@ Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 
 | `e2b`     | not wired, rejected                                 | native pause/resume              | native launch and callback, no live logs or stop |
 | `vercel`  | not wired, rejected                                 | named persistent sandbox         | yes, with live logs and stop                     |
 | `machine` | not supported, rejected                             | no                               | no                                               |
+| `custom`  | not supported, rejected                             | no                               | no                                               |
 
-`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. Validation refuses a fallback equal to `provider`, a `machine` fallback, and any fallback on a `persistent` config.
+`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. Validation refuses a fallback equal to `provider`, a `machine` or `custom` fallback, and any fallback on a `persistent` config.
 
 Per-call `envVars` go through `mergeSandboxEnv()` in `utils.ts`, which drops the `RESERVED_SANDBOX_ENV_KEYS`. Those are `BASH_ENV`, `ENV`, `HOME`, `LD_AUDIT`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `LOGNAME`, `NODE_OPTIONS`, `PATH`, `PROMPT_COMMAND`, `PYTHONHOME`, `PYTHONPATH`, `PYTHONSTARTUP`, `SHELL`, `TMPDIR`, `USER` and the `__CB_*` job-callback slots. Account `config.envVars` is not filtered.
 
@@ -99,7 +107,21 @@ There is no API to promote a running VM into a new image, so the dashboard's Cre
 
 - Child processes start from `env_clear()`. That clears the environment, not IMDS. Code in the VM can read the MicroVM execution role from the metadata address on any network mode. The role is limited to writing CloudWatch logs in this stage's MicroVM group. It can create a stream named after another tenant, which is why the log forwarder labels only stream names core signed. See [observability](observability.md#sandbox-output).
 - Persistent VMs attach the AWS-managed `HTTP_INGRESS` and `SHELL_INGRESS` connectors at `RunMicrovm`, the second for the dashboard terminal. Connectors cannot be added to a live VM, so instances reserved before the feature must be terminated and re-reserved; the terminal route fails with that hint.
-- The in-VM mount directory uses the base namespace by design. Reservation, endpoint cache and S3 prefix key on the full namespace, so one VM holds one workspace.
+- The in-VM mount directory uses the base namespace by design. Reservation, endpoint cache and S3 prefix key on the full namespace, so one VM holds one workspace folder.
+
+### Isolation levels
+
+A workspace record's `isolation` decides the namespace a run mounts, derived in `src/shared/workspaces.ts` (`isolatedWorkspaceNamespace`). The full namespace is the sandbox reservation key, the S3 key prefix and the scope of the mount's STS session policy, so each level below is its own VM, its own prefix and its own credentials.
+
+| Level          | Namespace                             | Who shares it                                   |
+| -------------- | ------------------------------------- | ----------------------------------------------- |
+| unset          | `fs-<hash(account:workspace)>`        | every agent and conversation on the workspace   |
+| `conversation` | `<base>/<alias>/<hash(conversation)>` | one conversation, per the channel's `partition` |
+| `agent`        | `<base>/agent/<hash(agentId)>`        | one agent, across all of its conversations      |
+
+The API and SDK still accept `true` and store it as `conversation`. A row written before the levels existed holds `true`: run `bunx convex run migrations:workspaceIsolationLevels` once on every deployment after the deploy that adds the levels, and until it has run core reads a stored `true` as `conversation`. The folders stay under the base prefix, so a workspace purge, the storage meter and reserved-instance teardown by namespace prefix still cover them; nothing enumerates agents.
+
+A mount session minted for a sandbox names who it serves. On an `agent` level mount that is the agent. A shared or `conversation` mount outlives one run's credentials and the next agent on the same sandbox reuses them, so it names the account. `assumeScopedMountCredentials` in `s3-mount.ts` sets `RoleSessionName` to `fp-sandbox-mount-<agentId>`, or `fp-sandbox-mount-acct-<accountId>` for an account-level session, on every role, and on the platform `sandbox-s3mount` role also `SourceIdentity` with the same identity plus the session tag `broods:account`, and `broods:agent` when the session names an agent. CloudTrail then ties each S3 call to an account, and to one agent on an `agent` level mount. The role trusts only the `core-runtime` user and grants it `sts:SetSourceIdentity` and `sts:TagSession`; a bring-your-own role gets the session name only, since its trust policy is the account's. The service-managed read-only mount of a workspace with no sandbox has no sandbox record to take the account from, so its session keeps the plain `fp-sandbox-mount` name.
 
 ## Harness adapters
 

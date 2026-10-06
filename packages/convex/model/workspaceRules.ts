@@ -12,6 +12,11 @@ import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
+import {
+  WORKSPACE_ISOLATION_LEVELS,
+  type WorkspaceIsolation,
+  workspaceIsolationInput,
+} from "./workspaceIsolation";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
@@ -56,9 +61,15 @@ export interface WorkspaceStorageConfig {
   auth?: WorkspaceStorageAuth;
 }
 
+/** What the API accepts: the boolean spelling of isolation is stored as its level. */
+export type WorkspaceConfigInput = Omit<WorkspaceConfig, "isolation"> & {
+  isolation?: WorkspaceIsolation | boolean;
+};
+
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
-  isolation?: boolean;
+  // Stored as the level; read it with workspaceIsolation().
+  isolation?: WorkspaceIsolation;
   // Named harness features, each with its own options (no top-level enabled):
   // workspace = the <workspace> prompt, memory = structured memory.
   harness?: {
@@ -96,8 +107,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   const config = value;
   const storage = normalizeWorkspaceStorage(config.storage);
-  assertOptionalBoolean(config.isolation, "config.isolation");
-  const isolation = config.isolation as boolean | undefined;
+  const isolation = normalizeWorkspaceIsolation(config.isolation);
 
   let harness:
     | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
@@ -124,7 +134,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   return {
     storage: storage,
-    ...(isolation === true ? { isolation: true } : {}),
+    ...(isolation ? { isolation: isolation } : {}),
     ...(harness ? { harness: harness } : {}),
   };
 }
@@ -342,6 +352,18 @@ function normalizeHarnessFeature(
 
   // Features default to on: `enabled: true` normalizes away to the omitted form.
   return value.enabled === false ? { enabled: false } : undefined;
+}
+
+// Accepts the two levels plus the boolean form; `true` is stored as its level.
+function normalizeWorkspaceIsolation(
+  value: unknown,
+): WorkspaceIsolation | undefined {
+  if (value === undefined || value === false) return undefined;
+  if (value !== true) {
+    assertOptionalEnum(value, "config.isolation", WORKSPACE_ISOLATION_LEVELS);
+  }
+
+  return workspaceIsolationInput(value);
 }
 
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {

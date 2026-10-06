@@ -16,10 +16,7 @@ import {
   normalizeCreateAccountInput,
   type AccountRecord,
 } from "../domain/accounts.ts";
-import {
-  decodeStoredAgentConfig,
-  decodeStoredConfigObject,
-} from "../domain/agent-config.ts";
+import type { AgentConfig } from "../domain/agent-config.ts";
 import type { PolicyRecord } from "../domain/policy.ts";
 import type { AgentRecord } from "../domain/agents.ts";
 import type {
@@ -42,7 +39,9 @@ import type {
   StoredConnection,
 } from "../storage.ts";
 import { budgets } from "./budgets.ts";
+import { decryptAccountBlob } from "./account-keys.ts";
 import { getConvexClient } from "./client.ts";
+import { auditLedger } from "./audit-ledger.ts";
 import { taskUsage } from "./usage.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
@@ -93,17 +92,17 @@ interface ConvexAgentDoc {
   updatedAt: number;
 }
 
-function agentFromConvex(doc: ConvexAgentDoc | null): AgentRecord | null {
+async function agentFromConvex(
+  doc: ConvexAgentDoc | null,
+): Promise<AgentRecord | null> {
   if (!doc) return null;
   const config =
     doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
-      ? decodeStoredAgentConfig({
-          encrypted: true as const,
-          algorithm: "aes-256-gcm",
+      ? ((await decryptAccountBlob(doc.accountId, "agents:encryptedConfig", {
           ciphertext: doc.encryptedConfig,
           iv: doc.encryptionIv,
           tag: doc.encryptionTag,
-        })
+        })) as AgentConfig)
       : {};
 
   return {
@@ -232,7 +231,7 @@ const agents: Storage["agents"] = {
       agentId: agentId,
     });
 
-    return agentFromConvex(doc as ConvexAgentDoc | null);
+    return await agentFromConvex(doc as ConvexAgentDoc | null);
   },
   listForEndpoint: async function (accountId, endpointId) {
     const docs = (await getConvexClient().query(
@@ -243,7 +242,9 @@ const agents: Storage["agents"] = {
       },
     )) as ConvexAgentDoc[];
 
-    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
+    return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
+      (record) => record !== null,
+    );
   },
   listForProduction: async function (accountId) {
     const docs = (await getConvexClient().query(
@@ -251,7 +252,9 @@ const agents: Storage["agents"] = {
       { accountId: accountId },
     )) as ConvexAgentDoc[];
 
-    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
+    return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
+      (record) => record !== null,
+    );
   },
   removeAllForAccount: async function (accountId) {
     const docs = (await getConvexClient().query(internal.agent.agents.list, {
@@ -401,19 +404,21 @@ interface ConvexSandboxConfigDoc {
   updatedAt: number;
 }
 
-function sandboxConfigFromConvex(
+async function sandboxConfigFromConvex(
   doc: ConvexSandboxConfigDoc | null,
-): SandboxConfigRecord | null {
+): Promise<SandboxConfigRecord | null> {
   if (!doc) return null;
   const config =
     doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
-      ? (decodeStoredConfigObject({
-          encrypted: true as const,
-          algorithm: "aes-256-gcm",
-          ciphertext: doc.encryptedConfig,
-          iv: doc.encryptionIv,
-          tag: doc.encryptionTag,
-        }) as unknown as SandboxConfig)
+      ? ((await decryptAccountBlob(
+          doc.accountId,
+          "sandboxConfigs:encryptedConfig",
+          {
+            ciphertext: doc.encryptedConfig,
+            iv: doc.encryptionIv,
+            tag: doc.encryptionTag,
+          },
+        )) as unknown as SandboxConfig)
       : ({
           provider: "sandbox",
           permissionMode: "ask",
@@ -554,14 +559,16 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
       },
     );
 
-    return sandboxConfigFromConvex(doc as ConvexSandboxConfigDoc | null);
+    return await sandboxConfigFromConvex(doc as ConvexSandboxConfigDoc | null);
   },
   list: async function (accountId) {
     const docs = (await getConvexClient().query(internal.sandbox.configs.list, {
       accountId: accountId,
     })) as ConvexSandboxConfigDoc[];
 
-    return docs.map((d) => sandboxConfigFromConvex(d)!).filter(Boolean);
+    return (
+      await Promise.all(docs.map((doc) => sandboxConfigFromConvex(doc)))
+    ).filter((record) => record !== null);
   },
   removeAllForAccount: async function (accountId) {
     const docs = (await getConvexClient().query(internal.sandbox.configs.list, {
@@ -847,6 +854,7 @@ const roleSessions: Storage["roleSessions"] = {
 };
 
 export const convexStorage: Storage = {
+  auditLedger: auditLedger,
   accounts: accounts,
   agents: agents,
   budgets: budgets,

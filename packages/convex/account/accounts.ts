@@ -142,6 +142,7 @@ export const update = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     status: v.optional(statusValidator),
     secretHash: v.optional(v.string()),
+    auditRetentionDays: v.optional(v.union(v.number(), v.null())),
   },
   returns: v.union(accountDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
@@ -155,6 +156,9 @@ export const update = internalMutation({
       ...(patch.username !== undefined && { username: patch.username }),
       ...(patch.description !== undefined && {
         description: patch.description ?? undefined,
+      }),
+      ...(patch.auditRetentionDays !== undefined && {
+        auditRetentionDays: patch.auditRetentionDays ?? undefined,
       }),
       ...(patch.status !== undefined && { status: patch.status }),
       ...(patch.secretHash !== undefined && { secretHash: patch.secretHash }),

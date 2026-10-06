@@ -15,9 +15,9 @@ info:
 
     Every core and config-plane response carries `X-Request-Id`. Every non-2xx body from core and the config plane is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and core and config-plane 429s also carry the IETF `RateLimit-*` fields. The edge may also limit requests per client address, and answers its own 429 as plain text with only `Retry-After`.
 
-    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`fp_dts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket, never the runtime key.
+    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket, never the runtime key.
 
-    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`fp_role_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `fp_sts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
+    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
 
 servers:
@@ -62,9 +62,14 @@ tags:
       it to an agent with its own instructions, workspaces, policies and roles.
   - name: Roles
     description: >-
-      Scoped API roles (`fp_role_...`). A role carries a policy over the
+      Scoped API roles (`brole_...`). A role carries a policy over the
       `<resource>:read`/`<resource>:write` API action namespace and is exchanged
-      via assume-role for a short-lived `fp_sts_...` session token.
+      via assume-role for a short-lived `bsts_...` session token.
+  - name: Audit
+    description: >-
+      The account's hash-chained, append-only audit ledger: config mutations,
+      run lifecycle and enforced tool denials. Read it by `seq`, verify the
+      chain, and export it to one signed webhook sink.
 
 paths:
   # checkov:skip=CKV_OPENAPI_21:Request arrays are bounded by core's and the config plane's body caps. Lists page with limit or cursor; with neither they return the whole collection, by design.
@@ -220,12 +225,18 @@ paths:
                       type: invalid_request_error
                       code: budget_exhausted
         "403":
-          description: Agent has not opted into public access (secure by default), or a runtime key sent run overrides the agent does not allow
+          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, or the credential is a run token, which does not start runs yet
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token may only GET /v1/runs/{runId} for agent agent_...'s runs. Starting runs with a run token is not enabled yet."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
@@ -247,7 +258,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "401":
-          description: Missing or unknown credential, or one that cannot run agents (a role session `fp_sts_...` or the admin secret)
+          description: Missing or unknown credential, or one that cannot run agents (a role session `bsts_...` or the admin secret)
           content:
             application/json:
               schema:
@@ -331,12 +342,18 @@ paths:
                     status: failed
                     error: Model provider returned 503
         "403":
-          description: Deployment-key caller polling an agent that has not opted into public access
+          description: Deployment-key caller polling an agent that has not opted into public access, or a run token reading a run of another agent
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token may only GET /v1/runs/{runId} for agent agent_...'s runs. Starting runs with a run token is not enabled yet."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
@@ -357,7 +374,7 @@ paths:
                       type: not_found_error
                       code: run_not_found
         "401":
-          description: Missing or unknown credential, or one that cannot poll runs (a role session `fp_sts_...` or the admin secret)
+          description: Missing or unknown credential, or one that cannot poll runs (a role session `bsts_...` or the admin secret)
           content:
             application/json:
               schema:
@@ -703,7 +720,7 @@ paths:
                       accountId: acct_abc123
                       username: company-a
                       description: Company A account
-                    secret: ask_xyz789...
+                    secret: bask_xyz789...
         "401":
           description: Missing or invalid bearer token
         "403":
@@ -874,7 +891,7 @@ paths:
                       status: active
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
-                    secret: ask_new...
+                    secret: bask_new...
 
   /v1/account:
     get:
@@ -912,6 +929,15 @@ paths:
                   type: string
                 description:
                   type: string
+                auditRetentionDays:
+                  type: [integer, "null"]
+                  minimum: 1
+                  maximum: 3650
+                  description: >-
+                    Days an audit ledger row is kept. With a sink, a row it has
+                    not exported yet stays past that. `null` returns to the
+                    default of 90. A role needs `audit:write` as well as
+                    `account:write` to set it.
             examples:
               updateDescription:
                 value:
@@ -980,7 +1006,7 @@ paths:
                       status: active
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
-                    secret: ask_new...
+                    secret: bask_new...
 
   /v1/account/connections:
     get:
@@ -1108,9 +1134,9 @@ paths:
       tags: [Roles]
       summary: Assume a role
       description: >-
-        Exchange a role for a short-lived `fp_sts_...` session token. Accepted
-        callers are the account key (`ask_...`), a CLI login token
-        (`fp_cli_...`), and a runtime key (`sk_...`). A runtime
+        Exchange a role for a short-lived `bsts_...` session token. Accepted
+        callers are the account key (`bask_...`), a CLI login token
+        (`bcli_...`), and a runtime key (`bsk_...`). A runtime
         key may only assume roles scoped to its own project/stage. Session
         tokens cannot chain into new sessions. Default TTL 3600 seconds,
         maximum 43200.
@@ -1144,7 +1170,7 @@ paths:
               examples:
                 minted:
                   value:
-                    token: fp_sts_abc...
+                    token: bsts_abc...
                     expiresAt: "2026-05-01T01:00:00.000Z"
         "403":
           description: Role disabled, or not scoped to the caller's stage
@@ -1156,8 +1182,8 @@ paths:
         - Accounts
       summary: Mint a stage session ticket
       description: >-
-        Exchange a CLI login token (`fp_cli_...`) for a fifteen-minute stage
-        session ticket (`fp_dts_...`) on one deployed project stage. `broods
+        Exchange a CLI login token (`bcli_...`) for a fifteen-minute stage
+        session ticket (`bdts_...`) on one deployed project stage. `broods
         logs`, `broods stream`, `broods dev` live logs and `broods machine` use
         it for the observability and machine WebSockets, which refuse the
         runtime key. Mint a new ticket before `expiresAt` to reconnect.
@@ -1202,7 +1228,7 @@ paths:
               examples:
                 minted:
                   value:
-                    token: fp_dts_abc...
+                    token: bdts_abc...
                     expiresAt: 1777597200000
                     projectSlug: demo-app
                     stageSlug: development
@@ -1499,7 +1525,7 @@ paths:
         - Direct API
       summary: Run an agent through its public endpoint
       description: |
-        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the runtime key rather than an account key. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`fp_dts_...`) from a member of the stage's project may run any agent of the stage.
+        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the runtime key rather than an account key. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`bdts_...`) from a member of the stage's project may run any agent of the stage.
 
         A runtime key is safe to embed, so it carries three limits an account key does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
 
@@ -1652,9 +1678,18 @@ paths:
                     provider:
                       {
                         type: string,
-                        enum: [sandbox, lambda, e2b, daytona, vercel, machine],
+                        enum:
+                          [
+                            sandbox,
+                            lambda,
+                            e2b,
+                            daytona,
+                            vercel,
+                            machine,
+                            custom,
+                          ],
                         default: lambda,
-                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
+                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec), stateless and on your compute, so never metered; see the Your own server guide for what it refuses.",
                       }
                     network:
                       type: object
@@ -1700,7 +1735,7 @@ paths:
                       {
                         type: string,
                         enum: [sandbox, lambda, e2b, daytona, vercel],
-                        description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
+                        description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine or custom. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:
                       type: object
@@ -1743,7 +1778,7 @@ paths:
                     options:
                       {
                         type: object,
-                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account.",
+                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers).",
                       }
             examples:
               lambda:
@@ -2094,8 +2129,11 @@ paths:
                                 roleArn: { type: string }
                                 externalId: { type: string }
                     isolation:
-                      type: boolean
-                      description: Enables hierarchical workspace folders. Omit or set false to share the workspace root.
+                      oneOf:
+                        - type: string
+                          enum: [conversation, agent]
+                        - type: boolean
+                      description: "How the workspace splits its files. `conversation` mounts a folder per channel partition, `agent` a folder per attached agent (its own sandbox, S3 prefix and mount session). `true` is accepted as `conversation`. Omit or set false to share the workspace root."
                     harness:
                       type: object
                       description: Named harness features, each defaulting to enabled. No top-level enabled flag.
@@ -2114,7 +2152,7 @@ paths:
               notes:
                 value:
                   name: notes
-                  config: { storage: { provider: s3 }, isolation: true }
+                  config: { storage: { provider: s3 }, isolation: conversation }
               ownBucket:
                 value:
                   name: reports
@@ -2878,6 +2916,135 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /v1/audit:
+    get:
+      tags: [Audit]
+      summary: List audit events
+      description: >-
+        Ledger rows with `seq` greater than `since`, oldest first. Every row
+        carries the hash of the row before it, so a reader that keeps the last
+        `hash` it saw can verify each page as it arrives. `head` is the chain
+        tip at the time of the read. Account secret, or a role with
+        `audit:read`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: Return rows after this `seq`. Defaults to 0, the whole kept ledger.
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          required: false
+          description: Rows per page, 1 to 500. Defaults to 100.
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Audit page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400": { description: A malformed `since` or `limit` }
+  /v1/audit/verify:
+    get:
+      tags: [Audit]
+      summary: Verify the audit chain
+      description: >-
+        Recomputes every row's hash and link over `[fromSeq, toSeq]`, from the
+        oldest kept row by default, at most 1000 rows per call. `ok` covers
+        only `checkedFrom` to `checkedTo`; on a longer ledger call again with
+        `fromSeq` set to `checkedTo + 1`. A row missing at the start of the
+        range reports at its `seq`. Without `toSeq` the last row must also
+        match the chain head, so a dropped tail reports at the first missing
+        `seq`. Pruned rows below the oldest kept row are not an error: that
+        row's own hash still pins its `prevHash`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: fromSeq
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+        - name: toSeq
+          in: query
+          required: false
+          description: Must not be less than `fromSeq`.
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: >-
+            Verification result. `checkedFrom` and `checkedTo` are absent when
+            the range holds no rows, so nothing was recomputed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditVerification"
+        "400":
+          { description: A bound below 1, or `fromSeq` greater than `toSeq` }
+  /v1/audit/sink:
+    get:
+      tags: [Audit]
+      summary: Get the audit sink
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The account's sink
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditSink"
+        "404": { description: No sink configured }
+    put:
+      tags: [Audit]
+      summary: Set the audit sink
+      description: >-
+        One webhook per account. Every 10 minutes Broods POSTs the unexported
+        rows to `url` as JSON arrays of up to 200, at most 10 batches a tick,
+        each signed with `X-Broods-Signature: sha256=<hex>`, an HMAC-SHA256 of
+        the body under `secret`. A 2xx within 10 seconds advances
+        `exportedSeq`; anything else is kept in `lastError` and the batch is
+        retried next tick. `url` must be public
+        `https`. Setting the sink keeps the watermark. Account secret, or a
+        role with `audit:write`.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, secret]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                  maxLength: 256
+      responses:
+        "200":
+          description: Sink set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditSink"
+        "400": { description: Invalid url or secret }
+    delete:
+      tags: [Audit]
+      summary: Remove the audit sink
+      description: Exports stop. Rows already in the ledger stay until they pass the account's `auditRetentionDays`; with no sink there is no export watermark holding them longer.
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Whether a sink existed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+
   /v1/channels:
     post:
       tags: [Channels]
@@ -3342,21 +3509,26 @@ components:
       scheme: bearer
       description: >-
         Which credential a route takes depends on the route.
-        The account key (`ask_...`, from account creation or rotation)
+        The account key (`bask_...`, from account creation or rotation)
         works on every account route and on `/v1/runs`; the endpoint-addressed
         run URLs (`POST /v1/agents/{endpointId}` and its scoped form) take only
         a stage credential.
-        A role session token (`fp_sts_...`, minted by
+        A role session token (`bsts_...`, minted by
         `POST /v1/account/assume-role`) works on the config-plane routes,
         limited to its role's policy; it gets 401 on `/v1/runs` and every run
         URL, and role management under `/v1/roles*` refuses it.
-        A runtime key (`sk_...`) works only on `/v1/runs`,
+        A runtime key (`bsk_...`) works only on `/v1/runs`,
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
         config-plane route answers it with 401.
-        A stage session ticket (`fp_dts_...`) runs agents like the runtime key,
+        A stage session ticket (`bdts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
+        A run token (`brt_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)
+        works only on `GET /v1/runs/{runId}` for its own agent's runs. Starting
+        a run with it is not enabled yet: `POST /v1/runs` and every other run
+        route answer 403 `run_token_scope`, and every config-plane route
+        answers 401. It expires shortly after the run's time budget.
     AdminAuth:
       type: http
       scheme: bearer
@@ -4057,7 +4229,9 @@ components:
                 | `invalid_auth` | 502 | Slack rejected the agent's stored bot token (channel directory). |
                 | `invalid_cursor` | 400 | `cursor` is not a page cursor this collection issued. |
                 | `invalid_limit` | 400 | `limit` is not an integer in the allowed page range. |
+                | `invalid_range` | 400 | `fromSeq` or `toSeq` is not a positive integer, or `fromSeq` is past `toSeq` (audit verify). |
                 | `invalid_request` | 400 | Default for a 400 and any unmapped 4xx: the request is malformed. |
+                | `invalid_since` | 400 | `since` is not a non-negative integer (audit ledger). |
                 | `job_result_not_found` | 404 | Unknown background job result, or its completion token does not match. |
                 | `job_result_settled` | 409 | The background job result was already completed. |
                 | `manifest_conflict` | 409 | The stage changed since the CLI read it. Re-read and retry the sync. |
@@ -4074,6 +4248,7 @@ components:
                 | `ratelimited` | 429 | Slack rate-limited the channel directory listing. Retry after `Retry-After`. |
                 | `run_not_found` | 404 | No run with this id in the account. |
                 | `run_overrides_disabled` | 403 | A runtime key sent `system` or `model` overrides and the agent does not set `allowRunOverrides`. |
+                | `run_token_scope` | 403 | A run token called something other than reading its own agent's runs. |
                 | `sandbox_instance_reserved` | 409 | The sandbox still has a reserved instance that could not be terminated. |
                 | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
                 | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
@@ -4105,6 +4280,9 @@ components:
         status:
           type: string
           enum: [active, disabled]
+        auditRetentionDays:
+          type: integer
+          description: Days an audit ledger row is kept. Absent means the default of 90.
         createdAt:
           type: string
           format: date-time
@@ -4514,6 +4692,8 @@ components:
                 account:write,
                 agents:read,
                 agents:write,
+                audit:read,
+                audit:write,
                 channels:read,
                 channels:write,
                 crons:read,
@@ -4763,6 +4943,163 @@ components:
         status:
           type: string
           enum: [active, deleted]
+
+    AuditEvent:
+      type: object
+      description: >-
+        One ledger row. `hash` is sha256 hex over the canonical JSON (keys
+        sorted recursively by UTF-16 code unit, no whitespace) of every
+        field but `hash`: `accountId`, `seq`, `prevHash`, `at`, `actor`,
+        `action`, `resource`, `summary`, `detailsJson`, `projectId`,
+        `stageId` and `traceId`. An optional field the row does not have is
+        left out of the JSON, never written as `null`.
+      required:
+        [accountId, seq, prevHash, hash, at, actor, action, resource, summary]
+      properties:
+        accountId:
+          type: string
+        seq:
+          type: integer
+          description: Per-account, starts at 1, gapless at append time.
+        prevHash:
+          type: string
+          description: Hash of the row before; empty on the first row.
+        hash:
+          type: string
+        at:
+          type: integer
+          description: Unix milliseconds.
+        actor:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum:
+                [
+                  dashboardUser,
+                  apiAccountSecret,
+                  admin,
+                  service,
+                  cli,
+                  deployKey,
+                  role,
+                  agent,
+                ]
+            id:
+              type: string
+            email:
+              type: string
+            name:
+              type: string
+            agentId:
+              type: string
+            chain:
+              type: array
+              description: >-
+                On an agent actor, the delegation chain behind the run, oldest
+                first: the person or key that asked, then each agent that
+                delegated. The actor's own `agentId` is not repeated in it.
+                Absent when the requester is not known; it is never guessed.
+              items:
+                oneOf:
+                  - type: object
+                    required: [kind, id]
+                    properties:
+                      kind: { type: string, enum: [user] }
+                      id: { type: string }
+                      name: { type: string }
+                      channel: { type: string }
+                  - type: object
+                    required: [kind, keyKind]
+                    properties:
+                      kind: { type: string, enum: [api] }
+                      keyKind:
+                        type: string
+                        enum: [account, deployment, cron]
+                  - type: object
+                    required: [kind, agentId]
+                    properties:
+                      kind: { type: string, enum: [agent] }
+                      agentId: { type: string }
+        action:
+          type: string
+          description: >-
+            Config rows use `created`, `updated`, `deleted` and the like against
+            `resource.kind`; runtime rows use `run.completed` and
+            `tool.denied`.
+        resource:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+            id:
+              type: string
+            name:
+              type: string
+        summary:
+          type: string
+        detailsJson:
+          type: string
+          description: Small non-secret JSON metadata, capped at 8 KB.
+        projectId:
+          type: string
+        stageId:
+          type: string
+        traceId:
+          type: string
+
+    AuditPage:
+      type: object
+      required: [events, nextSince, head]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        nextSince:
+          type: integer
+          description: Pass as `since` to read what follows this page.
+        head:
+          type: [object, "null"]
+          description: The chain tip, or null for an account with no rows yet.
+          properties:
+            seq:
+              type: integer
+            hash:
+              type: string
+
+    AuditVerification:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        brokenAtSeq:
+          type: integer
+          description: The first row whose hash or link does not match; absent when `ok`.
+        checkedFrom:
+          type: integer
+        checkedTo:
+          type: integer
+
+    AuditSink:
+      type: object
+      required: [kind, url, exportedSeq, updatedAt]
+      properties:
+        kind:
+          type: string
+          enum: [webhook]
+        url:
+          type: string
+        exportedSeq:
+          type: integer
+          description: Highest `seq` the receiver acknowledged with a 2xx.
+        lastError:
+          type: string
+        updatedAt:
+          type: string
 
     AgentPolicy:
       allOf:
@@ -5459,7 +5796,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5513,7 +5850,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5559,7 +5896,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5600,7 +5937,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5653,7 +5990,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5706,7 +6043,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5740,7 +6077,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5799,7 +6136,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5840,7 +6177,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5894,7 +6231,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5944,7 +6281,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -5999,7 +6336,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6051,7 +6388,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:
@@ -6100,7 +6437,7 @@ components:
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             partition:
               type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
               required: [by]
               properties:
                 alias:

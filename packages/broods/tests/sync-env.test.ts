@@ -50,8 +50,8 @@ test("getRuntimeKey recovers the runtime key", async () => {
     () =>
       new Response(
         JSON.stringify({
-          apiKey: "sk_secret",
-          keyHint: "sk_…cret",
+          apiKey: "bsk_secret",
+          keyHint: "bsk_…cret",
           endpointId: "env_123",
           projectSlug: "demo-app",
           stageSlug: "development",
@@ -62,8 +62,8 @@ test("getRuntimeKey recovers the runtime key", async () => {
   const key = await client.getRuntimeKey("demo-app", "development");
 
   expect(key).toEqual({
-    apiKey: "sk_secret",
-    keyHint: "sk_…cret",
+    apiKey: "bsk_secret",
+    keyHint: "bsk_…cret",
     endpointId: "env_123",
     projectSlug: "demo-app",
     stageSlug: "development",

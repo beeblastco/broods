@@ -45,6 +45,11 @@ const sidebars: SidebarsConfig = {
               id: "guides/sandboxes/machine",
               label: "Your computer",
             },
+            {
+              type: "doc",
+              id: "guides/sandboxes/custom",
+              label: "Your own server",
+            },
           ],
         },
         { type: "doc", id: "guides/workspaces", label: "Workspaces" },

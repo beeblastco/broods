@@ -15,7 +15,7 @@
  * server runtimes, as well as Node and Bun.
  *
  * Auth: every call sends `Authorization: Bearer {accountSecret}` to
- * `{baseUrl}/v1/...`, or a short-lived `fp_sts_` role session token from
+ * `{baseUrl}/v1/...`, or a short-lived `bsts_` role session token from
  * `assumeRole()`, limited to what the role's policy allows. Secrets inside
  * agent configs are encrypted at rest by the platform and come back redacted
  * (`********`) on reads.
@@ -30,6 +30,7 @@ import type {
   SandboxConfig,
   UpdateCronInput,
   WorkspaceConfig,
+  WorkspaceConfigInput,
 } from "./contracts.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
 import type {
@@ -61,7 +62,7 @@ export interface BroodsAccountClientOptions {
   /** Account key used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
   accountSecret?: string;
   /**
-   * Short-lived `fp_sts_` role session token (from {@link BroodsAccountClient.assumeRole})
+   * Short-lived `bsts_` role session token (from {@link BroodsAccountClient.assumeRole})
    * used as the Bearer instead of the account key. The session can only do
    * what its role's policy allows. Falls back to `BROODS_SESSION_TOKEN`.
    */
@@ -74,6 +75,8 @@ export interface BroodsAccount {
   accountId: string;
   username: string;
   status: string;
+  /** Days an audit row is kept; absent means the 90 day default. */
+  auditRetentionDays?: number;
   [key: string]: unknown;
 }
 
@@ -180,9 +183,72 @@ export interface AccountRole {
   updatedAt: string;
 }
 
+/** One link of an agent actor's delegation chain: who asked, or an agent that delegated. */
+export type AuditPrincipalLink =
+  | { kind: "user"; id: string; name?: string; channel?: string }
+  | { kind: "api"; keyKind: "account" | "deployment" | "cron" }
+  | { kind: "agent"; agentId: string };
+
+/**
+ * One row of the account's hash-chained audit ledger, as `GET /v1/audit`
+ * serves it. `hash` is sha256 over the canonical JSON of every field but
+ * `hash` itself (an absent optional field is left out, not null), with
+ * `prevHash` linking it to the row before.
+ */
+export interface AuditEvent {
+  accountId: string;
+  seq: number;
+  prevHash: string;
+  hash: string;
+  /** Unix ms. */
+  at: number;
+  actor: {
+    kind: string;
+    id?: string;
+    email?: string;
+    name?: string;
+    agentId?: string;
+    /** On an agent actor: who asked, then each agent that delegated, oldest first. */
+    chain?: AuditPrincipalLink[];
+  };
+  action: string;
+  resource: { kind: string; id?: string; name?: string };
+  summary: string;
+  detailsJson?: string;
+  projectId?: string;
+  stageId?: string;
+  traceId?: string;
+}
+
+/** A page of ledger rows plus the chain head to compare the last row against. */
+export interface AuditPage {
+  events: AuditEvent[];
+  /** Pass as `since` to read the rows after this page. */
+  nextSince: number;
+  head: { seq: number; hash: string } | null;
+}
+
+/** Result of `GET /v1/audit/verify`: the chain recomputed over the checked range. */
+export interface AuditVerification {
+  ok: boolean;
+  brokenAtSeq?: number;
+  checkedFrom?: number;
+  checkedTo?: number;
+}
+
+/** The account's audit export target. The signing secret never comes back. */
+export interface AuditSink {
+  kind: "webhook";
+  url: string;
+  /** Highest seq the receiver acknowledged. */
+  exportedSeq: number;
+  lastError?: string;
+  updatedAt: string;
+}
+
 /** Short-lived role session minted by `POST /v1/account/assume-role`. */
 export interface AssumeRoleResult {
-  /** `fp_sts_` bearer token; pass it as `sessionToken` to a new client. */
+  /** `bsts_` bearer token; pass it as `sessionToken` to a new client. */
   token: string;
   /** ISO timestamp when the session stops working. */
   expiresAt: string;
@@ -445,6 +511,8 @@ export class BroodsAccountClient {
   async updateAccount(patch: {
     username?: string;
     description?: string | null;
+    /** 1 to 3650 days, or null to return to the 90 day default. */
+    auditRetentionDays?: number | null;
   }): Promise<BroodsAccount | null> {
     const result = await this.request<{ account: BroodsAccount }>(
       "PATCH",
@@ -456,7 +524,7 @@ export class BroodsAccountClient {
   }
 
   /**
-   * Exchange a role for a short-lived `fp_sts_` session token. Callable with
+   * Exchange a role for a short-lived `bsts_` session token. Callable with
    * the account key, a CLI login token, or a runtime key (the latter
    * only into roles scoped to the key's own project/stage). Construct a new
    * client with `{ sessionToken: result.token }` to act as the role.
@@ -745,7 +813,7 @@ export class BroodsAccountClient {
   async createWorkspace(input: {
     name: string;
     description?: string;
-    config?: WorkspaceConfig;
+    config?: WorkspaceConfigInput;
   }): Promise<AccountWorkspace> {
     const result = await this.request<AccountWorkspace>(
       "POST",
@@ -775,7 +843,7 @@ export class BroodsAccountClient {
     patch: {
       name?: string;
       description?: string | null;
-      config?: ConfigPatch<WorkspaceConfig>;
+      config?: ConfigPatch<WorkspaceConfigInput>;
     },
   ): Promise<AccountWorkspace | null> {
     return await this.request<AccountWorkspace>(
@@ -1205,6 +1273,78 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
+  /** The audit ledger: rows since a seq, chain verification, and the webhook sink. */
+  readonly audit = {
+    /** Rows with `seq > since`, oldest first, at most `limit` (default 100, max 500). */
+    list: async (
+      options: { since?: number; limit?: number } = {},
+    ): Promise<AuditPage> => {
+      const result = await this.request<AuditPage>(
+        "GET",
+        `/v1/audit${optionalQuery(options)}`,
+      );
+      if (!result)
+        throw new BroodsAccountApiError("GET", "/v1/audit", 404, "Not found");
+
+      return result;
+    },
+    /**
+     * Recompute the chain over `[fromSeq, toSeq]`, from the oldest kept row by
+     * default, at most 1000 rows per call. `ok` covers only `checkedFrom` to
+     * `checkedTo`; on a longer ledger call again with `fromSeq: checkedTo + 1`.
+     */
+    verify: async (
+      options: { fromSeq?: number; toSeq?: number } = {},
+    ): Promise<AuditVerification> => {
+      const result = await this.request<AuditVerification>(
+        "GET",
+        `/v1/audit/verify${optionalQuery(options)}`,
+      );
+      if (!result)
+        throw new BroodsAccountApiError(
+          "GET",
+          "/v1/audit/verify",
+          404,
+          "Not found",
+        );
+
+      return result;
+    },
+    /** The account's sink, or null when none is set. */
+    getSink: async (): Promise<AuditSink | null> => {
+      return await this.request<AuditSink>("GET", "/v1/audit/sink");
+    },
+    /** Set the one webhook sink. `url` must be public https; `secret` signs each batch. */
+    setSink: async (input: {
+      url: string;
+      secret: string;
+    }): Promise<AuditSink> => {
+      const result = await this.request<AuditSink>(
+        "PUT",
+        "/v1/audit/sink",
+        input,
+      );
+      if (!result)
+        throw new BroodsAccountApiError(
+          "PUT",
+          "/v1/audit/sink",
+          404,
+          "Not found",
+        );
+
+      return result;
+    },
+    /** Remove the sink; exports stop and rows age out on retention alone. Returns whether one existed. */
+    deleteSink: async (): Promise<boolean> => {
+      const result = await this.request<{ deleted: boolean }>(
+        "DELETE",
+        "/v1/audit/sink",
+      );
+
+      return result?.deleted ?? false;
+    },
+  };
+
   async listChannels(): Promise<AccountChannel[]> {
     const result = await this.request<{ channels: AccountChannel[] }>(
       "GET",
@@ -1356,6 +1496,16 @@ export class BroodsAccountClient {
 
 function envVar(name: string): string | undefined {
   return typeof process !== "undefined" ? process?.env?.[name] : undefined;
+}
+
+/** `?a=1&b=2` from the defined entries, or "" when none is set. */
+function optionalQuery(params: Record<string, number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(name, String(value));
+  }
+
+  return query.size > 0 ? `?${query.toString()}` : "";
 }
 
 function stageScopeQuery(scope: StageScope): string {

@@ -232,7 +232,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 
 | Field                  | Default    | Description                                                                                                                    |
 | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`                                                                     |
+| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`, `custom`                                                           |
 | `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                      |
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |
@@ -248,6 +248,8 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `memoryLimit`          |            | MB, informational                                                                                                              |
 | `outputLimitBytes`     | 65536      | Output kept per call                                                                                                           |
 | `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey` |
+
+`custom` runs `bash` on your own server through one HTTP contract, named by `options.endpoint`; what it accepts and refuses is on [Your own server](../guides/sandboxes/custom.md).
 
 ```ts
 export const lambdaSandbox = defineSandbox({
@@ -266,7 +268,7 @@ Persistent files, mounted into a sandbox. See [Workspaces](../guides/workspaces.
 | Field         | Default              | Description                                                                                              |
 | ------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
 | `storage`     | `{ provider: "s3" }` | Managed bucket, or your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`                        |
-| `partitioned` | `false`              | Allow channels to split the workspace per conversation                                                   |
+| `partitioned` | `false`              | `true` lets channels split the workspace per conversation, `"agent"` gives each attached agent its own   |
 | `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default |
 
 ```ts

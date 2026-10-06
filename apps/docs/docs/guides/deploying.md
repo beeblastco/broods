@@ -60,7 +60,7 @@ broods env sync                               # push every referenced env("NAME"
 
 ## The runtime key
 
-Each stage has one runtime key, `sk_...`, that your app uses to run agents. `broods dev` and `broods deploy` write it to `.env.local` as `BROODS_API_KEY`. `broods deploy --rotate-key` mints a new one and invalidates the old one.
+Each stage has one runtime key, `bsk_...`, that your app uses to run agents. `broods dev` and `broods deploy` write it to `.env.local` as `BROODS_API_KEY`. `broods deploy --rotate-key` mints a new one and invalidates the old one.
 
 The key only reaches agents in its own stage that set `publicAccess: true`. It cannot read logs or change config. See [Security](security.md).
 
@@ -70,7 +70,7 @@ Server, organization, project and stage together decide where a command writes. 
 
 ## Deploying from CI
 
-Create a project key (`pdk_...`) for the project and stage in the dashboard. It can sync only that stage. It can set and list environment variables but never read them, and it cannot replace skills or hooks another stage manages.
+Create a project key (`bpdk_...`) for the project and stage in the dashboard. It can sync only that stage. It can set and list environment variables but never read them, and it cannot replace skills or hooks another stage manages.
 
 ```yaml title=".github/workflows/deploy.yaml"
 - run: bunx broods deploy

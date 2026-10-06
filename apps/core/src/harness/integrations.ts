@@ -40,6 +40,7 @@ import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
 import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
+import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   applyRunOverrides,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
@@ -49,6 +50,7 @@ import {
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
+import type { PrincipalLink } from "../shared/domain/principal.ts";
 import {
   channelActorRoles,
   channelRecordMatchesWorkspace,
@@ -135,6 +137,7 @@ import {
   getIngressStatusByEventId,
   type AppliedIngress,
   type ChannelTargetRefs,
+  type IngressConfigRef,
   type IngressMode,
   type IngressStatusRecord,
   type PublicDeploymentIngress,
@@ -201,6 +204,13 @@ export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
   agentConfig: AgentConfig;
+  // How a queued envelope rebuilds `agentConfig` when it runs; the stored
+  // envelope carries this, never the config. Absent on a subagent child.
+  configRef?: IngressConfigRef;
+  // Set on a subagent's run, to the config it runs on. That config derives
+  // from its parent, so no ref can rebuild it and its ref-less controls run on
+  // this.
+  subagentConfig?: AgentConfig;
   // Per-deployment id from the runtime key, when the request authenticated with
   // one. Scopes realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
@@ -248,22 +258,29 @@ export interface DirectInboundEvent {
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
+  // Who asked, as the router authenticated it, or the chain of the run that
+  // sent a session message. Absent on a rebuilt envelope: nothing is guessed.
+  principalChain?: PrincipalLink[];
   // Answers to open ask_questions prompts. A request carrying these settles
   // the prompts and resumes the conversation; it runs no turn of its own.
   answers?: QuestionAnswer[];
 }
 
-/** The scope a queued envelope needs to be rebuilt into its own run. */
+/**
+ * The scope a queued envelope needs to be rebuilt into its own run. It names
+ * no config: the envelope's ref rebuilds one. Only a subagent's scope carries
+ * `subagentConfig`, for the ref-less controls of that subagent.
+ */
 export type IngressDispatchScope = Pick<
   DirectInboundEvent,
   | "accountId"
   | "agentId"
-  | "agentConfig"
   | "conversationKey"
   | "publicConversationKey"
   | "endpointId"
   | "projectSlug"
   | "stageSlug"
+  | "subagentConfig"
 >;
 
 export type DispatchAppliedIngress = (
@@ -544,7 +561,9 @@ async function handleHttpRequest(
   if (method === "GET" && request.path.startsWith(RUN_PATH_PREFIX)) {
     const auth = await context.authResolver(headers);
     const account =
-      auth?.kind === "account" || auth?.kind === "deployment"
+      auth?.kind === "account" ||
+      auth?.kind === "deployment" ||
+      auth?.kind === "agent"
         ? auth.account
         : null;
     if (!account) {
@@ -580,6 +599,9 @@ async function handleHttpRequest(
         if (denial) {
           return errorResponse(403, denial.message, { code: denial.code });
         }
+      }
+      if (auth?.kind === "agent" && ingress.agentId !== auth.agentId) {
+        return runTokenScopeResponse(auth.agentId);
       }
 
       return handlers.handleStatusRequest(parsed);
@@ -783,6 +805,11 @@ async function handleHttpRequest(
     });
   }
 
+  // A run token reads its own agent's runs, above. It starts none yet.
+  if (auth?.kind === "agent") {
+    return runTokenScopeResponse(auth.agentId);
+  }
+
   // Everything below dispatches a run, whatever path it arrived on. Keying
   // this on the recognized path shapes let a POST to a retired URL through.
   if (!context.directApiEnabled) {
@@ -799,13 +826,16 @@ async function handleHttpRequest(
     }
 
     try {
-      const parsed = await parseDirectPayload(
-        request.body,
-        request.headers,
-        auth.account,
-        context,
-        auth,
-      );
+      const parsed = {
+        ...(await parseDirectPayload(
+          request.body,
+          request.headers,
+          auth.account,
+          context,
+          auth,
+        )),
+        principalChain: [{ kind: "api", keyKind: "deployment" } as const],
+      };
       if (parsed.background) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
@@ -852,12 +882,15 @@ async function handleHttpRequest(
   }
 
   try {
-    const parsed = await parseDirectPayload(
-      request.body,
-      request.headers,
-      account,
-      context,
-    );
+    const parsed = {
+      ...(await parseDirectPayload(
+        request.body,
+        request.headers,
+        account,
+        context,
+      )),
+      principalChain: [{ kind: "api", keyKind: "account" } as const],
+    };
     if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -1613,13 +1646,16 @@ async function cleanupChannelPartitions(options: {
       options.accountId,
       ref.workspaceId,
     );
-    if (!record || record.config.isolation !== true) {
+    if (
+      !record ||
+      workspaceIsolation(record.config.isolation) !== "conversation"
+    ) {
       continue;
     }
 
     const namespace = isolatedWorkspaceNamespace(
       workspaceNamespace(options.accountId, ref.workspaceId),
-      record.config.isolation,
+      "conversation",
       {
         channelName: options.channelName,
         channelScopeKey: channelScopeKeyFromConversation(
@@ -2037,6 +2073,15 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(text);
 }
 
+/** The one refusal a run token gets outside reading its own agent's runs. */
+function runTokenScopeResponse(agentId: string): Response {
+  return errorResponse(
+    403,
+    `A run token may only GET /v1/runs/{runId} for agent ${agentId}'s runs. Starting runs with a run token is not enabled yet.`,
+    { code: "run_token_scope" },
+  );
+}
+
 /** The two invoke shapes: project/stage scoped, and bare agent id. */
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
   const scoped = rawPath.match(
@@ -2180,6 +2225,7 @@ async function parseDirectPayload(
       toRuntimeAgentConfig(agent.config),
       overrides,
     ),
+    configRef: { model: overrides?.model },
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
     runId: createRunId(),
