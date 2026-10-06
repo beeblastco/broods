@@ -24,6 +24,11 @@ import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
+import {
+  WORKSPACE_ISOLATION_LEVELS,
+  isWorkspaceIsolation,
+  workspaceIsolationInput,
+} from "../../convex/model/workspaceIsolation.ts";
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -484,14 +489,18 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
 function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
   if (resource.kind !== "workspace") return;
   const config = resource.config as unknown as Record<string, unknown>;
-  if (typeof config.partitioned === "string") {
+  if (
+    config.partitioned !== undefined &&
+    typeof config.partitioned !== "boolean" &&
+    !isWorkspaceIsolation(config.partitioned)
+  ) {
     throw new Error(
-      `Workspace "${resource.name}" config.partitioned must be a boolean; string modes are not supported.`,
+      `Workspace "${resource.name}" config.partitioned must be a boolean or one of: ${WORKSPACE_ISOLATION_LEVELS.join(", ")}`,
     );
   }
   if (config.isolation !== undefined) {
     throw new Error(
-      `Workspace "${resource.name}" config.isolation is no longer supported; use partitioned: true.`,
+      `Workspace "${resource.name}" config.isolation is no longer supported; use partitioned.`,
     );
   }
 }
@@ -550,10 +559,12 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
           .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
           .filter((entry): entry is WorkspaceResource => Boolean(entry))
       : [];
+    // Only the per-conversation split needs a channel partition; "agent" splits
+    // on its own.
     const partitionedWorkspaces = attachedWorkspaces.filter(
       (workspace) =>
-        (workspace.config as unknown as Record<string, unknown>).partitioned ===
-        true,
+        workspaceIsolationInput(workspace.config.partitioned) ===
+        "conversation",
     );
     const partitionedChannels = channelDefinitions.filter(
       (channel) => channel.partition,
@@ -1063,17 +1074,11 @@ async function normalizeConfig(
 
   if (resource.kind === "workspace") {
     const config = { ...(resource.config as Record<string, unknown>) };
-    // Authoring says `partitioned`; storage still reads `isolation`.
-    if (config.partitioned !== undefined) {
-      if (typeof config.partitioned !== "boolean") {
-        throw new Error(
-          `Workspace "${resource.name}" config.partitioned must be a boolean`,
-        );
-      }
-      const partitioned = config.partitioned;
-      delete config.partitioned;
-      if (partitioned) config.isolation = true;
-    }
+    // Authoring says `partitioned`; storage reads `isolation` by level (the
+    // shape check above already refused anything else).
+    const isolation = workspaceIsolationInput(config.partitioned);
+    delete config.partitioned;
+    if (isolation) config.isolation = isolation;
 
     return rewriteValues(config);
   }

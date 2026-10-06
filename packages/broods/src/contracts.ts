@@ -41,7 +41,11 @@ import type {
   SandboxExecResponse,
   SandboxProvider,
 } from "../../../apps/core/src/shared/domain/sandbox-config.ts";
-import type { WorkspaceConfig } from "../../../apps/core/src/shared/domain/workspace-config.ts";
+import type {
+  WorkspaceConfig,
+  WorkspaceConfigInput,
+  WorkspaceIsolation,
+} from "../../../apps/core/src/shared/domain/workspace-config.ts";
 import type { PolicyDocument } from "../../../apps/core/src/shared/domain/policy.ts";
 import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channel-record.ts";
 
@@ -102,6 +106,8 @@ export type {
   SandboxConfig,
   UpdateCronInput,
   WorkspaceConfig,
+  WorkspaceConfigInput,
+  WorkspaceIsolation,
 };
 
 // The sandbox exec contract. `SandboxProvider` is every `config.provider` a

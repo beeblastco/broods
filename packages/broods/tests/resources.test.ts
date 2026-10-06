@@ -998,7 +998,7 @@ export const support = defineAgent({
   ]);
 });
 
-test("compileProject rejects a non-boolean partitioned flag", async () => {
+test("compileProject rejects an unknown partitioned mode", async () => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1012,8 +1012,41 @@ export const repo = defineWorkspace({
   );
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Workspace "repo" config.partitioned must be a boolean; string modes are not supported.',
+    'Workspace "repo" config.partitioned must be a boolean or one of: conversation, agent',
   );
+});
+
+test('compileProject stores partitioned: "agent" as agent isolation and needs no channel partition', async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
+
+export const slack = defineSlackConnection({
+  allowedChannelIds: ["*"],
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
+});
+export const scratch = defineWorkspace({ name: "scratch", storage: { provider: "s3" }, partitioned: "agent" });
+export const shared = defineWorkspace({ name: "shared", storage: { provider: "s3" }, partitioned: true });
+export const support = defineAgent({ name: "support", connections: [slack], workspaces: [scratch] });
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const configOf = (name: string): unknown =>
+    manifest.resources.find(
+      (resource) => resource.kind === "workspace" && resource.name === name,
+    )?.config;
+
+  expect(configOf("scratch")).toEqual({
+    storage: { provider: "s3" },
+    isolation: "agent",
+  });
+  expect(configOf("shared")).toEqual({
+    storage: { provider: "s3" },
+    isolation: "conversation",
+  });
 });
 
 test("compileProject auto-generates the channel id for a partitioned connection", async () => {

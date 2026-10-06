@@ -21,6 +21,7 @@ import {
   type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
+import { cacheDigest } from "../../shared/cache-digest.ts";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
   delegatedChain,
@@ -71,6 +72,8 @@ export interface McpConnection {
   headers: Record<string, string>;
   /** Who is calling, on every request; not part of the listing cache key. */
   principalHeaders?: Record<string, string>;
+  /** The agent whose run calls; a hosted row runs as `accountId:agentId`. Unset on an account-surface probe. */
+  agentId?: string;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
@@ -219,7 +222,8 @@ export async function listMcpTools(
  * Build the connection for a server row: row headers and oauth overlaid with
  * the agent config's (those resolved their ${NAME} refs at sync). A value
  * still carrying a placeholder never reaches the wire, and neither does a
- * header claiming one of the principal names.
+ * header claiming one of the principal names. The principal names the agent
+ * whose run calls, unset on an account-surface probe.
  */
 export function mcpConnection(
   record: McpRecord,
@@ -252,6 +256,7 @@ export function mcpConnection(
   return {
     record: record,
     headers: headers,
+    agentId: principal?.agentId,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
     ...(principal ? { principalHeaders: principalHeaders(principal) } : {}),
   };
@@ -286,14 +291,22 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 /**
  * One cache identity per server row version, resolved header set and oauth
  * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL.
+ * data for a TTL. The credentials ride the key only as a process-keyed
+ * digest: a Map key lives process-wide for up to an hour and must not hold
+ * them in clear. A hosted row adds the agent: its answers come from that
+ * agent's own child, so one agent never reads what another agent's child said.
  */
-function cacheKeyFor(connection: McpConnection): string {
+export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
+  const credentials = cacheDigest(
+    JSON.stringify([headers, connection.oauth ?? null]),
+  );
+  const agent =
+    connection.record.transport === "hosted" ? (connection.agentId ?? "") : "";
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${credentials}:${agent}`;
 }
 
 /** The chain as a remote server sees it: ids and kinds, never a display name. The ledger and the OPA input keep the name. */
@@ -340,9 +353,7 @@ async function connectClient(
         requestInit: { headers: headers },
         // A tenant url is dialed from inside the cluster, so it gets the same
         // resolve, refuse-private and pin treatment as a model endpoint.
-        fetch: hosted
-          ? hostedMcpFetch(connection.record, onCpuUsec)
-          : publicHostFetch,
+        fetch: hosted ? hostedMcpFetch(connection, onCpuUsec) : publicHostFetch,
       },
     );
     const client = new Client(CLIENT_INFO, {

@@ -266,7 +266,7 @@ Persistent files, mounted into a sandbox. See [Workspaces](../guides/workspaces.
 | Field         | Default              | Description                                                                                              |
 | ------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
 | `storage`     | `{ provider: "s3" }` | Managed bucket, or your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`                        |
-| `partitioned` | `false`              | Allow channels to split the workspace per conversation                                                   |
+| `partitioned` | `false`              | `true` lets channels split the workspace per conversation, `"agent"` gives each attached agent its own   |
 | `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default |
 
 ```ts
