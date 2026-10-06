@@ -90,10 +90,11 @@ export async function handleConnectionsRoute(
   );
 
   // Hosted, paid services need the provider's approval before a sign-in starts.
-  const selfHostedOnly = CONNECTION_TYPES[type].selfHostedOnly;
+  const { selfHostedOnly, managedOptIn } = CONNECTION_TYPES[type];
   if (
     selfHostedOnly &&
     isManagedService() &&
+    !(managedOptIn && process.env[managedOptIn] === "true") &&
     (path.start || req.method === "PUT")
   )
     return jsonError(403, selfHostedOnly);
