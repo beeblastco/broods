@@ -887,6 +887,7 @@ function verifyContext(
     measure: measure,
     runId: runId,
     serviceSecret: state.secrets.serviceAuth,
+    stageTicketSecret: state.secrets.stageTicket,
   };
 }
 

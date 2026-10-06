@@ -7,7 +7,7 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { ACCOUNT_ENV_VAR_NAME_PATTERN } from "../../model/agentConfigCodec";
-import { type ConfigAuditActor } from "../../model/auditEvents";
+import { type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { collectionPage, json, methodNotAllowed, writeAudit } from "./shared";
 import { ClientError } from "../../model/clientError";
@@ -16,7 +16,7 @@ export async function handleAccountEnvVarRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   name?: string,
 ): Promise<Response> {
   if (!name) {

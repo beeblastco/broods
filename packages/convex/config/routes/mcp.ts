@@ -8,10 +8,7 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { normalizeMcpInput } from "../../model/mcp";
 import { storeMcpBundle } from "../../model/bundles";
 import { uploadQuotaResponse } from "../../model/uploads";
@@ -32,7 +29,7 @@ export async function handleMcpRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   serverId?: string,
 ): Promise<Response> {
   if (!serverId)
@@ -105,7 +102,7 @@ async function handleMcpCollectionRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   // Servers belong to one stage, so the collection routes need a scope.
   const scope = await resolveMcpScope(ctx, req, accountId);
@@ -179,7 +176,7 @@ async function patchMcpRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   serverId: string,
 ): Promise<Response> {
   const existing = await ctx.runQuery(internal.account.mcp.getById, {

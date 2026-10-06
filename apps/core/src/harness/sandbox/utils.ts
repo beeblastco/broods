@@ -4,6 +4,7 @@
  */
 
 import { isPlainObject } from "../../shared/object.ts";
+import type { SandboxRunPrincipal } from "./types.ts";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -12,8 +13,18 @@ const textDecoder = new TextDecoder();
 // per-machine suffix cannot run into a provider's undocumented name limit.
 const PREFIX_SLUG_LENGTH = 31;
 
-// Keys a per-call `request.envVars` may never set; account `config.envVars` is not filtered.
+// The run identity. Only core sets these, so both env layers drop them.
+const IDENTITY_ENV_KEYS: ReadonlySet<string> = new Set([
+  "BROODS_ACCOUNT_ID",
+  "BROODS_AGENT_ID",
+  "BROODS_BASE_URL",
+  "BROODS_RUN_TOKEN",
+]);
+
+// Keys a per-call `request.envVars` may never set. Account `config.envVars` is
+// filtered for the identity names only.
 export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
+  ...IDENTITY_ENV_KEYS,
   "BASH_ENV",
   "ENV",
   "HOME",
@@ -98,16 +109,25 @@ export function isSandboxGoneError(error: unknown): boolean {
   );
 }
 
-// Account envVars under per-call overrides, reserved keys dropped from the overrides.
+// Account envVars under per-call overrides, reserved keys dropped from the
+// overrides and the identity names from both, then the run's identity on top.
 export function mergeSandboxEnv(
   accountEnv: Record<string, string | undefined> | undefined,
   requestEnv: Record<string, string> | undefined,
+  principal?: SandboxRunPrincipal,
 ): Record<string, string> {
+  const account = Object.entries(stringRecord(accountEnv)).filter(
+    ([key]) => !IDENTITY_ENV_KEYS.has(key),
+  );
   const overrides = Object.entries(requestEnv ?? {}).filter(
     ([key]) => !RESERVED_SANDBOX_ENV_KEYS.has(key),
   );
 
-  return { ...stringRecord(accountEnv), ...Object.fromEntries(overrides) };
+  return {
+    ...Object.fromEntries(account),
+    ...Object.fromEntries(overrides),
+    ...(principal ? principalEnv(principal) : {}),
+  };
 }
 
 export function requiredWorkspacePath(
@@ -200,4 +220,14 @@ export function workspacePath(
   }
 
   return request.namespace ? `${root}/${request.namespace}` : root;
+}
+
+/** The BROODS_* variables sandbox code reads to act as its run. */
+function principalEnv(principal: SandboxRunPrincipal): Record<string, string> {
+  return {
+    BROODS_ACCOUNT_ID: principal.accountId,
+    BROODS_AGENT_ID: principal.agentId,
+    ...(principal.baseUrl ? { BROODS_BASE_URL: principal.baseUrl } : {}),
+    BROODS_RUN_TOKEN: principal.runToken,
+  };
 }

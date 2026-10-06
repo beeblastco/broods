@@ -10,10 +10,7 @@ import {
   decryptAgentConfigBlob,
   encryptAgentConfigBlob,
 } from "../../model/agentConfigCodec";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { toPublicSandboxConfigResponse } from "../../model/responses";
 import {
   DEFAULT_SANDBOX_PROVIDER,
@@ -35,7 +32,7 @@ export async function handleSandboxConfigRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   sandboxId?: string,
 ): Promise<Response> {
   if (!sandboxId) {
