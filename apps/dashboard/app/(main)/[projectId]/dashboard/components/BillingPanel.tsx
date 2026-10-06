@@ -35,6 +35,12 @@ interface Props {
   projectId: Id<"projects">;
 }
 
+// Checkout returns with success=true before Stripe's webhook updates the plan.
+const ACTIVATING_NOTICE: Notice = {
+  tone: "info",
+  text: "Payment received. Activating Pro…",
+};
+
 /**
  * Billing tab: the plan with its one action and one bar for the closest cap,
  * then a single notice when something needs attention. The per-resource
@@ -44,6 +50,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const searchParams = useSearchParams();
 
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);
@@ -66,6 +73,8 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
     status,
     billingInfo?.currentPeriodEnd,
     canUpgrade,
+    plan,
+    searchParams.get("success") === "true",
   );
 
   async function handleUpgrade(): Promise<void> {
@@ -284,15 +293,17 @@ function PlanSummary({
   );
 }
 
-// The one notice worth showing, most urgent first.
+// The one notice worth showing, most urgent first. `checkoutReturned` is the
+// success=true Stripe adds to the checkout return URL; a payment due outranks
+// it, since the URL keeps that flag after the subscription later fails.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
   status: string | undefined,
   periodEnd: number | undefined,
   canUpgrade: boolean,
+  plan: PlanTier,
+  checkoutReturned: boolean,
 ): Notice | null {
-  if (!budget) return null;
-  const reset = billingReset(budget.month);
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return {
       tone: "destructive",
@@ -301,6 +312,9 @@ function pickNotice(
       actionLabel: "Update card",
     };
   }
+  if (checkoutReturned && plan === DEFAULT_PLAN) return ACTIVATING_NOTICE;
+  if (!budget) return null;
+  const reset = billingReset(budget.month);
   if (budget.level === "exhausted") {
     return {
       tone: "destructive",

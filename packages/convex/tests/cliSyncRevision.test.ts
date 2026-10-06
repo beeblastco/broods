@@ -64,7 +64,7 @@ vi.mock(
 const modules = import.meta.glob("../**/*.ts");
 
 const PROJECT = "revisions";
-const SECRET = "fp_secret_revisions";
+const SECRET = "bask_secret_revisions";
 const STAGE = "development";
 
 type T = TestConvex<typeof schema>;

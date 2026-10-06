@@ -1,0 +1,282 @@
+/**
+ * The custom provider against a real TLS server on loopback rather than a
+ * stubbed `fetch`: `HttpSandboxExecutor` connects through the pinned guard,
+ * which resolves the name itself and opens the socket to the address it
+ * validated, so there is no global for a stub to replace.
+ */
+
+import { describe, expect, it } from "bun:test";
+import {
+  HttpSandboxExecutor,
+  type HttpSandboxExecutorSeams,
+} from "../src/harness/sandbox/http-executor.ts";
+import type {
+  SandboxExecutorConfig,
+  SandboxRunRequest,
+} from "../src/harness/sandbox/types.ts";
+import type { SandboxExecResponse } from "../src/shared/domain/sandbox-config.ts";
+import { loopbackTransport, withLoopbackTlsServer } from "./helpers/tls.ts";
+
+interface Received {
+  body: string;
+  headers: Record<string, string | string[] | undefined>;
+  path: string;
+}
+
+const OK_RESPONSE: SandboxExecResponse = {
+  ok: true,
+  runtime: "bash",
+  exit_code: 0,
+  timed_out: false,
+  duration_ms: 12,
+  stdout: "hello\n",
+  stderr: "",
+  cpu_usec: 4200,
+};
+
+describe("HttpSandboxExecutor", () => {
+  it("posts the exec request with the bearer token and extra headers, and maps the answer", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint, received) => {
+      const executor = new HttpSandboxExecutor(
+        config(endpoint, { token: "tok", headers: { "x-team": "ops" } }),
+        seams(),
+      );
+      const result = await executor.run(
+        run({ code: "echo hello", envVars: { FOO: "bar" } }),
+      );
+
+      expect(result).toEqual({
+        ok: true,
+        runtime: "bash",
+        exitCode: 0,
+        stdout: "hello\n",
+        stderr: "",
+        durationMs: 12,
+        timedOut: false,
+        truncated: false,
+        provider: "custom",
+        cpuUsec: 4200,
+      });
+      const [exec] = received;
+      if (!exec) throw new Error("the server received nothing");
+      expect(received).toHaveLength(1);
+      expect(exec.path).toBe("/exec");
+      expect(exec.headers.authorization).toBe("Bearer tok");
+      expect(exec.headers["x-team"]).toBe("ops");
+      expect(exec.headers["content-type"]).toBe("application/json");
+      expect(JSON.parse(exec.body)).toEqual({
+        runtime: "bash",
+        code: "echo hello",
+        timeout_ms: 5000,
+        env: { BASE: "1", FOO: "bar" },
+      });
+    });
+  });
+
+  it("sends the run's identity in the exec env like every other executor", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint, received) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+      await executor.run(
+        run({
+          principal: {
+            accountId: "acct_1",
+            agentId: "agent_1",
+            runToken: "brt_payload.sig",
+            baseUrl: "https://api.example.test",
+          },
+        }),
+      );
+
+      const [exec] = received;
+      if (!exec) throw new Error("the server received nothing");
+      expect(JSON.parse(exec.body).env).toEqual({
+        BASE: "1",
+        BROODS_ACCOUNT_ID: "acct_1",
+        BROODS_AGENT_ID: "agent_1",
+        BROODS_BASE_URL: "https://api.example.test",
+        BROODS_RUN_TOKEN: "brt_payload.sig",
+      });
+    });
+  });
+
+  it("holds stdout and stderr to the request's output limit", async () => {
+    await withExecServer(
+      { ...OK_RESPONSE, stdout: "x".repeat(100), stderr: "y".repeat(100) },
+      async (endpoint) => {
+        const executor = new HttpSandboxExecutor(config(endpoint), seams());
+        const result = await executor.run(run({ outputLimitBytes: 16 }));
+
+        expect(result.truncated).toBe(true);
+        expect(result.stdout).toBe(`${"x".repeat(16)}\n[output truncated]`);
+        expect(result.stderr).toBe(`${"y".repeat(16)}\n[output truncated]`);
+      },
+    );
+  });
+
+  it("gives up on a server that never answers once the timeout and grace pass", async () => {
+    await withExecServer(null, async (endpoint) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), {
+        ...seams(),
+        graceMs: 50,
+      });
+
+      await expect(executor.run(run({ timeoutSeconds: 0.1 }))).rejects.toThrow(
+        /timed out/,
+      );
+    });
+  });
+
+  it("surfaces a non-2xx answer with its body", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+
+      await expect(executor.run(run({ code: "fail" }))).rejects.toThrow(
+        "custom sandbox exec failed (401): bad token",
+      );
+    });
+  });
+
+  it("holds a non-2xx body to the output limit in the error", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+      const error = await executor
+        .run(run({ code: "big-fail", outputLimitBytes: 16 }))
+        .then(
+          (): string => "",
+          (caught: unknown): string => String(caught),
+        );
+
+      expect(error).toContain("custom sandbox exec failed (502)");
+      expect(error.length).toBeLessThan(200);
+    });
+  });
+
+  it("refuses an answer that is not the exec contract", async () => {
+    await withExecServer([], async (endpoint) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+
+      await expect(executor.run(run())).rejects.toThrow(
+        "custom sandbox exec response must be a JSON object",
+      );
+    });
+    for (const answer of [
+      { status: "queued" },
+      { ...OK_RESPONSE, exit_code: "0" },
+      { ...OK_RESPONSE, cpu_usec: "4200" },
+    ]) {
+      await withExecServer(answer, async (endpoint) => {
+        const executor = new HttpSandboxExecutor(config(endpoint), seams());
+
+        await expect(executor.run(run())).rejects.toThrow(
+          "custom sandbox exec response is not a sandbox exec response",
+        );
+      });
+    }
+  });
+
+  it("refuses an endpoint whose name resolves to a private address", async () => {
+    const executor = new HttpSandboxExecutor(config("https://public.test"), {
+      transport: {
+        lookup: async (): Promise<{ address: string; family: number }[]> => [
+          { address: "169.254.169.254", family: 4 },
+        ],
+      },
+    });
+
+    await expect(executor.run(run())).rejects.toThrow(
+      /blocked private or metadata address/,
+    );
+  });
+
+  // The config API stores a ref as written; only a code sync resolves it.
+  it("refuses a token or header that still carries an env ref", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint, received) => {
+      for (const options of [
+        { token: "${SANDBOX_TOKEN}" },
+        { headers: { authorization: "Bearer ${SANDBOX_TOKEN}" } },
+      ]) {
+        const executor = new HttpSandboxExecutor(
+          config(endpoint, options),
+          seams(),
+        );
+
+        await expect(executor.run(run())).rejects.toThrow(
+          "still carries a ${NAME} ref",
+        );
+      }
+      expect(received).toHaveLength(0);
+    });
+  });
+
+  it("refuses a literal private endpoint before resolving anything", async () => {
+    const executor = new HttpSandboxExecutor(config("https://10.0.0.8"));
+
+    await expect(executor.run(run())).rejects.toThrow(
+      "custom sandbox endpoint must not point to a private or internal address",
+    );
+  });
+});
+
+function config(
+  endpoint: string,
+  options: Record<string, unknown> = {},
+): SandboxExecutorConfig {
+  return {
+    provider: "custom",
+    envVars: { BASE: "1" },
+    options: { endpoint: endpoint, ...options },
+  };
+}
+
+function run(overrides: Partial<SandboxRunRequest> = {}): SandboxRunRequest {
+  return {
+    code: "echo hello",
+    timeoutSeconds: 5,
+    outputLimitBytes: 4096,
+    ...overrides,
+  };
+}
+
+function seams(): HttpSandboxExecutorSeams {
+  return { transport: loopbackTransport() };
+}
+
+// A null answer never responds, so the client deadline is what ends the call.
+// A request whose code is "fail" is answered 401, like a server refusing a token,
+// and "big-fail" 502 with a page-sized body, like a proxy in front of it.
+async function withExecServer(
+  answer: SandboxExecResponse | Record<string, unknown> | unknown[] | null,
+  test: (endpoint: string, received: Received[]) => Promise<void>,
+): Promise<void> {
+  const received: Received[] = [];
+  await withLoopbackTlsServer(
+    (request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        received.push({
+          body: body,
+          headers: request.headers,
+          path: request.url ?? "",
+        });
+        if (answer === null) return;
+        if (body.includes('"code":"big-fail"')) {
+          response.writeHead(502);
+          response.end("x".repeat(100_000));
+
+          return;
+        }
+        if (body.includes('"code":"fail"')) {
+          response.writeHead(401);
+          response.end("bad token");
+
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(answer));
+      });
+    },
+    (origin): Promise<void> => test(`${origin}/`, received),
+  );
+}

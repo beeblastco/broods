@@ -67,7 +67,7 @@ Approval requests on a sync direct API run stream as SSE and persist in the conv
 
 ## MCP servers
 
-Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session.
+Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session. A hosted server's listing is cached per agent, because it comes from that agent's own child.
 
 - The `url` host is resolved before connecting. Private, loopback, link-local and metadata addresses are refused, and so are redirects. The OAuth `tokenUrl` gets the same check.
 - Credential-bearing headers must reference an account env var (`Bearer ${NAME}`). Inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
@@ -83,12 +83,14 @@ The handler factory must build a fresh server on every call. The stateless trans
 
 The tool-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the bundle. `src/harness/mcp/hosted.ts` is the core side:
 
-- Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS`, default 10 ms, and sends every call for the same account and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX`, default 8. Setting it to `1` disables batching. The child runs them concurrently and answers each on its own frame.
+- Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS`, default 10 ms, and sends every call for the same account, agent and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX`, default 8. Setting it to `1` disables batching. The child runs them concurrently and answers each on its own frame.
 - A batch shares one 30 s deadline and one 16 MB output cap. `RUN_TIMEOUT_MS` in `apps/lambda/handler.mjs` sets the deadline, with a 2 s grace for the child to abort itself. Its CPU is split evenly across its calls.
-- Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A child serves at most `MCP_CHILD_MAX_CALLS` invokes, default 64, each one batch, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
+- Warm reuse. Repeat invokes for the same account, agent and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A different agent of the same account gets its own child. A child serves at most `MCP_CHILD_MAX_CALLS` invokes, default 64, each one batch, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
 - Metering. Each call's span carries `tool.compute.type: "mcp-sandbox"` and `tool.compute.cpu_usec`, billed into the account's tool-sandbox CPU usage.
-- With `MCP_TENANT_ISOLATION=true`, every invoke carries the account id as its Lambda tenant id. See [security](security.md).
+- With `MCP_TENANT_ISOLATION=true`, every invoke carries `accountId:agentId` as its Lambda tenant id. See [security](security.md).
 - The bundle reaches the runner as a pre-signed URL valid for 120 s, so the function holds no S3 access.
+
+The S3 bundle writer marks a row `workersCompatible` when its bundle is at most 10 MB and passes the Workers scan (`isWorkersSafeBundle`). When core has `CLOUDFLARE_MCP_URL` and the owner left `runtime` on `auto`, such a row sends the same batch payload to the Dynamic Workers runtime in `apps/cloudflare-mcp` instead, over HTTPS with the `CLOUDFLARE_MCP_API_KEY` bearer, and reads the same NDJSON frames back. The Worker loads each bundle into its own isolate, keyed by `tenantId` and sha256 like the Lambda's warm child, after checking the bytes against the row's hash. It reads them from its own R2 bucket (`BUNDLES`, keyed by sha256) and only on a miss downloads them from S3, keeping a copy that expires after 30 days. The isolate gets no bindings, no Node compatibility flag and an egress gateway that refuses the runtime itself and the bundle store. The Worker loads the bundle before it answers, and tags its own refusal (a 422 when the bundle cannot load, a 504 when loading timed out) with `x-broods-nothing-ran`. That tag, or a request that never connected, means no tool ran: core then runs the same batch on Lambda and logs `hosted MCP batch fell back to Lambda`. Any other error status, from the Worker or from Cloudflare, fails the call, because it cannot prove nothing ran. A bundle the Worker cannot load (a 422) goes straight to Lambda for the next 10 minutes. A timeout, abort or broken stream after the Worker answered is never retried. It reports no CPU, so these calls carry no `tool.compute.cpu_usec`; usage is still metered per batch on wall time, at the Lambda rate. See [Cloudflare MCP runtime](../guides/cloudflare-mcp.md).
 
 Two parallel calls from one model step, end to end:
 
@@ -102,10 +104,10 @@ sequenceDiagram
 
   M->>H: call A
   M->>H: call B
-  Note over H: enqueueCall parks both under accountId:sha256<br/>until MCP_BATCH_WINDOW_MS or MCP_BATCH_MAX
+  Note over H: enqueueCall parks both under accountId:agentId:sha256<br/>until MCP_BATCH_WINDOW_MS or MCP_BATCH_MAX
   H->>H: flushBatch, presign bundleUrl for 120 s
   H->>L: InvokeWithResponseStream, mode mcp, requests A and B
-  alt warm child matches accountId and sha256
+  alt warm child matches accountId, agentId and sha256
     L->>C: reuse the warm child
   else no match
     L->>S3: fetch bundleUrl while spawning

@@ -13,6 +13,8 @@ import {
   type ConnectionType,
 } from "./connections";
 
+import { ClientError } from "./clientError";
+
 const PROVIDER_TIMEOUT_MS = 10_000;
 
 /** The token endpoint's answer to a code exchange. */
@@ -115,7 +117,7 @@ export async function exchangeCode(
     !token.refresh_token ||
     !token.id_token
   ) {
-    throw new Error(
+    throw new ClientError(
       `${meta.label} sign-in failed: ${token.error_description ?? token.error ?? `HTTP ${response.status}`}`,
     );
   }
@@ -168,12 +170,12 @@ export async function verifyIdToken(
   const meta = CONNECTION_TYPES[type];
   const [encodedHeader, encodedPayload, encodedSignature] = idToken.split(".");
   if (!encodedHeader || !encodedPayload || !encodedSignature) {
-    throw new Error(`${meta.label} ID token is malformed.`);
+    throw new ClientError(`${meta.label} ID token is malformed.`);
   }
   const header = decodeSegment<{ alg?: string; kid?: string }>(encodedHeader);
   const claims = decodeSegment<RawIdTokenClaims>(encodedPayload);
   if (header.alg !== "RS256") {
-    throw new Error(
+    throw new ClientError(
       `${meta.label} ID token uses unsupported alg ${header.alg}.`,
     );
   }
@@ -190,7 +192,9 @@ export async function verifyIdToken(
       (key.alg === undefined || key.alg === "RS256"),
   );
   if (!jwk) {
-    throw new Error(`${meta.label} ID token is signed with an unknown key.`);
+    throw new ClientError(
+      `${meta.label} ID token is signed with an unknown key.`,
+    );
   }
   const algorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
   const key = await crypto.subtle.importKey(
@@ -215,7 +219,7 @@ export async function verifyIdToken(
     claims.exp * 1000 < Date.now() ||
     claims.nonce !== nonce
   ) {
-    throw new Error(`${meta.label} ID token failed verification.`);
+    throw new ClientError(`${meta.label} ID token failed verification.`);
   }
 
   return claims.email ? { email: claims.email } : {};

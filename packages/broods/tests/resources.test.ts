@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
+import { defineSandbox, env } from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
 // Resolve the SDK entrypoint relative to this test file so generated fixtures
@@ -50,6 +51,15 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
+});
+
+test("compileProject says how to scaffold a missing broods/ folder", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "broods-no-project-"));
+  tempDirs.push(cwd);
+
+  await expect(compileProject({ cwd: cwd, command: "deploy" })).rejects.toThrow(
+    `No broods/ folder in ${cwd}. Run \`broods dev\` to scaffold one.`,
+  );
 });
 
 test("compileProject accepts object-shaped resource definitions", async () => {
@@ -462,6 +472,24 @@ export const curated = defineSandbox({
       }),
     }),
   );
+});
+
+// The validator takes a credential header only as an env ref, so the type has to.
+test("defineSandbox takes env() as a custom server's credential header", () => {
+  const fleet = defineSandbox({
+    name: "fleet",
+    provider: "custom",
+    network: { mode: "allow-all" },
+    options: {
+      endpoint: "https://sandbox.example.com",
+      headers: { authorization: env("SANDBOX_AUTH"), "x-team": "ops" },
+    },
+  });
+
+  expect(fleet.config.options?.headers).toEqual({
+    authorization: { __beeblastEnv: true, name: "SANDBOX_AUTH" },
+    "x-team": "ops",
+  });
 });
 
 test("compileProject rejects provider-native workspace storage before upload", async () => {
@@ -926,7 +954,7 @@ export const github = defineGitHubConnection({
 
 export const repo = defineWorkspace({
   name: "repo",
-  storage: { provider: "s3" }, partitioned: true,
+  storage: { provider: "s3" }, partitioned: "conversation",
 });
 
 export const support = defineAgent({
@@ -970,22 +998,63 @@ export const support = defineAgent({
   ]);
 });
 
-test("compileProject rejects a non-boolean partitioned flag", async () => {
-  const cwd = await fixtureProject(
-    "",
-    `
+test.each(['"channel"', "true"])(
+  "compileProject rejects partitioned: %s",
+  async (mode) => {
+    const cwd = await fixtureProject(
+      "",
+      `
 import { defineWorkspace } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
   name: "repo",
-  storage: { provider: "s3" }, partitioned: "channel",
+  storage: { provider: "s3" }, partitioned: ${mode},
 });
+`,
+    );
+
+    const refused = await compileProject({ cwd: cwd, command: "dev" }).then(
+      () => "",
+      (error: unknown) => String(error),
+    );
+
+    expect(refused).toContain(
+      'Workspace "repo" config.partitioned must be one of: conversation, agent',
+    );
+  },
+);
+
+test('compileProject stores partitioned: "agent" as agent isolation and needs no channel partition', async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
+
+export const slack = defineSlackConnection({
+  allowedChannelIds: ["*"],
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
+});
+export const scratch = defineWorkspace({ name: "scratch", storage: { provider: "s3" }, partitioned: "agent" });
+export const shared = defineWorkspace({ name: "shared", storage: { provider: "s3" }, partitioned: "conversation" });
+export const support = defineAgent({ name: "support", connections: [slack], workspaces: [scratch] });
 `,
   );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Workspace "repo" config.partitioned must be a boolean; string modes are not supported.',
-  );
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const configOf = (name: string): unknown =>
+    manifest.resources.find(
+      (resource) => resource.kind === "workspace" && resource.name === name,
+    )?.config;
+
+  expect(configOf("scratch")).toEqual({
+    storage: { provider: "s3" },
+    isolation: "agent",
+  });
+  expect(configOf("shared")).toEqual({
+    storage: { provider: "s3" },
+    isolation: "conversation",
+  });
 });
 
 test("compileProject auto-generates the channel id for a partitioned connection", async () => {
@@ -1000,7 +1069,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1131,7 +1200,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1153,7 +1222,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 export const escape = defineSlackChannel({
   name: "escape",
@@ -1181,7 +1250,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1209,7 +1278,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   );
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" connection "slack" defines partition, but no attached workspace has partitioned: true.',
+    'Agent "support" connection "slack" defines partition, but no attached workspace has partitioned: "conversation".',
   );
 });
 
@@ -1231,7 +1300,7 @@ export const github = defineGitHubConnection({
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack, github], workspaces: [repo] });
 `,
   );
@@ -1262,7 +1331,7 @@ export const github = defineGitHubConnection({
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack, github], workspaces: [repo] });
 `,
   );
@@ -2256,7 +2325,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
       // Pin baseUrl too: without it the field falls back to ~/.broods/config.json
       // stored auth, which exists on logged-in dev machines but not in CI.
       "BROODS_BASE_URL=https://gateway.dev.broods.app",
-      "BROODS_TOKEN=fp_cli_test",
+      "BROODS_TOKEN=bcli_test",
       "BROODS_PROJECT=sandbox-stateless",
       "BROODS_STAGE=development",
       "",
@@ -2268,7 +2337,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   expect(config).toEqual({
     dashboardUrl: "https://dashboard.dev.broods.app",
     baseUrl: "https://gateway.dev.broods.app",
-    token: "fp_cli_test",
+    token: "bcli_test",
     project: "sandbox-stateless",
     stage: "development",
   });

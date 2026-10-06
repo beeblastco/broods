@@ -5,7 +5,7 @@
  * and saves the browser state plus the project id; every spec starts from
  * those files.
  */
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -65,10 +65,32 @@ export async function resolveProjectId(page: Page): Promise<string> {
   for (let visit = 0; visit < 3; visit++) {
     const match = new URL(page.url()).pathname.match(PROJECT_PATH);
     if (match) return match[1];
+    // The projects page needs only queries every backend has. The home route
+    // creates the first project for a fresh account, but on a pull request
+    // this build runs against the dev backend, which may lack the functions
+    // that route calls until the merge deploys them.
+    await page.goto("/projects");
+    const card = page.getByRole("button", { name: /^Open / }).first();
+    const empty = page.getByText("No projects yet");
+    await card.or(empty).first().waitFor({ timeout: AUTH_TIMEOUT_MS });
+    if (await card.isVisible()) {
+      // The card renders before React hydrates it, and a click that early
+      // does nothing, so click until the project opens.
+      await expect(async () => {
+        await card.click();
+        await page.waitForURL((url) => PROJECT_PATH.test(url.pathname), {
+          timeout: 5_000,
+        });
+      }).toPass({ timeout: AUTH_TIMEOUT_MS });
+      continue;
+    }
+    // Home opens the project, or provisions an unprovisioned account and
+    // lands back on the projects page for the next visit.
     await page.goto("/");
-    await page.waitForURL((url) => url.pathname !== "/", {
-      timeout: AUTH_TIMEOUT_MS,
-    });
+    await page.waitForURL(
+      (url) => PROJECT_PATH.test(url.pathname) || url.pathname === "/projects",
+      { timeout: AUTH_TIMEOUT_MS },
+    );
   }
 
   throw new Error(

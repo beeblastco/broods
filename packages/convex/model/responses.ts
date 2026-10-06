@@ -8,6 +8,11 @@
 import type { Doc } from "../_generated/dataModel";
 import type { AgentConfig } from "./agentRules";
 import { redactConfigSecrets, REDACTED_SECRET_VALUE } from "./configValues";
+import {
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+  SENSITIVE_HEADER_NAME_PATTERN,
+} from "./mcp";
+import { isStringRecord } from "./objects";
 import type { SandboxConfig } from "./sandboxRules";
 
 /**
@@ -192,6 +197,21 @@ function redactSandboxConfigSecrets(config: SandboxConfig): SandboxConfig {
   if (redacted.envVars) {
     redacted.envVars = Object.fromEntries(
       Object.keys(redacted.envVars).map((key) => [key, REDACTED_SECRET_VALUE]),
+    );
+  }
+  // A code sync stores a custom server's credential header with its ref
+  // resolved; a header still written as a ref stays readable, like other refs.
+  if (redacted.options && isStringRecord(redacted.options.headers)) {
+    redacted.options.headers = Object.fromEntries(
+      Object.entries(redacted.options.headers).map(
+        ([name, value]): [string, string] => [
+          name,
+          SENSITIVE_HEADER_NAME_PATTERN.test(name) &&
+          !CREDENTIAL_HEADER_VALUE_PATTERN.test(value)
+            ? REDACTED_SECRET_VALUE
+            : value,
+        ],
+      ),
     );
   }
 

@@ -104,11 +104,11 @@ export const create = internalMutation({
     });
     const created = await ctx.db.get(cronId);
     if (!created) throw new Error("Failed to fetch created cron job");
-    const schedule = await registerSchedule(ctx, created, {
+    const scheduledRunId = await registerSchedule(ctx, created, {
       onPastAt: "throw",
     });
-    if (schedule.scheduledRunId !== undefined) {
-      await ctx.db.patch(cronId, { scheduledRunId: schedule.scheduledRunId });
+    if (scheduledRunId !== undefined) {
+      await ctx.db.patch(cronId, { scheduledRunId: scheduledRunId });
     }
 
     return toCronResponse(created);
@@ -523,13 +523,12 @@ export const update = internalMutation({
       updated.status !== existing.status;
     if (scheduleChanged) {
       await unregisterSchedule(ctx, existing);
-      const schedule = await registerSchedule(ctx, updated, {
+      updated.scheduledRunId = await registerSchedule(ctx, updated, {
         onPastAt:
           updated.scheduleExpression !== existing.scheduleExpression
             ? "throw"
             : "run",
       });
-      updated.scheduledRunId = schedule.scheduledRunId;
     }
     await ctx.db.patch(existing._id, {
       ...defined,
