@@ -56,6 +56,7 @@ beforeAll(async (): Promise<void> => {
       script: await build.outputs[0]!.text(),
       compatibilityDate: "2026-09-29",
       workerLoaders: { LOADER: {} },
+      r2Buckets: ["BUNDLES"],
       bindings: { MCP_API_KEY: API_KEY, BUNDLE_ORIGIN: BUNDLE_ORIGIN },
       outboundService: async (request: Request): Promise<Response> => {
         if (new URL(request.url).host === "slow.example.com") {
@@ -113,6 +114,22 @@ it("runs a verified bundle with no secrets in reach and no path to the bundle st
     outside: "public-ok",
   });
   await send(batch("acct-a"));
+  expect(bundleFetches).toBe(1);
+});
+
+it("keeps a verified copy in R2 and loads from it instead of S3", async (): Promise<void> => {
+  const bundles = await runtime.getR2Bucket("BUNDLES");
+  await framesOf(await send(batch("acct-d")));
+
+  expect(bundleFetches).toBe(1);
+  expect(await (await bundles.get(`acct-d/${TENANT_SHA256}.mjs`))?.text()).toBe(
+    TENANT_SOURCE,
+  );
+
+  await bundles.put(`acct-e/${TENANT_SHA256}.mjs`, TENANT_SOURCE);
+  const frames = await framesOf(await send(batch("acct-e")));
+
+  expect(frames.map((frame): string => frame.t)).toEqual(["final", "end"]);
   expect(bundleFetches).toBe(1);
 });
 

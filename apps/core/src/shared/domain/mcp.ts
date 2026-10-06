@@ -18,6 +18,9 @@ export {
 
 export type McpStatus = "active" | "deleted";
 
+/** Where a hosted server may run: "auto" picks Workers when the bundle can run there. */
+export type McpRuntime = "auto" | "lambda";
+
 export interface McpRecord {
   accountId: string;
   serverId: string;
@@ -28,6 +31,8 @@ export interface McpRecord {
   transport: McpTransport;
   /** Hosted-only: Cloudflare Dynamic Workers can run the bundle; harness/mcp/hosted.ts routes on it. */
   workersCompatible?: boolean;
+  /** Hosted-only, the owner's pick: "lambda" keeps it off Workers; absent means "auto". */
+  runtime?: McpRuntime;
   /** Present on "http" rows; a "hosted" row's endpoint is the Lambda host. */
   url?: string;
   /** "machine" rows: name of the machine sandbox whose daemon serves the server. */

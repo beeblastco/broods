@@ -225,6 +225,27 @@ describe("hosted MCP metering", () => {
     }
   });
 
+  it("keeps a row its owner pinned to Lambda off the Worker", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("unexpected", { status: 500 }),
+    );
+    const lambda = mockLambda("lambda");
+
+    try {
+      const response = await hostedMcpFetch({
+        ...hostedRecord(),
+        workersCompatible: true,
+        runtime: "lambda",
+      })(URL, { method: "POST", body: "{}" });
+      expect(await response.text()).toBe("lambda");
+      expect(bridge).not.toHaveBeenCalled();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+  });
+
   it("sends a Workers-capable row to the Cloudflare runtime and meters it like Lambda", async (): Promise<void> => {
     let reply = async (): Promise<Response> =>
       new Response(
@@ -267,10 +288,10 @@ describe("hosted MCP metering", () => {
     expect(recorded).toEqual([charge, charge]);
   });
 
-  it("runs the batch on Lambda when the Worker ran nothing, and charges only Lambda", async (): Promise<void> => {
+  it("runs the batch on Lambda when the Worker was down, and charges only Lambda", async (): Promise<void> => {
     const bridge = mockBridge(
       async (): Promise<Response> =>
-        new Response("Unauthorized", { status: 401 }),
+        new Response("Service Unavailable", { status: 503 }),
     );
     const lambda = mockLambda("lambda");
 
@@ -293,6 +314,29 @@ describe("hosted MCP metering", () => {
     }
 
     expect(recorded).toHaveLength(2);
+  });
+
+  it("fails loudly instead of falling back when the Worker is misconfigured", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("unauthorized", { status: 401 }),
+    );
+    const lambda = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      await expect(callWorkersRow()).rejects.toThrow("HTTP 401: unauthorized");
+      bridge.mockImplementation(
+        workerFetch(
+          async (): Promise<Response> =>
+            new Response("runtime is not configured", { status: 500 }),
+        ),
+      );
+      await expect(callWorkersRow()).rejects.toThrow("HTTP 500");
+      expect(lambda).not.toHaveBeenCalled();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
   });
 
   it("sends a bundle the Worker could not load straight to Lambda after that", async (): Promise<void> => {

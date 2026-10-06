@@ -147,6 +147,7 @@ async function handleMcpCollectionRoute(
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),
+      ...(input.runtime !== undefined ? { runtime: input.runtime } : {}),
     });
     const created = await ctx.runQuery(internal.account.mcp.getById, {
       accountId: accountId,
@@ -206,6 +207,7 @@ async function patchMcpRoute(
     ...(input.allowedTools !== undefined
       ? { allowedTools: input.allowedTools }
       : {}),
+    ...(input.runtime !== undefined ? { runtime: input.runtime } : {}),
     ...(input.disabled !== undefined ? { disabled: input.disabled } : {}),
   });
   const updated = await ctx.runQuery(internal.account.mcp.getById, {
@@ -285,6 +287,9 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
     ...(record.url !== undefined ? { url: record.url } : {}),
     ...(record.sandbox !== undefined ? { sandbox: record.sandbox } : {}),
     ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
+    ...(record.transport === "hosted"
+      ? { runtime: record.runtime ?? "auto" }
+      : {}),
     ...(record.headers !== undefined ? { headers: record.headers } : {}),
     // Safe to echo like headers: the secret fields hold ${NAME} refs.
     ...(record.oauth !== undefined ? { oauth: record.oauth } : {}),

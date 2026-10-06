@@ -64,6 +64,9 @@ export type McpPlacement = { sandbox: string | null; transport: McpTransport };
 
 export type McpTransport = "http" | "hosted" | "machine";
 
+/** Where a hosted server may run: "auto" picks Workers when the bundle can run there. */
+export type McpRuntime = "auto" | "lambda";
+
 /**
  * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
  * at connect time and sends `Authorization: Bearer <token>`, so a server
@@ -94,6 +97,8 @@ export interface McpInput {
    */
   bundleStorageId?: string;
   sha256?: string;
+  /** Hosted-only: "lambda" keeps the server off Cloudflare Workers. */
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
   allowedTools?: string[];
@@ -102,7 +107,8 @@ export interface McpInput {
 
 /**
  * Invariants on the row a create or update produces, whichever side brings
- * each field: a machine row names its sandbox, and oauth needs an external row
+ * each field: a machine row names its sandbox, only a hosted row picks a
+ * runtime, and oauth needs an external row
  * with an https url (the minted bearer rides every request) and no
  * Authorization header (core mints it itself).
  */
@@ -110,6 +116,7 @@ export function assertMcpRow(row: {
   transport: McpTransport;
   url?: string;
   sandbox?: string;
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
 }): void {
@@ -122,6 +129,11 @@ export function assertMcpRow(row: {
   // normalizer's own check never sees it.
   if (row.transport === "machine" && row.headers !== undefined) {
     throw new ClientError("headers do not apply to a machine server");
+  }
+  if (row.runtime !== undefined && row.transport !== "hosted") {
+    throw new ClientError(
+      `runtime applies to hosted (bundle) servers, not ${row.transport}`,
+    );
   }
   if (row.oauth === undefined) return;
   if (row.transport !== "http") {
@@ -225,6 +237,12 @@ export async function normalizeMcpInput(
   normalizeOauth(record, input);
   if (record.allowedTools !== undefined && record.allowedTools !== null) {
     input.allowedTools = normalizeAllowedTools(record.allowedTools);
+  }
+  if (record.runtime !== undefined) {
+    if (record.runtime !== "auto" && record.runtime !== "lambda") {
+      throw new ClientError('runtime must be "auto" or "lambda"');
+    }
+    input.runtime = record.runtime;
   }
   if (record.disabled !== undefined) {
     if (typeof record.disabled !== "boolean") {

@@ -10,7 +10,12 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
+import {
+  assertMcpRow,
+  type McpOauth,
+  type McpRuntime,
+  type McpTransport,
+} from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
@@ -31,6 +36,7 @@ export const create = internalMutation({
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
     workersCompatible: mcpFields.workersCompatible,
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -75,6 +81,7 @@ export const create = internalMutation({
       transport: transport,
       url: args.url,
       sandbox: args.sandbox,
+      runtime: args.runtime,
       headers: args.headers,
       oauth: args.oauth,
     });
@@ -89,6 +96,7 @@ export const create = internalMutation({
       description: args.description,
       transport: transport,
       workersCompatible: args.workersCompatible,
+      runtime: args.runtime,
       url: args.url,
       sandbox: args.sandbox,
       bundleStorageKey: args.bundleStorageKey,
@@ -242,6 +250,7 @@ export const update = internalMutation({
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
     workersCompatible: mcpFields.workersCompatible,
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
@@ -309,6 +318,7 @@ function updatePatch(
     description?: string;
     transport?: McpTransport;
     workersCompatible?: boolean;
+    runtime?: McpRuntime;
     url?: string;
     sandbox?: string;
     bundleStorageKey?: string;
@@ -330,6 +340,7 @@ function updatePatch(
     ...(args.workersCompatible !== undefined
       ? { workersCompatible: args.workersCompatible }
       : {}),
+    ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
     ...(args.bundleStorageKey !== undefined
@@ -349,6 +360,7 @@ function updatePatch(
     ...(args.transport === "http"
       ? {
           workersCompatible: undefined,
+          runtime: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,
@@ -361,6 +373,7 @@ function updatePatch(
           oauth: undefined,
           headers: undefined,
           workersCompatible: undefined,
+          runtime: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,

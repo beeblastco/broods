@@ -5248,6 +5248,13 @@ components:
           items:
             type: string
           description: Tool names agents may use from this server; omit to allow all.
+        runtime:
+          type: string
+          enum: [auto, lambda]
+          description: >-
+            Hosted-only. `auto` (the default) runs the server on Cloudflare
+            Workers when its bundle can run there and the deployment runs that
+            runtime, on AWS Lambda otherwise. `lambda` always runs it on Lambda.
 
     McpOauth:
       type: object
@@ -5310,6 +5317,10 @@ components:
           type: array
           items:
             type: string
+        runtime:
+          type: string
+          enum: [auto, lambda]
+          description: As on create. Hosted-only.
         disabled:
           type: boolean
 
@@ -5339,6 +5350,10 @@ components:
         sha256:
           type: string
           description: Hosted-only; sha256 of the uploaded server bundle.
+        runtime:
+          type: string
+          enum: [auto, lambda]
+          description: Hosted-only; where the server may run, `auto` unless set.
         headers:
           type: object
           additionalProperties:

@@ -61,6 +61,8 @@ const BATCH_SCHEMA = z.object({
 
 interface Env {
   LOADER: WorkerLoader;
+  /** This runtime's own copy of each bundle it loaded, so a cold load stays in Cloudflare. */
+  BUNDLES: R2Bucket;
   /** Bearer core sends as CLOUDFLARE_MCP_API_KEY. */
   MCP_API_KEY: string;
   /** Exact origin of the presigned tool-bundles S3 URLs core sends. */
@@ -131,7 +133,8 @@ export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
 /**
  * Core's hosted MCP transport POSTs one batch to `/mcp` with the shared
  * bearer (apps/core/src/harness/mcp/hosted.ts). Each account bundle runs in
- * its own Dynamic Worker, cached by account and content hash, with no
+ * its own Dynamic Worker, cached by account and content hash and read from
+ * this runtime's R2 copy before S3, with no
  * bindings, no Node compatibility and egress through TenantOutbound. The
  * bundle loads before the batch is answered: a bundle that cannot load is a
  * 422 (504 when loading only timed out) with no request served, which core
@@ -146,7 +149,9 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     if (!env.MCP_API_KEY || !env.BUNDLE_ORIGIN) {
-      return new Response("runtime is not configured", { status: 503 });
+      // 500, not 503: core reruns 502 and up on Lambda, and a misconfigured
+      // Worker should fail loudly instead.
+      return new Response("runtime is not configured", { status: 500 });
     }
     if (!(await bearerMatches(request, env.MCP_API_KEY))) {
       return new Response("unauthorized", { status: 401 });
@@ -178,7 +183,7 @@ export default {
         mainModule: "entry.js",
         modules: {
           "entry.js": ENTRY_MODULE,
-          "tenant.js": await loadBundle(batch),
+          "tenant.js": await loadBundle(batch, env.BUNDLES, ctx),
         },
         env: {},
         globalOutbound: ctx.exports.TenantOutbound({
@@ -227,6 +232,21 @@ function boundedMessage(prefix: string, error: unknown): string {
   );
 }
 
+/** Download a bundle from the presigned S3 URL, capped at the Worker bundle size. */
+async function downloadBundle(url: string): Promise<Uint8Array> {
+  const response = await fetch(url, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(BUNDLE_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`bundle fetch failed with HTTP ${response.status}`);
+  }
+
+  return await readBoundedBytes(response.body, {
+    remaining: MAX_BUNDLE_BYTES,
+  });
+}
+
 /** Encode a frame as one NDJSON line. */
 function encodeFrame(frame: Frame): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(frame)}\n`);
@@ -260,22 +280,26 @@ function hex(buffer: ArrayBuffer): string {
     .join("");
 }
 
-/** Download the bundle once per isolate and refuse any byte the row did not hash. */
-async function loadBundle(batch: Batch): Promise<string> {
-  const response = await fetch(batch.bundleUrl, {
-    redirect: "manual",
-    signal: AbortSignal.timeout(BUNDLE_FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`bundle fetch failed with HTTP ${response.status}`);
-  }
-  const bytes = await readBoundedBytes(response.body, {
-    remaining: MAX_BUNDLE_BYTES,
-  });
+/**
+ * The bundle's bytes, once per isolate: from this runtime's R2 copy, or on a
+ * miss (or an R2 error) from S3, keeping a copy for the next cold load.
+ * Refuses any byte the row did not hash, whichever store served it.
+ */
+async function loadBundle(
+  batch: Batch,
+  bundles: R2Bucket,
+  ctx: ExecutionContext,
+): Promise<string> {
+  const key = `${encodeURIComponent(batch.accountId)}/${batch.expectedSha256}.mjs`;
+  const copy = await bundles.get(key).catch((): null => null);
+  const bytes = copy
+    ? new Uint8Array(await copy.arrayBuffer())
+    : await downloadBundle(batch.bundleUrl);
   const sha256 = hex(await crypto.subtle.digest("SHA-256", bytes));
   if (sha256 !== batch.expectedSha256) {
     throw new Error("bundle sha256 does not match the uploaded row");
   }
+  if (!copy) ctx.waitUntil(bundles.put(key, bytes, { sha256: sha256 }));
 
   return UTF8.decode(bytes);
 }

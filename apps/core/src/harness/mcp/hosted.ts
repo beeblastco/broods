@@ -55,9 +55,9 @@ const openBatches = new Map<string, OpenBatch>();
 const unloadableOnWorker = new Map<string, number>();
 
 /**
- * The Worker refused the batch or was never reached, so no tenant code ran
- * there and sendBatch may run the same batch on Lambda. `status` is the
- * Worker's answer, absent when it was never reached.
+ * The Worker could not load the bundle, was down or was never reached, so no
+ * tenant code ran there and sendBatch may run the same batch on Lambda.
+ * `status` is the Worker's answer, absent when it was never reached.
  */
 class WorkerNotRunError extends Error {
   constructor(
@@ -262,8 +262,9 @@ function defaultClient(): LambdaClient {
 }
 
 // POST the batch to the Cloudflare runtime and push its NDJSON body into the
-// queue as it arrives. Throws WorkerNotRunError when the Worker ran nothing,
-// so sendBatch can retry on Lambda; a timeout or abort after sending is metered.
+// queue as it arrives. Throws WorkerNotRunError when the Worker ran nothing for
+// a reason Lambda would not share, so sendBatch can retry there; a timeout or
+// abort after sending is metered.
 async function drainBridgeStream(
   url: string,
   payload: McpHostPayload,
@@ -304,10 +305,17 @@ async function drainBridgeStream(
       0,
       CLOUDFLARE_ERROR_BODY_CHARS,
     );
-    throw new WorkerNotRunError(
-      `cloudflare MCP runtime failed with HTTP ${response.status}${reason ? `: ${reason}` : ""}`,
-      response.status,
-    );
+    const message = `cloudflare MCP runtime failed with HTTP ${response.status}${reason ? `: ${reason}` : ""}`;
+    // A bundle that cannot load there, or an outage (502 and up, a load
+    // timeout included), ran nothing and may rerun on Lambda. A 401, a 400 or
+    // the Worker's own 500 is a misconfiguration and fails loudly.
+    if (
+      response.status === WORKER_UNLOADABLE_STATUS ||
+      response.status >= 502
+    ) {
+      throw new WorkerNotRunError(message, response.status);
+    }
+    throw new Error(message);
   }
   if (!response.body) {
     throw new Error("cloudflare MCP runtime answered with no body");
@@ -611,9 +619,9 @@ async function sendBatch(
   }
 }
 
-// The Worker's URL when the bundle can run on Workers, this deployment runs
-// the Worker (URL and key both set), and the Worker has not lately failed to
-// load it; undefined sends the row to Lambda.
+// The Worker's URL when the owner left the runtime on "auto", the bundle can
+// run on Workers, this deployment runs the Worker (URL and key both set), and
+// the Worker has not lately failed to load it; undefined sends it to Lambda.
 function workersUrl(record: McpRecord): string | undefined {
   const unloadableUntil = unloadableOnWorker.get(bundleKey(record));
   if (unloadableUntil !== undefined && unloadableUntil > Date.now()) {
@@ -622,7 +630,9 @@ function workersUrl(record: McpRecord): string | undefined {
   if (unloadableUntil !== undefined)
     unloadableOnWorker.delete(bundleKey(record));
 
-  return record.workersCompatible && optionalEnv("CLOUDFLARE_MCP_API_KEY")
+  return record.runtime !== "lambda" &&
+    record.workersCompatible &&
+    optionalEnv("CLOUDFLARE_MCP_API_KEY")
     ? optionalEnv("CLOUDFLARE_MCP_URL")
     : undefined;
 }

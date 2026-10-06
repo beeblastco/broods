@@ -303,6 +303,7 @@ An MCP server whose tools the agent sees as `<name>__<tool>`. Give exactly one o
 | `headers`      | Request headers. Credentials must be `"Bearer ${NAME}"` refs                                                 |
 | `oauth`        | `{ clientId, clientSecret, refreshToken, tokenUrl? }` for expiring tokens. No Authorization header alongside |
 | `allowedTools` | Tools to register. Omit for all                                                                              |
+| `runtime`      | `handler` only. `"auto"` (default) runs it on Cloudflare Workers when it builds for them; `"lambda"` never   |
 
 ```ts
 export const search = defineMcp({

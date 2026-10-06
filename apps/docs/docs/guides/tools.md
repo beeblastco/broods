@@ -120,7 +120,7 @@ Install `@modelcontextprotocol/server` in your project. The CLI bundles the file
 - Bundles are capped at 50 MB. The calls from one model step to one server run as a batch, and the batch shares a 30 second deadline and 16 MB of output.
 - Hosted servers run outside the Broods core, one child process per bundle. Accounts can share a warm runner environment today, so keep secrets out of module-level state. The first call after an idle period is a cold start.
 - Module-level state, such as a memoized client, survives between calls of the same bundle.
-- Broods runs a server on [Cloudflare Dynamic Workers](cloudflare-mcp.md) when its bundle can run there, and on AWS Lambda otherwise. You do not pick.
+- By default (`runtime: "auto"`) Broods runs a server on [Cloudflare Dynamic Workers](cloudflare-mcp.md) when its bundle can run there, and on AWS Lambda otherwise. Set `runtime: "lambda"` to always run it on Lambda.
 
 See the runnable [`mcp-connect` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect).
 

@@ -278,7 +278,9 @@ jobs:
 
           # The hosted MCP runtime on Cloudflare Dynamic Workers, named and
           # pointed at the bundle bucket by the target's SST outputs. Code only:
-          # infra owns its MCP_API_KEY secret, which survives each deploy.
+          # infra owns its MCP_API_KEY secret, which survives each deploy. Its
+          # R2 bucket (wrangler.jsonc) only caches S3 bundles, so a new one gets
+          # a 30-day expiry and every copy is refetched from S3 after that.
           # Production stays on Lambda until infra routes production core to it.
           # A failure only warns, so it never stops the remaining SST targets.
           deploy_mcp_worker() {
@@ -291,8 +293,12 @@ jobs:
             local worker bundles
             worker="$(jq -r .cloudflareMcpWorkerName .sst/outputs.json)"
             bundles="$(jq -r .toolBundlesBucketName .sst/outputs.json)"
-            if ! (cd ../cloudflare-mcp && bunx wrangler deploy --name "$worker" \
-              --var "BUNDLE_ORIGIN:https://${bundles}.s3.${target_region}.amazonaws.com"); then
+            if ! (cd ../cloudflare-mcp &&
+              { bunx wrangler r2 bucket info broods-mcp-bundles >/dev/null 2>&1 ||
+                { bunx wrangler r2 bucket create broods-mcp-bundles &&
+                  bunx wrangler r2 bucket lifecycle add broods-mcp-bundles expire-copies --expire-days 30 --force; }; } &&
+              bunx wrangler deploy --name "$worker" \
+                --var "BUNDLE_ORIGIN:https://${bundles}.s3.${target_region}.amazonaws.com"); then
               echo "::warning::Cloudflare MCP runtime deploy failed for $worker"
             fi
           }

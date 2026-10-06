@@ -1097,6 +1097,10 @@ async function syncMcpResources(
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),
+      // The manifest is the whole truth: dropping `runtime` from it means "auto".
+      ...(input.transport === "hosted"
+        ? { runtime: input.runtime ?? "auto" }
+        : {}),
     };
     if (current) {
       // An identical patch is skipped: a write would bump updatedAt, which is
