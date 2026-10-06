@@ -19,6 +19,7 @@ import {
   transformSync,
   type BuildFailure,
   type Plugin,
+  type StdinOptions,
 } from "esbuild";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
@@ -231,14 +232,23 @@ export async function compileProject(
 /**
  * Collects the distinct account/environment variable names referenced via
  * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
- * compiled manifest, sorted. `dev` uses this to auto-sync exactly those vars
- * from the local environment to the cloud, never unrelated `.env.local` keys.
+ * compiled manifest, plus the `${NAME}` refs in MCP server headers, sorted.
+ * `dev` uses this to auto-sync exactly those vars from the local environment
+ * to the cloud, never unrelated `.env.local` keys.
  */
 export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
-  for (const resource of manifest.resources)
+  for (const resource of manifest.resources) {
     collectEnvRefNamesFromValue(resource.config, names);
+    if (resource.kind !== "mcp") continue;
+    const headers = (resource.config as { headers?: Record<string, string> })
+      .headers;
+    for (const value of Object.values(headers ?? {})) {
+      for (const match of value.matchAll(/\$\{([A-Z][A-Z0-9_]*)\}/g))
+        names.add(match[1]!);
+    }
+  }
 
   return [...names].sort();
 }
@@ -1618,13 +1628,16 @@ async function assertServableMcpBundle(
 
 /** Run one esbuild bundle build, mapping failures to a deploy-time error. */
 async function buildBundleModule(options: {
-  entryPoint: string;
+  entryPoint?: string;
+  stdin?: StdinOptions;
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
 }): Promise<string> {
   const build = await esbuild({
-    entryPoints: [options.entryPoint],
+    ...(options.stdin
+      ? { stdin: options.stdin }
+      : { entryPoints: [options.entryPoint!] }),
     bundle: true,
     platform: "node",
     format: "esm",
@@ -1713,22 +1726,20 @@ async function normalizeMcpConfig(
   assertSafeBundlePath(manifestPath, "MCP server");
   // The defining module imports the SDK for defineMcp/defineAgent; a shim
   // entrypoint picks the handler off the resource export and the stub plugin
-  // keeps the SDK client out of the bundle.
-  const shimDir = await mkdtemp(join(tmpdir(), "broods-mcp-shim-"));
-  let bundle: string;
-  try {
-    const shimPath = join(shimDir, "mcp-handler.mjs");
-    await writeFile(shimPath, mcpShimSource(entry), "utf8");
-    await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
-    bundle = await buildBundleModule({
-      entryPoint: shimPath,
-      label: "MCP server bundle",
-      manifestPath: manifestPath,
-      plugins: [sdkStubPlugin(shimDir)],
-    });
-  } finally {
-    await rm(shimDir, { recursive: true, force: true });
-  }
+  // keeps the SDK client out of the bundle. Neither lives on disk: esbuild
+  // writes each module's path into the bundle, and a temp path changes the
+  // sha256 on every build, so every diff and sync re-uploads the server.
+  const bundle = await buildBundleModule({
+    stdin: {
+      contents: mcpShimSource(entry),
+      resolveDir: projectRoot,
+      sourcefile: "mcp-handler.mjs",
+      loader: "js",
+    },
+    label: "MCP server bundle",
+    manifestPath: manifestPath,
+    plugins: [sdkStubPlugin()],
+  });
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_MCP_BUNDLE_BYTES) {
     throw new Error(
@@ -1759,13 +1770,18 @@ function mcpShimSource(entry: ExportedResource): string {
 // Hosted MCP handlers live beside `defineAgent(...)` calls that import the
 // SDK. Alias those imports to inert stubs so the bundle carries the handler,
 // not the client.
-function sdkStubPlugin(shimDir: string): Plugin {
-  const stub = join(shimDir, "broods-stub.mjs");
-
+function sdkStubPlugin(): Plugin {
   return {
     name: "broods-sdk-stub",
     setup: function (build): void {
-      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
+      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({
+        path: "broods",
+        namespace: "broods-stub",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "broods-stub" }, () => ({
+        contents: SDK_STUB_SOURCE,
+        loader: "js",
+      }));
     },
   };
 }

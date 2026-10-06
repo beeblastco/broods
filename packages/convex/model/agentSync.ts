@@ -19,6 +19,7 @@ import {
   substituteEnvPlaceholders,
   toNestedAgentConfig,
   type FlatPatch,
+  type NestedAgentConfig,
 } from "./agentConfigCodec";
 import {
   accountCipher,
@@ -346,7 +347,10 @@ export async function pushEncryptedConfigToAgentRow(
       | undefined,
     extraConfig: config.extraConfig as Record<string, unknown> | undefined,
   });
-  const resolved = substituteEnvPlaceholders(nested, variables);
+  const resolved = substituteEnvPlaceholders(
+    await withMcpServerHeaders(ctx, nested, accountId),
+    variables,
+  );
   // Every `broods dev` save re-pushes every agent. A fresh IV would rewrite an
   // unchanged row and then rebuild the account's whole channel projection.
   const current =
@@ -602,4 +606,36 @@ function oldest<T extends { _creationTime: number }>(rows: T[]): T | undefined {
         : earliest,
     undefined,
   );
+}
+
+/**
+ * Lays each connected MCP server row's headers under the agent's own entry
+ * headers. Core reads a server's secret headers only from the agent config,
+ * which is where their `${NAME}` refs resolve.
+ */
+async function withMcpServerHeaders(
+  ctx: MutationCtx,
+  config: NestedAgentConfig,
+  accountId: Id<"accounts">,
+): Promise<NestedAgentConfig> {
+  const mcp = config.mcp as
+    | Record<string, { headers?: Record<string, string> }>
+    | undefined;
+  if (!mcp) return config;
+  const entries = await Promise.all(
+    Object.entries(mcp).map(async ([serverId, entry]) => {
+      const id = ctx.db.normalizeId("mcp", serverId);
+      const row = id ? await ctx.db.get(id) : null;
+      if (!row?.headers || row.accountId !== accountId) {
+        return [serverId, entry];
+      }
+
+      return [
+        serverId,
+        { ...entry, headers: { ...row.headers, ...entry.headers } },
+      ];
+    }),
+  );
+
+  return { ...config, mcp: Object.fromEntries(entries) };
 }

@@ -1101,17 +1101,26 @@ async function syncMcpResources(
         : {}),
     };
     if (current) {
+      // The manifest is the whole server, so a field it dropped is cleared.
+      const clear = (
+        ["allowedTools", "description", "headers", "oauth"] as const
+      ).filter(
+        (field) => input[field] === undefined && current[field] !== undefined,
+      );
       // An identical patch is skipped: a write would bump updatedAt, which is
       // core's MCP cache identity, and re-probe every server on the next run.
       const row = current as unknown as Record<string, unknown>;
-      const unchanged = Object.entries(patch).every(
-        ([key, value]) => stableJson(value) === stableJson(row[key]),
-      );
+      const unchanged =
+        clear.length === 0 &&
+        Object.entries(patch).every(
+          ([key, value]) => stableJson(value) === stableJson(row[key]),
+        );
       if (!unchanged) {
         await ctx.runMutation(internal.account.mcp.update, {
           accountId: accountId,
           serverId: current._id,
           ...patch,
+          ...(clear.length > 0 ? { clear: clear } : {}),
         });
       }
       ids[name] = current._id;

@@ -10,7 +10,10 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { CliManifestResource } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
-import { toNestedAgentConfig } from "./agentConfigCodec";
+import {
+  collectEnvPlaceholderNames,
+  toNestedAgentConfig,
+} from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
@@ -66,6 +69,10 @@ export function assertEnvRefsResolved(
   const referenced = new Set<string>();
   for (const resource of resources) {
     rewriteEnvRefs(asObject(resource.config), referenced);
+    // An MCP server's `${NAME}` headers resolve into each agent that connects it.
+    if (resource.kind === "mcp") {
+      collectEnvPlaceholderNames(asObject(resource.config).headers, referenced);
+    }
   }
   const missing = [...referenced]
     .filter((name) => envValues[name] === undefined)
@@ -75,7 +82,7 @@ export function assertEnvRefsResolved(
   const flag = `--stage ${stage}`;
 
   throw new ClientError(
-    `env() references ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
+    `env() and \${NAME} references name ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
       `Set each one with \`broods env set <NAME> ${flag}\`, or put them in .env.local and run \`broods env sync ${flag}\`, then sync again.`,
   );
 }

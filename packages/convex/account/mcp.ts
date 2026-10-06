@@ -248,6 +248,17 @@ export const update = internalMutation({
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
     sourceCode: v.optional(v.string()),
+    // A declarative sync names the optional fields its manifest left out.
+    clear: v.optional(
+      v.array(
+        v.union(
+          v.literal("allowedTools"),
+          v.literal("description"),
+          v.literal("headers"),
+          v.literal("oauth"),
+        ),
+      ),
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -268,7 +279,12 @@ export const update = internalMutation({
     }
     // The normalizer only sees one body; the row the patch produces is
     // what has to hold.
-    const patch = updatePatch(args, doc);
+    const patch = {
+      ...Object.fromEntries(
+        (args.clear ?? []).map((field) => [field, undefined]),
+      ),
+      ...updatePatch(args, doc),
+    };
     assertMcpRow({ ...doc, ...patch });
 
     await ctx.db.patch(normalized, patch);

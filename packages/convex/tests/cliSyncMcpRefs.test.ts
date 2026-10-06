@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifestResource } from "../cli/types";
+import { accountCipher } from "../model/accountKeys";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -14,6 +15,7 @@ const PROJECT = "mcp-connect";
 const STAGE = "development";
 const SECRET_HASH = "hash-mcp-refs";
 const SERVER_NAME = "search";
+const TOKEN_HEADER = { Authorization: "Bearer ${SEARCH_TOKEN}" };
 
 const mcpResource = {
   kind: "mcp" as const,
@@ -66,6 +68,7 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
 async function seedMcpServer(
   tt: T,
   accountId: Id<"accounts">,
+  headers?: Record<string, string>,
 ): Promise<Id<"mcp">> {
   const scope = await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
     secretHash: SECRET_HASH,
@@ -78,6 +81,7 @@ async function seedMcpServer(
     stageId: scope.stageId,
     name: SERVER_NAME,
     url: mcpResource.config.url,
+    ...(headers ? { headers: headers } : {}),
   });
   await tt.mutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
     secretHash: SECRET_HASH,
@@ -120,6 +124,7 @@ function storedMcpServers(tt: T): Promise<Record<string, unknown>> {
 const syncMcpServers = (
   tt: T,
   mcp: Record<string, unknown>,
+  headers?: Record<string, string>,
 ): Promise<unknown> =>
   tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
@@ -127,9 +132,38 @@ const syncMcpServers = (
       version: 1 as const,
       project: PROJECT,
       stage: STAGE,
-      resources: [mcpResource, agentResource(mcp)],
+      resources: [
+        headers
+          ? {
+              ...mcpResource,
+              config: { ...mcpResource.config, headers: headers },
+            }
+          : mcpResource,
+        agentResource(mcp),
+      ],
     },
   });
+
+/** The `config.mcp` core decrypts for a run, with every `${NAME}` resolved. */
+function runtimeMcpServers(
+  tt: T,
+  accountId: Id<"accounts">,
+): Promise<Record<string, { headers?: Record<string, string> }>> {
+  return tt.run(async (ctx) => {
+    const agent = await ctx.db.query("agents").first();
+    const config = await (
+      await accountCipher(ctx, accountId)
+    ).decrypt("agents:encryptedConfig", {
+      ciphertext: agent!.encryptedConfig!,
+      iv: agent!.encryptionIv!,
+      tag: agent!.encryptionTag!,
+    });
+
+    return (
+      config as { mcp: Record<string, { headers?: Record<string, string> }> }
+    ).mcp;
+  });
+}
 
 describe("cli sync rewrites config.mcp names to mcp row ids", () => {
   // Agent config is written encrypted; the sync throws without a secret.
@@ -202,5 +236,77 @@ describe("cli sync rewrites config.mcp names to mcp row ids", () => {
     // so without this link a CLI-defined server is invisible on the canvas.
     expect(mcpNode).toBeDefined();
     expect(server!.nodeId).toBe(mcpNode!.id);
+  });
+});
+
+describe("cli sync resolves an mcp server's secret headers per agent", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("bakes a server's ${NAME} header into the agent's runtime config", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const serverId = await seedMcpServer(tt, accountId, TOKEN_HEADER);
+    await tt.mutation(internal.cli.sync.setEnvBySecretHash, {
+      secretHash: SECRET_HASH,
+      project: PROJECT,
+      stage: STAGE,
+      name: "SEARCH_TOKEN",
+      value: "tok-1",
+    });
+
+    await syncMcpServers(
+      tt,
+      { [SERVER_NAME]: { enabled: true } },
+      TOKEN_HEADER,
+    );
+
+    // Core refuses a run whose header still carries the ref.
+    expect((await runtimeMcpServers(tt, accountId))[serverId]).toEqual({
+      enabled: true,
+      headers: { Authorization: "Bearer tok-1" },
+    });
+    // The stored config stays what the code declares, so diff stays clean.
+    expect(await storedMcpServers(tt)).toEqual({
+      [serverId]: { enabled: true },
+    });
+  });
+
+  test("refuses the sync when a server header names an unset variable", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await seedMcpServer(tt, accountId, TOKEN_HEADER);
+
+    await expect(
+      syncMcpServers(tt, { [SERVER_NAME]: { enabled: true } }, TOKEN_HEADER),
+    ).rejects.toThrow("SEARCH_TOKEN");
+  });
+});
+
+describe("internal mcp update", () => {
+  test("clears the optional fields a declarative sync dropped", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const serverId = await seedMcpServer(tt, accountId, TOKEN_HEADER);
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: accountId,
+      serverId: serverId,
+      allowedTools: ["query"],
+    });
+
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: accountId,
+      serverId: serverId,
+      clear: ["allowedTools", "headers"],
+    });
+
+    // A stale allowedTools would silently hide every renamed tool.
+    const row = await tt.run(async (ctx) => await ctx.db.get(serverId));
+    expect(row!.allowedTools).toBeUndefined();
+    expect(row!.headers).toBeUndefined();
   });
 });

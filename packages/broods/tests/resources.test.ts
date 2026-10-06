@@ -1461,6 +1461,26 @@ export const billing = defineAgent({
   ]);
 });
 
+test("collectEnvRefNames includes ${NAME} refs in MCP server headers", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineMcp } from "${RESOURCES_MODULE}";
+
+export const search = defineMcp({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: "Bearer \${SEARCH_TOKEN}" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  // `broods dev` pushes these from .env.local, or the run fails on the ref.
+  expect(collectEnvRefNames(manifest)).toEqual(["SEARCH_TOKEN"]);
+});
+
 test("collectEnvRefNames returns nothing when no env refs are present", async () => {
   const cwd = await fixtureProject(
     "",

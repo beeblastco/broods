@@ -27,6 +27,23 @@ test("compileProject bundles a servable hosted MCP server", async () => {
   expect(typeof bundle).toBe("string");
 });
 
+test("compileProject hashes the same hosted MCP server the same way twice", async () => {
+  const cwd = await mcpFixture(
+    `handler: (request) => new Response("{}", { status: 200 }),`,
+  );
+
+  // A changing hash shows the server as changed on every diff and re-uploads it.
+  const sha = async (): Promise<unknown> =>
+    (
+      (
+        await compileProject({ cwd: cwd, command: "dev" })
+      ).manifest.resources.find((entry) => entry.kind === "mcp")?.config as
+        | { sha256?: unknown }
+        | undefined
+    )?.sha256;
+  expect(await sha()).toBe(await sha());
+});
+
 test("compileProject rejects a handler that is not fetch-style", async () => {
   const cwd = await mcpFixture(`handler: 42,`);
 

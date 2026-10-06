@@ -10,6 +10,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizePolicyDocument } from "../agent/policies";
 import { accountCipherForWrite } from "./accountKeys";
 import {
+  collectEnvPlaceholderNames,
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
 } from "./agentConfigCodec";
@@ -356,10 +357,25 @@ export async function syncAgentResources(
   }
   const claimed = new Set<Id<"agentConfigs">>();
 
+  // An MCP server's `${NAME}` headers resolve per agent, from that agent's values.
+  const mcpHeaders = new Map(
+    resources
+      .filter((entry) => entry.kind === "mcp")
+      .map((entry) => [
+        entry.name,
+        asObject(entry.config).headers as Record<string, string> | undefined,
+      ]),
+  );
+
   for (const resource of agentResources) {
     const name = resourceName(resource.name);
     const envNames = new Set<string>();
     const withEnvRefs = rewriteEnvRefs(asObject(resource.config), envNames);
+    // Store the values the agent's MCP headers name, its own and its servers'.
+    collectEnvPlaceholderNames(withEnvRefs.mcp, envNames);
+    for (const server of Object.keys(asObject(withEnvRefs.mcp ?? {}))) {
+      collectEnvPlaceholderNames(mcpHeaders.get(server), envNames);
+    }
     // A policy ref that names no policy resource in this deploy stays a raw
     // string. Unless it is an existing policy id, the runtime refuses every
     // action for that agent, so the deploy warns about it.
