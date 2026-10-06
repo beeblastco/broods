@@ -16,7 +16,9 @@ For a server that mostly does `fetch` calls and JSON, Workers costs about a quar
 - A bundle over 10 MB.
 - A deployment that does not run the Cloudflare runtime. A self-hosted Broods without it keeps every server on Lambda.
 
-The CLI tries a Workers build first (browser and `workerd` package exports) and ships it when it passes the same static scan Broods runs on every upload; otherwise it ships a Node build. The scan is a heuristic that leans toward Lambda. A server that gets past it and still fails on Workers stays there until its code changes.
+The CLI tries a Workers build first (browser and `workerd` package exports) and ships it when it passes the same static scan Broods runs on every upload; otherwise it ships a Node build. The scan is a heuristic that leans toward Lambda.
+
+If the Cloudflare runtime cannot take a batch before any of it runs (the runtime is unreachable or refuses the batch, or the bundle fails to load there), Broods runs that batch on Lambda instead and logs a warning. Once a call has started on Cloudflare it is never retried, because a tool may already have acted.
 
 ## What the server can reach on Cloudflare
 

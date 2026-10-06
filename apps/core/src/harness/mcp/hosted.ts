@@ -20,6 +20,7 @@ import {
   positiveIntegerEnv,
   requireEnv,
 } from "../../shared/env.ts";
+import { logWarn } from "../../shared/log.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
 import { FrameQueue, toolBundlesBucket, type RunnerFrame } from "../frames.ts";
 import { recordUsage } from "../plan-limits.ts";
@@ -34,6 +35,8 @@ const BUNDLE_URL_TTL_SECONDS = 120;
 const CLOUDFLARE_REQUEST_TIMEOUT_MS = 45_000;
 // Enough of a refusal's body to name its cause (bad origin, bad batch).
 const CLOUDFLARE_ERROR_BODY_CHARS = 512;
+// Bun fetch codes for a request that never left core: no connection, no host.
+const UNSENT_FETCH_CODES = new Set(["ConnectionRefused", "ENOTFOUND"]);
 
 // The parallel calls of one model step arrive well under 1ms apart; the window
 // only has to outlast that. The cap bounds what one batch's shared deadline,
@@ -44,6 +47,12 @@ const DEFAULT_BATCH_MAX = 8;
 let sharedClient: LambdaClient | undefined;
 let sendOverride: HostedMcpSendBatch | null = null;
 const openBatches = new Map<string, OpenBatch>();
+
+/**
+ * The Worker refused the batch or was never reached, so no tenant code ran
+ * there and sendBatch may run the same batch on Lambda.
+ */
+class WorkerNotRunError extends Error {}
 
 /** A hosted row whose bundle upload completed. */
 type HostedBundleRecord = McpRecord & {
@@ -227,9 +236,10 @@ function defaultClient(): LambdaClient {
 }
 
 // POST the batch to the Cloudflare runtime and push its NDJSON body into the
-// queue as it arrives. Metering starts when the request is sent. A refusal
-// (bad token, invalid payload) runs no tenant code and costs nothing; a
-// timeout or abort after sending may have, so it still counts.
+// queue as it arrives. Metering starts when the request is sent. A non-200
+// answer (bad token, invalid payload, bundle that failed to load) or a request
+// that never left runs no tenant code, costs nothing, and throws
+// WorkerNotRunError; a timeout or abort after sending may have, so it counts.
 async function drainBridgeStream(
   url: string,
   payload: McpHostPayload,
@@ -258,6 +268,15 @@ async function drainBridgeStream(
     ) {
       onInvoked(startedAt);
     }
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      UNSENT_FETCH_CODES.has(String(error.code))
+    ) {
+      throw new WorkerNotRunError(
+        `cloudflare MCP runtime unreachable: ${error.message}`,
+      );
+    }
     throw error;
   });
   if (!response.ok || !response.body) {
@@ -265,9 +284,8 @@ async function drainBridgeStream(
       0,
       CLOUDFLARE_ERROR_BODY_CHARS,
     );
-    throw new Error(
-      `cloudflare MCP runtime failed with HTTP ${response.status}${reason ? `: ${reason}` : ""}`,
-    );
+    const message = `cloudflare MCP runtime failed with HTTP ${response.status}${reason ? `: ${reason}` : ""}`;
+    throw response.ok ? new Error(message) : new WorkerNotRunError(message);
   }
   onInvoked(startedAt);
   const decoder = new TextDecoder();
@@ -450,45 +468,23 @@ function hasBundle(record: McpRecord): record is HostedBundleRecord {
   return Boolean(record.bundleStorageKey && record.sha256);
 }
 
-// One invoke for one batch, on the row's runtime; a transport failure before
-// any terminal frame throws for every call.
-async function sendBatch(
+// Collect one runtime's frames for the batch and meter what it ran.
+async function runBatch(
   record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],
-  abortSignal: AbortSignal,
+  drain: (
+    queue: FrameQueue,
+    onInvoked: (startedAt: number) => void,
+  ) => Promise<void>,
 ): Promise<HostedMcpBatchResult> {
-  const payload: McpHostPayload = {
-    mode: "mcp",
-    toolName: record.name,
-    accountId: record.accountId,
-    expectedSha256: record.sha256,
-    bundleUrl: await getS3ObjectUrl(
-      toolBundlesBucket(),
-      record.bundleStorageKey,
-      { expiresInSeconds: BUNDLE_URL_TTL_SECONDS },
-    ),
-    requests: requests,
-  };
   const queue = new FrameQueue();
   let transportError: unknown;
   // When the batch got underway. A failure before that (no function
   // name, a refused or throttled request) runs nothing and costs nothing.
   let invokedAt: number | undefined;
-  const onInvoked = (startedAt: number): void => {
+  const pump = drain(queue, (startedAt: number): void => {
     invokedAt = startedAt;
-  };
-  const bridgeUrl = workersUrl(record);
-  const pump = (
-    bridgeUrl
-      ? drainBridgeStream(bridgeUrl, payload, abortSignal, queue, onInvoked)
-      : drainInvokeStream(
-          defaultClient(),
-          payload,
-          abortSignal,
-          queue,
-          onInvoked,
-        )
-  )
+  })
     .catch((error: unknown) => {
       transportError = error;
     })
@@ -524,6 +520,47 @@ async function sendBatch(
       });
     }
   }
+}
+
+// One invoke for one batch, on the row's runtime; a transport failure before
+// any terminal frame throws for every call. A Worker that ran nothing hands
+// the same batch to Lambda, so a broken Worker degrades instead of failing.
+async function sendBatch(
+  record: HostedBundleRecord,
+  requests: HostedMcpBatchRequest[],
+  abortSignal: AbortSignal,
+): Promise<HostedMcpBatchResult> {
+  const payload: McpHostPayload = {
+    mode: "mcp",
+    toolName: record.name,
+    accountId: record.accountId,
+    expectedSha256: record.sha256,
+    bundleUrl: await getS3ObjectUrl(
+      toolBundlesBucket(),
+      record.bundleStorageKey,
+      { expiresInSeconds: BUNDLE_URL_TTL_SECONDS },
+    ),
+    requests: requests,
+  };
+  const bridgeUrl = workersUrl(record);
+  if (bridgeUrl) {
+    try {
+      return await runBatch(record, requests, (queue, onInvoked) =>
+        drainBridgeStream(bridgeUrl, payload, abortSignal, queue, onInvoked),
+      );
+    } catch (error) {
+      if (!(error instanceof WorkerNotRunError)) throw error;
+      logWarn("hosted MCP batch fell back to Lambda", {
+        accountId: record.accountId,
+        server: record.name,
+        reason: error.message,
+      });
+    }
+  }
+
+  return await runBatch(record, requests, (queue, onInvoked) =>
+    drainInvokeStream(defaultClient(), payload, abortSignal, queue, onInvoked),
+  );
 }
 
 // The Worker's URL when the bundle can run on Workers and this deployment runs

@@ -257,14 +257,6 @@ describe("hosted MCP metering", () => {
       });
       expect(lambda).not.toHaveBeenCalled();
 
-      reply = (): Response => new Response("Unauthorized", { status: 401 });
-      await expect(
-        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
-          method: "POST",
-          body: "{}",
-        }),
-      ).rejects.toThrow("HTTP 401: Unauthorized");
-
       reply = (): Response =>
         new Response(
           `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
@@ -275,18 +267,98 @@ describe("hosted MCP metering", () => {
           body: "{}",
         }),
       ).rejects.toThrow("without an end frame");
+      // Answered 200, so a tool may have run: never retried on Lambda.
+      expect(lambda).not.toHaveBeenCalled();
       await Promise.resolve();
     } finally {
       bridge.mockRestore();
       lambda.mockRestore();
     }
 
-    // The refused batch is free; the truncated one ran, so it is charged.
     const charge = {
       accountId: "acct_test",
       usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
     };
     expect(recorded).toEqual([charge, charge]);
+  });
+
+  it("runs the batch on Lambda when the Worker ran nothing, and charges only Lambda", async (): Promise<void> => {
+    process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
+    process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+    const refusals: (() => Promise<Response>)[] = [
+      async (): Promise<Response> =>
+        new Response("Unauthorized", { status: 401 }),
+      async (): Promise<Response> =>
+        new Response("bundle failed to load: sha256", { status: 502 }),
+      async (): Promise<Response> => {
+        throw Object.assign(new TypeError("Unable to connect"), {
+          code: "ConnectionRefused",
+        });
+      },
+    ];
+    let refuse = refusals[0]!;
+    const bridge = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(async (): Promise<Response> => await refuse(), {
+        preconnect: (): void => {},
+      }),
+    );
+    const frames = new TextEncoder().encode(
+      `${JSON.stringify({ t: "final", id: "1", result: ok("lambda") })}\n{"t":"end"}\n`,
+    );
+    const lambda = spyOn(LambdaClient.prototype, "send").mockImplementation(
+      async (): Promise<{
+        EventStream: InvokeWithResponseStreamResponseEvent[];
+      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+    );
+
+    try {
+      for (const refusal of refusals) {
+        refuse = refusal;
+        const response = await hostedMcpFetch({
+          ...hostedRecord(),
+          workersCompatible: true,
+        })(URL, { method: "POST", body: "{}" });
+        expect(await response.text()).toBe("lambda");
+      }
+      expect(bridge).toHaveBeenCalledTimes(3);
+      expect(lambda).toHaveBeenCalledTimes(3);
+      await Promise.resolve();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+
+    expect(recorded).toHaveLength(3);
+  });
+
+  it("never retries on Lambda when the Worker connection broke after sending", async (): Promise<void> => {
+    process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
+    process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
+    const bridge = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (): Promise<Response> => {
+          throw Object.assign(new TypeError("socket closed"), {
+            code: "ECONNRESET",
+          });
+        },
+        { preconnect: (): void => {} },
+      ),
+    );
+    const lambda = spyOn(LambdaClient.prototype, "send");
+
+    try {
+      await expect(
+        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
+          method: "POST",
+          body: "{}",
+        }),
+      ).rejects.toThrow("socket closed");
+      expect(lambda).not.toHaveBeenCalled();
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
   });
 
   it("charges nothing when no invoke starts", async () => {

@@ -26,6 +26,11 @@ const TENANT_SOURCE = `export default async function (request) {
 const TENANT_SHA256 = new Bun.CryptoHasher("sha256")
   .update(TENANT_SOURCE)
   .digest("hex");
+/** Loads, but exports no fetch handler: refused before any request runs. */
+const BROKEN_SOURCE = "export default 42;";
+const BROKEN_SHA256 = new Bun.CryptoHasher("sha256")
+  .update(BROKEN_SOURCE)
+  .digest("hex");
 
 interface Frame {
   t: string;
@@ -61,7 +66,9 @@ beforeAll(async (): Promise<void> => {
         }
         bundleFetches++;
 
-        return new Response(TENANT_SOURCE);
+        return new Response(
+          request.url.includes(BROKEN_SHA256) ? BROKEN_SOURCE : TENANT_SOURCE,
+        );
       },
     }),
   );
@@ -109,13 +116,26 @@ it("runs a verified bundle with no secrets in reach and no path to the bundle st
   expect(bundleFetches).toBe(1);
 });
 
-it("fails the request when the bundle does not match its sha256", async (): Promise<void> => {
-  const frames = await framesOf(
-    await send({ ...batch("acct-b"), expectedSha256: "0".repeat(64) }),
-  );
+// A non-200 answer is core's signal that no tool ran, so it may use Lambda.
+it("answers 502 before running anything when the bundle does not match its sha256", async (): Promise<void> => {
+  const response = await send({
+    ...batch("acct-b"),
+    expectedSha256: "0".repeat(64),
+  });
 
-  expect(frames[0]).toMatchObject({ t: "error", id: "1" });
-  expect(frames[0]!.error).toContain("sha256");
+  expect(response.status).toBe(502);
+  expect(await response.text()).toContain("sha256");
+});
+
+it("answers 502 before running anything when the bundle has no fetch handler", async (): Promise<void> => {
+  const response = await send({
+    ...batch("acct-c"),
+    expectedSha256: BROKEN_SHA256,
+    bundleUrl: `${BUNDLE_ORIGIN}/account-mcp/acct-c/bundles/${BROKEN_SHA256}.mjs`,
+  });
+
+  expect(response.status).toBe(502);
+  expect(await response.text()).toContain("fetch handler");
 });
 
 it("streams each frame as its request settles", async (): Promise<void> => {

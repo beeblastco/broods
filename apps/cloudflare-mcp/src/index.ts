@@ -17,6 +17,10 @@ const MAX_ERROR_MESSAGE_CHARS = 256;
 /** The Lambda runner's RUN_TIMEOUT_MS, per request here. */
 const REQUEST_TIMEOUT_MS = 30_000;
 const BUNDLE_FETCH_TIMEOUT_MS = 10_000;
+/** Bundle download plus module evaluation, before the batch is answered. */
+const LOAD_TIMEOUT_MS = 10_000;
+/** Answered by the entry module itself, never by tenant code. */
+const LOAD_CHECK_PATH = "/__broods_loaded";
 const END_FRAME = new TextEncoder().encode(`${JSON.stringify({ t: "end" })}\n`);
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 /** Per request into the tenant isolate. */
@@ -27,6 +31,7 @@ const serve = handler && typeof handler.fetch === "function" ? handler.fetch.bin
 export default {
   fetch(request) {
     if (typeof serve !== "function") throw new Error("mcp server bundle default export must be a fetch handler (createMcpHandler)");
+    if (new URL(request.url).pathname === "${LOAD_CHECK_PATH}") return new Response(null, { status: 204 });
     return serve(request);
   },
 };`;
@@ -115,8 +120,10 @@ export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
  * bearer (apps/core/src/harness/mcp/hosted.ts). Each account bundle runs in
  * its own Dynamic Worker, cached by account and content hash, with no
  * bindings, no Node compatibility and egress through TenantOutbound. The
- * response streams the NDJSON frames the Lambda runner speaks, each as soon
- * as its request settles, then `end`.
+ * bundle loads before the batch is answered, so any non-200 answer means no
+ * tool ran and core may run the batch on Lambda instead. The response streams
+ * the NDJSON frames the Lambda runner speaks, each as soon as its request
+ * settles, then `end`.
  */
 export default {
   fetch: async function (
@@ -166,6 +173,17 @@ export default {
         limits: TENANT_LIMITS,
       }),
     );
+    try {
+      await ensureLoaded(worker);
+    } catch (error) {
+      return new Response(
+        `bundle failed to load: ${error instanceof Error ? error.message : String(error)}`.slice(
+          0,
+          MAX_ERROR_MESSAGE_CHARS,
+        ),
+        { status: 502 },
+      );
+    }
     const { readable, writable } = new TransformStream<
       Uint8Array,
       Uint8Array
@@ -194,6 +212,24 @@ async function bearerMatches(request: Request, key: string): Promise<boolean> {
 /** Encode a frame as one NDJSON line. */
 function encodeFrame(frame: Frame): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(frame)}\n`);
+}
+
+/**
+ * Load the bundle and evaluate its modules without running a request: the
+ * entry module answers LOAD_CHECK_PATH itself. Throws on a failed download, a
+ * hash mismatch, code workerd refuses, or a bad default export.
+ */
+async function ensureLoaded(worker: WorkerStub): Promise<void> {
+  const response = await withDeadline(
+    worker
+      .getEntrypoint()
+      .fetch(new Request(`https://mcp.internal${LOAD_CHECK_PATH}`)),
+    LOAD_TIMEOUT_MS,
+    "load timed out",
+  );
+  if (response.status !== 204) {
+    throw new Error(`load check answered HTTP ${response.status}`);
+  }
 }
 
 /** A bounded error frame; it always fits the reserve streamFrames keeps for it. */
@@ -282,15 +318,8 @@ async function serveRequest(
   { id, mcpRequest }: BatchRequest,
   maxBodyBytes: number,
 ): Promise<Frame> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const deadline = new Promise<never>((_, reject): void => {
-    timer = setTimeout(
-      (): void => reject(new Error("run timed out")),
-      REQUEST_TIMEOUT_MS,
-    );
-  });
   try {
-    return await Promise.race([
+    return await withDeadline(
       (async (): Promise<Frame> => {
         const response = await worker.getEntrypoint().fetch(
           new Request("https://mcp.internal/mcp", {
@@ -313,15 +342,14 @@ async function serveRequest(
           },
         };
       })(),
-      deadline,
-    ]);
+      REQUEST_TIMEOUT_MS,
+      "run timed out",
+    );
   } catch (error) {
     return errorFrame(
       id,
       error instanceof Error ? error.message : String(error),
     );
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -362,5 +390,24 @@ async function streamFrames(
     await writer.close();
   } catch (error) {
     await writer.abort(error);
+  }
+}
+
+/** Settle with `work`, or reject with `message` once `ms` pass. */
+async function withDeadline<T>(
+  work: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject): void => {
+        timer = setTimeout((): void => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
