@@ -6,6 +6,7 @@ import { Input } from "@/app/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -137,30 +138,13 @@ export function McpDetailsTab({
       </div>
 
       {server?.transport === "hosted" && (
-        <div className="flex flex-col gap-1.5">
-          <SectionHeader>Runtime</SectionHeader>
-          <Select
-            items={RUNTIME_OPTIONS}
-            value={server.runtime ?? "auto"}
-            onValueChange={(value) => {
-              if (value === "auto" || value === "lambda") {
-                void saveServer({ runtime: value });
-              }
-            }}
-            disabled={isSavingStatus || !canWrite}
-          >
-            <SelectTrigger className="h-8 w-full text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {RUNTIME_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <RuntimeRow
+          runtime={server.runtime}
+          disabled={isSavingStatus || !canWrite}
+          onChange={(runtime): Promise<void> =>
+            saveServer({ runtime: runtime })
+          }
+        />
       )}
 
       {server?.sha256 && (
@@ -183,7 +167,7 @@ export function McpDetailsTab({
         </div>
         <Switch
           checked={isEnabled}
-          onCheckedChange={(nextEnabled) =>
+          onCheckedChange={(nextEnabled): Promise<void> =>
             saveServer({ disabled: !nextEnabled })
           }
           disabled={isSavingStatus || !canQuery || !server}
@@ -261,6 +245,44 @@ function AgentWireRow({
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </>
+  );
+}
+
+/** Where a hosted server runs; "auto" picks Workers when its bundle can run there. */
+function RuntimeRow({
+  runtime,
+  disabled,
+  onChange,
+}: {
+  runtime: McpRuntime | undefined;
+  disabled: boolean;
+  onChange: (runtime: McpRuntime) => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <SectionHeader>Runtime</SectionHeader>
+      <Select
+        items={RUNTIME_OPTIONS}
+        value={runtime ?? "auto"}
+        onValueChange={(value): void => {
+          if (value === "auto" || value === "lambda") onChange(value);
+        }}
+        disabled={disabled}
+      >
+        <SelectTrigger className="h-8 w-full text-xs" aria-label="Runtime">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {RUNTIME_OPTIONS.map((option): React.JSX.Element => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
