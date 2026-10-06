@@ -11,7 +11,7 @@ import {
 } from "../../apps/core/src/shared/auth.ts";
 import type { BenchCase } from "../runner.ts";
 
-const ADMIN_SECRET = "badmin_9d2f41ba7c3e5089bd6a4e17c05b8f36";
+const ADMIN_SECRET = "admin-secret-9d2f41ba7c3e5089bd6a4e17c05b8f36";
 
 // The header shapes the extractor actually sees, including the malformed ones
 // it has to reject without allocating its way through them.
@@ -27,7 +27,7 @@ const AUTHORIZATION_MIX: ReadonlyArray<string | undefined> = [
 
 // A token of the same length as a real runtime key, differing in the last byte,
 // so the comparison walks the full digest rather than short-circuiting.
-const NEAR_MISS_TOKEN = "badmin_9d2f41ba7c3e5089bd6a4e17c05b8f37";
+const NEAR_MISS_TOKEN = "admin-secret-9d2f41ba7c3e5089bd6a4e17c05b8f37";
 
 export const coreAuthCases: readonly BenchCase[] = [
   {

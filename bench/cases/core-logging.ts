@@ -18,7 +18,7 @@ import type { BenchCase } from "../runner.ts";
 // A deployed core pod's environment, trimmed to the shape that matters: a few
 // dozen names, several sensitive, and two large JSON values the redactor parses.
 const ENV_FIXTURE: Readonly<Record<string, string>> = {
-  ADMIN_ACCOUNT_SECRET: "badmin_9d2f41ba7c3e5089bd6a",
+  ADMIN_ACCOUNT_SECRET: "admin-secret-9d2f41ba7c3e5089bd6a",
   AGENT_TABLE_NAME: "broods-dev-agents",
   ANTHROPIC_API_KEY: "sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6",
   AWS_REGION: "us-east-1",
@@ -45,7 +45,7 @@ const ENV_FIXTURE: Readonly<Record<string, string>> = {
     },
   }),
   SANDBOX_PROVIDER: "lambda",
-  SERVICE_AUTH_SECRET: "bsvc_71c9e3a08d54b2f6",
+  SERVICE_AUTH_SECRET: "service-secret-71c9e3a08d54b2f6",
   SERVICE_NAME: "broods-core",
   STAGE: "production",
   TOOL_BUNDLES_BUCKET_NAME: "broods-prod-tool-bundles",
@@ -171,8 +171,8 @@ const PRECOMPUTED_SECRETS: readonly string[] = [
   "sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6",
   "sk-proj-1a2b3c4d5e6f708192a3b4c5d6e7f809",
   "sk-proj-fixture-99887766554433221100",
-  "badmin_9d2f41ba7c3e5089bd6a",
-  "bsvc_71c9e3a08d54b2f6",
+  "admin-secret-9d2f41ba7c3e5089bd6a",
+  "service-secret-71c9e3a08d54b2f6",
   "nt_4b18c07d92ae5361f8b0",
   "xoxb-fixture-1029384756-abcdefghij",
   "lin_api_fixture_5a6b7c8d9e0f",
