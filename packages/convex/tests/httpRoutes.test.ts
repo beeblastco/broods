@@ -125,6 +125,17 @@ describe("config-plane HTTP routes", () => {
     ).not.toBe(cliStagesHttp);
   });
 
+  // The ledger is read-only; only its sink takes writes, and never a POST.
+  it("mounts the audit ledger, its verify leaf and its sink", () => {
+    expect(http.lookup("/v1/audit", "GET")).toBeTruthy();
+    expect(http.lookup("/v1/audit/verify", "GET")).toBeTruthy();
+    for (const method of ["GET", "PUT", "DELETE"] as const) {
+      expect(http.lookup("/v1/audit/sink", method)).toBeTruthy();
+    }
+    expect(http.lookup("/v1/audit", "POST")).toBeFalsy();
+    expect(http.lookup("/v1/audit/sink", "POST")).toBeFalsy();
+  });
+
   // Redeeming happens in a browser with no credential, so it must resolve on a
   // bare GET. Convex serves HEAD from the same route.
   it("mounts download redemption for unauthenticated GET", () => {

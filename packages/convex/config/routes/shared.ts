@@ -9,16 +9,15 @@ import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import { cipherFromKeys } from "../../model/accountKeys";
 import {
   ACCOUNT_KEY_PREFIX,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
-import type {
-  ConfigAuditActor,
-  ConfigAuditResource,
-} from "../../model/auditEvents";
+import type { AuditActor, AuditResource } from "../../model/auditEvents";
+import { RUN_TOKEN_PREFIX } from "../../model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
 import { VIA_GATEWAY_HEADER } from "../../model/serviceBridge";
 import {
@@ -28,6 +27,7 @@ import {
   rateLimitHeaders,
 } from "../../model/httpJson";
 import { ClientError } from "../../model/clientError";
+import type { AccountCipher, WrappedAccountKey } from "../../model/envelope";
 
 export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
@@ -42,10 +42,32 @@ export type ConfigAuth =
   | { kind: "role"; account: Doc<"accounts">; role: RolePrincipal };
 
 /**
+ * The keyring from an HTTP action, which has no `ctx.db`. A `read` fetches the
+ * keys with a query; a `write` runs the mutation that mints the first key when
+ * the account has none. Build it once per request and pass it down.
+ */
+export async function accountCipherForAction(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  mode: "read" | "write",
+): Promise<AccountCipher> {
+  const keys: WrappedAccountKey[] =
+    mode === "write"
+      ? await ctx.runMutation(internal.account.keys.ensure, {
+          accountId: accountId,
+        })
+      : await ctx.runQuery(internal.account.keys.list, {
+          accountId: accountId,
+        });
+
+  return cipherFromKeys(accountId, keys);
+}
+
+/**
  * @param auth resolved config HTTP auth
  * @returns actor metadata for audit rows
  */
-export function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
+export function auditActorForAuth(auth: ConfigAuth): AuditActor {
   if (auth.kind === "admin") return { kind: "admin" };
   if (auth.kind === "deployment") return { kind: "deployKey" };
   if (auth.kind === "role") return { kind: "role", id: auth.role.roleId };
@@ -59,14 +81,6 @@ export function bearerToken(req: Request): string | null {
   const match = header.match(/^Bearer\s+(.+)$/i);
 
   return match?.[1]?.trim() || null;
-}
-
-/** Read the account-config encryption secret, failing loudly when unset. */
-export function configEncryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");
-
-  return secret;
 }
 
 /**
@@ -280,6 +294,17 @@ export async function requireSelfAccount(
 }
 
 /**
+ * The 401 a run token (`brt_`) gets on every config-plane and CLI route,
+ * on the prefix alone: it is a core credential for one agent run. Null for
+ * any other bearer.
+ */
+export function runTokenRefusal(req: Request): Response | null {
+  return bearerToken(req)?.startsWith(RUN_TOKEN_PREFIX)
+    ? jsonError(401, "run tokens cannot reach the config plane")
+    : null;
+}
+
+/**
  * Terminate reserved sandbox instances matching a predicate through core's
  * lifecycle route (which owns the decrypted provider credentials). Best-effort:
  * skips rows without a sandboxConfigId or already terminating, and swallows
@@ -337,7 +362,7 @@ export async function unauthorizedResponse(
   req: Request,
 ): Promise<Response> {
   const result: { blocked: boolean; retryAfterMs?: number } =
-    await ctx.runMutation(internal.config.auditEvents.recordAuthFailure, {
+    await ctx.runMutation(internal.config.authFailures.recordAuthFailure, {
       key: await authFailureKey(req),
       now: Date.now(),
       windowMs: 5 * 60 * 1000,
@@ -367,15 +392,15 @@ export async function writeAudit(
     accountId: Id<"accounts">;
     projectId?: Id<"projects">;
     stageId?: Id<"stages">;
-    actor: ConfigAuditActor;
+    actor: AuditActor;
     action: string;
-    resource: ConfigAuditResource;
+    resource: AuditResource;
     summary: string;
     detailsJson?: string;
   },
 ): Promise<void> {
   try {
-    await ctx.runMutation(internal.config.auditEvents.record, {
+    await ctx.runMutation(internal.audit.ledger.record, {
       accountId: event.accountId,
       projectId: event.projectId,
       stageId: event.stageId,

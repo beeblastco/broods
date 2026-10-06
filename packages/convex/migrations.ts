@@ -9,6 +9,7 @@ import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { decryptApiKey, runtimeKeyFields } from "./agent/deployments";
+import { reencryptBatch, reencryptWalkArgs } from "./model/accountKeys";
 import { randomToken, RUNTIME_KEY_PREFIX } from "./model/accountSecrets";
 import { ROLE_ID_PREFIX } from "./model/roleRules";
 
@@ -22,6 +23,43 @@ const prefixBatchValidator = v.object({
 });
 
 type PrefixBatch = { migrated: number; skipped: number; isDone: boolean };
+
+/**
+ * Move every legacy blob (AES-GCM under the global secret, no `v2:` prefix)
+ * under its account's data encryption key, minting the key where the account
+ * has none. Walks every encrypted table in `ENVELOPE_TABLES` order with a
+ * self-reschedule; call it with no arguments. Idempotent: a blob already under
+ * the current key is skipped. Once dev and production have run it, the legacy
+ * decrypt branch in `model/envelope.ts` can go.
+ * @returns rows rewritten in this batch, rows skipped so far because their project has no account yet (they stay legacy), and whether the whole walk finished
+ */
+export const migrateToEnvelope = internalMutation({
+  args: { ...reencryptWalkArgs, skipped: v.optional(v.number()) },
+  returns: v.object({
+    patched: v.number(),
+    skipped: v.number(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ patched: number; skipped: number; isDone: boolean }> => {
+    const batch = await reencryptBatch(ctx, args);
+    const skipped = (args.skipped ?? 0) + batch.skipped;
+    if (batch.next) {
+      await ctx.scheduler.runAfter(0, internal.migrations.migrateToEnvelope, {
+        ...batch.next,
+        skipped: skipped,
+      });
+    }
+
+    return {
+      patched: batch.patched,
+      skipped: skipped,
+      isDone: batch.next === null,
+    };
+  },
+});
 
 /**
  * Replace every `sk_`/`fp_agent_` runtime key with a fresh `bsk_` key, the
@@ -43,14 +81,18 @@ export const runtimeKeyPrefix = internalMutation({
     let migrated = 0;
     let skipped = 0;
     for (const deployment of page.page) {
-      const rawApiKey = await decryptApiKey(deployment);
+      const rawApiKey = await decryptApiKey(ctx, deployment);
       if (rawApiKey.startsWith(RUNTIME_KEY_PREFIX)) {
         skipped += 1;
         continue;
       }
 
       await ctx.db.patch(deployment._id, {
-        ...(await runtimeKeyFields(randomToken(RUNTIME_KEY_PREFIX))),
+        ...(await runtimeKeyFields(
+          ctx,
+          deployment.accountId,
+          randomToken(RUNTIME_KEY_PREFIX),
+        )),
         updatedAt: Date.now(),
       });
       migrated += 1;

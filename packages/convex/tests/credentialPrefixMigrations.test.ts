@@ -10,8 +10,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { decryptApiKey } from "../agent/deployments";
+import { accountCipherForWrite } from "../model/accountKeys";
 import { sha256Hex } from "../model/accountSecrets";
-import { encryptAgentConfigBlob } from "../model/agentConfigCodec";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -57,8 +57,11 @@ describe("migrations:runtimeKeyPrefix", () => {
     const rows = await t.run(
       async (ctx) => await ctx.db.query("agentDeployments").collect(),
     );
-    const migrated = await Promise.all(
-      rows.map(async (row) => await decryptApiKey(row)),
+    const migrated = await t.run(
+      async (ctx) =>
+        await Promise.all(
+          rows.map(async (row) => await decryptApiKey(ctx, row)),
+        ),
     );
     expect(migrated[2]).toBe(`bsk_${BODY}y`);
     for (const [index, key] of migrated.slice(0, 2).entries()) {
@@ -149,11 +152,11 @@ async function insertDeployment(
   stageId: Id<"stages">,
   rawApiKey: string,
 ): Promise<void> {
-  const blob = await encryptAgentConfigBlob(
-    { value: rawApiKey },
-    ENCRYPTION_SECRET,
-  );
   await t.run(async (ctx) => {
+    const cipher = await accountCipherForWrite(ctx, seeded.accountId);
+    const blob = await cipher.encrypt("agentDeployments:apiKeyCiphertext", {
+      value: rawApiKey,
+    });
     await ctx.db.insert("agentDeployments", {
       authId: AUTH_ID,
       accountId: seeded.accountId,

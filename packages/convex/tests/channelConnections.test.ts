@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ChannelConnection } from "../channel/connections";
-import { encryptAgentConfigBlob } from "../model/agentConfigCodec";
+import { accountCipherForWrite } from "../model/accountKeys";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -78,9 +78,9 @@ async function seedAgent(
   name: string,
   config: Record<string, unknown>,
 ): Promise<Id<"agents">> {
-  const blob = await encryptAgentConfigBlob(config, SECRET);
-
   return await tt.run(async (ctx) => {
+    const cipher = await accountCipherForWrite(ctx, scope.accountId);
+    const blob = await cipher.encrypt("agents:encryptedConfig", config);
     const now = Date.now();
     const agentId = await ctx.db.insert("agents", {
       accountId: scope.accountId,
@@ -326,15 +326,13 @@ describe("listConnections", () => {
     ]);
 
     // Only the URL changes, so a digest that skipped it would keep the old row.
-    const blob = await encryptAgentConfigBlob(
-      {
+    await tt.run(async (ctx) => {
+      const cipher = await accountCipherForWrite(ctx, scope.accountId);
+      const blob = await cipher.encrypt("agents:encryptedConfig", {
         channels: {
           matrix: { apiUrl: "https://chat.example.com", botToken: "syt_token" },
         },
-      },
-      SECRET,
-    );
-    await tt.run(async (ctx) => {
+      });
       await ctx.db.patch(agentId, {
         encryptedConfig: blob.ciphertext,
         encryptionIv: blob.iv,

@@ -136,6 +136,8 @@ function resolveFetchHandler(module) {
   return fetchLike;
 }
 
+// Headers are forwarded as core sent them, X-Broods-Agent-Id and
+// X-Broods-Principal included, so the bundle reads them off the Request.
 async function runMcpRequest(fetchLike, mcp, abortSignal) {
   const request = new Request("http://mcp-hosted.internal/mcp", {
     method: mcp.method,

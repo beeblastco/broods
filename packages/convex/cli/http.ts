@@ -9,7 +9,7 @@
 
 import { httpAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { bearerToken } from "../config/routes/shared";
+import { bearerToken, runTokenRefusal } from "../config/routes/shared";
 import {
   ACCOUNT_KEY_PREFIX,
   PROJECT_KEY_PREFIX,
@@ -32,6 +32,8 @@ import { jsonError } from "../model/httpJson";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
+    const refusal = runTokenRefusal(req);
+    if (refusal) return refusal;
     const token = bearerToken(req);
     if (!token) {
       return jsonError(401, "Authorization Bearer token is required");

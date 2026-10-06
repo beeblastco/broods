@@ -4,10 +4,8 @@
  * both sides share: `apps/dashboard/app/lib/agentConfigCodec.ts` re-exports
  * from here and keeps only its own UI helpers.
  *
- * The encryption helper at the bottom uses Web Crypto (`crypto.subtle`)
- * because Convex mutations run in a V8 isolate without `node:crypto`.
- * Output shape matches broods's `EncryptedAgentConfig` so the
- * harness can decrypt with `decodeStoredAgentConfig`.
+ * Encryption of the stored blob is not here: `./envelope.ts` is the codec
+ * both core and the config plane use.
  */
 
 import { isPlainObject } from "./objects";
@@ -64,13 +62,6 @@ const REMOVED_BRANCH_HINTS: Record<string, string> = {
   workspace:
     'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandboxes: ["sb_…"]',
 };
-
-/** Encrypted blob shape persisted on the `agents` row. base64url-encoded. */
-export interface EncryptedAgentConfig {
-  ciphertext: string;
-  iv: string;
-  tag: string;
-}
 
 export interface FlatAgentConfig {
   name?: string;
@@ -136,86 +127,6 @@ export function collectEnvPlaceholderNames(
   }
 
   return names;
-}
-
-/**
- * Inverse of {@link encryptAgentConfigBlob}. Used to read back what an
- * API-side caller wrote so the canvas can mirror provider/model/extras.
- * Returns null on any decode failure (wrong secret, tampered blob, etc.).
- */
-export async function decryptAgentConfigBlob(
-  blob: EncryptedAgentConfig,
-  secret: string,
-): Promise<NestedAgentConfig | null> {
-  try {
-    const enc = new TextEncoder();
-    const keyMaterial = await crypto.subtle.digest(
-      "SHA-256",
-      enc.encode(secret),
-    );
-    const key = await crypto.subtle.importKey(
-      "raw",
-      keyMaterial,
-      { name: "AES-GCM" },
-      false,
-      ["decrypt"],
-    );
-    const iv = base64UrlToBytes(blob.iv);
-    const ct = base64UrlToBytes(blob.ciphertext);
-    const tag = base64UrlToBytes(blob.tag);
-    // Web Crypto expects ciphertext || tag concatenated
-    const combined = new Uint8Array(ct.length + tag.length);
-    combined.set(ct, 0);
-    combined.set(tag, ct.length);
-    const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
-      key,
-      combined.buffer as ArrayBuffer,
-    );
-    const decoded = new TextDecoder().decode(plaintext);
-    const parsed = JSON.parse(decoded);
-
-    return isPlainObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * AES-256-GCM encrypt the JSON-serialised config with a key derived from
- * SHA-256(secret). Matches core's `encryptConfigObject` so the harness
- * can decrypt with `decodeStoredAgentConfig` from the convex storage adapter.
- */
-export async function encryptAgentConfigBlob(
-  config: NestedAgentConfig,
-  secret: string,
-): Promise<EncryptedAgentConfig> {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.digest("SHA-256", enc.encode(secret));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyMaterial,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt"],
-  );
-
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = enc.encode(JSON.stringify(config));
-
-  const encrypted = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, plaintext),
-  );
-
-  // Web Crypto returns ciphertext || tag (last 16 bytes are the auth tag).
-  const tagBytes = encrypted.slice(encrypted.length - 16);
-  const ciphertextBytes = encrypted.slice(0, encrypted.length - 16);
-
-  return {
-    ciphertext: bytesToBase64Url(ciphertextBytes),
-    iv: bytesToBase64Url(iv),
-    tag: bytesToBase64Url(tagBytes),
-  };
 }
 
 export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
@@ -340,17 +251,6 @@ function assertNoUnsupportedKeys(
   }
 }
 
-function base64UrlToBytes(s: string): Uint8Array {
-  const padded =
-    s.replace(/-/g, "+").replace(/_/g, "/") +
-    "=".repeat((4 - (s.length % 4)) % 4);
-  const bin = atob(padded);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-
-  return out;
-}
-
 function buildNestedAgentBranch(
   flat: FlatAgentConfig,
   extra: Record<string, unknown>,
@@ -408,13 +308,6 @@ function buildNestedToolsBranch(
   }
 
   return tools;
-}
-
-function bytesToBase64Url(bytes: Uint8Array): string {
-  let bin = "";
-  for (const byte of bytes) bin += String.fromCharCode(byte);
-
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 /**

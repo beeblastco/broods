@@ -1,6 +1,8 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
+import { principalLinkValidator } from "./model/principal";
+import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -438,8 +440,26 @@ export const accountsFields = {
   description: v.optional(v.string()),
   secretHash: v.string(),
   status: v.union(v.literal("active"), v.literal("disabled")),
+  /** Days an audit ledger row is kept before pruning; 90 when unset. */
+  auditRetentionDays: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
+};
+
+/**
+ * One account's data encryption keys, each wrapped under the KEK that
+ * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` derives (`model/envelope.ts`). Blobs name
+ * the key they were written under; the newest row without `retiredAt` seals
+ * new blobs, and a retired one no longer opens anything.
+ */
+export const accountKeysFields = {
+  accountId: v.id("accounts"),
+  keyId: v.string(),
+  /** First 8 hex of SHA-256 of the secret that wrapped this key. */
+  kekId: v.string(),
+  wrappedKey: v.string(),
+  createdAt: v.number(),
+  retiredAt: v.optional(v.number()),
 };
 
 /** Agent configuration, stored encrypted so the dashboard cannot read provider secrets. */
@@ -512,12 +532,7 @@ export const sandboxConfigsFields = {
 
 /** Sandbox compute backends a persistent instance / snapshot can target. */
 export const sandboxProviderValidator = v.union(
-  v.literal("sandbox"),
-  v.literal("lambda"),
-  v.literal("daytona"),
-  v.literal("e2b"),
-  v.literal("vercel"),
-  v.literal("machine"),
+  ...SANDBOX_PROVIDERS.map((name) => v.literal(name)),
 );
 
 /**
@@ -737,7 +752,7 @@ export const environmentVariablesFields = {
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
-  /** SHA-256 hex of the plaintext value. */
+  /** HMAC-SHA256 hex of the plaintext under the account key, so `env set` can skip an unchanged value without a guessable hash at rest. */
   valueDigest: v.string(),
   updatedAt: v.number(),
 };
@@ -756,7 +771,7 @@ export const accountEnvVarsFields = {
  * A connection: an external account (today the ChatGPT plan) signed in once
  * per account by `broods connect`, one of each type.
  * Core refreshes it in process and writes the rotated tokens back. Tokens are
- * encrypted with the agent-config codec and never leave through the API.
+ * sealed under the account's envelope key and never leave through the API.
  */
 export const connectionsFields = {
   accountId: v.id("accounts"),
@@ -800,7 +815,7 @@ export const environmentVariableRevealsFields = {
   revealedAt: v.number(),
 };
 
-export const configAuditActorKindValidator = v.union(
+export const auditActorKindValidator = v.union(
   v.literal("dashboardUser"),
   v.literal("apiAccountSecret"),
   v.literal("admin"),
@@ -808,9 +823,10 @@ export const configAuditActorKindValidator = v.union(
   v.literal("cli"),
   v.literal("deployKey"),
   v.literal("role"),
+  v.literal("agent"),
 );
 
-export const configAuditResourceKindValidator = v.union(
+export const auditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("agent"),
   v.literal("skill"),
@@ -827,31 +843,71 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("deployment"),
   v.literal("webhook"),
   v.literal("manifest"),
+  v.literal("run"),
+  v.literal("tool"),
+  v.literal("auditSink"),
   v.literal("unknown"),
 );
 
 /**
- * Account-visible audit feed for configuration mutations. Details are capped
- * before insert and must never carry plaintext secrets or config blobs.
+ * The account's hash-chained audit ledger: config mutations, run lifecycle and
+ * enforced tool denials. `seq` is per-account and gapless at append time, and
+ * `hash` covers the row plus `prevHash`, so a row cannot be edited or removed
+ * from the middle without `verifyChain` noticing. Details are capped before
+ * insert and must never carry plaintext secrets or config blobs.
  */
-export const configAuditEventsFields = {
+export const auditEventsFields = {
   accountId: v.id("accounts"),
-  projectId: v.optional(v.id("projects")),
-  stageId: v.optional(v.id("stages")),
+  seq: v.number(),
+  /** Hash of the previous row, "" on the genesis row. */
+  prevHash: v.string(),
+  /** sha256 hex over the canonical JSON of every other field (`model/auditEvents.ts`). */
+  hash: v.string(),
+  at: v.number(),
   actor: v.object({
-    kind: configAuditActorKindValidator,
+    kind: auditActorKindValidator,
     id: v.optional(v.string()),
     email: v.optional(v.string()),
     name: v.optional(v.string()),
+    agentId: v.optional(v.string()),
+    /** An agent actor's delegation chain: who asked, then each delegating agent. */
+    chain: v.optional(v.array(principalLinkValidator)),
   }),
   action: v.string(),
   resource: v.object({
-    kind: configAuditResourceKindValidator,
+    kind: auditResourceKindValidator,
     id: v.optional(v.string()),
     name: v.optional(v.string()),
   }),
   summary: v.string(),
   detailsJson: v.optional(v.string()),
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+  traceId: v.optional(v.string()),
+};
+
+/** One row per account: the ledger tip, so an append is one read and one patch. */
+export const auditChainHeadsFields = {
+  accountId: v.id("accounts"),
+  seq: v.number(),
+  hash: v.string(),
+};
+
+/**
+ * Where the ledger is exported to. One webhook per account; the signing secret
+ * is sealed under the account's envelope key and never read back.
+ */
+export const auditSinksFields = {
+  accountId: v.id("accounts"),
+  kind: v.literal("webhook"),
+  url: v.string(),
+  encryptedSecret: v.string(),
+  secretIv: v.string(),
+  secretTag: v.string(),
+  /** Highest `seq` the sink acknowledged; the prune watermark. */
+  exportedSeq: v.number(),
+  lastError: v.optional(v.string()),
+  updatedAt: v.number(),
 };
 
 export const configHttpAuthFailuresFields = {
@@ -1397,6 +1453,9 @@ export default defineSchema({
   accounts: defineTable(accountsFields)
     .index("by_orgId", ["orgId"])
     .index("by_secretHash", ["secretHash"]),
+  accountKeys: defineTable(accountKeysFields).index("by_accountId", [
+    "accountId",
+  ]),
   agents: defineTable(agentsFields).index("by_accountId_and_name", [
     "accountId",
     "name",
@@ -1477,10 +1536,16 @@ export default defineSchema({
     .index("by_stageId", ["stageId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])
     .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
-  configAuditEvents: defineTable(configAuditEventsFields).index(
-    "by_accountId",
-    ["accountId"],
-  ),
+  auditEvents: defineTable(auditEventsFields).index("by_accountId_and_seq", [
+    "accountId",
+    "seq",
+  ]),
+  auditChainHeads: defineTable(auditChainHeadsFields).index("by_accountId", [
+    "accountId",
+  ]),
+  auditSinks: defineTable(auditSinksFields).index("by_accountId", [
+    "accountId",
+  ]),
   configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
     .index("by_key", ["key"])
     .index("by_updatedAt", ["updatedAt"]),

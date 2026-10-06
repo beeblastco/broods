@@ -34,11 +34,12 @@ Three keys are yours to hold. Use the narrowest one that works.
 
 The rest are issued for you and expire or follow your membership:
 
-| Credential           | Prefix  | Use it for                                        | Never                          |
-| -------------------- | ------- | ------------------------------------------------- | ------------------------------ |
-| CLI login            | `bcli_` | Your own machine                                  | Share it                       |
-| Role session         | `bsts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours  |
-| Stage session ticket | `bdts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes. |
+| Credential           | Prefix  | Use it for                                        | Never                                          |
+| -------------------- | ------- | ------------------------------------------------- | ---------------------------------------------- |
+| CLI login            | `bcli_` | Your own machine                                  | Share it                                       |
+| Role session         | `bsts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours                  |
+| Stage session ticket | `bdts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes.                 |
+| Run token            | `brt_`  | Sandbox code reading its agent's runs             | Start a run with it, or expect it past the run |
 
 Every Broods credential starts with `b`, so you and a secret scanner can tell it from another vendor's key.
 
@@ -88,7 +89,7 @@ const session = await owner.assumeRole(role.roleId, { ttlSeconds: 900 });
 const scoped = new BroodsAccountClient({ sessionToken: session.token }); // can list and read agents, nothing else
 ```
 
-- Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills`, `tools` and `workspaces`.
+- Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `audit`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills`, `tools` and `workspaces`.
 - `resources.resourceIds` limits a rule to specific ids, `"*"` for all. A deny beats an allow, and no matching allow means `403`.
 - `projectId` and `stageId` pin a role to one stage.
 - Sessions last 1 hour by default, 12 at most. Only a hash is stored, and the token is shown once.

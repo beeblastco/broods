@@ -10,6 +10,7 @@ import {
   redactSensitiveText,
 } from "../src/shared/log.ts";
 import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
+import { sealRunToken } from "../src/shared/run-token.ts";
 
 const BROODS_CREDENTIAL_PREFIXES = [
   "bsk_",
@@ -212,6 +213,14 @@ describe("logging helpers", () => {
     expect(serialized).not.toContain("direct-secret");
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
+    );
+    process.env.STAGE_TICKET_SECRET = "run-token-test-secret";
+    const runToken = sealRunToken({ accountId: "acct_1", agentId: "agent_1" });
+    expect(redactSensitiveText(`BROODS_RUN_TOKEN=${runToken} next`)).toBe(
+      "BROODS_RUN_TOKEN=[redacted] next",
+    );
+    expect(redactSensitiveText(`curl sent ${runToken} twice`)).toBe(
+      "curl sent [redacted] twice",
     );
   });
 
