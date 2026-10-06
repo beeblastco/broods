@@ -129,9 +129,16 @@ describe("account key cache", () => {
       ciphertext: blob.ciphertext.slice(`v2:${keys[0]!.keyId}:`.length),
     };
 
-    await expect(
-      decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", bare),
-    ).rejects.toThrow("does not decrypt");
+    const refused = await decryptAccountBlob(
+      ACCOUNT,
+      "agents:encryptedConfig",
+      bare,
+    ).then(
+      () => "",
+      (error: unknown) => String(error),
+    );
+
+    expect(refused).toContain("does not decrypt");
   });
 
   test("refuses a blob bound to another column", async () => {

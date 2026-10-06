@@ -1013,7 +1013,12 @@ export const repo = defineWorkspace({
 `,
     );
 
-    await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    const refused = await compileProject({ cwd: cwd, command: "dev" }).then(
+      () => "",
+      (error: unknown) => String(error),
+    );
+
+    expect(refused).toContain(
       'Workspace "repo" config.partitioned must be one of: conversation, agent',
     );
   },
