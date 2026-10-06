@@ -73,6 +73,8 @@ const QUERY_SECRET_PATTERN =
 const RUNTIME_KEY_PATTERN =
   /\b(?:sk_[A-Za-z0-9_-]{43}|fp_agent_[A-Za-z0-9_-]+)\b/g;
 const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
+// payload.signature, so the dot is part of the token.
+const RUN_TOKEN_PATTERN = /\bbrt_[A-Za-z0-9_.-]+/g;
 const WHITESPACE_PATTERN = /\s/g;
 
 const ENCODER = new TextEncoder();
@@ -422,6 +424,7 @@ function replaceSecretValues(
   }
   redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
   redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
+  redacted = redacted.replace(RUN_TOKEN_PATTERN, "[redacted]");
 
   return redacted;
 }

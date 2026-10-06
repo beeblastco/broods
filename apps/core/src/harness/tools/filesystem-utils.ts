@@ -46,6 +46,7 @@ import type {
   SandboxExecutorConfig,
   SandboxJobCallback,
   SandboxJobHandle,
+  SandboxRunPrincipal,
   SandboxRunResult,
   SandboxRuntime,
 } from "../sandbox/types.ts";
@@ -109,6 +110,10 @@ export interface SandboxToolContext {
   // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
+  // The run's identity for a blocking `bash` exec env. The file tools run the
+  // harness's own scripts and a background job outlives its run, so they get
+  // none. A function, so the run token is only minted once a command runs.
+  principal?: () => SandboxRunPrincipal | undefined;
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
@@ -254,11 +259,12 @@ export async function runSandbox(
   options?: {
     onSandboxCpu?: (sample: SandboxCpuSample) => void;
     metadata?: SandboxRunMetadata;
+    principal?: SandboxRunPrincipal;
   },
 ): Promise<SandboxRunResult> {
   let result: SandboxRunResult;
   try {
-    result = await runSandboxOn(config, namespace, code, options?.metadata);
+    result = await runSandboxOn(config, namespace, code, options);
   } catch (error) {
     // `options` (URL, key, template) and `snapshot` (workdir image name vs
     // MicroVM image ARN) are the primary provider's; the fallback runs on the
@@ -289,7 +295,7 @@ export async function runSandbox(
       },
       namespace,
       code,
-      options?.metadata,
+      options,
     );
   }
   if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
@@ -858,7 +864,9 @@ async function runSandboxOn(
   config: SandboxExecutorConfig,
   namespace: string | undefined,
   code: string,
-  metadata: SandboxRunMetadata | undefined,
+  options:
+    | { metadata?: SandboxRunMetadata; principal?: SandboxRunPrincipal }
+    | undefined,
 ): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
@@ -878,7 +886,8 @@ async function runSandboxOn(
           workspaceRoot: workspaceRootFor(config),
         }
       : {}),
-    ...(metadata ? { metadata: metadata } : {}),
+    ...(options?.metadata ? { metadata: options.metadata } : {}),
+    ...(options?.principal ? { principal: options.principal } : {}),
     timeoutSeconds: boundedInteger(
       config.timeout,
       limits.defaultTimeoutSeconds,

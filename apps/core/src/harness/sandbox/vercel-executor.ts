@@ -89,7 +89,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         cmd: "bash",
         args: ["-lc", request.code],
         ...(cwd ? { cwd: cwd } : {}),
-        env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+        env: mergeSandboxEnv(
+          this.#config.envVars,
+          request.envVars,
+          request.principal,
+        ),
         timeoutMs: request.timeoutSeconds * 1000,
       });
 
@@ -533,6 +537,8 @@ function vercelCreateOptions(
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
       1000,
     networkPolicy: vercelNetworkPolicy(config),
+    // No run identity here: a sandbox outlives the run that created it, and
+    // every exec lays its own over this env.
     env: mergeSandboxEnv(config.envVars, request.envVars),
     tags: { app: "broods", provider: "vercel" },
   };

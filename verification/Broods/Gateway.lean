@@ -87,6 +87,8 @@ where
     (p == ["v1", "env"] && m == .get) ||
     (shape [.lit "v1", .lit "env", .any] p && (m == .put || m == .delete)) ||
     (shape [.lit "v1", .lit "workspaces", .any, .lit "download-links"] p && m == .post) ||
+    ((p == ["v1", "audit"] || p == ["v1", "audit", "verify"]) && m == .get) ||
+    (p == ["v1", "audit", "sink"] && (m == .get || m == .put || m == .delete)) ||
     rootOrItem "skills" p || rootOrItem "mcp" p || rootOrItem "hooks" p ||
     rootOrItem "workspaces" p || rootOrItem "sandboxes" p || rootOrItem "policies" p ||
     rootOrItem "roles" p || rootOrItem "channels" p || rootOrItem "crons" p ||
@@ -173,6 +175,12 @@ example : route .post ["v1", "agents", "a", "ws"] = .socket .agent := by decide
 
 /-- In-cluster paths reach core, which refuses them without the service token. -/
 example : route .post ["v1", "cron-runs"] = .core := by decide
+
+/-- The audit ledger is read-only: a write to it falls through to core. -/
+example : route .post ["v1", "audit"] = .core := by decide
+
+/-- Its one sink takes a PUT on the config plane. -/
+example : route .put ["v1", "audit", "sink"] = .config := by decide
 
 /-- `/v1/internal/observability-scope` is public by design (tested in apps/edge). -/
 example : route .post ["v1", "internal", "observability-scope"] = .core := by decide
