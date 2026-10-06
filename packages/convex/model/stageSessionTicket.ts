@@ -1,7 +1,7 @@
 /**
- * Short-lived stage session tickets (`fp_dts_…`). The dashboard mints one for
+ * Short-lived stage session tickets (`bdts_…`). The dashboard mints one for
  * any org member so logs, traces and the test chat run without handing the
- * browser the permanent `sk_` runtime key; core verifies it and scopes it
+ * browser the permanent `bsk_` runtime key; core verifies it and scopes it
  * to the same stage, without the limits it puts on the embeddable key (run
  * overrides, continuing a channel session). Signed with an HMAC derived
  * from the service secret both sides already hold, on WebCrypto so the same
@@ -12,7 +12,7 @@ const ENCODER = new TextEncoder();
 const HMAC_ALGORITHM = { name: "HMAC", hash: "SHA-256" };
 const KEY_CONTEXT = "stage-session-ticket:";
 
-export const STAGE_SESSION_TICKET_PREFIX = "fp_dts_";
+export const STAGE_SESSION_TICKET_PREFIX = "bdts_";
 // Short because a ticket is bearer-only: a rotated key or a removed member
 // is only fully out once every ticket minted before that has expired.
 export const STAGE_SESSION_TICKET_TTL_MS = 15 * 60 * 1000;

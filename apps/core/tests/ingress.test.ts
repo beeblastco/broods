@@ -17,6 +17,7 @@ import {
 import {
   acceptIngress,
   interruptLiveOwners,
+  loadAppliedIngressConfig,
   prepareSessionMessage,
   releaseIngressOwner,
   takeNextIngress,
@@ -104,11 +105,11 @@ describe("ingress admission payloads", () => {
 
       return { outcome: "owner", ownerGeneration: 1 };
     }) as never;
-    const agentConfig = { channels: { telegram: { botToken: "secret" } } };
-
     await acceptIngress({
       ...candidate(),
-      agentConfig: agentConfig,
+      configRef: {
+        channel: { channelName: "telegram", channelRecordId: "rec_1" },
+      },
       channelTarget: { channelRecordId: "rec_1" },
       delivery: {
         kind: "channel",
@@ -124,6 +125,10 @@ describe("ingress admission payloads", () => {
       channelName: "telegram",
       source: { chatId: "chat-1" },
     });
+    expect(call?.configRef).toEqual({
+      channel: { channelName: "telegram", channelRecordId: "rec_1" },
+    });
+    expect(call).not.toHaveProperty("agentConfig");
     // The sender rides on the envelope so a queued turn is policed as its own
     // author, not as whoever owned the run when it was queued.
     expect(call?.delivery).toEqual(
@@ -143,17 +148,17 @@ describe("ingress admission payloads", () => {
 
     await acceptIngress({
       ...candidate(),
-      agentConfig: { model: { temperature: 0.1 } },
+      configRef: { model: { temperature: 0.1 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
     await acceptIngress({
       ...candidate(),
-      agentConfig: { model: { temperature: 0.9 } },
+      configRef: { model: { temperature: 0.9 } },
     });
     await acceptIngress(candidate());
 
     const [first, second, third] = calls;
-    expect(first!.agentConfig).toEqual({ model: { temperature: 0.1 } });
+    expect(first!.configRef).toEqual({ model: { temperature: 0.1 } });
     expect(first!.ephemeralSystem).toEqual([
       { role: "system", content: "one-turn override" },
     ]);
@@ -646,12 +651,17 @@ describe("channel senders", (): void => {
     appliedToEventId: "event-2",
     contributingEventIds: ["event-2"],
     ownerGeneration: 2,
+    configRef: { channel: { channelName: "slack" } },
   };
   const originalCreate = Session.prototype.createTurnContext;
   let senders: unknown[];
 
   beforeEach((): void => {
     senders = [];
+    // The queued envelope's ref rebuilds its config from this row.
+    setStorageForTests({
+      agents: { getById: async (): Promise<AgentRecord> => agentRecord({}) },
+    } as never);
     runtime.query = (async (name: string): Promise<[] | null> =>
       name === "listPendingAsyncToolResults" ? [] : null) as never;
     // Ends each turn before the model runs; only the session's sender matters.
@@ -667,6 +677,7 @@ describe("channel senders", (): void => {
 
   afterEach((): void => {
     Session.prototype.createTurnContext = originalCreate;
+    resetStorageForTests();
   });
 
   function aliceMessage(): ChannelInboundEvent {
@@ -1267,6 +1278,111 @@ describe("live owners at shutdown", (): void => {
   });
 });
 
+describe("applied ingress config", (): void => {
+  afterEach((): void => {
+    resetStorageForTests();
+  });
+
+  it("rebuilds a direct envelope from the live agent with its model override, in one read", async (): Promise<void> => {
+    const reads: string[] = [];
+    setStorageForTests({
+      agents: {
+        getById: async (_accountId: string, agentId: string) => {
+          reads.push(agentId);
+
+          return agentRecord({
+            model: { provider: "openai", modelId: "gpt-5", temperature: 0 },
+            provider: { openai: { apiKey: "sk-live" } },
+          });
+        },
+      },
+    } as never);
+
+    const config = await loadAppliedIngressConfig({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      configRef: { model: { temperature: 0.7 } },
+    });
+
+    expect(config.model).toEqual({
+      provider: "openai",
+      modelId: "gpt-5",
+      temperature: 0.7,
+    });
+    expect(config.provider).toEqual({ openai: { apiKey: "sk-live" } });
+    expect(reads).toEqual(["agent_test"]);
+  });
+
+  it("rebuilds a channel envelope through its pinned record", async (): Promise<void> => {
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<AgentRecord> =>
+          agentRecord({ channels: { telegram: { botToken: "rotated" } } }),
+      },
+      channelRecords: {
+        getById: async (): Promise<ChannelRecord> =>
+          channelRecord("agent_test"),
+      },
+    } as never);
+
+    const config = await loadAppliedIngressConfig({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      configRef: {
+        channel: { channelName: "telegram", channelRecordId: "rec_1" },
+      },
+    });
+
+    expect(config.channels).toEqual({ telegram: { botToken: "rotated" } });
+  });
+
+  it("fails clearly when the agent was deleted while the envelope waited", async (): Promise<void> => {
+    setStorageForTests({
+      agents: { getById: async (): Promise<null> => null },
+    } as never);
+
+    await expect(
+      loadAppliedIngressConfig({
+        accountId: "acct_test",
+        agentId: "agent_test",
+        configRef: {},
+      }),
+    ).rejects.toThrow("Agent not found: agent_test");
+  });
+
+  it("runs a subagent's ref-less envelope on its scope's config without a read", async (): Promise<void> => {
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<never> => {
+          throw new Error("must not read");
+        },
+      },
+    } as never);
+    const subagentConfig: AgentConfig = {
+      model: { provider: "openai", modelId: "gpt-5" },
+    };
+
+    await expect(
+      loadAppliedIngressConfig({
+        accountId: "acct_test",
+        agentId: "agent_test",
+        configRef: undefined,
+        subagentConfig: subagentConfig,
+      }),
+    ).resolves.toBe(subagentConfig);
+  });
+
+  it("fails any other ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
+    await expect(
+      loadAppliedIngressConfig({
+        accountId: "acct_test",
+        agentId: "agent_test",
+        configRef: undefined,
+      }),
+    ).rejects.toThrow("Queued turn was admitted before config refs; retry");
+  });
+});
+
 describe("session messages", (): void => {
   afterEach((): void => {
     resetStorageForTests();
@@ -1308,8 +1424,10 @@ describe("session messages", (): void => {
       agentId: "agent_test",
       conversationKey: "acct:acct_test:agent:agent_test:tg:target-chat",
     });
+    expect(prepared.agentConfig).toEqual(agentConfig);
+    expect(prepared.candidate).not.toHaveProperty("agentConfig");
     expect(prepared.candidate).toMatchObject({
-      agentConfig: agentConfig,
+      configRef: { channel: { channelName: "telegram" } },
       conversationKey: "acct:acct_test:agent:agent_test:tg:target-chat",
       delivery: {
         kind: "channel",

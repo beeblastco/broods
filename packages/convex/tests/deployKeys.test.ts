@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-/** A project key is minted with its `pdk_` prefix and resolves to its stage by hash. */
+/** A project key is minted with its `bpdk_` prefix and resolves to its stage by hash. */
 
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
@@ -25,7 +25,7 @@ vi.mock(
   }),
 );
 
-test("a project key is minted as pdk_ and resolves scoped to its stage", async (): Promise<void> => {
+test("a project key is minted as bpdk_ and resolves scoped to its stage", async (): Promise<void> => {
   const t = convexTest(schema, modules);
   const seeded = await t.run(async (ctx): Promise<Seeded> => {
     const now = Date.now();
@@ -69,11 +69,12 @@ test("a project key is minted as pdk_ and resolves scoped to its stage", async (
     name: "CI",
   });
 
-  expect(created.token).toMatch(/^pdk_[A-Za-z0-9_-]{43}$/);
-  expect(created.keyHint).toBe(`pdk_…${created.token.slice(-4)}`);
+  expect(created.token).toMatch(/^bpdk_[A-Za-z0-9_-]{43}$/);
+  expect(created.keyHint).toBe(`bpdk_…${created.token.slice(-4)}`);
   expect(
     await t.query(internal.cli.sync.resolveCliAuth, {
       tokenHash: await sha256Hex(created.token),
+      keyKind: "project",
       project: "demo-app",
       stage: "production",
     }),

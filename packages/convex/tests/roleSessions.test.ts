@@ -16,13 +16,13 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const ACCOUNT_SECRET = "ask_test-owner-secret";
+const ACCOUNT_SECRET = "bask_test-owner-secret";
 const AGENTS_READ_POLICY: PolicyDocument = {
   version: 1,
   rules: [{ id: "read-agents", effect: "allow", actions: ["agents:read"] }],
 };
 const AUTH_ID = "auth_owner";
-const RUNTIME_KEY = "sk_stage-runtime-key";
+const RUNTIME_KEY = "bsk_stage-runtime-key";
 
 const roleTest = () => convexTest(schema, modules);
 
@@ -121,7 +121,7 @@ async function seed(t: T): Promise<Seeded> {
       projectSlug: "demo-app",
       stageSlug: "production",
       apiKeyHash: await sha256Hex(RUNTIME_KEY),
-      keyHint: "sk_...-key",
+      keyHint: "bsk_...-key",
       apiKeyCiphertext: "ct",
       apiKeyIv: "iv",
       apiKeyTag: "tag",
@@ -138,7 +138,7 @@ async function seed(t: T): Promise<Seeded> {
 }
 
 describe("POST /v1/account/assume-role", () => {
-  test("account key mints a working fp_sts_ session", async () => {
+  test("account key mints a working bsts_ session", async () => {
     const t = roleTest();
     const seeded = await seed(t);
     const roleId = await createRole(t, seeded);
@@ -149,7 +149,7 @@ describe("POST /v1/account/assume-role", () => {
       token: string;
       expiresAt: string;
     };
-    expect(body.token.startsWith("fp_sts_")).toBe(true);
+    expect(body.token.startsWith("bsts_")).toBe(true);
     expect(Date.parse(body.expiresAt)).toBeGreaterThan(Date.now());
 
     const agents = await t.fetch("/v1/agents", {
@@ -194,7 +194,7 @@ describe("role sessions on config-plane routes", () => {
     const t = roleTest();
     const seeded = await seed(t);
     const roleId = await createRole(t, seeded);
-    const token = "fp_sts_expired-token";
+    const token = "bsts_expired-token";
     const tokenHash = await sha256Hex(token);
     await t.run(async (ctx) => {
       await ctx.db.insert("roleSessions", {

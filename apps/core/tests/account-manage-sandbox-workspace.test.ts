@@ -25,7 +25,7 @@ import {
 } from "../src/shared/terminal-ticket.ts";
 
 const ACCOUNT_ID = "acct_test";
-const AUTH = { authorization: "Bearer ask_test" };
+const AUTH = { authorization: "Bearer bask_test" };
 const ORIGINAL_SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET;
 const ORIGINAL_ADMIN_ACCOUNT_SECRET = process.env.ADMIN_ACCOUNT_SECRET;
 const ORIGINAL_TERMINAL_TICKET_SECRET = process.env.TERMINAL_TICKET_SECRET;
@@ -722,13 +722,13 @@ function createFakeStorage() {
         return [fakeAccount()];
       },
       create: async function () {
-        return { account: fakeAccount(), secret: "ask_fake" };
+        return { account: fakeAccount(), secret: "bask_fake" };
       },
       update: async function () {
         return fakeAccount();
       },
       rotateSecret: async function () {
-        return { account: fakeAccount(), secret: "ask_fake" };
+        return { account: fakeAccount(), secret: "bask_fake" };
       },
       remove: async function () {
         return true;

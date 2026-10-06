@@ -7,6 +7,7 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
+import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
   ToggleRow,
@@ -302,6 +303,7 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
+  const isolation = workspaceIsolation(config.isolation);
   const storage: Record<string, unknown> = isPlainObject(config.storage)
     ? config.storage
     : { provider: "s3" };
@@ -486,12 +488,12 @@ export function WorkspaceResourceDetailsTab({
         <ToggleRow
           label="Isolation"
           description="Split the filesystem per conversation instead of sharing one root."
-          checked={config.isolation === true}
-          onCheckedChange={(isolation) =>
-            setConfig({ isolation: isolation ? true : undefined })
+          checked={isolation !== undefined}
+          onCheckedChange={(checked) =>
+            setConfig({ isolation: checked ? "conversation" : undefined })
           }
         />
-        {config.isolation === true && (
+        {isolation === "conversation" && (
           <ExpandBlock>
             <p className="text-2xs text-muted-foreground">
               Every channel attached to this workspace must set `partition`. A

@@ -21,7 +21,13 @@ import {
   type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
+import { cacheDigest } from "../../shared/cache-digest.ts";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
+import {
+  delegatedChain,
+  type Principal,
+  type PrincipalLink,
+} from "../../shared/domain/principal.ts";
 import {
   authorizationHeaderName,
   ENV_PLACEHOLDER_PATTERN,
@@ -42,6 +48,14 @@ import {
 } from "./oauth.ts";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
+export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
+export const MCP_PRINCIPAL_HEADER = "X-Broods-Principal";
+// Core alone names the caller. Header names are case-insensitive on the wire,
+// where a tenant's own copy would be joined with the real one.
+const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
+  MCP_AGENT_ID_HEADER.toLowerCase(),
+  MCP_PRINCIPAL_HEADER.toLowerCase(),
+]);
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
@@ -56,6 +70,10 @@ let testOverrides: McpTestOverrides | null = null;
 export interface McpConnection {
   record: McpRecord;
   headers: Record<string, string>;
+  /** Who is calling, on every request; not part of the listing cache key. */
+  principalHeaders?: Record<string, string>;
+  /** The agent whose run calls; a hosted row runs as `accountId:agentId`. Unset on an account-surface probe. */
+  agentId?: string;
   /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
@@ -203,17 +221,21 @@ export async function listMcpTools(
 /**
  * Build the connection for a server row: row headers and oauth overlaid with
  * the agent config's (those resolved their ${NAME} refs at sync). A value
- * still carrying a placeholder never reaches the wire.
+ * still carrying a placeholder never reaches the wire, and neither does a
+ * header claiming one of the principal names. The principal names the agent
+ * whose run calls, unset on an account-surface probe.
  */
 export function mcpConnection(
   record: McpRecord,
   configHeaders: Record<string, string> | undefined,
   configOauth?: AgentMcpEntry["oauth"],
+  principal?: Principal,
 ): McpConnection {
-  const headers: Record<string, string> = {
-    ...record.headers,
-    ...configHeaders,
-  };
+  const headers: Record<string, string> = Object.fromEntries(
+    Object.entries({ ...record.headers, ...configHeaders }).filter(
+      ([name]) => !PRINCIPAL_HEADER_NAMES.has(name.toLowerCase()),
+    ),
+  );
   for (const [name, value] of Object.entries(headers)) {
     if (ENV_PLACEHOLDER_PATTERN.test(value)) {
       throw new Error(
@@ -234,7 +256,27 @@ export function mcpConnection(
   return {
     record: record,
     headers: headers,
+    agentId: principal?.agentId,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
+    ...(principal ? { principalHeaders: principalHeaders(principal) } : {}),
+  };
+}
+
+/** Every header one request carries: row and config headers, the principal, then a minted bearer. */
+export async function mcpRequestHeaders(
+  connection: McpConnection,
+): Promise<Record<string, string>> {
+  // Minted (or served from the token cache) per connect: clients are
+  // per-operation, so every request carries a token outside its refresh
+  // margin instead of a static header that expires mid-conversation.
+  return {
+    ...connection.headers,
+    ...connection.principalHeaders,
+    ...(connection.oauth
+      ? {
+          Authorization: `Bearer ${await mcpAccessToken(connection.record.name, connection.oauth)}`,
+        }
+      : {}),
   };
 }
 
@@ -249,14 +291,32 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 /**
  * One cache identity per server row version, resolved header set and oauth
  * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL.
+ * data for a TTL. The credentials ride the key only as a process-keyed
+ * digest: a Map key lives process-wide for up to an hour and must not hold
+ * them in clear. A hosted row adds the agent: its answers come from that
+ * agent's own child, so one agent never reads what another agent's child said.
  */
-function cacheKeyFor(connection: McpConnection): string {
+export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
+  const credentials = cacheDigest(
+    JSON.stringify([headers, connection.oauth ?? null]),
+  );
+  const agent =
+    connection.record.transport === "hosted" ? (connection.agentId ?? "") : "";
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${credentials}:${agent}`;
+}
+
+/** The chain as a remote server sees it: ids and kinds, never a display name. The ledger and the OPA input keep the name. */
+function chainWithoutNames(chain: PrincipalLink[]): PrincipalLink[] {
+  return chain.map((link): PrincipalLink => {
+    if (link.kind !== "user") return link;
+    const { name: _name, ...rest } = link;
+
+    return rest;
+  });
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -286,24 +346,14 @@ async function connectClient(
   const makeClient = async (
     discover: DiscoverResult | undefined,
   ): Promise<Client> => {
-    // Minted (or served from the token cache) per connect: clients are
-    // per-operation, so every request carries a token outside its refresh
-    // margin instead of a static header that expires mid-conversation.
-    const headers = connection.oauth
-      ? {
-          ...connection.headers,
-          Authorization: `Bearer ${await mcpAccessToken(connection.record.name, connection.oauth)}`,
-        }
-      : connection.headers;
+    const headers = await mcpRequestHeaders(connection);
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {
         requestInit: { headers: headers },
         // A tenant url is dialed from inside the cluster, so it gets the same
         // resolve, refuse-private and pin treatment as a model endpoint.
-        fetch: hosted
-          ? hostedMcpFetch(connection.record, onCpuUsec)
-          : publicHostFetch,
+        fetch: hosted ? hostedMcpFetch(connection, onCpuUsec) : publicHostFetch,
       },
     );
     const client = new Client(CLIENT_INFO, {
@@ -339,6 +389,22 @@ async function connectClient(
   }
 
   return client;
+}
+
+/** The agent id, and its chain when known (base64url JSON, ids and kinds only), so a server can authorize per agent. */
+function principalHeaders(principal: Principal): Record<string, string> {
+  const chain = delegatedChain(principal);
+
+  return {
+    [MCP_AGENT_ID_HEADER]: principal.agentId,
+    ...(chain
+      ? {
+          [MCP_PRINCIPAL_HEADER]: Buffer.from(
+            JSON.stringify(chainWithoutNames(chain)),
+          ).toString("base64url"),
+        }
+      : {}),
+  };
 }
 
 /** Drop oldest entries so a long-lived core process stays bounded. */

@@ -12,7 +12,7 @@ let pendingSecret: string | null = null;
 /**
  * Publishes a one-time secret so the onboarding dialog can show it on the next
  * (or current) route, then notifies any mounted listener.
- * @param secret the plaintext ask_ account key to surface once
+ * @param secret the plaintext bask_ account key to surface once
  */
 export function publishOnboardingSecret(secret: string): void {
   if (typeof window === "undefined") return;

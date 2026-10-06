@@ -8,12 +8,12 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizePolicyDocument } from "../agent/policies";
+import { accountCipherForWrite } from "./accountKeys";
 import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
 } from "./agentConfigCodec";
+import type { AccountCipher } from "./envelope";
 import { saveAgentRuntimeSecrets } from "./agentRuntimeSecrets";
 import {
   deleteAgentRow,
@@ -44,7 +44,10 @@ import {
   loadPolicyReferenceRows,
   type PolicyReferenceRows,
 } from "./policyReferences";
-import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
+import {
+  DEFAULT_SANDBOX_PROVIDER,
+  normalizeSandboxConfig,
+} from "./sandboxRules";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
@@ -572,12 +575,7 @@ export async function syncSandboxResources(
 
   // sandboxConfigs is a shared SaaS table owned by broods: the blob is
   // stored encrypted at rest (envVars/options may carry provider secrets).
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to sync sandbox configs",
-    );
-  }
+  const cipher = await accountCipherForWrite(ctx, accountId);
   const existing = await ctx.db
     .query("sandboxConfigs")
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
@@ -592,7 +590,7 @@ export async function syncSandboxResources(
   for (const sandbox of existing) {
     existingConfigs.set(
       sandbox._id,
-      await decryptSandboxConfig(sandbox, secret),
+      await decryptSandboxConfig(sandbox, cipher),
     );
   }
   const claimed = new Set<Id<"sandboxConfigs">>();
@@ -611,6 +609,14 @@ export async function syncSandboxResources(
       { provider: DEFAULT_SANDBOX_PROVIDER, ...asObject(resource.config) },
       envNames,
     );
+    // Same rules as the config API for a custom server, on the placeholder
+    // form its credential headers are written in.
+    if (
+      sourceConfig.provider === "custom" ||
+      sourceConfig.fallbackProvider === "custom"
+    ) {
+      normalizeSandboxConfig(sourceConfig);
+    }
     const resolvedConfig = substituteEnvPlaceholders(sourceConfig, envValues);
     const runtimeVariables = [...envNames].map((key) => ({
       key: key,
@@ -636,7 +642,7 @@ export async function syncSandboxResources(
       );
     if (
       target &&
-      (await sandboxUnchanged(target, secret, {
+      (await sandboxUnchanged(target, cipher, {
         projectId: projectId,
         name: name,
         description: resource.description,
@@ -650,8 +656,14 @@ export async function syncSandboxResources(
       ids[name] = target._id;
       continue;
     }
-    const encrypted = await encryptAgentConfigBlob(resolvedConfig, secret);
-    const encryptedSource = await encryptAgentConfigBlob(sourceConfig, secret);
+    const encrypted = await cipher.encrypt(
+      "sandboxConfigs:encryptedConfig",
+      resolvedConfig,
+    );
+    const encryptedSource = await cipher.encrypt(
+      "sandboxConfigs:encryptedSourceConfig",
+      sourceConfig,
+    );
     if (target) {
       claimed.add(target._id);
       await ctx.db.patch(target._id, {
@@ -913,7 +925,7 @@ async function resolveSubagentReferences(
 // A fresh IV rewrites the row on every deploy, so compare plaintext first.
 async function sandboxUnchanged(
   sandbox: Doc<"sandboxConfigs">,
-  secret: string,
+  cipher: AccountCipher,
   next: {
     projectId: Id<"projects">;
     name: string;
@@ -938,14 +950,11 @@ async function sandboxUnchanged(
   ) {
     return false;
   }
-  const source = await decryptAgentConfigBlob(
-    {
-      ciphertext: sandbox.encryptedSourceConfig,
-      iv: sandbox.sourceEncryptionIv,
-      tag: sandbox.sourceEncryptionTag,
-    },
-    secret,
-  );
+  const source = await cipher.decrypt("sandboxConfigs:encryptedSourceConfig", {
+    ciphertext: sandbox.encryptedSourceConfig,
+    iv: sandbox.sourceEncryptionIv,
+    tag: sandbox.sourceEncryptionTag,
+  });
 
   return stableJson(source) === stableJson(next.nextSourceConfig);
 }

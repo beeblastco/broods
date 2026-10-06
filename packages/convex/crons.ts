@@ -18,9 +18,24 @@ crons.interval(
   {},
 );
 crons.interval(
-  "prune config audit events",
+  "prune config auth failures",
   { hours: 24 },
-  internal.config.auditEvents.pruneExpired,
+  internal.config.authFailures.pruneExpired,
+  {},
+);
+// Rows past an account's retention go oldest first, never one its sink has
+// not exported, so the chain stays verifiable from the oldest kept row to the
+// head.
+crons.interval(
+  "prune expired audit events",
+  { hours: 24 },
+  internal.audit.ledger.pruneExpired,
+  {},
+);
+crons.interval(
+  "export audit events",
+  { minutes: 10 },
+  internal.audit.sinks.exportDue,
   {},
 );
 crons.interval(

@@ -74,9 +74,17 @@ const CASES: [string, string, Upstream | null][] = [
   ["GET", "/v1/sandboxes/sbx_1", "config"],
   ["GET", "/v1/sandboxes/sbx_1/exec", "core"],
   ["GET", "/v1/policies/pol_1", "config"],
-  ["GET", "/v1/roles/fp_role_abc", "config"],
+  ["GET", "/v1/roles/brole_abc", "config"],
   ["GET", "/v1/channels/chan_1", "config"],
   ["GET", "/v1/crons/cron_123/runs", "config"],
+  ["GET", "/v1/audit", "config"],
+  ["POST", "/v1/audit", "core"],
+  ["GET", "/v1/audit/verify", "config"],
+  ["GET", "/v1/audit/sink", "config"],
+  ["PUT", "/v1/audit/sink", "config"],
+  ["DELETE", "/v1/audit/sink", "config"],
+  ["POST", "/v1/audit/sink", "core"],
+  ["GET", "/v1/audit/other", "core"],
 
   // Trailing slashes never move a request; an inner empty segment stays in
   // its subtree.
