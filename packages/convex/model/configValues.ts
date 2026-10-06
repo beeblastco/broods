@@ -6,6 +6,7 @@
  */
 
 import { ACCOUNT_ENV_REFS_ONLY_PATTERN } from "./envRefs";
+import { CREDENTIAL_HEADER_VALUE_PATTERN } from "./mcp";
 import { isPlainObject } from "./objects";
 
 export const REDACTED_SECRET_VALUE = "********";
@@ -70,23 +71,27 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-function redactSecrets(value: unknown): unknown {
+// Inside a `headers` map any value but a `${NAME}` ref is masked: a sync
+// resolves refs into the stored config whatever the header is called.
+function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
-    return value.map(redactSecrets);
+    return value.map((entry) => redactSecrets(entry));
   }
   if (!isPlainObject(value)) {
     return value;
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      isSecretConfigKey(key) &&
-      typeof entry === "string" &&
-      !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry)
-        ? REDACTED_SECRET_VALUE
-        : redactSecrets(entry),
-    ]),
+    Object.entries(value).map(([key, entry]) => {
+      if (typeof entry !== "string") {
+        return [key, redactSecrets(entry, key === "headers")];
+      }
+      const secret = inHeaders
+        ? !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
+        : isSecretConfigKey(key) && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry);
+
+      return [key, secret ? REDACTED_SECRET_VALUE : entry];
+    }),
   );
 }
 

@@ -26,7 +26,7 @@ Stay ephemeral unless the agent needs state between calls. Ephemeral runs hold r
 
 Reserve a machine for iterative coding sessions, long-running work, background jobs, or when you want the live terminal in the dashboard. Avoid it for one-shot tasks.
 
-On `lambda`, a reserved MicroVM counts against your account's allocated memory quota while it runs and while it is suspended. A handful of persistent agents can exhaust the quota, and every new launch then fails with `ServiceQuotaExceededException` and the message "maximum allocated memory limit". Terminate reservations you are done with from the dashboard, under Sandbox, Instances. That frees the quota at once instead of waiting for the idle window.
+On `lambda`, a reserved MicroVM counts against your account's allocated memory quota while it runs and while it is suspended. A handful of persistent agents can exhaust the quota, and every new launch then fails with `ServiceQuotaExceededException` and the message "maximum allocated memory limit". Terminate reservations you are done with from the dashboard, under Sandbox, Instances. That frees the quota at once instead of waiting for the idle window. If no reservation is running and launches still fail, the quota itself is too low: check "Max allocated ARM_64 MicroVM memory" for your region in AWS Service Quotas, which can start at 0 on a new account, and request an increase.
 
 ## Which machine you get
 
