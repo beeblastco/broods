@@ -34,11 +34,12 @@ Three keys are yours to hold. Use the narrowest one that works.
 
 The rest are issued for you and expire or follow your membership:
 
-| Credential           | Prefix    | Use it for                                        | Never                          |
-| -------------------- | --------- | ------------------------------------------------- | ------------------------------ |
-| CLI login            | `fp_cli_` | Your own machine                                  | Share it                       |
-| Role session         | `fp_sts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours  |
-| Stage session ticket | `fp_dts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes. |
+| Credential           | Prefix    | Use it for                                        | Never                                          |
+| -------------------- | --------- | ------------------------------------------------- | ---------------------------------------------- |
+| CLI login            | `fp_cli_` | Your own machine                                  | Share it                                       |
+| Role session         | `fp_sts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours                  |
+| Stage session ticket | `fp_dts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes.                 |
+| Run token            | `brt_`    | Sandbox code reading its agent's runs             | Start a run with it, or expect it past the run |
 
 The runtime key is the one key meant to sit in a frontend, so it is limited:
 

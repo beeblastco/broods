@@ -56,6 +56,11 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
     JSON.stringify(run ?? null),
   );
   assertStep(
+    "the finished run records who asked",
+    run?.actor.chain?.[0]?.kind === "api",
+    JSON.stringify(run?.actor ?? null),
+  );
+  assertStep(
     "audit ledger holds the agent create",
     events.some(
       (event: AuditEvent): boolean =>

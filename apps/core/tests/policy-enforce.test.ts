@@ -172,20 +172,30 @@ describe("agent policy enforce mode", () => {
 
   it("acts on a denial the policy engine returned", async () => {
     auditWrites.length = 0;
+    seenPolicyInputs.length = 0;
+    const principal = {
+      kind: "agent" as const,
+      accountId: "acct_1",
+      agentId: "agent_1",
+      chain: [{ kind: "user" as const, id: "U1", channel: "slack" }],
+    };
     const approval = await createPolicyToolApproval(
       agentConfig(),
-      { accountId: "acct_1", agentId: "agent_1" },
+      { accountId: "acct_1", agentId: "agent_1", principal: principal },
       [],
     );
     expect(approval).toBeDefined();
     const status = await approval!(toolCallEvent);
     expect(decisionType(status)).toBe("denied");
+    // The principal reaches OPA whole, so a rule can read the chain.
+    expect(seenPolicyInputs[0]).toMatchObject({ principal: principal });
     // An enforced denial is an account event: it lands on the audit ledger
-    // with the tool and the rule, never the tool input.
+    // with the tool, the rule and the chain, never the tool input.
     expect(auditWrites).toHaveLength(1);
     expect(auditWrites[0]).toMatchObject({
       accountId: "acct_1",
       agentId: "agent_1",
+      chain: principal.chain,
       action: "tool.denied",
       resource: { kind: "tool", name: "bash" },
       details: {

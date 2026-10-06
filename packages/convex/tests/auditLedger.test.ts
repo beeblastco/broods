@@ -65,6 +65,7 @@ describe("chain", () => {
       accountId: accountId,
       endpointId: "ep-1",
       agentId: "agent-1",
+      principalChain: [{ kind: "api" as const, keyKind: "account" as const }],
       conversationKey: "conv-1",
       taskId: "evt-1#trace-1",
       modelProvider: "anthropic",
@@ -95,7 +96,11 @@ describe("chain", () => {
     expect(rows[0]).toMatchObject({
       seq: 1,
       traceId: "trace-1",
-      actor: { kind: "agent", agentId: "agent-1" },
+      actor: {
+        kind: "agent",
+        agentId: "agent-1",
+        chain: [{ kind: "api", keyKind: "account" }],
+      },
       action: "run.completed",
       resource: { kind: "run", id: "evt-1" },
       summary: "Run completed after 1000ms",
@@ -134,6 +139,39 @@ describe("chain", () => {
       });
       expect(response.status).toBe(400);
     }
+  });
+
+  test("stores an agent actor's chain and hashes it", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    const chain = [
+      { kind: "user" as const, id: "U1", name: "Ada", channel: "slack" },
+      { kind: "agent" as const, agentId: "agent_1" },
+    ];
+    await t.mutation(internal.audit.ledger.record, {
+      accountId: accountId,
+      actor: { kind: "agent", agentId: "agent_2", chain: chain },
+      action: "run.completed",
+      resource: { kind: "run", id: "evt_1" },
+      summary: "Run completed",
+    });
+
+    const rows = await allRows(t, accountId);
+    expect(rows[0]?.actor).toEqual({
+      kind: "agent",
+      agentId: "agent_2",
+      chain: chain,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(rows[0]!._id, {
+        actor: { kind: "agent", agentId: "agent_2", chain: chain.slice(1) },
+      });
+    });
+    expect(
+      await t.query(internal.audit.ledger.verifyChain, {
+        accountId: accountId,
+      }),
+    ).toEqual({ ok: false, brokenAtSeq: 1, checkedFrom: 1, checkedTo: 1 });
   });
 
   test("a row edited in place is reported at its seq", async () => {

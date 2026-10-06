@@ -11,6 +11,7 @@ import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { appendAuditEvent, auditDetailsJson } from "./model/auditEvents";
+import { principalLinkValidator } from "./model/principal";
 
 const TASK_USAGE_PRUNE_BATCH_SIZE = 100;
 const TASK_USAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -95,6 +96,8 @@ export const recordTaskUsage = internalMutation({
     accountId: v.id("accounts"),
     endpointId: v.string(),
     agentId: v.string(),
+    /** Who asked and which agents delegated; lands on the `run.completed` row. */
+    principalChain: v.optional(v.array(principalLinkValidator)),
     conversationKey: v.string(),
     taskId: v.string(),
     modelProvider: v.string(),
@@ -209,7 +212,11 @@ export const recordTaskUsage = internalMutation({
     await appendAuditEvent(ctx.db, {
       accountId: args.accountId,
       traceId: traceId,
-      actor: { kind: "agent", agentId: args.agentId },
+      actor: {
+        kind: "agent",
+        agentId: args.agentId,
+        chain: args.principalChain,
+      },
       action: "run.completed",
       resource: { kind: "run", id: eventId },
       summary: `Run ${args.status} after ${args.durationMs}ms`,

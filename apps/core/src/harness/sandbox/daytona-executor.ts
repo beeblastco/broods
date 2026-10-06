@@ -333,7 +333,11 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   #execEnvVars(request: SandboxRunRequest): Record<string, string> | undefined {
-    const env = mergeSandboxEnv(this.#config.envVars, request.envVars);
+    const env = mergeSandboxEnv(
+      this.#config.envVars,
+      request.envVars,
+      request.principal,
+    );
 
     return Object.keys(env).length > 0 ? env : undefined;
   }
@@ -455,6 +459,8 @@ async function daytonaCreateOptions(
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
+  // No run identity here: a sandbox outlives the run that created it, and
+  // every exec lays its own over this env.
   const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
   const envVars = await daytonaEnvVars(config, request, baseEnv);
   // Persistent: auto-stop on idle (filesystem persists, harness restarts on next

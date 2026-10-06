@@ -40,6 +40,8 @@ export interface VerifyContext {
   runId: string;
   /** The in-cluster service token; valid only on requests that skip the edge. */
   serviceSecret: string;
+  /** The stack's STAGE_TICKET_SECRET, which core derives its run-token key from. */
+  stageTicketSecret: string;
 }
 
 /** Thrown by assertStep; verify records the step as the failure. */

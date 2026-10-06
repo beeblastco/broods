@@ -261,6 +261,7 @@ export async function createPolicyToolApproval(
           void getStorage().auditLedger.append({
             accountId: accountId,
             agentId: baseInput.agentId,
+            chain: baseInput.principal?.chain,
             traceId: getObservabilityContext()?.traceId,
             action: "tool.denied",
             resource: { kind: "tool", name: event.toolCall.toolName },
