@@ -4,14 +4,25 @@
 [extend]
 useDefault = true
 
-# Every Broods key starts with `b` so it can be told apart from other
-# vendors' keys: runtime (bsk_), account (bask_), project (bpdk_) and CLI
-# login (bcli_), each 32 random bytes as 43 base64url chars.
+# Every Broods credential starts with `b` so it can be told apart from other
+# vendors' keys. Runtime (bsk_), account (bask_), project (bpdk_) and CLI
+# login (bcli_) keys, login codes (bcode_) and role sessions (bsts_) are 32
+# random bytes as 43 base64url chars. Stage tickets (bdts_) and run tokens
+# (brt_) are a base64url JSON payload, a dot and a 43-char HMAC signature.
 [[rules]]
 id = "broods-credential"
-description = "Broods runtime, account, project or CLI login key"
-regex = '''\bb(?:sk|ask|pdk|cli)_[A-Za-z0-9_-]{43}'''
-keywords = ["bsk_", "bask_", "bpdk_", "bcli_"]
+description = "Broods key, login code, role session, stage ticket or run token"
+regex = '''\bb(?:(?:sk|ask|pdk|cli|code|sts)_[A-Za-z0-9_-]{43}|(?:dts|rt)_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{43})'''
+keywords = [
+  "bsk_",
+  "bask_",
+  "bpdk_",
+  "bcli_",
+  "bcode_",
+  "bsts_",
+  "bdts_",
+  "brt_",
+]
 
 [[allowlists]]
 description = "Made-up keys the benchmark inputs feed to the config and log redaction cases"
