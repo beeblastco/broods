@@ -419,7 +419,7 @@ describe("agent rules", () => {
       }),
     ).not.toThrow();
     // An upstream key in a literal header is as secret as an apiKey; a header
-    // made only of an env ref is not.
+    // made only of an env ref is not. Outside headers only refs are shown.
     expect(
       redactConfigSecrets({
         provider: {
@@ -433,7 +433,9 @@ describe("agent rules", () => {
             },
           },
         },
-        tools: { search: { serperApiKey: "sk-serper" } },
+        tools: {
+          search: { serperApiKey: "sk-serper", apiKey: "sk-live ${SUFFIX}" },
+        },
       }),
     ).toEqual({
       provider: {
@@ -447,7 +449,7 @@ describe("agent rules", () => {
           },
         },
       },
-      tools: { search: { serperApiKey: "********" } },
+      tools: { search: { serperApiKey: "********", apiKey: "********" } },
     });
     // Inherited Object keys are not provider names, however `in` reads them.
     for (const inherited of ["constructor", "__proto__", "toString"]) {

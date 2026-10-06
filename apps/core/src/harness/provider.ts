@@ -711,7 +711,10 @@ function createCloudflare({
       workersAI(workersAIModelId(modelId));
   }
   const gatewayAuth = { "cf-aig-authorization": `Bearer ${settings.apiKey}` };
-  const workersAI = createWorkersAI({ ...settings, gateway: { id: gateway } });
+  const workersAI = createWorkersAI({
+    ...settings,
+    gateway: { ...settings.gateway, id: gateway },
+  });
   const path = [settings.accountId, gateway].map(encodeURIComponent).join("/");
   const compatible = createOpenAICompatible({
     name: "cloudflare",

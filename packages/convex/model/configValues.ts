@@ -5,7 +5,10 @@
  * byte-identical. Pure module, safe for the default Convex runtime.
  */
 
-import { CREDENTIAL_HEADER_VALUE_PATTERN } from "./envRefs";
+import {
+  ACCOUNT_ENV_REFS_ONLY_PATTERN,
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+} from "./envRefs";
 import { isPlainObject } from "./objects";
 
 export const REDACTED_SECRET_VALUE = "********";
@@ -70,8 +73,7 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-// Inside a `headers` map, or under a secret-looking key, any value but
-// `${NAME}` refs (after an optional auth scheme word) is masked: a sync
+// Inside a `headers` map any value but a `${NAME}` ref is masked: a sync
 // resolves refs into the stored config whatever the header is called.
 function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
@@ -86,9 +88,9 @@ function redactSecrets(value: unknown, inHeaders = false): unknown {
       if (typeof entry !== "string") {
         return [key, redactSecrets(entry, key === "headers")];
       }
-      const secret =
-        (inHeaders || isSecretConfigKey(key)) &&
-        !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry);
+      const secret = inHeaders
+        ? !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
+        : isSecretConfigKey(key) && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry);
 
       return [key, secret ? REDACTED_SECRET_VALUE : entry];
     }),
@@ -110,7 +112,6 @@ function isSecretConfigKey(key: string): boolean {
     normalized.includes("access_key") ||
     normalized.includes("password") ||
     normalized.includes("passwd") ||
-    normalized.endsWith("authorization") ||
     /api[-_]?key$/.test(normalized)
   );
 }

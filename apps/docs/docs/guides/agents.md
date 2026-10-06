@@ -64,13 +64,13 @@ provider: {
     accountId: "your-account-id",
     gatewayId: "my-gateway",
     apiKey: env("CF_AIG_TOKEN"),
-    headers: { Authorization: "Bearer ${OPENAI_API_KEY}" }, // optional upstream key
+    headers: { Authorization: env("OPENAI_AUTHORIZATION") }, // optional, "Bearer sk-..."
   },
 },
 model: { provider: "cloudflare", modelId: "openai/gpt-5-mini" },
 ```
 
-On the gateway `apiKey` is sent as `cf-aig-authorization`. The upstream provider key goes in `headers.Authorization`. Leave it out and the gateway uses its stored key or unified billing. Workers AI models keep their `@cf/...` id and run on the token in `apiKey`, so that token needs both the AI Gateway Run and Workers AI permissions.
+On the gateway `apiKey` is sent as `cf-aig-authorization`. The upstream provider key goes in `headers.Authorization`, as the whole header value. Leave it out and the gateway uses its stored key or unified billing. Workers AI models keep their `@cf/...` id and run on the token in `apiKey`, so that token needs both the AI Gateway Run and Workers AI permissions.
 
 ### ChatGPT plan
 
