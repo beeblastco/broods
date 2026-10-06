@@ -24,6 +24,7 @@ import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
+import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
@@ -1618,11 +1619,15 @@ async function buildBundleModule(options: {
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
+  /** A Workers build resolves the Workers export conditions and no Node builtins. */
+  workers?: boolean;
 }): Promise<string> {
   const build = await esbuild({
     entryPoints: [options.entryPoint],
     bundle: true,
-    platform: "node",
+    ...(options.workers
+      ? { platform: "browser", conditions: ["workerd", "worker", "browser"] }
+      : { platform: "node" }),
     format: "esm",
     minify: false,
     write: false,
@@ -1716,12 +1721,32 @@ async function normalizeMcpConfig(
     const shimPath = join(shimDir, "mcp-handler.mjs");
     await writeFile(shimPath, mcpShimSource(entry), "utf8");
     await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
-    bundle = await buildBundleModule({
-      entryPoint: shimPath,
-      label: "MCP server bundle",
-      manifestPath: manifestPath,
-      plugins: [sdkStubPlugin(shimDir)],
-    });
+    const build = (workers: boolean): Promise<string> =>
+      buildBundleModule({
+        entryPoint: shimPath,
+        label: "MCP server bundle",
+        manifestPath: manifestPath,
+        plugins: [sdkStubPlugin(shimDir)],
+        workers: workers,
+      });
+    // Ship the Workers build only when the config plane will place it on
+    // Workers: runtime "auto", within the 10 MB Worker cap, passing the same
+    // scan and loading as a handler. Anything else ships the Node build,
+    // which runs on Lambda.
+    const workersBundle =
+      config.runtime === "lambda"
+        ? undefined
+        : await build(true).catch((): undefined => undefined);
+    bundle =
+      workersBundle !== undefined &&
+      Buffer.byteLength(workersBundle) <= INLINE_MCP_BUNDLE_BYTES &&
+      isWorkersSafeBundle(workersBundle) &&
+      (await assertServableMcpBundle(manifestPath, workersBundle).then(
+        (): boolean => true,
+        (): boolean => false,
+      ))
+        ? workersBundle
+        : await build(false);
   } finally {
     await rm(shimDir, { recursive: true, force: true });
   }

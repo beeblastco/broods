@@ -349,7 +349,7 @@ The doc id of `accounts` is the `accountId` every other table carries. Config ro
 
 ## Async and deferred work
 
-Everything a run starts runs inside core's process. Subagents are in-process child loops, async tools wait in the request or worker, and background runs are in-process workers. There are no separate worker deployments. Hosted MCP calls go to the Lambda. Code hooks run in a pooled Node child with a V8 isolate, in `src/harness/isolate`.
+Everything a run starts runs inside core's process. Subagents are in-process child loops, async tools wait in the request or worker, and background runs are in-process workers. There are no separate worker deployments. Hosted MCP calls go to the Cloudflare Workers runtime or the Lambda. Code hooks run in a pooled Node child with a V8 isolate, in `src/harness/isolate`.
 
 A detached sandbox job outlives its request. Its result comes back through a delivery descriptor stored with the job:
 

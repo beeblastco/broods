@@ -5551,8 +5551,10 @@ components:
           description: >-
             Hosted alternative to url (`transport: hosted`): bundled JavaScript
             module whose default export is a fetch-style MCP handler
-            (createMcpHandler). Max 10 MB inline; the mcp-runner Lambda hosts
-            it, one invoke per batch of requests. Larger bundles (up to 50 MB) go through
+            (createMcpHandler). Max 10 MB inline. The platform hosts it, one
+            invocation per batch of requests: with `runtime: auto`, on
+            Cloudflare Workers when the bundle can run there and the
+            deployment runs that runtime, on AWS Lambda otherwise. Larger bundles (up to 50 MB) go through
             `POST /v1/mcp/uploads` and are registered with bundleStorageId +
             sha256 instead.
         bundleStorageId:
@@ -5581,6 +5583,13 @@ components:
           items:
             type: string
           description: Tool names agents may use from this server; omit to allow all.
+        runtime:
+          type: string
+          enum: [auto, lambda]
+          description: >-
+            Hosted-only. `auto` (the default) runs the server on Cloudflare
+            Workers when its bundle can run there and the deployment runs that
+            runtime, on AWS Lambda otherwise. `lambda` always runs it on Lambda.
 
     McpOauth:
       type: object
@@ -5643,6 +5652,10 @@ components:
           type: array
           items:
             type: string
+        runtime:
+          type: string
+          enum: [auto, lambda]
+          description: As on create. Hosted-only.
         disabled:
           type: boolean
 
@@ -5672,6 +5685,10 @@ components:
         sha256:
           type: string
           description: Hosted-only; sha256 of the uploaded server bundle.
+        runtime:
+          type: string
+          enum: [auto, lambda]
+          description: Hosted-only; where the server may run, `auto` unless set.
         headers:
           type: object
           additionalProperties:

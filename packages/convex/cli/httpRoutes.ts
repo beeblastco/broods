@@ -1054,7 +1054,7 @@ async function syncMcpResources(
 
   for (const { name, input } of desired) {
     const current = existing.get(name);
-    const bundleStorageKey = await storeMcpBundle(
+    const storedBundle = await storeMcpBundle(
       ctx,
       accountId,
       input,
@@ -1065,9 +1065,7 @@ async function syncMcpResources(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-      ...(bundleStorageKey !== undefined
-        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-        : {}),
+      ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),
@@ -1075,6 +1073,10 @@ async function syncMcpResources(
       ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
+        : {}),
+      // The manifest is the whole truth: dropping `runtime` from it means "auto".
+      ...(input.transport === "hosted"
+        ? { runtime: input.runtime ?? "auto" }
         : {}),
     };
     if (current) {
