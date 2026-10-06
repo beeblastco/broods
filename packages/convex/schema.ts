@@ -215,7 +215,11 @@ export const cliAuthCodesFields = {
   authId: v.string(),
   orgId: v.id("orgs"),
   accountId: v.id("accounts"),
-  /** PKCE S256 challenge the CLI sent; the exchange must present its verifier. */
+  /**
+   * PKCE S256 challenge the CLI sent; the exchange must present its verifier.
+   * Every new code has one; optional only so codes minted before PKCE became
+   * required still validate, and the exchange refuses those.
+   */
   codeChallenge: v.optional(v.string()),
   expiresAt: v.number(),
   usedAt: v.optional(v.number()),

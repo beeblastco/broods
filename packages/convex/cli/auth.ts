@@ -91,21 +91,18 @@ type OnboardingOrg = {
 
 /**
  * Mint a short-lived one-time login code for the authenticated user's active
- * org. With a PKCE `codeChallenge`, only the CLI process holding the verifier
- * can exchange the code, so a stray localhost listener that catches it gets
- * nothing.
+ * org. The PKCE `codeChallenge` means only the CLI process holding the
+ * verifier can exchange the code, so a stray localhost listener that catches
+ * it gets nothing.
  */
 export const createLoginCode = mutation({
-  args: { codeChallenge: v.optional(v.string()) },
+  args: { codeChallenge: v.string() },
   returns: v.object({ code: v.string(), expiresAt: v.number() }),
   handler: async (
     ctx,
     { codeChallenge },
   ): Promise<{ code: string; expiresAt: number }> => {
-    if (
-      codeChallenge !== undefined &&
-      !PKCE_CHALLENGE_PATTERN.test(codeChallenge)
-    ) {
+    if (!PKCE_CHALLENGE_PATTERN.test(codeChallenge)) {
       throw new ClientError("codeChallenge must be a base64url S256 challenge");
     }
     const authUser = await authKit.getAuthUser(ctx);
@@ -149,7 +146,7 @@ export const createLoginCode = mutation({
       authId: authUser.id,
       orgId: org._id,
       accountId: account._id,
-      ...(codeChallenge ? { codeChallenge: codeChallenge } : {}),
+      codeChallenge: codeChallenge,
       expiresAt: expiresAt,
       createdAt: now,
     });
@@ -228,15 +225,16 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
   if (typeof body.code !== "string" || !body.code.trim()) {
     return jsonError(400, "Request body must include code");
   }
+  if (typeof body.code_verifier !== "string") {
+    return jsonError(400, "Request body must include code_verifier");
+  }
 
   try {
     const result: Record<string, unknown> = await ctx.runMutation(
       internal.cli.auth.exchangeLoginCode,
       {
         code: body.code,
-        ...(typeof body.code_verifier === "string"
-          ? { codeVerifier: body.code_verifier }
-          : {}),
+        codeVerifier: body.code_verifier,
       },
     );
 
@@ -256,7 +254,7 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
 
 /** Exchange a one-time code for a long-lived CLI bearer token. */
 export const exchangeLoginCode = internalMutation({
-  args: { code: v.string(), codeVerifier: v.optional(v.string()) },
+  args: { code: v.string(), codeVerifier: v.string() },
   returns: v.object({
     token: v.string(),
     expiresAt: v.number(),
@@ -289,9 +287,8 @@ export const exchangeLoginCode = internalMutation({
       throw new Error("CLI login code is invalid or expired");
     }
     if (
-      row.codeChallenge &&
-      (!codeVerifier ||
-        (await pkceChallenge(codeVerifier)) !== row.codeChallenge)
+      !row.codeChallenge ||
+      (await pkceChallenge(codeVerifier)) !== row.codeChallenge
     ) {
       throw new Error("CLI login code is invalid or expired");
     }

@@ -2,8 +2,8 @@
  * The one home for "what fires a cron job": a recurring schedule is a
  * crons-component registration named by the row id, a one-time at(...) job is
  * a Convex scheduler run recorded in the row's `scheduledRunId`. create,
- * update, the account/project cascades, and the cutover migration all
- * register and deschedule through here, so the convention cannot drift.
+ * update and the account/project cascades all register and deschedule
+ * through here, so the convention cannot drift.
  */
 
 import { Crons } from "@convex-dev/crons";
@@ -25,10 +25,9 @@ export interface RegisterScheduleOptions {
   /**
    * What to do with an at(...) instant that already passed: "throw" rejects
    * the write (create, or an update changing the expression), "run" fires it
-   * immediately (resuming a job whose time went by), "skip" leaves it
-   * unregistered (the cutover migration, where it already fired).
+   * immediately (resuming a job whose time went by).
    */
-  onPastAt: "throw" | "run" | "skip";
+  onPastAt: "throw" | "run";
 }
 
 /**
@@ -88,11 +87,8 @@ export async function registerSchedule(
 
     return { registered: true };
   }
-  if (schedule.timestamp <= Date.now()) {
-    if (options.onPastAt === "throw") {
-      throw new ClientError("at(...) time must be in the future");
-    }
-    if (options.onPastAt === "skip") return { registered: false };
+  if (schedule.timestamp <= Date.now() && options.onPastAt === "throw") {
+    throw new ClientError("at(...) time must be in the future");
   }
   const scheduledRunId = await ctx.scheduler.runAt(
     schedule.timestamp,

@@ -11,7 +11,10 @@ import schema from "../schema";
 // The WorkOS component is not registered in the test runtime; the org admin
 // below is the caller.
 vi.mock("../auth", () => ({
-  authKit: { getAuthUser: async () => ({ id: "auth_admin" }) },
+  authKit: {
+    getAuthUser: async () => ({ id: "auth_admin" }),
+    registerRoutes: () => undefined,
+  },
 }));
 
 const modules = import.meta.glob("../**/*.ts");
@@ -65,9 +68,6 @@ describe("CLI login code exchange with PKCE", () => {
     await seedCode(t, await pkceChallenge(VERIFIER));
 
     await expect(
-      t.mutation(internal.cli.auth.exchangeLoginCode, { code: CODE }),
-    ).rejects.toThrow(/invalid or expired/);
-    await expect(
       t.mutation(internal.cli.auth.exchangeLoginCode, {
         code: CODE,
         codeVerifier: "not-the-verifier",
@@ -81,23 +81,43 @@ describe("CLI login code exchange with PKCE", () => {
     expect(exchanged.token.startsWith("bcli_")).toBe(true);
   });
 
-  test("a code minted without a challenge still exchanges for older CLIs", async () => {
+  test("an exchange without a verifier is refused", async () => {
+    const t = loginTest();
+    await seedCode(t, await pkceChallenge(VERIFIER));
+
+    const response = await t.fetch("/v1/account/auth/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: CODE }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { message: "Request body must include code_verifier" },
+    });
+  });
+
+  test("a code minted without a challenge is refused", async () => {
     const t = loginTest();
     await seedCode(t, undefined);
 
-    const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
-      code: CODE,
-    });
-    expect(exchanged.token.startsWith("bcli_")).toBe(true);
+    await expect(
+      t.mutation(internal.cli.auth.exchangeLoginCode, {
+        code: CODE,
+        codeVerifier: VERIFIER,
+      }),
+    ).rejects.toThrow(/invalid or expired/);
   });
 
   test("a code under an old prefix is refused even when its hash is stored", async () => {
     const t = loginTest();
     const legacy = "fp_code_test-code";
-    await seedCode(t, undefined, legacy);
+    await seedCode(t, await pkceChallenge(VERIFIER), legacy);
 
     await expect(
-      t.mutation(internal.cli.auth.exchangeLoginCode, { code: legacy }),
+      t.mutation(internal.cli.auth.exchangeLoginCode, {
+        code: legacy,
+        codeVerifier: VERIFIER,
+      }),
     ).rejects.toThrow(/invalid or expired/);
   });
 
@@ -133,7 +153,9 @@ describe("CLI login code minting", () => {
       });
     });
 
-    const minting = t.mutation(api.cli.auth.createLoginCode, {});
+    const minting = t.mutation(api.cli.auth.createLoginCode, {
+      codeChallenge: await pkceChallenge(VERIFIER),
+    });
 
     await expect(minting).rejects.toBeInstanceOf(ClientError);
     await expect(minting).rejects.toThrow(

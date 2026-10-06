@@ -90,8 +90,8 @@ crons.interval(
   internal.aws.storageMeter.snapshotAll,
   {},
 );
-// The write seams keep this projection live; the sweep seeds it at cutover and
-// self-heals any seam a future writer forgets.
+// The write seams keep this projection live; the sweep self-heals any seam a
+// future writer forgets.
 crons.interval(
   "reconcile channel endpoints",
   { hours: 1 },

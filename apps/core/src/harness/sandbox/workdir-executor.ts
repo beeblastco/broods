@@ -572,9 +572,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     // Declarative mount creds come from the guest secret env (named org secrets).
     if (mounts) startup.secrets = s3SecretNames(options);
 
-    // The first-class `snapshot` pin wins; `options.image` stays a back-compat alias.
-    const image =
-      configString(this.#config.snapshot) ?? configString(options.image);
+    const image = configString(this.#config.snapshot);
 
     return {
       ...(workdirResources(this.#config)
