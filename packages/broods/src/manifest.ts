@@ -19,7 +19,9 @@ import {
   transformSync,
   type BuildFailure,
   type Plugin,
+  type StdinOptions,
 } from "esbuild";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "../../convex/model/envRefs.ts";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
@@ -48,6 +50,10 @@ import {
 
 /** Reach every room the app can see, instead of only the declared channels. */
 const CHANNEL_REACH_WILDCARD = "*";
+const ENV_PLACEHOLDER_GLOBAL_PATTERN = new RegExp(
+  ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
+  "g",
+);
 
 export interface CompileOptions {
   cwd?: string;
@@ -80,6 +86,12 @@ type ExportedValue = {
   exportName: string;
   file: string;
   value: unknown;
+};
+
+// The auth half of an MCP server config, copied under each agent entry.
+type McpAuth = {
+  headers?: Record<string, unknown>;
+  oauth?: Record<string, unknown>;
 };
 
 type ExportedResource = {
@@ -205,13 +217,21 @@ export async function compileProject(
       (options.useRuntimeStage === false ? undefined : stageFromEnv()),
     options.command ?? "dev",
   );
-  const manifestResources = (
+  const sortedResources = (
     await Promise.all(
       resourceExports.map((entry) => toManifestResources(entry, root, reach)),
     )
   )
     .flat()
     .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
+  const mcpServers = new Map(
+    sortedResources
+      .filter((resource) => resource.kind === "mcp")
+      .map((resource) => [resource.name, resource.config as McpAuth]),
+  );
+  const manifestResources = sortedResources.map((resource) =>
+    withMcpServerAuth(resource, mcpServers),
+  );
   assertUniqueResources(manifestResources);
 
   return {
@@ -231,21 +251,42 @@ export async function compileProject(
 /**
  * Collects the distinct account/environment variable names referenced via
  * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
- * compiled manifest, sorted. `dev` uses this to auto-sync exactly those vars
- * from the local environment to the cloud, never unrelated `.env.local` keys.
+ * compiled manifest, plus the `${NAME}` refs in MCP headers (a server's and an
+ * agent's own), sorted.
+ * `dev` uses this to auto-sync exactly those vars from the local environment
+ * to the cloud, never unrelated `.env.local` keys.
  */
 export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
-  for (const resource of manifest.resources)
-    collectEnvRefNamesFromValue(resource.config, names);
+  for (const resource of manifest.resources) {
+    collectEnvRefNamesFromValue(resource.config, names, false);
+    // `${NAME}` refs count where the sync resolves them: agent mcp entries,
+    // which carry each server's headers and oauth, and the server's own headers.
+    const config = resource.config as { headers?: unknown; mcp?: unknown };
+    if (resource.kind === "agent")
+      collectEnvRefNamesFromValue(config.mcp, names, true);
+    if (resource.kind === "mcp")
+      collectEnvRefNamesFromValue(config.headers, names, true);
+  }
 
   return [...names].sort();
 }
 
-function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
+function collectEnvRefNamesFromValue(
+  value: unknown,
+  names: Set<string>,
+  placeholders: boolean,
+): void {
+  if (placeholders && typeof value === "string") {
+    for (const match of value.matchAll(ENV_PLACEHOLDER_GLOBAL_PATTERN))
+      names.add(match[1]!);
+
+    return;
+  }
   if (Array.isArray(value)) {
-    for (const entry of value) collectEnvRefNamesFromValue(entry, names);
+    for (const entry of value)
+      collectEnvRefNamesFromValue(entry, names, placeholders);
 
     return;
   }
@@ -257,7 +298,7 @@ function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
       return;
     }
     for (const entry of Object.values(record))
-      collectEnvRefNamesFromValue(entry, names);
+      collectEnvRefNamesFromValue(entry, names, placeholders);
   }
 }
 
@@ -1615,7 +1656,7 @@ async function assertServableMcpBundle(
 
 /** Run one esbuild bundle build, mapping failures to a deploy-time error. */
 async function buildBundleModule(options: {
-  entryPoint: string;
+  stdin: StdinOptions;
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
@@ -1623,7 +1664,9 @@ async function buildBundleModule(options: {
   workers?: boolean;
 }): Promise<string> {
   const build = await esbuild({
-    entryPoints: [options.entryPoint],
+    stdin: options.stdin,
+    // esbuild names modules relative to this dir, so the hash ignores the cwd.
+    absWorkingDir: options.stdin.resolveDir,
     bundle: true,
     ...(options.workers
       ? { platform: "browser", conditions: ["workerd", "worker", "browser"] }
@@ -1712,44 +1755,39 @@ async function normalizeMcpConfig(
 
   const manifestPath = relative(projectRoot, entry.file).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "MCP server");
-  // The defining module imports the SDK for defineMcp/defineAgent; a shim
-  // entrypoint picks the handler off the resource export and the stub plugin
-  // keeps the SDK client out of the bundle.
-  const shimDir = await mkdtemp(join(tmpdir(), "broods-mcp-shim-"));
-  let bundle: string;
-  try {
-    const shimPath = join(shimDir, "mcp-handler.mjs");
-    await writeFile(shimPath, mcpShimSource(entry), "utf8");
-    await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
-    const build = (workers: boolean): Promise<string> =>
-      buildBundleModule({
-        entryPoint: shimPath,
-        label: "MCP server bundle",
-        manifestPath: manifestPath,
-        plugins: [sdkStubPlugin(shimDir)],
-        workers: workers,
-      });
-    // Ship the Workers build only when the config plane will place it on
-    // Workers: runtime "auto", within the 10 MB Worker cap, passing the same
-    // scan and loading as a handler. Anything else ships the Node build,
-    // which runs on Lambda.
-    const workersBundle =
-      config.runtime === "lambda"
-        ? undefined
-        : await build(true).catch((): undefined => undefined);
-    bundle =
-      workersBundle !== undefined &&
-      Buffer.byteLength(workersBundle) <= INLINE_MCP_BUNDLE_BYTES &&
-      isWorkersSafeBundle(workersBundle) &&
-      (await assertServableMcpBundle(manifestPath, workersBundle).then(
-        (): boolean => true,
-        (): boolean => false,
-      ))
-        ? workersBundle
-        : await build(false);
-  } finally {
-    await rm(shimDir, { recursive: true, force: true });
-  }
+  // An in-memory shim picks the handler off the resource export and the stub
+  // keeps the SDK out; a temp path would change the bundle sha256 every build.
+  const build = (workers: boolean): Promise<string> =>
+    buildBundleModule({
+      stdin: {
+        contents: mcpShimSource(entry),
+        resolveDir: projectRoot,
+        sourcefile: "mcp-handler.mjs",
+        loader: "js",
+      },
+      label: "MCP server bundle",
+      manifestPath: manifestPath,
+      plugins: [sdkStubPlugin()],
+      workers: workers,
+    });
+  // Ship the Workers build only when the config plane will place it on
+  // Workers: runtime "auto", within the 10 MB Worker cap, passing the same
+  // scan and loading as a handler. Anything else ships the Node build,
+  // which runs on Lambda.
+  const workersBundle =
+    config.runtime === "lambda"
+      ? undefined
+      : await build(true).catch((): undefined => undefined);
+  const bundle =
+    workersBundle !== undefined &&
+    Buffer.byteLength(workersBundle) <= INLINE_MCP_BUNDLE_BYTES &&
+    isWorkersSafeBundle(workersBundle) &&
+    (await assertServableMcpBundle(manifestPath, workersBundle).then(
+      (): boolean => true,
+      (): boolean => false,
+    ))
+      ? workersBundle
+      : await build(false);
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_MCP_BUNDLE_BYTES) {
     throw new Error(
@@ -1780,13 +1818,63 @@ function mcpShimSource(entry: ExportedResource): string {
 // Hosted MCP handlers live beside `defineAgent(...)` calls that import the
 // SDK. Alias those imports to inert stubs so the bundle carries the handler,
 // not the client.
-function sdkStubPlugin(shimDir: string): Plugin {
-  const stub = join(shimDir, "broods-stub.mjs");
-
+function sdkStubPlugin(): Plugin {
   return {
     name: "broods-sdk-stub",
     setup: function (build): void {
-      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
+      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({
+        path: "broods",
+        namespace: "broods-stub",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "broods-stub" }, () => ({
+        contents: SDK_STUB_SOURCE,
+        loader: "js",
+      }));
+    },
+  };
+}
+
+/**
+ * Copies each connected MCP server's headers and oauth credentials under the
+ * agent's own entry. Core reads a server's secrets only from the agent config,
+ * where the sync resolves their refs; the agent's own value wins, and header
+ * names compare case-insensitively.
+ */
+function withMcpServerAuth(
+  resource: CliManifestResource,
+  servers: Map<string, McpAuth>,
+): CliManifestResource {
+  if (resource.kind !== "agent") return resource;
+  const mcp = (resource.config as { mcp?: Record<string, McpAuth> }).mcp;
+  if (!mcp) return resource;
+  const entries = Object.entries(mcp).map(([server, entry]) => {
+    const config = servers.get(server);
+    const own = new Set(
+      Object.keys(entry.headers ?? {}).map((name) => name.toLowerCase()),
+    );
+    const headers = Object.entries(config?.headers ?? {}).filter(
+      ([name]) => !own.has(name.toLowerCase()),
+    );
+    // The token endpoint stays on the server row, where registration checked it.
+    const { tokenUrl: _tokenUrl, ...oauth } = config?.oauth ?? {};
+
+    return [
+      server,
+      {
+        ...entry,
+        ...(headers.length > 0
+          ? { headers: { ...Object.fromEntries(headers), ...entry.headers } }
+          : {}),
+        ...(config?.oauth ? { oauth: { ...oauth, ...entry.oauth } } : {}),
+      },
+    ];
+  });
+
+  return {
+    ...resource,
+    config: {
+      ...(resource.config as Record<string, unknown>),
+      mcp: Object.fromEntries(entries),
     },
   };
 }
