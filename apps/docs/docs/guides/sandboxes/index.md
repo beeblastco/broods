@@ -34,13 +34,13 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `vercel`  | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
 | `machine` | Your own computer            | no              | no                    | no                      | `allow-all` only               |
 
-`sandbox` is the default provider. Attaching a workspace to an `e2b`, `vercel` or `machine` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and the `machine` provider has its own page, [Your computer](machine.md).
+`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel` or `machine` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and the `machine` provider has its own page, [Your computer](machine.md).
 
 ## Configuration
 
 | Field                  | Default                | What it does                                                                                                      |
 | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `provider`             | `sandbox`              | Compute backend, from the table above                                                                             |
+| `provider`             | `lambda`               | Compute backend, from the table above                                                                             |
 | `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                          |
 | `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
 | `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)       |

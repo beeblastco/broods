@@ -8,7 +8,7 @@
  *
  * Stage management spans every stage of a project, so the HTTP endpoint
  * authenticates with a `broods login` token rather than a stage-scoped
- * deploy key.
+ * project key.
  */
 
 import { v } from "convex/values";
@@ -246,7 +246,7 @@ export const mintSessionByAccount = internalMutation({
 /**
  * HTTP endpoint for the CLI's logs, stream and machine commands. They trade
  * the `broods login` token for a 15-minute stage ticket instead of using the
- * stage runtime key, which is meant to sit in a frontend.
+ * runtime key, which is meant to sit in a frontend.
  */
 export const sessionHttpHandle = httpAction(
   async (ctx, req): Promise<Response> => {

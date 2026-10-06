@@ -36,6 +36,7 @@ import {
   ObservabilityToolbar,
   type ToolbarFilterOption,
 } from "./ObservabilityToolbar";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   projectSlug: string | undefined;
@@ -690,7 +691,7 @@ export function TracingPanel({
           : payload.error?.message;
       settle(error ?? `Continue failed (${response.status})`);
     } catch (err) {
-      settle(err instanceof Error ? err.message : "Continue failed");
+      settle(toErrorMessage(err));
     }
   };
 
@@ -719,7 +720,6 @@ export function TracingPanel({
         onClear={clearFilters}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
-        refreshSpinning={status === "connecting"}
         refreshTitle={error ?? "Refresh traces"}
         isError={status === "error"}
       />

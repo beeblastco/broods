@@ -8,7 +8,7 @@
  * agent configs, no canvas, no env vars, no crons, no workspace files or blobs.
  *
  * Project management spans every stage of a project, so the HTTP endpoints
- * authenticate with a `broods login` token rather than a stage-scoped deploy
+ * authenticate with a `broods login` token rather than a stage-scoped project
  * key, exactly as the stage endpoint does.
  */
 

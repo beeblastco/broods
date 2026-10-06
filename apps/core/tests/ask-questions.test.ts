@@ -105,7 +105,9 @@ describe("ask_questions tool", () => {
       },
     });
     expect(sendText.mock.calls).toEqual([
-      ["Which stage should this go to?\n1. dev - current default\n2. prod"],
+      [
+        "Which stage should this go to?\n1. dev - current default\n2. prod\nOr reply with your own answer.",
+      ],
     ]);
   });
 
@@ -189,14 +191,17 @@ describe("question answers", () => {
     expect(answersFromText(PENDING, "1")?.note).toBeUndefined();
   });
 
-  it("takes free text only when the question allows it", () => {
-    expect(answersFromText(PENDING, "staging please")).toBeUndefined();
-    expect(
-      answersFromText(
-        { ...PENDING, questions: [{ ...QUESTION, allowFreeText: true }] },
-        "staging please",
-      )?.answers,
-    ).toEqual({ deploy_target: ["staging please"] });
+  it("takes any other typed reply as the person's own answer", () => {
+    // Otherwise the reply runs as a new turn while the question stays open,
+    // and the agent asks again instead of reading the answer.
+    expect(answersFromText(PENDING, "staging please")?.answers).toEqual({
+      deploy_target: ["staging please"],
+    });
+  });
+
+  it("leaves the question open for a reply with no text", () => {
+    // An attachment-only message must still reach normal ingestion.
+    expect(answersFromText(PENDING, "  ")).toBeUndefined();
   });
 
   it("says so when a typed reply only answers the first of several", () => {
@@ -262,11 +267,10 @@ describe("question answers", () => {
     ]);
   });
 
-  it("renders the free-text hint only when the question allows it", () => {
-    expect(formatQuestionsText([QUESTION])).not.toContain("your own answer");
-    expect(
-      formatQuestionsText([{ ...QUESTION, allowFreeText: true }]),
-    ).toContain("Or reply with your own answer.");
+  it("always tells the person they can reply with their own answer", () => {
+    expect(formatQuestionsText([QUESTION])).toContain(
+      "Or reply with your own answer.",
+    );
   });
 });
 

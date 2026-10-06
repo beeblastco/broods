@@ -30,7 +30,7 @@ import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
 
-/** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
+/** Resolved CLI auth: an account key, a scoped project key, or a CLI token. */
 export type CliAuth =
   | {
       accountId: Id<"accounts">;
@@ -85,7 +85,7 @@ type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 /**
  * `kind:name` of every external resource another stage of the account
  * manages. Skills and hooks are account-wide rows keyed by name, so this set
- * is what keeps a stage-scoped deploy key from replacing them.
+ * is what keeps a stage-scoped project key from replacing them.
  */
 type ForeignExternalResources = ReadonlySet<string>;
 
@@ -148,12 +148,12 @@ export async function handleEnvRoute(
   auth: CliAuth,
 ): Promise<Response> {
   if (req.method === "GET") {
-    // A deploy key deploys; it does not carry the stage's secrets out. Reveal
-    // stays with a person (`broods login`) or the org secret.
+    // A project key deploys; it does not carry the stage's secrets out. Reveal
+    // stays with a person (`broods login`) or the account key.
     if ("deployKeyId" in auth) {
       return jsonError(
         403,
-        "Deploy keys cannot read environment values; use `broods login` or the org secret",
+        "Project keys cannot read environment values; use `broods login` or the account key",
       );
     }
     const result = await ctx.runMutation(internal.cli.sync.getEnvBySecretHash, {
@@ -393,7 +393,7 @@ function cronStatus(value: unknown): "active" | "paused" {
   throw new ClientError("Cron job status must be active or paused");
 }
 
-// Matches only this stage's crons: a deploy key pinned to dev must not delete
+// Matches only this stage's crons: a project key pinned to dev must not delete
 // production's job of the same name.
 async function deleteCronByName(
   ctx: ActionCtx,
@@ -535,9 +535,9 @@ async function handleManifestSync(
     },
   );
   try {
-    // Skills and hooks are account-wide, so the org secret and a login token
+    // Skills and hooks are account-wide, so the account key and a login token
     // may move a name between stages (dev then deploy). Only a stage-scoped
-    // deploy key is fenced to the names another stage recorded, read before this
+    // project key is fenced to the names another stage recorded, read before this
     // sync records anything.
     const fenced = "deployKeyId" in auth;
     const foreign =
@@ -631,7 +631,7 @@ async function handleManifestSync(
       },
     );
 
-    // Mint or reuse the stage's recoverable runtime API key so the CLI
+    // Mint or reuse the stage's recoverable runtime key so the CLI
     // can write BROODS_API_KEY locally on first or later deploys.
     const deployment = await ctx.runMutation(
       internal.cli.sync.ensureRuntimeKeyBySecretHash,

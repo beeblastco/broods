@@ -79,6 +79,6 @@ Channel and group messages get a threaded reply. DMs and App Home messages share
 - Replies stream live when the event has thread and user context. Otherwise the agent sends one final reply.
 - Event replies stay in the current thread. Slash command replies use the command's response URL.
 - The agent can send image blocks, uploaded files, and custom emoji or URL stickers.
-- `ask_questions` renders as numbered text with one button per option. Click a button, or reply with an option number, its label, or free text when allowed.
+- `ask_questions` renders as numbered text with one button per option. Click a button, or reply with an option number, its label, or your own answer.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.

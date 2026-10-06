@@ -177,10 +177,10 @@ const MAX_PENDING_WORKER_RUNS = 1000;
 // inside the TTL until a slot starts the run.
 const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
-// ownership on this clock. A frame the client acts on checks exactly: a stale
-// run must not land one in a stream the next owner is writing to. `waiting` is
-// the heartbeat: it fires on a timer, not per token, so exact costs nothing.
-const OWNER_CHECK_INTERVAL_MS = 2_000;
+// ownership on the session's OWNER_CHECK_INTERVAL_MS clock. A frame the client
+// acts on checks exactly: a stale run must not land one in a stream the next
+// owner is writing to. `waiting` is the heartbeat: it fires on a timer, not per
+// token, so exact costs nothing.
 const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "done",
   "error",
@@ -340,23 +340,17 @@ export async function handler(
 
 /**
  * One per stream. The returned check runs before each frame goes out: exact
- * for `OWNER_CHECK_EXACT_FRAME_TYPES`, at most once per interval for the rest.
+ * for `OWNER_CHECK_EXACT_FRAME_TYPES`; for the rest, only when the session's
+ * last ownership proof (a read or a fenced write) is older than the interval.
  */
 export function ownerCheckForStream(
-  session: Pick<Session, "assertCurrentOwner">,
+  session: Pick<Session, "assertCurrentOwner" | "assertRecentOwner">,
 ): (frame: Record<string, unknown>) => Promise<void> {
-  // performance.now() cannot step backwards the way Date.now() can.
-  let checkedAt = Number.NEGATIVE_INFINITY;
-
   return async (frame): Promise<void> => {
     const exact =
       typeof frame.type === "string" &&
       OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type);
-    if (!exact && performance.now() - checkedAt < OWNER_CHECK_INTERVAL_MS) {
-      return;
-    }
-    await session.assertCurrentOwner();
-    checkedAt = performance.now();
+    await (exact ? session.assertCurrentOwner() : session.assertRecentOwner());
   };
 }
 
@@ -556,7 +550,7 @@ async function handleScheduledCron(
 /**
  * Handle a background-job completion posted by the detached job itself.
  * Authenticated by the per-job token (matched against the stored row), so the
- * sandbox never needs an account secret. Reuses the same settle → continuation
+ * sandbox never needs an account key. Reuses the same settle → continuation
  * path as the account-auth async-tool completion endpoint.
  */
 async function handleSandboxJobCompletionRequest(
@@ -1688,23 +1682,26 @@ async function runChannelTurns(
 
   try {
     for (;;) {
-      // A thrown turn must still settle its envelope terminally before the
-      // queue drains on; otherwise accepted work is stranded in processing.
+      // The turn's outcome, settled in the same mutation that takes the next
+      // message. A thrown turn still settles failed; otherwise accepted work
+      // is stranded in processing.
+      let settlement: IngressSettlement | undefined;
       try {
         const command = queuedCommand(incoming, event.channelName);
         if (command) {
-          const { status, ...settlement } = outcomeSettlement(
+          settlement = outcomeSettlement(
             await commandOutcome(session, command),
           );
-          await session.settleIngress(status, settlement);
         } else {
-          const ephemeralSystem = await session.appendIngressEvents(incoming);
-          ephemeralSystem.push(...incomingEphemeral);
-          const turnContext = await session.createTurnContext(ephemeralSystem);
+          const turnContext = await session.createTurnContext(
+            incomingEphemeral,
+            incoming,
+          );
           if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-            await session.settleIngress("failed", {
+            settlement = {
+              status: "failed",
               error: "Request did not produce pending model input",
-            });
+            };
           } else {
             let terminal: "completed" | "failed" | null = null;
             let finalResult: JSONValue | undefined;
@@ -1804,14 +1801,15 @@ async function runChannelTurns(
             if (awaitingInput) {
               // Settled in the hook; the answer resumes the conversation.
             } else if (terminal === "failed") {
-              await session.settleIngress("failed", {
+              settlement = {
+                status: "failed",
                 error: result.failureText ?? AGENT_PROCESSING_FAILED,
-              });
+              };
             } else if (terminal === "completed") {
-              await session.settleIngress(
-                "completed",
-                finalResult !== undefined ? { result: finalResult } : {},
-              );
+              settlement = {
+                status: "completed",
+                ...(finalResult !== undefined ? { result: finalResult } : {}),
+              };
             }
           }
         }
@@ -1821,14 +1819,13 @@ async function runChannelTurns(
           conversationKey: session.conversationKey,
           error: err instanceof Error ? err.message : String(err),
         });
-        await session
-          .settleIngress("failed", {
-            error: err instanceof Error ? err.message : "Channel turn failed",
-          })
-          .catch(() => {});
+        settlement = {
+          status: "failed",
+          error: err instanceof Error ? err.message : "Channel turn failed",
+        };
       }
 
-      const next = await session.takeNextIngress();
+      const next = await session.takeNextIngress(settlement);
       if (!next) {
         await session.releaseConversationLease();
         released = true;
@@ -2004,11 +2001,10 @@ async function prepareDirectTurn(
 ): Promise<DirectTurn | null> {
   const session = directSession(event);
   try {
-    const ephemeralSystem = await session.appendIngressEvents(event.events);
-    if (event.ephemeralSystem) {
-      ephemeralSystem.push(...event.ephemeralSystem);
-    }
-    const turnContext = await session.createTurnContext(ephemeralSystem);
+    const turnContext = await session.createTurnContext(
+      event.ephemeralSystem,
+      event.events,
+    );
 
     return { session: session, turnContext: turnContext };
   } catch (err) {

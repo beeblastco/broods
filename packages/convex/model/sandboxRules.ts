@@ -18,6 +18,9 @@ export const SANDBOX_PROVIDERS = [
   "machine",
 ] as const;
 
+/** The provider a config without one runs on: AWS MicroVM, until `sandbox` has hosts everywhere. */
+export const DEFAULT_SANDBOX_PROVIDER: SandboxProvider = "lambda";
+
 // Platform MicroVM image variants a lambda sandbox can boot by name instead of ARN.
 // Core resolves each to `<default image name>-<variant>` in the default's account.
 export const SANDBOX_IMAGES = ["browser", "obscura"] as const;
@@ -157,7 +160,7 @@ export function workspaceSandboxLimits(
 export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (value == null) {
     return {
-      provider: "sandbox",
+      provider: DEFAULT_SANDBOX_PROVIDER,
       permissionMode: "ask",
       network: { mode: "deny-all" },
     };
@@ -174,7 +177,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
   const provider =
     assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS) ??
-    "sandbox";
+    DEFAULT_SANDBOX_PROVIDER;
   const fallbackProvider = assertOptionalEnum(
     config.fallbackProvider,
     "config.fallbackProvider",

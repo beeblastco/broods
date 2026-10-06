@@ -58,9 +58,9 @@ interface StoredAuthFile {
 }
 
 /**
- * Resolves the login this invocation acts as. BROODS_TOKEN + BROODS_BASE_URL
- * win outright. Otherwise it is the stored login for one server, named by
- * `baseUrl`, then BROODS_BASE_URL, then the login whose dashboard is
+ * Resolves the login this invocation acts as. BROODS_TOKEN (a project key or
+ * login token) + BROODS_BASE_URL win outright. Otherwise it is the stored
+ * login for one server, named by `baseUrl`, then BROODS_BASE_URL, then the login whose dashboard is
  * BROODS_DASHBOARD_URL, then the most recent login. Null when that server has
  * no login, so a dev project never quietly runs on a prod token.
  */
