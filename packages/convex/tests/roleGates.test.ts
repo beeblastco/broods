@@ -342,8 +342,8 @@ describe("readCapped", () => {
   });
 });
 
-describe("deploy keys and environment values", () => {
-  test("a deploy key is refused before any value is read", async () => {
+describe("project keys and environment values", () => {
+  test("a project key is refused before any value is read", async () => {
     const t = roleTest();
     const { accountId } = await seed(t);
     const response = await handleEnvRoute(
@@ -367,7 +367,7 @@ describe("deploy keys and environment values", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error: {
-        message: expect.stringMatching(/Deploy keys cannot read/),
+        message: expect.stringMatching(/Project keys cannot read/),
         type: "permission_error",
         code: "forbidden",
       },

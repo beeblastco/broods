@@ -63,7 +63,7 @@ Scheduled runs never get the scheduling tools below, so a task cannot reschedule
 
 ## Manage jobs at runtime
 
-Cron jobs are config, so managing them needs the account secret, not the stage runtime key. Use `BroodsAccountClient` from a backend:
+Cron jobs are config, so managing them needs the account key, not the runtime key. Use `BroodsAccountClient` from a backend:
 
 ```ts
 import { BroodsAccountClient } from "broods/account";

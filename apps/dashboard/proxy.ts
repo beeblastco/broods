@@ -14,6 +14,7 @@ const authProxy = authkitProxy({
     unauthenticatedPaths: [
       "/healthz",
       "/auth/callback",
+      "/auth/error",
       "/auth/sign-in",
       // The component fixture the browser tests drive; it 404s outside dev.
       ...(process.env.NODE_ENV === "development" ? ["/ui-gallery"] : []),

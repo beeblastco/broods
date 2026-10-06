@@ -45,13 +45,13 @@ test("listEnv returns an empty array when the payload omits variables", async ()
   expect(await client.listEnv("demo-app", "development")).toEqual([]);
 });
 
-test("getRuntimeKey recovers the stage runtime key", async () => {
+test("getRuntimeKey recovers the runtime key", async () => {
   const { client, calls } = clientWith(
     () =>
       new Response(
         JSON.stringify({
-          apiKey: "fp_agent_secret",
-          keyHint: "fp_agent_…cret",
+          apiKey: "sk_secret",
+          keyHint: "sk_…cret",
           endpointId: "env_123",
           projectSlug: "demo-app",
           stageSlug: "development",
@@ -62,8 +62,8 @@ test("getRuntimeKey recovers the stage runtime key", async () => {
   const key = await client.getRuntimeKey("demo-app", "development");
 
   expect(key).toEqual({
-    apiKey: "fp_agent_secret",
-    keyHint: "fp_agent_…cret",
+    apiKey: "sk_secret",
+    keyHint: "sk_…cret",
     endpointId: "env_123",
     projectSlug: "demo-app",
     stageSlug: "development",

@@ -9,6 +9,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"
+      - "scripts/sdk-tarball-smoke.sh"
       - ".github/workflows/publish-npm.yaml"
   # dev only, like ci.yaml: a branch push is already checked by its pull request.
   push:
@@ -21,6 +22,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"
+      - "scripts/sdk-tarball-smoke.sh"
       - ".github/workflows/publish-npm.yaml"
   workflow_dispatch:
 
@@ -70,6 +72,20 @@ jobs:
         # pack:check leaves dist built; the budget reads it.
         run: bun bench/bundles.ts --check cli
 
+      - name: Pack the tarball
+        # From the dist pack:check built: the same files npm publish uploads.
+        working-directory: packages/broods
+        run: |
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack"
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: broods-tarball
+          path: ${{ runner.temp }}/pack/*.tgz
+          retention-days: 3
+
       - name: Typecheck demos
         # Each demo links the SDK as file:../../broods, whose entry is the dist
         # pack:check just built, so install only after it.
@@ -77,3 +93,48 @@ jobs:
           for demo in packages/demos/*/; do
             (cd "$demo" && bun install --frozen-lockfile && bun run check)
           done
+
+  sdk-install:
+    # The packed tarball installed on a clean machine, once per runtime we
+    # claim: the engines floor, current Node, and the repo's Bun.
+    needs: sdk-package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: node
+            node: "22.15.0"
+          - runtime: node
+            node: "24"
+          - runtime: bun
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        if: matrix.runtime == 'node'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Setup Bun
+        if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Download the tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: broods-tarball
+          path: ${{ runner.temp }}/pack
+
+      - name: Install and smoke-test the tarball
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: bash scripts/sdk-tarball-smoke.sh "$RUNNER_TEMP"/pack/broods-*.tgz "$RUNTIME"
