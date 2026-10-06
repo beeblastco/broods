@@ -315,6 +315,32 @@ describe("cli sync holds a custom sandbox to the config API's rules", () => {
   });
 });
 
+describe("a stage env var name", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // A `${NAME}` ref only matches uppercase, so a lowercase name could never be read.
+  test("is uppercase only, like an account env var", async (): Promise<void> => {
+    const tt = t();
+    await seedAccount(tt);
+
+    await expect(
+      tt.mutation(internal.cli.sync.setEnvBySecretHash, {
+        secretHash: SECRET_HASH,
+        project: PROJECT,
+        stage: STAGE,
+        name: "api_key",
+        value: "sk-live-1",
+      }),
+    ).rejects.toThrow("env name must match /^[A-Z][A-Z0-9_]*$/");
+    expect(await storedEnvCount(tt)).toBe(0);
+  });
+});
+
 const syncedRows = (tt: T): Promise<unknown> =>
   tt.run(async (ctx) => ({
     projects: await ctx.db.query("projects").collect(),
