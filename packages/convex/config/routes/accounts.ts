@@ -61,10 +61,7 @@ export async function handleAccountRoute(
       // Rotating the master secret from a session would be privilege
       // escalation, so no role policy can grant it.
       if (route.kind === "selfRotate") {
-        return jsonError(
-          403,
-          "Role sessions may not rotate the account secret",
-        );
+        return jsonError(403, "Role sessions may not rotate the account key");
       }
       const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
         type: "account",
@@ -269,7 +266,7 @@ function requireString(value: unknown, name: string): string {
 }
 
 /**
- * Rotate an account secret hash and return the one-time plaintext secret.
+ * Rotate an account key: store the new hash and return the one-time plaintext.
  * @param ctx Convex action context
  * @param accountId account id to rotate
  * @returns rotate-secret response
@@ -296,7 +293,7 @@ async function rotateAccountSecretResponse(
       actor: actor,
       action: "secret-rotated",
       resource: { kind: "account", id: existing._id, name: updated.username },
-      summary: "Account secret rotated",
+      summary: "Account key rotated",
     });
   }
 

@@ -64,6 +64,7 @@ function deploymentStorage(): Storage {
           endpointId: "env-endpoint",
           projectSlug: "demo",
           stageSlug: "development",
+          account: account,
         };
       },
       touchLastUsed: async function () {},

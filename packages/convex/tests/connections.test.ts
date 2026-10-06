@@ -16,7 +16,7 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
+const ACCOUNT_SECRET = "ask_test-owner-secret";
 const REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
 const ISSUER = "https://auth.openai.com";
 

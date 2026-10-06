@@ -67,10 +67,15 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-const RUNTIME_KEY_PATTERN = /\bfp_agent_[A-Za-z0-9_-]+\b/g;
+// A runtime key is `sk_` plus exactly 43 base64url chars, so other `sk_`
+// identifiers stay readable. `fp_agent_` is the prefix keys minted
+// before the rename still carry.
+const RUNTIME_KEY_PATTERN =
+  /\b(?:sk_[A-Za-z0-9_-]{43}|fp_agent_[A-Za-z0-9_-]+)\b/g;
 const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
 // payload.signature, so the dot is part of the token.
 const RUN_TOKEN_PATTERN = /\bfp_run_[A-Za-z0-9_.-]+/g;
+const WHITESPACE_PATTERN = /\s/g;
 
 const ENCODER = new TextEncoder();
 
@@ -143,17 +148,58 @@ export function redact(
   value: unknown,
   secretValues: readonly string[] = sensitiveEnvValues(),
 ): unknown {
-  if (typeof value === "string") return redactString(value, secretValues);
-  if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value))
-    return value.map((item) => redact(item, secretValues));
+  return redactValue(value, matchableSecrets(secretValues));
+}
 
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = isRedactedKey(k) ? "[redacted]" : redact(v, secretValues);
+/**
+ * Serializes a value for a span attribute with sensitive keys and secrets
+ * redacted, cut to `maxChars`. Only the kept prefix is scrubbed, so a long
+ * history costs one `JSON.stringify` instead of a deep redact.
+ */
+export function redactSerialized(
+  value: unknown,
+  secretValues: readonly string[],
+  maxChars: number,
+): string {
+  let text: string;
+  try {
+    text =
+      typeof value === "string"
+        ? value
+        : (JSON.stringify(value, (key: string, item: unknown): unknown =>
+            isRedactedKey(key) ? "[redacted]" : item,
+          ) ?? "");
+  } catch {
+    text = String(value);
   }
+  // Inside JSON a secret appears escaped, so match that form too.
+  const secrets = matchableSecrets(
+    secretValues.flatMap((secret): string[] => [
+      secret,
+      JSON.stringify(secret).slice(1, -1),
+    ]),
+  );
+  // A secret can straddle a window's end, so the last `overlap` chars of a
+  // scrubbed window are never kept, and a window ends at whitespace so it
+  // never cuts a token the patterns match. The window grows when replacements
+  // shrank it below `maxChars`.
+  const overlap = secrets[0]?.length ?? 0;
+  for (let size = maxChars + overlap; ; size *= 2) {
+    WHITESPACE_PATTERN.lastIndex = size;
+    const end = WHITESPACE_PATTERN.exec(text)?.index ?? text.length;
+    if (end >= text.length) {
+      const scrubbed = scrubSecrets(text, secrets);
 
-  return out;
+      return scrubbed.length <= maxChars
+        ? scrubbed
+        : `${scrubbed.slice(0, maxChars)}...[truncated]`;
+    }
+    const scrubbed = scrubSecrets(text.slice(0, end), secrets);
+    const kept = scrubbed.slice(0, scrubbed.length - overlap);
+    if (kept.length >= maxChars) {
+      return `${kept.slice(0, maxChars)}...[truncated]`;
+    }
+  }
 }
 
 /** Redact a free-form string using sensitive env values plus task-local secrets. */
@@ -268,6 +314,13 @@ function isSensitiveEnvName(name: string): boolean {
   );
 }
 
+/** Secrets long enough to match, longest first so one inside another never leaves a tail. */
+function matchableSecrets(secretValues: readonly string[]): string[] {
+  return [...new Set(secretValues.filter((secret) => secret.length >= 4))].sort(
+    (left, right) => right.length - left.length,
+  );
+}
+
 function publishNats(
   level: "INFO" | "WARN" | "ERROR",
   entry: ObservabilityLogEntry,
@@ -301,11 +354,27 @@ function publishNats(
 }
 
 function redactString(value: string, secretValues: readonly string[]): string {
+  return scrubSecrets(value, matchableSecrets(secretValues));
+}
+
+function redactValue(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return scrubSecrets(value, secrets);
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value))
+    return value.map((item) => redactValue(item, secrets));
+
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = isRedactedKey(k) ? "[redacted]" : redactValue(v, secrets);
+  }
+
+  return out;
+}
+
+/** Replaces each secret (already from `matchableSecrets`) and every known token shape. */
+function scrubSecrets(value: string, secrets: readonly string[]): string {
   let redacted = value;
-  const uniqueSecrets = [
-    ...new Set(secretValues.filter((secret) => secret.length >= 4)),
-  ].sort((left, right) => right.length - left.length);
-  for (const secret of uniqueSecrets) {
+  for (const secret of secrets) {
     redacted = redacted.split(secret).join("[redacted]");
   }
   redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");

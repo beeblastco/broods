@@ -1,15 +1,14 @@
 /**
  * Account role CRUD (`/v1/roles*`) and the assume-role exchange
  * (`POST /v1/account/assume-role`). Role CRUD is account-secret only; the
- * exchange also accepts CLI tokens and stage runtime keys (the latter only
+ * exchange also accepts CLI tokens and runtime keys (the latter only
  * into roles scoped to the key's own project/stage).
  */
 
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { sha256Hex } from "../../model/accountSecrets";
-import { DEPLOYMENT_KEY_PREFIX } from "../../agent/deployments";
+import { RUNTIME_KEY_PREFIX, sha256Hex } from "../../model/accountSecrets";
 import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { toPublicRoleResponse } from "../../model/responses";
@@ -55,7 +54,7 @@ export async function handleAssumeRoleRoute(
   if (!role) return jsonError(404, "Role not found");
   if (role.status !== "active") return jsonError(403, "Role is disabled");
   // A runtime key may only assume roles pinned to its own stage: a leaked
-  // fp_agent_ must not widen past the stage it already controls.
+  // sk_ key must not widen past the stage it already controls.
   if (caller.deploymentScope) {
     if (
       role.projectId !== caller.deploymentScope.projectId ||
@@ -205,8 +204,8 @@ export async function handleRoleRoute(
 }
 
 /**
- * Resolve an account-level caller: CLI login token or stage runtime key by
- * prefix, else an account secret by hash. Assume-role and connections use
+ * Resolve an account-level caller: CLI login token or runtime key by
+ * prefix, else an account key by hash. Assume-role and connections use
  * it; fp_sts_ sessions resolve to nothing, so a role session never mints
  * sessions or reads connections.
  */
@@ -228,7 +227,7 @@ export async function resolveAccountCaller(
     return { accountId: resolved.accountId, actor: { kind: "cli" } };
   }
 
-  if (token.startsWith(DEPLOYMENT_KEY_PREFIX)) {
+  if (token.startsWith(RUNTIME_KEY_PREFIX)) {
     const deployment: {
       accountId: Id<"accounts">;
       projectId: Id<"projects">;
@@ -248,7 +247,7 @@ export async function resolveAccountCaller(
     };
   }
 
-  // Last, like every config-plane route: an account secret by its hash,
+  // Last, like every config-plane route: an account key by its hash,
   // whatever its prefix. A role session's hash never matches one.
   const account: Doc<"accounts"> | null = await ctx.runQuery(
     internal.account.accounts.getBySecretHash,

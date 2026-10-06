@@ -1,7 +1,7 @@
 /**
  * HTTP router for the `broods` CLI.
  *
- * Routes authenticate with the org Bearer secret (or a scoped deploy key /
+ * Routes authenticate with the account key (or a scoped project key /
  * CLI token) and dispatch to the handlers in `cli/httpRoutes.ts`, which
  * delegate writes to `cliSync` so the CLI can sync desired-state manifests
  * without browser auth.
@@ -39,7 +39,7 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
 
     const authResult = await resolveCliRequestAuth(ctx, auth.secretHash, route);
     if (!authResult)
-      return jsonError(401, "Invalid or out-of-scope deploy token");
+      return jsonError(401, "Invalid or out-of-scope project key");
 
     switch (route.kind) {
       case "manifest":
@@ -134,10 +134,10 @@ function parseRoute(pathname: string): RouteParts | null {
 }
 
 /**
- * Resolve the token hash to an account secret hash, enforcing deploy-key scope
+ * Resolve the token hash to an account key hash, enforcing project-key scope
  * against the route's project/stage. Cron sync runs natively against the crons
- * table and its registered schedules (agent/crons), so it works for org
- * secrets and scoped deploy keys alike.
+ * table and its registered schedules (agent/crons), so it works for account
+ * keys and project keys alike.
  */
 async function resolveCliRequestAuth(
   ctx: ActionCtx,

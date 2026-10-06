@@ -53,6 +53,7 @@ import {
 } from "./compaction.ts";
 import {
   applySteering,
+  DEFAULT_CONVERSATION_LEASE_TTL_MS,
   releaseIngressOwner,
   renewIngressOwner,
   settleIngress,
@@ -92,6 +93,10 @@ const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 // events reach long before the byte cap does.
 const APPEND_EVENT_COUNT = 8_000;
 const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+// How old the last ownership proof may be before a periodic check reads Convex
+// again. Ownership moves only through this run's own hand-off or lease expiry,
+// and a successful fenced write proves it as well as a read does.
+export const OWNER_CHECK_INTERVAL_MS = 2_000;
 // Convex refuses a document over 1 MiB. One tool message shares this budget
 // across its results, which leaves room for the rest of the row.
 const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
@@ -107,6 +112,12 @@ export type ConversationIngressEvent =
   | AssistantModelMessage
   | ToolModelMessage
   | (SystemModelMessage & { persist?: boolean });
+
+/** What `Session.stepBoundary` reports to the model step about to start. */
+export interface StepBoundary {
+  renewal: "renewed" | "stopped" | "stale";
+  steering: AppliedIngress | null;
+}
 
 export interface TurnContextSnapshot {
   messages: ModelMessage[];
@@ -308,6 +319,10 @@ export class Session {
   private messageSequence = 0;
   private lastSystemCursor: string | null = null;
   private ownerHandedOff = false;
+  // performance.now() at the start of the latest call Convex fenced against
+  // this generation and accepted. Taken before the call, so the proof is never
+  // younger than the commit that gave it.
+  private ownerConfirmedAt = Number.NEGATIVE_INFINITY;
   private hasLoggedMissingMemoryFile = false;
   // One clock reading for the whole run: the system prompt is rebuilt before
   // every step, so a moving timestamp would break the provider's prompt cache.
@@ -361,12 +376,28 @@ export class Session {
   /** Rejects a side effect when this run no longer owns the conversation. */
   async assertCurrentOwner(): Promise<void> {
     if (this.ownerGeneration === undefined) return;
+    const startedAt = performance.now();
     const current = await runtime.query<boolean>("isCurrentIngressOwner", {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
     });
     if (!current) throw new Error("Stale conversation owner generation");
+    this.confirmOwner(startedAt);
+  }
+
+  /**
+   * `assertCurrentOwner` for checks on the OWNER_CHECK_INTERVAL_MS clock (stream
+   * chunks, tool starts): a fenced call inside the interval already answered.
+   */
+  async assertRecentOwner(): Promise<void> {
+    if (
+      !this.ownerHandedOff &&
+      performance.now() - this.ownerConfirmedAt < OWNER_CHECK_INTERVAL_MS
+    ) {
+      return;
+    }
+    await this.assertCurrentOwner();
   }
 
   async claim(): Promise<boolean> {
@@ -399,45 +430,58 @@ export class Session {
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
     });
+    this.ownerHandedOff = true;
   }
 
   /** Renews the current fenced owner before another model/tool boundary. */
   async renewConversationLease(): Promise<"renewed" | "stopped" | "stale"> {
     if (this.ownerGeneration === undefined) return "renewed";
-
-    return renewIngressOwner({
+    const startedAt = performance.now();
+    const renewal = await renewIngressOwner({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
     });
+    if (renewal === "renewed") this.confirmOwner(startedAt);
+
+    return renewal;
+  }
+
+  /**
+   * The model step boundary as one fenced mutation: stores the step's new
+   * messages, reports a stop or a lost lease, renews the lease, and claims the
+   * steers waiting to join this turn. Rows that do not fit one mutation are
+   * appended first, in cursor order.
+   */
+  async stepBoundary(messages: ModelMessage[]): Promise<StepBoundary> {
+    const events = this.storedEvents(messages);
+    if (this.ownerGeneration === undefined) {
+      await this.appendStoredEvents(events);
+
+      return { renewal: "renewed", steering: null };
+    }
+    const batches = storedEventBatches(events);
+    const inline = batches.pop() ?? [];
+    for (const batch of batches) await this.appendConversationEvents(batch);
+    const startedAt = performance.now();
+    const boundary = await runtime.mutate<StepBoundary>("stepIngressBoundary", {
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+      leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+      ...(inline.length > 0 ? { events: inline } : {}),
+    });
+    if (boundary.renewal !== "stale") this.trackSystemCursor(events);
+    if (boundary.renewal === "renewed") this.confirmOwner(startedAt);
+
+    return boundary;
   }
 
   async appendIngressEvents(
     events: ConversationIngressEvent[],
   ): Promise<SystemModelMessage[]> {
-    const ephemeralSystem: SystemModelMessage[] = [];
-    const persistedMessages: ModelMessage[] = [];
-
-    for (const event of events) {
-      if (event.role === "system") {
-        const message = systemModelMessageSchema.parse(event);
-
-        if (event.persist === false) {
-          // Direct API system injections are one-turn instructions. They are
-          // returned to the caller and included in the current turn's system
-          // prompt, but never written to Convex.
-          ephemeralSystem.push(message);
-          continue;
-        }
-
-        persistedMessages.push(message);
-        continue;
-      }
-
-      persistedMessages.push(event);
-    }
-
-    await this.persistModelMessages(persistedMessages);
+    const { ephemeralSystem, persisted } = splitIngressEvents(events);
+    await this.persistModelMessages(persisted);
 
     return ephemeralSystem;
   }
@@ -448,13 +492,16 @@ export class Session {
     options: { textOnly?: boolean } = {},
   ): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
-
-    return applySteering({
+    const startedAt = performance.now();
+    const steering = await applySteering({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
       ...(options.textOnly ? { textOnly: true } : {}),
     });
+    this.confirmOwner(startedAt);
+
+    return steering;
   }
 
   /**
@@ -471,6 +518,7 @@ export class Session {
     } = {},
   ): Promise<boolean> {
     if (this.ownerGeneration === undefined) return false;
+    const startedAt = performance.now();
     await settleIngress({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
@@ -478,6 +526,7 @@ export class Session {
       status: status,
       ...options,
     });
+    this.confirmOwner(startedAt);
 
     return true;
   }
@@ -524,52 +573,8 @@ export class Session {
   }
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
-    if (!this.persist) return [];
-    const producer: MessageProducer = {
-      model: modelIdentityFromModelConfig(this.agentConfig),
-      retainsReasoning: retainsReasoningParts(this.agentConfig),
-    };
-    const events = messages.flatMap(
-      (message): { cursor: string; event: StoredConversationEvent }[] => {
-        const event = createStoredEventFromModelMessage(
-          message,
-          this.eventId,
-          producer,
-        );
-
-        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
-      },
-    );
-    if (events.length === 0) return [];
-
-    // A step fits one mutation, but a harness run hands over its whole history
-    // at once and that can pass what Convex accepts in a single call.
-    let batch: typeof events = [];
-    let batchBytes = 0;
-    for (const entry of events) {
-      const entryBytes = Buffer.byteLength(JSON.stringify(entry));
-      if (
-        batch.length > 0 &&
-        (batchBytes + entryBytes > APPEND_EVENT_BYTES ||
-          batch.length >= APPEND_EVENT_COUNT)
-      ) {
-        await this.appendConversationEvents(batch);
-        batch = [];
-        batchBytes = 0;
-      }
-      batch.push(entry);
-      batchBytes += entryBytes;
-    }
-    await this.appendConversationEvents(batch);
-    const systemCursor = events.findLast(
-      (entry): boolean => entry.event.message.role === "system",
-    )?.cursor;
-    if (
-      systemCursor !== undefined &&
-      (this.lastSystemCursor === null || systemCursor > this.lastSystemCursor)
-    ) {
-      this.lastSystemCursor = systemCursor;
-    }
+    const events = this.storedEvents(messages);
+    await this.appendStoredEvents(events);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -645,10 +650,19 @@ export class Session {
     };
   }
 
+  /**
+   * Builds the turn's context. `ingress` is the turn's own input: its write
+   * overlaps the history read, and the appended rows are merged into the
+   * history by cursor, so the result is the same whichever lands first.
+   */
   async createTurnContext(
-    ephemeralSystem: SystemModelMessage[] = [],
+    extraEphemeralSystem: SystemModelMessage[] = [],
+    ingress: ConversationIngressEvent[] = [],
   ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
+    const input = splitIngressEvents(ingress);
+    const ephemeralSystem = [...input.ephemeralSystem, ...extraEphemeralSystem];
+    const appended = this.storedEvents(input.persisted);
     const phases: ContextPreparePhases = {
       historyMs: 0,
       historyRows: 0,
@@ -661,7 +675,8 @@ export class Session {
     // Every load behind the turn starts at once; buildSystemPromptParts below
     // reads the memoized results.
     const [history] = await Promise.all([
-      this.loadTurnHistory(phases),
+      this.loadTurnHistory(phases, appended),
+      this.appendStoredEvents(appended),
       timePhase(phases, "runtimeMs", () => this.ensureResolvedRuntime()),
       timePhase(phases, "memoryMs", () => this.loadMemoryFiles()),
       timePhase(phases, "skillsMs", () => this.loadSkillMetadata()),
@@ -814,12 +829,14 @@ export class Session {
     events: { cursor: string; event: StoredConversationEvent }[],
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
+      const startedAt = performance.now();
       await runtime.mutate("appendFencedConversationEvent", {
         conversationKey: this.conversationKey,
         ownerEventId: this.eventId,
         ownerGeneration: this.ownerGeneration,
         events: events,
       });
+      this.confirmOwner(startedAt);
 
       return;
     }
@@ -827,6 +844,37 @@ export class Session {
       conversationKey: this.conversationKey,
       events: events,
     });
+  }
+
+  /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
+  private async appendStoredEvents(
+    events: { cursor: string; event: StoredConversationEvent }[],
+  ): Promise<void> {
+    if (events.length === 0) return;
+    for (const batch of storedEventBatches(events)) {
+      await this.appendConversationEvents(batch);
+    }
+    this.trackSystemCursor(events);
+  }
+
+  /** Records a fenced call Convex accepted, by the time the call started. */
+  private confirmOwner(startedAt: number): void {
+    this.ownerConfirmedAt = Math.max(this.ownerConfirmedAt, startedAt);
+  }
+
+  /** Remembers the newest stored system row, so a step refresh knows to read it. */
+  private trackSystemCursor(
+    events: { cursor: string; event: StoredConversationEvent }[],
+  ): void {
+    const systemCursor = events.findLast(
+      (entry): boolean => entry.event.message.role === "system",
+    )?.cursor;
+    if (
+      systemCursor !== undefined &&
+      (this.lastSystemCursor === null || systemCursor > this.lastSystemCursor)
+    ) {
+      this.lastSystemCursor = systemCursor;
+    }
   }
 
   private async buildSystemPromptParts(
@@ -1131,10 +1179,26 @@ export class Session {
   // same messages, and none of them should have to know how it got there.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
+    appended: { cursor: string; event: StoredConversationEvent }[] = [],
   ): Promise<TurnHistory> {
     const entries = await timePhase(phases, "historyMs", () =>
       this.loadConversationEntries(),
     );
+    // A context-only channel message is written without the lease, so it can
+    // land with a newer cursor before this run's own rows: merge by cursor.
+    const read = new Set(entries.map((entry): string => entry.createdAt));
+    const missing = appended.filter((row): boolean => !read.has(row.cursor));
+    if (missing.length > 0) {
+      entries.push(
+        ...missing.map((row): StoredConversationEntry => ({
+          createdAt: row.cursor,
+          event: row.event,
+        })),
+      );
+      entries.sort((left, right): number =>
+        left.createdAt < right.createdAt ? -1 : 1,
+      );
+    }
     phases.historyRows = entries.length;
     const messages = await timePhase(phases, "mediaMs", () =>
       rehydrateStoredMedia(
@@ -1154,6 +1218,29 @@ export class Session {
     this.messageSequence += 1;
 
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
+  }
+
+  /** The rows a persisting session writes for these messages, cursors minted here. */
+  private storedEvents(
+    messages: ModelMessage[],
+  ): { cursor: string; event: StoredConversationEvent }[] {
+    if (!this.persist) return [];
+    const producer: MessageProducer = {
+      model: modelIdentityFromModelConfig(this.agentConfig),
+      retainsReasoning: retainsReasoningParts(this.agentConfig),
+    };
+
+    return messages.flatMap(
+      (message): { cursor: string; event: StoredConversationEvent }[] => {
+        const event = createStoredEventFromModelMessage(
+          message,
+          this.eventId,
+          producer,
+        );
+
+        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
+      },
+    );
   }
 }
 
@@ -1748,6 +1835,31 @@ function sanitizeUserMessage(
     : null;
 }
 
+/** A turn's input split into one-turn system instructions and the messages to store. */
+function splitIngressEvents(events: ConversationIngressEvent[]): {
+  ephemeralSystem: SystemModelMessage[];
+  persisted: ModelMessage[];
+} {
+  const ephemeralSystem: SystemModelMessage[] = [];
+  const persisted: ModelMessage[] = [];
+  for (const event of events) {
+    if (event.role !== "system") {
+      persisted.push(event);
+      continue;
+    }
+    const message = systemModelMessageSchema.parse(event);
+    // Direct API system injections are one-turn instructions. They join the
+    // current turn's system prompt but are never written to Convex.
+    if (event.persist === false) {
+      ephemeralSystem.push(message);
+    } else {
+      persisted.push(message);
+    }
+  }
+
+  return { ephemeralSystem: ephemeralSystem, persisted: persisted };
+}
+
 /**
  * A tool result as a stored row can hold it. Media follows the rule in
  * `sanitizeUserMessage`: bytes are dropped, a URL stays. Whatever is still over
@@ -1804,6 +1916,35 @@ function storableToolResultOutput(
         : "text",
     value: text.value,
   };
+}
+
+/**
+ * Splits stored rows, in cursor order, into the fewest appends Convex accepts.
+ * A step fits one, but a harness run hands over its whole history at once.
+ */
+function storedEventBatches(
+  events: { cursor: string; event: StoredConversationEvent }[],
+): { cursor: string; event: StoredConversationEvent }[][] {
+  const batches: { cursor: string; event: StoredConversationEvent }[][] = [];
+  let batch: typeof events = [];
+  let batchBytes = 0;
+  for (const entry of events) {
+    const entryBytes = Buffer.byteLength(JSON.stringify(entry));
+    if (
+      batch.length > 0 &&
+      (batchBytes + entryBytes > APPEND_EVENT_BYTES ||
+        batch.length >= APPEND_EVENT_COUNT)
+    ) {
+      batches.push(batch);
+      batch = [];
+      batchBytes = 0;
+    }
+    batch.push(entry);
+    batchBytes += entryBytes;
+  }
+  if (batch.length > 0) batches.push(batch);
+
+  return batches;
 }
 
 async function timePhase<T>(

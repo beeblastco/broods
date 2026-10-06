@@ -79,7 +79,7 @@ export function RenameNodeDialog({
             </Button>
             <Button
               type="submit"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={trimmed === ""}
             >
               Rename

@@ -29,12 +29,17 @@ export interface VerifyContext {
   account: BroodsAccountClient;
   accountSecret: string;
   client: BroodsClient;
+  /** The Convex site directly, as an in-cluster caller reaches it. */
+  configPlaneUrl: string;
   coreLogPath: string;
-  gatewayUrl: string;
+  /** The public URL: Traefik, in front of core, the config plane and the gateway. */
+  edgeUrl: string;
   hasModelKey: boolean;
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
   runId: string;
+  /** The in-cluster service token; valid only on requests that skip the edge. */
+  serviceSecret: string;
   /** The stack's STAGE_TICKET_SECRET, which core derives its run-token key from. */
   stageTicketSecret: string;
 }
@@ -61,7 +66,7 @@ export function assertStep(
 
 /**
  * Creates a machine sandbox and runs its daemon in-process on the account
- * secret until `stop`, because the `broods machine` CLI needs a dashboard login.
+ * key until `stop`, because the `broods machine` CLI needs a dashboard login.
  */
 export async function connectMachine(
   context: VerifyContext,
@@ -78,7 +83,7 @@ export async function connectMachine(
   let output = "";
   const controller = new AbortController();
   const daemon = runMachineDaemon({
-    baseUrl: context.gatewayUrl,
+    baseUrl: context.edgeUrl,
     computer: options.computer,
     credential: async (): Promise<string> => context.accountSecret,
     cwd: process.cwd(),

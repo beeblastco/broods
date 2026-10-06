@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import {
   hashAccountSecret,
@@ -10,6 +10,7 @@ import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
 import { sealRunToken } from "../src/shared/run-token.ts";
 import {
+  getStorage,
   resetStorageForTests,
   setStorageForTests,
   type Storage,
@@ -24,7 +25,7 @@ import {
 const ACCOUNT: AccountRecord = {
   accountId: "acct_1",
   username: "tester",
-  secretHash: hashAccountSecret("fp_acct_known-secret"),
+  secretHash: hashAccountSecret("ask_known-secret"),
   status: "active",
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
@@ -37,7 +38,7 @@ const AGENT: AgentRecord = {
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
 };
-const DEPLOYMENT_API_KEY = "fp_agent_known-key";
+const DEPLOYMENT_API_KEY = "sk_known-key";
 const ROLE_PRINCIPAL: RolePrincipal = {
   accountId: "acct_1",
   roleId: "fp_role_1",
@@ -50,6 +51,7 @@ const ROLE_SESSION_TOKEN = "fp_sts_known-session";
 
 let accountsById: Record<string, AccountRecord>;
 let accountsBySecretHash: Record<string, AccountRecord>;
+let runtimeKeyHashes: Set<string>;
 let agentsById: Record<string, AgentRecord>;
 let roleSessionsByTokenHash: Record<string, RolePrincipal>;
 
@@ -59,6 +61,7 @@ beforeEach(() => {
   process.env.STAGE_TICKET_SECRET = "stage-secret";
   accountsById = { [ACCOUNT.accountId]: ACCOUNT };
   accountsBySecretHash = { [ACCOUNT.secretHash]: ACCOUNT };
+  runtimeKeyHashes = new Set([sha256Hex(DEPLOYMENT_API_KEY)]);
   agentsById = { [AGENT.agentId]: AGENT };
   roleSessionsByTokenHash = {
     [sha256Hex(ROLE_SESSION_TOKEN)]: ROLE_PRINCIPAL,
@@ -75,12 +78,13 @@ beforeEach(() => {
     },
     agentDeployments: {
       getByApiKeyHash: async (apiKeyHash: string) =>
-        apiKeyHash === sha256Hex(DEPLOYMENT_API_KEY)
+        runtimeKeyHashes.has(apiKeyHash)
           ? {
               accountId: ACCOUNT.accountId,
               endpointId: "env-endpoint",
               projectSlug: "demo",
               stageSlug: "development",
+              account: ACCOUNT,
             }
           : null,
       touchLastUsed: async () => {},
@@ -132,7 +136,7 @@ describe("resolveBearerAuth", () => {
 
   it("resolves an account by secret hash", async () => {
     const auth = await resolveBearerAuth({
-      authorization: "Bearer fp_acct_known-secret",
+      authorization: "Bearer ask_known-secret",
     });
     expect(auth).toMatchObject({
       kind: "account",
@@ -140,7 +144,7 @@ describe("resolveBearerAuth", () => {
     });
   });
 
-  it("resolves a project/stage runtime API key", async () => {
+  it("resolves a runtime key", async () => {
     const auth = await resolveBearerAuth({
       authorization: `Bearer ${DEPLOYMENT_API_KEY}`,
     });
@@ -152,6 +156,37 @@ describe("resolveBearerAuth", () => {
       stageSlug: "development",
     });
     expect(auth).not.toHaveProperty("stageTicket");
+  });
+
+  it("sends each known prefix to its one lookup, an unknown one to both", async () => {
+    const storage = getStorage();
+    const keyLookup = spyOn(storage.agentDeployments, "getByApiKeyHash");
+    const secretLookup = spyOn(storage.accounts, "getBySecretHash");
+
+    await resolveBearerAuth({ authorization: "Bearer ask_known-secret" });
+    await resolveBearerAuth({ authorization: `Bearer ${DEPLOYMENT_API_KEY}` });
+    expect(secretLookup).toHaveBeenCalledTimes(1);
+    expect(keyLookup).toHaveBeenCalledTimes(1);
+
+    await resolveBearerAuth({ authorization: "Bearer legacy-secret" });
+    expect(secretLookup).toHaveBeenCalledTimes(2);
+    expect(keyLookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("still resolves keys minted under the earlier prefixes, by hash", async () => {
+    runtimeKeyHashes.add(sha256Hex("fp_agent_issued-before"));
+    accountsBySecretHash[hashAccountSecret("fp_acct_issued-before")] = ACCOUNT;
+
+    expect(
+      await resolveBearerAuth({
+        authorization: "Bearer fp_agent_issued-before",
+      }),
+    ).toMatchObject({ kind: "deployment", endpointId: "env-endpoint" });
+    expect(
+      await resolveBearerAuth({
+        authorization: "Bearer fp_acct_issued-before",
+      }),
+    ).toMatchObject({ kind: "account", account: { accountId: "acct_1" } });
   });
 
   it("resolves an fp_sts_ role session to role auth", async () => {
@@ -242,16 +277,16 @@ describe("resolveBearerAuth", () => {
       status: "disabled",
     };
     expect(
-      await resolveBearerAuth({ authorization: "Bearer fp_acct_known-secret" }),
+      await resolveBearerAuth({ authorization: "Bearer ask_known-secret" }),
     ).toBeNull();
   });
 
-  it("allows a disabled account secret only for an explicit deletion retry", async () => {
+  it("allows a disabled account key only for an explicit deletion retry", async () => {
     accountsBySecretHash[ACCOUNT.secretHash] = {
       ...ACCOUNT,
       status: "disabled",
     };
-    const headers = { authorization: "Bearer fp_acct_known-secret" };
+    const headers = { authorization: "Bearer ask_known-secret" };
 
     expect(await resolveBearerAuth(headers)).toBeNull();
     expect(

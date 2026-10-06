@@ -28,7 +28,6 @@ export interface PendingQuestion {
     header: string;
     question: string;
     options: { label: string; description?: string }[];
-    allowFreeText?: boolean;
   }[];
 }
 

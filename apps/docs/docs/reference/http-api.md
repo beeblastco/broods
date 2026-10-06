@@ -12,12 +12,12 @@ The base URL is `https://gateway.broods.app`, or your own gateway when self-host
 
 Every request sends `Authorization: Bearer <credential>`.
 
-| Endpoint                                           | Accepts                                                      |
-| -------------------------------------------------- | ------------------------------------------------------------ |
-| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Stage runtime key, account secret, or a stage session ticket |
-| `GET /v1/runs/{runId}`                             | Also a run token, from inside a sandbox                      |
-| `/v1/*` config routes                              | Account secret, or a role session within its policy          |
-| Logs and traces socket                             | Stage session ticket only. The runtime key is refused        |
+| Endpoint                                           | Accepts                                               |
+| -------------------------------------------------- | ----------------------------------------------------- |
+| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Runtime key, account key, or a stage session ticket   |
+| `GET /v1/runs/{runId}`                             | Also a run token, from inside a sandbox               |
+| `/v1/*` config routes                              | Account key, or a role session within its policy      |
+| Logs and traces socket                             | Stage session ticket only. The runtime key is refused |
 
 The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`fp_run_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
 

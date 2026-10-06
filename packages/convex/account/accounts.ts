@@ -10,7 +10,7 @@ import { internalMutation, internalQuery } from "../_generated/server";
 import { deleteAccountContentsBatch } from "../model/cascade";
 import { accountsFields } from "../schema";
 
-const accountDoc = v.object({
+export const accountDoc = v.object({
   ...accountsFields,
   _id: v.id("accounts"),
   _creationTime: v.number(),

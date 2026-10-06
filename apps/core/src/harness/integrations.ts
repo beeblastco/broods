@@ -202,8 +202,8 @@ export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
   agentConfig: AgentConfig;
-  // Per-deployment id from the runtime key, when the request authenticated with a
-  // deployment key. Scopes realtime telemetry to the dashboard's deployment view.
+  // Per-deployment id from the runtime key, when the request authenticated with
+  // one. Scopes realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
   // Project and stage slugs from the runtime key scope, forwarded to the
   // harness so it can build NATS observability subjects for live streaming.
@@ -297,7 +297,7 @@ export interface StatusInboundEvent extends StatusRunTarget {
 }
 
 // Background-job completion posted by the detached job itself. Authenticated by
-// the per-job token (matched against the stored row), so no account secret rides
+// the per-job token (matched against the stored row), so no account key rides
 // inside the sandbox.
 export interface SandboxJobCompletionInboundEvent {
   resultId: string;
@@ -803,7 +803,7 @@ async function handleHttpRequest(
     return directApiDisabledResponse();
   }
 
-  // A project+stage runtime key works on both /v1/runs and the scoped
+  // A runtime key works on both /v1/runs and the scoped
   // /v1/projects/{project}/stages/{stage}/agents/{endpointId} URL. When the
   // scoped path is present it must match the key's stage; the agent itself is
   // chosen by the request body's agentId and loaded against the key's account.
@@ -858,7 +858,7 @@ async function handleHttpRequest(
     }
   }
 
-  // The scoped public URL only accepts a deployment key.
+  // The scoped public URL only accepts a runtime key.
   if (publicEndpoint) {
     return unauthorizedResponse();
   }

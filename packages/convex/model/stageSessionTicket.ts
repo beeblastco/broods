@@ -1,7 +1,7 @@
 /**
  * Short-lived stage session tickets (`fp_dts_…`). The dashboard mints one for
  * any org member so logs, traces and the test chat run without handing the
- * browser the permanent `fp_agent_` runtime key; core verifies it and scopes it
+ * browser the permanent `sk_` runtime key; core verifies it and scopes it
  * to the same stage, without the limits it puts on the embeddable key (run
  * overrides, continuing a channel session). Signed with an HMAC derived
  * from the service secret both sides already hold, on WebCrypto so the same

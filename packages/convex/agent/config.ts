@@ -6,7 +6,10 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import type { CanvasNode } from "../canvas";
-import { toNestedAgentConfig } from "../model/agentConfigCodec";
+import {
+  collectEnvPlaceholderNames,
+  toNestedAgentConfig,
+} from "../model/agentConfigCodec";
 import {
   assertAgentRuntimeRefs,
   mergeCanvasSandboxes,
@@ -29,7 +32,12 @@ import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import { saveAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
 import { redactConfigSecrets } from "../model/configValues";
-import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
+import { loadEnvironmentVariableValues } from "../model/environmentValues";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  providerApiKeyEnvName,
+  type AccountModelProviderName,
+} from "../model/modelProviders";
 import { agentConfigsFields } from "../schema";
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
@@ -97,7 +105,8 @@ export const create = mutation({
 
     const now = Date.now();
     const trimmedName = name.trim();
-    if (provider === "custom" && !customBaseUrl?.trim()) {
+    const baseUrl = customBaseUrl?.trim();
+    if (provider === "custom" && !baseUrl) {
       throw new Error("customBaseUrl is required for the custom provider");
     }
     const configId = await ctx.db.insert("agentConfigs", {
@@ -110,15 +119,10 @@ export const create = mutation({
       provider: provider,
       modelId: modelId?.trim() || "gpt-4.1-mini",
       systemPrompt: systemPrompt?.trim() || undefined,
-      ...(provider === "custom" && customBaseUrl?.trim()
+      ...(provider
         ? {
             extraConfig: {
-              provider: {
-                custom: {
-                  base_url: customBaseUrl.trim(),
-                  baseURL: customBaseUrl.trim(),
-                },
-              },
+              provider: { [provider]: newProviderSettings(provider, baseUrl) },
             },
           }
         : {}),
@@ -126,6 +130,7 @@ export const create = mutation({
       searchToolEnabled: false,
       updatedAt: now,
     });
+    await bindStageEnvRefs(ctx, configId);
 
     await ctx.db.patch(projectId, { updatedAt: now });
 
@@ -237,7 +242,7 @@ export const remove = mutation({
       );
     }
 
-    // Note: the stage's runtime API key is shared across all its agents
+    // Note: the stage's runtime key is shared across all its agents
     // (stage-scoped), so deleting one agent config must NOT delete it. The key
     // is only removed when the whole stage is deleted (see stage.ts).
 
@@ -327,6 +332,9 @@ export const update = mutation({
     }
 
     await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
+    if (updates.runtimeVariables === undefined) {
+      await bindStageEnvRefs(ctx, configId);
+    }
 
     // Keep the broods `agents` row aligned; this also provisions
     // the runtime row when an org account was created after the config.
@@ -573,6 +581,38 @@ async function assertAgentConfigAdmin(
   }
 }
 
+/**
+ * Binds every `${NAME}` the config references to the stage variable of that
+ * name, as a CLI sync does, so setting the variable later re-resolves the
+ * agent. A name the stage lacks keeps the agent's earlier value, else empty.
+ * A config with no reference left releases every variable it bound.
+ */
+async function bindStageEnvRefs(
+  ctx: MutationCtx,
+  configId: Id<"agentConfigs">,
+): Promise<void> {
+  const config = await ctx.db.get(configId);
+  if (!config) return;
+  const names = [...collectEnvPlaceholderNames(config)].sort();
+  if (names.length === 0 && !config.runtimeVariables?.length) return;
+
+  const values = await loadEnvironmentVariableValues(
+    ctx,
+    config.projectId,
+    config.stageId,
+    names,
+  );
+  const runtimeVariables = await saveAgentRuntimeSecrets(
+    ctx,
+    configId,
+    names.map((name) => ({
+      key: name,
+      value: values[name] ?? MASKED_RUNTIME_VARIABLE_VALUE,
+    })),
+  );
+  await ctx.db.patch(configId, { runtimeVariables: runtimeVariables });
+}
+
 /** Returns true when the caller may read a project-scoped agent config. */
 async function canAccessAgentConfig(
   ctx: Parameters<typeof getProjectForRole>[0],
@@ -614,6 +654,23 @@ function maskRuntimeVariables<
       key: entry.key,
       value: MASKED_RUNTIME_VARIABLE_VALUE,
     })),
+  };
+}
+
+/**
+ * A new agent's provider settings. The key is a `${NAME}` ref to a stage
+ * variable, as the CLI starter's env("OPENAI_API_KEY"), which
+ * bindStageEnvRefs resolves.
+ */
+function newProviderSettings(
+  provider: AccountModelProviderName,
+  baseUrl: string | undefined,
+): Record<string, string | undefined> {
+  const keyVariable = providerApiKeyEnvName(provider);
+
+  return {
+    ...(keyVariable ? { apiKey: `\${${keyVariable}}` } : {}),
+    ...(provider === "custom" ? { base_url: baseUrl, baseURL: baseUrl } : {}),
   };
 }
 

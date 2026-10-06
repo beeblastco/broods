@@ -1,13 +1,15 @@
 /**
- * Local Broods stack: self-hosted Convex in docker plus core and gateway as
- * watched bun processes. Instances are keyed by worktree, so parallel
- * checkouts get isolated stacks on disjoint port blocks. State (secrets,
- * ports, pids, logs, perf) lives under ~/.broods-local/<instance>/.
+ * Local Broods stack: self-hosted Convex and Traefik in docker, core and the
+ * gateway as watched bun processes. Traefik is the front door, as in the
+ * cluster: it routes the public port to core, the Convex config plane or the
+ * gateway's sockets from the apps/edge route table. Instances are keyed by
+ * worktree, so parallel checkouts get isolated stacks on disjoint port blocks.
+ * State (secrets, ports, pids, logs, perf) lives under ~/.broods-local/<instance>/.
  *
- * A warm `up` is idempotent: the container restarts in place and the script
+ * A warm `up` is idempotent: the containers restart in place and the script
  * skips `convex deploy` while packages/convex is unchanged.
  *
- * `verify` drives the cases in scripts/local-verify/cases through the gateway.
+ * `verify` drives the cases in scripts/local-verify/cases through the edge.
  * `up --perf` answers the model in process and traces core's Convex calls, and
  * `perf` then grades scripts/local-verify/perf.ts against its baseline.
  * Under GitHub Actions each command also writes its timings to the job summary.
@@ -31,6 +33,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Doc } from "../packages/convex/_generated/dataModel.ts";
 
+import { renderFileConfig } from "../apps/edge/src/traefik.ts";
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
@@ -50,14 +53,20 @@ import {
 const CONVEX_IMAGE =
   process.env.BROODS_LOCAL_CONVEX_IMAGE ??
   "ghcr.io/get-convex/convex-backend@sha256:b756b06641d15a55b5ec0692897ce5ad3715ddccfd02e1e213621e9e764255c8";
+// The version the cluster runs.
+const TRAEFIK_IMAGE = "traefik:v3.7.12";
 const HEALTH_TIMEOUT_MS = 60_000;
 const PORT_BLOCK_BASE = 4300;
 const PORT_BLOCK_SIZE = 10;
 const STATE_ROOT = join(homedir(), ".broods-local");
+/** Every port of an instance, at a fixed offset from its block base. */
 interface InstancePorts {
   convexApi: number;
   convexSite: number;
   core: number;
+  /** The public port: Traefik, in front of everything else. */
+  edge: number;
+  /** The WebSocket gateway process, behind Traefik. */
   gateway: number;
 }
 
@@ -78,7 +87,8 @@ interface InstanceState {
   instanceSecret: string;
   perf?: boolean;
   pids: { core?: number; gateway?: number };
-  ports: InstancePorts;
+  /** First port of the instance's block; `ports()` derives the rest. */
+  portBase: number;
   secrets: InstanceSecrets;
 }
 
@@ -141,6 +151,9 @@ async function down(purge: boolean): Promise<void> {
   const container = containerName(instanceId);
   if (purge) {
     docker(["rm", "-f", "-v", container], { allowFailure: true });
+    docker(["rm", "-f", traefikContainerName(instanceId)], {
+      allowFailure: true,
+    });
     docker(["volume", "rm", dataVolumeName(instanceId)], {
       allowFailure: true,
     });
@@ -150,7 +163,9 @@ async function down(purge: boolean): Promise<void> {
     return;
   }
 
-  docker(["stop", container], { allowFailure: true });
+  docker(["stop", container, traefikContainerName(instanceId)], {
+    allowFailure: true,
+  });
   console.log(`stopped ${instanceId} (state kept for fast restart)`);
 }
 
@@ -167,14 +182,17 @@ async function status(): Promise<void> {
   console.log(`instance  ${instanceId}`);
   console.log(`convex    ${container ?? "not created"}`);
   console.log(
-    `core      ${processState(state.pids.core)} (:${state.ports.core})`,
+    `traefik   ${dockerContainerState(traefikContainerName(instanceId)) ?? "not created"} (:${ports(state).edge})`,
   );
   console.log(
-    `gateway   ${processState(state.pids.gateway)} (:${state.ports.gateway})`,
+    `core      ${processState(state.pids.core)} (:${ports(state).core})`,
+  );
+  console.log(
+    `gateway   ${processState(state.pids.gateway)} (:${ports(state).gateway})`,
   );
 
   const health = await probeHttp(
-    `http://127.0.0.1:${state.ports.gateway}/healthz`,
+    `http://127.0.0.1:${ports(state).edge}/healthz`,
   );
   console.log(`healthz   ${health ?? "unreachable"}`);
 
@@ -201,14 +219,17 @@ async function up(fresh: boolean, perfMode: boolean): Promise<void> {
     await down(true);
   }
   const state = loadOrCreateState();
+  // Traefik needs nothing from the other steps, so a first pull of its image
+  // runs alongside them.
+  const traefikImage = pullImage(TRAEFIK_IMAGE);
   console.log(
-    `[${state.instanceId}] gateway :${state.ports.gateway} core :${state.ports.core} convex :${state.ports.convexApi}/${state.ports.convexSite}`,
+    `[${state.instanceId}] edge :${ports(state).edge} gateway :${ports(state).gateway} core :${ports(state).core} convex :${ports(state).convexApi}/${ports(state).convexSite}`,
   );
 
   await measureStep(perf, "convex container", async () => {
     ensureConvexContainer(state);
     await waitForHttp(
-      `http://127.0.0.1:${state.ports.convexApi}/version`,
+      `http://127.0.0.1:${ports(state).convexApi}/version`,
       "convex backend",
     );
   });
@@ -249,32 +270,30 @@ async function up(fresh: boolean, perfMode: boolean): Promise<void> {
     state.pids.core = undefined;
   }
   state.perf = perfMode;
-  await measureStep(perf, "start core + gateway", () => {
+  await measureStep(perf, "start core + gateway + edge", async () => {
     startCore(state);
     startGateway(state);
+    await traefikImage;
+    ensureTraefikContainer(state);
     saveState(state);
   });
 
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   await measureStep(perf, "health checks", async () => {
+    // A 401 can only come from the config plane: Traefik answers 404 until it
+    // loads the routes and 502 while an upstream is down.
     await Promise.all([
-      waitForHttp(`${gatewayUrl}/healthz`, "gateway"),
-      waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core"),
+      waitForHttp(`${edgeUrl}/healthz`, "gateway via edge"),
+      waitForHttp(`http://127.0.0.1:${ports(state).core}/healthz`, "core"),
+      waitForHttp(`${edgeUrl}/v1/agents`, "config plane via edge", 401),
     ]);
-    // The gateway answers /healthz itself; any status from /v1/agents (401
-    // expected) proves the proxied gateway -> convex chain.
-    await waitForHttp(
-      `${gatewayUrl}/v1/agents`,
-      "config plane via gateway",
-      true,
-    );
   });
 
   const totalMs = Date.now() - startedAt;
   recordPerf(state.instanceId, "up", perf, totalMs);
   printPerfBreakdown(perf, totalMs);
   console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
-  console.log(`  gateway   ${gatewayUrl}`);
+  console.log(`  edge      ${edgeUrl}`);
   console.log(
     `  admin     read secrets.adminAccount in ${join(instanceDir(state.instanceId), "state.json")}`,
   );
@@ -299,10 +318,10 @@ async function perf(record: boolean): Promise<void> {
     process.exit(1);
   }
 
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   const runId = Date.now().toString(36);
   const accountSecret = await createAccount(
-    gatewayUrl,
+    edgeUrl,
     state.secrets.adminAccount,
     `perf-${runId}`,
   );
@@ -333,7 +352,7 @@ async function verify(): Promise<void> {
 
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   let currentCase = "";
   let currentStep = "";
   const measure = async <T>(step: string, fn: () => Promise<T>): Promise<T> => {
@@ -346,12 +365,12 @@ async function verify(): Promise<void> {
   let failedStep: string | undefined;
   try {
     await measure("gateway healthz", async (): Promise<void> => {
-      const health = await probeHttp(`${gatewayUrl}/healthz`);
+      const health = await probeHttp(`${edgeUrl}/healthz`);
       assertStep("gateway healthz", health === 200, `status ${health}`);
     });
     const runId = `${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
     await measure("create account", (): Promise<string> =>
-      createAccount(gatewayUrl, state.secrets.adminAccount, `smoke-${runId}`),
+      createAccount(edgeUrl, state.secrets.adminAccount, `smoke-${runId}`),
     );
     const accountSecret = await measure(
       "create manifest account",
@@ -388,7 +407,7 @@ function configureDeploymentEnv(state: InstanceState): void {
   const entries: Record<string, string> = {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
-    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${state.ports.core}`,
+    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
     SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     STAGE_TICKET_SECRET: state.secrets.stageTicket,
     WORKOS_API_KEY: "sk_local_dummy",
@@ -486,9 +505,9 @@ function ensureConvexContainer(state: InstanceState): void {
     "--name",
     name,
     "-p",
-    `${state.ports.convexApi}:3210`,
+    `${ports(state).convexApi}:3210`,
     "-p",
-    `${state.ports.convexSite}:3211`,
+    `${ports(state).convexSite}:3211`,
     "-v",
     `${dataVolumeName(state.instanceId)}:/convex/data`,
     "--add-host",
@@ -498,14 +517,74 @@ function ensureConvexContainer(state: InstanceState): void {
     "-e",
     `INSTANCE_SECRET=${state.instanceSecret}`,
     "-e",
-    `CONVEX_CLOUD_ORIGIN=http://127.0.0.1:${state.ports.convexApi}`,
+    `CONVEX_CLOUD_ORIGIN=http://127.0.0.1:${ports(state).convexApi}`,
     "-e",
-    `CONVEX_SITE_ORIGIN=http://127.0.0.1:${state.ports.convexSite}`,
+    `CONVEX_SITE_ORIGIN=http://127.0.0.1:${ports(state).convexSite}`,
     "-e",
     "DISABLE_BEACON=true",
     "-e",
     "DO_NOT_REQUIRE_SSL=true",
     CONVEX_IMAGE,
+  ]);
+}
+
+/**
+ * Traefik on the public port, routing from the apps/edge table as the cluster
+ * does. The routes file is rewritten on every `up` and watched, so a route
+ * table change reaches a running container. Logs land next to core's.
+ */
+function ensureTraefikContainer(state: InstanceState): void {
+  const dir = instanceDir(state.instanceId);
+  const edgeDir = join(dir, "edge");
+  const logDir = join(dir, "logs");
+  mkdirSync(edgeDir, { recursive: true });
+  mkdirSync(logDir, { recursive: true });
+  const upstream = (port: number): string =>
+    `http://host.docker.internal:${port}`;
+  writeFileSync(
+    join(edgeDir, "routes.yaml"),
+    Bun.YAML.stringify(
+      renderFileConfig({
+        config: upstream(ports(state).convexSite),
+        core: upstream(ports(state).core),
+        gateway: upstream(ports(state).gateway),
+      }),
+      null,
+      2,
+    ),
+  );
+
+  const name = traefikContainerName(state.instanceId);
+  const containerState = dockerContainerState(name);
+  if (containerState === "running") return;
+  if (containerState) {
+    docker(["start", name]);
+
+    return;
+  }
+
+  console.log(`creating traefik container ${name}...`);
+  docker([
+    "run",
+    "-d",
+    "--name",
+    name,
+    "-p",
+    `${ports(state).edge}:80`,
+    "-v",
+    `${edgeDir}:/etc/broods-edge:ro`,
+    "-v",
+    `${logDir}:/logs`,
+    "--add-host",
+    "host.docker.internal:host-gateway",
+    TRAEFIK_IMAGE,
+    "--entrypoints.web.address=:80",
+    "--providers.file.directory=/etc/broods-edge",
+    "--providers.file.watch=true",
+    "--accesslog=true",
+    "--accesslog.format=json",
+    "--accesslog.filepath=/logs/traefik-access.log",
+    "--log.filepath=/logs/traefik.log",
   ]);
 }
 
@@ -540,7 +619,7 @@ function runConvexCli(
       CONVEX_DEPLOY_KEY: undefined,
       CONVEX_DEPLOYMENT: "",
       CONVEX_SELF_HOSTED_ADMIN_KEY: state.adminKey,
-      CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${state.ports.convexApi}`,
+      CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${ports(state).convexApi}`,
     },
   });
 
@@ -621,10 +700,10 @@ function startCore(state: InstanceState): void {
       ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
       ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
       CONVEX_DEPLOY_KEY: state.adminKey ?? "",
-      CONVEX_URL: `http://127.0.0.1:${state.ports.convexApi}`,
+      CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
       MEDIA_TICKET_SECRET: state.secrets.mediaTicket,
-      PORT: String(state.ports.core),
-      PUBLIC_BASE_URL: `http://127.0.0.1:${state.ports.gateway}`,
+      PORT: String(ports(state).core),
+      PUBLIC_BASE_URL: `http://127.0.0.1:${ports(state).edge}`,
       SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
       SERVICE_NAME: `local-${state.instanceId}-core`,
       STAGE_TICKET_SECRET: state.secrets.stageTicket,
@@ -648,9 +727,8 @@ function startGateway(state: InstanceState): void {
     args: ["--watch", "src/main.ts"],
     cwd: join(repoRoot, "apps", "gateway"),
     env: {
-      BROODS_CONFIG_URL: `http://127.0.0.1:${state.ports.convexSite}`,
-      BROODS_CORE_URLS: `http://127.0.0.1:${state.ports.core}`,
-      PORT: String(state.ports.gateway),
+      BROODS_CORE_URL: `http://127.0.0.1:${ports(state).core}`,
+      PORT: String(ports(state).gateway),
       TERMINAL_TICKET_SECRET: state.secrets.terminalTicket,
     },
     instanceId: state.instanceId,
@@ -709,6 +787,10 @@ function containerName(instanceId: string): string {
   return `broods-convex-${instanceId}`;
 }
 
+function traefikContainerName(instanceId: string): string {
+  return `broods-traefik-${instanceId}`;
+}
+
 function dataVolumeName(instanceId: string): string {
   return `${containerName(instanceId)}-data`;
 }
@@ -718,7 +800,11 @@ function docker(
   options: { allowFailure?: boolean } = {},
 ): string {
   try {
-    return execFileSync("docker", args, { encoding: "utf8" });
+    // An allowed failure, like inspecting a container not yet created, stays quiet.
+    return execFileSync("docker", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", options.allowFailure ? "ignore" : "inherit"],
+    });
   } catch (error) {
     if (options.allowFailure) return "";
     throw error;
@@ -733,15 +819,33 @@ function dockerContainerState(name: string): string | null {
   return output || null;
 }
 
+/** Pulls an image in the background unless it is already local; resolves once present. */
+function pullImage(image: string): Promise<void> {
+  if (docker(["image", "inspect", image], { allowFailure: true })) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolvePull, rejectPull): void => {
+    const child = spawn("docker", ["pull", "--quiet", image], {
+      stdio: "ignore",
+    });
+    child.on("error", rejectPull);
+    child.on("exit", (code): void => {
+      if (code === 0) resolvePull();
+      else rejectPull(new Error(`docker pull ${image} exited with ${code}`));
+    });
+  });
+}
+
 // --- http ---------------------------------------------------------------
 
 // Mints a verify account with the admin secret and returns its secret.
 async function createAccount(
-  gatewayUrl: string,
+  edgeUrl: string,
   adminSecret: string,
   username: string,
 ): Promise<string> {
-  const response = await fetch(`${gatewayUrl}/v1/accounts`, {
+  const response = await fetch(`${edgeUrl}/v1/accounts`, {
     method: "POST",
     signal: AbortSignal.timeout(15_000),
     headers: {
@@ -754,7 +858,7 @@ async function createAccount(
   assertStep(
     "create account (core, admin bearer)",
     response.status === 201 && typeof body.secret === "string",
-    `status ${response.status}: ${body.error ?? "no account secret in response"}`,
+    `status ${response.status}: ${body.error ?? "no account key in response"}`,
   );
 
   return body.secret;
@@ -767,28 +871,31 @@ function verifyContext(
   runId: string,
   measure: VerifyContext["measure"],
 ): VerifyContext {
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
 
   return {
     ...smokeModel(),
     account: new BroodsAccountClient({
       accountSecret: accountSecret,
-      baseUrl: gatewayUrl,
+      baseUrl: edgeUrl,
     }),
     accountSecret: accountSecret,
-    client: new BroodsClient({ apiKey: accountSecret, baseUrl: gatewayUrl }),
+    client: new BroodsClient({ apiKey: accountSecret, baseUrl: edgeUrl }),
+    configPlaneUrl: `http://127.0.0.1:${ports(state).convexSite}`,
     coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
-    gatewayUrl: gatewayUrl,
+    edgeUrl: edgeUrl,
     measure: measure,
     runId: runId,
+    serviceSecret: state.secrets.serviceAuth,
     stageTicketSecret: state.secrets.stageTicket,
   };
 }
 
+// Ready on any status below 400, or on exactly `expectedStatus` when given.
 async function waitForHttp(
   url: string,
   what: string,
-  acceptAnyStatus = false,
+  expectedStatus?: number,
 ): Promise<void> {
   const ready = await pollUntil(
     {
@@ -798,10 +905,12 @@ async function waitForHttp(
     },
     async () => {
       const statusCode = await probeHttp(url);
+      const ok =
+        expectedStatus === undefined
+          ? statusCode !== null && statusCode < 400
+          : statusCode === expectedStatus;
 
-      return statusCode !== null && (acceptAnyStatus || statusCode < 400)
-        ? statusCode
-        : null;
+      return ok ? statusCode : null;
     },
   );
   if (ready === null) {
@@ -927,24 +1036,17 @@ function recordPerf(
 
 // --- instance state -----------------------------------------------------
 
-function allocatePortBlock(): InstancePorts {
+function allocatePortBase(): number {
   const used = new Set<number>();
   if (existsSync(STATE_ROOT)) {
     for (const entry of readdirSync(STATE_ROOT)) {
       const other = loadState(entry);
-      if (other) used.add(other.ports.gateway);
+      if (other) used.add(other.portBase);
     }
   }
   for (let index = 0; index < 50; index += 1) {
     const base = PORT_BLOCK_BASE + index * PORT_BLOCK_SIZE;
-    if (used.has(base)) continue;
-
-    return {
-      convexApi: base + 2,
-      convexSite: base + 3,
-      core: base + 1,
-      gateway: base,
-    };
+    if (!used.has(base)) return base;
   }
   throw new Error("no free port block under ~/.broods-local");
 }
@@ -968,13 +1070,18 @@ function loadOrCreateState(): InstanceState {
       "this stack predates the per-purpose secrets; run `up --fresh` to recreate it",
     );
   }
+  if (existing && existing.portBase === undefined) {
+    throw new Error(
+      "this stack predates the Traefik edge; run `bun run local:up -- --fresh` to recreate it",
+    );
+  }
   if (existing) return existing;
 
   const state: InstanceState = {
     instanceId: instanceId,
     instanceSecret: randomBytes(32).toString("hex"),
     pids: {},
-    ports: allocatePortBlock(),
+    portBase: allocatePortBase(),
     secrets: {
       accountConfigEncryption: randomBytes(24).toString("hex"),
       adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
@@ -994,6 +1101,18 @@ function loadState(instanceId: string): InstanceState | null {
   if (!existsSync(path)) return null;
 
   return JSON.parse(readFileSync(path, "utf8")) as InstanceState;
+}
+
+function ports(state: InstanceState): InstancePorts {
+  const base = state.portBase;
+
+  return {
+    convexApi: base + 2,
+    convexSite: base + 3,
+    core: base + 1,
+    edge: base,
+    gateway: base + 4,
+  };
 }
 
 // state.json carries the admin and encryption secrets, so the instance dir is

@@ -19,7 +19,7 @@ export async function runToken(context: VerifyContext): Promise<void> {
     token: string,
     body?: Record<string, unknown>,
   ): Promise<Answer> => {
-    const response = await fetch(`${context.gatewayUrl}${path}`, {
+    const response = await fetch(`${context.edgeUrl}${path}`, {
       method: method,
       headers: {
         Authorization: `Bearer ${token}`,

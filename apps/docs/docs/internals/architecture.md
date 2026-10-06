@@ -14,6 +14,7 @@ flowchart LR
   end
 
   subgraph Cluster["k8s cluster (../infra)"]
+    Edge["Traefik<br/>routes from apps/edge"]
     GW["gateway<br/>apps/gateway"]
     Core["core<br/>apps/core"]
     DFwd["discord-forwarder"]
@@ -36,18 +37,20 @@ flowchart LR
   Discord["Discord Gateway"] --> DFwd
   Matrix["Matrix homeserver"] <--> MFwd
 
-  SDK --> GW
-  CLI --> GW
-  Prov --> GW
+  SDK --> Edge
+  CLI --> Edge
+  Prov --> Edge
   Dash --> Convex
-  Dash -->|"observability, test chat,<br/>terminal sockets"| GW
-  DFwd -->|"POST channel webhook"| GW
-  MFwd -->|"POST channel webhook"| GW
+  Dash -->|"observability, test chat,<br/>terminal sockets"| Edge
+  DFwd -->|"POST channel webhook"| Edge
+  MFwd -->|"POST channel webhook"| Edge
   DFwd -. "subscribe listConnections" .-> Convex
   MFwd -. "subscribe listConnections" .-> Convex
 
-  GW -->|"config-plane paths"| Convex
-  GW -->|"runtime paths"| Core
+  Edge -->|"config-plane paths"| Convex
+  Edge -->|"runtime paths"| Core
+  Edge -->|"WebSockets"| GW
+  GW -->|"scope lookup, socket runs"| Core
   GW <-->|"replay + tail"| NATS
   GW -->|"history backfill"| OTel
 
@@ -68,7 +71,8 @@ flowchart LR
 
 | Deployable                              | Runs as                                    | Job                                                                                                                                              |
 | --------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/gateway`                          | Bun pod, `src/main.ts`                     | The only public door. Splits HTTP by path between Convex and core, terminates four WebSocket kinds, rate-limits auth failures and upgrades.      |
+| `apps/edge`                             | Traefik config, generated                  | The only public door. Splits HTTP by path between Convex and core, sends WebSockets to the gateway, limits per address, sets CORS.               |
+| `apps/gateway`                          | Bun pod, `src/main.ts`                     | Terminates four WebSocket kinds behind Traefik and rate-limits failed socket logins.                                                             |
 | `apps/core`                             | Bun pod, `src/server.ts`                   | Runs agents: runtime API, channel webhooks, cron runs, async and subagent work, sandbox lifecycle verbs, hosted MCP invokes, the machine socket. |
 | `packages/convex`                       | Convex deployment                          | Config plane (HTTP actions under `/v1/...`), CLI sync, every table, the crons component, WorkOS auth, Stripe.                                    |
 | `apps/dashboard`                        | Next.js                                    | Reads and writes Convex as a WorkOS user. Opens gateway sockets for logs, traces, the test chat and sandbox terminals.                           |
@@ -86,12 +90,12 @@ SST in `apps/core/sst.config.ts` owns only AWS resources. Those are the three S3
 ```mermaid
 sequenceDiagram
   participant C as Client
-  participant G as gateway
+  participant G as Traefik
   participant H as core handler.ts
   participant X as Convex runtimeIngress
   participant R as harness.ts
   C->>G: POST /v1/runs (bearer)
-  G->>H: proxyHttp, x-broods-via-gateway
+  G->>H: core route, x-broods-via-gateway
   H->>H: routeIncomingEvent, resolve credential and agent
   H->>X: accept envelope
   alt busy: queued or duplicate
@@ -114,7 +118,7 @@ sequenceDiagram
 ```
 
 1. The client sends `POST /v1/runs`, or the scoped `POST /v1/projects/:p/stages/:s/agents/:endpointId`, with a bearer credential.
-2. The gateway sees a non-config `/v1/` path and proxies it to core (`apps/gateway/src/upstream.ts` `proxyHttp`), stripping `Host` and stamping `x-broods-via-gateway`.
+2. Traefik sees a non-config `/v1/` path and sends it to core (the `core` route in `apps/edge/src/routes.ts`), without the client's `Host` and with `x-broods-via-gateway` stamped.
 3. `apps/core/src/server.ts` routes it to the harness handler. `routeIncomingEvent` in `src/harness/integrations.ts` resolves the credential (`src/shared/auth.ts`), loads the agent, and applies the public-access and run-override rules for a runtime key.
 4. `src/harness/handler.ts` admits the request through the conversation coordinator in `src/harness/ingress.ts` and Convex `runtimeIngress.ts`. A busy conversation queues or steers per [queue and steer](queue-and-steer.md).
 5. `src/harness/session.ts` persists the incoming events, loads history and builds the turn context. Dedup already happened at admission, on the ingress identity. `src/harness/harness.ts` runs the AI SDK `streamText` loop with tools from `src/harness/tools/index.ts`.
@@ -166,7 +170,7 @@ sequenceDiagram
 The sequence, with what the provider ACK waits on, is in [channels](channels.md#runtime-flow).
 
 1. The provider posts to `/v1/webhooks/:accountId/:channel`, or `/v1/webhooks/:accountId/dev/:endpointId/:channel` for a non-production stage. Discord messages and all Matrix traffic come from the two forwarders, which post to the same URL.
-2. The gateway proxies to core. `integrations.ts` loads the account and finds the credential holder, the agent whose channel credentials verify the request. On the bare URL, when two agents verify, the lowest agent id wins. A stage URL that resolves to no agent is a `404`.
+2. Traefik sends it to core, with no per-address limit since providers post from shared addresses. `integrations.ts` loads the account and finds the credential holder, the agent whose channel credentials verify the request. On the bare URL, when two agents verify, the lowest agent id wins. A stage URL that resolves to no agent is a `404`.
 3. The holder's adapter (`src/shared/<channel>-channel.ts`) authenticates and parses the request into an `InboundMessage`.
 4. The `channelRecords` row for `(platform, externalId)` decides which agent runs and layers its instructions, workspaces, policies and `denyTools` (`applyChannelRecord`). A failed lookup refuses the turn.
 5. The `agent.invoke` policy gate runs. `handleChannelRequest` admits the message: it deduplicates it and queues it in Convex. The provider gets its ack once admission finishes or after `CHANNEL_ACK_BUDGET_MS` (2 s), whichever comes first, so a provider retry never races an admitted message. The turn then runs on the same bounded worker pool as async and WebSocket runs, and replies through the adapter's `ChannelActions`. Matrix replies go to the matrix-forwarder's `/v1/send`, since only it holds the room keys.
@@ -201,14 +205,14 @@ sequenceDiagram
 ```
 
 1. A schedule in the Convex crons component fires `packages/convex/agent/crons.ts` `dispatch`.
-2. The action posts `{ kind: "cron", accountId, cronId, scheduledTime }` to core's in-cluster address (`BROODS_ACCOUNT_MANAGE_URL`) at `/v1/cron-runs` with the service token. The gateway answers `404` on that path.
+2. The action posts `{ kind: "cron", accountId, cronId, scheduledTime }` to core's in-cluster address (`BROODS_ACCOUNT_MANAGE_URL`) at `/v1/cron-runs` with the service token. Traefik refuses that path from outside with `403`.
 3. `handleScheduledCron` in `handler.ts` loads the job, skips it if paused, opens a run row and starts the run. The job's `lastStatus` follows its latest run row, so an older run that settles late cannot overwrite a newer one. A conversation key that names a live channel session resumes it and replies there.
 4. A one-time `at(...)` job is deleted when its run settles, or at once when the run fails to start.
 
 ### Config-plane call
 
-1. A client calls a config path such as `/v1/agents`, `/v1/crons`, `/v1/workspaces/:id/files` or `/v1/account`. The gateway strips trailing slashes first (`normalizePathname`) and forwards that path, so `/v1/agents/` and `/v1/agents` reach the same plane. `isConfigHttpPath` in `apps/gateway/src/routes.ts` is method-aware and decides; everything else under `/v1/` goes to core.
-2. The gateway proxies to `BROODS_CONFIG_URL`, the Convex HTTP router in `packages/convex/http.ts`, with handlers in `config/http.ts` and `config/routes/*`.
+1. A client calls a config path such as `/v1/agents`, `/v1/crons`, `/v1/workspaces/:id/files` or `/v1/account`. Trailing slashes match the same route and are stripped before forwarding, so `/v1/agents/` and `/v1/agents` reach the same plane. The config rules in `apps/edge/src/routes.ts` are method-aware and decide; everything else under `/v1/` goes to core.
+2. Traefik sends it to the Convex site, the HTTP router in `packages/convex/http.ts`, with handlers in `config/http.ts` and `config/routes/*`.
 3. The config plane authenticates the bearer, checks role policy for a role session, runs the mutation, and appends an `auditEvents` row to the account ledger.
 4. Sandbox lifecycle verbs (`/v1/sandboxes/:id/suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec`, `terminal`) and account creation and deletion are the exceptions. They reach core's account handler (`src/accounts/handler.ts`, `routesToAccountManage`). The dashboard reaches them through Convex actions that call core with the service token (`packages/convex/model/serviceBridge.ts`).
 
@@ -217,13 +221,13 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant CLI as broods dev / deploy
-  participant G as gateway
+  participant G as Traefik
   participant V as Convex cli/http.ts
   participant S as S3
   CLI->>CLI: compile broods/ into a manifest
   CLI->>G: PUT /v1/account/projects/:project/stages/:stage/manifest
   G->>V: /v1/account/* goes to Convex
-  V->>V: authenticate login token or deploy key
+  V->>V: authenticate login token or project key
   V->>V: check the manifest's rules, before any write
   V->>V: cliSync: resolve env refs, encrypt agent config
   V->>S: skill and bundle bytes
@@ -232,24 +236,24 @@ sequenceDiagram
 ```
 
 1. `broods dev` or `broods deploy` compiles `broods/` into a manifest (`packages/broods/src/manifest.ts`). Hosted MCP handlers and code hooks are bundled here.
-2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or deploy key. The gateway routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it. The PUT's first mutation ensures the project and stage rows exist, then claims the stage's next manifest revision (`stageSyncs`). `broods dev` sends the revision it read, and a PUT whose revision another sync already moved past gets a 409 `manifest_conflict` before it writes resources. `broods deploy` sends none, so it can replace the last completed sync without reading its revision. Both commands receive 409 `manifest_conflict` while another manifest PUT holds the stage claim; retry after that sync finishes. The claim is released in `finally`, with abandoned claims expiring after 45 minutes.
-3. The sync first runs the manifest's rules on every resource, skills, hooks, MCP servers and crons included, so a manifest they refuse changes nothing. Checks against live rows (name conflicts, a channel place another record owns) still run inside the sync. It then resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the stage runtime key if the stage has none.
+2. The CLI sends `PUT /v1/account/projects/:project/stages/:stage/manifest` with a login token or project key. Traefik routes `/v1/account/*` to Convex, where `packages/convex/cli/http.ts` authenticates and `cliSync` applies it. The PUT's first mutation ensures the project and stage rows exist, then claims the stage's next manifest revision (`stageSyncs`). `broods dev` sends the revision it read, and a PUT whose revision another sync already moved past gets a 409 `manifest_conflict` before it writes resources. `broods deploy` sends none, so it can replace the last completed sync without reading its revision. Both commands receive 409 `manifest_conflict` while another manifest PUT holds the stage claim; retry after that sync finishes. The claim is released in `finally`, with abandoned claims expiring after 45 minutes.
+3. The sync first runs the manifest's rules on every resource, skills, hooks, MCP servers and crons included, so a manifest they refuse changes nothing. Checks against live rows (name conflicts, a channel place another record owns) still run inside the sync. It then resolves `${NAME}` env refs into encrypted agent config, writes agents, sandboxes, workspaces, MCP rows, policies, channel records and crons, uploads skill and bundle bytes to S3, large ones through upload grants, and creates the runtime key if the stage has none.
 4. The CLI writes `broods/_generated/` and `BROODS_API_KEY`.
 
 ## Credentials
 
-| Credential           | Prefix       | Verified by                                                                                      | Scope                                                                   |
-| -------------------- | ------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| Stage runtime key    | `fp_agent_`  | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
-| Stage session ticket | `fp_dts_`    | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
-| Account secret       | `fp_acct_`   | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
-| Role session         | `fp_sts_`    | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
-| CLI login            | `fp_cli_`    | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
-| Deploy key           | `fp_deploy_` | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
-| Admin secret         | none         | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
-| Service token        | none         | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
-| Terminal ticket      | sealed       | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
-| Per-job token        | none         | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
+| Credential           | Prefix    | Verified by                                                                                      | Scope                                                                   |
+| -------------------- | --------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Runtime key          | `sk_`     | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
+| Stage session ticket | `fp_dts_` | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
+| Account key          | `ask_`    | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
+| Role session         | `fp_sts_` | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
+| CLI login            | `fp_cli_` | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
+| Project key          | `pdk_`    | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
+| Admin secret         | none      | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
+| Service token        | none      | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
+| Terminal ticket      | sealed    | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
+| Per-job token        | none      | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
 
 Channel webhooks use each provider's own signature or secret, checked by the adapter. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
 

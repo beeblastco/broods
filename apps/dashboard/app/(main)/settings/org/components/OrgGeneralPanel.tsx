@@ -10,6 +10,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   org: Doc<"orgs">;
@@ -46,7 +47,7 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
       await updateOrg({ orgId: org._id, name: name.trim() });
       setSaveNotice("Saved.");
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed");
+      setSaveError(toErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -73,7 +74,7 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
             {canWrite && (
               <Button
                 size="sm"
-                className="cursor-pointer disabled:cursor-not-allowed"
+                className="cursor-pointer"
                 disabled={!dirty || saving}
                 onClick={handleSave}
               >
