@@ -954,7 +954,7 @@ export const github = defineGitHubConnection({
 
 export const repo = defineWorkspace({
   name: "repo",
-  storage: { provider: "s3" }, partitioned: true,
+  storage: { provider: "s3" }, partitioned: "conversation",
 });
 
 export const support = defineAgent({
@@ -998,23 +998,26 @@ export const support = defineAgent({
   ]);
 });
 
-test("compileProject rejects an unknown partitioned mode", async () => {
-  const cwd = await fixtureProject(
-    "",
-    `
+test.each(['"channel"', "true"])(
+  "compileProject rejects partitioned: %s",
+  async (mode) => {
+    const cwd = await fixtureProject(
+      "",
+      `
 import { defineWorkspace } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
   name: "repo",
-  storage: { provider: "s3" }, partitioned: "channel",
+  storage: { provider: "s3" }, partitioned: ${mode},
 });
 `,
-  );
+    );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Workspace "repo" config.partitioned must be a boolean or one of: conversation, agent',
-  );
-});
+    await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+      'Workspace "repo" config.partitioned must be one of: conversation, agent',
+    );
+  },
+);
 
 test('compileProject stores partitioned: "agent" as agent isolation and needs no channel partition', async () => {
   const cwd = await fixtureProject(
@@ -1028,7 +1031,7 @@ export const slack = defineSlackConnection({
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const scratch = defineWorkspace({ name: "scratch", storage: { provider: "s3" }, partitioned: "agent" });
-export const shared = defineWorkspace({ name: "shared", storage: { provider: "s3" }, partitioned: true });
+export const shared = defineWorkspace({ name: "shared", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [scratch] });
 `,
   );
@@ -1061,7 +1064,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1192,7 +1195,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1214,7 +1217,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 export const escape = defineSlackChannel({
   name: "escape",
@@ -1242,7 +1245,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1270,7 +1273,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   );
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" connection "slack" defines partition, but no attached workspace has partitioned: true.',
+    'Agent "support" connection "slack" defines partition, but no attached workspace has partitioned: "conversation".',
   );
 });
 
@@ -1292,7 +1295,7 @@ export const github = defineGitHubConnection({
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack, github], workspaces: [repo] });
 `,
   );
@@ -1323,7 +1326,7 @@ export const github = defineGitHubConnection({
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack, github], workspaces: [repo] });
 `,
   );
