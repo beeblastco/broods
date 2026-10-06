@@ -13,14 +13,14 @@ import {
   internalQuery,
   type ActionCtx,
 } from "../_generated/server";
-import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
+import { assertSealedUnderCurrentKey } from "../model/accountKeys";
 import { auditChainHeadRow, publicAuditEvent } from "../model/auditEvents";
 import {
   AUDIT_SIGNATURE_HEADER,
   auditSinkRow,
   signAuditExport,
 } from "../model/auditSinks";
-import { configEncryptionSecret } from "../config/routes/shared";
+import { accountCipherForAction } from "../config/routes/shared";
 import { auditSinksFields } from "../schema";
 
 const DUE_SINKS_PAGE_SIZE = 100;
@@ -158,6 +158,9 @@ export const put = internalMutation({
   },
   returns: auditSinkDoc,
   handler: async (ctx, args): Promise<Doc<"auditSinks">> => {
+    await assertSealedUnderCurrentKey(ctx, args.accountId, [
+      args.encryptedSecret,
+    ]);
     const existing = await auditSinkRow(ctx.db, args.accountId);
     const fields = {
       url: args.url,
@@ -205,14 +208,12 @@ async function exportSink(
   ctx: ActionCtx,
   sink: Doc<"auditSinks">,
 ): Promise<void> {
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: sink.encryptedSecret,
-      iv: sink.secretIv,
-      tag: sink.secretTag,
-    },
-    configEncryptionSecret(),
-  );
+  const cipher = await accountCipherForAction(ctx, sink.accountId, "read");
+  const decrypted = await cipher.decrypt("auditSinks:encryptedSecret", {
+    ciphertext: sink.encryptedSecret,
+    iv: sink.secretIv,
+    tag: sink.secretTag,
+  });
   const secret = decrypted?.secret;
   if (typeof secret !== "string") {
     await ctx.runMutation(internal.audit.sinks.markError, {

@@ -9,10 +9,9 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
   collectEnvPlaceholderNames,
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
   substituteAccountEnvPlaceholders,
 } from "../../model/agentConfigCodec";
+import type { AccountCipher, EncryptedBlob } from "../../model/envelope";
 import {
   normalizeCreateAgentInput,
   normalizeUpdateAgentInput,
@@ -23,7 +22,7 @@ import { isPlainObject } from "../../model/objects";
 import { toPublicAgentResponse } from "../../model/responses";
 import { fetchSlackChannelDirectory } from "../../model/slackDirectory";
 import {
-  configEncryptionSecret,
+  accountCipherForAction,
   json,
   jsonError,
   methodNotAllowed,
@@ -33,8 +32,8 @@ import {
 import { ClientError } from "../../model/clientError";
 
 type PreparedAccountAgentConfig = {
-  encrypted: { ciphertext: string; iv: string; tag: string };
-  source?: { ciphertext: string; iv: string; tag: string };
+  encrypted: EncryptedBlob;
+  source?: EncryptedBlob;
 };
 
 // Skills are account-scoped, so bare names canonicalize to <accountId>/<name>
@@ -81,7 +80,10 @@ export async function handleAgentChannelDirectoryRoute(
   }
   // The resolved config (env placeholders substituted), not the public-read
   // source config. This is the same view the runtime uses to post messages.
-  const config = await decryptAgentConfig(record);
+  const config = await decryptAgentConfig(
+    await accountCipherForAction(ctx, accountId, "read"),
+    record,
+  );
   const channels = isPlainObject(config.channels) ? config.channels : undefined;
   const slack =
     channels && isPlainObject(channels.slack) ? channels.slack : undefined;
@@ -133,7 +135,10 @@ export async function handleAgentConfigRoute(
       ? json(
           toPublicAgentResponse(
             record,
-            await decryptAgentConfigForPublicRead(record),
+            await decryptAgentConfigForPublicRead(
+              await accountCipherForAction(ctx, accountId, "read"),
+              record,
+            ),
           ),
         )
       : jsonError(404, "Agent not found");
@@ -170,18 +175,18 @@ export async function handleAgentConfigRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-async function decryptAgentConfig(doc: Doc<"agents">): Promise<AgentConfig> {
+async function decryptAgentConfig(
+  cipher: AccountCipher,
+  doc: Doc<"agents">,
+): Promise<AgentConfig> {
   if (!doc.encryptedConfig || !doc.encryptionIv || !doc.encryptionTag) {
     return {};
   }
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: doc.encryptedConfig,
-      iv: doc.encryptionIv,
-      tag: doc.encryptionTag,
-    },
-    configEncryptionSecret(),
-  );
+  const decrypted = await cipher.decrypt("agents:encryptedConfig", {
+    ciphertext: doc.encryptedConfig,
+    iv: doc.encryptionIv,
+    tag: doc.encryptionTag,
+  });
   if (!decrypted) throw new Error("Failed to decrypt agent config");
 
   return decrypted as AgentConfig;
@@ -189,6 +194,7 @@ async function decryptAgentConfig(doc: Doc<"agents">): Promise<AgentConfig> {
 
 /** Decrypt the unresolved config when present so API reads and PATCHes preserve placeholders. */
 async function decryptAgentConfigForPublicRead(
+  cipher: AccountCipher,
   doc: Doc<"agents">,
 ): Promise<AgentConfig> {
   if (
@@ -196,25 +202,16 @@ async function decryptAgentConfigForPublicRead(
     !doc.sourceEncryptionIv ||
     !doc.sourceEncryptionTag
   ) {
-    return await decryptAgentConfig(doc);
+    return await decryptAgentConfig(cipher, doc);
   }
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: doc.encryptedSourceConfig,
-      iv: doc.sourceEncryptionIv,
-      tag: doc.sourceEncryptionTag,
-    },
-    configEncryptionSecret(),
-  );
+  const decrypted = await cipher.decrypt("agents:encryptedSourceConfig", {
+    ciphertext: doc.encryptedSourceConfig,
+    iv: doc.sourceEncryptionIv,
+    tag: doc.sourceEncryptionTag,
+  });
   if (!decrypted) throw new Error("Failed to decrypt agent source config");
 
   return decrypted as AgentConfig;
-}
-
-async function encryptAgentConfig(
-  config: AgentConfig,
-): Promise<{ ciphertext: string; iv: string; tag: string }> {
-  return await encryptAgentConfigBlob(config, configEncryptionSecret());
 }
 
 async function handleAgentCollectionRoute(
@@ -224,13 +221,15 @@ async function handleAgentCollectionRoute(
   actor: AuditActor,
 ): Promise<Response> {
   if (req.method === "GET") {
+    const cipher = await accountCipherForAction(ctx, accountId, "read");
+
     return collectionPage("agents", req, {
       all: () =>
         ctx.runQuery(internal.agent.agents.list, { accountId: accountId }),
       item: async (record) =>
         toPublicAgentResponse(
           record,
-          await decryptAgentConfigForPublicRead(record),
+          await decryptAgentConfigForPublicRead(cipher, record),
         ),
       page: (options) =>
         ctx.runQuery(internal.agent.agents.listPage, {
@@ -261,6 +260,7 @@ async function handleAgentCollectionRoute(
     canonicalizeAgentSkillPaths(accountId, input.config);
     const config = await prepareAccountAgentConfig(
       ctx,
+      await accountCipherForAction(ctx, accountId, "write"),
       accountId,
       input.config,
     );
@@ -329,7 +329,11 @@ async function patchAgentConfigRoute(
     },
   );
   if (!existing) return jsonError(404, "Agent not found");
-  const existingConfig = await decryptAgentConfigForPublicRead(existing);
+  const cipher = await accountCipherForAction(ctx, accountId, "write");
+  const existingConfig = await decryptAgentConfigForPublicRead(
+    cipher,
+    existing,
+  );
   const patch = normalizeUpdateAgentInput(existingConfig, await req.json());
   if (patch.name !== undefined && patch.name !== existing.name) {
     const collision: Doc<"agents"> | null = await ctx.runQuery(
@@ -349,7 +353,12 @@ async function patchAgentConfigRoute(
   }
   // Before encryption: canonicalization must land in the persisted config.
   canonicalizeAgentSkillPaths(accountId, patch.config);
-  const config = await prepareAccountAgentConfig(ctx, accountId, patch.config);
+  const config = await prepareAccountAgentConfig(
+    ctx,
+    cipher,
+    accountId,
+    patch.config,
+  );
   await validateAgentReferences(ctx, accountId, patch.config);
   await ctx.runMutation(internal.agent.agents.update, {
     accountId: accountId,
@@ -394,7 +403,7 @@ async function patchAgentConfigRoute(
     ? json(
         toPublicAgentResponse(
           updated,
-          await decryptAgentConfigForPublicRead(updated),
+          await decryptAgentConfigForPublicRead(cipher, updated),
         ),
       )
     : jsonError(404, "Agent not found");
@@ -402,12 +411,15 @@ async function patchAgentConfigRoute(
 
 async function prepareAccountAgentConfig(
   ctx: ActionCtx,
+  cipher: AccountCipher,
   accountId: Id<"accounts">,
   sourceConfig: AgentConfig,
 ): Promise<PreparedAccountAgentConfig> {
   const names = [...collectEnvPlaceholderNames(sourceConfig)].sort();
   if (names.length === 0)
-    return { encrypted: await encryptAgentConfig(sourceConfig) };
+    return {
+      encrypted: await cipher.encrypt("agents:encryptedConfig", sourceConfig),
+    };
   const values: Record<string, string> = await ctx.runQuery(
     internal.account.envVars.loadValues,
     { accountId: accountId },
@@ -419,10 +431,11 @@ async function prepareAccountAgentConfig(
     throw new ClientError(`unknown env vars: ${missing.join(", ")}`);
 
   return {
-    encrypted: await encryptAgentConfig(
+    encrypted: await cipher.encrypt(
+      "agents:encryptedConfig",
       substituteAccountEnvPlaceholders(sourceConfig, values),
     ),
-    source: await encryptAgentConfig(sourceConfig),
+    source: await cipher.encrypt("agents:encryptedSourceConfig", sourceConfig),
   };
 }
 

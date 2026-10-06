@@ -7,7 +7,10 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
-import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import {
+  accountCipherForWrite,
+  hasEncryptionSecret,
+} from "./model/accountKeys";
 import { stableJson } from "./model/objects";
 import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
 import { hasReservation } from "./model/cliSyncResources";
@@ -333,15 +336,20 @@ function asRecord(value: unknown): Record<string, unknown> {
  * config-less rather than failing the whole canvas save).
  */
 async function encryptSandboxConfigFields(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
   config: Record<string, unknown>,
 ): Promise<{
   encryptedConfig: string;
   encryptionIv: string;
   encryptionTag: string;
 } | null> {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) return null;
-  const encrypted = await encryptAgentConfigBlob(config, secret);
+  if (!hasEncryptionSecret()) return null;
+  const cipher = await accountCipherForWrite(ctx, accountId);
+  const encrypted = await cipher.encrypt(
+    "sandboxConfigs:encryptedConfig",
+    config,
+  );
 
   return {
     encryptedConfig: encrypted.ciphertext,
@@ -428,7 +436,7 @@ async function materializeSandboxNode(
   const hasConfig = Object.keys(sandboxConfig).length > 0;
   const encrypted =
     changed && hasConfig
-      ? await encryptSandboxConfigFields(sandboxConfig)
+      ? await encryptSandboxConfigFields(ctx, account._id, sandboxConfig)
       : null;
   const normalized = resourceId
     ? ctx.db.normalizeId("sandboxConfigs", resourceId)
