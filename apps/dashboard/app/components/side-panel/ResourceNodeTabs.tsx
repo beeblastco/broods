@@ -31,6 +31,8 @@ import {
   machineState,
 } from "@/app/lib/machineConnection";
 import { isPlainObject } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
+import { useQuery } from "convex/react";
 import { useState } from "react";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
@@ -111,6 +113,25 @@ export function SandboxResourceDetailsTab({
     : {};
   // Convex rejects sizing, persistence and egress rules on a machine record.
   const machine = config.provider === "machine";
+  const provider =
+    typeof config.provider === "string" ? config.provider : "lambda";
+  const snapshot =
+    typeof config.snapshot === "string" ? config.snapshot : undefined;
+  const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
+  // The account's ready snapshots for this provider, pinned by provider image id.
+  // A pin set in code that is not in the list still shows, so the select is honest.
+  const snapshotOptions = [
+    { value: "none", label: "None" },
+    ...(snapshots ?? [])
+      .filter((row) => row.provider === provider && row.status === "active")
+      .map((row) => ({ value: row.externalImageId, label: row.name })),
+  ];
+  if (
+    snapshot &&
+    !snapshotOptions.some((option) => option.value === snapshot)
+  ) {
+    snapshotOptions.push({ value: snapshot, label: snapshot });
+  }
 
   function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: { ...config, ...patch } });
@@ -128,7 +149,7 @@ export function SandboxResourceDetailsTab({
             snapshot: undefined,
             memoryLimit: undefined,
           }
-        : { provider: provider, image: undefined },
+        : { provider: provider, image: undefined, snapshot: undefined },
     );
   }
 
@@ -170,7 +191,7 @@ export function SandboxResourceDetailsTab({
             { value: "machine", label: "Your computer" },
           ]}
         />
-        {config.provider === "lambda" && (
+        {provider === "lambda" && (
           <SelectField
             label="Image"
             disabled={managedByCode}
@@ -188,6 +209,21 @@ export function SandboxResourceDetailsTab({
               { value: "obscura", label: "Obscura browser" },
               { value: "browser", label: "Chromium browser" },
             ]}
+          />
+        )}
+        {(provider === "sandbox" || provider === "lambda") && (
+          <SelectField
+            label="Snapshot"
+            disabled={managedByCode}
+            value={snapshot ?? "none"}
+            onValueChange={(next) =>
+              setConfig({
+                snapshot: next === "none" ? undefined : next,
+                // A lambda snapshot replaces the image variant.
+                ...(next !== "none" ? { image: undefined } : {}),
+              })
+            }
+            options={snapshotOptions}
           />
         )}
         <SelectField

@@ -118,7 +118,7 @@ Set `snapshot` to boot a prebuilt image instead of the provider default. Bake he
 - `lambda` selects a platform MicroVM image by ARN, in the same AWS account and region as the default image. A running MicroVM cannot be captured into a new image. Its state survives idle through suspend and resume instead.
 - `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
 
-The dashboard Snapshots view shows which image each running instance booted from.
+The dashboard Snapshots view shows which image each running instance booted from. On a `sandbox` or `lambda` sandbox node, the Snapshot select pins one of the account's active snapshots for that provider.
 
 On `lambda`, `image` picks a platform image with a browser by name. It cannot be combined with `snapshot` or `fallbackProvider`.
 
