@@ -105,7 +105,7 @@ describe("sandbox config", () => {
     );
   });
 
-  it("redacts env vars, sensitive provider option names and credential headers", () => {
+  it("redacts env vars, sensitive provider option names and resolved headers", () => {
     const doc = {
       _id: "sb_1",
       _creationTime: 0,
@@ -157,7 +157,8 @@ describe("sandbox config", () => {
           authorization: "********",
           "x-api-key": "********",
           "x-auth-ref": "Bearer ${SANDBOX_TOKEN}",
-          "x-team": "ops",
+          // A sync resolves a ref whatever the header is called.
+          "x-team": "********",
         },
       },
     });
