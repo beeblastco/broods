@@ -31,8 +31,13 @@ export default function SettingsPage(): React.JSX.Element {
           />
         );
       case "deploy":
+        // Keyed by stage so a key revealed on one stage never shows on another.
         return (
-          <DeployKeysPanel projectId={projectId} stageId={activeStageId} />
+          <DeployKeysPanel
+            key={activeStageId}
+            projectId={projectId}
+            stageId={activeStageId}
+          />
         );
       case "webhooks":
         return <WebhooksPanel projectId={projectId} stageId={activeStageId} />;

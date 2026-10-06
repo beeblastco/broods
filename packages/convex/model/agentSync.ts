@@ -15,13 +15,16 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
   toNestedAgentConfig,
   type FlatPatch,
 } from "./agentConfigCodec";
+import {
+  accountCipher,
+  accountCipherForWrite,
+  hasEncryptionSecret,
+} from "./accountKeys";
 import { uniqueProjectSlug } from "../lib/slug";
 import {
   loadAgentRuntimeSecrets,
@@ -93,7 +96,7 @@ export async function backSyncCanvasFromAgentRow(
 
   // Mirror what the API caller configured (provider, model, prompt, tools)
   // onto the canvas fields, without resolved secrets.
-  const flat = await decryptAgentFlatPatch(agent);
+  const flat = await decryptAgentFlatPatch(ctx, agent);
 
   const now = Date.now();
   const configId = await ctx.db.insert("agentConfigs", {
@@ -245,7 +248,7 @@ export async function mirrorAgentRowOntoConfig(
     .first();
   if (!linkedConfig) return;
 
-  const flat = await decryptAgentFlatPatch(agent);
+  const flat = await decryptAgentFlatPatch(ctx, agent);
   // The public API just wrote this agent, so the API owns it from here on,
   // except CLI-managed configs, whose ownership the next `broods deploy`
   // re-asserts anyway.
@@ -315,17 +318,12 @@ export async function pushEncryptedConfigToAgentRow(
 ): Promise<void> {
   const config = await ctx.db.get(configId);
   if (!config?.agentId) return;
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET must be configured before syncing agent runtime config.",
-    );
-  }
   const normalized = ctx.db.normalizeId("agents", config.agentId);
   if (!normalized) return;
   const agent = await ctx.db.get(normalized);
   if (agent?.accountId !== accountId) return;
 
+  const cipher = await accountCipherForWrite(ctx, accountId);
   const variables = await loadAgentRuntimeSecrets(ctx, configId);
 
   const nested = toNestedAgentConfig({
@@ -353,17 +351,14 @@ export async function pushEncryptedConfigToAgentRow(
   // unchanged row and then rebuild the account's whole channel projection.
   const current =
     agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
-      ? await decryptAgentConfigBlob(
-          {
-            ciphertext: agent.encryptedConfig,
-            iv: agent.encryptionIv,
-            tag: agent.encryptionTag,
-          },
-          secret,
-        )
+      ? await cipher.decrypt("agents:encryptedConfig", {
+          ciphertext: agent.encryptedConfig,
+          iv: agent.encryptionIv,
+          tag: agent.encryptionTag,
+        })
       : null;
   if (current && stableJson(current) === stableJson(resolved)) return;
-  const encrypted = await encryptAgentConfigBlob(resolved, secret);
+  const encrypted = await cipher.encrypt("agents:encryptedConfig", resolved);
 
   await ctx.db.patch(normalized, {
     encryptedConfig: encrypted.ciphertext,
@@ -468,37 +463,32 @@ export async function syncAgentRowFields(
 // source blob, which keeps `${NAME}` placeholders. A row with no source only
 // has the resolved blob, and its secret-shaped values are masked first.
 async function decryptAgentFlatPatch(
+  ctx: MutationCtx,
   agent: Doc<"agents">,
 ): Promise<FlatPatch | null> {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) return null;
+  if (!hasEncryptionSecret()) return null;
+  const cipher = await accountCipher(ctx, agent.accountId);
   if (
     agent.encryptedSourceConfig &&
     agent.sourceEncryptionIv &&
     agent.sourceEncryptionTag
   ) {
-    const source = await decryptAgentConfigBlob(
-      {
-        ciphertext: agent.encryptedSourceConfig,
-        iv: agent.sourceEncryptionIv,
-        tag: agent.sourceEncryptionTag,
-      },
-      secret,
-    );
+    const source = await cipher.decrypt("agents:encryptedSourceConfig", {
+      ciphertext: agent.encryptedSourceConfig,
+      iv: agent.sourceEncryptionIv,
+      tag: agent.sourceEncryptionTag,
+    });
 
     return source ? fromNestedAgentConfig(source) : null;
   }
   if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
     return null;
   }
-  const resolved = await decryptAgentConfigBlob(
-    {
-      ciphertext: agent.encryptedConfig,
-      iv: agent.encryptionIv,
-      tag: agent.encryptionTag,
-    },
-    secret,
-  );
+  const resolved = await cipher.decrypt("agents:encryptedConfig", {
+    ciphertext: agent.encryptedConfig,
+    iv: agent.encryptionIv,
+    tag: agent.encryptionTag,
+  });
 
   return resolved ? fromNestedAgentConfig(redactConfigSecrets(resolved)) : null;
 }

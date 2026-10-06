@@ -70,23 +70,28 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-function redactSecrets(value: unknown): unknown {
+// Inside a `headers` map, or under a secret-looking key, any value but
+// `${NAME}` refs (after an optional auth scheme word) is masked: a sync
+// resolves refs into the stored config whatever the header is called.
+function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
-    return value.map(redactSecrets);
+    return value.map((entry) => redactSecrets(entry));
   }
   if (!isPlainObject(value)) {
     return value;
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      isSecretConfigKey(key) &&
-      typeof entry === "string" &&
-      !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
-        ? REDACTED_SECRET_VALUE
-        : redactSecrets(entry),
-    ]),
+    Object.entries(value).map(([key, entry]) => {
+      if (typeof entry !== "string") {
+        return [key, redactSecrets(entry, key === "headers")];
+      }
+      const secret =
+        (inHeaders || isSecretConfigKey(key)) &&
+        !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry);
+
+      return [key, secret ? REDACTED_SECRET_VALUE : entry];
+    }),
   );
 }
 

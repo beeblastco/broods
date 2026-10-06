@@ -7,6 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { Writable } from "node:stream";
 import {
   gatewayUrlForDashboard,
   readStoredAuth,
@@ -15,7 +16,8 @@ import {
   type StoredAuthConfig,
 } from "../config.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
-import { formatChoiceRow } from "./output.ts";
+import { cliFetch } from "../sync.ts";
+import { formatChoiceRow, formatWarning } from "./output.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -158,16 +160,20 @@ export async function loginWithBrowser(
         code_challenge: codeChallenge,
       });
     await assertCliAuthRouteExists(startUrl);
-    openBrowser(startUrl);
+    // Printed first, so a machine with no browser still has the link.
     console.log(`Opening ${startUrl}`);
+    openBrowser(startUrl);
     const login = await waitWithTimeout(code.promise);
     // The dashboard advertises the API base URL in the callback; the
     // exchange and all later sync/env calls go there directly.
-    const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
-    });
+    const response = await cliFetch(
+      `${login.baseUrl}/v1/account/auth/exchange`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
+      },
+    );
     if (!response.ok) {
       throw new Error(
         `Login exchange failed: ${response.status} ${await response.text()}`,
@@ -233,15 +239,28 @@ export async function promptConfirm(question: string): Promise<boolean> {
   }
 }
 
+/**
+ * Reads a secret without echoing it: readline still edits the line, but writes
+ * every keystroke to a stream that drops it.
+ */
 export async function promptSecret(label: string): Promise<string> {
-  const rl = createInterface({ input: input, output: output });
+  output.write(`${label}: `);
+  const muted = new Writable({
+    write: (_chunk, _encoding, callback): void => callback(),
+  });
+  const rl = createInterface({
+    input: input,
+    output: muted,
+    terminal: input.isTTY === true,
+  });
   try {
-    const value = await rl.question(`${label}: `);
+    const value = await rl.question("");
     if (!value) throw new Error(`${label} is required`);
 
     return value;
   } finally {
     rl.close();
+    output.write("\n");
   }
 }
 
@@ -350,10 +369,21 @@ export async function promptText(
   }
 }
 
-/** Opens `url` in the default browser, detached so the CLI never waits on it. */
+/**
+ * Opens `url` in the default browser, detached so the CLI never waits on it.
+ * Best effort: with no launcher (SSH, containers) the printed URL is the way in.
+ */
 export function openBrowser(url: string): void {
   const { command, args } = browserCommand(url);
   const child = spawn(command, args, { stdio: "ignore", detached: true });
+  child.on("error", (error): void => {
+    console.error(
+      formatWarning(
+        `Could not open a browser (${error.message}). Open the URL above to continue.`,
+        { stream: "stderr" },
+      ),
+    );
+  });
   child.unref();
 }
 
@@ -453,20 +483,19 @@ export async function waitWithTimeout<T>(
 
 /** Fails early with a hint when the dashboard has no `/cli-auth/start`. */
 async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
-  const response = await fetch(startUrl, {
+  const response = await cliFetch(startUrl, {
     method: "GET",
     redirect: "manual",
   });
   if (response.status === 404) {
     const url = new URL(startUrl);
     throw new Error(
-      `${url.origin} does not expose /cli-auth/start yet. Deploy the dashboard changes first, ` +
-        `or use --dashboard-url http://localhost:3000 with a local dashboard dev server.`,
+      `${url.origin} has no broods login page. Check that --dashboard-url points at your broods dashboard.`,
     );
   }
   if (response.status >= 500) {
     throw new Error(
-      `Dashboard CLI auth route failed: ${response.status} ${await response.text()}`,
+      `The broods login page failed: ${response.status} ${await response.text()}`,
     );
   }
 }
@@ -485,6 +514,9 @@ function callbackPort(): number {
 
 /** The dashboard's redirect: the login code and the API base URL it advertises. */
 function readLoginCallback(params: URLSearchParams): LoginCallback {
+  // The dashboard sends `error` instead of a code when it cannot log in.
+  const failure = params.get("error");
+  if (failure) throw new Error(`Login failed: ${failure}`);
   const code = params.get("code");
   if (!code) throw new Error("Login callback carried no code.");
   const baseUrl = params.get("base_url");

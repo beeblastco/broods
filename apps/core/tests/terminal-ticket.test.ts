@@ -10,7 +10,7 @@ const SECRET = "test-service-secret";
 function ticket(overrides: Partial<TerminalTicket> = {}): TerminalTicket {
   return {
     url: "ws://sandbox-node.example:8080/v1/sandboxes/sb_123/pty",
-    authorization: "Bearer sk_live_abc",
+    authorization: "Bearer bsk_live_abc",
     accountId: "acct_1",
     expiresAt: Date.now() + 60_000,
     ...overrides,
@@ -23,7 +23,7 @@ describe("terminal tickets", () => {
     const opened = openTerminalTicket(sealed, SECRET);
     expect(opened).toEqual(ticket({ expiresAt: opened?.expiresAt }));
     expect(opened?.url).toContain("/pty");
-    expect(sealed).not.toContain("sk_live_abc");
+    expect(sealed).not.toContain("bsk_live_abc");
   });
 
   test("round-trips a custom auth header (MicroVM shells use X-aws-proxy-auth)", () => {

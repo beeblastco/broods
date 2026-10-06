@@ -155,7 +155,6 @@ export function MonitoringPanel({
         onClear={clearFilters}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
-        refreshSpinning={status === "connecting"}
         refreshTitle={error ?? "Refresh logs"}
         isError={status === "error"}
       />

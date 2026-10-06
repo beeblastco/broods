@@ -42,7 +42,7 @@ test("org deletion drains account contents in scheduled batches", async () => {
       });
       await ctx.db.insert("accountRoles", {
         accountId: accountId,
-        roleId: "fp_role_test",
+        roleId: "brole_test",
         name: "reader",
         status: "active",
         policy: { version: 1, rules: [] },
@@ -73,6 +73,13 @@ test("org deletion drains account contents in scheduled batches", async () => {
         egressGb: 0,
         ingressGb: 0,
         updatedAt: now,
+      });
+      await ctx.db.insert("accountKeys", {
+        accountId: accountId,
+        keyId: "key_1",
+        kekId: "kek_1",
+        wrappedKey: "iv.sealed",
+        createdAt: now,
       });
       // Account-scoped rows no project purge reaches, more than one deletion
       // batch holds, so the drain must reschedule itself at least once.
@@ -111,6 +118,7 @@ test("org deletion drains account contents in scheduled batches", async () => {
         .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
         .collect();
       expect(envVars).toHaveLength(0);
+      expect(await ctx.db.query("accountKeys").collect()).toEqual([]);
       expect(await ctx.db.query("accountRoles").collect()).toEqual([]);
       expect(await ctx.db.query("usageMeters").collect()).toEqual([]);
       expect(await ctx.db.query("usageDays").collect()).toEqual([]);
