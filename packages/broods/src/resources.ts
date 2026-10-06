@@ -858,7 +858,7 @@ export type AgentDefinitionConfig = EnvRefString<
   policies?: readonly (PolicyResource | string)[];
   /**
    * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
-   * stage runtime key). Off by default: when unset the public endpoint
+   * runtime key). Off by default: when unset the public endpoint
    * refuses requests for this agent. Reach a private agent through an
    * internal endpoint or a channel webhook. See issue #65.
    */

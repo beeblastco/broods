@@ -59,11 +59,11 @@ export type ConfigPatch<T> = T extends readonly unknown[]
 export interface BroodsAccountClientOptions {
   /** Base URL of the broods gateway. Falls back to `BROODS_BASE_URL`, then `https://gateway.broods.app`. */
   baseUrl?: string;
-  /** Account secret used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
+  /** Account key used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
   accountSecret?: string;
   /**
    * Short-lived `fp_sts_` role session token (from {@link BroodsAccountClient.assumeRole})
-   * used as the Bearer instead of the account secret. The session can only do
+   * used as the Bearer instead of the account key. The session can only do
    * what its role's policy allows. Falls back to `BROODS_SESSION_TOKEN`.
    */
   sessionToken?: string;
@@ -167,7 +167,7 @@ export interface AccountPolicy {
 /**
  * Public account-role record returned by the roles routes. The policy uses the
  * API action namespace (`"agents:read"`, `"crons:write"`, ...); `projectId` and
- * `stageId` bound which stage runtime keys may assume the role.
+ * `stageId` bound which runtime keys may assume the role.
  */
 export interface AccountRole {
   accountId: string;
@@ -326,7 +326,7 @@ export interface SkillUploadInput {
   url?: string;
 }
 
-/** Result of `POST /v1/account/rotate-secret`. The returned `secret` is shown once; the old secret stops working immediately. */
+/** Result of `POST /v1/account/rotate-secret`. The returned `secret` is the new account key, shown once; the old key stops working immediately. */
 export interface RotateSecretResult {
   account: BroodsAccount;
   secret: string;
@@ -385,7 +385,7 @@ export function envPlaceholder(name: string): string {
 
 /**
  * The credential the environment supplies, with a role session winning over
- * the account secret. The constructor throws through this same resolution, so
+ * the account key. The constructor throws through this same resolution, so
  * callers that can run without an account credential (`broods mcp` with only a
  * stored login) probe here instead of catching the constructor.
  */
@@ -454,7 +454,7 @@ export class BroodsAccountClient {
 
   /**
    * Exchange a role for a short-lived `fp_sts_` session token. Callable with
-   * the account secret, a CLI login token, or a stage runtime key (the latter
+   * the account key, a CLI login token, or a runtime key (the latter
    * only into roles scoped to the key's own project/stage). Construct a new
    * client with `{ sessionToken: result.token }` to act as the role.
    */
@@ -483,7 +483,7 @@ export class BroodsAccountClient {
     return result;
   }
 
-  /** Rotate the account secret. The returned `secret` is shown once and the current secret stops working immediately, so persist it before the process exits. */
+  /** Rotate the account key. The returned `secret` is the new key, shown once, and the current key stops working immediately, so persist it before the process exits. */
   async rotateSecret(): Promise<RotateSecretResult> {
     const result = await this.request<RotateSecretResult>(
       "POST",

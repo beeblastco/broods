@@ -6,36 +6,39 @@ This page is for running a Broods deployment day to day. It covers what runs whe
 
 The managed service runs on one k3s cluster, deployed from the infra repo (`kubernetes/charts/releases/`). Each pod listens on port 3000.
 
-| Release                                      | Namespace       | Image                      | Replicas           | Exposed                                                |
-| -------------------------------------------- | --------------- | -------------------------- | ------------------ | ------------------------------------------------------ |
-| `gateway`, `gateway-dev`                     | `beeblast`      | `broods-gateway`           | scale freely       | `gateway.broods.app`, `gateway.dev.broods.app`         |
-| `core`, `core-dev`                           | `beeblast`      | `broods-core`              | 1                  | cluster only: `http://core.beeblast.svc.cluster.local` |
-| `dashboard`, `dashboard-dev`                 | `beeblast`      | `broods-dashboard`         | as needed          | `dashboard.broods.app`, `dashboard.dev.broods.app`     |
-| `discord-forwarder`                          | `beeblast`      | `broods-discord-forwarder` | 1, `Recreate`      | none                                                   |
-| `matrix-forwarder`                           | `beeblast`      | `broods-matrix-forwarder`  | 1, `Recreate`, PVC | cluster only, for core's sends                         |
-| `convex-prod`, `convex-dev`                  | `convex`        | self-hosted Convex         | 1                  | Convex API and site hosts                              |
-| `nats`                                       | `nats`          | NATS with JetStream        | chart default      | in-cluster `nats://`, plus a `wss://` ingress          |
-| `opa`                                        | `beeblast`      | OPA with the Broods rego   | chart default      | `opa.beeblast.co`                                      |
-| `otel-collector`, `loki`, `tempo`, `grafana` | `observability` | upstream                   | chart default      | OTLP ingress                                           |
+| Release                                      | Namespace       | Image                      | Replicas           | Exposed                                                      |
+| -------------------------------------------- | --------------- | -------------------------- | ------------------ | ------------------------------------------------------------ |
+| `gateway`, `gateway-dev`                     | `beeblast`      | `broods-gateway`           | 1, can scale       | WebSockets on `gateway.broods.app`, `gateway.dev.broods.app` |
+| `core`, `core-dev`                           | `beeblast`      | `broods-core`              | 1                  | cluster only: `http://core.beeblast.svc.cluster.local`       |
+| `dashboard`, `dashboard-dev`                 | `beeblast`      | `broods-dashboard`         | as needed          | `dashboard.broods.app`, `dashboard.dev.broods.app`           |
+| `discord-forwarder`                          | `beeblast`      | `broods-discord-forwarder` | 1, `Recreate`      | none                                                         |
+| `matrix-forwarder`                           | `beeblast`      | `broods-matrix-forwarder`  | 1, `Recreate`, PVC | cluster only, for core's sends                               |
+| `convex-prod`, `convex-dev`                  | `convex`        | self-hosted Convex         | 1                  | Convex API and site hosts                                    |
+| `nats`                                       | `nats`          | NATS with JetStream        | chart default      | cluster only: `nats://nats.nats.svc.cluster.local:4222`      |
+| `opa`                                        | `beeblast`      | OPA with the Broods rego   | chart default      | `opa.beeblast.co`                                            |
+| `otel-collector`, `loki`, `tempo`, `grafana` | `observability` | upstream                   | chart default      | OTLP ingress                                                 |
 
 ```mermaid
 flowchart LR
   Client((Client)) -->|HTTPS| Ingress[Traefik]
-  Ingress --> Gateway[gateway]
-  Gateway --> Core[core]
-  Gateway --> ConvexSite["Convex site<br/>config plane"]
+  Ingress -->|HTTP| Core[core]
+  Ingress -->|HTTP| ConvexSite["Convex site<br/>config plane"]
+  Ingress -->|WebSockets| Gateway[gateway]
+  Gateway --> Core
   Gateway --> NATS[(NATS)]
   Core --> Convex[(Convex)]
   Core --> AWS[("S3, Lambda,<br/>MicroVM")]
   Core --> OPA[OPA]
   Convex -->|"cron trigger<br/>in-cluster"| Core
-  DFwd[discord-forwarder] --> Gateway
-  MFwd[matrix-forwarder] --> Gateway
+  DFwd[discord-forwarder] --> Ingress
+  MFwd[matrix-forwarder] --> Ingress
   Core --> MFwd
 ```
 
+- Traefik is the front door. The `broods-edge` IngressRoute, generated from the route table in `apps/edge`, sends each request on the public host to core, the Convex config plane or the gateway, limits per client address, sets CORS and writes the access log. The gateway serves only health checks and the four WebSockets. A route added to core or the config plane needs a row in `apps/edge/src/routes.ts`, then the regenerated file in the infra repo.
+
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user that SST creates. The key lives in the `core-secrets` k8s secret.
-- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A run waiting for a slot keeps its conversation lease renewed, so a long queue does not expire it. A model that sends nothing for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before its first chunk, or `MODEL_CHUNK_TIMEOUT_MS` between chunks (both default 5 minutes), fails its run. Time spent inside a tool call does not count. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
+- Async runs execute in-process, capped by `MAX_INPROCESS_WORKERS`, default 8. A run waiting for a slot keeps its conversation lease renewed, so a long queue does not expire it. A model that sends nothing for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before its first chunk, or `MODEL_CHUNK_TIMEOUT_MS` between chunks (both default 5 minutes), fails its run. Time spent inside a tool call does not count, except a tool the model provider runs itself (such as its web search) on a plain model call, whose result streams back from the model. A request's work deadline is `REQUEST_TIMEOUT_BUDGET_MS`, default 10 minutes. On `SIGTERM` core drains in-process workers for up to `SHUTDOWN_DEADLINE_MS`, default 25 seconds; the managed releases set 60 seconds inside a 90-second termination grace period. Runs still going then fail with a restart error and hand their conversation leases back, so a conversation is not locked for the 15-minute lease TTL.
 - Core runs as a single replica, because the machine sandbox registry and the worker queue live in memory.
 - On boot and every 30 seconds, `apps/core/src/harness/ingress-recovery.ts` starts queued work whose conversation has no live owner. Convex promotes each queue atomically, so an overlapping pod never runs one twice.
 
@@ -51,7 +54,7 @@ sequenceDiagram
   K->>Old: SIGTERM
   Old->>Old: stopIngressRecovery, server.stop()
   Old->>Old: drain in-flight requests and in-process workers
-  alt drained before SHUTDOWN_DEADLINE_MS (25 s)
+  alt drained before SHUTDOWN_DEADLINE_MS
     Old->>Old: stop isolate pool and sandbox sweeper
   else runs still going
     Old->>CVX: interruptLiveOwners, fail runs and release leases (3 s budget)
@@ -66,7 +69,8 @@ sequenceDiagram
   end
 ```
 
-- The gateway buffers each proxied request body and refuses one over 20 MiB (`GATEWAY_MAX_REQUEST_BODY_BYTES`). A WebSocket upgrade whose token core cannot check, on a 5xx or timeout, gets `502` and does not count against `GATEWAY_AUTH_FAILURES_PER_MINUTE`, default 20. On `SIGTERM` the gateway stops listening and closes open sockets with `1012`, so clients reconnect to another pod.
+- In the cluster, Traefik limits each client address to 1200 HTTP requests a minute per router (core, the config plane, download links) and 120 WebSocket upgrades a minute, answering `429` with `Retry-After`. Channel webhooks and media links are exempt, because providers fetch from shared addresses. Traefik binds the node's ports 80 and 443 itself (`hostPort`) so it sees each client's own address; behind klipper or a load balancer without PROXY protocol, every client would share one bucket. The limit counts in memory per Traefik pod, so keep Traefik at one replica.
+- A WebSocket upgrade whose token core cannot check, on a 5xx or timeout, gets `502` and does not count against `GATEWAY_AUTH_FAILURES_PER_MINUTE`, default 20. On `SIGTERM` the gateway stops listening and closes open sockets with `1012`, so clients reconnect to another pod.
 - Core schedules nothing. The Convex crons component owns every schedule, including the account-deletion cascade. When one fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` to `BROODS_ACCOUNT_MANAGE_URL/v1/cron-runs` with `SERVICE_AUTH_SECRET`.
 - Core's sandbox sweeper releases reserved sandboxes whose conversation never came back, once an hour by default (`SANDBOX_SWEEP_INTERVAL_SECONDS`). A lease keeps two core pods from sweeping at once. It lives in core, not a Convex cron, because deleting a sandbox calls the in-cluster workdir control plane.
 - A green image build deploys nothing. `rollout.yaml` dispatches the infra workflow that rolls the pod. See [CI/CD](ci-cd.md).
@@ -93,15 +97,14 @@ Rotation:
 
 The service token never crosses the public door. Only Convex sends it, always to core's in-cluster address.
 
-- The gateway drops a client `X-Account-Id` unless `GATEWAY_FORWARD_ACCOUNT_ID=true`.
-- The gateway sets `x-broods-via-gateway` on every upstream request. Core and the config plane refuse the service token on a request that carries it. The header name is `VIA_GATEWAY_HEADER` in `packages/convex/model/serviceBridge.ts`.
-- The gateway answers `404` for `/v1/cron-runs` and `/v1/mcp-service/rpc`. `GATEWAY_DENY_INTERNAL_PATHS=false` turns that off.
+- Traefik's `broods-edge-headers` middleware drops a client `X-Account-Id` and sets `x-broods-via-gateway` on every public request. The gateway sets the same header on its own calls to core. Core and the config plane refuse the service token on a request that carries it. The header name is `VIA_GATEWAY_HEADER` in `packages/convex/model/serviceBridge.ts`.
+- Traefik refuses `/v1/cron-runs` and `/v1/mcp-service/rpc` with `403`.
 
-If Convex cannot reach core directly, fix the network rather than the flags. Run `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, and add a NetworkPolicy egress rule from the `convex` namespace if one blocks it. The flags do not restore a gateway path.
+If Convex cannot reach core directly, fix the network; there is no public path to open. Run `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, and add a NetworkPolicy egress rule from the `convex` namespace if one blocks it.
 
 ## Forwarders
 
-Discord delivers regular messages only over a Gateway WebSocket, and Matrix only over `/sync` long-polls. Each forwarder holds those connections and POSTs what arrives to the channel webhook through the gateway. Telegram, Slack, Zalo, GitHub, Linear, Pancake, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram post to a registered webhook and need no forwarder.
+Discord delivers regular messages only over a Gateway WebSocket, and Matrix only over `/sync` long-polls. Each forwarder holds those connections and POSTs what arrives to the channel webhook on the public host. Telegram, Slack, Zalo, GitHub, Linear, Pancake, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram post to a registered webhook and need no forwarder.
 
 Both share one design, and the Matrix forwarder imports the Discord forwarder's `config.ts`, `connections.ts`, `backoff.ts`, `forward.ts`, `log.ts` and `supervisor.ts`:
 
@@ -129,7 +132,7 @@ Matrix specifics:
 | Symptom                                                            | Cause and fix                                                                                                                                                                      |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Core exits at boot naming a secret                                 | One of `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `MEDIA_TICKET_SECRET`, `TERMINAL_TICKET_SECRET` is missing. Set it in the pod env                                             |
-| Config-plane routes answer `503` through the gateway               | `BROODS_CONFIG_URL` is unset on the gateway. Point it at the Convex `*.convex.site` origin                                                                                         |
+| A new config-plane or core route answers `404`, or the wrong plane | The `broods-edge` IngressRoute in the infra repo predates the route. Regenerate it with `bun run --filter @broods/edge generate kubernetes` and land it                            |
 | Crons never fire, or sandbox deletes leave reservations behind     | Convex cannot reach core with the service token. Check `BROODS_ACCOUNT_MANAGE_URL` is core's in-cluster URL, not the gateway, and that `SERVICE_AUTH_SECRET` matches on both sides |
 | Every agent config fails to decrypt                                | `ACCOUNT_CONFIG_ENCRYPTION_SECRET` differs from the value that encrypted the data. Restore the old value                                                                           |
 | `deny-all` or `restricted` `lambda` sandboxes fail to launch       | `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN` is unset on core. Set it from the `microvmEgressNetworkConnectorArn` output                                                                 |

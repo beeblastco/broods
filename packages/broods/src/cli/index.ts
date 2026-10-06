@@ -44,6 +44,7 @@ import {
   BroodsSyncClient,
   ManifestConflictError,
   type RemoteManifestResponse,
+  RouteNotMountedError,
 } from "../sync.ts";
 import {
   BroodsClient,
@@ -85,6 +86,7 @@ import {
   formatContext,
   formatNext,
   formatTarget,
+  formatWarning,
   printDeploymentTarget,
   printDiffEntries,
   printEnvSync,
@@ -170,7 +172,8 @@ ${GLOBAL_OPTIONS}`,
 
 Signs an external account in through the browser and keeps it on your
 deployment, so agents act through it. Without a type, lists the account's
-connections. Uses BROODS_ACCOUNT_SECRET when set, otherwise your broods login.
+connections. Uses the account key in BROODS_ACCOUNT_SECRET when set, otherwise
+your broods login.
 
 Types:
 ${CONNECTION_TYPE_NAMES.map((type) => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
@@ -183,7 +186,7 @@ BROODS_STAGE by design. Pass --stage to deploy anywhere else.
 
 Options:
   --prune               Allow deploy to delete undeclared remote resources
-  --rotate-key          Mint a fresh runtime API key and write it to .env.local
+  --rotate-key          Mint a fresh runtime key and write it to .env.local
 
 ${GLOBAL_OPTIONS}`,
   dev: `Usage: broods dev [--once] [options]
@@ -274,7 +277,7 @@ whose sandbox is this record. The file has the .mcp.json shape Claude Code and
 Cursor read, and it never leaves this computer.
 
 Authenticates with your \`broods login\`, like \`broods logs\`, and needs a
-deployed stage. The stage runtime key cannot open the machine socket.
+deployed stage. The runtime key cannot open the machine socket.
 
 Options:
   --cwd <dir>           Working directory for commands (default: current directory)
@@ -347,9 +350,10 @@ than a terminal:
 
 Auth comes from the environment, same as the SDK. Prefer a role session
 (BROODS_SESSION_TOKEN) so the role's policy bounds what the agent can reach;
-BROODS_ACCOUNT_SECRET is the full-tenant fallback. Mint a session with the
-assume-role tool, or with the account secret from another client. With only
-a stored \`broods login\`, the org, project and stage tools still register.
+BROODS_ACCOUNT_SECRET (the account key) is the full-tenant fallback. Mint a
+session with the assume-role tool, or with the account key from another
+client. With only a stored \`broods login\`, the org, project and stage tools
+still register.
 
 rotate-secret and delete-project stay unregistered unless
 BROODS_MCP_ALLOW_DESTRUCTIVE=1 is exported in the shell: no role policy
@@ -666,7 +670,7 @@ async function connectCommand(args: string[]): Promise<void> {
 }
 
 /**
- * The account client connections run on: the account secret when set, else
+ * The account client connections run on: the account key when set, else
  * the `broods login` token. Role sessions are refused by the route itself.
  */
 async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
@@ -1196,7 +1200,7 @@ async function deploy(args: string[]): Promise<void> {
 }
 
 /**
- * Persist the stage's recoverable runtime API key after a deploy.
+ * Persist the stage's recoverable runtime key after a deploy.
  */
 async function applyDeploymentKey(
   deployment: RemoteManifestResponse["deployment"],
@@ -1372,7 +1376,7 @@ async function dev(args: string[]): Promise<void> {
   );
 
   // Like `convex dev`: stream live agent logs alongside the resource watcher so
-  // the developer sees activity while editing. Best-effort: with no runtime API
+  // the developer sees activity while editing. Best-effort: with no runtime
   // key configured yet, it prints a hint and skips without breaking the sync.
   const logController = new AbortController();
   void streamDevLogs(args, logController.signal);
@@ -1406,8 +1410,10 @@ async function streamDevLogs(
   try {
     for await (const entry of subscribeObservabilityLogs(session, {
       backfill: 0,
+      keepReconnecting: true,
       minLevel: minLevel,
       signal: signal,
+      onReconnect: printReconnect,
     })) {
       console.log(formatObservabilityEntry(entry));
     }
@@ -1602,9 +1608,10 @@ async function getOnboardingContextOrFallback(
   try {
     return await client.getOnboarding();
   } catch (error) {
-    if (!auth.org) throw error;
+    // Only an older server falls back; a 401 or a network error is the answer.
+    if (!(error instanceof RouteNotMountedError) || !auth.org) throw error;
     printWarning(
-      "CLI onboarding endpoint is not available yet; using the org from the current login.",
+      "This broods server cannot list your orgs yet; using the org from your login.",
     );
 
     return {
@@ -2330,7 +2337,7 @@ async function syncEnvFromLocal(
   if (unresolved.length > 0) {
     printWarning(
       `${unresolved.length} referenced variable(s) with no value here or on ${target}: ` +
-        `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME>\`.`,
+        `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME> --stage ${manifest.stage}\`.`,
     );
   }
 }
@@ -2384,7 +2391,7 @@ async function resolveProjectStage(
 /**
  * The stage the logs, stream and machine commands act on, with a credential
  * for it: a 15-minute ticket minted from the `broods login` token and re-minted
- * once it nears expiry. Never the stage runtime key, which sits in frontends.
+ * once it nears expiry. Never the runtime key, which sits in frontends.
  * Project and stage come back as slugs, which the gateway paths match on.
  */
 async function openStageSession(
@@ -2433,6 +2440,15 @@ function levelHint(minLevel: LogLevel): string {
   return minLevel === "WARN" ? " (--all for INFO too)" : "";
 }
 
+/** The `onReconnect` of every live tail: stderr, so `logs --json` stays parseable. */
+function printReconnect(attempt: number, reason: string): void {
+  console.error(
+    formatWarning(`Reconnecting to live logs (attempt ${attempt}): ${reason}`, {
+      stream: "stderr",
+    }),
+  );
+}
+
 /**
  * Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`.
  * A sandbox line is raw guest output, so terminal escapes are dropped before
@@ -2468,6 +2484,7 @@ async function streamLogs(args: string[]): Promise<void> {
       backfill: 0,
       minLevel: minLevel,
       signal: controller.signal,
+      onReconnect: printReconnect,
     })) {
       console.log(formatObservabilityEntry(entry));
     }
@@ -2592,6 +2609,7 @@ async function logs(args: string[]): Promise<void> {
       minLevel: minLevel,
       ...(sandboxId ? { sandboxId: sandboxId } : {}),
       signal: controller.signal,
+      onReconnect: printReconnect,
     })) {
       if (jsonMode) {
         console.log(JSON.stringify(entry));
@@ -2893,7 +2911,7 @@ async function writeStarter(
   }
 }
 
-/** `.env.local` holds the stage runtime key, so keep it out of the repo. */
+/** `.env.local` holds the runtime key, so keep it out of the repo. */
 async function ensureEnvLocalIgnored(): Promise<void> {
   const path = resolve(process.cwd(), ".gitignore");
   const existing = await readTextIfExists(path);
@@ -3090,7 +3108,7 @@ function starterAgent(): string {
     `    system: "You are a helpful assistant.",\n` +
     `  },\n` +
     `  sandboxes: [lambdaSandbox],\n` +
-    `  // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
+    `  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key and\n` +
     `  // \`broods run\` can reach this agent. Off by default: a private agent is\n` +
     `  // only reachable via internal endpoints or channel webhooks.\n` +
     `  publicAccess: true,\n` +
@@ -3143,7 +3161,7 @@ function assertNoPreRenameConfig(command: string, args: string[]): void {
 async function mcp(): Promise<void> {
   const runtime = loadBroodsRuntimeConfig();
   // A stored login adds the org, project and stage tools; those routes live
-  // behind the CLI router, which rejects an account secret or role session.
+  // behind the CLI router, which rejects an account key or role session.
   const [{ createBroodsMcpServer }, { serveStdio }, auth] = await Promise.all([
     import("../mcp.ts"),
     import("@modelcontextprotocol/server/stdio"),

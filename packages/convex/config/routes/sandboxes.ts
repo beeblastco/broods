@@ -16,6 +16,7 @@ import {
 } from "../../model/auditEvents";
 import { toPublicSandboxConfigResponse } from "../../model/responses";
 import {
+  DEFAULT_SANDBOX_PROVIDER,
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
   type SandboxConfig,
@@ -213,7 +214,7 @@ async function decryptSandboxConfig(
   doc: Doc<"sandboxConfigs">,
 ): Promise<SandboxConfig> {
   if (!doc.encryptedConfig || !doc.encryptionIv || !doc.encryptionTag) {
-    return { provider: "sandbox", permissionMode: "ask" };
+    return { provider: DEFAULT_SANDBOX_PROVIDER, permissionMode: "ask" };
   }
   const decrypted = await decryptAgentConfigBlob(
     {
@@ -226,7 +227,7 @@ async function decryptSandboxConfig(
 
   return decrypted
     ? (decrypted as unknown as SandboxConfig)
-    : { provider: "sandbox", permissionMode: "ask" };
+    : { provider: DEFAULT_SANDBOX_PROVIDER, permissionMode: "ask" };
 }
 
 async function encryptSandboxConfig(

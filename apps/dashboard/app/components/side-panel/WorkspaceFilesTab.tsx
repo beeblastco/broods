@@ -15,7 +15,6 @@ import {
   Folder,
   FolderOpen,
   FolderUp,
-  Loader2,
   Pencil,
   RefreshCw,
   Trash2,
@@ -24,6 +23,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProps } from "react-file-icon";
 import { FileIcon, defaultStyles } from "react-file-icon";
+import { toErrorMessage } from "@/app/lib/errors";
 
 type FileRecord = {
   _id?: Id<"workspaceFiles">;
@@ -163,11 +163,7 @@ export function WorkspaceFilesTab({
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load workspace files.",
-        );
+        setError(toErrorMessage(err));
         if (!cached) setRuntimeFiles([]);
       })
       .finally(() => {
@@ -230,11 +226,7 @@ export function WorkspaceFilesTab({
           });
           await refreshRuntimeFiles(false, true);
         } catch (err) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Failed to delete workspace path.",
-          );
+          setError(toErrorMessage(err));
           await refreshRuntimeFiles(false, true);
         }
 
@@ -375,7 +367,7 @@ export function WorkspaceFilesTab({
               mimeType: file.type || undefined,
             });
           } catch (err) {
-            entryError = err instanceof Error ? err.message : "Upload failed.";
+            entryError = toErrorMessage(err);
           } finally {
             setUploading((prev) => {
               const next = new Set(prev);
@@ -388,7 +380,7 @@ export function WorkspaceFilesTab({
         if (entryError) setError(entryError);
         if (workspaceId) await refreshRuntimeFiles(false, true);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Upload failed.");
+        setError(toErrorMessage(err));
         // The folder-creation path can fail before the loop starts; clear
         // every pending path so no row is left spinning forever.
         setUploading((prev) => {
@@ -498,17 +490,17 @@ export function WorkspaceFilesTab({
           });
           await refreshRuntimeFiles(false, true);
         } catch (err) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Failed to rename workspace path.",
-          );
+          setError(toErrorMessage(err));
           await refreshRuntimeFiles(false, true);
         }
 
         return;
       }
-      await renameMut({ fileId: node._id!, newName: newName });
+      try {
+        await renameMut({ fileId: node._id!, newName: newName });
+      } catch (err) {
+        setError(toErrorMessage(err));
+      }
     },
     [
       applyRuntimeFiles,
@@ -543,22 +535,16 @@ export function WorkspaceFilesTab({
             <Button
               size="icon-xs"
               variant="ghost"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={isRefreshing}
               onClick={(e) => {
                 e.stopPropagation();
                 void refreshRuntimeFiles(true, true).catch((err) => {
-                  setError(
-                    err instanceof Error
-                      ? err.message
-                      : "Failed to refresh workspace files.",
-                  );
+                  setError(toErrorMessage(err));
                 });
               }}
             >
-              <RefreshCw
-                className={cn("size-3.5", isRefreshing && "animate-spin")}
-              />
+              <RefreshCw className="size-3.5" />
             </Button>
           </IconTooltip>
         )}
@@ -630,7 +616,7 @@ export function WorkspaceFilesTab({
       <div className="flex-1 overflow-y-auto">
         {files === undefined ? (
           <div className="flex items-center justify-center py-10">
-            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Loading…</span>
           </div>
         ) : tree.length === 0 && uploading.size === 0 ? (
           <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
@@ -678,7 +664,7 @@ export function WorkspaceFilesTab({
                   key={`uploading-${path}`}
                   className="flex h-5.5 items-center gap-1.5 pl-5 text-xs text-muted-foreground"
                 >
-                  <Loader2 className="size-3 animate-spin" />
+                  <Upload className="size-3" />
                   <span className="truncate font-mono">{name}</span>
                 </div>
               );
@@ -1066,7 +1052,7 @@ function TreeRow({
             )}
           >
             {isUploading ? (
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              <Upload className="size-3.5 text-muted-foreground" />
             ) : canWrite ? (
               <>
                 <IconTooltip label={`Rename ${node.name}`}>

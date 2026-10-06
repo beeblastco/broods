@@ -170,7 +170,7 @@ Credentials fall back to deployment env when a config omits them. Daytona reads 
 
 - Live daemons are held in memory in core, keyed per record, and mirrored to Convex for the dashboard Instances list. A heartbeat every 60 s marks a quiet computer offline.
 - One daemon holds a record. A second is closed with `4423` and a reason naming the holder's host; `--force` replaces the holder, which gets `4409`. Bad credentials close with `4401`, an unknown sandbox name with `4404`, a malformed frame with `4400`.
-- The socket accepts a login-derived stage ticket, the account secret, or a role session with `sandboxes:write` on the record. Never the stage runtime key.
+- The socket accepts a login-derived stage ticket, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key.
 - Frames are capped at 4 MiB. A computer action has 30 s, an MCP call 60 s, and a `bash` call its timeout plus 5 s.
 - Validation rejects `persistent`, `size`, `snapshot`, `memoryLimit` and any network mode other than `allow-all`, and a machine cannot back a workspace.
 

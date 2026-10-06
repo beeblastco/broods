@@ -11,6 +11,7 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
@@ -48,6 +49,7 @@ export function CreateProjectDialog({
   const router = useRouter();
   const [name, setName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -72,13 +74,17 @@ export function CreateProjectDialog({
   }, [open]);
 
   function handleOpenChange(next: boolean): void {
-    if (!next) setName("");
+    if (!next) {
+      setName("");
+      setError(null);
+    }
     onOpenChange(next);
   }
 
   async function handleCreate(): Promise<void> {
     if (!name.trim()) return;
     setIsCreating(true);
+    setError(null);
     try {
       const id = await createProject({
         name: name.trim(),
@@ -86,6 +92,8 @@ export function CreateProjectDialog({
       });
       handleOpenChange(false);
       router.push(`/${id}`);
+    } catch (err) {
+      setError(toErrorMessage(err));
     } finally {
       setIsCreating(false);
     }
@@ -112,6 +120,7 @@ export function CreateProjectDialog({
               onChange={(e) => setName(e.target.value)}
               autoFocus
             />
+            {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </div>
           <DialogFooter>
             <Button
@@ -124,7 +133,7 @@ export function CreateProjectDialog({
             </Button>
             <Button
               type="submit"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={!name.trim() || isCreating}
             >
               {isCreating ? "Creating..." : "Create"}

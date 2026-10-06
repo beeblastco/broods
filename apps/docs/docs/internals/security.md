@@ -14,7 +14,7 @@ flowchart TD
   Account --> S3["S3 objects<br/>workspaces, skills, bundles"]
 ```
 
-- The account secret is never stored. It is returned once on create or rotation; only `secretHash` is kept.
+- The account key is never stored. It is returned once on create or rotation; only `secretHash` is kept.
 - Provider credentials must be usable at runtime, so they cannot be hashed. They live inside encrypted agent config or encrypted env vars.
 - Env vars store a SHA-256 digest beside the encrypted value, so `broods env sync` and `broods diff` can compare local and remote values without revealing either.
 - Sandbox config, including `envVars`, is encrypted at rest.
@@ -46,17 +46,17 @@ Logs go through one redaction chokepoint. See [observability](observability.md#s
 
 ## Credentials
 
-| Prefix       | Credential           | Scope                                                                                          |
-| ------------ | -------------------- | ---------------------------------------------------------------------------------------------- |
-| `fp_acct_`   | Account secret       | Whole tenant                                                                                   |
-| `fp_cli_`    | CLI login token      | An org owner or admin. Re-checked against current membership on every request                  |
-| `fp_agent_`  | Stage runtime key    | One account, project, stage and endpoint. Encrypted at rest and recoverable by the owning user |
-| `fp_deploy_` | Deploy key           | One project and stage                                                                          |
-| `fp_role_`   | Role                 | Never used directly. Exchanged for a session                                                   |
-| `fp_sts_`    | Role session         | The role's policy. Default TTL 1 hour, max 12. Only the hash is stored                         |
-| `fp_dts_`    | Stage session ticket | Fifteen minutes, signed by Convex with `STAGE_TICKET_SECRET`                                   |
+| Prefix     | Credential           | Scope                                                                                          |
+| ---------- | -------------------- | ---------------------------------------------------------------------------------------------- |
+| `ask_`     | Account key          | Whole tenant                                                                                   |
+| `fp_cli_`  | CLI login token      | An org owner or admin. Re-checked against current membership on every request                  |
+| `sk_`      | Runtime key          | One account, project, stage and endpoint. Encrypted at rest and recoverable by the owning user |
+| `pdk_`     | Project key          | One project and stage                                                                          |
+| `fp_role_` | Role                 | Never used directly. Exchanged for a session                                                   |
+| `fp_sts_`  | Role session         | The role's policy. Default TTL 1 hour, max 12. Only the hash is stored                         |
+| `fp_dts_`  | Stage session ticket | Fifteen minutes, signed by Convex with `STAGE_TICKET_SECRET`                                   |
 
-Core resolves a bearer in a fixed order in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`). Only `fp_sts_` and `fp_dts_` are routed by prefix. The rest are tried as secrets, then as hashes:
+Core resolves a bearer in a fixed order in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`). `fp_sts_` and `fp_dts_` are routed by prefix and resolve as that kind or not at all. The admin secret and service token are compared next. An `ask_` or `sk_` token then goes straight to its one hash lookup, and any other token takes both lookups below, which is how a key minted under an earlier prefix keeps working until it is rotated:
 
 ```mermaid
 flowchart TD
@@ -75,16 +75,16 @@ flowchart TD
   Acct -->|no| Deny["null, 401"]
 ```
 
-Every branch that names an account also requires it to be `active`, except the account secret on `DELETE /v1/account`, which accepts a disabled account so the owner can retry a deletion. `fp_cli_` and `fp_deploy_` never reach core; the Convex config plane checks them in `packages/convex/cli/http.ts`, and `fp_cli_` also in `config/routes/roles.ts`.
+Every branch that names an account also requires it to be `active`, except the account key on `DELETE /v1/account`, which accepts a disabled account so the owner can retry a deletion. `fp_cli_` and `pdk_` never reach core; the Convex config plane checks them in `packages/convex/cli/http.ts`, and `fp_cli_` also in `config/routes/roles.ts`.
 
 Rules the code enforces:
 
 - The runtime key is meant to sit in a frontend, so it is limited further. It reaches only agents of its own stage, and another stage's `agentId` answers `404`. It needs `publicAccess: true` on the agent. It cannot send `system` or `model` overrides unless the agent sets `allowRunOverrides: true`, and gets `403 run_overrides_disabled` otherwise. With `continue: true` it re-enters only conversations the direct API opened, never a channel session. It cannot open the observability socket, because logs and traces carry every end user's chats and tool payloads.
 - A member's stage ticket (`fp_dts_`) is the dashboard's credential. It reaches every agent of its stage, `publicAccess` or not, and its `continue: true` re-enters channel sessions too, so Continue on a failed Telegram task answers back in Telegram.
-- A deploy key syncs its own stage only. Skills and hooks are account-wide by name, so a deploy key whose manifest names one that another stage manages is refused instead of replacing it. The org secret and a login token may move a name between stages. `--prune` leaves other stages' rows alone and fails when an agent or channel record still lists a policy it would remove.
-- A deploy key can set and list env vars but never read a value back. `broods env get` needs a login token or the org secret, and every reveal is recorded in `environmentVariableReveals`.
+- A project key syncs its own stage only. Skills and hooks are account-wide by name, so a project key whose manifest names one that another stage manages is refused instead of replacing it. The account key and a login token may move a name between stages. `--prune` leaves other stages' rows alone and fails when an agent or channel record still lists a policy it would remove.
+- A project key can set and list env vars but never read a value back. `broods env get` needs a login token or the account key, and every reveal is recorded in `environmentVariableReveals`.
 - `broods login` binds the one-time code to the CLI process with S256 PKCE, so a code caught by another local listener cannot be exchanged.
-- Sessions cannot mint new sessions, rotate the account secret, or touch `/v1/roles`. A stage runtime key may assume only roles pinned to its own project and stage. `status: "disabled"` on a role kills every live session.
+- Sessions cannot mint new sessions, rotate the account key, or touch `/v1/roles`. A runtime key may assume only roles pinned to its own project and stage. `status: "disabled"` on a role kills every live session.
 - Webhook signing secrets and env var values are write-only in the dashboard.
 
 ## Hosted MCP servers
@@ -117,7 +117,7 @@ Inline [code hooks](../guides/hooks.md) run in a V8 `isolated-vm` isolate. Bun c
 ## Sandboxes
 
 - Runs start from a cleared environment. Only declared `envVars` and the image's reserved vars reach them.
-- No account secret enters a sandbox. Background jobs authenticate their callback with a per-job token.
+- No account key enters a sandbox. Background jobs authenticate their callback with a per-job token.
 - Workspace mounts get one-hour STS credentials whose session policy allows only the workspace's key prefix. The `sandbox-s3mount` role itself can also read the skills bucket, but no session core mints for a sandbox includes it; skills reach a sandbox as staged copies in the workspace.
 - A mount session minted for a sandbox is attributed: its name carries the agent id on an agent-isolated mount and the account id on a mount other agents can reuse, and on the platform role it also carries `SourceIdentity` and the `broods:account` / `broods:agent` session tags, so CloudTrail shows which account made an S3 call, and which agent where the mount is one agent's alone. The role trusts only the `core-runtime` user. See [sandboxes](sandboxes.md#isolation-levels).
 - A workspace with `isolation: "agent"` gives every attached agent its own namespace, so its sandbox, S3 prefix and mount credentials are per agent. An agent cannot reach another agent's files or VM through a shared workspace unless the workspace is deliberately shared.

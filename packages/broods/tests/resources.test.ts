@@ -52,6 +52,15 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
   });
 });
 
+test("compileProject says how to scaffold a missing broods/ folder", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "broods-no-project-"));
+  tempDirs.push(cwd);
+
+  await expect(compileProject({ cwd: cwd, command: "deploy" })).rejects.toThrow(
+    `No broods/ folder in ${cwd}. Run \`broods dev\` to scaffold one.`,
+  );
+});
+
 test("compileProject accepts object-shaped resource definitions", async () => {
   const cwd = await fixtureProject(
     "",

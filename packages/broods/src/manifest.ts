@@ -4,7 +4,7 @@
 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import module from "node:module";
 import { tmpdir } from "node:os";
@@ -169,6 +169,11 @@ export async function compileProject(
   const cwd = options.cwd ?? process.cwd();
   loadBroodsRuntimeConfig(cwd);
   const root = resolve(cwd, PROJECT_DIR);
+  if (!existsSync(root)) {
+    throw new Error(
+      `No ${PROJECT_DIR}/ folder in ${cwd}. Run \`broods dev\` to scaffold one.`,
+    );
+  }
   const files = await listTypeScriptFiles(root);
   const exports = await loadExports(files);
   const config = await findConfig(exports, cwd, options.project);
@@ -725,7 +730,7 @@ function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
 function sandboxProvider(sandbox: SandboxResource): string {
   return typeof sandbox.config.provider === "string"
     ? sandbox.config.provider
-    : "sandbox";
+    : "lambda";
 }
 
 // Resource files skip the typecheck and CLI sync keeps unknown names as-is, so a
