@@ -68,10 +68,12 @@ export const runtimeKeyPrefix = internalMutation({
 
 /**
  * Rewrite `fp_role_` role ids to `brole_`, keeping the random body so a role
- * keeps its identity. Each role's sessions move in the same mutation, so a
- * live session never points at a role id that is gone. Code that pins a role
- * id must switch to the new one. Idempotent: a role already on `brole_` is
- * skipped. Paginated with a self-reschedule, like the other backfills.
+ * keeps its identity. Sessions are left alone: every session from before the
+ * cutover holds an `fp_sts_` token that core already refuses, and they expire
+ * within 12 hours. A caller assumes the role again for a `bsts_` session.
+ * Code that pins a role id must switch to the new one. Idempotent: a role
+ * already on `brole_` is skipped. Paginated with a self-reschedule, like the
+ * other backfills.
  * @returns roles migrated and skipped in this batch and whether the walk finished
  */
 export const roleIdPrefix = internalMutation({
@@ -90,15 +92,9 @@ export const roleIdPrefix = internalMutation({
         continue;
       }
 
-      const roleId = `${ROLE_ID_PREFIX}${role.roleId.slice(OLD_ROLE_ID_PREFIX.length)}`;
-      const sessions = await ctx.db
-        .query("roleSessions")
-        .withIndex("by_roleId", (q) => q.eq("roleId", role.roleId))
-        .collect();
-      for (const session of sessions) {
-        await ctx.db.patch(session._id, { roleId: roleId });
-      }
-      await ctx.db.patch(role._id, { roleId: roleId });
+      await ctx.db.patch(role._id, {
+        roleId: `${ROLE_ID_PREFIX}${role.roleId.slice(OLD_ROLE_ID_PREFIX.length)}`,
+      });
       migrated += 1;
     }
 

@@ -90,7 +90,7 @@ describe("migrations:runtimeKeyPrefix", () => {
 });
 
 describe("migrations:roleIdPrefix", () => {
-  test("rewrites fp_role_ ids in roles and their sessions, once", async () => {
+  test("rewrites fp_role_ role ids and leaves the refused sessions alone, once", async () => {
     const t = migrationTest();
     const seeded = await seed(t, 1);
     await t.run(async (ctx) => {
@@ -120,8 +120,8 @@ describe("migrations:roleIdPrefix", () => {
       isDone: true,
     });
 
-    // The batch that renames a role also renames its live sessions, so a
-    // session keeps resolving while the walk runs.
+    // Sessions keep the old id: their fp_sts_ tokens are refused before any
+    // lookup, so they only wait out their expiry.
     const roleIds = await t.run(async (ctx) => ({
       roles: (await ctx.db.query("accountRoles").collect()).map(
         (row) => row.roleId,
@@ -132,13 +132,8 @@ describe("migrations:roleIdPrefix", () => {
     }));
     expect(roleIds).toEqual({
       roles: ["brole_abc", "brole_def"],
-      sessions: ["brole_abc"],
+      sessions: ["fp_role_abc"],
     });
-    expect(
-      await t.query(internal.account.roles.resolveSession, {
-        tokenHash: "session-hash",
-      }),
-    ).toMatchObject({ roleId: "brole_abc" });
 
     expect(await t.mutation(internal.migrations.roleIdPrefix, {})).toEqual({
       migrated: 0,

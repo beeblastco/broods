@@ -154,7 +154,7 @@ bunx convex run migrations:roleIdPrefix
 ```
 
 - `runtimeKeyPrefix` replaces each stored `sk_` or `fp_agent_` runtime key with a fresh `bsk_` key, the same way a rotation does. The random part is new on purpose, so an old key left in a log cannot rebuild the live one. A batch returns `{ migrated, skipped, isDone }` and reschedules itself until the table is done.
-- `roleIdPrefix` rewrites `fp_role_` to `brole_` in `accountRoles` and moves each role's `roleSessions` in the same mutation, so a live session keeps resolving.
+- `roleIdPrefix` rewrites `fp_role_` to `brole_` in `accountRoles`. It leaves `roleSessions` alone: every session from before the release holds an `fp_sts_` token that is already refused, and it expires within 12 hours. A caller that assumed a role between the deploy and this migration assumes it again.
 - Both skip rows already on the new prefix, so a re-run is safe.
 
 Run `runtimeKeyPrefix` right after the deploy. A `broods dev` sync that reads the key just before the migration rotates it writes the old key to `.env.local`; the next `broods dev` or `broods stage use` writes the new one.
