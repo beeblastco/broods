@@ -250,7 +250,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_MCP_API_KEY: ${{ secrets.CLOUDFLARE_MCP_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -278,27 +277,24 @@ jobs:
           }
 
           # The hosted MCP runtime on Cloudflare Dynamic Workers, named and
-          # pointed at the bundle bucket by the target's SST outputs. Skipped
-          # until the environment has the Cloudflare token and the key core
-          # sends; core keeps every hosted MCP server on Lambda without it. A
-          # failure only warns, so it never stops the remaining SST targets.
+          # pointed at the bundle bucket by the target's SST outputs. Code only:
+          # infra owns its MCP_API_KEY secret, which survives each deploy.
+          # Production stays on Lambda until infra routes production core to it.
+          # A failure only warns, so it never stops the remaining SST targets.
           deploy_mcp_worker() {
-            local target_region="$1"
-            if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" || -z "${CLOUDFLARE_MCP_API_KEY:-}" ]]; then
-              echo "Cloudflare MCP runtime not configured for this environment; skipping."
+            local target_stage="$1"
+            local target_region="$2"
+            if [[ "$target_stage" == production* || -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+              echo "Cloudflare MCP runtime not deployed for $target_stage; skipping."
               return 0
             fi
-            local worker bundles secrets
+            local worker bundles
             worker="$(jq -r .cloudflareMcpWorkerName .sst/outputs.json)"
             bundles="$(jq -r .toolBundlesBucketName .sst/outputs.json)"
-            secrets="$(mktemp)"
-            jq -n --arg key "$CLOUDFLARE_MCP_API_KEY" '{MCP_API_KEY: $key}' > "$secrets"
             if ! (cd ../cloudflare-mcp && bunx wrangler deploy --name "$worker" \
-              --var "BUNDLE_ORIGIN:https://${bundles}.s3.${target_region}.amazonaws.com" \
-              --secrets-file "$secrets"); then
+              --var "BUNDLE_ORIGIN:https://${bundles}.s3.${target_region}.amazonaws.com"); then
               echo "::warning::Cloudflare MCP runtime deploy failed for $worker"
             fi
-            rm -f "$secrets"
           }
 
           ecr_login() {
@@ -353,5 +349,5 @@ jobs:
             fi
 
             deploy_target "$target_stage" "$target_region" "$target_sandbox_ready"
-            deploy_mcp_worker "$target_region"
+            deploy_mcp_worker "$target_stage" "$target_region"
           done <<< "$DEPLOY_TARGETS"

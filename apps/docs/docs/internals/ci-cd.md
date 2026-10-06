@@ -102,7 +102,7 @@ Gateway, dashboard, docs and both forwarders are dispatched in the same parallel
 
 Production deploys only to `eu-west-1`. `production_targets()` in `deploy.yaml` lists it alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM prerequisites in `ap-southeast-1`.
 
-`deploy.yaml` also deploys the [Cloudflare MCP runtime](../guides/cloudflare-mcp.md) per target with wrangler, right after that target's SST deploy, named by its `cloudflareMcpWorkerName` output and pointed at its tool-bundles bucket.
+`deploy.yaml` also deploys the [Cloudflare MCP runtime](../guides/cloudflare-mcp.md) per target with wrangler, right after that target's SST deploy, named by its `cloudflareMcpWorkerName` output and pointed at its tool-bundles bucket. It ships code only and skips production. The infra repo holds the Worker's key and writes it to both the Worker's `MCP_API_KEY` and core's `CLOUDFLARE_MCP_API_KEY`, so rotating it is one secret and one infra deploy.
 
 `deploy.yaml` also handles the regional sandbox image. When a target's `SANDBOX_IMAGE_READY_*` variable is `true` and the region's ECR repo has no `latest-arm64` image, it runs one deploy without sandbox functions to create the repo, copies the image from `SANDBOX_IMAGE_SOURCE_REGION` with `crane`, then deploys again.
 
@@ -124,7 +124,7 @@ Environment-scoped values resolve from `development` or `production` by branch.
 | `DASHBOARD_E2E_EMAIL`, `DASHBOARD_E2E_PASSWORD`, `DASHBOARD_E2E_PROJECT_ID`                           | secret, variable          | `ci`, `e2e-dashboard`                                                                    |
 | `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                       | variable, secret          | `opa-policy-check`                                                                       |
 | `DOCS_S3_BUCKET`, `DOCS_DOMAIN`, `DOCS_AWS_REGION`                                                    | variable                  | `deploy-docs`                                                                            |
-| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_MCP_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`                             | secret, variable, per env | `deploy`, the Cloudflare MCP runtime. Unset skips it, so hosted MCP stays on Lambda      |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`                                                       | secret, variable, per env | `deploy`, the Cloudflare MCP runtime code. Unset skips it, so hosted MCP stays on Lambda |
 | `ACCOUNT_*`                                                                                           | secret, variable          | `deploy` still exports these, but no step in it or `sst.config.ts` reads them            |
 
 Runtime secrets for the containers are not GitHub secrets. They live in k8s secrets referenced by the infra repo's release files, and in the Convex deployment env. See [self-hosting](self-hosting.md).

@@ -1,7 +1,7 @@
 /**
  * Dashboard-facing API for MCP servers, backed by the same `mcp` rows the CLI
- * syncs and the runtime connects to. Saves probe the server through core (in
- * the sandboxed Lambda for hosted rows) before the row is written; the tool
+ * syncs and the runtime connects to. Saves probe the server through core (on
+ * the runtime the hosted row will use, Lambda or Workers) before the row is written; the tool
  * explorer's list/call verbs ride the same service-auth bridge.
  */
 

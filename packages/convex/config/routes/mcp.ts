@@ -1,7 +1,7 @@
 /**
  * MCP server CRUD (`/v1/mcp*`): list/create on the stage-scoped
  * collection, get/patch/delete by id. A `url` registers an external server
- * core connects to; a `bundle` uploads a hosted one for the Lambda host.
+ * core connects to; a `bundle` uploads a hosted one, which the platform runs on Lambda or Workers.
  * Secrets stay in account env vars as ${NAME} refs on the header values.
  */
 
