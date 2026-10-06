@@ -36,6 +36,14 @@ const MAX_URL_LENGTH = 2048;
 /** RFC 9110 field-name token characters. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
+/** Optional row fields a declarative sync clears when its manifest drops them. */
+export const MCP_CLEARABLE_FIELDS = [
+  "allowedTools",
+  "description",
+  "headers",
+  "oauth",
+] as const;
+
 /** Header names whose values carry credentials and so must use a ${NAME} ref. */
 export const SENSITIVE_HEADER_NAME_PATTERN =
   /auth|token|secret|key|cookie|password|credential/i;

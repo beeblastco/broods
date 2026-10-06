@@ -85,16 +85,17 @@ function redactSecrets(value: unknown, inHeaders = false): unknown {
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      typeof entry === "string" &&
-      (inHeaders
+    Object.entries(value).map(([key, entry]) => {
+      if (typeof entry !== "string") {
+        return [key, redactSecrets(entry, key === "headers")];
+      }
+      const secret = inHeaders
         ? (SENSITIVE_HEADER_NAME_PATTERN.test(key) || isSecretConfigKey(key)) &&
           !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
-        : isSecretConfigKey(key) && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry))
-        ? REDACTED_SECRET_VALUE
-        : redactSecrets(entry, key === "headers"),
-    ]),
+        : isSecretConfigKey(key) && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry);
+
+      return [key, secret ? REDACTED_SECRET_VALUE : entry];
+    }),
   );
 }
 

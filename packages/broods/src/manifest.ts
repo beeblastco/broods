@@ -21,6 +21,7 @@ import {
   type Plugin,
   type StdinOptions,
 } from "esbuild";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "../../convex/model/envRefs.ts";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
@@ -81,6 +82,12 @@ type ExportedValue = {
   exportName: string;
   file: string;
   value: unknown;
+};
+
+// The auth half of an MCP server config, copied under each agent entry.
+type McpAuth = {
+  headers?: Record<string, unknown>;
+  oauth?: Record<string, unknown>;
 };
 
 type ExportedResource = {
@@ -206,14 +213,21 @@ export async function compileProject(
       (options.useRuntimeStage === false ? undefined : stageFromEnv()),
     options.command ?? "dev",
   );
-  const manifestResources = (
+  const sortedResources = (
     await Promise.all(
       resourceExports.map((entry) => toManifestResources(entry, root, reach)),
     )
   )
     .flat()
-    .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`))
-    .map(withMcpServerAuth);
+    .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
+  const mcpServers = new Map(
+    sortedResources
+      .filter((resource) => resource.kind === "mcp")
+      .map((resource) => [resource.name, resource.config as McpAuth]),
+  );
+  const manifestResources = sortedResources.map((resource) =>
+    withMcpServerAuth(resource, mcpServers),
+  );
   assertUniqueResources(manifestResources);
 
   return {
@@ -242,30 +256,33 @@ export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
   for (const resource of manifest.resources) {
-    collectEnvRefNamesFromValue(resource.config, names);
-    const config = resource.config as {
-      headers?: Record<string, unknown>;
-      mcp?: Record<string, { headers?: Record<string, unknown> }>;
-    };
-    const headerMaps =
-      resource.kind === "mcp"
-        ? [config.headers]
-        : resource.kind === "agent"
-          ? Object.values(config.mcp ?? {}).map((entry) => entry.headers)
-          : [];
-    for (const value of headerMaps.flatMap((map) => Object.values(map ?? {}))) {
-      if (typeof value !== "string") continue;
-      for (const match of value.matchAll(/\$\{([A-Z][A-Z0-9_]*)\}/g))
-        names.add(match[1]!);
-    }
+    collectEnvRefNamesFromValue(resource.config, names, false);
+    // `${NAME}` refs count where the sync resolves them: agent mcp entries,
+    // which carry each server's headers and oauth, and the server's own headers.
+    const config = resource.config as { headers?: unknown; mcp?: unknown };
+    if (resource.kind === "agent")
+      collectEnvRefNamesFromValue(config.mcp, names, true);
+    if (resource.kind === "mcp")
+      collectEnvRefNamesFromValue(config.headers, names, true);
   }
 
   return [...names].sort();
 }
 
-function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
+function collectEnvRefNamesFromValue(
+  value: unknown,
+  names: Set<string>,
+  placeholders: boolean,
+): void {
+  if (placeholders && typeof value === "string") {
+    const pattern = new RegExp(ACCOUNT_ENV_PLACEHOLDER_PATTERN.source, "g");
+    for (const match of value.matchAll(pattern)) names.add(match[1]!);
+
+    return;
+  }
   if (Array.isArray(value)) {
-    for (const entry of value) collectEnvRefNamesFromValue(entry, names);
+    for (const entry of value)
+      collectEnvRefNamesFromValue(entry, names, placeholders);
 
     return;
   }
@@ -277,7 +294,7 @@ function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
       return;
     }
     for (const entry of Object.values(record))
-      collectEnvRefNamesFromValue(entry, names);
+      collectEnvRefNamesFromValue(entry, names, placeholders);
   }
 }
 
@@ -1638,16 +1655,13 @@ async function assertServableMcpBundle(
 
 /** Run one esbuild bundle build, mapping failures to a deploy-time error. */
 async function buildBundleModule(options: {
-  entryPoint?: string;
-  stdin?: StdinOptions;
+  stdin: StdinOptions;
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
 }): Promise<string> {
   const build = await esbuild({
-    ...(options.stdin
-      ? { stdin: options.stdin }
-      : { entryPoints: [options.entryPoint!] }),
+    stdin: options.stdin,
     bundle: true,
     platform: "node",
     format: "esm",
@@ -1734,11 +1748,8 @@ async function normalizeMcpConfig(
 
   const manifestPath = relative(projectRoot, entry.file).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "MCP server");
-  // The defining module imports the SDK for defineMcp/defineAgent; a shim
-  // entrypoint picks the handler off the resource export and the stub plugin
-  // keeps the SDK client out of the bundle. Neither lives on disk: esbuild
-  // writes each module's path into the bundle, and a temp path changes the
-  // sha256 on every build, so every diff and sync re-uploads the server.
+  // An in-memory shim picks the handler off the resource export and the stub
+  // keeps the SDK out; a temp path would change the bundle sha256 every build.
   const bundle = await buildBundleModule({
     stdin: {
       contents: mcpShimSource(entry),
@@ -1804,27 +1815,13 @@ function sdkStubPlugin(): Plugin {
  */
 function withMcpServerAuth(
   resource: CliManifestResource,
-  _index: number,
-  resources: CliManifestResource[],
+  servers: Map<string, McpAuth>,
 ): CliManifestResource {
-  const mcp = (
-    resource.config as {
-      mcp?: Record<
-        string,
-        {
-          headers?: Record<string, unknown>;
-          oauth?: Record<string, unknown>;
-        }
-      >;
-    }
-  ).mcp;
-  if (resource.kind !== "agent" || !mcp) return resource;
+  if (resource.kind !== "agent") return resource;
+  const mcp = (resource.config as { mcp?: Record<string, McpAuth> }).mcp;
+  if (!mcp) return resource;
   const entries = Object.entries(mcp).map(([server, entry]) => {
-    const config = resources.find(
-      (other) => other.kind === "mcp" && other.name === server,
-    )?.config as
-      | { headers?: Record<string, unknown>; oauth?: Record<string, unknown> }
-      | undefined;
+    const config = servers.get(server);
     const own = new Set(
       Object.keys(entry.headers ?? {}).map((name) => name.toLowerCase()),
     );

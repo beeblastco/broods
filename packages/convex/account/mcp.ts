@@ -10,7 +10,12 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
+import {
+  assertMcpRow,
+  MCP_CLEARABLE_FIELDS,
+  type McpOauth,
+  type McpTransport,
+} from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
@@ -251,12 +256,7 @@ export const update = internalMutation({
     // A declarative sync names the optional fields its manifest left out.
     clear: v.optional(
       v.array(
-        v.union(
-          v.literal("allowedTools"),
-          v.literal("description"),
-          v.literal("headers"),
-          v.literal("oauth"),
-        ),
+        v.union(...MCP_CLEARABLE_FIELDS.map((field) => v.literal(field))),
       ),
     ),
   },

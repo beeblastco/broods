@@ -21,7 +21,12 @@ import {
   normalizeAccountHookUpload,
   type RequiredAccountHookUpload,
 } from "../model/accountHooks";
-import { assertMcpRow, normalizeMcpInput, type McpInput } from "../model/mcp";
+import {
+  assertMcpRow,
+  MCP_CLEARABLE_FIELDS,
+  normalizeMcpInput,
+  type McpInput,
+} from "../model/mcp";
 import { normalizeCreateCronInput } from "../model/cronRules";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
@@ -1102,9 +1107,7 @@ async function syncMcpResources(
     };
     if (current) {
       // The manifest is the whole server, so a field it dropped is cleared.
-      const clear = (
-        ["allowedTools", "description", "headers", "oauth"] as const
-      ).filter(
+      const clear = MCP_CLEARABLE_FIELDS.filter(
         (field) => input[field] === undefined && current[field] !== undefined,
       );
       // An identical patch is skipped: a write would bump updatedAt, which is
@@ -1120,7 +1123,7 @@ async function syncMcpResources(
           accountId: accountId,
           serverId: current._id,
           ...patch,
-          ...(clear.length > 0 ? { clear: clear } : {}),
+          clear: clear,
         });
       }
       ids[name] = current._id;
