@@ -116,25 +116,21 @@ it("runs a verified bundle with no secrets in reach and no path to the bundle st
   expect(bundleFetches).toBe(1);
 });
 
-// A non-200 answer is core's signal that no tool ran, so it may use Lambda.
-it("answers 502 before running anything when the bundle does not match its sha256", async (): Promise<void> => {
+// A 422 is core's signal that no tool ran and the bundle cannot load here.
+it("answers 422 before running anything when the bundle does not match its sha256", async (): Promise<void> => {
   const response = await send({
     ...batch("acct-b"),
     expectedSha256: "0".repeat(64),
   });
 
-  expect(response.status).toBe(502);
+  expect(response.status).toBe(422);
   expect(await response.text()).toContain("sha256");
 });
 
-it("answers 502 before running anything when the bundle has no fetch handler", async (): Promise<void> => {
-  const response = await send({
-    ...batch("acct-c"),
-    expectedSha256: BROKEN_SHA256,
-    bundleUrl: `${BUNDLE_ORIGIN}/account-mcp/acct-c/bundles/${BROKEN_SHA256}.mjs`,
-  });
+it("answers 422 before running anything when the bundle has no fetch handler", async (): Promise<void> => {
+  const response = await send(batch("acct-c", ["{}"], BROKEN_SHA256));
 
-  expect(response.status).toBe(502);
+  expect(response.status).toBe(422);
   expect(await response.text()).toContain("fetch handler");
 });
 
@@ -177,13 +173,14 @@ it("budgets encoded frames, escaping included, against the 16 MiB batch cap", as
 function batch(
   accountId: string,
   bodies: string[] = ["{}"],
+  sha256: string = TENANT_SHA256,
 ): Record<string, unknown> {
   return {
     mode: "mcp",
     toolName: "tools",
     accountId: accountId,
-    expectedSha256: TENANT_SHA256,
-    bundleUrl: `${BUNDLE_ORIGIN}/account-mcp/${accountId}/bundles/${TENANT_SHA256}.mjs`,
+    expectedSha256: sha256,
+    bundleUrl: `${BUNDLE_ORIGIN}/account-mcp/${accountId}/bundles/${sha256}.mjs`,
     requests: bodies.map((body, index): Record<string, unknown> => ({
       id: String(index + 1),
       mcpRequest: {

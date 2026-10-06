@@ -1,8 +1,20 @@
 /**
- * Readable text for a thrown value. A model provider reports a stream failure
- * as data rather than an exception, so the harness sees a payload where it
- * expects an Error and the one line worth reading sits nested inside it.
+ * Readable text for a thrown value, and whether a fetch failed before it
+ * reached anyone. A model provider reports a stream failure as data rather
+ * than an exception, so the harness sees a payload where it expects an Error
+ * and the one line worth reading sits nested inside it.
  */
+
+// Socket-level fetch failure codes (Bun's own names plus the Node errnos) that
+// mean the provider was never reached, as opposed to it answering with an error.
+const UNREACHABLE_ERROR_CODES = new Set([
+  "ConnectionRefused",
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "FailedToOpenSocket",
+]);
 
 /**
  * The part of a provider failure payload worth reading. `@ai-sdk/provider`
@@ -28,6 +40,16 @@ interface ProviderErrorPayload {
  * for both, so this falls back to JSON too and an unrecognised payload stays
  * legible.
  */
+/** True when a fetch failed at the socket, before reaching the provider. */
+export function isUnreachableError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    typeof err.code === "string" &&
+    UNREACHABLE_ERROR_CODES.has(err.code)
+  );
+}
+
 export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

@@ -226,25 +226,15 @@ describe("hosted MCP metering", () => {
   });
 
   it("sends a Workers-capable row to the Cloudflare runtime and meters it like Lambda", async (): Promise<void> => {
-    process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
-    process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
-    let reply = (): Response =>
+    let reply = async (): Promise<Response> =>
       new Response(
         `${JSON.stringify({ t: "final", id: "1", result: ok("cloudflare") })}\n{"t":"end"}\n`,
       );
-    const bridge = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(async (): Promise<Response> => reply(), {
-        preconnect: (): void => {},
-      }),
-    );
+    const bridge = mockBridge(async (): Promise<Response> => await reply());
     const lambda = spyOn(LambdaClient.prototype, "send");
 
     try {
-      const response = await hostedMcpFetch({
-        ...hostedRecord(),
-        workersCompatible: true,
-      })(URL, { method: "POST", body: "{}" });
-      expect(await response.text()).toBe("cloudflare");
+      expect(await callWorkersRow()).toBe("cloudflare");
       await Promise.resolve();
       const [target, init] = bridge.mock.calls[0] ?? [];
       expect(target).toBe("https://mcp.example.workers.dev/mcp");
@@ -257,16 +247,11 @@ describe("hosted MCP metering", () => {
       });
       expect(lambda).not.toHaveBeenCalled();
 
-      reply = (): Response =>
+      reply = async (): Promise<Response> =>
         new Response(
           `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
         );
-      await expect(
-        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
-          method: "POST",
-          body: "{}",
-        }),
-      ).rejects.toThrow("without an end frame");
+      await expect(callWorkersRow()).rejects.toThrow("without an end frame");
       // Answered 200, so a tool may have run: never retried on Lambda.
       expect(lambda).not.toHaveBeenCalled();
       await Promise.resolve();
@@ -283,77 +268,61 @@ describe("hosted MCP metering", () => {
   });
 
   it("runs the batch on Lambda when the Worker ran nothing, and charges only Lambda", async (): Promise<void> => {
-    process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
-    process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
-    process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
-    const refusals: (() => Promise<Response>)[] = [
+    const bridge = mockBridge(
       async (): Promise<Response> =>
         new Response("Unauthorized", { status: 401 }),
-      async (): Promise<Response> =>
-        new Response("bundle failed to load: sha256", { status: 502 }),
-      async (): Promise<Response> => {
-        throw Object.assign(new TypeError("Unable to connect"), {
-          code: "ConnectionRefused",
-        });
-      },
-    ];
-    let refuse = refusals[0]!;
-    const bridge = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(async (): Promise<Response> => await refuse(), {
-        preconnect: (): void => {},
-      }),
     );
-    const frames = new TextEncoder().encode(
-      `${JSON.stringify({ t: "final", id: "1", result: ok("lambda") })}\n{"t":"end"}\n`,
-    );
-    const lambda = spyOn(LambdaClient.prototype, "send").mockImplementation(
-      async (): Promise<{
-        EventStream: InvokeWithResponseStreamResponseEvent[];
-      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
-    );
+    const lambda = mockLambda("lambda");
 
     try {
-      for (const refusal of refusals) {
-        refuse = refusal;
-        const response = await hostedMcpFetch({
-          ...hostedRecord(),
-          workersCompatible: true,
-        })(URL, { method: "POST", body: "{}" });
-        expect(await response.text()).toBe("lambda");
-      }
-      expect(bridge).toHaveBeenCalledTimes(3);
-      expect(lambda).toHaveBeenCalledTimes(3);
+      expect(await callWorkersRow()).toBe("lambda");
+      bridge.mockImplementation(
+        workerFetch(async (): Promise<Response> => {
+          throw Object.assign(new TypeError("Unable to connect"), {
+            code: "ConnectionRefused",
+          });
+        }),
+      );
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(bridge).toHaveBeenCalledTimes(2);
+      expect(lambda).toHaveBeenCalledTimes(2);
       await Promise.resolve();
     } finally {
       bridge.mockRestore();
       lambda.mockRestore();
     }
 
-    expect(recorded).toHaveLength(3);
+    expect(recorded).toHaveLength(2);
+  });
+
+  it("sends a bundle the Worker could not load straight to Lambda after that", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("bundle failed to load: sha256", { status: 422 }),
+    );
+    const lambda = mockLambda("lambda");
+
+    try {
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(bridge).toHaveBeenCalledTimes(1);
+      expect(lambda).toHaveBeenCalledTimes(2);
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
   });
 
   it("never retries on Lambda when the Worker connection broke after sending", async (): Promise<void> => {
-    process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
-    process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
-    const bridge = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        async (): Promise<Response> => {
-          throw Object.assign(new TypeError("socket closed"), {
-            code: "ECONNRESET",
-          });
-        },
-        { preconnect: (): void => {} },
-      ),
-    );
+    const bridge = mockBridge(async (): Promise<Response> => {
+      throw Object.assign(new TypeError("socket closed"), {
+        code: "ECONNRESET",
+      });
+    });
     const lambda = spyOn(LambdaClient.prototype, "send");
 
     try {
-      await expect(
-        hostedMcpFetch({ ...hostedRecord(), workersCompatible: true })(URL, {
-          method: "POST",
-          body: "{}",
-        }),
-      ).rejects.toThrow("socket closed");
+      await expect(callWorkersRow()).rejects.toThrow("socket closed");
       expect(lambda).not.toHaveBeenCalled();
     } finally {
       bridge.mockRestore();
@@ -699,4 +668,47 @@ function hostedRecord(): McpRecord {
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
   };
+}
+
+/** One call through a Workers-capable row; the response body as text. */
+async function callWorkersRow(): Promise<string> {
+  const response = await hostedMcpFetch({
+    ...hostedRecord(),
+    workersCompatible: true,
+  })(URL, { method: "POST", body: "{}" });
+
+  return await response.text();
+}
+
+/** Point core at a stub Worker that answers with `reply`; restore the spy after. */
+function mockBridge(
+  reply: () => Promise<Response>,
+): ReturnType<typeof spyOn<typeof globalThis, "fetch">> {
+  process.env.CLOUDFLARE_MCP_URL = "https://mcp.example.workers.dev/mcp";
+  process.env.CLOUDFLARE_MCP_API_KEY = "bridge-key";
+
+  return spyOn(globalThis, "fetch").mockImplementation(workerFetch(reply));
+}
+
+/** A Lambda that answers every batch with one final frame carrying `body`. */
+function mockLambda(
+  body: string,
+): ReturnType<typeof spyOn<LambdaClient, "send">> {
+  process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+  const frames = new TextEncoder().encode(
+    `${JSON.stringify({ t: "final", id: "1", result: ok(body) })}\n{"t":"end"}\n`,
+  );
+
+  return spyOn(LambdaClient.prototype, "send").mockImplementation(
+    async (): Promise<{
+      EventStream: InvokeWithResponseStreamResponseEvent[];
+    }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+  );
+}
+
+/** `reply` shaped as the global fetch, which Bun types with `preconnect`. */
+function workerFetch(reply: () => Promise<Response>): typeof fetch {
+  return Object.assign(async (): Promise<Response> => await reply(), {
+    preconnect: (): void => {},
+  });
 }

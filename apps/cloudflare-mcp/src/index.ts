@@ -18,20 +18,24 @@ const MAX_ERROR_MESSAGE_CHARS = 256;
 const REQUEST_TIMEOUT_MS = 30_000;
 const BUNDLE_FETCH_TIMEOUT_MS = 10_000;
 /** Bundle download plus module evaluation, before the batch is answered. */
-const LOAD_TIMEOUT_MS = 10_000;
-/** Answered by the entry module itself, never by tenant code. */
-const LOAD_CHECK_PATH = "/__broods_loaded";
+const LOAD_TIMEOUT_MS = BUNDLE_FETCH_TIMEOUT_MS + 2_000;
 const END_FRAME = new TextEncoder().encode(`${JSON.stringify({ t: "end" })}\n`);
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 /** Per request into the tenant isolate. */
 const TENANT_LIMITS = { cpuMs: 5_000, subRequests: 50 };
-/** Same default-export contract as apps/lambda/child-runner.mjs. */
-const ENTRY_MODULE = `import handler from "./tenant.js";
+/**
+ * Same default-export contract as apps/lambda/child-runner.mjs, checked while
+ * the modules evaluate. `Loaded` runs no tenant code; ensureLoaded calls it.
+ */
+const ENTRY_MODULE = `import { WorkerEntrypoint } from "cloudflare:workers";
+import handler from "./tenant.js";
 const serve = handler && typeof handler.fetch === "function" ? handler.fetch.bind(handler) : handler;
+if (typeof serve !== "function") throw new Error("mcp server bundle default export must be a fetch handler (createMcpHandler)");
+export class Loaded extends WorkerEntrypoint {
+  ping() {}
+}
 export default {
   fetch(request) {
-    if (typeof serve !== "function") throw new Error("mcp server bundle default export must be a fetch handler (createMcpHandler)");
-    if (new URL(request.url).pathname === "${LOAD_CHECK_PATH}") return new Response(null, { status: 204 });
     return serve(request);
   },
 };`;
@@ -60,6 +64,11 @@ interface Env {
   MCP_API_KEY: string;
   /** Exact origin of the presigned tool-bundles S3 URLs core sends. */
   BUNDLE_ORIGIN: string;
+}
+
+/** The entry module's `Loaded` entrypoint; ensureLoaded calls it. */
+interface LoadedEntrypoint extends Rpc.WorkerEntrypointBranded {
+  ping(): void;
 }
 
 /** Hosts tenant code may not reach: this runtime and the bundle store. */
@@ -120,8 +129,8 @@ export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
  * bearer (apps/core/src/harness/mcp/hosted.ts). Each account bundle runs in
  * its own Dynamic Worker, cached by account and content hash, with no
  * bindings, no Node compatibility and egress through TenantOutbound. The
- * bundle loads before the batch is answered, so any non-200 answer means no
- * tool ran and core may run the batch on Lambda instead. The response streams
+ * bundle loads before the batch is answered: a bundle that cannot load is a
+ * 422 with no tool run, which core reruns on Lambda. The response streams
  * the NDJSON frames the Lambda runner speaks, each as soon as its request
  * settles, then `end`.
  */
@@ -176,13 +185,9 @@ export default {
     try {
       await ensureLoaded(worker);
     } catch (error) {
-      return new Response(
-        `bundle failed to load: ${error instanceof Error ? error.message : String(error)}`.slice(
-          0,
-          MAX_ERROR_MESSAGE_CHARS,
-        ),
-        { status: 502 },
-      );
+      return new Response(boundedMessage("bundle failed to load", error), {
+        status: 422,
+      });
     }
     const { readable, writable } = new TransformStream<
       Uint8Array,
@@ -209,38 +214,38 @@ async function bearerMatches(request: Request, key: string): Promise<boolean> {
   return crypto.subtle.timingSafeEqual(left!, right!);
 }
 
+/** A thrown value as one line, capped like every message a batch carries. */
+function boundedMessage(prefix: string, error: unknown): string {
+  return `${prefix}: ${error instanceof Error ? error.message : String(error)}`.slice(
+    0,
+    MAX_ERROR_MESSAGE_CHARS,
+  );
+}
+
 /** Encode a frame as one NDJSON line. */
 function encodeFrame(frame: Frame): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(frame)}\n`);
 }
 
 /**
- * Load the bundle and evaluate its modules without running a request: the
- * entry module answers LOAD_CHECK_PATH itself. Throws on a failed download, a
- * hash mismatch, code workerd refuses, or a bad default export.
+ * Load the bundle and evaluate its modules without running a request. Throws
+ * on a failed download, a hash mismatch, code workerd refuses, or a bad
+ * default export.
  */
 async function ensureLoaded(worker: WorkerStub): Promise<void> {
-  const response = await withDeadline(
-    worker
-      .getEntrypoint()
-      .fetch(new Request(`https://mcp.internal${LOAD_CHECK_PATH}`)),
+  await withDeadline(
+    worker.getEntrypoint<LoadedEntrypoint>("Loaded").ping(),
     LOAD_TIMEOUT_MS,
     "load timed out",
   );
-  if (response.status !== 204) {
-    throw new Error(`load check answered HTTP ${response.status}`);
-  }
 }
 
 /** A bounded error frame; it always fits the reserve streamFrames keeps for it. */
-function errorFrame(id: string, message: string): Frame {
+function errorFrame(id: string, error: unknown): Frame {
   return {
     t: "error",
     id: id,
-    error: `mcp server failed on the cloudflare runtime: ${message}`.slice(
-      0,
-      MAX_ERROR_MESSAGE_CHARS,
-    ),
+    error: boundedMessage("mcp server failed on the cloudflare runtime", error),
   };
 }
 
@@ -346,10 +351,7 @@ async function serveRequest(
       "run timed out",
     );
   } catch (error) {
-    return errorFrame(
-      id,
-      error instanceof Error ? error.message : String(error),
-    );
+    return errorFrame(id, error);
   }
 }
 

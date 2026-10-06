@@ -4,6 +4,7 @@
  * plane.
  */
 
+import { isUnreachableError } from "../shared/errors.ts";
 import {
   roleDenial,
   rolePrincipal,
@@ -79,17 +80,6 @@ import {
   deleteAccountSkills,
   deleteAccountBundles,
 } from "./cleanup.ts";
-
-// Socket-level fetch failure codes (Bun's own names plus the Node errnos) that
-// mean the provider was never reached, as opposed to it answering with an error.
-const UNREACHABLE_ERROR_CODES = new Set([
-  "ConnectionRefused",
-  "ECONNREFUSED",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "ENOTFOUND",
-  "FailedToOpenSocket",
-]);
 
 // Verbs that run or wake a machine. The executor below is built from the
 // stored config with no control plane, so the budget check its wrapper does
@@ -827,16 +817,6 @@ function errorResponseForError(err: unknown): Response {
 /** An error's message, or the value as a string, for logs and audit rows. */
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/** True when a fetch failed at the socket, before reaching the provider. */
-function isUnreachableError(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    "code" in err &&
-    typeof err.code === "string" &&
-    UNREACHABLE_ERROR_CODES.has(err.code)
-  );
 }
 
 /**
