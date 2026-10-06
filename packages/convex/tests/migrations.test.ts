@@ -518,8 +518,9 @@ test("pruneStaleRows clears plaintext conversation targets, deletes orphaned sec
   ).toEqual({ cleared: 0, deleted: 0, patched: 0, isDone: true });
 });
 
-test("pruneStaleRows reports the walk's totals on its last batch", async () => {
+test("pruneStaleRows reports and logs the walk's totals on its last batch", async () => {
   const tt = convexTest(schema, modules);
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
   const result = await tt.mutation(internal.migrations.pruneStaleRows, {
     table: "canvasLayouts",
@@ -530,4 +531,12 @@ test("pruneStaleRows reports the walk's totals on its last batch", async () => {
   });
 
   expect(result).toEqual({ cleared: 2, deleted: 5, patched: 1, isDone: true });
+  // `convex run` only returns the first batch, so the totals reach the
+  // operator through the deployment log.
+  expect(log).toHaveBeenCalledWith("pruneStaleRows finished", {
+    cleared: 2,
+    deleted: 5,
+    patched: 1,
+  });
+  log.mockRestore();
 });

@@ -87,6 +87,7 @@ export const migrateToEnvelope = internalMutation({
  * session, and the next channel turn pins a fresh one), deletes runtime
  * secrets whose agent config is gone, deletes used or expired CLI login codes,
  * and strips the retired `animated` flag from stored canvas edges. Idempotent.
+ * `convex run` returns only the first batch, so the last one logs the totals.
  * Never logs or returns a field value.
  * @returns targets cleared, rows deleted and layouts patched so far, and whether the whole walk finished
  */
@@ -124,6 +125,8 @@ export const pruneStaleRows = internalMutation({
         ...next,
         ...totals,
       });
+    } else {
+      console.log("pruneStaleRows finished", totals);
     }
 
     return { ...totals, isDone: next === null };
