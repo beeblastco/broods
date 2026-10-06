@@ -69,6 +69,10 @@ export class SandboxCapacityError extends Error {}
  */
 export class SandboxGoneError extends Error {}
 
+// Each sandbox's dashboard-row writes (upsert, burst, remove) in the order they
+// were queued, so a write never beats the row it bills or its removal.
+const mirrorWrites = new Map<string, Promise<void>>();
+
 // Past the exec server's own `timeout_ms`: it answers `timed_out` itself, so
 // the client deadline only covers a server that never answers.
 export const EXEC_GRACE_MS = 15_000;
@@ -184,6 +188,29 @@ export function mergeSandboxEnv(
     ...Object.fromEntries(overrides),
     ...(principal ? principalEnv(principal) : {}),
   };
+}
+
+/**
+ * Run `write` after every earlier write queued for this sandbox id. A failed
+ * write never blocks the ones behind it. Used for an ephemeral sandbox's
+ * dashboard row, so its removal cannot land before the upsert that created it.
+ */
+export function queueMirrorWrite(
+  sandboxId: string,
+  write: () => Promise<unknown>,
+): Promise<void> {
+  const queued = (mirrorWrites.get(sandboxId) ?? Promise.resolve())
+    .then(write)
+    .then(
+      () => {},
+      () => {},
+    );
+  mirrorWrites.set(sandboxId, queued);
+  void queued.then(() => {
+    if (mirrorWrites.get(sandboxId) === queued) mirrorWrites.delete(sandboxId);
+  });
+
+  return queued;
 }
 
 export function requiredWorkspacePath(

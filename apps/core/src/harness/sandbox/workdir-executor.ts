@@ -78,6 +78,7 @@ import {
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
+  queueMirrorWrite,
   SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
@@ -203,16 +204,20 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
     // An ephemeral sandbox is billable compute for the length of the call, so it
     // gets a row keyed by its id; the teardown removes it, which meters the call.
-    const mirrored = persistent
+    const accountId = persistent
       ? undefined
-      : upsertSandboxInstance(
+      : this.#config.controlPlane?.accountId;
+    if (accountId)
+      void queueMirrorWrite(sandbox.id, () =>
+        upsertSandboxInstance(
           this.#config.controlPlane,
           "sandbox",
           sandbox.id,
           sandbox.id,
           request.metadata,
           { ephemeral: true },
-        );
+        ),
+      );
 
     try {
       if (execMount)
@@ -276,11 +281,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
             });
           }),
         );
-        // Removed after the upsert lands, or a slow upsert would recreate the row.
-        const accountId = this.#config.controlPlane?.accountId;
-        if (mirrored && accountId)
+        if (accountId)
           waitUntil(
-            mirrored.then((): Promise<void> =>
+            queueMirrorWrite(sandbox.id, () =>
               removeSandboxInstance(accountId, sandbox.id),
             ),
           );
