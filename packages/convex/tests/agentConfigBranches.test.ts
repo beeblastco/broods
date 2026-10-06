@@ -9,11 +9,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { CliManifestResource } from "../cli/types";
 import type { Id } from "../_generated/dataModel";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-  type NestedAgentConfig,
-} from "../model/agentConfigCodec";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
+import type { NestedAgentConfig } from "../model/agentConfigCodec";
 import { pushEncryptedConfigToAgentRow } from "../model/agentSync";
 import schema from "../schema";
 
@@ -126,7 +123,12 @@ describe("agent config branches core reads", () => {
       policies: ["policy_1"],
       denyTools: ["bash"],
     };
-    const encrypted = await encryptAgentConfigBlob(written, SECRET);
+    const encrypted = await tt.run(async (ctx) =>
+      (await accountCipherForWrite(ctx, accountId)).encrypt(
+        "agents:encryptedConfig",
+        written,
+      ),
+    );
     // The PATCH route writes the blob, then mirrors it onto the config row.
     await tt.mutation(internal.agent.agents.update, {
       accountId: accountId,
@@ -179,13 +181,15 @@ async function runtimeConfigByName(
     throw new Error(`Agent "${name}" has no encrypted config`);
   }
 
-  return await decryptAgentConfigBlob(
-    {
-      ciphertext: row.encryptedConfig,
-      iv: row.encryptionIv,
-      tag: row.encryptionTag,
-    },
-    SECRET,
+  return await tt.run(async (ctx) =>
+    (await accountCipher(ctx, row.accountId)).decrypt(
+      "agents:encryptedConfig",
+      {
+        ciphertext: row.encryptedConfig!,
+        iv: row.encryptionIv!,
+        tag: row.encryptionTag!,
+      },
+    ),
   );
 }
 

@@ -8,6 +8,7 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
+import { assertSealedUnderCurrentKey } from "../model/accountKeys";
 import { accountIdForProject } from "../model/auditEvents";
 import {
   backSyncCanvasFromAgentRow,
@@ -55,6 +56,10 @@ export const create = internalMutation({
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
     }
+    await assertSealedUnderCurrentKey(ctx, args.accountId, [
+      args.encryptedConfig,
+      args.encryptedSourceConfig,
+    ]);
 
     // Serializable duplicate guard: racing creates conflict on this index
     // read, so the retried transaction sees the winner's row and rejects.
@@ -422,6 +427,10 @@ export const update = internalMutation({
     if (!agent || agent.accountId !== accountId) {
       throw new ClientError("Agent does not belong to the supplied accountId");
     }
+    await assertSealedUnderCurrentKey(ctx, accountId, [
+      patch.encryptedConfig,
+      patch.encryptedSourceConfig,
+    ]);
 
     if (patch.name !== undefined && patch.name !== agent.name) {
       const existing = await ctx.db

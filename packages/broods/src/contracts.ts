@@ -35,7 +35,12 @@ import type {
   CronStatus,
   UpdateCronInput,
 } from "../../../apps/core/src/shared/domain/cron.ts";
-import type { SandboxConfig } from "../../../apps/core/src/shared/domain/sandbox-config.ts";
+import type {
+  SandboxConfig,
+  SandboxExecRequest,
+  SandboxExecResponse,
+  SandboxProvider,
+} from "../../../apps/core/src/shared/domain/sandbox-config.ts";
 import type { WorkspaceConfig } from "../../../apps/core/src/shared/domain/workspace-config.ts";
 import type { PolicyDocument } from "../../../apps/core/src/shared/domain/policy.ts";
 import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channel-record.ts";
@@ -98,6 +103,12 @@ export type {
   UpdateCronInput,
   WorkspaceConfig,
 };
+
+// The sandbox exec contract. `SandboxProvider` is every `config.provider` a
+// sandbox accepts; the exec pair is what a `custom` provider's server speaks:
+// `POST <endpoint>/exec` takes a `SandboxExecRequest` and answers a
+// `SandboxExecResponse`.
+export type { SandboxExecRequest, SandboxExecResponse, SandboxProvider };
 
 export type ProjectDoc = Doc<"projects">;
 export type StageDoc = Doc<"stages">;

@@ -3,6 +3,7 @@ import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { connections } from "./connections.ts";
+import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
@@ -26,6 +27,7 @@ export const verifyCases: readonly VerifyCase[] = [
   autoCompaction,
   machineSandbox,
   ownBucketSandbox,
+  customSandbox,
   trailingSlash,
   edgeHeaders,
   manifestSync,

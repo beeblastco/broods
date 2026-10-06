@@ -4,19 +4,23 @@
  * is unchanged. The public projection lives in ./responses.ts.
  */
 
+import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
+import { normalizeHeaders } from "./mcp";
 import { isPlainObject, isStringRecord } from "./objects";
+import {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+  type SandboxProvider,
+} from "./sandboxProviders";
 import { assertStorageEndpoint } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
-export const SANDBOX_PROVIDERS = [
-  "sandbox",
-  "lambda",
-  "e2b",
-  "daytona",
-  "vercel",
-  "machine",
-] as const;
+export {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+  type SandboxProvider,
+} from "./sandboxProviders";
 
 /** The provider a config without one runs on: AWS MicroVM, until `sandbox` has hosts everywhere. */
 export const DEFAULT_SANDBOX_PROVIDER: SandboxProvider = "lambda";
@@ -53,8 +57,6 @@ const LAMBDA_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
   "workspaceRoot",
 ]);
-
-export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
 
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
 
@@ -146,9 +148,13 @@ export function workspaceSandboxLimits(
 
 /**
  * @param value the raw config value
+ * @param stored the config an update merges into, when there is one
  * @returns the normalized sandbox config
  */
-export function normalizeSandboxConfig(value: unknown): SandboxConfig {
+export function normalizeSandboxConfig(
+  value: unknown,
+  stored?: SandboxConfig,
+): SandboxConfig {
   if (value == null) {
     return {
       provider: DEFAULT_SANDBOX_PROVIDER,
@@ -188,15 +194,19 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
       "config.fallbackProvider must differ from config.provider",
     );
   }
-  if (fallbackProvider === "machine") {
-    throw new ClientError("config.fallbackProvider cannot be machine");
+  // A machine is one computer, and a custom server's endpoint lives in
+  // `options`, which does not carry over to the fallback.
+  if (fallbackProvider && STATELESS_SANDBOX_PROVIDERS.has(fallbackProvider)) {
+    throw new ClientError(
+      `config.fallbackProvider cannot be ${fallbackProvider}`,
+    );
   }
   if (fallbackProvider !== undefined && config.persistent === true) {
     throw new ClientError(
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
     );
   }
-  assertMachineFields(config, provider);
+  assertStatelessProviderFields(config, provider);
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
@@ -207,7 +217,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     assertNetworkEnforceable(runsOn, network);
     assertResourceLimits(config, runsOn);
   }
-  assertEnvVarsAndOptions(config, provider);
+  assertEnvVarsAndOptions(config, provider, stored);
 
   return buildNormalizedConfig(
     config,
@@ -258,6 +268,7 @@ export function normalizeUpdateSandboxConfigInput(
     "config" in value
       ? normalizeSandboxConfig(
           mergeConfigObjects(existingConfig, asObject(value.config)),
+          existingConfig,
         )
       : existingConfig;
 
@@ -283,9 +294,43 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
+// A custom server is reached by one URL and nothing else, so the endpoint is
+// the one required option. A `${NAME}` token or header resolves on a code sync
+// only (core refuses one left over); a placeholder URL is never accepted.
+function assertCustomOptions(
+  options: Record<string, unknown>,
+  storedHeaders: unknown,
+): void {
+  if (typeof options.endpoint !== "string") {
+    throw new ClientError(
+      "config.options.endpoint is required for the custom provider: the https URL of your sandbox server",
+    );
+  }
+  const endpoint = assertPublicHttpsUrl(
+    options.endpoint,
+    "config.options.endpoint",
+  );
+  // Core appends `/exec` to the string, so anything after the path is lost.
+  if (endpoint.search || endpoint.hash) {
+    throw new ClientError(
+      "config.options.endpoint must not carry a query or fragment",
+    );
+  }
+  if (options.token !== undefined) {
+    requireString(options.token, "config.options.token");
+  }
+  if (options.headers !== undefined) {
+    normalizeHeaders(
+      options.headers,
+      isStringRecord(storedHeaders) ? storedHeaders : undefined,
+    );
+  }
+}
+
 function assertEnvVarsAndOptions(
   config: Record<string, unknown>,
   provider: SandboxProvider,
+  stored: SandboxConfig | undefined,
 ): void {
   if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
     throw new ClientError(
@@ -298,19 +343,8 @@ function assertEnvVarsAndOptions(
   if (config.options !== undefined) {
     validateProviderOptions(provider, config.options);
   }
-}
-
-function assertMachineFields(
-  config: Record<string, unknown>,
-  provider: SandboxProvider,
-): void {
-  if (provider !== "machine") return;
-  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
-    if (config[field] !== undefined) {
-      throw new ClientError(
-        `config.${field} does not apply to the machine provider`,
-      );
-    }
+  if (provider === "custom") {
+    assertCustomOptions(config.options ?? {}, stored?.options?.headers);
   }
 }
 
@@ -319,7 +353,7 @@ function assertNetworkEnforceable(
   network: SandboxNetworkConfig,
 ): void {
   if (
-    (provider === "e2b" || provider === "machine") &&
+    (provider === "e2b" || STATELESS_SANDBOX_PROVIDERS.has(provider)) &&
     network.mode !== "allow-all"
   ) {
     throw new ClientError(
@@ -406,6 +440,21 @@ function assertRuntimes(value: unknown): void {
     throw new ClientError(
       `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
     );
+  }
+}
+
+// A stateless provider is never sized, snapshotted or reserved by Broods.
+function assertStatelessProviderFields(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
+  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+    if (config[field] !== undefined) {
+      throw new ClientError(
+        `config.${field} does not apply to the ${provider} provider`,
+      );
+    }
   }
 }
 

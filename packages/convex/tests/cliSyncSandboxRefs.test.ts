@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CanvasEdge, CanvasNode } from "../canvas";
-import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
+import { accountCipher } from "../model/accountKeys";
 import { rewriteIdsToNames, rewriteResourceRefs } from "../model/cliSync";
 import schema from "../schema";
 
@@ -161,14 +161,13 @@ describe("cli sync sandbox refs", () => {
     const stored = await tt.run(async (ctx) => {
       const doc = await ctx.db.query("sandboxConfigs").first();
 
-      return await decryptAgentConfigBlob(
-        {
-          ciphertext: doc!.encryptedConfig!,
-          iv: doc!.encryptionIv!,
-          tag: doc!.encryptionTag!,
-        },
-        "test-config-secret",
-      );
+      const cipher = await accountCipher(ctx, doc!.accountId);
+
+      return await cipher.decrypt("sandboxConfigs:encryptedConfig", {
+        ciphertext: doc!.encryptedConfig!,
+        iv: doc!.encryptionIv!,
+        tag: doc!.encryptionTag!,
+      });
     });
 
     expect(stored).toEqual({ provider: "lambda", size: "xsmall" });
