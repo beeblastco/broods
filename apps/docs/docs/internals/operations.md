@@ -82,7 +82,7 @@ Four secrets, one job each. None falls back to another. Core refuses to start wi
 | Secret                   | Job                                                       | Set on                   |
 | ------------------------ | --------------------------------------------------------- | ------------------------ |
 | `SERVICE_AUTH_SECRET`    | Service bearer (with `X-Account-Id`) and the cron trigger | core, Convex env         |
-| `STAGE_TICKET_SECRET`    | Signs and verifies `fp_dts_` stage session tickets        | Convex env (signs), core |
+| `STAGE_TICKET_SECRET`    | Signs and verifies `bdts_` stage session tickets          | Convex env (signs), core |
 | `TERMINAL_TICKET_SECRET` | Seals and opens sandbox terminal tickets                  | core (seals), gateway    |
 | `MEDIA_TICKET_SECRET`    | Seals and opens `/v1/media/{ticket}` links                | core                     |
 
@@ -143,6 +143,21 @@ Matrix specifics:
 | Matrix agent cannot read encrypted rooms after a redeploy          | The crypto store was lost. Put `MATRIX_STORE_DIR` on a persistent volume, then log the account in again as a new device                                                            |
 | Image built but pods still run the old version                     | The rollout job failed or `INFRA_DISPATCH_TOKEN` is missing. Check the `rollout` job of the build workflow and the infra run it names                                              |
 | `broods logs` or the dashboard stream stops after about 15 minutes | The stage ticket expired and could not be renewed. The CLI mints a new one before each reconnect from its login, so re-run `broods login` if the login itself expired              |
+
+## Credential prefix cutover
+
+Every Broods credential now starts with `b` (`bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_`, `bsts_`, `bdts_`, `brole_`). Core and the config plane route a bearer by prefix and refuse any other one without a lookup, so the old `sk_`, `ask_`, `pdk_` and `fp_*` credentials get `401` the moment the release is live. There is no compatibility path. After the deploy reaches a stage, run the two migrations against it:
+
+```sh
+bunx convex run migrations:runtimeKeyPrefix
+bunx convex run migrations:roleIdPrefix
+```
+
+- `runtimeKeyPrefix` decrypts each stored runtime key, swaps `sk_` or `fp_agent_` for `bsk_` and keeps the random part, then rewrites the hash, hint and at-rest blob. A batch returns `{ migrated, skipped, isDone }` and reschedules itself until the table is done.
+- `roleIdPrefix` rewrites `fp_role_` to `brole_` in `accountRoles`, then `roleSessions`.
+- Both skip rows already on the new prefix, so a re-run is safe.
+
+Account keys, project keys and CLI logins cannot be migrated: their stored hash covers the old prefix and the plaintext is gone. Owners rotate the account key in the dashboard (an admin can use `POST /v1/accounts/{accountId}/rotate-secret`), create new project keys and run `broods login` again. Deployed apps update `BROODS_API_KEY` to the `bsk_` key; `broods dev`, `broods deploy` and `broods stage use` rewrite `.env.local`. Role sessions, stage tickets and login codes are short-lived and just expire. The user-facing note is in [Security](../guides/security.md#credentials).
 
 ## Drift cleanup
 

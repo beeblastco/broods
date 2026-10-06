@@ -18,7 +18,7 @@ Every request sends `Authorization: Bearer <credential>`.
 | `/v1/*` config routes                              | Account key, or a role session within its policy      |
 | Logs and traces socket                             | Stage session ticket only. The runtime key is refused |
 
-The runtime key only reaches agents with `publicAccess: true` in its own stage. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md).
+The runtime key only reaches agents with `publicAccess: true` in its own stage. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md). Every credential starts with `b` (`bsk_`, `bask_`, ...). A key from before that prefix gets `401`; [Security](../guides/security.md#credentials) says how to replace it.
 
 ## Run an agent
 

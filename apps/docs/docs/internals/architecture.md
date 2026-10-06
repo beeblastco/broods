@@ -242,18 +242,18 @@ sequenceDiagram
 
 ## Credentials
 
-| Credential           | Prefix    | Verified by                                                                                      | Scope                                                                   |
-| -------------------- | --------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| Runtime key          | `sk_`     | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
-| Stage session ticket | `fp_dts_` | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
-| Account key          | `ask_`    | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
-| Role session         | `fp_sts_` | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
-| CLI login            | `fp_cli_` | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
-| Project key          | `pdk_`    | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
-| Admin secret         | none      | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
-| Service token        | none      | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
-| Terminal ticket      | sealed    | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
-| Per-job token        | none      | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
+| Credential           | Prefix  | Verified by                                                                                      | Scope                                                                   |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Runtime key          | `bsk_`  | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
+| Stage session ticket | `bdts_` | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
+| Account key          | `bask_` | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
+| Role session         | `bsts_` | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
+| CLI login            | `bcli_` | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
+| Project key          | `bpdk_` | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
+| Admin secret         | none    | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
+| Service token        | none    | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
+| Terminal ticket      | sealed  | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
+| Per-job token        | none    | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
 
 Channel webhooks use each provider's own signature or secret, checked by the adapter. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
 

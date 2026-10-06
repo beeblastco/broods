@@ -46,41 +46,45 @@ Logs go through one redaction chokepoint. See [observability](observability.md#s
 
 ## Credentials
 
-| Prefix     | Credential           | Scope                                                                                          |
-| ---------- | -------------------- | ---------------------------------------------------------------------------------------------- |
-| `ask_`     | Account key          | Whole tenant                                                                                   |
-| `fp_cli_`  | CLI login token      | An org owner or admin. Re-checked against current membership on every request                  |
-| `sk_`      | Runtime key          | One account, project, stage and endpoint. Encrypted at rest and recoverable by the owning user |
-| `pdk_`     | Project key          | One project and stage                                                                          |
-| `fp_role_` | Role                 | Never used directly. Exchanged for a session                                                   |
-| `fp_sts_`  | Role session         | The role's policy. Default TTL 1 hour, max 12. Only the hash is stored                         |
-| `fp_dts_`  | Stage session ticket | Fifteen minutes, signed by Convex with `STAGE_TICKET_SECRET`                                   |
+| Prefix   | Credential           | Scope                                                                                          |
+| -------- | -------------------- | ---------------------------------------------------------------------------------------------- |
+| `bask_`  | Account key          | Whole tenant                                                                                   |
+| `bcli_`  | CLI login token      | An org owner or admin. Re-checked against current membership on every request                  |
+| `bsk_`   | Runtime key          | One account, project, stage and endpoint. Encrypted at rest and recoverable by the owning user |
+| `bpdk_`  | Project key          | One project and stage                                                                          |
+| `brole_` | Role                 | Never used directly. Exchanged for a session                                                   |
+| `bsts_`  | Role session         | The role's policy. Default TTL 1 hour, max 12. Only the hash is stored                         |
+| `bdts_`  | Stage session ticket | Fifteen minutes, signed by Convex with `STAGE_TICKET_SECRET`                                   |
 
-Core resolves a bearer in a fixed order in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`). `fp_sts_` and `fp_dts_` are routed by prefix and resolve as that kind or not at all. The admin secret and service token are compared next. An `ask_` or `sk_` token then goes straight to its one hash lookup, and any other token takes both lookups below, which is how a key minted under an earlier prefix keeps working until it is rotated:
+Every Broods credential starts with `b`, so a person or a secret scanner can tell it from another vendor's key; `.gitleaks.toml` carries a rule for them. Core resolves a bearer in a fixed order in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`). `bsts_` and `bdts_` are routed by prefix and resolve as that kind or not at all. The admin secret and service token are compared next. A `bask_` or `bsk_` token then goes straight to its one hash lookup. Any other token, a key minted under an old prefix included, is refused without a lookup. The config plane routes the same way, and `cli/http.ts` adds `bcli_` and `bpdk_`:
 
 ```mermaid
 flowchart TD
-  Bearer["Authorization: Bearer token"] --> Sts{"fp_sts_ prefix?"}
+  Bearer["Authorization: Bearer token"] --> Sts{"bsts_ prefix?"}
   Sts -->|yes| Role["roleSessions hash lookup<br/>kind: role"]
-  Sts -->|no| Dts{"fp_dts_ prefix?"}
+  Sts -->|no| Dts{"bdts_ prefix?"}
   Dts -->|yes| Ticket["open with STAGE_TICKET_SECRET<br/>kind: deployment, stageTicket"]
   Dts -->|no| Admin{"equals ADMIN_ACCOUNT_SECRET?"}
   Admin -->|yes| AdminCtx["kind: admin"]
   Admin -->|no| Svc{"equals SERVICE_AUTH_SECRET<br/>and no x-broods-via-gateway?"}
   Svc -->|yes| SvcCtx["account from X-Account-Id<br/>kind: account, viaServiceToken"]
-  Svc -->|no| Key{"sha256 in agentDeployments?"}
-  Key -->|yes| Deploy["runtime key<br/>kind: deployment"]
-  Key -->|no| Acct{"secretHash in accounts?"}
+  Svc -->|no| Ask{"bask_ prefix?"}
+  Ask -->|yes| Acct{"secretHash in accounts?"}
   Acct -->|yes| AcctCtx["kind: account"]
-  Acct -->|no| Deny["null, 401"]
+  Ask -->|no| Bsk{"bsk_ prefix?"}
+  Bsk -->|yes| Key{"sha256 in agentDeployments?"}
+  Key -->|yes| Deploy["runtime key<br/>kind: deployment"]
+  Bsk -->|no| Deny["null, 401"]
+  Acct -->|no| Deny
+  Key -->|no| Deny
 ```
 
-Every branch that names an account also requires it to be `active`, except the account key on `DELETE /v1/account`, which accepts a disabled account so the owner can retry a deletion. `fp_cli_` and `pdk_` never reach core; the Convex config plane checks them in `packages/convex/cli/http.ts`, and `fp_cli_` also in `config/routes/roles.ts`.
+Every branch that names an account also requires it to be `active`, except the account key on `DELETE /v1/account`, which accepts a disabled account so the owner can retry a deletion. `bcli_` and `bpdk_` never reach core; the Convex config plane checks them in `packages/convex/cli/http.ts`, and `bcli_` also in `config/routes/roles.ts`.
 
 Rules the code enforces:
 
 - The runtime key is meant to sit in a frontend, so it is limited further. It reaches only agents of its own stage, and another stage's `agentId` answers `404`. It needs `publicAccess: true` on the agent. It cannot send `system` or `model` overrides unless the agent sets `allowRunOverrides: true`, and gets `403 run_overrides_disabled` otherwise. With `continue: true` it re-enters only conversations the direct API opened, never a channel session. It cannot open the observability socket, because logs and traces carry every end user's chats and tool payloads.
-- A member's stage ticket (`fp_dts_`) is the dashboard's credential. It reaches every agent of its stage, `publicAccess` or not, and its `continue: true` re-enters channel sessions too, so Continue on a failed Telegram task answers back in Telegram.
+- A member's stage ticket (`bdts_`) is the dashboard's credential. It reaches every agent of its stage, `publicAccess` or not, and its `continue: true` re-enters channel sessions too, so Continue on a failed Telegram task answers back in Telegram.
 - A project key syncs its own stage only. Skills and hooks are account-wide by name, so a project key whose manifest names one that another stage manages is refused instead of replacing it. The account key and a login token may move a name between stages. `--prune` leaves other stages' rows alone and fails when an agent or channel record still lists a policy it would remove.
 - A project key can set and list env vars but never read a value back. `broods env get` needs a login token or the account key, and every reveal is recorded in `environmentVariableReveals`.
 - `broods login` binds the one-time code to the CLI process with S256 PKCE, so a code caught by another local listener cannot be exchanged.
