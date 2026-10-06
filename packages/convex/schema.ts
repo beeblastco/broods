@@ -1054,8 +1054,9 @@ export const runtimeConversationCoordinatorsFields = {
   agentId: v.string(),
   conversationKey: v.string(),
   // Where a channel session replies, and the rows core rebuilds its config
-  // from on re-entry. `agentConfig` is legacy: never written any more, and a
-  // row still holding it reads as no session. Purge it, then remove it.
+  // from on re-entry. `agentConfig` is optional only so rows from before the
+  // refs still validate; nothing writes it, and such a target fails the
+  // `getConversationTarget` return check. Remove it with the data reset.
   channelTarget: v.optional(
     v.object({
       channelName: v.string(),
@@ -1110,8 +1111,8 @@ export const runtimeIngressEnvelopesFields = {
   // config and one-turn system, never the previous owner's. The config itself
   // is rebuilt from the ref at dispatch; it never sits here with its secrets.
   configRef: v.optional(ingressConfigRefValidator),
-  // Written by a core pod from before this rollout, never read. Cleared on
-  // every terminal patch; remove once no live envelope predates the rollout.
+  // Optional only so rows from before `configRef` still validate; nothing
+  // reads or writes it. Remove it with the data reset.
   agentConfig: v.optional(v.any()),
   ephemeralSystem: v.optional(v.array(v.any())),
   appliedMode: v.optional(ingressModeValidator),
