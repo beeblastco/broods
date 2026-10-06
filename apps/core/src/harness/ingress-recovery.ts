@@ -46,7 +46,6 @@ function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
   return {
     accountId: entry.accountId,
     agentId: entry.agentId,
-    agentConfig: entry.applied.agentConfig ?? {},
     conversationKey: entry.conversationKey,
     publicConversationKey: publicConversationKeyFromScoped(
       entry.conversationKey,

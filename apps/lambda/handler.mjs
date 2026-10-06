@@ -13,8 +13,14 @@
  * boundary. Same-UID, so keep the execution role empty.
  *
  * Event: { mode: "mcp", toolName, tenantId, expectedSha256,
- * bundleUrl | bundleSourceB64, requests: [{ id, mcpRequest }] }. Core builds it
- * in apps/core/src/harness/mcp/hosted.ts (McpHostPayload); the two roll together.
+ * bundleUrl | bundleSourceB64, requests: [{ id, mcpRequest: { method,
+ * headers, body } }] }. Core builds it in
+ * apps/core/src/harness/mcp/hosted.ts (McpHostPayload); the two roll together.
+ * Every `mcpRequest.headers` carries the calling agent as `X-Broods-Agent-Id`
+ * and, when the requester is known, `X-Broods-Principal` (base64url JSON of
+ * the delegation chain), so a bundle can authorize per agent. They ride each
+ * request, not the batch: one batch is one agent, but its calls come from
+ * different requesters.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */

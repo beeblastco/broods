@@ -14,7 +14,8 @@ import {
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
-import { logError, logInfo } from "../shared/log.ts";
+import { delegatedChain, runPrincipal } from "../shared/domain/principal.ts";
+import { collectSecretValues, logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
   getObservabilityContext,
@@ -724,6 +725,16 @@ export class SubagentCoordinator {
       trigger: this.parentSession.trigger,
       persist: task.persistent,
       policyDelivery: this.parentSession.policyDelivery,
+      // The child acts as its own agent, delegated to by the parent's chain.
+      principal: this.parentSession.principal
+        ? runPrincipal(
+            {
+              accountId: this.parentSession.principal.accountId,
+              agentId: task.agentId,
+            },
+            delegatedChain(this.parentSession.principal),
+          )
+        : undefined,
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
@@ -926,7 +937,6 @@ export class SubagentCoordinator {
           eventId: next.eventId,
           resuming: true,
           inheritedContext: false,
-          ...(next.agentConfig ? { agentConfig: next.agentConfig } : {}),
         },
         subagentParent,
         publisher,
@@ -966,7 +976,7 @@ export class SubagentCoordinator {
     const transferred = await this.dispatchNextIngress(childSession, {
       accountId: requireParentAccountId(this.parentSession),
       agentId: task.agentId,
-      agentConfig: task.agentConfig,
+      subagentConfig: task.agentConfig,
       conversationKey: task.conversationKey,
       publicConversationKey: task.publicConversationKey,
       endpointId: this.parentSession.endpointId,
@@ -1010,7 +1020,6 @@ export class SubagentCoordinator {
         publicConversationKey: task.publicConversationKey,
         statusUrl: subagentStatusPath(task),
       },
-      agentConfig: task.agentConfig,
     });
     if (
       admission.outcome !== "owner" ||
@@ -1326,13 +1335,16 @@ function createSubagentPublisher(
     return undefined;
   }
 
-  return new LiveNatsPublisher({
-    accountId: requireParentAccountId(parentSession),
-    agentId: task.agentId,
-    conversationKey: task.publicConversationKey,
-    eventId: task.taskId,
-    connectionId: task.taskId,
-  });
+  return new LiveNatsPublisher(
+    {
+      accountId: requireParentAccountId(parentSession),
+      agentId: task.agentId,
+      conversationKey: task.publicConversationKey,
+      eventId: task.taskId,
+      connectionId: task.taskId,
+    },
+    collectSecretValues(task.agentConfig),
+  );
 }
 
 function requireParentAccountId(session: Session): string {

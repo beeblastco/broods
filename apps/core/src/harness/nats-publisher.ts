@@ -5,7 +5,12 @@
  */
 
 import { headers as natsHeaders } from "nats.ws";
-import { logError } from "../shared/log.ts";
+import {
+  logError,
+  redactWithRunSecrets,
+  runSecretValues,
+} from "../shared/log.ts";
+import { getObservabilityContext } from "../shared/otel.ts";
 import {
   ensureResponseStream,
   getSharedNatsConn,
@@ -29,14 +34,32 @@ const TRUNCATED_FRAME_KEPT_FIELDS = [
   "toolName",
   "eventId",
 ] as const;
+// The frame's structure: never scrubbed, so a generated id that happens to
+// contain a secret substring still matches its stream. Every other field is.
+const STRUCTURAL_FRAME_FIELDS = new Set<string>([
+  "type",
+  "approvalId",
+  ...TRUNCATED_FRAME_KEPT_FIELDS,
+]);
 
 export class LiveNatsPublisher implements NatsPublisher {
   private connectionPromise: Promise<NatsConnection> | null = null;
   private streamReady: Promise<void> | null = null;
   private readonly subject: string;
   private sequence = 0;
+  // The scrub list and the context secrets it was built from: rebuilt only
+  // when the run swaps its context, not for every token.
+  private scrubValues: string[] | null = null;
+  private scrubValuesFor: readonly string[] | undefined;
 
-  constructor(private readonly headers: NatsEventHeaders) {
+  /**
+   * @param secretValues the run's resolved secrets, as `collectSecretValues`
+   *   gathers them; the stream is retained, so they never reach it in clear
+   */
+  constructor(
+    private readonly headers: NatsEventHeaders,
+    private readonly secretValues: readonly string[] = [],
+  ) {
     this.subject = streamResponseSubject(
       headers.accountId,
       headers.agentId,
@@ -75,7 +98,7 @@ export class LiveNatsPublisher implements NatsPublisher {
       hdrs.set("Nats-Msg-Id", `${this.headers.eventId}:${this.sequence}`);
       connection.publish(
         this.subject,
-        this.encodeWithinLimit(connection, data),
+        this.encodeWithinLimit(connection, this.redactPayload(data)),
         { headers: hdrs },
       );
     } catch (err) {
@@ -118,6 +141,29 @@ export class LiveNatsPublisher implements NatsPublisher {
     }
 
     return ENCODER.encode(JSON.stringify(this.envelope(truncated)));
+  }
+
+  /**
+   * The frame with everything but its structure scrubbed against the run's
+   * secrets. The run adds its sandbox and workspace secrets to the
+   * observability context once it starts, so those are read at publish time.
+   */
+  private redactPayload(
+    data: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const contextSecrets = getObservabilityContext()?.secretValues;
+    if (!this.scrubValues || contextSecrets !== this.scrubValuesFor) {
+      this.scrubValues = [...runSecretValues(), ...this.secretValues];
+      this.scrubValuesFor = contextSecrets;
+    }
+    const safe: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(data)) {
+      safe[field] = STRUCTURAL_FRAME_FIELDS.has(field)
+        ? value
+        : redactWithRunSecrets(value, this.scrubValues);
+    }
+
+    return safe;
   }
 
   private envelope(data: Record<string, unknown>): NatsStreamEvent {

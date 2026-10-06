@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
+import { defineSandbox, env } from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
 // Resolve the SDK entrypoint relative to this test file so generated fixtures
@@ -471,6 +472,24 @@ export const curated = defineSandbox({
       }),
     }),
   );
+});
+
+// The validator takes a credential header only as an env ref, so the type has to.
+test("defineSandbox takes env() as a custom server's credential header", () => {
+  const fleet = defineSandbox({
+    name: "fleet",
+    provider: "custom",
+    network: { mode: "allow-all" },
+    options: {
+      endpoint: "https://sandbox.example.com",
+      headers: { authorization: env("SANDBOX_AUTH"), "x-team": "ops" },
+    },
+  });
+
+  expect(fleet.config.options?.headers).toEqual({
+    authorization: { __beeblastEnv: true, name: "SANDBOX_AUTH" },
+    "x-team": "ops",
+  });
 });
 
 test("compileProject rejects provider-native workspace storage before upload", async () => {

@@ -19,15 +19,12 @@ import {
   type QueryCtx,
 } from "../_generated/server";
 import { authKit, deriveName } from "../auth";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "../model/agentConfigCodec";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
 import { accountDoc } from "../account/accounts";
 import { RUNTIME_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
@@ -341,7 +338,7 @@ export const revealKeyForStage = query({
     if (!deployment) return null;
 
     return {
-      apiKey: await decryptApiKey(deployment),
+      apiKey: await decryptApiKey(ctx, deployment),
       createdAt: deployment.createdAt,
       createdBy: deployment.createdBy,
       lastUsedAt: deployment.lastUsedAt,
@@ -462,14 +459,14 @@ export async function ensureStageDeployment(
       projectSlug: args.projectSlug,
       stageSlug: args.stageSlug,
       keyHint: existing.keyHint,
-      rawApiKey: await decryptApiKey(existing),
+      rawApiKey: await decryptApiKey(ctx, existing),
     };
   }
 
   const rawApiKey = generateDeploymentKey();
   const apiKeyHash = await sha256Hex(rawApiKey);
   const keyHint = deploymentKeyHint(rawApiKey);
-  const encryptedKey = await encryptApiKey(rawApiKey);
+  const encryptedKey = await encryptApiKey(ctx, args.accountId, rawApiKey);
   const now = Date.now();
 
   if (existing) {
@@ -524,20 +521,22 @@ export async function ensureStageDeployment(
   };
 }
 
-async function decryptApiKey(deployment: {
-  apiKeyCiphertext: string;
-  apiKeyIv: string;
-  apiKeyTag: string;
-}): Promise<string> {
-  const decoded = await decryptAgentConfigBlob(
-    {
-      ciphertext: deployment.apiKeyCiphertext,
-      iv: deployment.apiKeyIv,
-      tag: deployment.apiKeyTag,
-    },
-    encryptionSecret(),
-  );
-  const value = (decoded as { value?: unknown } | null)?.value;
+async function decryptApiKey(
+  ctx: QueryCtx | MutationCtx,
+  deployment: {
+    accountId: Id<"accounts">;
+    apiKeyCiphertext: string;
+    apiKeyIv: string;
+    apiKeyTag: string;
+  },
+): Promise<string> {
+  const cipher = await accountCipher(ctx, deployment.accountId);
+  const decoded = await cipher.decrypt("agentDeployments:apiKeyCiphertext", {
+    ciphertext: deployment.apiKeyCiphertext,
+    iv: deployment.apiKeyIv,
+    tag: deployment.apiKeyTag,
+  });
+  const value = decoded?.value;
 
   if (typeof value !== "string")
     throw new Error("Stored runtime key is invalid");
@@ -549,33 +548,25 @@ function deploymentKeyHint(token: string): string {
   return `${RUNTIME_KEY_PREFIX}…${token.slice(-4)}`;
 }
 
-async function encryptApiKey(rawApiKey: string): Promise<{
+async function encryptApiKey(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  rawApiKey: string,
+): Promise<{
   apiKeyCiphertext: string;
   apiKeyIv: string;
   apiKeyTag: string;
 }> {
-  const blob = await encryptAgentConfigBlob(
-    { value: rawApiKey },
-    encryptionSecret(),
-  );
+  const cipher = await accountCipherForWrite(ctx, accountId);
+  const blob = await cipher.encrypt("agentDeployments:apiKeyCiphertext", {
+    value: rawApiKey,
+  });
 
   return {
     apiKeyCiphertext: blob.ciphertext,
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,
   };
-}
-
-/** Secret for AES-GCM encrypting the runtime key at rest (shared with env vars). */
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime keys",
-    );
-  }
-
-  return secret;
 }
 
 /** Stable opaque endpoint handle for a stage's runtime API. */
@@ -598,7 +589,7 @@ function generateDeploymentKey(): string {
 /** Record a dashboard deployment mutation without storing runtime keys. */
 async function recordDeploymentAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: {
     accountId: Id<"accounts">;
     projectId: Id<"projects">;
@@ -608,7 +599,7 @@ async function recordDeploymentAudit(
     summary: string;
   },
 ): Promise<void> {
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: input.accountId,
     projectId: input.projectId,
     stageId: input.stageId,

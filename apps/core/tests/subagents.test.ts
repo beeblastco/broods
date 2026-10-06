@@ -1272,6 +1272,8 @@ describe("SubagentCoordinator", () => {
       conversationKey:
         "acct:account_1:agent:agent_child:api:subagent-persistent-1",
       publicConversationKey: "subagent-persistent-1",
+      // A queued control carries no config ref: it runs on the child's config.
+      subagentConfig: persistentChildTask().agentConfig,
     });
     // No live parent turn to inject into, so it must not run in-process.
     expect(takeNextIngress).not.toHaveBeenCalled();

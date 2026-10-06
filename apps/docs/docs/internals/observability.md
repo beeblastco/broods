@@ -90,7 +90,7 @@ Every top-level run is its own trace, labelled by what started it. `task` is a r
 - A root that ends cleanly but leaves something open closes as `needs_input`, when it is blocked on the person (an open question or approval), or `waiting`, when work still has to settle (a subagent, an async tool, a background job). `task.waiting_on` says which one: `question`, `approval`, `subagent` or `tool`. OTel only has ok and error, so Tempo keeps the state in `task.state` and the gateway restores it on backfill.
 - The Tracing tab lists one row per request, not per trace. The runs one request started nest under its first run: the passes that share its `task.id`, the runs an answer or finished job resumed (`task.root_id`), and its subagents (`parent.trace_id`). A wait row sits between a run that closed on something open and the next run. The row's status is the request's: Running, Waiting, Needs input, Done or Failed. A Done request with a subagent still running reads Waiting, and failed tool calls show as a count even when the run recovered.
 - A failed `task` or `cron` root has a Continue button that posts `continue: true` for its agent and scoped conversation key.
-- Config mutations write to Convex `configAuditEvents`, which the dashboard Settings Audit Logs tab reads.
+- Config mutations and run lifecycle write to the Convex `auditEvents` ledger, read through `GET /v1/audit`; see [security](security.md#audit-ledger).
 
 ## Sandbox output
 

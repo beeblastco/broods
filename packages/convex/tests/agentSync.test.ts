@@ -3,10 +3,8 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import {
-  encryptAgentConfigBlob,
-  type NestedAgentConfig,
-} from "../model/agentConfigCodec";
+import { accountCipherForWrite } from "../model/accountKeys";
+import type { NestedAgentConfig } from "../model/agentConfigCodec";
 import { ensureAgentsRowForConfig } from "../model/agentSync";
 import schema from "../schema";
 
@@ -92,15 +90,21 @@ async function seedConfig(
     source?: NestedAgentConfig;
   },
 ): Promise<null> {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET!;
-  const resolved = await encryptAgentConfigBlob(args.config, secret);
-  const source = args.source
-    ? await encryptAgentConfigBlob(args.source, secret)
-    : null;
-  const agent = await tt.run(async (ctx) => ctx.db.get(args.agentId));
+  const { accountId, resolved, source } = await tt.run(async (ctx) => {
+    const agent = await ctx.db.get(args.agentId);
+    const cipher = await accountCipherForWrite(ctx, agent!.accountId);
+
+    return {
+      accountId: agent!.accountId,
+      resolved: await cipher.encrypt("agents:encryptedConfig", args.config),
+      source: args.source
+        ? await cipher.encrypt("agents:encryptedSourceConfig", args.source)
+        : null,
+    };
+  });
 
   return await tt.mutation(internal.agent.agents.update, {
-    accountId: agent!.accountId,
+    accountId: accountId,
     agentId: args.agentId,
     encryptedConfig: resolved.ciphertext,
     encryptionIv: resolved.iv,

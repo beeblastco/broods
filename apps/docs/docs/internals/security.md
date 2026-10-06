@@ -20,25 +20,39 @@ flowchart TD
 - Sandbox config, including `envVars`, is encrypted at rest.
 - The workspace, skills, tool-bundles and MicroVM artifact buckets block public access. `denyUnlessProjectPrincipal()` in `apps/core/sst.config.ts` denies `s3:*` to every principal except the stage's `sandbox-s3mount`, `microvm-build` and `microvm-execution` roles, the `core-runtime` IAM user the core pods use, the `convex-aws` role the config plane assumes, the GitHub Actions deploy roles, and the account root.
 
-## Config encryption
+## Encryption at rest
 
 ```mermaid
 sequenceDiagram
   participant API as config plane
-  participant Crypto as AES-256-GCM
+  participant Keys as accountKeys
   participant CVX as Convex
   participant Core as core
 
-  API->>Crypto: encrypt with ACCOUNT_CONFIG_ENCRYPTION_SECRET
-  Crypto->>CVX: ciphertext + iv + auth tag
+  API->>Keys: unwrap the account DEK with the KEK
+  API->>CVX: AES-256-GCM(DEK, aad = account:table:field)
   Core->>CVX: load the selected agent
-  Core->>Crypto: decrypt
-  Core->>Core: verify webhooks, call providers
+  Core->>Keys: wrapped keys (cached 5 min)
+  Core->>Core: unwrap, decrypt, verify webhooks, call providers
 ```
 
-- AES-256-GCM encrypts config before the Convex write. The key is the SHA-256 of `ACCOUNT_CONFIG_ENCRYPTION_SECRET` (`src/shared/domain/agent-config.ts`); the config plane writes the same blob with Web Crypto.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is plain runtime env on core and on the Convex deployment, and both must hold the same value. Rotating it needs a re-encryption migration.
-- Core decrypts only when it needs a selected agent's runtime settings.
+Envelope encryption, one codec for both sides (`packages/convex/model/envelope.ts`):
+
+- Every account owns a 32-byte data encryption key (DEK), minted on its first write and stored in `accountKeys` wrapped under the key encryption key (KEK). The KEK is derived from `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; each key row records the `kekId` (first 8 hex of SHA-256 of the secret) it was wrapped under, so a KMS-backed KEK can replace the derived one later without a schema change.
+- A stored blob is AES-256-GCM under the DEK with `${accountId}:${table}:${field}` as additional data, and its `ciphertext` column reads `v2:<keyId>:<base64url>`. A ciphertext cannot be moved to another tenant, row kind or column, and names the key that opens it. The `iv` and `tag` columns are unchanged.
+- Encrypted columns: `agents.encryptedConfig` and `encryptedSourceConfig`, the same two on `sandboxConfigs`, `environmentVariables.ciphertext`, `accountEnvVars.ciphertext`, `agentRuntimeSecrets.ciphertext`, `agentDeployments.apiKeyCiphertext`, `channelEndpoints.tokenCiphertext`, `connections.ciphertext` and `auditSinks.encryptedSecret`.
+- `environmentVariables.valueDigest` is HMAC-SHA256 under the DEK, so a dump of the table cannot be brute-forced against short values. The CLI still compares plain SHA-256: `listEnvBySecretHash` computes that per request from the decrypted value.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is plain runtime env on core and on the Convex deployment, and both must hold the same value. It takes a comma-separated list: the first entry wraps new keys, every entry unwraps.
+- The cipher under the codec is swappable: Convex runs it on Web Crypto, core on the synchronous `node:crypto` (`src/shared/node-aead.ts`), which keeps a per-turn decrypt off a thread hop. The format is the same, so a blob sealed by either opens with the other.
+- Convex builds the keyring once per request (`accountCipher*` in `model/accountKeys.ts`) and never caches it across requests. Core caches unwrapped keys per account for five minutes (`src/shared/convex/account-keys.ts`) and refreshes once when a row names a key it has not seen.
+
+### Rotation runbook
+
+All three run with `bunx convex run` against the deployment, as the deployment admin. None has a UI. Each one is paginated with a self-reschedule and idempotent; call it with no continuation arguments and wait for the scheduled batches to drain. The value a call returns covers its first batch only, so `isDone: false` is the normal answer. A batch that throws stops the walk and shows as a failed scheduled function.
+
+1. **Legacy rows, once per deployment.** Blobs written before envelope encryption have no `v2:` prefix and still decrypt through the legacy branch in `envelope.ts`. Run `bunx convex run migrations:migrateToEnvelope` on dev and on production; it mints a key for every account that has none and rewrites every legacy blob under it. Each call returns `skipped`, the running count of rows whose project has no account yet; those stay legacy. Once both have run and `skipped` is zero, the legacy branch can be deleted. A legacy blob also opens under the whole unsplit env value, so a secret that holds a comma or outer whitespace keeps working after deploy; run this step before changing that value, since its pieces are what the list is read as from now on.
+2. **Rotate one account's DEK.** `bunx convex run account/keys:rotateAccountKey '{"accountId": "<id>"}'` mints a new key, which every write uses from that moment, rewrites every blob of the account under it table by table, then retires the older keys. Calling it again before it finishes, or after a batch failed, resumes the same rotation, and only the walk that began under the newest key retires the older ones. A retired key opens nothing, so a config that an HTTP action sealed under the old key is refused with a `409` and the caller retries under the new one.
+3. **Rotate the KEK.** Core and Convex pick up an env change at different moments, so the new secret goes in last before it goes first. Set `old,new` on both and deploy, so each side can unwrap under either. Then set `new,old` on both, run `bunx convex run account/keys:rewrapAllKeys`, and once the batches drain check that no `accountKeys` row still carries the old `kekId`. Only then drop `old` and deploy again. No blob is rewritten; only the wrapped keys change. Legacy blobs are keyed by the secret itself, so finish step 1 before dropping the secret they were written under.
 
 Reads recursively redact secret-like field names such as `token`, `secret`, `privateKey` and `apiKey` as `********`, including inside tool config. Sending `********` back in a patch keeps the stored value.
 
@@ -129,6 +143,58 @@ More detail is in [sandboxes](sandboxes.md#security-review-notes-2026-09).
 ## Outbound requests
 
 Core checks user-supplied URLs before it sends credentials to them. That covers MCP `url` and OAuth `tokenUrl`, lifecycle webhook `url`, channel `apiUrl` overrides, and storage `endpoint`. They must be public `https`, and private, loopback, link-local and metadata addresses are refused. MCP and webhook delivery do not follow redirects.
+
+## Audit ledger
+
+Every account has one append-only ledger in Convex (`auditEvents`, written only through `appendAuditEvent` in `packages/convex/model/auditEvents.ts`). It holds config mutations from the config plane, dashboard and CLI sync, plus two runtime rows: `run.completed` and `tool.denied`. A run is audited once, when it finishes: the usage write (`internal.usage.recordTaskUsage`) appends the `run.completed` row (status, `startedAt`, duration, step and tool counts, token totals) in the same mutation, so the per-turn Convex call budget is unchanged. There is no `run.started` row, and a run cut off at pod shutdown writes no usage row and no ledger row (the ingress settle runs on every run, so it cannot tell a cut-off apart without a flag). `tool.denied` is appended by core when an enforcing policy stops a tool. Rows never carry tool input, config blobs or secrets; `detailsJson` is capped at 8 KB.
+
+```mermaid
+flowchart LR
+  Head["auditChainHeads<br/>seq, hash"] -->|read, then patch| Append["appendAuditEvent"]
+  Append -->|seq+1, prevHash = head.hash| Row["auditEvents row<br/>hash = sha256(canonical JSON)"]
+  Row -->|GET /v1/audit?since| Reader
+  Row -->|every 10 min, HMAC signed| Sink["auditSinks webhook"]
+  Sink -->|2xx| Watermark["exportedSeq"]
+  Row -->|older than auditRetentionDays| Prune["pruneExpired"]
+  Watermark -->|floor when a sink exists| Prune
+```
+
+- Chain: each row stores `seq` (per account, gapless at append), `prevHash` and `hash`. The hash is sha256 over the canonical JSON (keys sorted by UTF-16 code unit, no whitespace) of every row field but `hash`: `accountId`, `seq`, `prevHash`, `at`, `actor`, `action`, `resource`, `summary`, `detailsJson`, `projectId`, `stageId` and `traceId`. An optional field the row does not have is left out of the JSON, never written as `null`. The head row is read and patched in the same mutation, so Convex OCC serializes concurrent appends and two writers cannot take the same `seq`.
+- Verify: `GET /v1/audit/verify` (internal query `audit.ledger.verifyChain`) recomputes every hash and link over a range, 1000 rows per call, and `ok` covers only `checkedFrom` to `checkedTo`. Stored rows are gapless from the oldest kept row to the head, so a row missing at the start of a range is reported at its `seq`, while rows below the oldest kept row are a pruned prefix and are not. Without `toSeq` the last row must match the head, so a deleted tail is reported at the first missing `seq`. Editing a row breaks its own hash; re-hashing it breaks the next row's `prevHash`.
+- Export: `PUT /v1/audit/sink` stores one webhook per account, the secret sealed under the account's envelope key. The `export audit events` cron posts the rows past `exportedSeq` as JSON arrays of up to 200, at most 10 batches per sink per tick, each with `X-Broods-Signature: sha256=<hmac>`, the same shape as lifecycle webhooks, and advances the watermark on each 2xx. Sinks export side by side with a 10 second timeout, so one receiver cannot hold up another account's export. The url is held to public `https` by the same `assertPublicHttpsUrl` the rest of the config plane uses.
+- Retention: `pruneExpired` sweeps every account with a ledger and deletes rows older than the account's `auditRetentionDays` (90 by default, settable through `PATCH /v1/account`). When the account has a sink, `exportedSeq` is a floor: a row the sink has not exported is never dropped, however old. The head row is never deleted, and rows go oldest first with no gap, so the kept range always verifies from its oldest row to the head.
+- Access: the account secret, or a role with `audit:read` for the ledger and `audit:write` for the sink. Setting `auditRetentionDays` takes `audit:write` on top of `account:write`, since it decides when rows are deleted.
+
+## Agent principal and run tokens
+
+Every run acts as one agent of one account, never "as the account". Core builds a `Principal` (`apps/core/src/shared/domain/principal.ts`) where the `Session` is constructed: `{ kind: "agent", accountId, agentId, chain }`. The chain records who asked, oldest first:
+
+| Run                                             | Chain                                                                      |
+| ----------------------------------------------- | -------------------------------------------------------------------------- |
+| Channel turn                                    | `[{ kind: "user", id, name?, channel }]` from the adapter's identity       |
+| Direct API                                      | `[{ kind: "api", keyKind: "account" \| "deployment" }]`, set by the router |
+| Cron firing                                     | `[{ kind: "api", keyKind: "cron" }]`                                       |
+| Subagent, or a run started by session messaging | the parent's chain, then `{ kind: "agent", agentId: parent }`              |
+| Requester not known                             | no chain                                                                   |
+
+Core never guesses a link. A queued envelope rebuilt after the request is gone, an async-tool continuation and a channel re-entry without a stored sender all run with no chain, and so does every run they delegate to. The ledger row then has no `actor.chain`, the span has no `principal.chain` and an MCP request has no `X-Broods-Principal`. The ledger is hash-chained, so a guessed link could never be corrected.
+
+The link shape is one validator, `principalLinkValidator` in `packages/convex/model/principal.ts`, so core and the ledger cannot drift. The principal appears in four places:
+
+- OPA input: `input.principal` next to the flat `agentId`, `userId` and `userRoles` fields. The rego resolves dotted paths, so a rule can condition on `principal.chain[0].kind` with no engine change.
+- Audit ledger: `run.completed` (appended by the usage write, which now takes `principalChain`) and `tool.denied` rows carry `actor.chain`. The row hash already covers `actor`, so the chain is tamper-evident like the rest.
+- Root span: `principal.agentId` and `principal.chain` (`user:U1>agent:a1`) on `agent.task`, `agent.cron` and `agent.subtask`.
+- Sandbox env and MCP requests, below.
+
+Run tokens (`brt_…`) let sandbox code read its agent's runs. A token is stateless: base64url JSON of `{ accountId, agentId, exp }`, HMAC-SHA256 signed with a key derived from `STAGE_TICKET_SECRET` by HKDF-SHA256 (empty salt, info `broods-run-token`, 32 bytes). No new secret, and the purpose separation means a run token can never open a stage ticket. The payload is signed, not encrypted, and sandbox code can read it, so it carries the two ids and nothing core does not check on the way back in: no chain, no user id, no display name. A display name stays on the ledger and the OPA input, and never enters an MCP header either. Log and span redaction strips `brt_` bearers like the other prefixed credentials. Its TTL is the worker budget (`WORKER_TIMEOUT_BUDGET_MS`) plus five minutes, capped at two hours. Core mints one lazily, on the first sandbox exec of a run, so the per-turn Convex budget is untouched and a run with no exec never signs one.
+
+A run token resolves on core to auth kind `agent`. It may `GET /v1/runs/{runId}` for its own agent's runs, and nothing else. Every other core route, `POST /v1/runs` included, answers 403 `run_token_scope`; the config plane and the CLI routes answer 401 `run tokens cannot reach the config plane` on the prefix alone; the machine socket and the account verbs refuse it.
+
+Not yet: starting runs with a run token. A run started that way would run on the agent's stored config, so it first needs to inherit the holder's narrowing (channel record `denyTools` and policies, a parent's policies, the cron flag), a depth cap on self-delegation, and the holder's stage scope.
+
+Sandbox code reads its identity from the `bash` exec env (the file tools run the harness's own scripts and get none): `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID` and, when core knows its public base (`PUBLIC_BASE_URL`), `BROODS_BASE_URL`, the name the SDK and CLI already read. `mergeSandboxEnv` lays them over both the account `envVars` and the per-call env, and the four names are in `RESERVED_SANDBOX_ENV_KEYS`, so nothing an account configures can spoof them. They ride each exec, never a sandbox's create-time env, because a persistent sandbox outlives the run that created it. Background jobs get none on any provider: a detached job outlives the run and its token. `mergeSandboxEnv` drops the four names from the account `envVars` as well as the per-call env, so a configured `BROODS_BASE_URL` never stands in where core sets none.
+
+Remote MCP servers (`http` and `hosted` transports) receive `X-Broods-Agent-Id` on every request and, when the chain is known, `X-Broods-Principal` (base64url JSON of the chain without display names, the calling agent last). The hosted path forwards them inside each `requests[].mcpRequest.headers` of the Lambda payload, per request rather than per batch because one batch mixes calls from different agents; the bundle reads them off the synthesized `Request`. A row or config header of either name is dropped in any case, since the wire would join it with the real one. They are kept out of the tool-listing cache key, so a listing is still shared across callers.
 
 ## Limits
 

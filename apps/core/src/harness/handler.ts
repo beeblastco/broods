@@ -36,10 +36,18 @@ import {
   type CronRunRecord,
 } from "../shared/domain/cron.ts";
 import {
+  channelPrincipalChain,
+  delegatedChain,
+  directPrincipalChain,
+  runPrincipal,
+} from "../shared/domain/principal.ts";
+import {
   booleanEnv,
   getHarnessPublicUrl,
   positiveIntegerEnv,
+  WORKER_TIMEOUT_BUDGET_MS,
 } from "../shared/env.ts";
+import { toErrorMessage } from "../shared/errors.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -48,7 +56,13 @@ import {
   type CoreRequest,
   type RequestContext,
 } from "../shared/http.ts";
-import { logDebug, logError, logInfo, logWarn } from "../shared/log.ts";
+import {
+  collectSecretValues,
+  logDebug,
+  logError,
+  logInfo,
+  logWarn,
+} from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
   getObservabilityContext,
@@ -63,6 +77,7 @@ import {
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
 import { getStorage } from "../shared/storage.ts";
+import { resolveAgentRuntime } from "../shared/workspaces.ts";
 import {
   createPendingAsyncAgentResult,
   getAsyncAgentResult,
@@ -97,12 +112,15 @@ import {
   DEFAULT_CONVERSATION_LEASE_TTL_MS,
   getConversationDispatchTarget,
   getIngressStatusByEventId,
+  loadAppliedIngressConfig,
   loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
   renewIngressOwner,
+  takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
+  type IngressConfigRef,
   type IngressDelivery,
   type IngressSettlement,
   type LiveOwner,
@@ -165,10 +183,6 @@ const WAIT_DEADLINE_MARGIN_MS = 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
-  "WORKER_TIMEOUT_BUDGET_MS",
-  10 * 60 * 1000,
-);
 const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
@@ -580,6 +594,7 @@ async function handleSandboxJobCompletionRequest(
     status: event.status,
     ...(event.response !== undefined ? { response: event.response } : {}),
     ...(event.error ? { error: event.error } : {}),
+    secretValues: await asyncToolRowSecretValues(existing),
   });
   if (!settled) {
     return errorResponse(409, "Background job result is already settled", {
@@ -591,6 +606,40 @@ async function handleSandboxJobCompletionRequest(
     settled,
     await continueAfterAsyncToolSettlement(settled),
   );
+}
+
+/**
+ * The secret values the run that started this row scrubbed with: its agent's
+ * config and the sandboxes and workspaces that config names. A job callback
+ * arrives outside any run, so it resolves them from the row. An agent whose
+ * sandbox or workspace no longer resolves still gives its config's values.
+ */
+async function asyncToolRowSecretValues(
+  row: AsyncToolResultRecord,
+): Promise<string[]> {
+  const scope = parseAccountAgentFromScopedKey(row.parentEventId);
+  const agent = scope
+    ? await getStorage().agents.getById(scope.accountId, scope.agentId)
+    : null;
+  if (!scope || !agent) {
+    return [];
+  }
+  const agentConfig = toRuntimeAgentConfig(agent.config);
+  try {
+    const { sandboxes, workspaces } = await resolveAgentRuntime(agentConfig, {
+      accountId: scope.accountId,
+      agentId: scope.agentId,
+    });
+
+    return collectSecretValues([agentConfig, sandboxes, workspaces]);
+  } catch (err) {
+    logWarn("Background job secrets resolved from the agent config only", {
+      resultId: row.resultId,
+      error: toErrorMessage(err),
+    });
+
+    return collectSecretValues(agentConfig);
+  }
 }
 
 /**
@@ -635,6 +684,7 @@ async function continueAfterAsyncToolSettlement(
     agentId: scope.agentId,
     runId: createRunId(),
     agentConfig: target.agentConfig,
+    configRef: target.configRef,
     // Without the deployment scope the resumed run never reaches Tracing.
     endpointId: target.endpointId,
     projectSlug: target.projectSlug,
@@ -905,7 +955,7 @@ async function handleDirectRequest(
     requestedMode: event.requestedMode,
     idempotencyKey: event.idempotencyKey,
     delivery: delivery,
-    agentConfig: event.agentConfig,
+    configRef: event.configRef,
     ...(event.ephemeralSystem
       ? { ephemeralSystem: event.ephemeralSystem }
       : {}),
@@ -1032,7 +1082,7 @@ async function handleAsyncRequest(
         ? { publicDeploymentIngress: event.publicDeploymentIngress }
         : {}),
     },
-    agentConfig: event.agentConfig,
+    configRef: event.configRef,
     ...(event.ephemeralSystem
       ? { ephemeralSystem: event.ephemeralSystem }
       : {}),
@@ -1069,6 +1119,7 @@ async function handleContinueRequest(
     agentId: event.agentId,
     publicConversationKey: event.publicConversationKey,
     agentConfig: event.agentConfig,
+    configRef: event.configRef,
   });
   // The key the caller named must be the session it resolves to: a scoped
   // channel key with no live session behind it is not something to continue.
@@ -1274,13 +1325,16 @@ async function handleNatsWorkerRequest(
     throw new Error("NATS worker requires NATS_URL");
   }
 
-  const publisher = new LiveNatsPublisher({
-    accountId: event.accountId,
-    agentId: event.agentId,
-    conversationKey: event.publicConversationKey,
-    eventId: event.publicEventId,
-    connectionId: connectionId,
-  });
+  const publisher = new LiveNatsPublisher(
+    {
+      accountId: event.accountId,
+      agentId: event.agentId,
+      conversationKey: event.publicConversationKey,
+      eventId: event.publicEventId,
+      connectionId: connectionId,
+    },
+    collectSecretValues(event.agentConfig),
+  );
 
   const command = queuedCommand(event.events);
   if (command) {
@@ -1545,13 +1599,14 @@ export async function handleChannelRequest(
       ...(event.identity ? { identity: event.identity } : {}),
       source: event.source,
     },
-    agentConfig: event.agentConfig ?? {},
+    configRef: {
+      channel: { channelName: event.channelName, ...event.channelTarget },
+    },
     channelTarget: event.channelTarget,
   });
   const scope: IngressDispatchScope = {
     accountId: event.accountId,
     agentId: event.agentId,
-    agentConfig: event.agentConfig ?? {},
     conversationKey: event.conversationKey,
     publicConversationKey: eventPublicConversationKey(
       event.conversationKey,
@@ -1619,6 +1674,10 @@ export async function handleChannelRequest(
     stageSlug: event.stageSlug,
     ownerGeneration: admission.ownerGeneration,
     channelActions: event.channel,
+    principal: runPrincipal(
+      event,
+      channelPrincipalChain(event.identity, event.channelName),
+    ),
   });
   // A queued worker starts later, from whichever run frees its slot, so it
   // takes this message's observability context rather than inheriting that one.
@@ -1630,18 +1689,22 @@ export async function handleChannelRequest(
       (context): Promise<void> =>
         runWithObservabilityScope(
           (): Promise<void> =>
-            runChannelTurns(event, session, ingested.turnEvents, context).catch(
-              async (err: unknown): Promise<never> => {
-                await sendChannelFailure(
-                  event.channel,
-                  formatChannelErrorText(
-                    err instanceof Error ? err.message : String(err),
-                    event.channelName,
-                  ),
-                ).catch((): void => {});
-                throw err;
-              },
-            ),
+            runChannelTurns(
+              event,
+              scope,
+              session,
+              ingested.turnEvents,
+              context,
+            ).catch(async (err: unknown): Promise<never> => {
+              await sendChannelFailure(
+                event.channel,
+                formatChannelErrorText(
+                  err instanceof Error ? err.message : String(err),
+                  event.channelName,
+                ),
+              ).catch((): void => {});
+              throw err;
+            }),
           observability,
         ),
       {
@@ -1668,6 +1731,7 @@ export async function handleChannelRequest(
  */
 async function runChannelTurns(
   event: ChannelInboundEvent,
+  scope: IngressDispatchScope,
   owned: Session,
   incoming: ConversationIngressEvent[],
   context: RequestContext,
@@ -1826,7 +1890,35 @@ async function runChannelTurns(
         };
       }
 
-      const next = await session.takeNextIngress(settlement);
+      // The envelope stores no config: its ref rebuilds one from the live
+      // rows, so a key rotated while it waited applies to this turn. One whose
+      // config cannot load is failed as the queue moves on past it.
+      let next = await session.takeNextIngress(settlement);
+      while (next) {
+        try {
+          activeConfig = await loadAppliedIngressConfig({
+            accountId: scope.accountId,
+            agentId: scope.agentId,
+            configRef: next.configRef,
+          });
+          break;
+        } catch (err) {
+          const error = toErrorMessage(err);
+          logWarn("Queued channel turn failed: its config did not load", {
+            eventId: next.eventId,
+            conversationKey: event.conversationKey,
+            error: error,
+          });
+          next = await takeNextIngress(
+            {
+              conversationKey: event.conversationKey,
+              ownerEventId: next.eventId,
+              ownerGeneration: next.ownerGeneration,
+            },
+            { status: "failed", error: error },
+          );
+        }
+      }
       if (!next) {
         await session.releaseConversationLease();
         released = true;
@@ -1841,7 +1933,6 @@ async function runChannelTurns(
       // from here, and the envelope is the only place the sender survived.
       const identity =
         next.delivery.kind === "channel" ? next.delivery.identity : undefined;
-      activeConfig = next.agentConfig ?? event.agentConfig ?? {};
       session = new Session({
         eventId: next.eventId,
         conversationKey: event.conversationKey,
@@ -1859,6 +1950,10 @@ async function runChannelTurns(
         stageSlug: event.stageSlug,
         ownerGeneration: next.ownerGeneration,
         channelActions: event.channelFactory?.(source) ?? event.channel,
+        principal: runPrincipal(
+          event,
+          channelPrincipalChain(identity, event.channelName),
+        ),
       });
       incoming = next.events as ConversationIngressEvent[];
       incomingEphemeral = next.ephemeralSystem ?? [];
@@ -2064,6 +2159,7 @@ function directSession(event: DirectInboundEvent): Session {
         ) ?? undefined)
       : undefined,
     trigger: event.cronRun ? "cron" : undefined,
+    principal: runPrincipal(event, directPrincipalChain(event)),
   });
 }
 
@@ -2225,8 +2321,9 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
 
 /**
  * Schedules one durably applied envelope on its worker. The envelope's own
- * persisted agentConfig/ephemeralSystem win over the base event's so a queued
- * request never inherits a previous request's overrides.
+ * config ref and ephemeralSystem win over the base event's so a queued
+ * request never inherits a previous request's overrides; the config itself is
+ * rebuilt from the live rows here, since the envelope never stores it.
  */
 export async function dispatchAppliedIngress(
   base: IngressDispatchScope,
@@ -2246,7 +2343,10 @@ export async function dispatchAppliedIngress(
     // delivery (status URL included) is the stored one, so this id is never
     // published. It exists only because every direct event carries one.
     runId: createRunId(),
-    agentConfig: next.agentConfig ?? base.agentConfig,
+    // Loaded below; an envelope whose config cannot load settles on this.
+    agentConfig: {},
+    configRef: next.configRef,
+    ...(base.subagentConfig ? { subagentConfig: base.subagentConfig } : {}),
     conversationKey: base.conversationKey,
     endpointId: base.endpointId,
     projectSlug: base.projectSlug,
@@ -2273,6 +2373,14 @@ export async function dispatchAppliedIngress(
       : {}),
   };
   try {
+    // An agent deleted while the envelope waited fails it here, and so does
+    // an envelope with no ref that is not a subagent's.
+    event.agentConfig = await loadAppliedIngressConfig({
+      accountId: base.accountId,
+      agentId: base.agentId,
+      configRef: next.configRef,
+      subagentConfig: base.subagentConfig,
+    });
     if (delivery.kind === "websocket") {
       await invokeNatsWorker(event);
     } else {
@@ -2357,11 +2465,13 @@ async function dispatchSessionMessage(
   });
   const { candidate, publicEventId, publicConversationKey } = prepared;
   const delivery = candidate.delivery;
+  const senderChain = session.principal && delegatedChain(session.principal);
   const event: DirectInboundEvent = {
     accountId: candidate.accountId,
     agentId: candidate.agentId,
     runId: candidate.runId,
-    agentConfig: candidate.agentConfig,
+    agentConfig: prepared.agentConfig,
+    configRef: candidate.configRef,
     eventId: candidate.eventId,
     publicEventId: publicEventId,
     conversationKey: candidate.conversationKey,
@@ -2373,6 +2483,8 @@ async function dispatchSessionMessage(
       channelName: delivery.channel,
       source: delivery.source ?? {},
     },
+    // The sending run asked, so the run it starts records that agent.
+    ...(senderChain ? { principalChain: senderChain } : {}),
   };
   const admission = await acceptIngress(candidate);
   await dispatchRecoveredIngress(event, admission);
@@ -2427,7 +2539,7 @@ async function admitInternalContinuation(
     requestedMode: event.requestedMode,
     idempotencyKey: event.idempotencyKey,
     delivery: delivery,
-    agentConfig: event.agentConfig,
+    configRef: event.configRef,
     ...(event.ephemeralSystem
       ? { ephemeralSystem: event.ephemeralSystem }
       : {}),
@@ -2700,10 +2812,12 @@ async function resolveReentryTarget(options: {
   agentId: string;
   publicConversationKey: string;
   agentConfig: AgentConfig;
+  configRef?: IngressConfigRef;
 }): Promise<
   Pick<
     DirectInboundEvent,
     | "agentConfig"
+    | "configRef"
     | "conversationKey"
     | "replyTarget"
     | "endpointId"
@@ -2728,16 +2842,16 @@ async function resolveReentryTarget(options: {
     }),
   ]);
 
-  const agentConfig = channelTarget
+  const runConfig = channelTarget
     ? await loadChannelSessionConfig({
         accountId: options.accountId,
         agentId: options.agentId,
         target: channelTarget,
       })
-    : options.agentConfig;
+    : { agentConfig: options.agentConfig, configRef: options.configRef ?? {} };
 
   return {
-    agentConfig: agentConfig,
+    ...runConfig,
     conversationKey: channelTarget
       ? sessionConversationKey
       : scopedDirectConversationKey(
