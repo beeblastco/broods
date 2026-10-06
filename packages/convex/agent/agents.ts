@@ -9,6 +9,7 @@ import { internalMutation, internalQuery, query } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
 import { assertSealedUnderCurrentKey } from "../model/accountKeys";
+import { deleteAgentConfig } from "../model/agentRuntimeSecrets";
 import { accountIdForProject } from "../model/auditEvents";
 import {
   backSyncCanvasFromAgentRow,
@@ -383,7 +384,7 @@ export const remove = internalMutation({
           });
         }
       }
-      await ctx.db.delete(linkedConfig._id);
+      await deleteAgentConfig(ctx, linkedConfig._id);
 
       // Recompute the API-managed wiring so workspace/sandbox/skill nodes
       // with no remaining API agent references disappear with their agent.

@@ -30,7 +30,6 @@ import type {
   SandboxConfig,
   UpdateCronInput,
   WorkspaceConfig,
-  WorkspaceConfigInput,
 } from "./contracts.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
 import type {
@@ -319,6 +318,9 @@ export interface McpOauthInput {
   tokenUrl?: string;
 }
 
+/** Where a hosted MCP server may run. */
+export type McpRuntime = "auto" | "lambda";
+
 /** Public MCP server registration returned by the `/v1/mcp` routes (#331). */
 export interface AccountMcp {
   accountId: string;
@@ -334,6 +336,8 @@ export interface AccountMcp {
   sandbox?: string;
   /** Hosted servers only: content hash of the uploaded bundle. */
   sha256?: string;
+  /** Hosted servers only: "auto" or "lambda". */
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
@@ -360,6 +364,12 @@ export interface CreateMcpInput {
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
+  /**
+   * Hosted servers only. "auto" (the default) runs it on Cloudflare Workers
+   * when its bundle can run there, on Lambda otherwise; "lambda" always runs
+   * it on Lambda.
+   */
+  runtime?: McpRuntime;
 }
 
 /** Fields accepted by `PATCH /v1/mcp/{serverId}`; every field is optional. */
@@ -374,6 +384,12 @@ export interface UpdateMcpInput {
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
+  /**
+   * Hosted servers only. "auto" (the default) runs it on Cloudflare Workers
+   * when its bundle can run there, on Lambda otherwise; "lambda" always runs
+   * it on Lambda.
+   */
+  runtime?: McpRuntime;
   disabled?: boolean;
 }
 
@@ -809,7 +825,7 @@ export class BroodsAccountClient {
   async createWorkspace(input: {
     name: string;
     description?: string;
-    config?: WorkspaceConfigInput;
+    config?: WorkspaceConfig;
   }): Promise<AccountWorkspace> {
     const result = await this.request<AccountWorkspace>(
       "POST",
@@ -839,7 +855,7 @@ export class BroodsAccountClient {
     patch: {
       name?: string;
       description?: string | null;
-      config?: ConfigPatch<WorkspaceConfigInput>;
+      config?: ConfigPatch<WorkspaceConfig>;
     },
   ): Promise<AccountWorkspace | null> {
     return await this.request<AccountWorkspace>(

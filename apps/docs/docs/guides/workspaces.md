@@ -76,12 +76,12 @@ The refusal exists because the workspace is the only storage that outlives a san
 
 By default every run mounts the same folder. Partitioning gives each conversation, ticket or team its own folder under one workspace, so a GitHub issue cannot read another issue's files. It separates files, `memory/` and `TASKS.md`. The agent's prompt, tools, credentials and skills stay shared.
 
-Turn it on with `partitioned: true` on the workspace and a `partition` on every connection the agent uses:
+Turn it on with `partitioned: "conversation"` on the workspace and a `partition` on every connection the agent uses:
 
 ```ts
 export const support = defineWorkspace({
   name: "support",
-  partitioned: true,
+  partitioned: "conversation",
 });
 
 export const slack = defineSlackConnection({
@@ -111,7 +111,7 @@ export const github = defineGitHubConnection({
 
 A new child folder starts empty. Files at the root are not copied in. A [channel record](../channels/channel-records.md) can also set `partition` for one place.
 
-`broods dev` checks the rules. A workspace with `partitioned: true` needs `partition` on every attached connection, and a connection with `partition` needs at least one partitioned workspace.
+`broods dev` checks the rules. A workspace with `partitioned: "conversation"` needs `partition` on every attached connection, and a connection with `partition` needs at least one partitioned workspace.
 
 ### Per agent
 

@@ -139,6 +139,8 @@ describe("cli sync sandbox refs", () => {
         .filter((target) => sandboxNodeIds.includes(target))
         .sort(),
     ).toEqual([...sandboxNodeIds].sort());
+    // Animated edges repaint the canvas every frame.
+    expect(edges.filter((edge) => "animated" in edge)).toEqual([]);
   });
 
   // Core reads the stored blob verbatim and refuses a config with no provider.

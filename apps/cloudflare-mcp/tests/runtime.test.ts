@@ -1,0 +1,230 @@
+/**
+ * Runs the real Worker in local workerd (Miniflare) with a real Worker Loader,
+ * so auth, bundle integrity, tenant isolation and egress are checked against
+ * the runtime, not a mock. The outbound service stands in for S3 and the web.
+ */
+
+import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
+import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+
+const BUNDLE_ORIGIN = "https://bundles.example.com";
+const API_KEY = "local-key";
+const TENANT_SOURCE = `export default async function (request) {
+  const text = await request.text();
+  if (text === "quotes") return new Response('"'.repeat(3_000_000));
+  if (text === "slow") await fetch("https://slow.example.com/");
+  if (text === "slow" || text === "fast") return new Response(text);
+  const blocked = await fetch("${BUNDLE_ORIGIN}/other.mjs");
+  const outside = await fetch("https://api.example.com/data");
+  return Response.json({
+    body: text,
+    env: JSON.stringify(globalThis.process?.env ?? {}),
+    blocked: blocked.status,
+    outside: await outside.text(),
+  });
+}`;
+const TENANT_SHA256 = new Bun.CryptoHasher("sha256")
+  .update(TENANT_SOURCE)
+  .digest("hex");
+/** Loads, but exports no fetch handler: refused before any request runs. */
+const BROKEN_SOURCE = "export default 42;";
+const BROKEN_SHA256 = new Bun.CryptoHasher("sha256")
+  .update(BROKEN_SOURCE)
+  .digest("hex");
+
+interface Frame {
+  t: string;
+  id?: string;
+  error?: string;
+  result?: { status: number; body: string };
+}
+
+let runtime: Miniflare;
+let runtimeUrl: URL;
+let bundleFetches = 0;
+
+beforeAll(async (): Promise<void> => {
+  const build = await Bun.build({
+    entrypoints: [new URL("../src/index.ts", import.meta.url).pathname],
+    format: "esm",
+    target: "browser",
+    external: ["cloudflare:workers"],
+  });
+  runtime = new Miniflare(
+    convertV4MiniflareOptions({
+      modules: true,
+      script: await build.outputs[0]!.text(),
+      compatibilityDate: "2026-09-29",
+      workerLoaders: { LOADER: {} },
+      r2Buckets: ["BUNDLES"],
+      bindings: { MCP_API_KEY: API_KEY, BUNDLE_ORIGIN: BUNDLE_ORIGIN },
+      outboundService: async (request: Request): Promise<Response> => {
+        if (new URL(request.url).host === "slow.example.com") {
+          await Bun.sleep(1_500);
+        }
+        if (new URL(request.url).origin !== BUNDLE_ORIGIN) {
+          return new Response("public-ok");
+        }
+        bundleFetches++;
+
+        return new Response(
+          request.url.includes(BROKEN_SHA256) ? BROKEN_SOURCE : TENANT_SOURCE,
+        );
+      },
+    }),
+  );
+  // Bun's fetch, not dispatchFetch: Bun ignores the undici dispatcher it relies on.
+  runtimeUrl = new URL("/mcp", await runtime.ready);
+});
+
+afterAll(async (): Promise<void> => {
+  await runtime.dispose();
+});
+
+beforeEach((): void => {
+  bundleFetches = 0;
+});
+
+it("refuses a wrong bearer before it downloads tenant code", async (): Promise<void> => {
+  const response = await send(batch("acct-a"), "wrong");
+
+  expect(response.status).toBe(401);
+  expect(response.headers.has("x-broods-nothing-ran")).toBe(false);
+  expect(bundleFetches).toBe(0);
+});
+
+it("refuses a bundle url outside BUNDLE_ORIGIN", async (): Promise<void> => {
+  const response = await send({
+    ...batch("acct-a"),
+    bundleUrl: "https://attacker.example.com/bundle.mjs",
+  });
+
+  expect(response.status).toBe(400);
+  expect(bundleFetches).toBe(0);
+});
+
+it("runs a verified bundle with no secrets in reach and no path to the bundle store", async (): Promise<void> => {
+  const response = await send(batch("acct-a"));
+  const frames = await framesOf(response);
+
+  expect(frames.map((frame): string => frame.t)).toEqual(["final", "end"]);
+  expect(JSON.parse(frames[0]!.result!.body)).toEqual({
+    body: "{}",
+    env: "{}",
+    blocked: 403,
+    outside: "public-ok",
+  });
+  await send(batch("acct-a"));
+  expect(bundleFetches).toBe(1);
+});
+
+it("keeps a verified copy in R2 and loads the next tenant from it instead of S3", async (): Promise<void> => {
+  const bundles = await runtime.getR2Bucket("BUNDLES");
+  await bundles.delete(`${TENANT_SHA256}.mjs`);
+  await framesOf(await send(batch("acct-d:agent-1")));
+
+  expect(bundleFetches).toBe(1);
+  expect(await (await bundles.get(`${TENANT_SHA256}.mjs`))?.text()).toBe(
+    TENANT_SOURCE,
+  );
+
+  const frames = await framesOf(await send(batch("acct-d:agent-2")));
+
+  expect(frames.map((frame): string => frame.t)).toEqual(["final", "end"]);
+  expect(bundleFetches).toBe(1);
+});
+
+// A 422 is core's signal that no tool ran and the bundle cannot load here.
+it("answers 422 before running anything when the bundle does not match its sha256", async (): Promise<void> => {
+  const response = await send({
+    ...batch("acct-b"),
+    expectedSha256: "0".repeat(64),
+  });
+
+  expect(response.status).toBe(422);
+  expect(response.headers.get("x-broods-nothing-ran")).toBe("1");
+  expect(await response.text()).toContain("sha256");
+});
+
+it("answers 422 before running anything when the bundle has no fetch handler", async (): Promise<void> => {
+  const response = await send(batch("acct-c", ["{}"], BROKEN_SHA256));
+
+  expect(response.status).toBe(422);
+  expect(await response.text()).toContain("fetch handler");
+});
+
+it("streams each frame as its request settles", async (): Promise<void> => {
+  const frames = await framesOf(
+    await send(batch("acct-a", ["slow", "fast", "PATCH"])),
+  );
+
+  // The slow request went first but answers last; PATCH passes like on Lambda.
+  expect(
+    frames.map((frame): string => `${frame.t}:${frame.id}`).slice(2),
+  ).toEqual(["final:1", "end:undefined"]);
+  expect(frames.find((frame): boolean => frame.id === "3")?.result?.body).toBe(
+    "fast",
+  );
+});
+
+it("budgets encoded frames, escaping included, against the 16 MiB batch cap", async (): Promise<void> => {
+  // Each body is 3 MB raw but 6 MB once JSON escapes every quote.
+  const response = await send(batch("acct-a", ["quotes", "quotes", "quotes"]));
+  const text = await response.text();
+  const frames = text
+    .trim()
+    .split("\n")
+    .map((line): Frame => JSON.parse(line));
+
+  expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(
+    16 * 1024 * 1024,
+  );
+  expect(frames.filter((frame): boolean => frame.t === "final")).toHaveLength(
+    2,
+  );
+  expect(frames.find((frame): boolean => frame.t === "error")?.error).toContain(
+    "16 MiB",
+  );
+  expect(frames.at(-1)?.t).toBe("end");
+});
+
+/** A batch whose request bodies pick the tenant's behaviour; `PATCH` sends `{}` as a PATCH. */
+function batch(
+  tenantId: string,
+  bodies: string[] = ["{}"],
+  sha256: string = TENANT_SHA256,
+): Record<string, unknown> {
+  return {
+    mode: "mcp",
+    toolName: "tools",
+    tenantId: tenantId,
+    expectedSha256: sha256,
+    bundleUrl: `${BUNDLE_ORIGIN}/account-mcp/${tenantId}/bundles/${sha256}.mjs`,
+    requests: bodies.map((body, index): Record<string, unknown> => ({
+      id: String(index + 1),
+      mcpRequest: {
+        method: body === "PATCH" ? "PATCH" : "POST",
+        headers: {},
+        body: body === "PATCH" ? "fast" : body,
+      },
+    })),
+  };
+}
+
+async function framesOf(response: Response): Promise<Frame[]> {
+  return (await response.text())
+    .trim()
+    .split("\n")
+    .map((line): Frame => JSON.parse(line));
+}
+
+async function send(
+  body: Record<string, unknown>,
+  key = API_KEY,
+): Promise<Response> {
+  return await fetch(runtimeUrl, {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}` },
+    body: JSON.stringify(body),
+  });
+}

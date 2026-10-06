@@ -18,7 +18,10 @@ export interface RuntimeFunctions {
     appendConversationEvent: FunctionReference<
       "mutation",
       "internal",
-      { conversationKey: string; cursor: string; event: unknown },
+      {
+        conversationKey: string;
+        events: { cursor: string; event: unknown }[];
+      },
       unknown
     >;
     getHarnessSession: FunctionReference<

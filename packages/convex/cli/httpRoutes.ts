@@ -424,14 +424,11 @@ async function deleteCronByName(
   });
 }
 
-/**
- * The manifest's crons, keyed by resource name. `legacyName` is a different
- * `config.name` an older sync may have created the cron under.
- */
+/** The manifest's crons, keyed by resource name. */
 function desiredCrons(
   manifest: CliManifest,
   agentIds: Record<string, string>,
-): Array<{ job: DesiredCron; legacyName?: string }> {
+): DesiredCron[] {
   return manifest.resources
     .filter((resource) => resource.kind === "cron")
     .map((resource) => {
@@ -448,7 +445,7 @@ function desiredCrons(
 
       // A cron is keyed by its resource name, the key the diff and the
       // generated ids use, whatever `config.name` says.
-      const job = stripUndefined({
+      return stripUndefined({
         name: resource.name,
         description: optionalStringField(
           config.description ?? resource.description,
@@ -463,11 +460,6 @@ function desiredCrons(
         timezone: optionalStringField(config.timezone),
         status: cronStatus(config.status),
       });
-      const legacyName = optionalStringField(config.name);
-
-      return legacyName && legacyName !== resource.name
-        ? { job: job, legacyName: legacyName }
-        : { job: job };
     });
 }
 
@@ -870,24 +862,9 @@ async function syncCrons(
   });
   const stageAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
   const cronIds: Record<string, string> = {};
-  // Every job's own name claims its cron before any legacy name can, and a
-  // cron is claimed once.
-  const own = desired.map(({ job }) =>
-    stageCronByName(existing, stageAgentIds, job.name),
-  );
-  const kept = new Set<string>(own.flatMap((row) => (row ? [row._id] : [])));
-
-  for (const [index, { job, legacyName }] of desired.entries()) {
-    // Patching a cron found under its legacy name renames it in place.
-    const existingJob =
-      own[index] ??
-      (legacyName
-        ? stageCronByName(
-            existing.filter((row) => !kept.has(row._id)),
-            stageAgentIds,
-            legacyName,
-          )
-        : undefined);
+  const kept = new Set<string>();
+  for (const job of desired) {
+    const existingJob = stageCronByName(existing, stageAgentIds, job.name);
     if (existingJob) {
       kept.add(existingJob._id);
       await ctx.runMutation(internal.agent.crons.update, {
@@ -1087,7 +1064,7 @@ async function syncMcpResources(
 
   for (const { name, input } of desired) {
     const current = existing.get(name);
-    const bundleStorageKey = await storeMcpBundle(
+    const storedBundle = await storeMcpBundle(
       ctx,
       accountId,
       input,
@@ -1098,9 +1075,7 @@ async function syncMcpResources(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-      ...(bundleStorageKey !== undefined
-        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-        : {}),
+      ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),
@@ -1108,6 +1083,10 @@ async function syncMcpResources(
       ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
+        : {}),
+      // The manifest is the whole truth: dropping `runtime` from it means "auto".
+      ...(input.transport === "hosted"
+        ? { runtime: input.runtime ?? "auto" }
         : {}),
     };
     if (current) {
@@ -1259,7 +1238,7 @@ async function validateManifest(
     }),
   });
   const agentNames = names("agent").map((name) => resourceName(name));
-  for (const { job } of desiredCrons(manifest, placeholderIds(agentNames))) {
+  for (const job of desiredCrons(manifest, placeholderIds(agentNames))) {
     normalizeCreateCronInput(job);
   }
 }
