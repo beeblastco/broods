@@ -77,7 +77,11 @@ export class HttpSandboxExecutor implements SandboxExecutor {
       ...(request.args && request.args.length > 0
         ? { args: request.args }
         : {}),
-      env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+      env: mergeSandboxEnv(
+        this.#config.envVars,
+        request.envVars,
+        request.principal,
+      ),
     };
     // The address is the boundary: `guardedFetch` refuses every private and
     // metadata address the name resolves to and pins the socket to the one it

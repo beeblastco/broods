@@ -73,6 +73,32 @@ describe("HttpSandboxExecutor", () => {
     });
   });
 
+  it("sends the run's identity in the exec env like every other executor", async () => {
+    await withExecServer(OK_RESPONSE, async (endpoint, received) => {
+      const executor = new HttpSandboxExecutor(config(endpoint), seams());
+      await executor.run(
+        run({
+          principal: {
+            accountId: "acct_1",
+            agentId: "agent_1",
+            runToken: "brt_payload.sig",
+            baseUrl: "https://api.example.test",
+          },
+        }),
+      );
+
+      const [exec] = received;
+      if (!exec) throw new Error("the server received nothing");
+      expect(JSON.parse(exec.body).env).toEqual({
+        BASE: "1",
+        BROODS_ACCOUNT_ID: "acct_1",
+        BROODS_AGENT_ID: "agent_1",
+        BROODS_BASE_URL: "https://api.example.test",
+        BROODS_RUN_TOKEN: "brt_payload.sig",
+      });
+    });
+  });
+
   it("holds stdout and stderr to the request's output limit", async () => {
     await withExecServer(
       { ...OK_RESPONSE, stdout: "x".repeat(100), stderr: "y".repeat(100) },
