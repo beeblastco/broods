@@ -379,6 +379,13 @@ async function serveRequest(
           }),
         );
         const bytes = await readBoundedBytes(response.body, budget);
+        let body: string;
+        try {
+          body = UTF8.decode(bytes);
+        } catch (error) {
+          budget.remaining += bytes.byteLength;
+          throw error;
+        }
 
         return {
           frame: {
@@ -387,7 +394,7 @@ async function serveRequest(
             result: {
               status: response.status,
               headers: Object.fromEntries(response.headers),
-              body: UTF8.decode(bytes),
+              body: body,
             },
           },
           drawn: bytes.byteLength,

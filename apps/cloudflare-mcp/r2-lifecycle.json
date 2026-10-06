@@ -3,7 +3,7 @@
     {
       "id": "expire-copies",
       "enabled": true,
-      "conditions": {},
+      "conditions": { "prefix": "" },
       "deleteObjectsTransition": {
         "condition": { "maxAge": 2592000, "type": "Age" }
       }
