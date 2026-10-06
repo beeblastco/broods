@@ -7,7 +7,6 @@ import {
   rewrapAccountKey,
   type WrappedAccountKey,
 } from "../model/envelope";
-import { encryptLegacyBlob } from "./legacyBlob.helper";
 
 const ACCOUNT = "acct_one";
 const OTHER_ACCOUNT = "acct_two";
@@ -47,41 +46,18 @@ describe("envelope codec", () => {
     ).toBeNull();
   });
 
-  test("decrypts a legacy blob and rewrites it as v2", async () => {
-    const legacy = await encryptLegacyBlob(VALUE, "old-secret");
-    const { cipher } = await cipherWith(["new-secret", "old-secret"]);
+  test("refuses a blob without a v2 key id", async () => {
+    const { cipher, keys } = await cipherWith(SECRETS);
+    const blob = await cipher.encrypt("agents:encryptedConfig", VALUE);
+    const bare = {
+      ...blob,
+      ciphertext: blob.ciphertext.slice(`v2:${keys[0]!.keyId}:`.length),
+    };
 
-    expect(blobKeyId(legacy)).toBeNull();
-    expect(cipher.needsRewrite(legacy)).toBe(true);
-    const value = await cipher.decrypt("agents:encryptedConfig", legacy);
-    expect(value).toEqual(VALUE);
-    const rewritten = await cipher.encrypt("agents:encryptedConfig", value!);
-    expect(rewritten.ciphertext.startsWith("v2:")).toBe(true);
-
-    const withoutOld = await cipherWith(["new-secret"]);
-    expect(
-      await withoutOld.cipher.decrypt("agents:encryptedConfig", legacy),
-    ).toBeNull();
-  });
-
-  test("a legacy blob opens under the unsplit secret it was written with", async () => {
-    const raw = "left, right ";
-    const split = ["left", "right"];
-    const legacy = await encryptLegacyBlob(VALUE, raw);
-    const keys = [await createWrappedAccountKey(ACCOUNT, split)];
-
-    expect(
-      await new AccountCipher(ACCOUNT, split, keys).decrypt(
-        "agents:encryptedConfig",
-        legacy,
-      ),
-    ).toBeNull();
-    expect(
-      await new AccountCipher(ACCOUNT, split, keys, { rawSecret: raw }).decrypt(
-        "agents:encryptedConfig",
-        legacy,
-      ),
-    ).toEqual(VALUE);
+    expect(blobKeyId(bare)).toBeNull();
+    expect(cipher.hasKey(bare)).toBe(false);
+    expect(cipher.needsRewrite(bare)).toBe(true);
+    expect(await cipher.decrypt("agents:encryptedConfig", bare)).toBeNull();
   });
 
   test("a KEK list unwraps under any entry and rewraps under the first", async () => {

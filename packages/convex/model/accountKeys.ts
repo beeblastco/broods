@@ -113,14 +113,12 @@ export async function assertSealedUnderCurrentKey(
   }
 }
 
-/** A keyring over `keys` under this deployment's secrets, legacy blobs included. */
+/** A keyring over `keys` under this deployment's secrets. */
 export function cipherFromKeys(
   accountId: Id<"accounts">,
   keys: WrappedAccountKey[],
 ): AccountCipher {
-  return new AccountCipher(accountId, encryptionSecrets(), keys, {
-    rawSecret: process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-  });
+  return new AccountCipher(accountId, encryptionSecrets(), keys);
 }
 
 /**
@@ -199,7 +197,7 @@ export async function mintKey(
 /**
  * One batch of a walk over every encrypted table: each row whose blob is not
  * under its account's current key is decrypted and written back under it, so
- * the same walk serves the legacy migration and a key rotation. With
+ * a key rotation moves every row under the new key. With
  * `accountId` only that account's rows are rewritten; the table is still paged
  * in full since two of them have no account index. A blob that does not
  * decrypt throws, so a bad secret stops the walk instead of skipping rows.

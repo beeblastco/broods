@@ -18,7 +18,7 @@
 import { hexFromBytes, sha256Hex } from "./accountSecrets";
 import { isPlainObject } from "./objects";
 
-/** Marks a blob encrypted under an account key; anything else is legacy. */
+/** Marks a blob encrypted under an account key; anything else is refused. */
 const BLOB_VERSION_PREFIX = "v2:";
 const DEK_BYTES = 32;
 const GCM_IV_BYTES = 12;
@@ -31,7 +31,7 @@ const TEXT_ENCODER = new TextEncoder();
 /**
  * Every encrypted column. The scope type, the table list and the
  * re-encryption walk all derive from this one list, so nothing can be
- * encrypted under a scope that a migration or rotation does not rewrite.
+ * encrypted under a scope that a rotation does not rewrite.
  * `scope` is what binds a blob to its column through the GCM additional data.
  */
 export const ENVELOPE_COLUMNS = [
@@ -161,8 +161,7 @@ const WEB_CRYPTO: AeadPrimitive = {
 
 /**
  * The three columns every encrypted row stores. `ciphertext` reads
- * `v2:<keyId>:<base64url>`; a bare base64url value is a legacy blob under the
- * old global key.
+ * `v2:<keyId>:<base64url>`.
  */
 export interface EncryptedBlob {
   ciphertext: string;
@@ -218,31 +217,21 @@ export interface AeadPrimitive {
 export class AccountCipher {
   private readonly accountId: string;
   private readonly secrets: string[];
-  private readonly legacySecrets: string[];
   private readonly keys: Map<string, WrappedAccountKey>;
   private readonly currentKeyId: string | null;
   private readonly primitive: AeadPrimitive;
   private readonly dataKeys = new Map<string, Promise<Uint8Array>>();
 
-  /**
-   * @param options.rawSecret the env value before it was split into
-   * `secrets`. Legacy blobs were keyed by that whole string, so one holding a
-   * comma or outer whitespace only opens under it.
-   * @param options.primitive the cipher to run on; Web Crypto when omitted.
-   */
+  /** @param options.primitive the cipher to run on; Web Crypto when omitted. */
   constructor(
     accountId: string,
     secrets: string[],
     keys: WrappedAccountKey[],
-    options: { rawSecret?: string; primitive?: AeadPrimitive } = {},
+    options: { primitive?: AeadPrimitive } = {},
   ) {
     this.accountId = accountId;
     this.secrets = secrets;
     this.primitive = options.primitive ?? WEB_CRYPTO;
-    this.legacySecrets =
-      options.rawSecret === undefined || secrets.includes(options.rawSecret)
-        ? secrets
-        : [...secrets, options.rawSecret];
     this.keys = new Map(keys.map((key) => [key.keyId, key]));
     // The newest key that is not retired seals new blobs.
     this.currentKeyId =
@@ -265,20 +254,18 @@ export class AccountCipher {
   }
 
   /**
-   * Decrypts a blob bound to `scope`. Null on any failure: unknown or retired
-   * key, wrong tenant or column, tampered bytes, or a legacy blob under a
-   * secret no longer in the list.
+   * Decrypts a blob bound to `scope`. Null on any failure: a blob without
+   * the `v2:` key id, unknown or retired key, wrong tenant or column, or
+   * tampered bytes.
    */
   async decrypt(
     scope: BlobScope,
     blob: EncryptedBlob,
   ): Promise<Record<string, unknown> | null> {
     const keyId = blobKeyId(blob);
+    if (keyId === null) return null;
     try {
-      const plaintext =
-        keyId === null
-          ? await decryptLegacyBlob(this.legacySecrets, blob, this.primitive)
-          : await this.decryptEnvelope(keyId, scope, blob);
+      const plaintext = await this.decryptEnvelope(keyId, scope, blob);
       const parsed: unknown = JSON.parse(plaintext);
 
       return isPlainObject(parsed) ? parsed : null;
@@ -309,14 +296,14 @@ export class AccountCipher {
     };
   }
 
-  /** True when this keyring holds the key a blob names (retired included), or the blob is legacy. */
+  /** True when this keyring holds the key a blob names, retired included. */
   hasKey(blob: Pick<EncryptedBlob, "ciphertext">): boolean {
     const keyId = blobKeyId(blob);
 
-    return keyId === null || this.keys.has(keyId);
+    return keyId !== null && this.keys.has(keyId);
   }
 
-  /** True when `blob` was not written under the current key, so a rotation or migration must rewrite it. */
+  /** True when `blob` was not written under the current key, so a rotation must rewrite it. */
   needsRewrite(blob: Pick<EncryptedBlob, "ciphertext">): boolean {
     return blobKeyId(blob) !== this.currentKeyId;
   }
@@ -374,7 +361,7 @@ export class AccountCipher {
   }
 }
 
-/** The key id a blob names, or null for a legacy blob under the old global key. */
+/** The key id a blob names, or null when it carries no `v2:` key id. */
 export function blobKeyId(
   blob: Pick<EncryptedBlob, "ciphertext">,
 ): string | null {
@@ -455,39 +442,7 @@ function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
   return out;
 }
 
-// legacy until migrateToEnvelope has run: a blob with no `v2:` prefix is
-// AES-256-GCM under SHA-256(secret) with no additional data. Every listed
-// secret is tried so a KEK rotation does not strand rows the migration has
-// not reached yet.
-async function decryptLegacyBlob(
-  secrets: string[],
-  blob: EncryptedBlob,
-  primitive: AeadPrimitive,
-): Promise<string> {
-  const sealed = concatBytes(
-    base64UrlToBytes(blob.ciphertext),
-    base64UrlToBytes(blob.tag),
-  );
-  const iv = base64UrlToBytes(blob.iv);
-  for (const secret of secrets) {
-    try {
-      return TEXT_DECODER.decode(
-        await primitive.open(
-          new Uint8Array(await sha256(secret)),
-          iv,
-          new Uint8Array(0),
-          sealed,
-        ),
-      );
-    } catch {
-      continue;
-    }
-  }
-
-  throw new Error("Legacy blob does not decrypt under any listed secret");
-}
-
-/** The KEK is a domain-separated hash of the secret, so it never equals the legacy blob key. */
+/** The KEK is a domain-separated hash of the secret. */
 async function keyEncryptionKey(secret: string): Promise<Uint8Array> {
   return new Uint8Array(await sha256(`broods-kek:${secret}`));
 }
