@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/app/components/ui/button";
-import { KeyRound, Loader2 } from "lucide-react";
+import { KeyRound } from "lucide-react";
 
 interface Props {
   generating: boolean;
@@ -9,7 +9,7 @@ interface Props {
   onGenerate: () => void;
 }
 
-/** Shown on the Monitoring/Tracing tabs when a stage has no runtime API key yet. */
+/** Shown on the Monitoring/Tracing tabs when a stage has no runtime key yet. */
 export function ObservabilityKeyPrompt({
   generating,
   error,
@@ -23,8 +23,8 @@ export function ObservabilityKeyPrompt({
       <div className="flex flex-col gap-1">
         <p className="text-sm font-medium">Generate a viewing key</p>
         <p className="max-w-sm text-xs text-muted-foreground">
-          Logs and traces stream with this stage&apos;s runtime API key.
-          Generate one to view them.
+          Logs and traces stream with this stage&apos;s runtime key. Generate
+          one to view them.
         </p>
       </div>
 
@@ -33,11 +33,7 @@ export function ObservabilityKeyPrompt({
         disabled={generating}
         onClick={onGenerate}
       >
-        {generating ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          "Generate key"
-        )}
+        {generating ? "Generating…" : "Generate key"}
       </Button>
 
       {error ? (

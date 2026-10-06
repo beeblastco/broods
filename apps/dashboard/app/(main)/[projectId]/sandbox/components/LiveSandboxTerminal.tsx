@@ -15,6 +15,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useAction } from "convex/react";
 import { Plug, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 type TerminalStatus = keyof typeof CONNECTION_TONE;
 
@@ -137,9 +138,7 @@ export function LiveSandboxTerminal({
       });
     } catch (err) {
       setStatus("error");
-      setError(
-        err instanceof Error ? err.message : "Failed to open the terminal",
-      );
+      setError(toErrorMessage(err));
     }
   }
 
@@ -158,7 +157,7 @@ export function LiveSandboxTerminal({
             size="sm"
             disabled={disabled || status === "connecting"}
             onClick={handleConnect}
-            className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
+            className="shrink-0 cursor-pointer"
           >
             {connected ? (
               <RefreshCw className="mr-1 size-3.5" />

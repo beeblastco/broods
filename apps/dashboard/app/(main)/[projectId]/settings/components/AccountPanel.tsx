@@ -133,11 +133,7 @@ export function AccountPanel(): React.JSX.Element {
       setIsDirty(false);
       setSaveNotice("Changes saved.");
     } catch (error) {
-      setSaveError(
-        error instanceof Error
-          ? error.message
-          : "Unable to save account settings.",
-      );
+      setSaveError(toErrorMessage(error));
     } finally {
       setIsSavingProfile(false);
     }

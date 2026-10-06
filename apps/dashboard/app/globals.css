@@ -66,9 +66,6 @@
   --text-2xs: 0.6875rem;
   --text-3xs: 0.625rem;
 
-  /* Keyframes come from @xyflow/react/dist/style.css. */
-  --animate-dashdraw: dashdraw 0.5s linear infinite;
-
   --color-stage-development: oklch(0.696 0.17 162.48);
   --color-stage-production: oklch(0.606 0.25 292.717);
   --color-stage-custom: oklch(0.715 0.143 215.221);

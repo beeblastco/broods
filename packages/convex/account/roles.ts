@@ -277,7 +277,7 @@ async function resolveRoleScope(
 ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> } | null> {
   if (projectId === undefined && stageId === undefined) return null;
   // Structural scope is the deployKeys shape: a stage inside a project, or
-  // account-wide. Half a scope would silently widen what fp_agent_ can assume.
+  // account-wide. Half a scope would silently widen what a runtime key can assume.
   if (projectId === undefined || stageId === undefined) {
     throw new ClientError("projectId and stageId must be provided together");
   }

@@ -72,7 +72,7 @@ stateDiagram-v2
   running --> failed: accept with mode reject answers rejected
   running --> running: update_subagent steer, applied at the next step
   running --> stopping: stop_subagent, stopOwner
-  stopping --> failed: renewOwner answers stopped at the next step
+  stopping --> failed: stepBoundary answers stopped at the next step
   stopping --> completed: no further step, stop never seen
   running --> completed: settle completed, result injected
   running --> failed: settle failed, error injected
@@ -100,7 +100,7 @@ sequenceDiagram
   alt child still owns its generation
     CX-->>T: queued
     T-->>P: status queued
-    Ch->>CX: applySteering at the next step, or takeNext after settle
+    Ch->>CX: stepBoundary at the next step, or takeNext after settle
   else child settled, or another task owns the conversation
     CX-->>T: not_running, no envelope written
     T-->>P: status not_running
@@ -111,7 +111,7 @@ sequenceDiagram
     CX-->>T: stopped true
     T-->>P: status stopping
     alt child has another step
-      Ch->>CX: renewOwner answers stopped
+      Ch->>CX: stepBoundary answers stopped
       Ch->>CX: settle failed, stoppedByUser
     else child was on its last step
       Ch->>CX: settle completed, result injected
@@ -147,7 +147,7 @@ A client attaches with the values `run_subagent` returned. `taskId` becomes the 
 
 ### Attach authorization
 
-The gateway protocol is unchanged. What is specific to children is who may attach with a stage runtime key:
+The gateway protocol is unchanged. What is specific to children is who may attach with a runtime key:
 
 - `taskId` is server-issued. It embeds a base64url parent correlation, which is encoding, not encryption, and must never carry confidential data. Core persists the child event before `run_subagent` returns. Public requests cannot use the reserved `subagent~` event namespace.
 - A runtime-key status or attach succeeds only when the child status row, the child agent and conversation scope, the durable parent ingress row, the active public parent, and the key's account, project, stage and endpoint all agree. The client never supplies parent scope. A private child, virtual or predefined, can be watched through its authorized public parent without becoming publicly runnable.
