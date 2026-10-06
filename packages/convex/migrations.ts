@@ -15,6 +15,13 @@ import { ROLE_ID_PREFIX } from "./model/roleRules";
 
 const OLD_ROLE_ID_PREFIX = "fp_role_";
 
+// `pruneStaleRows` walks these in order, one table after the other.
+const PRUNE_TABLES = [
+  "runtimeConversationCoordinators",
+  "agentRuntimeSecrets",
+  "cliAuthCodes",
+] as const;
+
 /** What one batch of a prefix migration did, and whether its walk finished. */
 const prefixBatchValidator = v.object({
   migrated: v.number(),
@@ -23,6 +30,10 @@ const prefixBatchValidator = v.object({
 });
 
 type PrefixBatch = { migrated: number; skipped: number; isDone: boolean };
+
+type PruneTable = (typeof PRUNE_TABLES)[number];
+
+type PruneTotals = { cleared: number; deleted: number; isDone: boolean };
 
 /**
  * Move every legacy blob (AES-GCM under the global secret, no `v2:` prefix)
@@ -58,6 +69,79 @@ export const migrateToEnvelope = internalMutation({
       skipped: skipped,
       isDone: batch.next === null,
     };
+  },
+});
+
+/**
+ * Prune rows nothing can use any more, walking `PRUNE_TABLES` in order with a
+ * self-reschedule; call it with no arguments. Clears a conversation target that
+ * still holds a pre-#920 plaintext `agentConfig` (it already reads as no
+ * session, and the next channel turn pins a fresh one), deletes runtime
+ * secrets whose agent config is gone, and deletes used or expired CLI login
+ * codes. Idempotent. Never logs or returns a field value.
+ * @returns targets cleared and rows deleted so far, and whether the whole walk finished
+ */
+export const pruneStaleRows = internalMutation({
+  args: {
+    table: v.optional(v.union(...PRUNE_TABLES.map((name) => v.literal(name)))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    cleared: v.optional(v.number()),
+    deleted: v.optional(v.number()),
+  },
+  returns: v.object({
+    cleared: v.number(),
+    deleted: v.number(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<PruneTotals> => {
+    const table: PruneTable = args.table ?? PRUNE_TABLES[0];
+    const page = { numItems: 100, cursor: args.cursor ?? null };
+    let cleared = args.cleared ?? 0;
+    let deleted = args.deleted ?? 0;
+    let result: { isDone: boolean; continueCursor: string };
+    if (table === "runtimeConversationCoordinators") {
+      const rows = await ctx.db.query(table).paginate(page);
+      for (const row of rows.page) {
+        if (row.channelTarget?.agentConfig === undefined) continue;
+        await ctx.db.patch(row._id, { channelTarget: undefined });
+        cleared += 1;
+      }
+      result = rows;
+    } else if (table === "agentRuntimeSecrets") {
+      const rows = await ctx.db.query(table).paginate(page);
+      for (const row of rows.page) {
+        if (await ctx.db.get(row.agentConfigId)) continue;
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+      result = rows;
+    } else {
+      const now = Date.now();
+      const rows = await ctx.db.query(table).paginate(page);
+      for (const row of rows.page) {
+        if (row.usedAt === undefined && row.expiresAt >= now) continue;
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+      result = rows;
+    }
+
+    const nextTable: PruneTable | undefined =
+      PRUNE_TABLES[PRUNE_TABLES.indexOf(table) + 1];
+    const next = !result.isDone
+      ? { table: table, cursor: result.continueCursor }
+      : nextTable
+        ? { table: nextTable, cursor: null }
+        : null;
+    if (next) {
+      await ctx.scheduler.runAfter(0, internal.migrations.pruneStaleRows, {
+        ...next,
+        cleared: cleared,
+        deleted: deleted,
+      });
+    }
+
+    return { cleared: cleared, deleted: deleted, isDone: next === null };
   },
 });
 

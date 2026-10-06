@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { accountCipher, listWrappedKeys } from "../model/accountKeys";
 import { blobKeyId } from "../model/envelope";
 import schema from "../schema";
@@ -353,4 +353,156 @@ test("workspaceIsolationLevels stores a boolean isolation as the conversation le
     { storage: { provider: "s3" }, isolation: "agent" },
     { storage: { provider: "s3", bucket: "own", prefix: "agents/" } },
   ]);
+});
+
+test("pruneStaleRows clears plaintext conversation targets and deletes orphaned secrets and dead login codes", async () => {
+  vi.useFakeTimers();
+  const tt = convexTest(schema, modules);
+  const target = { channelName: "slack", source: { channel: "C1" } };
+  const ids = await tt.run(async (ctx) => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free",
+      createdAt: now,
+    });
+    const accountId = await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "beeblast",
+      secretHash: "hash",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const projectId = await ctx.db.insert("projects", {
+      authId: "auth_owner",
+      orgId: orgId,
+      name: "demo",
+      slug: "demo",
+      updatedAt: now,
+    });
+    const stageId = await ctx.db.insert("stages", {
+      authId: "auth_owner",
+      projectId: projectId,
+      name: "Development",
+      kind: "development",
+      isDefault: true,
+      updatedAt: now,
+    });
+    const coordinator = async (
+      key: string,
+      channelTarget: NonNullable<
+        Doc<"runtimeConversationCoordinators">["channelTarget"]
+      >,
+    ): Promise<Id<"runtimeConversationCoordinators">> =>
+      await ctx.db.insert("runtimeConversationCoordinators", {
+        accountId: accountId,
+        agentId: "agent",
+        conversationKey: key,
+        channelTarget: channelTarget,
+        nextSequence: 1,
+        ownerGeneration: 1,
+        queuedCount: 0,
+        queuedBytes: 0,
+        updatedAt: now,
+      });
+    const config = async (name: string): Promise<Id<"agentConfigs">> =>
+      await ctx.db.insert("agentConfigs", {
+        authId: "auth_owner",
+        name: name,
+        projectId: projectId,
+        stageId: stageId,
+        updatedAt: now,
+      });
+    const secret = async (
+      agentConfigId: Id<"agentConfigs">,
+    ): Promise<Id<"agentRuntimeSecrets">> =>
+      await ctx.db.insert("agentRuntimeSecrets", {
+        agentConfigId: agentConfigId,
+        ciphertext: "ciphertext",
+        iv: "iv",
+        tag: "tag",
+        updatedAt: now,
+      });
+    const code = async (
+      hash: string,
+      expiresAt: number,
+      usedAt?: number,
+    ): Promise<Id<"cliAuthCodes">> =>
+      await ctx.db.insert("cliAuthCodes", {
+        codeHash: hash,
+        authId: "auth_owner",
+        orgId: orgId,
+        accountId: accountId,
+        expiresAt: expiresAt,
+        usedAt: usedAt,
+        createdAt: now,
+      });
+    const deletedConfigId = await config("deleted");
+    await ctx.db.delete(deletedConfigId);
+
+    return {
+      legacy: await coordinator("legacy", {
+        ...target,
+        agentConfig: { provider: { openai: { apiKey: "sk-plain" } } },
+      }),
+      clean: await coordinator("clean", {
+        ...target,
+        channelRecordId: "record",
+      }),
+      orphanSecret: await secret(deletedConfigId),
+      liveSecret: await secret(await config("live")),
+      expiredCode: await code("expired", now - 1),
+      usedCode: await code("used", now + 60_000, now),
+      liveCode: await code("live", now + 60_000),
+    };
+  });
+
+  const first = await tt.mutation(internal.migrations.pruneStaleRows, {});
+  await tt.finishAllScheduledFunctions(vi.runAllTimers);
+
+  // The first batch only reached the coordinators; the rest ran rescheduled.
+  expect(first).toEqual({ cleared: 1, deleted: 0, isDone: false });
+  const after = await tt.run(async (ctx) => ({
+    legacy: await ctx.db.get(ids.legacy),
+    clean: (await ctx.db.get(ids.clean))?.channelTarget,
+    orphanSecret: await ctx.db.get(ids.orphanSecret),
+    liveSecret: (await ctx.db.get(ids.liveSecret))?._id,
+    expiredCode: await ctx.db.get(ids.expiredCode),
+    usedCode: await ctx.db.get(ids.usedCode),
+    liveCode: (await ctx.db.get(ids.liveCode))?._id,
+  }));
+  expect(after.legacy).toMatchObject({ conversationKey: "legacy" });
+  expect(after.legacy?.channelTarget).toBeUndefined();
+  expect(after).toMatchObject({
+    clean: { ...target, channelRecordId: "record" },
+    orphanSecret: null,
+    liveSecret: ids.liveSecret,
+    expiredCode: null,
+    usedCode: null,
+    liveCode: ids.liveCode,
+  });
+
+  // A second walk finds nothing left to prune.
+  expect(
+    await tt.mutation(internal.migrations.pruneStaleRows, {
+      table: "cliAuthCodes",
+      cursor: null,
+    }),
+  ).toEqual({ cleared: 0, deleted: 0, isDone: true });
+});
+
+test("pruneStaleRows reports the walk's totals on its last batch", async () => {
+  const tt = convexTest(schema, modules);
+
+  const result = await tt.mutation(internal.migrations.pruneStaleRows, {
+    table: "cliAuthCodes",
+    cursor: null,
+    cleared: 2,
+    deleted: 5,
+  });
+
+  expect(result).toEqual({ cleared: 2, deleted: 5, isDone: true });
 });
