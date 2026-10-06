@@ -238,12 +238,6 @@ export async function normalizeMcpInput(
   if (record.allowedTools !== undefined && record.allowedTools !== null) {
     input.allowedTools = normalizeAllowedTools(record.allowedTools);
   }
-  if (record.runtime !== undefined) {
-    if (record.runtime !== "auto" && record.runtime !== "lambda") {
-      throw new ClientError('runtime must be "auto" or "lambda"');
-    }
-    input.runtime = record.runtime;
-  }
   if (record.disabled !== undefined) {
     if (typeof record.disabled !== "boolean") {
       throw new ClientError("disabled must be a boolean");
@@ -339,6 +333,9 @@ function normalizeConnection(
       throw new ClientError("sandbox must be the name of a machine sandbox");
     }
     input.sandbox = record.sandbox;
+  }
+  if (record.runtime !== undefined) {
+    input.runtime = normalizeRuntime(record.runtime);
   }
   const connections = [
     input.url,
@@ -472,6 +469,14 @@ function normalizeOauth(
     refreshToken: field("refreshToken", true),
     ...(tokenUrl !== undefined ? { tokenUrl: tokenUrl } : {}),
   };
+}
+
+function normalizeRuntime(value: unknown): McpRuntime {
+  if (value !== "auto" && value !== "lambda") {
+    throw new ClientError('runtime must be "auto" or "lambda"');
+  }
+
+  return value;
 }
 
 function normalizeUrl(value: unknown): string {

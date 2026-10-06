@@ -305,6 +305,28 @@ async function requireNameFree(
   }
 }
 
+/** The other transports' connection fields, cleared when a row switches to `transport`. */
+function transportClears(
+  transport: McpTransport | undefined,
+): Partial<Doc<"mcp">> {
+  if (transport === "hosted") {
+    return { url: undefined, oauth: undefined, sandbox: undefined };
+  }
+  const hosted = {
+    workersCompatible: undefined,
+    runtime: undefined,
+    bundleStorageKey: undefined,
+    sha256: undefined,
+    sourceCode: undefined,
+  };
+  if (transport === "http") return { ...hosted, sandbox: undefined };
+  if (transport === "machine") {
+    return { ...hosted, url: undefined, oauth: undefined, headers: undefined };
+  }
+
+  return {};
+}
+
 /**
  * The fields an update writes. Provided args win; a transport switch clears
  * the other side's connection fields so a hosted row never carries a stale
@@ -354,31 +376,7 @@ function updatePatch(
       : {}),
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
-    ...(args.transport === "hosted"
-      ? { url: undefined, oauth: undefined, sandbox: undefined }
-      : {}),
-    ...(args.transport === "http"
-      ? {
-          workersCompatible: undefined,
-          runtime: undefined,
-          bundleStorageKey: undefined,
-          sha256: undefined,
-          sourceCode: undefined,
-          sandbox: undefined,
-        }
-      : {}),
-    ...(args.transport === "machine"
-      ? {
-          url: undefined,
-          oauth: undefined,
-          headers: undefined,
-          workersCompatible: undefined,
-          runtime: undefined,
-          bundleStorageKey: undefined,
-          sha256: undefined,
-          sourceCode: undefined,
-        }
-      : {}),
+    ...transportClears(args.transport),
     ...(args.sha256 !== undefined &&
     args.sha256 !== doc.sha256 &&
     args.sourceCode === undefined
