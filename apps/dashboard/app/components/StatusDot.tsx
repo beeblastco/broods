@@ -1,7 +1,13 @@
 import type { ObservabilityStreamStatus } from "@/app/hooks/useObservabilityStream";
 import { cn } from "@/app/lib/utils";
 
-export type StatusTone = "ok" | "warn" | "error" | "running" | "ended";
+export type StatusTone =
+  | "ok"
+  | "warn"
+  | "input"
+  | "error"
+  | "running"
+  | "ended";
 
 // The hue carries the meaning, so each tone needs both themes. The tokens hold
 // the 600 shade on the light card and the 400 shade on the dark, the only
@@ -9,6 +15,7 @@ export type StatusTone = "ok" | "warn" | "error" | "running" | "ended";
 export const STATUS_TONE_BG: Record<StatusTone, string> = {
   ok: "bg-success",
   warn: "bg-warning",
+  input: "bg-needs-input",
   error: "bg-destructive",
   running: "bg-info",
   ended: "bg-muted-foreground",

@@ -1,6 +1,14 @@
 "use client";
 
+import { CopyButton } from "@/app/components/CopyButton";
 import { Button } from "@/app/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/app/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -8,33 +16,36 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/app/components/ui/field";
 import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
+import { Separator } from "@/app/components/ui/separator";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "@/app/components/ui/tabs";
-import {
-  Check,
-  Copy,
-  Eye,
-  EyeOff,
-  KeyRound,
-  Loader2,
-  RefreshCw,
-} from "lucide-react";
+import { useNow } from "@/app/hooks/useNow";
+import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { toErrorMessage } from "@/app/lib/errors";
+import { formatDate } from "@/app/lib/formatTime";
+import type { api } from "@broods/convex/_generated/api";
+import type { FunctionReturnType } from "convex/server";
+import { Eye, EyeOff, KeyRound, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { relativeTime } from "../../sandbox/components/sandboxFormat";
 
-interface DialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** The plaintext runtime key (fp_agent_…) for the active stage. */
-  apiKey: string;
-  /** Whether the key was just minted (changes the framing copy). */
-  justCreated?: boolean;
-}
+const DESCRIPTION =
+  "One key for runs, streaming and observability on this stage.";
+
+// npm like the onboarding dialog, but local: the SDK import needs a project dependency.
+const INSTALL_SNIPPET = "npm install broods";
 
 const SSE_SNIPPET = [
   `import { BroodsClient } from "broods";`,
@@ -44,7 +55,7 @@ const SSE_SNIPPET = [
   `const client = new BroodsClient();`,
   ``,
   `// Default transport: server-sent events over plain HTTP.`,
-  `for await (const chunk of client.stream(api.agent.agents.yourAgent, {`,
+  `for await (const chunk of client.stream(api.agents.myAgent, {`,
   `  input: "Hello from the SDK!",`,
   `})) {`,
   `  if (chunk.type === "text-delta") process.stdout.write(chunk.text);`,
@@ -52,15 +63,15 @@ const SSE_SNIPPET = [
 ].join("\n");
 
 const WS_SNIPPET = [
-  `import { WebsocketClient } from "broods";`,
+  `import { BroodsWebSocketClient } from "broods";`,
   `import { api } from "./broods/_generated/api";`,
   ``,
   `// Reads BROODS_API_KEY from your .env automatically.`,
-  `const client = new WebsocketClient();`,
+  `const client = new BroodsWebSocketClient();`,
   ``,
   `// Opt-in transport: a full-duplex WebSocket connection.`,
   `for await (const message of client.stream({`,
-  `  agent: api.agent.agents.yourAgent,`,
+  `  agent: api.agents.myAgent,`,
   `  input: "Hello from the SDK!",`,
   `})) {`,
   `  if (message.type === "text-delta") process.stdout.write(message.text);`,
@@ -83,6 +94,36 @@ const TS_RE =
 const BASH_RE =
   /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b([A-Z_][A-Z0-9_]*)(?==)/g;
 
+type RevealedKey = NonNullable<
+  FunctionReturnType<typeof api.agent.deployments.revealKeyForStage>
+>;
+
+/** Who minted the key and when it last authenticated; absent fields render as nothing. */
+type RuntimeKeyMeta = Omit<RevealedKey, "apiKey">;
+
+interface DialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** The plaintext runtime key (bsk_…) for the active stage. */
+  apiKey: string;
+  /** Whether the key was just minted (changes the title). */
+  justCreated?: boolean;
+}
+
+interface FieldsProps {
+  apiKey: string;
+  meta?: RuntimeKeyMeta;
+  onRotate?: () => Promise<void>;
+}
+
+interface ViewProps {
+  apiKey: string;
+  /** The reveal query's result; its metadata shows only while it describes `apiKey`. */
+  revealed?: RevealedKey | null;
+  onRotate?: () => Promise<void>;
+}
+
+/** Opened by the dashboard page right after it mints the stage's first key. */
 export function RuntimeKeyDialog({
   open,
   onOpenChange,
@@ -95,133 +136,41 @@ export function RuntimeKeyDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="size-4 text-foreground" />
-            {justCreated ? "Your runtime API key is ready" : "Runtime API key"}
+            {justCreated ? "Your runtime key is ready" : "Runtime key"}
           </DialogTitle>
-          <DialogDescription>
-            This key authenticates runtime calls for this stage: agent runs,
-            streaming, and the observability views. Treat it like a password.
-          </DialogDescription>
+          <DialogDescription>{DESCRIPTION}</DialogDescription>
         </DialogHeader>
 
-        <RuntimeKeyView apiKey={apiKey} />
+        <RuntimeKeyFields key={apiKey} apiKey={apiKey} />
       </DialogContent>
     </Dialog>
   );
 }
 
+/** The dashboard's "Runtime key" tab: gateway URL, runtime key and a quickstart in one card. */
 export function RuntimeKeyView({
   apiKey,
+  revealed,
   onRotate,
-}: {
-  apiKey: string;
-  onRotate?: () => Promise<void>;
-}): React.JSX.Element {
-  const [showKey, setShowKey] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
-  // The .env block mirrors the reveal toggle so the secret is never shown by
-  // default, but Copy always yields the real line.
-  const envDisplay = `BROODS_API_KEY="${showKey ? apiKey : maskedKey}"`;
-  const envReal = `BROODS_API_KEY="${apiKey}"`;
-
-  function copyKey(): void {
-    navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
+}: ViewProps): React.JSX.Element {
+  // A just-rotated key shows no metadata until the reveal query catches up.
+  const meta = revealed?.apiKey === apiKey ? revealed : undefined;
 
   return (
-    <div className="grid gap-6">
-      <section className="grid gap-2">
-        <div className="flex min-h-7 items-center justify-between gap-2">
-          <Label>API key</Label>
-          {onRotate ? <RotateButton onRotate={onRotate} /> : null}
-        </div>
-        <div className="flex items-center gap-2">
-          <Input
-            readOnly
-            value={showKey ? apiKey : maskedKey}
-            className="h-9 font-mono text-xs"
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 shrink-0 cursor-pointer"
-            onClick={() => setShowKey((v) => !v)}
-            title={showKey ? "Hide key" : "Reveal key"}
-          >
-            {showKey ? (
-              <EyeOff className="size-3.5" />
-            ) : (
-              <Eye className="size-3.5" />
-            )}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 shrink-0 cursor-pointer"
-            onClick={copyKey}
-          >
-            {copied ? (
-              <Check className="size-3.5" />
-            ) : (
-              <Copy className="size-3.5" />
-            )}
-            <span className="ml-1">{copied ? "Copied" : "Copy"}</span>
-          </Button>
-        </div>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Stored encrypted at rest. Treat it like a password. Reopen it here
-          anytime, or rotate it to invalidate the old one.
-        </p>
-      </section>
-
-      <section className="grid gap-2">
-        <Label>Add it to your environment</Label>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          The SDK reads <Mono>BROODS_API_KEY</Mono> by default. Copy this into
-          your <Mono>.env.local</Mono> or <Mono>.env</Mono> file.
-        </p>
-        <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
-      </section>
-
-      <section className="grid gap-2">
-        <Label>Stream the response</Label>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          The SDK streams over <Mono>SSE</Mono> by default, plain HTTP that
-          works through any proxy with zero setup. For the lowest latency and a
-          full-duplex channel, opt into the WebSocket client.
-        </p>
-        <Tabs defaultValue="sse" className="mt-1">
-          <TabsList>
-            <TabsTrigger value="sse" className="cursor-pointer">
-              SSE · default
-            </TabsTrigger>
-            <TabsTrigger value="ws" className="cursor-pointer">
-              WebSocket
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="sse" className="grid gap-2">
-            <CodeBlock code={SSE_SNIPPET} lang="ts" />
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Best for simple request/response runs. No connection to manage,
-              and reconnects come for free.
-            </p>
-          </TabsContent>
-          <TabsContent value="ws" className="grid gap-2">
-            <CodeBlock code={WS_SNIPPET} lang="ts" />
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Best for live, interactive runs. Full-duplex, lowest latency,
-              cancel mid-stream.
-            </p>
-          </TabsContent>
-        </Tabs>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Calls go to <Mono>gateway.broods.app</Mono> by default; override with{" "}
-          <Mono>BROODS_BASE_URL</Mono> for a self-hosted deployment.
-        </p>
-      </section>
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Runtime</CardTitle>
+        <CardDescription>{DESCRIPTION}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <RuntimeKeyFields
+          key={apiKey}
+          apiKey={apiKey}
+          meta={meta}
+          onRotate={onRotate}
+        />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -235,33 +184,30 @@ function CodeBlock({
   lang: "ts" | "bash";
   copyText?: string;
 }): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
-
-  function copy(): void {
-    navigator.clipboard.writeText(copyText ?? code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
   return (
     <div className="relative">
       <pre className="overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
         <code>{highlight(code, lang)}</code>
       </pre>
-      <button
-        type="button"
-        onClick={copy}
-        title="Copy"
-        className="absolute right-2 top-2 flex size-7 cursor-pointer items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-      >
-        {copied ? (
-          <Check className="size-3.5" />
-        ) : (
-          <Copy className="size-3.5" />
-        )}
-      </button>
+      <div className="absolute right-2 top-2">
+        <CopyButton value={copyText ?? code} label="snippet" />
+      </div>
     </div>
   );
+}
+
+function curlSnippet(gatewayUrl: string): string {
+  return [
+    `curl -N ${gatewayUrl}/v1/runs \\`,
+    `  -H "Authorization: Bearer $BROODS_API_KEY" \\`,
+    `  -H "Content-Type: application/json" \\`,
+    `  -d '{`,
+    `    "agentId": "your-agent-id",`,
+    `    "eventId": "unique-id",`,
+    `    "conversationKey": "conversation-identifier",`,
+    `    "events": [{ "role": "user", "content": [{ "type": "text", "text": "Hello from cURL!" }] }]`,
+    `  }'`,
+  ].join("\n");
 }
 
 function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
@@ -301,12 +247,22 @@ function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
   return out;
 }
 
-function Mono({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs text-foreground">
-      {children}
-    </code>
+// "Created Sep 2 by Ada · last used 4m ago", dropping each part the row does not know.
+function KeyMetaLine({ meta }: { meta?: RuntimeKeyMeta }): React.JSX.Element {
+  const now = useNow();
+  const created = meta?.createdAt
+    ? `Created ${formatDate(meta.createdAt)}${meta.createdBy ? ` by ${meta.createdBy}` : ""}`
+    : meta?.createdBy
+      ? `Created by ${meta.createdBy}`
+      : null;
+  const lastUsed = meta?.lastUsedAt
+    ? `last used ${relativeTime(meta.lastUsedAt, now)}`
+    : null;
+  const parts = [created, lastUsed].filter(
+    (part): part is string => part !== null,
   );
+
+  return <FieldDescription>{parts.join(" · ")}</FieldDescription>;
 }
 
 function RotateButton({
@@ -325,7 +281,7 @@ function RotateButton({
       await onRotate();
       setConfirming(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to rotate key");
+      setError(toErrorMessage(e));
     } finally {
       setRotating(false);
     }
@@ -333,23 +289,23 @@ function RotateButton({
 
   if (confirming) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <span className="text-xs text-muted-foreground">
           Invalidate the current key?
         </span>
         <Button
           variant="destructive"
-          size="sm"
-          className="h-7 cursor-pointer"
+          size="xs"
+          className="cursor-pointer"
           disabled={rotating}
           onClick={run}
         >
-          {rotating ? <Loader2 className="size-3.5 animate-spin" /> : "Rotate"}
+          {rotating ? "Rotating" : "Rotate"}
         </Button>
         <Button
           variant="ghost"
-          size="sm"
-          className="h-7 cursor-pointer"
+          size="xs"
+          className="cursor-pointer"
           disabled={rotating}
           onClick={() => setConfirming(false)}
         >
@@ -360,18 +316,148 @@ function RotateButton({
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex shrink-0 flex-col items-end">
       <Button
         variant="outline"
-        size="sm"
+        size="xs"
         tone="muted"
-        className="h-7 cursor-pointer"
+        className="cursor-pointer"
         onClick={() => setConfirming(true)}
       >
-        <RefreshCw className="size-3.5" />
-        <span className="ml-1">Rotate</span>
+        <RefreshCw />
+        Rotate
       </Button>
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </div>
+  );
+}
+
+// The fields and quickstart shared by the tab's card and the just-minted dialog.
+function RuntimeKeyFields({
+  apiKey,
+  meta,
+  onRotate,
+}: FieldsProps): React.JSX.Element {
+  const [showKey, setShowKey] = useState(false);
+  const endpoint = resolveCoreEndpoint();
+  const gatewayUrl = endpoint.ok ? endpoint.httpBaseUrl : null;
+  const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
+  // The .env block mirrors the reveal toggle so the secret is never shown by
+  // default, but Copy always yields the real lines.
+  const baseUrlLine = gatewayUrl ? `\nBROODS_BASE_URL="${gatewayUrl}"` : "";
+  const envDisplay = `BROODS_API_KEY="${showKey ? apiKey : maskedKey}"${baseUrlLine}`;
+  const envReal = `BROODS_API_KEY="${apiKey}"${baseUrlLine}`;
+
+  // Each label sits in a fixed-width wrapper: a horizontal Field grows a
+  // label that is its direct child.
+  return (
+    <FieldGroup>
+      <Field orientation="horizontal">
+        <div className="w-28 shrink-0">
+          <FieldLabel>Gateway URL</FieldLabel>
+        </div>
+        {gatewayUrl ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <Input readOnly value={gatewayUrl} className="font-mono text-xs" />
+            <CopyButton value={gatewayUrl} label="gateway URL" />
+          </div>
+        ) : (
+          <FieldDescription>
+            {endpoint.ok ? null : endpoint.message}
+          </FieldDescription>
+        )}
+      </Field>
+      <Field orientation="horizontal" className="items-start">
+        <div className="w-28 shrink-0">
+          <FieldLabel>Runtime key</FieldLabel>
+        </div>
+        <FieldContent>
+          <div className="flex items-center gap-1">
+            <Input
+              readOnly
+              value={showKey ? apiKey : maskedKey}
+              className="font-mono text-xs"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              tone="muted"
+              className="cursor-pointer"
+              aria-label={showKey ? "Hide key" : "Reveal key"}
+              onClick={() => setShowKey((v) => !v)}
+            >
+              {showKey ? <EyeOff /> : <Eye />}
+            </Button>
+            <CopyButton value={apiKey} label="runtime key" />
+          </div>
+          <div className="flex items-start justify-between">
+            <KeyMetaLine meta={meta} />
+            {onRotate ? <RotateButton onRotate={onRotate} /> : null}
+          </div>
+        </FieldContent>
+      </Field>
+
+      <Separator />
+
+      <div className="grid gap-4">
+        <h3 className="text-sm font-semibold">Quickstart</h3>
+        <ol className="grid gap-4">
+          <Step n={1} title="Install">
+            <CodeBlock code={INSTALL_SNIPPET} lang="bash" />
+          </Step>
+          <Step n={2} title="Add to .env">
+            <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
+          </Step>
+          <Step n={3} title="Run an agent">
+            <Tabs defaultValue="sdk">
+              <TabsList>
+                <TabsTrigger value="sdk" className="cursor-pointer">
+                  SDK
+                </TabsTrigger>
+                <TabsTrigger value="ws" className="cursor-pointer">
+                  WebSocket
+                </TabsTrigger>
+                {gatewayUrl ? (
+                  <TabsTrigger value="curl" className="cursor-pointer">
+                    cURL
+                  </TabsTrigger>
+                ) : null}
+              </TabsList>
+              <TabsContent value="sdk">
+                <CodeBlock code={SSE_SNIPPET} lang="ts" />
+              </TabsContent>
+              <TabsContent value="ws">
+                <CodeBlock code={WS_SNIPPET} lang="ts" />
+              </TabsContent>
+              {gatewayUrl ? (
+                <TabsContent value="curl">
+                  <CodeBlock code={curlSnippet(gatewayUrl)} lang="bash" />
+                </TabsContent>
+              ) : null}
+            </Tabs>
+          </Step>
+        </ol>
+      </div>
+    </FieldGroup>
+  );
+}
+
+function Step({
+  n,
+  title,
+  children,
+}: {
+  n: number;
+  title: string;
+  children: ReactNode;
+}): React.JSX.Element {
+  return (
+    <li className="grid gap-2">
+      <p className="text-sm font-medium">
+        <span className="text-muted-foreground tabular-nums">{n}</span> {title}
+      </p>
+      {children}
+    </li>
   );
 }

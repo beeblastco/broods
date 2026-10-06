@@ -1,6 +1,7 @@
 "use client";
 
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import type { NodeType } from "@/app/components/canvas/nodeTemplates";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
@@ -56,15 +57,12 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
-import {
-  isRuntimeVariable,
-  type RuntimeVariable,
-} from "@/app/lib/runtimeVariables";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import { reportPerf } from "@/app/lib/perfReport";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { providerApiKeyEnvName } from "@broods/convex/model/modelProviders";
 import type { Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
@@ -211,7 +209,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const ensureDeployment = useMutation(api.agent.deployments.ensureForStage);
   const rotateDeployment = useMutation(api.agent.deployments.rotate);
 
-  // The stage's runtime API key (shared by every agent in it). The agent
+  // The stage's runtime key (shared by every agent in it). The agent
   // itself is selected per request by its Agent ID. Created on demand here or on
   // the first `broods deploy`.
   const activeDeployment =
@@ -297,16 +295,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
     return inferProviderFromModelId(agentConfig.modelId ?? "");
   }, [agentConfig]);
-  const runtimeVariables = useMemo<RuntimeVariable[]>(
-    () =>
-      Array.isArray(agentConfig?.runtimeVariables)
-        ? agentConfig.runtimeVariables.filter(
-            (value: unknown): value is RuntimeVariable =>
-              isRuntimeVariable(value),
-          )
-        : [],
-    [agentConfig],
-  );
   const headerStatus = useMemo<HeaderStatusBadge | null>(() => {
     if (isAgent) {
       const config = agentStatusConfig[healthStatus];
@@ -463,17 +451,22 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const base = agentConfig
       ? (toNestedAgentConfig(agentConfig) as Record<string, unknown>)
       : {};
-    const currentProvider = isPlainObject(base.provider) ? base.provider : {};
-    const nextProviderConfig = { ...currentProvider };
-    if (next.provider === "custom") {
-      nextProviderConfig.custom = {
-        ...(isPlainObject(currentProvider.custom)
-          ? currentProvider.custom
+    const currentProvider = readAgentBranch<
+      Partial<Record<AgentProvider, Record<string, unknown>>>
+    >(agentConfig, "provider");
+    // A provider picked here without a key yet reads the same `${NAME}` stage
+    // variable a newly created agent does.
+    const keyVariable = providerApiKeyEnvName(next.provider);
+    const nextProviderConfig = {
+      ...currentProvider,
+      [next.provider]: {
+        ...(keyVariable ? { apiKey: `\${${keyVariable}}` } : {}),
+        ...currentProvider[next.provider],
+        ...(next.provider === "custom"
+          ? { base_url: next.customBaseUrl, baseURL: next.customBaseUrl }
           : {}),
-        base_url: next.customBaseUrl,
-        baseURL: next.customBaseUrl,
-      };
-    }
+      },
+    };
     const patch = fromNestedAgentConfig({
       ...base,
       model: {
@@ -728,9 +721,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </Badge>
           )}
         </div>
-        <Button variant="ghost" size="icon-xs" onClick={onClose}>
-          <X className="size-4" />
-        </Button>
+        <IconTooltip label="Close panel">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="cursor-pointer"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
+        </IconTooltip>
       </div>
 
       <Separator />
@@ -796,7 +796,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onRotateKey={handleRotateKey}
                 isSavingKey={isSavingKey}
                 selectedProvider={selectedProvider}
-                runtimeVariables={runtimeVariables}
                 onSaveModelSettings={handleSaveModelSettings}
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}

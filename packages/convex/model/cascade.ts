@@ -10,7 +10,6 @@ import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
 import { unregisterSchedule } from "./cronSchedules";
-import { cronsInProject } from "./projectScope";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 // One bounded read per account-scoped table. Each names the index whose
@@ -36,6 +35,45 @@ const accountScopedReads: ReadonlyArray<
     ctx.db
       .query("agentPolicies")
       .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  // Account-scoped rows with no stage outlive every project purge, so the
+  // account drain is the only place they are removed.
+  (ctx, accountId) =>
+    ctx.db
+      .query("accountEnvVars")
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("connections")
+      .withIndex("by_accountId_and_type", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("accountKeys")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("accountRoles")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("mcp")
+      .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("uploadGrants")
+      .withIndex("by_accountId_and_expiresAt", (q) =>
+        q.eq("accountId", accountId),
+      )
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
@@ -80,7 +118,17 @@ const accountScopedReads: ReadonlyArray<
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
-      .query("skills")
+      .query("auditEvents")
+      .withIndex("by_accountId_and_seq", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditChainHeads")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditSinks")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
@@ -91,6 +139,16 @@ const accountScopedReads: ReadonlyArray<
   (ctx, accountId) =>
     ctx.db
       .query("runtimeConversationEvents")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeConversationCoordinators")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeHarnessSessions")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
@@ -106,11 +164,6 @@ const accountScopedReads: ReadonlyArray<
   (ctx, accountId) =>
     ctx.db
       .query("runtimeAsyncToolResults")
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .take(ACCOUNT_DELETE_BATCH_SIZE),
-  (ctx, accountId) =>
-    ctx.db
-      .query("runtimeAsyncToolGroups")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
@@ -132,6 +185,16 @@ const accountScopedReads: ReadonlyArray<
     ctx.db
       .query("cliExternalResources")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("usageMeters")
+      .withIndex("by_accountId_and_month", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("usageDays")
+      .withIndex("by_accountId_and_day", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
 ];
 
@@ -186,21 +249,9 @@ export async function deleteAccountContentsBatch(
     return false;
   }
 
-  const auditEvents = await ctx.db
-    .query("configAuditEvents")
-    .withIndex("by_account", (q) => q.eq("accountId", accountId))
-    .take(ACCOUNT_DELETE_BATCH_SIZE);
-  if (auditEvents.length > 0) {
-    for (const event of auditEvents) await ctx.db.delete(event._id);
-
-    return false;
-  }
-
   const taskUsage = await ctx.db
     .query("taskUsage")
-    .withIndex("by_accountId_and_finishedAt", (q) =>
-      q.eq("accountId", accountId),
-    )
+    .withIndex("by_accountId_and_taskId", (q) => q.eq("accountId", accountId))
     .take(ACCOUNT_DELETE_BATCH_SIZE);
   if (taskUsage.length > 0) {
     for (const task of taskUsage) await ctx.db.delete(task._id);
@@ -211,7 +262,7 @@ export async function deleteAccountContentsBatch(
   const usageRollups = await ctx.db
     .query("usageRollups")
     .withIndex(
-      "by_accountId_endpointId_bucketStart_modelProvider_modelId",
+      "by_accountId_endpointId_grain_bucketStart_modelProvider_modelId",
       (q) => q.eq("accountId", accountId),
     )
     .take(ACCOUNT_DELETE_BATCH_SIZE);
@@ -235,20 +286,7 @@ export async function purgeProject(
   ctx: MutationCtx,
   projectId: Id<"projects">,
 ): Promise<void> {
-  // Crons hang off the project's agents, so gather them before the stage
-  // cascade deletes those agents. Rows and their schedules go now, in this
-  // transaction; run history can exceed one transaction, so a scheduled
-  // mutation drains it in bounded batches after this commits.
-  const crons = await cronsForProject(ctx, projectId);
-  for (const cron of crons) {
-    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
-      accountId: cron.accountId,
-      cronId: cron._id,
-    });
-    await unregisterSchedule(ctx, cron);
-    await ctx.db.delete(cron._id);
-  }
-
+  // Each stage's cascade deletes its agents, and each agent its crons.
   const stages = await ctx.db
     .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
@@ -379,21 +417,4 @@ export async function purgeUser(
   for (const reveal of cliReveals) await ctx.db.delete(reveal._id);
 
   await ctx.db.delete(user._id);
-}
-
-// Crons are account-scoped, so the project's org resolves the account that
-// owns them.
-async function cronsForProject(
-  ctx: MutationCtx,
-  projectId: Id<"projects">,
-): Promise<Doc<"crons">[]> {
-  const project = await ctx.db.get(projectId);
-  if (!project) return [];
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
-    .unique();
-  if (!account) return [];
-
-  return await cronsInProject(ctx, projectId, account._id);
 }

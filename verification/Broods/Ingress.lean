@@ -1,0 +1,295 @@
+/-!
+# Run lifecycle
+
+Model of one `runtimeIngressEnvelopes` row (the run behind `GET /v1/runs/{runId}`)
+under the mutations in `packages/convex/runtimeIngress.ts`. Each mutation is a
+Convex transaction, so a run is a sequence of `Step`s. The polling row written
+next to it lives in `Broods.AsyncResults`.
+-/
+
+namespace Broods.Ingress
+
+/-- Stored envelope status. `accepted` and `applied` exist only in the public type. -/
+inductive Status where
+  | queued | processing | completed | failed | expired
+  deriving DecidableEq, Repr
+
+/-- How an owner ends its turn in `settle` / `takeNext`. -/
+inductive Outcome where
+  | completed | failed
+  deriving DecidableEq, Repr
+
+/-- The `runtimeConversationCoordinators` fields the fence reads. -/
+structure Coord where
+  ownerGeneration : Nat
+  ownerEventId : Option Nat
+  leaseExpiresAt : Option Nat
+  stopRequestedGeneration : Option Nat
+  deriving DecidableEq, Repr
+
+/-- The envelope fields the lifecycle reads and writes. -/
+structure Envelope where
+  eventId : Nat
+  status : Status
+  expiresAt : Nat
+  ownerGeneration : Option Nat
+  appliedToEventId : Option Nat
+  stoppedByUser : Bool
+  deriving DecidableEq, Repr
+
+/-- One envelope write, named after the helper that performs it. -/
+inductive Step where
+  /-- `promoteQueuedGroup` and `applySteering`: queued to processing. -/
+  | promote (generation appliedTo : Nat)
+  /-- `stepBoundary`: the steer claim, behind the fence and the stop check of the
+  same transaction that stores the step and renews the lease. -/
+  | stepBoundary (ownerEventId generation : Nat)
+  /-- `settleAppliedEnvelopes`, reached through `settle` and `takeNext`. -/
+  | settle (ownerEventId generation : Nat) (outcome : Outcome)
+  /-- `expireQueuedEnvelopes`. -/
+  | expireQueued
+  /-- `expireStaleOwner`. -/
+  | expireStaleOwner
+  /-- The `maintain` cron. -/
+  | maintain
+
+/-- `TERMINAL_STATUSES` in `runtimeIngress.ts`. -/
+def Status.terminal : Status → Bool
+  | .completed | .failed | .expired => true
+  | _ => false
+
+/-- The envelope status a `settle` / `takeNext` outcome writes. -/
+def Outcome.status : Outcome → Status
+  | .completed => .completed
+  | .failed => .failed
+
+/-- `hasActiveOwner`: an owner whose lease has not ended. A lease ending at `now` is
+still live; the fence and every expiry use this one predicate. -/
+def Coord.live (c : Coord) (now : Nat) : Bool :=
+  c.ownerEventId.isSome &&
+    match c.leaseExpiresAt with
+    | some t => decide (now ≤ t)
+    | none => false
+
+/-- `requireOwner`: same owner event, same generation, a live lease. -/
+def requireOwner (c : Coord) (ownerEventId generation now : Nat) : Bool :=
+  c.ownerEventId == some ownerEventId && c.ownerGeneration == generation && c.live now
+
+/-- `stepBoundary` goes past its fence and stop check: only then does it renew the
+lease and claim steers. A stale owner writes nothing; a stopped one keeps the
+step's rows and claims nothing. -/
+def boundaryProceeds (c : Coord) (ownerEventId generation now : Nat) : Bool :=
+  requireOwner c ownerEventId generation now && c.stopRequestedGeneration != some generation
+
+/-- `renewHeldLease`: keeps the lease while more than 9/10 of the TTL remains, else
+extends it to `now + ttl`. Scaled by 10 to stay in `Nat`. -/
+def Coord.renew (c : Coord) (now ttl : Nat) : Coord :=
+  match c.leaseExpiresAt with
+  | some t => if 10 * now + 9 * ttl < 10 * t then c else { c with leaseExpiresAt := some (now + ttl) }
+  | none => { c with leaseExpiresAt := some (now + ttl) }
+
+/-- `stepBoundary`'s coordinator write. -/
+def Coord.stepBoundary (c : Coord) (ownerEventId generation now ttl : Nat) : Coord :=
+  if boundaryProceeds c ownerEventId generation now then c.renew now ttl else c
+
+/-- The effect of one step on one envelope at time `now`. -/
+def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
+  | .promote g to, e =>
+    if e.status == .queued && decide (now < e.expiresAt) then
+      { e with status := .processing, ownerGeneration := some g, appliedToEventId := some to }
+    else e
+  | .stepBoundary owner g, e =>
+    if boundaryProceeds c owner g now && e.status == .queued && decide (now < e.expiresAt) then
+      { e with status := .processing, ownerGeneration := some g, appliedToEventId := some owner }
+    else e
+  | .settle owner g o, e =>
+    if requireOwner c owner g now && (e.eventId == owner || e.appliedToEventId == some owner) &&
+        e.status == .processing then
+      { e with
+        status := o.status
+        stoppedByUser := e.stoppedByUser || (o == .failed && c.stopRequestedGeneration == some g) }
+    else e
+  | .expireQueued, e =>
+    if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired } else e
+  | .expireStaleOwner, e =>
+    if c.ownerEventId == some e.eventId && !c.live now && !e.status.terminal then
+      { e with status := .expired }
+    else e
+  | .maintain, e =>
+    if (e.status == .queued || e.status == .processing) && decide (e.expiresAt ≤ now) then
+      if e.status == .processing && c.live now &&
+          e.ownerGeneration == some c.ownerGeneration then
+        { e with expiresAt := c.leaseExpiresAt.getD e.expiresAt }
+      else { e with status := .expired }
+    else e
+
+/-- Replays a run: each step with the coordinator and clock it saw. -/
+def run (e : Envelope) (steps : List (Coord × Nat × Step)) : Envelope :=
+  steps.foldl (fun e (c, now, s) => step c now s e) e
+
+/-- The transitions a single step may make. -/
+inductive Allowed : Status → Status → Prop where
+  | stay (s : Status) : Allowed s s
+  | start : Allowed .queued .processing
+  | expireQueued : Allowed .queued .expired
+  | expireRunning : Allowed .processing .expired
+  | finish (o : Outcome) : Allowed .processing o.status
+
+/-! ## Properties -/
+
+/-- A finished run stays finished: no step moves a terminal envelope. -/
+theorem terminal_absorbing {c : Coord} {now : Nat} {e : Envelope} (s : Step)
+    (h : e.status.terminal = true) : (step c now s e).status = e.status := by
+  cases s <;> cases hst : e.status <;> simp [Status.terminal, hst] at h <;>
+    simp only [step, hst] <;> (repeat' split) <;> simp_all [Status.terminal]
+
+/-- Over any sequence of steps, a terminal run keeps its status. -/
+theorem run_terminal {e : Envelope} (steps : List (Coord × Nat × Step))
+    (h : e.status.terminal = true) : (run e steps).status = e.status := by
+  induction steps generalizing e with
+  | nil => rfl
+  | cons hd tl ih =>
+    obtain ⟨c, now, s⟩ := hd
+    have hs := terminal_absorbing (c := c) (now := now) s h
+    simp only [run, List.foldl_cons] at ih ⊢
+    rw [ih (by rw [hs]; exact h), hs]
+
+/-- Every step is a forward transition: nothing re-opens a finished run and nothing
+returns a running row to the queue. -/
+theorem step_allowed {c : Coord} {now : Nat} {e : Envelope} (s : Step) :
+    Allowed e.status (step c now s e).status := by
+  cases s with
+  | settle owner g o =>
+    simp only [step]
+    split
+    · rename_i hc
+      simp only [Bool.and_eq_true, beq_iff_eq] at hc
+      rw [hc.2]
+      exact .finish o
+    · exact .stay _
+  | _ =>
+    simp only [step]
+    (repeat' split) <;> first
+      | exact .stay _
+      | (cases hst : e.status <;> simp_all [Status.terminal] <;> constructor)
+
+/-- A settle writes only for the fenced owner, and `stoppedByUser` only for the
+generation that `/stop` targeted, which is the owner's own generation. -/
+theorem settle_fenced {c : Coord} {now owner g : Nat} {o : Outcome} {e : Envelope}
+    (h : step c now (.settle owner g o) e ≠ e) :
+    requireOwner c owner g now = true := by
+  simp only [step] at h
+  split at h
+  · simp_all
+  · exact absurd rfl h
+
+theorem stop_scoped {c : Coord} {now owner g : Nat} {o : Outcome} {e : Envelope}
+    (hb : e.stoppedByUser = false)
+    (h : (step c now (.settle owner g o) e).stoppedByUser = true) :
+    c.stopRequestedGeneration = some g ∧ c.ownerGeneration = g ∧ o = .failed := by
+  simp only [step] at h
+  split at h
+  · rename_i hc
+    simp only [requireOwner, Bool.and_eq_true, beq_iff_eq] at hc
+    simp_all
+  · simp_all
+
+/-- The expiry sweeps agree with the fence: while `requireOwner` accepts the
+owner, neither `maintain` nor `expireStaleOwner` expires its running row. -/
+theorem fence_agreement {c : Coord} {now owner : Nat} {e : Envelope}
+    (hfence : requireOwner c owner c.ownerGeneration now = true)
+    (hrun : e.status = .processing) (hgen : e.ownerGeneration = some c.ownerGeneration) :
+    (step c now .maintain e).status = .processing ∧
+      (step c now .expireStaleOwner e).status = .processing := by
+  simp only [requireOwner, Bool.and_eq_true] at hfence
+  have hlive := hfence.2
+  constructor
+  · simp only [step, hrun, hgen, hlive]
+    split <;> simp_all
+  · simp [step, hlive, hrun, Status.terminal]
+
+/-- A step boundary claims a steer only for the live owner of a generation nobody
+stopped, decided in the transaction that claims it. -/
+theorem boundary_fenced {c : Coord} {now owner g : Nat} {e : Envelope}
+    (h : step c now (.stepBoundary owner g) e ≠ e) :
+    requireOwner c owner g now = true ∧ c.stopRequestedGeneration ≠ some g := by
+  simp only [step] at h
+  split at h
+  · rename_i hc
+    simp only [boundaryProceeds, Bool.and_eq_true, bne_iff_ne, ne_eq] at hc
+    exact ⟨hc.1.1.1, hc.1.1.2⟩
+  · exact absurd rfl h
+
+/-- A boundary that proceeds leaves its owner fenced in for 9/10 of the TTL. -/
+theorem boundary_lease {c : Coord} {owner g now ttl n : Nat}
+    (hp : boundaryProceeds c owner g now = true) (hn : 10 * n ≤ 10 * now + 9 * ttl) :
+    requireOwner (c.stepBoundary owner g now ttl) owner g n = true := by
+  have hreq : requireOwner c owner g now = true := by
+    simp only [boundaryProceeds, Bool.and_eq_true] at hp
+    exact hp.1
+  simp only [requireOwner, Coord.live, Bool.and_eq_true, beq_iff_eq] at hreq
+  obtain ⟨⟨hid, hgen⟩, hsome, hlive⟩ := hreq
+  simp only [Coord.stepBoundary, hp, ↓reduceIte, Coord.renew]
+  split
+  · rename_i t ht
+    rw [ht] at hlive
+    split
+    · simp only [requireOwner, Coord.live, hid, hgen, ht, Option.isSome_some]
+      simp only [decide_eq_true_eq] at hlive ⊢
+      simp
+      omega
+    · simp [requireOwner, Coord.live, hid, hgen]
+      omega
+  · simp [requireOwner, Coord.live, hid, hgen]
+    omega
+
+/-- Finding 7: a proof of ownership answers a later check. A fenced write and
+`isCurrentOwner` both pass `requireOwner`, and the coordinator leaves an owner
+only through its own `takeNext` / `releaseOwner` (core counts no proof after
+those) or once `live` is false. So while the lease still covers `n`, a proof at
+`t` gives the fence at `n`, and the sweeps keep the owner's running row. After a
+boundary that proceeds, `boundary_lease` covers 9/10 of the TTL, far past
+`OWNER_CHECK_INTERVAL_MS`; any other proof covers what is left of the lease, as
+the read-based check it replaces always did. -/
+theorem proof_covers {c : Coord} {owner t n L : Nat} {e : Envelope}
+    (hproof : requireOwner c owner c.ownerGeneration t = true)
+    (hlease : c.leaseExpiresAt = some L) (hn : n ≤ L)
+    (hrun : e.status = .processing) (hgen : e.ownerGeneration = some c.ownerGeneration) :
+    requireOwner c owner c.ownerGeneration n = true ∧
+      (step c n .maintain e).status = .processing ∧
+      (step c n .expireStaleOwner e).status = .processing := by
+  have hfence : requireOwner c owner c.ownerGeneration n = true := by
+    simp only [requireOwner, Coord.live, Bool.and_eq_true, beq_iff_eq, hlease] at hproof ⊢
+    exact ⟨hproof.1, hproof.2.1, by simpa using hn⟩
+  exact ⟨hfence, fence_agreement hfence hrun hgen⟩
+
+/-! ## Regression witnesses -/
+
+/-- At `now = leaseExpiresAt` the fence accepts the owner, `maintain` defers its
+running row, and the owner's settle completes the run. -/
+example :
+    let c : Coord := ⟨1, some 7, some 10, none⟩
+    let e : Envelope := ⟨7, .processing, 10, some 1, some 7, false⟩
+    requireOwner c 7 1 10 = true ∧
+      (step c 10 .maintain e).status = .processing ∧
+      (run e [(c, 10, .maintain), (c, 10, .settle 7 1 .completed)]).status = .completed := by
+  decide
+
+/-- A stopped boundary claims no steer and leaves the lease as it was; without the
+stop, the same boundary claims it. -/
+example :
+    let c : Coord := ⟨1, some 7, some 10, some 1⟩
+    let e : Envelope := ⟨8, .queued, 20, none, none, false⟩
+    step c 5 (.stepBoundary 7 1) e = e ∧ c.stepBoundary 7 1 5 100 = c ∧
+      (step { c with stopRequestedGeneration := none } 5 (.stepBoundary 7 1) e).status =
+        .processing := by
+  decide
+
+/-- A queued row that names the owner is left queued by its settle. -/
+example :
+    let c : Coord := ⟨1, some 7, some 10, none⟩
+    let e : Envelope := ⟨8, .queued, 20, none, some 7, false⟩
+    (step c 5 (.settle 7 1 .completed) e).status = .queued := by
+  decide
+
+end Broods.Ingress

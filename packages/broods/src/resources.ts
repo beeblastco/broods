@@ -6,11 +6,19 @@
 
 import type {
   AgentConfig,
+  HookAgentConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentGoogleChatChannelConfig,
+  AgentInstagramChannelConfig,
+  AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
+  AgentMessengerChannelConfig,
   AgentSlackChannelConfig,
+  AgentTeamsChannelConfig,
   AgentTelegramChannelConfig,
+  AgentTwilioChannelConfig,
+  AgentWhatsAppChannelConfig,
   ChannelPartition,
   ChannelReplyIn,
   PolicyDocument,
@@ -18,14 +26,23 @@ import type {
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
+  WorkspaceIsolation,
   TelegramSource,
+  GoogleChatSource,
   GitHubSource,
+  LinearSource,
   SlackSource,
   DiscordSource,
   MatrixSource,
   PancakeSource,
+  TeamsSource,
+  TwilioSource,
   ZaloSource,
+  InstagramSource,
+  MessengerSource,
+  WhatsAppSource,
 } from "./contracts.ts";
+import type { McpRuntime } from "./account.ts";
 
 export type { ChannelPartition };
 
@@ -107,9 +124,15 @@ export type ResourceInput<Name extends string, Config> = {
  * `persistent` sandbox reconnects to when no workspace is mounted; unset, each
  * agent gets its own, and pinning one string on two sandboxes shares a machine.
  * Keys are scoped to the account, so they cannot reach another account's machine.
+ * A `custom` sandbox names its server with `endpoint` (https, required), an
+ * optional bearer `token` and extra static `headers`; a credential header's
+ * value is an `env("NAME")` ref.
  */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
   reservationKey?: string;
+  endpoint?: string;
+  token?: string | EnvRef;
+  headers?: Record<string, string | EnvRef>;
 };
 
 /**
@@ -172,9 +195,17 @@ export interface McpDefinitionConfig {
    * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
    * right next to the `defineMcp` call. The CLI bundles the defining module
-   * and the mcp-runner Lambda hosts it, one invoke per batch of requests.
+   * and the platform hosts it, one invocation per batch of requests: with
+   * `runtime` "auto" on Cloudflare Workers when the bundle builds for them,
+   * on Lambda otherwise.
    */
   handler?: McpHandler;
+  /**
+   * Hosted servers only. "auto" (the default) runs the handler on Cloudflare
+   * Workers when it builds for them; "lambda" always ships the Node build to
+   * Lambda, for a server that needs Node APIs Workers lack.
+   */
+  runtime?: McpRuntime;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
    * X-Api-Key, ...) must reference an account env var by name inside a plain
@@ -202,12 +233,19 @@ export interface McpDefinitionConfig {
 
 export type ChannelType =
   | "telegram"
+  | "gchat"
   | "github"
+  | "linear"
   | "slack"
   | "discord"
   | "matrix"
   | "pancake"
-  | "zalo";
+  | "teams"
+  | "twilio"
+  | "zalo"
+  | "whatsapp"
+  | "instagram"
+  | "messenger";
 
 /**
  * A connection is one app install: the credentials an agent needs before a
@@ -262,6 +300,21 @@ export type TelegramConnectionInput = EnvRefString<
 > &
   ConnectionIdentityInput;
 
+export type GoogleChatConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentGoogleChatChannelConfig,
+      | "credentials"
+      | "endpointUrl"
+      | "googleChatProjectNumber"
+      | "userName"
+      | "workspaceAddOnServiceAccountEmail"
+    >,
+    "credentials"
+  >
+> &
+  ConnectionIdentityInput;
+
 export type GitHubConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
@@ -276,6 +329,17 @@ export type GitHubConnectionInput = EnvRefString<
       | "triggerOnPROpen"
     >,
     "webhookSecret" | "appId" | "privateKey"
+  >
+> &
+  ConnectionIdentityInput;
+
+export type LinearConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentLinearChannelConfig,
+      "apiKey" | "apiUrl" | "userName" | "webhookSecret"
+    >,
+    "apiKey" | "userName" | "webhookSecret"
   >
 > &
   ConnectionIdentityInput;
@@ -313,6 +377,39 @@ export type MatrixConnectionInput = EnvRefString<
 > &
   ConnectionIdentityInput;
 
+export type TeamsConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentTeamsChannelConfig,
+      | "apiUrl"
+      | "appId"
+      | "appPassword"
+      | "appTenantId"
+      | "appType"
+      | "userName"
+    >,
+    "appId" | "appPassword"
+  >
+> &
+  ConnectionIdentityInput;
+
+export type WhatsAppConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentWhatsAppChannelConfig,
+      | "accessToken"
+      | "apiUrl"
+      | "apiVersion"
+      | "appSecret"
+      | "phoneNumberId"
+      | "userName"
+      | "verifyToken"
+    >,
+    "accessToken" | "appSecret" | "phoneNumberId" | "verifyToken"
+  >
+> &
+  ConnectionIdentityInput;
+
 export interface PancakeConnectionInput extends ConnectionIdentityInput {
   pageId: ChannelSecret;
   pageAccessToken: ChannelSecret;
@@ -320,18 +417,75 @@ export interface PancakeConnectionInput extends ConnectionIdentityInput {
   senderId?: string | EnvRef;
 }
 
+export type TwilioConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentTwilioChannelConfig,
+      | "accountSid"
+      | "apiUrl"
+      | "authToken"
+      | "messagingServiceSid"
+      | "phoneNumber"
+      | "statusCallbackUrl"
+      | "userName"
+      | "webhookUrl"
+    >,
+    "accountSid" | "authToken"
+  >
+> &
+  ConnectionIdentityInput;
+
 export interface ZaloConnectionInput extends ConnectionIdentityInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
 }
 
+export type InstagramConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentInstagramChannelConfig,
+      | "accessToken"
+      | "accountId"
+      | "apiVersion"
+      | "appSecret"
+      | "userName"
+      | "verifyToken"
+    >,
+    "accessToken" | "accountId" | "appSecret" | "verifyToken"
+  >
+> &
+  ConnectionIdentityInput;
+
+export type MessengerConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentMessengerChannelConfig,
+      | "apiVersion"
+      | "appSecret"
+      | "pageAccessToken"
+      | "userName"
+      | "verifyToken"
+    >,
+    "appSecret" | "pageAccessToken" | "verifyToken"
+  >
+> &
+  ConnectionIdentityInput;
+
 export type TelegramConnectionDefinition = ConnectionDefinition<
   "telegram",
   TelegramConnectionInput
 >;
+export type GoogleChatConnectionDefinition = ConnectionDefinition<
+  "gchat",
+  GoogleChatConnectionInput
+>;
 export type GitHubConnectionDefinition = ConnectionDefinition<
   "github",
   GitHubConnectionInput
+>;
+export type LinearConnectionDefinition = ConnectionDefinition<
+  "linear",
+  LinearConnectionInput
 >;
 export type SlackConnectionDefinition = ConnectionDefinition<
   "slack",
@@ -349,18 +503,45 @@ export type PancakeConnectionDefinition = ConnectionDefinition<
   "pancake",
   PancakeConnectionInput
 >;
+export type TeamsConnectionDefinition = ConnectionDefinition<
+  "teams",
+  TeamsConnectionInput
+>;
+export type TwilioConnectionDefinition = ConnectionDefinition<
+  "twilio",
+  TwilioConnectionInput
+>;
 export type ZaloConnectionDefinition = ConnectionDefinition<
   "zalo",
   ZaloConnectionInput
 >;
+export type InstagramConnectionDefinition = ConnectionDefinition<
+  "instagram",
+  InstagramConnectionInput
+>;
+export type MessengerConnectionDefinition = ConnectionDefinition<
+  "messenger",
+  MessengerConnectionInput
+>;
+export type WhatsAppConnectionDefinition = ConnectionDefinition<
+  "whatsapp",
+  WhatsAppConnectionInput
+>;
 export type AnyConnectionDefinition =
   | TelegramConnectionDefinition
+  | GoogleChatConnectionDefinition
   | GitHubConnectionDefinition
+  | LinearConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
   | MatrixConnectionDefinition
   | PancakeConnectionDefinition
-  | ZaloConnectionDefinition;
+  | TeamsConnectionDefinition
+  | TwilioConnectionDefinition
+  | ZaloConnectionDefinition
+  | WhatsAppConnectionDefinition
+  | InstagramConnectionDefinition
+  | MessengerConnectionDefinition;
 
 /**
  * One real place a team talks: a Slack channel, a Discord channel, a repo. It
@@ -423,10 +604,30 @@ export type MatrixChannelInput = ChannelRulesInput & {
   channelId: string;
 };
 
+export type GoogleChatChannelInput = ChannelRulesInput & {
+  connection: GoogleChatConnectionDefinition;
+  /** Google Chat space name, e.g. "spaces/AAAAxxxx". */
+  spaceName: string;
+};
+
 export type GitHubChannelInput = ChannelRulesInput & {
   connection: GitHubConnectionDefinition;
   /** Repository full name, e.g. "beeblast/api". */
   repo: string;
+};
+
+export type LinearChannelInput = ChannelRulesInput & {
+  connection: LinearConnectionDefinition;
+  /** Team key, e.g. "ENG", or several that share one set of rules. */
+  team: string | readonly string[];
+};
+
+export type TeamsChannelInput = ChannelRulesInput & {
+  connection: TeamsConnectionDefinition;
+  /** Teams channel id, or a chat's conversation id, e.g. "19:abc@thread.tacv2". */
+  channelId: string;
+  /** Team the channel sits in. */
+  teamId?: string;
 };
 
 export type TelegramChannelInput = ChannelRulesInput & {
@@ -435,10 +636,34 @@ export type TelegramChannelInput = ChannelRulesInput & {
   chatId: string;
 };
 
+export type TwilioChannelInput = ChannelRulesInput & {
+  connection: TwilioConnectionDefinition;
+  /** Sender's number in E.164, e.g. "+15551234567", or several. */
+  from: string | readonly string[];
+};
+
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
   /** Zalo user or group chat id, or several that share one set of rules. */
   chatId: string | readonly string[];
+};
+
+export type InstagramChannelInput = ChannelRulesInput & {
+  connection: InstagramConnectionDefinition;
+  /** Instagram-scoped id (IGSID) of the person, or several. */
+  igsid: string | readonly string[];
+};
+
+export type MessengerChannelInput = ChannelRulesInput & {
+  connection: MessengerConnectionDefinition;
+  /** Page-scoped id (PSID) of the person, or several. */
+  psid: string | readonly string[];
+};
+
+export type WhatsAppChannelInput = ChannelRulesInput & {
+  connection: WhatsAppConnectionDefinition;
+  /** Customer's WhatsApp id, their number with country code and no "+", or several. */
+  waId: string | readonly string[];
 };
 
 export type PancakeChannelInput = ChannelRulesInput & {
@@ -481,7 +706,8 @@ export type AgentSkillsDefinitionConfig = Omit<
 
 export interface HookContext {
   fetch: typeof fetch;
-  config: Record<string, unknown>;
+  /** The model and the names of the agent's tools, MCP servers, channels, skills and subagents. Never credentials. */
+  config: HookAgentConfig;
   /**
    * Mutable per-request scratchpad shared across this agent request's hooks.
    * Seed it in an early hook (e.g. `onStart`) and read or modify it later.
@@ -504,12 +730,19 @@ type Handler<Event, Result> = (
  * Pancake `tagIds`).
  */
 export type TelegramMessageSource = TelegramSource;
+export type GoogleChatMessageSource = GoogleChatSource;
 export type GitHubMessageSource = GitHubSource;
+export type LinearMessageSource = LinearSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
+export type TeamsMessageSource = TeamsSource;
+export type TwilioMessageSource = TwilioSource;
 export type ZaloMessageSource = ZaloSource;
+export type InstagramMessageSource = InstagramSource;
+export type MessengerMessageSource = MessengerSource;
+export type WhatsAppMessageSource = WhatsAppSource;
 
 /**
  * Inbound channel message passed to `onMessageReceived`, discriminated on
@@ -517,12 +750,19 @@ export type ZaloMessageSource = ZaloSource;
  */
 export type ChannelMessageReceived =
   | { channel: "telegram"; text: string; source: TelegramMessageSource }
+  | { channel: "gchat"; text: string; source: GoogleChatMessageSource }
   | { channel: "github"; text: string; source: GitHubMessageSource }
+  | { channel: "linear"; text: string; source: LinearMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
-  | { channel: "zalo"; text: string; source: ZaloMessageSource };
+  | { channel: "teams"; text: string; source: TeamsMessageSource }
+  | { channel: "twilio"; text: string; source: TwilioMessageSource }
+  | { channel: "zalo"; text: string; source: ZaloMessageSource }
+  | { channel: "whatsapp"; text: string; source: WhatsAppMessageSource }
+  | { channel: "instagram"; text: string; source: InstagramMessageSource }
+  | { channel: "messenger"; text: string; source: MessengerMessageSource };
 
 /**
  * Inline agent hook callbacks. Handlers are serialized with `.toString()`,
@@ -633,7 +873,7 @@ export type AgentDefinitionConfig = EnvRefString<
   policies?: readonly (PolicyResource | string)[];
   /**
    * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
-   * stage runtime key). Off by default: when unset the public endpoint
+   * runtime key). Off by default: when unset the public endpoint
    * refuses requests for this agent. Reach a private agent through an
    * internal endpoint or a channel webhook. See issue #65.
    */
@@ -656,12 +896,13 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
 >;
 /**
  * Code-first workspace config. Says `partitioned` where storage says
- * `isolation`: the flag permits a split, it does not perform one. A channel's
- * `partition` decides which folder a run mounts.
+ * `isolation`. "conversation" permits a per-conversation split that a
+ * channel's `partition` performs; "agent" splits the workspace per attached
+ * agent on its own, with no partition needed.
  */
 export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
-  /** Allow this workspace to be split into per-conversation folders. */
-  partitioned?: boolean;
+  /** How to split this workspace: per conversation or per agent. */
+  partitioned?: WorkspaceIsolation;
 };
 
 export type WorkspaceResource<Name extends string = string> =
@@ -869,10 +1110,34 @@ export function defineGitHubConnection(
   return defineConnection("github", config);
 }
 
+export function defineGoogleChatConnection(
+  config: GoogleChatConnectionInput,
+): GoogleChatConnectionDefinition {
+  return defineConnection("gchat", config);
+}
+
+export function defineInstagramConnection(
+  config: InstagramConnectionInput,
+): InstagramConnectionDefinition {
+  return defineConnection("instagram", config);
+}
+
+export function defineLinearConnection(
+  config: LinearConnectionInput,
+): LinearConnectionDefinition {
+  return defineConnection("linear", config);
+}
+
 export function defineMatrixConnection(
   config: MatrixConnectionInput,
 ): MatrixConnectionDefinition {
   return defineConnection("matrix", config);
+}
+
+export function defineMessengerConnection(
+  config: MessengerConnectionInput,
+): MessengerConnectionDefinition {
+  return defineConnection("messenger", config);
 }
 
 export function definePancakeConnection(
@@ -887,10 +1152,28 @@ export function defineSlackConnection(
   return defineConnection("slack", config);
 }
 
+export function defineTeamsConnection(
+  config: TeamsConnectionInput,
+): TeamsConnectionDefinition {
+  return defineConnection("teams", config);
+}
+
 export function defineTelegramConnection(
   config: TelegramConnectionInput,
 ): TelegramConnectionDefinition {
   return defineConnection("telegram", config);
+}
+
+export function defineTwilioConnection(
+  config: TwilioConnectionInput,
+): TwilioConnectionDefinition {
+  return defineConnection("twilio", config);
+}
+
+export function defineWhatsAppConnection(
+  config: WhatsAppConnectionInput,
+): WhatsAppConnectionDefinition {
+  return defineConnection("whatsapp", config);
 }
 
 export function defineZaloConnection(
@@ -923,12 +1206,44 @@ export function defineGitHubChannel<const Name extends string>(
   return defineChannelResource(name, description, repo, owner, rules);
 }
 
+export function defineGoogleChatChannel<const Name extends string>(
+  input: ResourceInput<Name, GoogleChatChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, spaceName, ...rules } = input;
+
+  return defineChannelResource(name, description, spaceName, undefined, rules);
+}
+
+export function defineInstagramChannel<const Name extends string>(
+  input: ResourceInput<Name, InstagramChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, igsid, ...rules } = input;
+
+  return defineChannelResource(name, description, igsid, undefined, rules);
+}
+
+export function defineLinearChannel<const Name extends string>(
+  input: ResourceInput<Name, LinearChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, team, ...rules } = input;
+
+  return defineChannelResource(name, description, team, undefined, rules);
+}
+
 export function defineMatrixChannel<const Name extends string>(
   input: ResourceInput<Name, MatrixChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, channelId, ...rules } = input;
 
   return defineChannelResource(name, description, channelId, undefined, rules);
+}
+
+export function defineMessengerChannel<const Name extends string>(
+  input: ResourceInput<Name, MessengerChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, psid, ...rules } = input;
+
+  return defineChannelResource(name, description, psid, undefined, rules);
 }
 
 export function definePancakeChannel<const Name extends string>(
@@ -953,12 +1268,36 @@ export function defineSlackChannel<const Name extends string>(
   return defineChannelResource(name, description, channelId, teamId, rules);
 }
 
+export function defineTeamsChannel<const Name extends string>(
+  input: ResourceInput<Name, TeamsChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, channelId, teamId, ...rules } = input;
+
+  return defineChannelResource(name, description, channelId, teamId, rules);
+}
+
 export function defineTelegramChannel<const Name extends string>(
   input: ResourceInput<Name, TelegramChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, chatId, ...rules } = input;
 
   return defineChannelResource(name, description, chatId, undefined, rules);
+}
+
+export function defineTwilioChannel<const Name extends string>(
+  input: ResourceInput<Name, TwilioChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, from, ...rules } = input;
+
+  return defineChannelResource(name, description, from, undefined, rules);
+}
+
+export function defineWhatsAppChannel<const Name extends string>(
+  input: ResourceInput<Name, WhatsAppChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, waId, ...rules } = input;
+
+  return defineChannelResource(name, description, waId, undefined, rules);
 }
 
 export function defineZaloChannel<const Name extends string>(

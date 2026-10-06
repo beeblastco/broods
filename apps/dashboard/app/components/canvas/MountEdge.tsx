@@ -12,6 +12,7 @@ import { MountStateLabel } from "@/app/components/canvas/MountStateLabel";
 import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
 import {
   sideEdgePath,
+  stepEdgePath,
   type DrawnEdgeKind,
   type SideEdgeData,
 } from "@/app/lib/canvasFrameNodes";
@@ -20,7 +21,6 @@ import { cn } from "@/app/lib/utils";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
   useStore,
   type Edge,
   type EdgeProps,
@@ -72,14 +72,13 @@ export function MountEdge({
         { x: targetX, y: targetY },
         data.route,
       )
-    : getSmoothStepPath({
+    : stepEdgePath({
         sourceX: sourceX,
         sourceY: sourceY,
         targetX: targetX,
         targetY: targetY,
         sourcePosition: sourcePosition,
         targetPosition: targetPosition,
-        borderRadius: 16,
       });
 
   const control = mountEdgeControl({
@@ -124,7 +123,7 @@ export function MountEdge({
           // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
           // and the width goes through xyflow's own variable.
           className={cn(
-            "animate-dashdraw opacity-(--edge-opacity)",
+            "opacity-(--edge-opacity)",
             deleteHover ? "stroke-destructive/90!" : "stroke-canvas-mount/80!",
           )}
           style={{

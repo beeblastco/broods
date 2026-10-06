@@ -1,7 +1,7 @@
 /** Authoritative Convex mapping from sandbox reservations to provider ids. */
 
 import { runtime } from "../../shared/convex/runtime.ts";
-import type { SandboxProvider } from "./types.ts";
+import type { SandboxProvider, SandboxReleaseTarget } from "./types.ts";
 export function getSandboxExternalId(
   provider: SandboxProvider,
   reservationKey: string,
@@ -22,15 +22,32 @@ export function getSandboxReservationRecord(
     reservationKey: reservationKey,
   });
 }
+// The reserved machine, or `externalId` when the caller already holds it, and
+// the instance row's record of whose credentials it runs on, for a release.
+export function getSandboxReleaseTarget(
+  accountId: string,
+  provider: SandboxProvider,
+  reservationKey: string,
+  externalId?: string,
+): Promise<SandboxReleaseTarget> {
+  return runtime.query("getSandboxReleaseTarget", {
+    accountId: accountId,
+    provider: provider,
+    reservationKey: reservationKey,
+    externalId: externalId,
+  });
+}
 // The reservation key is a hashed namespace, so the owning account can't be
 // derived from it. Callers pass accountId from the sandbox control plane. When
 // it is absent (synthetic/stateless config) the reservation write is skipped so
 // the run degrades to non-persistent instead of failing the tool call.
+// `ttlSeconds` shortens the idle window the sweeper waits before releasing it.
 export function claimSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
   externalId: string,
   accountId: string | undefined,
+  ttlSeconds?: number,
 ): Promise<boolean> {
   if (!accountId) return Promise.resolve(false);
 
@@ -39,6 +56,7 @@ export function claimSandboxInstance(
     reservationKey: reservationKey,
     externalId: externalId,
     accountId: accountId,
+    ttlSeconds: ttlSeconds,
   });
 }
 // Drops the reservation row while it still names `expectedExternalId`; with
@@ -68,6 +86,7 @@ export async function saveSandboxInstance(
   reservationKey: string,
   externalId: string,
   accountId: string | undefined,
+  ttlSeconds?: number,
 ): Promise<void> {
   if (!accountId) return;
 
@@ -76,5 +95,6 @@ export async function saveSandboxInstance(
     reservationKey: reservationKey,
     externalId: externalId,
     accountId: accountId,
+    ttlSeconds: ttlSeconds,
   });
 }

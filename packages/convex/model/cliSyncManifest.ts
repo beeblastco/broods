@@ -8,6 +8,7 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { GeneratedIds } from "../cli/types";
+import { accountCipher, hasEncryptionSecret } from "./accountKeys";
 import { toNestedAgentConfig } from "./agentConfigCodec";
 import {
   decryptSandboxManifestConfig,
@@ -73,7 +74,9 @@ export async function idsForStage(
     .collect();
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   const channelRecords = await ctx.db
     .query("channelRecords")
@@ -161,7 +164,9 @@ export async function resourcesForStage(
     .collect();
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   const channelRecords = await ctx.db
     .query("channelRecords")
@@ -221,8 +226,11 @@ export async function resourcesForStage(
   );
 
   // sandboxConfigs is stored encrypted (broods contract); decrypt back
-  // into the manifest shape the CLI expects.
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  // into the manifest shape the CLI expects. Without the secret the manifest
+  // still lists the sandbox, with an empty config, as it always has.
+  const cipher = hasEncryptionSecret()
+    ? await accountCipher(ctx, accountId)
+    : null;
   const sandboxResources: CliResource[] = await Promise.all(
     sandboxes
       .filter((sandbox) => sandbox.managedBy === "cli")
@@ -230,7 +238,9 @@ export async function resourcesForStage(
         kind: "sandbox",
         name: sandbox.name,
         description: sandbox.description,
-        config: await decryptSandboxManifestConfig(sandbox, secret),
+        config: cipher
+          ? await decryptSandboxManifestConfig(sandbox, cipher)
+          : {},
       })),
   );
 

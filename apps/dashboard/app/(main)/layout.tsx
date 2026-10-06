@@ -1,148 +1,20 @@
-"use client";
+import { SIDEBAR_COOKIE } from "@/app/lib/navigation";
+import { cookies } from "next/headers";
+import { MainShell } from "./MainShell";
 
-import { CopilotDock } from "@/app/components/copilot/CopilotDock";
-import { CopilotLauncher } from "@/app/components/copilot/CopilotLauncher";
-import { CopilotProvider } from "@/app/components/copilot/CopilotProvider";
-import { Header } from "@/app/components/Header";
-import { PerfReporter } from "@/app/components/PerfReporter";
-import { ShortcutOverlay } from "@/app/components/ShortcutOverlay";
-import { ShortcutProvider } from "@/app/components/ShortcutProvider";
-import {
-  clearOnboardingSecret,
-  readOnboardingSecret,
-  subscribeOnboardingSecret,
-} from "@/app/lib/onboardingSecret";
-import { api } from "@broods/convex/_generated/api";
-import { useAuth } from "@workos-inc/authkit-nextjs/components";
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
-import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
-
-const SYNC_RETRY_MS = 5_000;
-
-// Shown once, on the first login of an account's life. It has no business
-// riding along in the layout chunk every other session loads. `loading` is
-// what buys it a Suspense boundary of its own; without one its download
-// suspends the whole signed-in tree, header included.
-const OnboardingDialog = dynamic(
-  () =>
-    import("@/app/components/OnboardingDialog").then(
-      (mod) => mod.OnboardingDialog,
-    ),
-  { loading: (): null => null },
-);
-
-export default function MainLayout({
+/**
+ * Reads the sidebar's pinned or hidden state on the server, so a reload paints
+ * it the way it was left instead of flashing open first. The root layout
+ * already reads the request, so this adds no dynamic rendering.
+ */
+export default async function MainLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
-}>): React.JSX.Element | null {
-  const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
-  const router = useRouter();
-  const ensureSynced = useAction(api.user.ensureSynced);
-  const syncProfile = useMutation(api.user.syncProfile);
-  const currentUser = useQuery(
-    api.user.getCurrent,
-    isAuthenticated ? {} : "skip",
-  );
-  const profileSynced = useRef(false);
-  const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
-  const [syncRetry, setSyncRetry] = useState(0);
-
-  // Surface the one-time account secret produced by first-login auto-provision
-  // in the onboarding dialog, even after the home route navigates away.
-  useEffect(() => {
-    const sync = (): void => setOnboardingSecret(readOnboardingSecret());
-    sync();
-
-    return subscribeOnboardingSecret(sync);
-  }, []);
-
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.replace("/auth/sign-in?returnTo=/");
-    }
-  }, [isLoading, isAuthenticated, router]);
-
-  // A signed-in caller with no user row is a signup whose WorkOS webhook has
-  // not landed yet. Create the rows directly; `currentUser` then flips and the
-  // routes below proceed as usual. Nothing else re-renders while the row is
-  // missing, so a failed attempt schedules its own retry.
-  useEffect(() => {
-    if (currentUser !== null) return;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    ensureSynced({}).catch((err: unknown) => {
-      console.error("Failed to sync user:", err);
-      retry = setTimeout(() => setSyncRetry(syncRetry + 1), SYNC_RETRY_MS);
-    });
-
-    return () => clearTimeout(retry);
-  }, [currentUser, ensureSynced, syncRetry]);
-
-  useEffect(() => {
-    if (profileSynced.current || !isAuthenticated || !user || !currentUser)
-      return;
-    const name = [user.firstName, user.lastName]
-      .filter(Boolean)
-      .join(" ")
-      .trim();
-    const avatarUrl = user.profilePictureUrl ?? undefined;
-    if (!name && !avatarUrl) return;
-    profileSynced.current = true;
-    syncProfile({ name: name || undefined, avatarUrl: avatarUrl }).catch(() => {
-      profileSynced.current = false;
-    });
-  }, [currentUser, isAuthenticated, user, syncProfile]);
-
-  // The reporter is the first child of both fragments, one tree position, so
-  // it survives the auth flip instead of registering every observer twice.
-  // Mounted before the gates: LCP usually lands while this is still loading.
-  if (isLoading) {
-    return (
-      <>
-        <PerfReporter />
-        <div className="flex h-screen w-screen items-center justify-center bg-background">
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
-      </>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return null;
-  }
+}>): Promise<React.JSX.Element> {
+  const sidebar = (await cookies()).get(SIDEBAR_COOKIE)?.value;
 
   return (
-    <>
-      <PerfReporter />
-      <ShortcutProvider>
-        <Suspense>
-          <CopilotProvider>
-            <div className="flex h-screen w-screen flex-col bg-background">
-              <Header />
-              {onboardingSecret && (
-                <OnboardingDialog
-                  secret={onboardingSecret}
-                  onDone={() => {
-                    clearOnboardingSecret();
-                    router.push("/projects");
-                  }}
-                />
-              )}
-              {/* The dock is a column beside the page, not a sheet over it: what
-                  it is about to change has to stay on screen. */}
-              <div className="relative flex flex-1 overflow-hidden">
-                <div className="min-w-0 flex-1 overflow-hidden">{children}</div>
-                <CopilotLauncher />
-                <CopilotDock />
-              </div>
-              <ShortcutOverlay />
-            </div>
-          </CopilotProvider>
-        </Suspense>
-      </ShortcutProvider>
-    </>
+    <MainShell defaultSidebarOpen={sidebar !== "false"}>{children}</MainShell>
   );
 }

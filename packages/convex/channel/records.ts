@@ -12,6 +12,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { channelRecordsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const channelRecordDoc = v.object({
   ...channelRecordsFields,
@@ -36,20 +37,20 @@ export const create = internalMutation({
       throw new Error(`Account not found: ${args.accountId}`);
     }
     // One active record per place, so the webhook lookup stays unambiguous.
-    const existing = (
-      await ctx.db
-        .query("channelRecords")
-        .withIndex("by_accountId_platform_external", (q) =>
-          q
-            .eq("accountId", args.accountId)
-            .eq("platform", args.platform)
-            .eq("externalId", args.externalId),
-        )
-        .collect()
-    ).find((doc) => doc.status === "active");
+    const existing = await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_platform_external", (q) =>
+        q
+          .eq("accountId", args.accountId)
+          .eq("platform", args.platform)
+          .eq("externalId", args.externalId)
+          .eq("status", "active"),
+      )
+      .first();
     if (existing) {
-      throw new Error(
+      throw new ClientError(
         `A channel record already exists for ${args.platform}:${args.externalId}`,
+        "conflict",
       );
     }
 
@@ -224,13 +225,15 @@ export const update = internalMutation({
             q
               .eq("accountId", accountId)
               .eq("platform", doc.platform)
-              .eq("externalId", doc.externalId),
+              .eq("externalId", doc.externalId)
+              .eq("status", "active"),
           )
-          .collect()
-      ).find((row) => row.status === "active" && row._id !== doc._id);
+          .take(2)
+      ).find((row) => row._id !== doc._id);
       if (active) {
-        throw new Error(
+        throw new ClientError(
           `A channel record already exists for ${doc.platform}:${doc.externalId}`,
+          "conflict",
         );
       }
     }
@@ -261,11 +264,15 @@ async function loadOwnedRecord(
 ): Promise<Doc<"channelRecords">> {
   const normalized = ctx.db.normalizeId("channelRecords", channelRecordId);
   if (!normalized) {
-    throw new Error("Channel record does not belong to the supplied accountId");
+    throw new ClientError(
+      "Channel record does not belong to the supplied accountId",
+    );
   }
   const doc = await ctx.db.get(normalized);
   if (!doc || doc.accountId !== accountId) {
-    throw new Error("Channel record does not belong to the supplied accountId");
+    throw new ClientError(
+      "Channel record does not belong to the supplied accountId",
+    );
   }
 
   return doc;

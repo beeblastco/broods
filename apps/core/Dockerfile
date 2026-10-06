@@ -2,6 +2,7 @@
 # both harness-processing and account-manage over HTTP, routed by Host header.
 # Build from the monorepo root: docker build -f apps/core/Dockerfile .
 # Pin the digest: the version tag is republished when the base image rebuilds.
+# checkov:skip=CKV_DOCKER_7:BUN_IMAGE defaults to a version and immutable digest; the scanner does not resolve ARG in FROM.
 ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
@@ -10,6 +11,7 @@ COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
+COPY apps/edge/package.json ./apps/edge/
 COPY apps/gateway/package.json ./apps/gateway/
 COPY apps/matrix-forwarder/package.json ./apps/matrix-forwarder/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
@@ -34,6 +36,9 @@ COPY apps/core ./apps/core
 RUN cd apps/core && bun run scripts/compaction-prompt.ts \
     && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server
 
+# Reuse the server's PORT parser in the image probe.
+RUN bun build apps/core/src/shared/env.ts --target=node --outfile /out/health-env.mjs
+
 FROM node:22-alpine AS isolate-deps
 WORKDIR /app/isolate-runner
 RUN apk add --no-cache build-base python3 \
@@ -52,6 +57,9 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ nodejs \
 COPY --from=builder --chown=1001:1001 /out/core-server ./core-server
 COPY --from=isolate-deps --chown=1001:1001 /app/isolate-runner/node_modules ./isolate-runner/node_modules
 COPY --chown=1001:1001 apps/core/src/harness/isolate/runner/ ./isolate-runner/
+COPY --from=builder --chown=1001:1001 /out/health-env.mjs ./health-env.mjs
 USER 1001
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["node", "--input-type=module", "-e", "import { positiveIntegerEnv } from './health-env.mjs'; fetch('http://127.0.0.1:' + positiveIntegerEnv('PORT', 3000) + '/healthz', { signal: AbortSignal.timeout(4000) }).then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1));"]
 CMD ["./core-server"]

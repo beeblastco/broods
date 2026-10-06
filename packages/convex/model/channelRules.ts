@@ -6,6 +6,7 @@
  */
 
 import { isPlainObject } from "./objects";
+import { ClientError } from "./clientError";
 
 const CHANNEL_CONFIG_KEYS = [
   "instructions",
@@ -65,14 +66,14 @@ export function normalizeChannelRecordConfig(
   value: unknown,
 ): ChannelRecordConfig {
   if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
+    throw new ClientError("config must be an object");
   }
   const config = value as Record<string, unknown>;
   for (const key of Object.keys(config)) {
     if (
       !CHANNEL_CONFIG_KEYS.includes(key as (typeof CHANNEL_CONFIG_KEYS)[number])
     ) {
-      throw new Error(`config.${key} is not supported`);
+      throw new ClientError(`config.${key} is not supported`);
     }
   }
   const instructions = optionalString(
@@ -106,7 +107,8 @@ export function normalizeChannelRecordConfig(
 export function normalizeCreateChannelRecordInput(
   value: unknown,
 ): CreateChannelRecordInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const input = value as Record<string, unknown>;
   const workspaceRef = optionalString(input.workspaceRef, "workspaceRef");
   const description = optionalString(input.description, "description");
@@ -124,7 +126,8 @@ export function normalizeCreateChannelRecordInput(
 export function normalizeUpdateChannelRecordInput(
   value: unknown,
 ): UpdateChannelRecordInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const input = value as Record<string, unknown>;
   // Without this a typo like `descripton` normalizes to {} and PATCH answers
   // 200 having changed nothing.
@@ -134,7 +137,7 @@ export function normalizeUpdateChannelRecordInput(
         key as (typeof CHANNEL_RECORD_UPDATE_KEYS)[number],
       )
     ) {
-      throw new Error(`${key} is not supported`);
+      throw new ClientError(`${key} is not supported`);
     }
   }
   const patch: UpdateChannelRecordInput = {};
@@ -156,7 +159,7 @@ export function normalizeUpdateChannelRecordInput(
   }
   if (input.status !== undefined) {
     if (input.status !== "active" && input.status !== "deleted") {
-      throw new Error("status must be one of: active, deleted");
+      throw new ClientError("status must be one of: active, deleted");
     }
     patch.status = input.status;
   }
@@ -168,18 +171,18 @@ function normalizeAgentBindings(
   value: unknown,
 ): ChannelRecordConfig["agentBindings"] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("config.agentBindings must be a non-empty array");
+    throw new ClientError("config.agentBindings must be a non-empty array");
   }
   const bindings = value.map((entry, index) => {
     if (!isPlainObject(entry)) {
-      throw new Error(`config.agentBindings[${index}] must be an object`);
+      throw new ClientError(`config.agentBindings[${index}] must be an object`);
     }
     const binding = entry as Record<string, unknown>;
     if (
       binding.isDefault !== undefined &&
       typeof binding.isDefault !== "boolean"
     ) {
-      throw new Error(
+      throw new ClientError(
         `config.agentBindings[${index}].isDefault must be a boolean`,
       );
     }
@@ -193,7 +196,7 @@ function normalizeAgentBindings(
     };
   });
   if (bindings.filter((binding) => binding.isDefault).length > 1) {
-    throw new Error(
+    throw new ClientError(
       "config.agentBindings may mark only one binding as default",
     );
   }
@@ -204,12 +207,12 @@ function normalizeAgentBindings(
 function normalizePartition(value: unknown): ChannelRecordConfig["partition"] {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
-    throw new Error("config.partition must be an object");
+    throw new ClientError("config.partition must be an object");
   }
   const scope = value as Record<string, unknown>;
   if (scope.by === "shared") {
     if (scope.alias !== undefined) {
-      throw new Error(
+      throw new ClientError(
         "config.partition.alias is only supported when by is conversation",
       );
     }
@@ -217,7 +220,9 @@ function normalizePartition(value: unknown): ChannelRecordConfig["partition"] {
     return { by: "shared" };
   }
   if (scope.by !== "conversation") {
-    throw new Error("config.partition.by must be one of: shared, conversation");
+    throw new ClientError(
+      "config.partition.by must be one of: shared, conversation",
+    );
   }
 
   return {
@@ -229,7 +234,7 @@ function normalizePartition(value: unknown): ChannelRecordConfig["partition"] {
 function normalizeReplyIn(value: unknown): ChannelReplyIn | undefined {
   if (value === undefined) return undefined;
   if (!CHANNEL_REPLY_TARGETS.includes(value as ChannelReplyIn)) {
-    throw new Error(
+    throw new ClientError(
       `config.replyIn must be one of: ${CHANNEL_REPLY_TARGETS.join(", ")}`,
     );
   }
@@ -240,11 +245,11 @@ function normalizeReplyIn(value: unknown): ChannelReplyIn | undefined {
 function normalizeTagRoles(value: unknown): ChannelRecordConfig["tagRoles"] {
   if (value === undefined) return undefined;
   if (!Array.isArray(value))
-    throw new Error("config.tagRoles must be an array");
+    throw new ClientError("config.tagRoles must be an array");
 
   return value.map((entry, index) => {
     if (!isPlainObject(entry)) {
-      throw new Error(`config.tagRoles[${index}] must be an object`);
+      throw new ClientError(`config.tagRoles[${index}] must be an object`);
     }
     const role = entry as Record<string, unknown>;
 
@@ -264,11 +269,11 @@ function normalizeWorkspaces(
 ): ChannelRecordConfig["workspaces"] {
   if (value === undefined) return undefined;
   if (!Array.isArray(value))
-    throw new Error("config.workspaces must be an array");
+    throw new ClientError("config.workspaces must be an array");
 
   return value.map((entry, index) => {
     if (!isPlainObject(entry)) {
-      throw new Error(`config.workspaces[${index}] must be an object`);
+      throw new ClientError(`config.workspaces[${index}] must be an object`);
     }
     const ref = entry as Record<string, unknown>;
 
@@ -284,7 +289,8 @@ function normalizeWorkspaces(
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -301,7 +307,7 @@ function optionalStringArray(
       (entry) => typeof entry !== "string" || entry.trim().length === 0,
     )
   ) {
-    throw new Error(`${name} must be an array of non-empty strings`);
+    throw new ClientError(`${name} must be an array of non-empty strings`);
   }
 
   return value as string[];
@@ -309,7 +315,7 @@ function optionalStringArray(
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();

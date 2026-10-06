@@ -42,7 +42,8 @@ bun bench/bundles.ts --check dashboard|cli   # payload budgets, run where each i
   more than the functions.
 - **cli/compile-** a cold compile of `bench/fixtures/project` in a fresh
   process, and the cached in-process compile. **cli/startup-** `--version`
-  under Node and Bun against the built dist; skipped without a build.
+  under Node and Bun. All four run against the built dist; skipped without a
+  build.
 
 ## Two gates per case
 

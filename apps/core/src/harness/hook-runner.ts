@@ -3,14 +3,17 @@
  * Loads an uploaded accountHooks bundle, runs the handler for a fired event in
  * the V8 isolate pool, and returns the validated, field-scoped mutation the
  * caller folds into harness state. Hooks are non-fatal: a throw or timeout logs
- * and yields no mutation, so the agent run is never broken. Fire-point wiring
- * lives in harness.ts / integrations.ts; this file owns only "run one hook,
+ * and yields no mutation, so the agent run is never broken. Dispatch across
+ * hooks lives in hook-dispatcher.ts; this file owns only "run one hook,
  * sanitize its return".
  */
 
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
-import type { AgentHookEventName } from "../shared/domain/agent-config.ts";
+import type {
+  AgentHookEventName,
+  HookAgentConfig,
+} from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { readS3Bytes } from "../shared/s3.ts";
@@ -49,8 +52,8 @@ export interface RunCodeHookParams {
   event: AgentHookEventName;
   /** Event data handed to the hook as its second argument (JSON-serializable). */
   payload: Record<string, JSONValue | undefined>;
-  /** Optional config object exposed to the hook as ctx.config. */
-  config?: Record<string, unknown>;
+  /** The allow-listed agent config, exposed to the hook as ctx.config. */
+  config: HookAgentConfig;
   /** Mutable per-run scratchpad exposed to the hook as ctx.state. */
   state: Record<string, unknown>;
 }
@@ -62,6 +65,7 @@ export interface CodeHookOutcome {
   state: Record<string, unknown>;
 }
 
+/** Whether a hook's return is folded back at this event, rather than ignored. */
 export function isHookMutableEvent(
   event: AgentHookEventName,
 ): event is HookMutableEvent {
@@ -150,17 +154,18 @@ async function createHookRunnerPayload(
     toolName: record.name,
     hookEvent: event,
     input: payload,
-    config: config ?? {},
+    config: config,
     state: params.state,
   };
 }
 
+/** Drains one isolate hook run for `runCodeHook` and keeps the last value it yielded. */
 async function runForResult(
   accountId: string,
   payload: Record<string, unknown>,
 ): Promise<unknown> {
-  // A hook returns a single value; the isolate yields chunks only for the async
-  // -iterable tool path, so the last yielded value is the handler's return.
+  // A hook returns a single value; the isolate yields chunks only for the
+  // async-iterable tool path, so the last yielded value is the handler's return.
   let result: unknown;
   for await (const value of streamIsolatePayload(accountId, payload)) {
     result = value;
@@ -169,6 +174,7 @@ async function runForResult(
   return result;
 }
 
+/** JSON.stringify that returns undefined instead of throwing on cycles or BigInt. */
 function safeStringify(value: unknown): string | undefined {
   try {
     return JSON.stringify(value);

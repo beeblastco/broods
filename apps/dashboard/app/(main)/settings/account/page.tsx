@@ -4,61 +4,23 @@ import { AccountPanel } from "@/app/(main)/[projectId]/settings/components/Accou
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { ACCOUNT_TABS, pickTab } from "@/app/lib/navigation";
 import { api } from "@broods/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-
-type AccountTab = "profile" | "danger";
-
-const TABS: Array<{ id: AccountTab; label: string; danger?: boolean }> = [
-  { id: "profile", label: "Profile" },
-  { id: "danger", label: "Danger Zone", danger: true },
-];
+import { toErrorMessage } from "@/app/lib/errors";
 
 export default function AccountSettingsPage(): React.JSX.Element {
   const searchParams = useSearchParams();
-  const router = useRouter();
-
-  const activeTab = (searchParams.get("tab") as AccountTab) || "profile";
-  const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Account";
+  const tab = pickTab(ACCOUNT_TABS, searchParams.get("tab"));
 
   return (
-    <div className="flex h-full">
-      <aside className="flex w-48 shrink-0 flex-col bg-transparent">
-        <div className="px-6 pt-9.25 pb-3">
-          <h2 className="text-xl font-semibold text-foreground">Account</h2>
-        </div>
-        <nav className="flex flex-col gap-0.5 px-3">
-          {TABS.map((tab) => (
-            <Button
-              key={tab.id}
-              variant={tab.danger ? "nav-destructive" : "nav"}
-              size="sm"
-              data-active={activeTab === tab.id}
-              className="w-full justify-start cursor-pointer"
-              onClick={() => {
-                const p = new URLSearchParams(searchParams.toString());
-                p.set("tab", tab.id);
-                router.push(`/settings/account?${p.toString()}`);
-              }}
-            >
-              {tab.label}
-            </Button>
-          ))}
-        </nav>
-      </aside>
-
-      <div className="flex flex-1 flex-col overflow-auto">
-        <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
-          <h2 className="text-xl font-semibold text-foreground">
-            {activeLabel}
-          </h2>
-        </div>
-        <div className="mx-auto w-full max-w-2xl px-8 pb-12">
-          {activeTab === "profile" && <AccountPanel />}
-          {activeTab === "danger" && <AccountDangerPanel />}
-        </div>
+    <div className="flex h-full min-w-0 flex-col overflow-auto">
+      <h1 className="sr-only">{tab.label}</h1>
+      <div className="mx-auto w-full max-w-2xl px-6 pt-6 pb-12">
+        {tab.id === "profile" && <AccountPanel />}
+        {tab.id === "danger" && <AccountDangerPanel />}
       </div>
     </div>
   );
@@ -86,11 +48,7 @@ function AccountDangerPanel(): React.JSX.Element {
       setDialogOpen(false);
       router.replace("/auth/sign-in");
     } catch (err) {
-      setDeleteError(
-        err instanceof Error
-          ? err.message
-          : "Unable to schedule account deletion.",
-      );
+      setDeleteError(toErrorMessage(err));
     } finally {
       setIsDeleting(false);
     }

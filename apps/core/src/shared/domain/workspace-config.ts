@@ -2,13 +2,15 @@
  * Workspace config: account-scoped, reusable workspace definitions referenced by
  * agents via `config.workspaces[].workspaceId`. A workspace is the persistent
  * S3-backed filesystem mounted into a sandbox; agents referencing the same
- * workspaceId share the same files. Holds no secrets, so it is stored in
+ * workspaceId share the same files unless `isolation` splits them. Holds no
+ * secrets, so it is stored in
  * plaintext (unlike sandbox config). Validation and the public projection live
  * in packages/convex/model/workspaceRules.ts.
  */
 
 import type { WorkspaceConfig } from "@broods/convex/model/workspaceRules";
 
+export type { WorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 export type {
   WorkspaceConfig,
   WorkspaceStorageAuth,

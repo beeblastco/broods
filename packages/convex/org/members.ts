@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { getOrgMembership, requireOrgMember } from "../model/ownership/org";
@@ -112,7 +112,13 @@ export const add = mutation({
       throw new Error("User row not found");
     }
 
-    await requireOrgMember(ctx, orgId, caller._id, "admin");
+    const callerMembership = await requireOrgMember(
+      ctx,
+      orgId,
+      caller._id,
+      "admin",
+    );
+    assertCanTouchOwnerRole(callerMembership, role);
 
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
@@ -174,7 +180,14 @@ export const updateRole = mutation({
       throw new Error("Membership not found");
     }
 
-    await requireOrgMember(ctx, membership.orgId, caller._id, "admin");
+    const callerMembership = await requireOrgMember(
+      ctx,
+      membership.orgId,
+      caller._id,
+      "admin",
+    );
+    assertCanTouchOwnerRole(callerMembership, membership.role);
+    assertCanTouchOwnerRole(callerMembership, role);
 
     const targetUser = await ctx.db.get(membership.userId);
     const org = await ctx.db.get(membership.orgId);
@@ -219,7 +232,13 @@ export const remove = mutation({
       throw new Error("Membership not found");
     }
 
-    await requireOrgMember(ctx, membership.orgId, caller._id, "admin");
+    const callerMembership = await requireOrgMember(
+      ctx,
+      membership.orgId,
+      caller._id,
+      "admin",
+    );
+    assertCanTouchOwnerRole(callerMembership, membership.role);
 
     const targetUser = await ctx.db.get(membership.userId);
     const org = await ctx.db.get(membership.orgId);
@@ -232,3 +251,16 @@ export const remove = mutation({
     return null;
   },
 });
+
+/**
+ * Owner memberships can delete the org, so only an owner may grant one, or
+ * change or remove one. Without this an admin could promote themselves.
+ */
+function assertCanTouchOwnerRole(
+  caller: Doc<"orgMembers">,
+  role: Doc<"orgMembers">["role"] | undefined,
+): void {
+  if (role === "owner" && caller.role !== "owner") {
+    throw new Error("Only an owner can grant, change or remove the owner role");
+  }
+}

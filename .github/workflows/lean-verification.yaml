@@ -1,0 +1,57 @@
+name: Lean verification
+
+# Always reports the uniquely named required check. The models and their
+# TypeScript contract tests run together; neither replaces implementation review.
+on:
+  pull_request:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: lean-verification-${{ github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lean-verification:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: verification
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        working-directory: .
+        run: bun install --ignore-scripts --frozen-lockfile
+
+      - name: Generate the core prompt
+        working-directory: apps/core
+        run: bun run scripts/compaction-prompt.ts
+
+      - name: Check the TypeScript contracts
+        working-directory: .
+        run: bun run verification:test
+
+      # elan reads verification/lean-toolchain and installs that exact Lean.
+      # The installer is pinned to the v4.2.4 release commit.
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # Broods.lean fails the build when a proof rests on `sorry`,
+      # `native_decide` or an axiom past the three standard ones.
+      - name: Build and check every proof
+        run: lake build

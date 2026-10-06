@@ -74,12 +74,12 @@ async function sha256Hex(value: string): Promise<string> {
 // These three functions are the CLI/core wire for a stage's runtime key. Their
 // `returns` validators are runtime-only, so a key renamed on one side alone is
 // invisible to `bun run check` and only fails when the function runs.
-describe("stage runtime key wire", () => {
+describe("runtime key wire", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  test("ensureScopeBySecretHash resolves the project and stage ids", async () => {
+  test("ensureScopeBySecretHash resolves the project and stage ids and claims a revision", async () => {
     const t = runtimeKeyTest();
     const seeded = await seed(t);
 
@@ -92,6 +92,7 @@ describe("stage runtime key wire", () => {
     expect(scope).toEqual({
       projectId: seeded.projectId,
       stageId: seeded.stageId,
+      revision: 1,
     });
   });
 
@@ -122,6 +123,8 @@ describe("stage runtime key wire", () => {
     expect(deployment!.stageSlug).toBe("production");
     expect(deployment!.projectSlug).toBe("demo-app");
     expect(deployment!.endpointId).toBe(`stage-${seeded.stageId.slice(-8)}`);
+    expect(deployment!.apiKey).toMatch(/^bsk_[A-Za-z0-9_-]{43}$/);
+    expect(deployment!.keyHint).toBe(`bsk_…${deployment!.apiKey.slice(-4)}`);
   });
 
   test("getByApiKeyHash hands core the same stage slug", async () => {
@@ -141,13 +144,59 @@ describe("stage runtime key wire", () => {
       apiKeyHash: await sha256Hex(deployment!.apiKey),
     });
 
-    expect(scope).toEqual({
+    expect(scope).toMatchObject({
       accountId: seeded.accountId,
       projectId: seeded.projectId,
       stageId: seeded.stageId,
       endpointId: `stage-${seeded.stageId.slice(-8)}`,
       projectSlug: "demo-app",
       stageSlug: "production",
+      account: { _id: seeded.accountId, status: "active" },
     });
+  });
+
+  test("a minted key records its creator, core touches lastUsedAt, rotate resets it", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = runtimeKeyTest();
+    await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("users", {
+        authId: AUTH_ID,
+        email: "owner@beeblast.co",
+        name: "Ada Owner",
+        plan: "free",
+      });
+    });
+    const args = {
+      secretHash: SECRET_HASH,
+      project: "demo-app",
+      stage: "production",
+      createdByAuthId: AUTH_ID,
+    };
+
+    const minted = await t.mutation(
+      internal.cli.sync.ensureRuntimeKeyBySecretHash,
+      args,
+    );
+    await t.mutation(internal.agent.deployments.touchLastUsed, {
+      apiKeyHash: await sha256Hex(minted!.apiKey),
+      usedAt: 1_000,
+    });
+    const used = await t.run(
+      async (ctx) => await ctx.db.query("agentDeployments").unique(),
+    );
+    await t.mutation(internal.cli.sync.ensureRuntimeKeyBySecretHash, {
+      ...args,
+      rotate: true,
+    });
+    const rotated = await t.run(
+      async (ctx) => await ctx.db.query("agentDeployments").unique(),
+    );
+
+    expect(used?.createdBy).toBe("Ada Owner");
+    expect(used?.createdAt).toBeTypeOf("number");
+    expect(used?.lastUsedAt).toBe(1_000);
+    expect(rotated?.createdBy).toBe("Ada Owner");
+    expect(rotated?.lastUsedAt).toBeUndefined();
   });
 });

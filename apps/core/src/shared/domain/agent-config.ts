@@ -1,15 +1,23 @@
 /**
- * Agent configuration: types for the per-agent settings object, the runtime
- * projection of a stored config, and encryption helpers. The validation rules
- * are the config plane's (`@broods/convex/model/agentRules`), so a config is
- * judged the same on write and on every run.
+ * Agent configuration: types for the per-agent settings object and the
+ * runtime projection of a stored config. The validation rules are the config
+ * plane's (`@broods/convex/model/agentRules`), so a config is judged the same
+ * on write and on every run. Decrypting the stored blob is
+ * `../convex/account-keys.ts`.
  * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
+import type { GoogleChatAdapterBaseConfig } from "@chat-adapter/gchat";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
+import type { InstagramAdapterConfig } from "@chat-adapter/instagram";
+import type { LinearAdapterAPIKeyConfig } from "@chat-adapter/linear";
+import type { MessengerAdapterConfig } from "@chat-adapter/messenger";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
+import type { TeamsAdapterConfig } from "@chat-adapter/teams";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
+import type { TwilioAdapterConfig } from "@chat-adapter/twilio";
+import type { WhatsAppAdapterConfig } from "@chat-adapter/whatsapp";
 import type {
   JSONSchema7,
   LanguageModelCallOptions,
@@ -17,14 +25,6 @@ import type {
   SystemModelMessage,
   streamText,
 } from "ai";
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from "node:crypto";
-import { requireEnv } from "../env.ts";
-import { isPlainObject } from "../object.ts";
 import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
 import {
   normalizeAgentConfig,
@@ -37,7 +37,6 @@ import type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 import type { McpOauth } from "./mcp.ts";
 export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
-const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 // `agent.maxTurn: 0` lifts the step cap: the loop runs until the model stops.
 export const AGENT_MAX_TURN_UNLIMITED = 0;
 // A per-run `model` override may tune sampling (the Vercel AI SDK
@@ -81,15 +80,34 @@ export interface AgentConfig {
   scheduler?: AgentSchedulerConfig;
   /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
-  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
-  // runtime key). Off by default: when not `true` the deployment (public-key)
-  // request path is refused. Internal callers (account/admin secret, cron,
-  // async worker) and channel webhooks are never gated by this.
+  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the runtime
+  // key). Off by default: when not `true` the runtime-key request path is
+  // refused. Internal callers (account key, admin secret, cron, async worker)
+  // and channel webhooks are never gated by this.
   publicAccess?: boolean;
   // Lets the embeddable runtime key send `system` and `model` overrides. Off by
-  // default; stage tickets and account secrets ignore it.
+  // default; stage tickets and account keys ignore it.
   allowRunOverrides?: boolean;
   [key: string]: unknown;
+}
+
+/**
+ * What a code hook reads as ctx.config: the model and the names of what the
+ * agent can use. An allow-list, so no credential field can reach hook code.
+ */
+export interface HookAgentConfig {
+  readonly model: {
+    readonly provider?: AccountModelProviderName;
+    readonly modelId?: string;
+  };
+  readonly harness?: AgentHarnessConfig["type"];
+  readonly maxTurn?: number;
+  readonly tools: readonly string[];
+  readonly mcp: readonly string[];
+  readonly channels: readonly string[];
+  readonly skills: readonly string[];
+  readonly subagents: readonly string[];
+  readonly denyTools: readonly string[];
 }
 
 export interface AgentBehaviorConfig {
@@ -224,13 +242,13 @@ export interface AgentWorkspaceRef {
   // read-only and read/glob run through a service-managed read-only mount (so they see
   // committed writes immediately). `null` forces this workspace read-only AND opts
   // out of that mount: read/glob then read straight from S3 (no compute, but reads
-  // lag mount writes by the S3 export delay). See docs/workspace/sandbox/lambda.md.
+  // lag mount writes until the mount uploads them). See docs/internals/storage.md.
   sandbox?: string | null;
 }
 
 export interface AgentSessionConfig {
   pruning?: AgentSessionPruningConfig;
-  compaction?: AgentSessionCompactionConfig;
+  autoCompaction?: AgentSessionAutoCompactionConfig;
   [key: string]: unknown;
 }
 
@@ -239,7 +257,12 @@ export interface AgentSessionPruningConfig {
   [key: string]: unknown;
 }
 
-export interface AgentSessionCompactionConfig {
+/**
+ * Compaction after a finished turn, on unless `enabled: false`. It runs once
+ * the turn's last model call read `maxContextLength` input tokens or more
+ * (default 500000). `/compact` works whatever this says.
+ */
+export interface AgentSessionAutoCompactionConfig {
   enabled?: boolean;
   maxContextLength?: number;
   [key: string]: unknown;
@@ -315,12 +338,19 @@ export interface AgentMcpEntry {
 
 export interface AgentChannelsConfig {
   telegram?: AgentTelegramChannelConfig;
+  gchat?: AgentGoogleChatChannelConfig;
   github?: AgentGitHubChannelConfig;
+  linear?: AgentLinearChannelConfig;
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
+  teams?: AgentTeamsChannelConfig;
+  twilio?: AgentTwilioChannelConfig;
   zalo?: AgentZaloChannelConfig;
   matrix?: AgentMatrixChannelConfig;
+  instagram?: AgentInstagramChannelConfig;
+  messenger?: AgentMessengerChannelConfig;
+  whatsapp?: AgentWhatsAppChannelConfig;
   [key: string]: unknown;
 }
 
@@ -369,6 +399,10 @@ type ChannelCredentialDrift = AssertAllExact<
       Extract<GitHubAdapterConfig, { appId: string }>["privateKey"],
       string
     >,
+    Exactly<LinearAdapterAPIKeyConfig["apiKey"], string>,
+    Exactly<LinearAdapterAPIKeyConfig["apiUrl"], string | undefined>,
+    Exactly<LinearAdapterAPIKeyConfig["userName"], string | undefined>,
+    Exactly<LinearAdapterAPIKeyConfig["webhookSecret"], string | undefined>,
     Exactly<SlackAdapterConfig["apiUrl"], string | undefined>,
     Exactly<SlackAdapterConfig["signingSecret"], string | undefined>,
     Exactly<DiscordAdapterConfig["apiUrl"], string | undefined>,
@@ -377,6 +411,60 @@ type ChannelCredentialDrift = AssertAllExact<
       string | undefined
     >,
     Exactly<DiscordAdapterConfig["publicKey"], string | undefined>,
+    Exactly<GoogleChatAdapterBaseConfig["endpointUrl"], string | undefined>,
+    Exactly<
+      GoogleChatAdapterBaseConfig["googleChatProjectNumber"],
+      string | undefined
+    >,
+    Exactly<GoogleChatAdapterBaseConfig["userName"], string | undefined>,
+    Exactly<
+      GoogleChatAdapterBaseConfig["workspaceAddOnServiceAccountEmail"],
+      string | undefined
+    >,
+    Exactly<TeamsAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<TeamsAdapterConfig["appId"], string | undefined>,
+    Exactly<TeamsAdapterConfig["appPassword"], string | undefined>,
+    Exactly<TeamsAdapterConfig["appTenantId"], string | undefined>,
+    Exactly<
+      TeamsAdapterConfig["appType"],
+      "MultiTenant" | "SingleTenant" | undefined
+    >,
+    Exactly<TeamsAdapterConfig["userName"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["accountSid"]>,
+      string | undefined
+    >,
+    Exactly<TwilioAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["authToken"]>,
+      string | undefined
+    >,
+    Exactly<TwilioAdapterConfig["messagingServiceSid"], string | undefined>,
+    Exactly<TwilioAdapterConfig["phoneNumber"], string | undefined>,
+    Exactly<TwilioAdapterConfig["statusCallbackUrl"], string | undefined>,
+    Exactly<TwilioAdapterConfig["userName"], string | undefined>,
+    Exactly<
+      SerializedCredential<TwilioAdapterConfig["webhookUrl"]>,
+      string | undefined
+    >,
+    Exactly<WhatsAppAdapterConfig["accessToken"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["apiVersion"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["appSecret"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["phoneNumberId"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["userName"], string | undefined>,
+    Exactly<WhatsAppAdapterConfig["verifyToken"], string | undefined>,
+    Exactly<InstagramAdapterConfig["accessToken"], string | undefined>,
+    Exactly<InstagramAdapterConfig["accountId"], string | undefined>,
+    Exactly<InstagramAdapterConfig["apiVersion"], string | undefined>,
+    Exactly<InstagramAdapterConfig["appSecret"], string | undefined>,
+    Exactly<InstagramAdapterConfig["userName"], string | undefined>,
+    Exactly<InstagramAdapterConfig["verifyToken"], string | undefined>,
+    Exactly<MessengerAdapterConfig["apiVersion"], string | undefined>,
+    Exactly<MessengerAdapterConfig["appSecret"], string | undefined>,
+    Exactly<MessengerAdapterConfig["pageAccessToken"], string | undefined>,
+    Exactly<MessengerAdapterConfig["userName"], string | undefined>,
+    Exactly<MessengerAdapterConfig["verifyToken"], string | undefined>,
   ]
 >;
 
@@ -411,6 +499,26 @@ export interface AgentGitHubChannelConfig {
   triggerOnIssueOpen?: boolean;
   /** When false, the bot does not auto-trigger on new PRs (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to a PR. */
   triggerOnPROpen?: boolean;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Linear member the agent comments as, through that member's personal API
+ * key. The agent answers comments that mention `@userName` on issues, and
+ * `webhookSecret` checks every delivery.
+ */
+export interface AgentLinearChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  apiKey?: string;
+  /** Linear GraphQL endpoint. Defaults to `https://api.linear.app/graphql`. */
+  apiUrl?: string;
+  /** The member's display name, e.g. `acme-agent`. `@acme-agent` addresses the agent. */
+  userName?: string;
+  webhookSecret?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;
@@ -497,12 +605,134 @@ export interface AgentZaloChannelConfig {
   [key: string]: unknown;
 }
 
-interface EncryptedAgentConfig {
-  encrypted: true;
-  algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
-  iv: string;
-  tag: string;
-  ciphertext: string;
+/**
+ * An Instagram professional account, reached through a Meta app with
+ * Instagram Login. `accountId` is the account the webhook entries name.
+ */
+export interface AgentInstagramChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  /** Instagram user access token with `instagram_business_manage_messages`. */
+  accessToken?: string;
+  /** Instagram professional account id. */
+  accountId?: string;
+  /** Graph API version, e.g. `v26.0`. Defaults to the SDK's. */
+  apiVersion?: string;
+  /** Meta app secret; signs every webhook POST. */
+  appSecret?: string;
+  userName?: string;
+  /** The verify token typed into the Meta webhook settings. */
+  verifyToken?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/** A Facebook Page the agent answers Messenger DMs for. */
+export interface AgentMessengerChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  /** Graph API version, e.g. `v21.0`. Defaults to the SDK's. */
+  apiVersion?: string;
+  /** Meta app secret; signs every webhook POST. */
+  appSecret?: string;
+  /** Page access token for the Page the app is subscribed to. */
+  pageAccessToken?: string;
+  userName?: string;
+  /** The verify token typed into the Meta webhook settings. */
+  verifyToken?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Google Chat app on the HTTP endpoint connection. It posts as the service
+ * account in `credentials`, and a webhook is accepted when its Google-signed
+ * token names `endpointUrl` or `googleChatProjectNumber` as the audience.
+ */
+export interface AgentGoogleChatChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  /** The service-account key JSON, as downloaded from Google Cloud. */
+  credentials?: string;
+  /** Audience when the app authenticates with "HTTP endpoint URL". */
+  endpointUrl?: string;
+  /** Audience when the app authenticates with "Project number". */
+  googleChatProjectNumber?: string;
+  /** `service-{projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`, for an app built as a Workspace add-on. */
+  workspaceAddOnServiceAccountEmail?: string;
+  userName?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Microsoft Teams bot registered in Azure Bot Service, authenticated with a
+ * client secret. `appTenantId` is required unless `appType` is `MultiTenant`.
+ */
+export interface AgentTeamsChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  apiUrl?: string;
+  appId?: string;
+  appPassword?: string;
+  appTenantId?: string;
+  appType?: "MultiTenant" | "SingleTenant";
+  userName?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Twilio number or Messaging Service for SMS and MMS. `authToken` checks
+ * Twilio's signature, which covers the exact public URL Twilio called, so
+ * `webhookUrl` is only set when that URL is not the broods webhook URL.
+ */
+export interface AgentTwilioChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  accountSid?: string;
+  apiUrl?: string;
+  authToken?: string;
+  /** `MG...`. Replies go through the service instead of the number texted. */
+  messagingServiceSid?: string;
+  /** E.164 number, e.g. `+15551234567`. Messages to another number go to the agent holding it. */
+  phoneNumber?: string;
+  statusCallbackUrl?: string;
+  userName?: string;
+  /** The URL entered in the Twilio console, when it is not `{PUBLIC_BASE_URL}/v1/webhooks/...`. */
+  webhookUrl?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A WhatsApp Business Cloud API number. `appSecret` signs every delivery and
+ * `verifyToken` answers Meta's subscription handshake.
+ */
+export interface AgentWhatsAppChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  accessToken?: string;
+  apiUrl?: string;
+  apiVersion?: string;
+  appSecret?: string;
+  phoneNumberId?: string;
+  userName?: string;
+  verifyToken?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
 }
 
 /**
@@ -537,44 +767,6 @@ export function configuredMaxTurn(config: AgentConfig): number | undefined {
   return maxTurn === AGENT_MAX_TURN_UNLIMITED
     ? Number.MAX_SAFE_INTEGER
     : maxTurn;
-}
-
-export function decodeStoredAgentConfig(value: unknown): AgentConfig {
-  return decodeStoredConfigObject(value) as AgentConfig;
-}
-
-export function decodeStoredConfigObject(
-  value: unknown,
-): Record<string, unknown> {
-  if (isEncryptedAgentConfig(value)) {
-    return decryptConfigObject(value);
-  }
-
-  throw new Error("Stored config must be encrypted");
-}
-
-// The same aes-256-gcm blob the config plane writes with Web Crypto
-// (encryptAgentConfigBlob), so decodeStoredConfigObject reads either.
-export function encryptConfigObject(config: object): EncryptedAgentConfig {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(
-    CONFIG_ENCRYPTION_ALGORITHM,
-    agentConfigEncryptionKey(),
-    iv,
-  );
-  const plaintext = JSON.stringify(config);
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, "utf-8"),
-    cipher.final(),
-  ]);
-
-  return {
-    encrypted: true,
-    algorithm: CONFIG_ENCRYPTION_ALGORITHM,
-    iv: iv.toString("base64url"),
-    tag: cipher.getAuthTag().toString("base64url"),
-    ciphertext: ciphertext.toString("base64url"),
-  };
 }
 
 // Off by default: only an explicit `trace: "enabled"` on the channel appends
@@ -668,46 +860,4 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
       ? { allowRunOverrides: allowRunOverrides }
       : {}),
   }) as AgentConfig;
-}
-
-function agentConfigEncryptionKey(): Buffer {
-  return createHash("sha256")
-    .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
-    .digest();
-}
-
-function decryptConfigObject(
-  config: EncryptedAgentConfig,
-): Record<string, unknown> {
-  const decipher = createDecipheriv(
-    CONFIG_ENCRYPTION_ALGORITHM,
-    agentConfigEncryptionKey(),
-    Buffer.from(config.iv, "base64url"),
-  );
-  decipher.setAuthTag(Buffer.from(config.tag, "base64url"));
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(config.ciphertext, "base64url")),
-    decipher.final(),
-  ]).toString("utf-8");
-
-  const parsed = JSON.parse(plaintext) as unknown;
-  if (!isPlainObject(parsed)) {
-    throw new Error("Stored config must be an object");
-  }
-
-  return parsed;
-}
-
-function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
-  if (!isPlainObject(value)) {
-    return false;
-  }
-
-  return (
-    value.encrypted === true &&
-    value.algorithm === CONFIG_ENCRYPTION_ALGORITHM &&
-    typeof value.iv === "string" &&
-    typeof value.tag === "string" &&
-    typeof value.ciphertext === "string"
-  );
 }

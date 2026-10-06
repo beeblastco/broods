@@ -28,6 +28,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useRef, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 const SCHEDULE_REGEX = /^(cron|rate|at)\(.+\)$/;
 
@@ -49,7 +50,7 @@ interface Props {
   mode: Mode;
   /** Required when mode is "edit". */
   cron?: Doc<"crons">;
-  agents: Array<Doc<"agents">>;
+  agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
   onClose: () => void;
 }
 
@@ -128,7 +129,7 @@ export function CronDialog({
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(toErrorMessage(err));
     } finally {
       submittingRef.current = false;
       setPending(false);
@@ -314,14 +315,14 @@ export function CronDialog({
         <DialogFooter>
           <Button
             variant="outline"
-            className="cursor-pointer disabled:cursor-not-allowed"
+            className="cursor-pointer"
             onClick={onClose}
             disabled={pending}
           >
             Cancel
           </Button>
           <Button
-            className="cursor-pointer disabled:cursor-not-allowed"
+            className="cursor-pointer"
             onClick={handleSubmit}
             disabled={!canSubmit}
           >

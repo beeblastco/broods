@@ -1,5 +1,6 @@
 # Build from the monorepo root: docker build -f apps/dashboard/Dockerfile .
 # Pin the digest: the version tag is republished when the base image rebuilds.
+# checkov:skip=CKV_DOCKER_7:BUN_IMAGE defaults to a version and immutable digest; the scanner does not resolve ARG in FROM.
 ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
@@ -10,6 +11,7 @@ COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
+COPY apps/edge/package.json ./apps/edge/
 COPY apps/gateway/package.json ./apps/gateway/
 COPY apps/matrix-forwarder/package.json ./apps/matrix-forwarder/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
@@ -55,4 +57,6 @@ COPY --from=builder --chown=1001:1001 /app/apps/dashboard/.next/static ./apps/da
 COPY --from=builder --chown=1001:1001 /app/apps/dashboard/public ./apps/dashboard/public
 USER 1001
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD wget -q -T 4 -O /dev/null "http://127.0.0.1:${PORT:-3000}/healthz" || exit 1
 CMD ["bun", "apps/dashboard/server.js"]

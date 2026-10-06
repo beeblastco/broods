@@ -97,12 +97,14 @@ export function CommandPalette({
       <button
         type="button"
         data-palette-trigger
+        aria-label="Search or ask Broods"
         onClick={() => openScoped(null)}
-        className="flex h-6.5 w-56 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2 text-muted-foreground transition-colors hover:text-foreground"
+        className="flex h-6.5 shrink-0 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2 text-muted-foreground transition-colors hover:text-foreground lg:w-56"
       >
         <Search className="size-3.5" />
-        <span className="text-xs">Search</span>
-        <ShortcutKeys id="search.open" className="ml-auto" />
+        {/* Icon only below lg, where the header has no room for the label. */}
+        <span className="hidden text-xs lg:inline">Search or ask Broods</span>
+        <ShortcutKeys id="search.open" className="ml-auto hidden lg:flex" />
       </button>
 
       <CommandDialog

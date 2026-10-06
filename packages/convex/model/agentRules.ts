@@ -14,9 +14,11 @@ import {
 } from "./accountHooks";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
+  PROVIDER_ENDPOINT_SETTING,
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "./modelProviders";
+import { ClientError } from "./clientError";
 
 export type AgentStatus = "active" | "disabled";
 export type { AccountModelProviderName } from "./modelProviders";
@@ -81,7 +83,8 @@ export type LaterSandboxMount = {
 };
 
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
-const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
+// Input tokens; above every model context window shipped today.
+const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 10_000_000;
 export const AGENT_HARNESS_TYPES = [
   "claude-code",
   "codex",
@@ -119,10 +122,12 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 // Tool names the harness registers itself (sandbox, skills, subagents, async
 // status). config.tools cannot claim them for a provider-defined tool.
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
+  "ask_parent",
   "async_status",
   "bash",
   "cancel_schedule",
   "edit",
+  "get_subagent_status",
   "glob",
   "grep",
   "list_schedules",
@@ -131,7 +136,9 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "read",
   "run_subagent",
   "schedule",
+  "stop_subagent",
   "update_schedule",
+  "update_subagent",
   "write",
 ]);
 const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
@@ -197,7 +204,7 @@ export function normalizeAgentConfig(
     return {};
   }
   if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
+    throw new ClientError("config must be an object");
   }
 
   const config = value as AgentConfig;
@@ -216,7 +223,7 @@ export function normalizeAgentConfig(
   normalizeSubagentConfig(config.subagent);
   normalizeSchedulerConfig(config.scheduler);
   if (config.policy !== undefined) {
-    throw new Error(
+    throw new ClientError(
       "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
     );
   }
@@ -227,7 +234,9 @@ export function normalizeAgentConfig(
     delete config.policies;
   }
   if (isPlainObject(config.harness) && config.policies !== undefined) {
-    throw new Error("config.policies is not supported with config.harness");
+    throw new ClientError(
+      "config.policies is not supported with config.harness",
+    );
   }
   if (
     isPlainObject(config.harness) &&
@@ -235,7 +244,7 @@ export function normalizeAgentConfig(
     isPlainObject(config.model.output) &&
     config.model.output.type !== "text"
   ) {
-    throw new Error(
+    throw new ClientError(
       "config.model.output structured output is not supported with config.harness",
     );
   }
@@ -254,7 +263,7 @@ export function normalizeAgentConfigPatch(
   value: unknown,
 ): Record<string, unknown> {
   if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
+    throw new ClientError("config must be an object");
   }
   validateConfigPatch(value, "config");
 
@@ -283,7 +292,8 @@ export function normalizeCreateAgentInput(value: unknown): {
   description?: string;
   config: AgentConfig;
 } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const name = normalizeRequiredString(value.name, "name");
   const description = optionalString(value.description, "description");
   const config = normalizeAgentConfig(value.config);
@@ -310,7 +320,8 @@ export function normalizeUpdateAgentInput(
   status?: AgentStatus;
   config: AgentConfig;
 } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
 
   const config =
     "config" in value
@@ -348,7 +359,8 @@ export function assertAgentRuntimeRefs(
   config: AgentConfig,
   options: AgentConfigCheckOptions = {},
 ): void {
-  if (config.sandbox !== undefined) throw new Error(SANDBOX_REMOVED_MESSAGE);
+  if (config.sandbox !== undefined)
+    throw new ClientError(SANDBOX_REMOVED_MESSAGE);
   normalizeWorkspaceRefs(config.workspaces);
   normalizeSandboxRefs(config.sandboxes, config.workspaces);
   // A patch may add a harness to an agent whose sandboxes are already stored.
@@ -357,7 +369,7 @@ export function assertAgentRuntimeRefs(
     isPlainObject(config.harness) &&
     !config.sandboxes?.length
   )
-    throw new Error(
+    throw new ClientError(
       `config.sandboxes needs at least one sandbox for the ${String(config.harness.type)} harness; the first runs it`,
     );
 }
@@ -371,11 +383,14 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`${label} must be a valid URL`);
+    throw new ClientError(`${label} must be a valid URL`);
   }
-  if (url.protocol !== "https:") throw new Error(`${label} must use https`);
+  if (url.protocol !== "https:")
+    throw new ClientError(`${label} must use https`);
   if (isPrivateHostname(url.hostname))
-    throw new Error(`${label} must not point to a private or internal address`);
+    throw new ClientError(
+      `${label} must not point to a private or internal address`,
+    );
 
   return url;
 }
@@ -437,7 +452,8 @@ export function mergeCanvasSandboxes(
 
 function normalizeAgentBehaviorConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.agent must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("config.agent must be an object");
   const config = value as Record<string, unknown>;
   assertOptionalMaxTurn(config.maxTurn);
   validateAgentSystemConfig(config.system);
@@ -448,7 +464,7 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
 function assertOptionalMaxTurn(value: unknown): void {
   if (value === undefined) return;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error(
+    throw new ClientError(
       "config.agent.maxTurn must be a non-negative integer (0 lifts the cap)",
     );
   }
@@ -470,7 +486,7 @@ function validateAgentSystemConfig(value: unknown): void {
           Object.values(entry.providerOptions).every(isPlainObject)
         ))
     ) {
-      throw new Error(
+      throw new ClientError(
         "config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: invalid system message",
       );
     }
@@ -480,11 +496,11 @@ function validateAgentSystemConfig(value: unknown): void {
 function normalizeHarnessConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.harness must be an object");
+    throw new ClientError("config.harness must be an object");
   const config = value as Record<string, unknown>;
   for (const key of Object.keys(config)) {
     if (!AGENT_HARNESS_KEYS.has(key))
-      throw new Error(`config.harness has unknown option "${key}"`);
+      throw new ClientError(`config.harness has unknown option "${key}"`);
   }
   if (
     typeof config.type !== "string" ||
@@ -492,7 +508,7 @@ function normalizeHarnessConfig(value: unknown): void {
       config.type as (typeof AGENT_HARNESS_TYPES)[number],
     )
   ) {
-    throw new Error(
+    throw new ClientError(
       `config.harness.type must be one of: ${AGENT_HARNESS_TYPES.join(", ")}`,
     );
   }
@@ -513,7 +529,7 @@ function normalizeHarnessConfig(value: unknown): void {
     "config.harness.inactiveTools",
   );
   if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
-    throw new Error(
+    throw new ClientError(
       "config.harness must use either activeTools or inactiveTools, not both",
     );
   }
@@ -523,17 +539,17 @@ function normalizeHarnessConfig(value: unknown): void {
     config.permissionMode !== undefined &&
     config.permissionMode !== "allow-all"
   ) {
-    throw new Error(
+    throw new ClientError(
       "config.harness.permissionMode must be allow-all for the codex harness",
     );
   }
   if (config.type !== "codex" && config.webSearch !== undefined) {
-    throw new Error(
+    throw new ClientError(
       "config.harness.webSearch is only supported by the codex harness",
     );
   }
   if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
-    throw new Error(
+    throw new ClientError(
       "config.harness.startupTimeoutMs is not supported by the pi harness",
     );
   }
@@ -542,10 +558,10 @@ function normalizeHarnessConfig(value: unknown): void {
 function normalizeHarnessDebugConfig(value: unknown): void {
   if (value === undefined) return;
   if (!isPlainObject(value))
-    throw new Error("config.harness.debug must be an object");
+    throw new ClientError("config.harness.debug must be an object");
   for (const key of Object.keys(value)) {
     if (!AGENT_HARNESS_DEBUG_KEYS.has(key))
-      throw new Error(`config.harness.debug has unknown option "${key}"`);
+      throw new ClientError(`config.harness.debug has unknown option "${key}"`);
   }
   assertOptionalBoolean(value.enabled, "config.harness.debug.enabled");
   assertOptionalEnum(
@@ -561,7 +577,8 @@ function normalizeHarnessDebugConfig(value: unknown): void {
 
 function normalizeModelConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.model must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("config.model must be an object");
   const config = value as Record<string, unknown>;
   for (const key of Object.keys(config)) {
     if (
@@ -569,7 +586,7 @@ function normalizeModelConfig(value: unknown): void {
         key as (typeof MODEL_CONFIG_SETTING_KEYS)[number],
       )
     ) {
-      throw new Error(
+      throw new ClientError(
         `config.model.${key} is not supported; use config.model.providerOptions for provider-specific settings`,
       );
     }
@@ -593,7 +610,7 @@ function normalizeModelConfig(value: unknown): void {
     config.providerOptions !== undefined &&
     !isPlainObject(config.providerOptions)
   ) {
-    throw new Error("config.model.providerOptions must be an object");
+    throw new ClientError("config.model.providerOptions must be an object");
   }
   normalizeModelOutputConfig(config.output);
 }
@@ -601,7 +618,7 @@ function normalizeModelConfig(value: unknown): void {
 function normalizeModelOutputConfig(value: unknown): void {
   if (value === undefined) return;
   if (!isPlainObject(value))
-    throw new Error("config.model.output must be an object");
+    throw new ClientError("config.model.output must be an object");
   const config = value as Record<string, unknown>;
   assertOptionalEnum(config.type, "config.model.output.type", [
     "text",
@@ -611,22 +628,22 @@ function normalizeModelOutputConfig(value: unknown): void {
     "json",
   ]);
   if (config.type === undefined)
-    throw new Error(
+    throw new ClientError(
       "config.model.output.type must be one of: text, object, array, choice, json",
     );
   assertOptionalString(config.name, "config.model.output.name");
   assertOptionalString(config.description, "config.model.output.description");
   if (config.type === "object" && !isPlainObject(config.schema))
-    throw new Error("config.model.output.schema must be an object");
+    throw new ClientError("config.model.output.schema must be an object");
   if (config.type === "array" && !isPlainObject(config.element))
-    throw new Error("config.model.output.element must be an object");
+    throw new ClientError("config.model.output.element must be an object");
   if (
     config.type === "choice" &&
     (!Array.isArray(config.options) ||
       config.options.length === 0 ||
       !config.options.every((entry) => typeof entry === "string"))
   ) {
-    throw new Error(
+    throw new ClientError(
       "config.model.output.options must be a non-empty array of strings",
     );
   }
@@ -635,10 +652,10 @@ function normalizeModelOutputConfig(value: unknown): void {
 function normalizeProviderConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.provider must be an object");
+    throw new ClientError("config.provider must be an object");
   for (const [providerName, providerConfig] of Object.entries(value)) {
     if (!isAccountModelProviderName(providerName))
-      throw new Error(
+      throw new ClientError(
         `config.provider.${providerName} is not a supported provider`,
       );
     normalizeProviderSettings(providerName, providerConfig);
@@ -650,7 +667,7 @@ function normalizeProviderSettings(
   value: unknown,
 ): void {
   if (!isPlainObject(value))
-    throw new Error(`config.provider.${providerName} must be an object`);
+    throw new ClientError(`config.provider.${providerName} must be an object`);
   const config = value as Record<string, unknown>;
   assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
   assertOptionalString(
@@ -667,7 +684,7 @@ function normalizeProviderSettings(
       config.baseUrl !== undefined
         ? ` (found "baseUrl", use "base_url" or "baseURL")`
         : "";
-    throw new Error(`config.provider.custom.base_url is required${hint}`);
+    throw new ClientError(`config.provider.custom.base_url is required${hint}`);
   }
   if (baseURL) {
     const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
@@ -678,8 +695,17 @@ function normalizeProviderSettings(
     config.baseURL = baseURL;
     delete config.base_url;
   }
+  // `baseURL` is the canonical base URL checked above.
+  for (const [key, endpoint] of Object.entries(config)) {
+    if (key === "baseURL" || !PROVIDER_ENDPOINT_SETTING.test(key)) continue;
+    const label = `config.provider.${providerName}.${key}`;
+    assertOptionalString(endpoint, label);
+    if (typeof endpoint === "string" && endpoint.trim()) {
+      assertPublicHttpsUrl(endpoint.trim(), label);
+    }
+  }
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
-    throw new Error(
+    throw new ClientError(
       `config.provider.${providerName}.headers must be an object with string values`,
     );
   }
@@ -707,12 +733,12 @@ function normalizeSandboxRefs(
   // error as core's copy of this rule.
   value.forEach((sandboxId, index): void => {
     if (seen.has(sandboxId))
-      throw new Error(
+      throw new ClientError(
         `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
       );
     const mounted = workspaceOnLaterSandbox(value, index, workspaces);
     if (mounted)
-      throw new Error(
+      throw new ClientError(
         `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
       );
     seen.add(sandboxId);
@@ -733,15 +759,15 @@ function workspaceOnLaterSandbox(
 function normalizeWorkspaceRefs(value: unknown): void {
   if (value == null) return;
   if (!Array.isArray(value))
-    throw new Error("config.workspaces must be an array");
+    throw new ClientError("config.workspaces must be an array");
   const seenNames = new Set<string>();
   value.forEach((entry, index) => {
     if (!isPlainObject(entry))
-      throw new Error(`config.workspaces[${index}] must be an object`);
+      throw new ClientError(`config.workspaces[${index}] must be an object`);
     const ref = entry as Record<string, unknown>;
     const name = ref.name;
     if (typeof name !== "string" || name.trim().length === 0)
-      throw new Error(
+      throw new ClientError(
         `config.workspaces[${index}].name must be a non-empty string`,
       );
     assertWorkspaceId(name, `config.workspaces[${index}].name`);
@@ -753,7 +779,7 @@ function normalizeWorkspaceRefs(value: unknown): void {
       typeof ref.workspaceId !== "string" ||
       ref.workspaceId.trim().length === 0
     ) {
-      throw new Error(
+      throw new ClientError(
         `config.workspaces[${index}].workspaceId must be a non-empty string`,
       );
     }
@@ -762,12 +788,12 @@ function normalizeWorkspaceRefs(value: unknown): void {
       ref.sandbox !== undefined &&
       (typeof ref.sandbox !== "string" || ref.sandbox.trim().length === 0)
     ) {
-      throw new Error(
+      throw new ClientError(
         `config.workspaces[${index}].sandbox must be a non-empty string or null`,
       );
     }
     if (seenNames.has(name))
-      throw new Error(
+      throw new ClientError(
         `config.workspaces[${index}].name "${name}" is used more than once`,
       );
     seenNames.add(name);
@@ -777,45 +803,51 @@ function normalizeWorkspaceRefs(value: unknown): void {
 function normalizeSessionConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.session must be an object");
+    throw new ClientError("config.session must be an object");
   const config = value as Record<string, unknown>;
   normalizeSessionPruningConfig(config.pruning);
-  normalizeSessionCompactionConfig(config.compaction);
+  if (config.compaction !== undefined) {
+    throw new ClientError(
+      "config.session.compaction was renamed to config.session.autoCompaction, and maxContextLength now counts input tokens",
+    );
+  }
+  normalizeSessionAutoCompactionConfig(config.autoCompaction);
 }
 
 function normalizeSessionPruningConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.session.pruning must be an object");
+    throw new ClientError("config.session.pruning must be an object");
   assertOptionalBoolean(value.enabled, "config.session.pruning.enabled");
 }
 
-function normalizeSessionCompactionConfig(value: unknown): void {
+function normalizeSessionAutoCompactionConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.session.compaction must be an object");
-  assertOptionalBoolean(value.enabled, "config.session.compaction.enabled");
+    throw new ClientError("config.session.autoCompaction must be an object");
+  assertOptionalBoolean(value.enabled, "config.session.autoCompaction.enabled");
   assertOptionalPositiveInteger(
     value.maxContextLength,
-    "config.session.compaction.maxContextLength",
+    "config.session.autoCompaction.maxContextLength",
     SESSION_MAX_CONTEXT_LENGTH_LIMIT,
   );
 }
 
 function normalizeHooksConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.hooks must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("config.hooks must be an object");
   const config = value as Record<string, unknown>;
   if (config.webhooks !== undefined) {
     if (!Array.isArray(config.webhooks))
-      throw new Error("config.hooks.webhooks must be an array");
+      throw new ClientError("config.hooks.webhooks must be an array");
     config.webhooks.forEach((webhook, index) =>
       normalizeWebhookHookConfig(webhook, `config.hooks.webhooks[${index}]`),
     );
   }
   if (config.code !== undefined) {
     if (!Array.isArray(config.code))
-      throw new Error("config.hooks.code must be an array");
+      throw new ClientError("config.hooks.code must be an array");
     config.code.forEach((hook, index) =>
       normalizeCodeHookConfig(hook, `config.hooks.code[${index}]`),
     );
@@ -823,13 +855,13 @@ function normalizeHooksConfig(value: unknown): void {
 }
 
 function normalizeCodeHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
+  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
   const config = value as Record<string, unknown>;
   if (
     typeof config.hookId !== "string" ||
     !isNativeConvexDocumentId(config.hookId)
   ) {
-    throw new Error(`${path}.hookId must be a native Convex document id`);
+    throw new ClientError(`${path}.hookId must be a native Convex document id`);
   }
   assertOptionalBoolean(config.enabled, `${path}.enabled`);
   if (
@@ -841,14 +873,14 @@ function normalizeCodeHookConfig(value: unknown, path: string): void {
           AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName),
       ))
   ) {
-    throw new Error(
+    throw new ClientError(
       `${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
     );
   }
 }
 
 function normalizeWebhookHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
+  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, `${path}.enabled`);
   assertOptionalNonEmptyString(config.url, `${path}.url`);
@@ -864,15 +896,17 @@ function normalizeWebhookHookConfig(value: unknown, path: string): void {
           ),
       ))
   ) {
-    throw new Error(
+    throw new ClientError(
       `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
     );
   }
   if (config.enabled === true) {
     if (typeof config.url !== "string" || config.url.trim().length === 0)
-      throw new Error(`${path}.url is required when ${path}.enabled is true`);
+      throw new ClientError(
+        `${path}.url is required when ${path}.enabled is true`,
+      );
     if (typeof config.secret !== "string" || config.secret.trim().length === 0)
-      throw new Error(
+      throw new ClientError(
         `${path}.secret is required when ${path}.enabled is true`,
       );
   }
@@ -882,16 +916,17 @@ function normalizeWebhookHookConfig(value: unknown, path: string): void {
 
 function normalizeToolsConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.tools must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("config.tools must be an object");
   for (const [toolName, toolConfig] of Object.entries(value))
     normalizeToolConfig(toolName, toolConfig);
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {
   if (!isPlainObject(value))
-    throw new Error(`config.tools.${toolName} must be an object`);
+    throw new ClientError(`config.tools.${toolName} must be an object`);
   if (!isProviderToolName(toolName)) {
-    throw new Error(`config.tools.${toolName} is not a supported tool`);
+    throw new ClientError(`config.tools.${toolName} is not a supported tool`);
   }
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, `config.tools.${toolName}.enabled`);
@@ -901,20 +936,21 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   );
   assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
   if (config.config !== undefined && !isPlainObject(config.config))
-    throw new Error(`config.tools.${toolName}.config must be an object`);
+    throw new ClientError(`config.tools.${toolName}.config must be an object`);
 }
 
 function normalizeMcpConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.mcp must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("config.mcp must be an object");
   for (const [serverId, serverConfig] of Object.entries(value)) {
     if (!isNativeConvexDocumentId(serverId)) {
-      throw new Error(
+      throw new ClientError(
         `config.mcp.${serverId} must be keyed by an MCP server id`,
       );
     }
     if (!isPlainObject(serverConfig))
-      throw new Error(`config.mcp.${serverId} must be an object`);
+      throw new ClientError(`config.mcp.${serverId} must be an object`);
     const config = serverConfig as Record<string, unknown>;
     assertOptionalBoolean(config.enabled, `config.mcp.${serverId}.enabled`);
     assertOptionalBoolean(
@@ -922,12 +958,12 @@ function normalizeMcpConfig(value: unknown): void {
       `config.mcp.${serverId}.needsApproval`,
     );
     if (config.headers !== undefined && !isStringRecord(config.headers)) {
-      throw new Error(
+      throw new ClientError(
         `config.mcp.${serverId}.headers must be an object of string values`,
       );
     }
     if (config.oauth !== undefined && !isStringRecord(config.oauth)) {
-      throw new Error(
+      throw new ClientError(
         `config.mcp.${serverId}.oauth must be an object of string values`,
       );
     }
@@ -936,7 +972,8 @@ function normalizeMcpConfig(value: unknown): void {
 
 function normalizeSkillsConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.skills must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("config.skills must be an object");
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.skills.enabled");
   assertOptionalStringArray(config.allowed, "config.skills.allowed");
@@ -945,7 +982,7 @@ function normalizeSkillsConfig(value: unknown): void {
 function normalizeSubagentConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.subagent must be an object");
+    throw new ClientError("config.subagent must be an object");
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.subagent.enabled");
   assertOptionalBoolean(config.stream, "config.subagent.stream");
@@ -968,7 +1005,7 @@ function normalizeSubagentConfig(value: unknown): void {
 function normalizeSchedulerConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.scheduler must be an object");
+    throw new ClientError("config.scheduler must be an object");
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
 }
@@ -991,24 +1028,34 @@ function normalizeChannelsConfig(
 ): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels must be an object");
+    throw new ClientError("config.channels must be an object");
   const channels = value as Record<string, unknown>;
   normalizeTelegramConfig(channels.telegram);
+  normalizeGoogleChatConfig(channels.gchat, options);
   normalizeGitHubConfig(channels.github);
+  normalizeLinearConfig(channels.linear, options);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
   normalizeMatrixConfig(channels.matrix, options);
   normalizePancakeConfig(channels.pancake);
+  normalizeTeamsConfig(channels.teams, options);
+  normalizeTwilioConfig(channels.twilio);
   normalizeZaloConfig(channels.zalo);
+  normalizeInstagramConfig(channels.instagram, options);
+  normalizeMessengerConfig(channels.messenger, options);
+  normalizeWhatsAppConfig(channels.whatsapp);
 }
 
 function normalizeTelegramConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels.telegram must be an object");
+    throw new ClientError("config.channels.telegram must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.telegram");
   assertOptionalString(config.apiUrl, "config.channels.telegram.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.telegram.apiUrl");
+  }
   assertOptionalString(config.botToken, "config.channels.telegram.botToken");
   assertOptionalString(
     config.webhookSecret,
@@ -1024,13 +1071,67 @@ function normalizeTelegramConfig(value: unknown): void {
   );
 }
 
+/**
+ * A Google Chat app is only reachable once one audience is set: without it no
+ * webhook token can be verified. A patch may carry the key alone, so the
+ * merged config checks it.
+ */
+function normalizeGoogleChatConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.gchat must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.gchat");
+  assertOptionalString(config.credentials, "config.channels.gchat.credentials");
+  assertOptionalString(config.endpointUrl, "config.channels.gchat.endpointUrl");
+  if (typeof config.endpointUrl === "string") {
+    assertPublicHttpsUrl(
+      config.endpointUrl,
+      "config.channels.gchat.endpointUrl",
+    );
+  }
+  assertOptionalString(
+    config.googleChatProjectNumber,
+    "config.channels.gchat.googleChatProjectNumber",
+  );
+  if (
+    typeof config.googleChatProjectNumber === "string" &&
+    !/^\d+$/.test(config.googleChatProjectNumber)
+  ) {
+    throw new ClientError(
+      "config.channels.gchat.googleChatProjectNumber must be the numeric project number",
+    );
+  }
+  assertOptionalString(
+    config.workspaceAddOnServiceAccountEmail,
+    "config.channels.gchat.workspaceAddOnServiceAccountEmail",
+  );
+  assertOptionalString(config.userName, "config.channels.gchat.userName");
+  if (
+    typeof config.credentials === "string" &&
+    config.endpointUrl === undefined &&
+    config.googleChatProjectNumber === undefined &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      "config.channels.gchat needs endpointUrl or googleChatProjectNumber to verify webhooks",
+    );
+  }
+}
+
 function normalizeGitHubConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels.github must be an object");
+    throw new ClientError("config.channels.github must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.github");
   assertOptionalString(config.apiUrl, "config.channels.github.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.github.apiUrl");
+  }
   assertOptionalString(
     config.webhookSecret,
     "config.channels.github.webhookSecret",
@@ -1048,13 +1149,55 @@ function normalizeGitHubConfig(value: unknown): void {
   );
 }
 
+/**
+ * Linear has no bot account: the agent comments as the member whose API key it
+ * holds, and `userName` is what mentions it. Core runs the channel only with
+ * the key, the name and the webhook secret, so a config with the key and not
+ * the other two is refused here. A patch may carry the key alone, so the merged
+ * config checks it.
+ */
+function normalizeLinearConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.linear must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.linear");
+  assertOptionalString(config.apiKey, "config.channels.linear.apiKey");
+  assertOptionalString(config.apiUrl, "config.channels.linear.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.linear.apiUrl");
+  }
+  assertOptionalString(config.userName, "config.channels.linear.userName");
+  assertOptionalString(
+    config.webhookSecret,
+    "config.channels.linear.webhookSecret",
+  );
+  if (typeof config.apiKey !== "string" || options.patch) return;
+  if (typeof config.userName !== "string" || !config.userName.trim()) {
+    throw new ClientError(
+      "config.channels.linear.userName is required: the display name of the member the API key belongs to",
+    );
+  }
+  if (!config.webhookSecret) {
+    throw new ClientError(
+      "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
+    );
+  }
+}
+
 function normalizeSlackConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels.slack must be an object");
+    throw new ClientError("config.channels.slack must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.slack");
   assertOptionalString(config.apiUrl, "config.channels.slack.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.slack.apiUrl");
+  }
   assertOptionalString(config.botToken, "config.channels.slack.botToken");
   assertOptionalString(
     config.signingSecret,
@@ -1069,10 +1212,13 @@ function normalizeSlackConfig(value: unknown): void {
 function normalizeDiscordConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels.discord must be an object");
+    throw new ClientError("config.channels.discord must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.discord");
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.discord.apiUrl");
+  }
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
@@ -1092,7 +1238,7 @@ function normalizeMatrixConfig(
 ): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels.matrix must be an object");
+    throw new ClientError("config.channels.matrix must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.matrix");
   assertOptionalString(config.apiUrl, "config.channels.matrix.apiUrl");
@@ -1107,7 +1253,7 @@ function normalizeMatrixConfig(
   if (typeof config.apiUrl === "string") {
     assertPublicHttpsUrl(config.apiUrl, "config.channels.matrix.apiUrl");
   } else if (typeof config.botToken === "string" && !options.patch) {
-    throw new Error(
+    throw new ClientError(
       "config.channels.matrix.apiUrl is required when config.channels.matrix.botToken is set",
     );
   }
@@ -1116,7 +1262,7 @@ function normalizeMatrixConfig(
 function normalizePancakeConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels.pancake must be an object");
+    throw new ClientError("config.channels.pancake must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.pancake");
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
@@ -1131,10 +1277,137 @@ function normalizePancakeConfig(value: unknown): void {
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
 }
 
+/**
+ * A single-tenant bot signs in against its own tenant, so it cannot work
+ * without one. A patch may carry the app id alone, so the merged config checks it.
+ */
+function normalizeTeamsConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.teams must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.teams");
+  assertOptionalString(config.apiUrl, "config.channels.teams.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.teams.apiUrl");
+  }
+  assertOptionalString(config.appId, "config.channels.teams.appId");
+  assertOptionalString(config.appPassword, "config.channels.teams.appPassword");
+  assertOptionalString(config.appTenantId, "config.channels.teams.appTenantId");
+  assertOptionalEnum(config.appType, "config.channels.teams.appType", [
+    "MultiTenant",
+    "SingleTenant",
+  ] as const);
+  assertOptionalString(config.userName, "config.channels.teams.userName");
+  if (
+    typeof config.appId === "string" &&
+    config.appType !== "MultiTenant" &&
+    !(typeof config.appTenantId === "string" && config.appTenantId.trim()) &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
+    );
+  }
+}
+
+/**
+ * Every URL Twilio is told to call, and the one it signs, is held to public
+ * https. A Messaging Service sid is the reply sender, so it must look like one
+ * or the adapter would send it as a phone number.
+ */
+function normalizeTwilioConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.twilio must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.twilio");
+  assertOptionalString(config.accountSid, "config.channels.twilio.accountSid");
+  assertOptionalString(config.authToken, "config.channels.twilio.authToken");
+  for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"] as const) {
+    assertOptionalString(config[key], `config.channels.twilio.${key}`);
+    if (typeof config[key] === "string") {
+      assertPublicHttpsUrl(config[key], `config.channels.twilio.${key}`);
+    }
+  }
+  assertOptionalString(
+    config.messagingServiceSid,
+    "config.channels.twilio.messagingServiceSid",
+  );
+  if (
+    typeof config.messagingServiceSid === "string" &&
+    !/^MG[0-9a-fA-F]{32}$/.test(config.messagingServiceSid)
+  ) {
+    throw new ClientError(
+      'config.channels.twilio.messagingServiceSid must be a Messaging Service sid ("MG" and 32 hex digits)',
+    );
+  }
+  assertOptionalString(
+    config.phoneNumber,
+    "config.channels.twilio.phoneNumber",
+  );
+  // Core compares it to the E.164 `To` Twilio posts, so any other spelling
+  // would ignore every message.
+  if (
+    typeof config.phoneNumber === "string" &&
+    !/^\+[1-9]\d{1,14}$/.test(config.phoneNumber)
+  ) {
+    throw new ClientError(
+      'config.channels.twilio.phoneNumber must be an E.164 number, e.g. "+15551234567"',
+    );
+  }
+  assertOptionalString(config.userName, "config.channels.twilio.userName");
+}
+
+/**
+ * The version is spliced into every Graph API path, so it is held to Meta's
+ * `vNN.N` shape rather than taken as free text.
+ */
+function normalizeWhatsAppConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.whatsapp must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.whatsapp");
+  assertOptionalString(
+    config.accessToken,
+    "config.channels.whatsapp.accessToken",
+  );
+  assertOptionalString(config.apiUrl, "config.channels.whatsapp.apiUrl");
+  if (typeof config.apiUrl === "string") {
+    assertPublicHttpsUrl(config.apiUrl, "config.channels.whatsapp.apiUrl");
+  }
+  assertOptionalString(
+    config.apiVersion,
+    "config.channels.whatsapp.apiVersion",
+  );
+  if (
+    typeof config.apiVersion === "string" &&
+    !/^v\d+\.\d+$/.test(config.apiVersion)
+  ) {
+    throw new ClientError(
+      'config.channels.whatsapp.apiVersion must look like "v25.0"',
+    );
+  }
+  assertOptionalString(config.appSecret, "config.channels.whatsapp.appSecret");
+  assertOptionalString(
+    config.phoneNumberId,
+    "config.channels.whatsapp.phoneNumberId",
+  );
+  assertOptionalString(config.userName, "config.channels.whatsapp.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.whatsapp.verifyToken",
+  );
+}
+
 function normalizeZaloConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new Error("config.channels.zalo must be an object");
+    throw new ClientError("config.channels.zalo must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.zalo");
   assertOptionalString(config.botToken, "config.channels.zalo.botToken");
@@ -1145,10 +1418,116 @@ function normalizeZaloConfig(value: unknown): void {
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256)
-      throw new Error(
+      throw new ClientError(
         "config.channels.zalo.webhookSecret must be 8 to 256 characters",
       );
   }
+}
+
+function normalizeInstagramConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.instagram must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.instagram");
+  assertOptionalString(
+    config.accessToken,
+    "config.channels.instagram.accessToken",
+  );
+  assertOptionalString(config.accountId, "config.channels.instagram.accountId");
+  // The account id is a path segment of every Graph call the SDK makes.
+  if (typeof config.accountId === "string" && !/^\d+$/.test(config.accountId))
+    throw new ClientError(
+      "config.channels.instagram.accountId must be the numeric Instagram account id",
+    );
+  normalizeGraphApiVersion(config, "config.channels.instagram");
+  assertOptionalString(config.appSecret, "config.channels.instagram.appSecret");
+  assertOptionalString(config.userName, "config.channels.instagram.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.instagram.verifyToken",
+  );
+  assertMetaCredentials(
+    config,
+    "config.channels.instagram",
+    ["accessToken", "accountId", "appSecret", "verifyToken"],
+    options,
+  );
+}
+
+function normalizeMessengerConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.messenger must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.messenger");
+  normalizeGraphApiVersion(config, "config.channels.messenger");
+  assertOptionalString(config.appSecret, "config.channels.messenger.appSecret");
+  assertOptionalString(
+    config.pageAccessToken,
+    "config.channels.messenger.pageAccessToken",
+  );
+  assertOptionalString(config.userName, "config.channels.messenger.userName");
+  assertOptionalString(
+    config.verifyToken,
+    "config.channels.messenger.verifyToken",
+  );
+  assertMetaCredentials(
+    config,
+    "config.channels.messenger",
+    ["appSecret", "pageAccessToken", "verifyToken"],
+    options,
+  );
+}
+
+/**
+ * Core builds a Messenger or Instagram adapter only when every one of these is
+ * set and non-empty, so a config that has some but not all would never answer.
+ * A patch may carry one alone, so the merged config checks it.
+ */
+function assertMetaCredentials(
+  config: Record<string, unknown>,
+  path: string,
+  fields: readonly string[],
+  options: AgentConfigCheckOptions,
+): void {
+  if (options.patch) return;
+  const present = fields.find((field) => config[field] !== undefined);
+  if (!present) return;
+  const empty = fields.find(
+    (field) =>
+      typeof config[field] === "string" && config[field].trim().length === 0,
+  );
+  if (empty)
+    throw new ClientError(`${path}.${empty} must be a non-empty string`);
+  const missing = fields.find((field) => config[field] === undefined);
+  if (missing) {
+    throw new ClientError(
+      `${path}.${missing} is required when ${path}.${present} is set`,
+    );
+  }
+}
+
+/**
+ * Messenger and Instagram put `apiVersion` into the path of every Graph call,
+ * so it may only be a version, never a path.
+ */
+function normalizeGraphApiVersion(
+  config: Record<string, unknown>,
+  name: string,
+): void {
+  assertOptionalString(config.apiVersion, `${name}.apiVersion`);
+  if (
+    typeof config.apiVersion === "string" &&
+    !/^v\d+\.\d+$/.test(config.apiVersion)
+  )
+    throw new ClientError(`${name}.apiVersion must look like "v21.0"`);
 }
 
 function normalizeChannelIdentityConfig(
@@ -1162,7 +1541,7 @@ function normalizeChannelIdentityConfig(
   ] as const);
   for (const [retired, replacement] of RETIRED_REACH_KEYS) {
     if (config[retired] !== undefined)
-      throw new Error(
+      throw new ClientError(
         `${name}.${retired} is no longer supported; use ${name}.${replacement}`,
       );
   }
@@ -1173,13 +1552,13 @@ function normalizeChannelIdentityConfig(
   assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
   for (const retired of RETIRED_PARTITION_KEYS) {
     if (config[retired] !== undefined)
-      throw new Error(
+      throw new ClientError(
         `${name}.${retired} is no longer supported; use ${name}.partition`,
       );
   }
   if (config.partition === undefined) return;
   if (!isPlainObject(config.partition))
-    throw new Error(`${name}.partition must be an object`);
+    throw new ClientError(`${name}.partition must be an object`);
   const partition = config.partition as Record<string, unknown>;
   assertOptionalEnum(
     partition.by,
@@ -1187,12 +1566,12 @@ function normalizeChannelIdentityConfig(
     CHANNEL_PARTITION_MODES,
   );
   if (partition.by === undefined)
-    throw new Error(
+    throw new ClientError(
       `${name}.partition.by must be one of: ${CHANNEL_PARTITION_MODES.join(", ")}`,
     );
   if (partition.by === "shared") {
     if ("alias" in partition && partition.alias !== undefined) {
-      throw new Error(
+      throw new ClientError(
         `${name}.partition.alias is only supported when ${name}.partition.by is conversation`,
       );
     }
@@ -1204,7 +1583,7 @@ function normalizeChannelIdentityConfig(
 }
 
 function validateConfigPatch(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
+  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
   const candidate = value as Record<string, unknown>;
   const withoutNulls = removeNullConfigValues(candidate);
   if (path === "config") {
@@ -1271,13 +1650,13 @@ function isPrivateIpv6(host: string): boolean {
 
 function assertOptionalString(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "string")
-    throw new Error(`${name} must be a string`);
+    throw new ClientError(`${name} must be a string`);
 }
 
 function assertOptionalProviderName(value: unknown, name: string): void {
   if (value === undefined) return;
   if (typeof value !== "string" || !isAccountModelProviderName(value)) {
-    throw new Error(
+    throw new ClientError(
       `${name} must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`,
     );
   }
@@ -1285,7 +1664,7 @@ function assertOptionalProviderName(value: unknown, name: string): void {
 
 function assertOptionalBoolean(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "boolean")
-    throw new Error(`${name} must be a boolean`);
+    throw new ClientError(`${name} must be a boolean`);
 }
 
 function assertOptionalEnum<T extends string>(
@@ -1297,20 +1676,21 @@ function assertOptionalEnum<T extends string>(
     value !== undefined &&
     (typeof value !== "string" || !allowed.includes(value as T))
   ) {
-    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+    throw new ClientError(`${name} must be one of: ${allowed.join(", ")}`);
   }
 }
 
 function normalizeRequiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0)
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
 
   return value.trim();
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -1319,19 +1699,19 @@ function optionalString(value: unknown, name: string): string | undefined {
 function assertOptionalNonEmptyString(value: unknown, name: string): void {
   assertOptionalString(value, name);
   if (typeof value === "string" && value.trim().length === 0)
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
 }
 
 function assertWorkspaceId(value: string, name: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(value))
-    throw new Error(
+    throw new ClientError(
       `${name} must use only letters, numbers, dots, underscores, or hyphens`,
     );
 }
 
 function assertPartitionAlias(value: unknown, name: string): void {
   if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value)) {
-    throw new Error(
+    throw new ClientError(
       `${name} must use only letters, numbers, dots, underscores, or hyphens`,
     );
   }
@@ -1349,7 +1729,7 @@ function assertOptionalPositiveInteger(
     value < 1 ||
     value > max
   ) {
-    throw new Error(`${name} must be an integer from 1 to ${max}`);
+    throw new ClientError(`${name} must be an integer from 1 to ${max}`);
   }
 }
 
@@ -1364,7 +1744,7 @@ function assertOptionalStringArray(
       (entry) => typeof entry === "string" && entry.trim().length > 0,
     )
   ) {
-    throw new Error(`${name} must be an array of non-empty strings`);
+    throw new ClientError(`${name} must be an array of non-empty strings`);
   }
 }
 
@@ -1374,7 +1754,7 @@ function isNativeConvexDocumentId(value: string): boolean {
 
 function requireAgentStatus(value: unknown): AgentStatus {
   if (value !== "active" && value !== "disabled")
-    throw new Error("status must be one of: active, disabled");
+    throw new ClientError("status must be one of: active, disabled");
 
   return value;
 }

@@ -14,6 +14,7 @@ import {
 import { isPlainObject } from "./object.ts";
 
 const TICKET_ALGORITHM = "aes-256-gcm";
+const TICKET_AUTH_TAG_LENGTH = 16;
 const TICKET_VERSION = "st1";
 
 export const TERMINAL_TICKET_TTL_MS = 2 * 60 * 1000;
@@ -50,15 +51,28 @@ export function openTerminalTicket(
     extra !== undefined
   )
     return null;
+  // Node decodes base64url leniently, so one ticket has many spellings. Only
+  // the one sealTerminalTicket writes opens, or the gateway's single-use
+  // check, keyed on the token, could be dodged by re-spelling it.
+  const ivBytes = Buffer.from(iv, "base64url");
+  const tagBytes = Buffer.from(tag, "base64url");
+  const ciphertextBytes = Buffer.from(ciphertext, "base64url");
+  if (
+    ivBytes.toString("base64url") !== iv ||
+    tagBytes.toString("base64url") !== tag ||
+    ciphertextBytes.toString("base64url") !== ciphertext
+  )
+    return null;
   try {
     const decipher = createDecipheriv(
       TICKET_ALGORITHM,
       ticketKey(secret),
-      Buffer.from(iv, "base64url"),
+      ivBytes,
+      { authTagLength: TICKET_AUTH_TAG_LENGTH },
     );
-    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    decipher.setAuthTag(tagBytes);
     const plaintext = Buffer.concat([
-      decipher.update(Buffer.from(ciphertext, "base64url")),
+      decipher.update(ciphertextBytes),
       decipher.final(),
     ]).toString("utf-8");
     const parsed: unknown = JSON.parse(plaintext);
@@ -97,7 +111,9 @@ export function sealTerminalTicket(
   secret: string,
 ): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
+  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv, {
+    authTagLength: TICKET_AUTH_TAG_LENGTH,
+  });
   const ciphertext = Buffer.concat([
     cipher.update(JSON.stringify(ticket), "utf-8"),
     cipher.final(),

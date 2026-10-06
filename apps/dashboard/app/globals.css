@@ -40,6 +40,7 @@
   --color-card: var(--card);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-needs-input: var(--needs-input);
   --color-info: var(--info);
   --color-folder: var(--folder);
   --color-run-subagent: var(--run-subagent);
@@ -65,9 +66,6 @@
   --text-2xs: 0.6875rem;
   --text-3xs: 0.625rem;
 
-  /* Keyframes come from @xyflow/react/dist/style.css. */
-  --animate-dashdraw: dashdraw 0.5s linear infinite;
-
   --color-stage-development: oklch(0.696 0.17 162.48);
   --color-stage-production: oklch(0.606 0.25 292.717);
   --color-stage-custom: oklch(0.715 0.143 215.221);
@@ -87,6 +85,16 @@
   --color-usage-mcp-sandbox: #fb923c;
   --color-usage-tasks: #22d3ee;
   --color-usage-model-calls: #f472b6;
+  --color-usage-storage: #818cf8;
+  --color-usage-egress: #f472b6;
+  --color-usage-ingress: #60a5fa;
+  /* One per model in the usage filter, table and trace rail, in model order. */
+  --color-usage-model-1: #38bdf8;
+  --color-usage-model-2: #f472b6;
+  --color-usage-model-3: #a3e635;
+  --color-usage-model-4: #fb923c;
+  --color-usage-model-5: #c084fc;
+  --color-usage-model-6: #facc15;
 
   /* Syntax colors for code samples on --color-code-background. */
   --color-code-background: #1e1e1e;
@@ -139,6 +147,7 @@ body {
 }
 
 :root {
+  --header-height: 3rem;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -163,16 +172,17 @@ body {
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: var(--background);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: var(--border);
   --sidebar-ring: oklch(0.708 0 0);
   --success: oklch(0.596 0.145 163.225);
   --warning: oklch(0.666 0.179 58.318);
+  --needs-input: oklch(0.558 0.288 302.321);
   --info: oklch(0.546 0.245 262.881);
   --folder: oklch(0.554 0.135 66.442);
   --run-subagent: oklch(0.609 0.126 221.723);
@@ -210,16 +220,17 @@ body {
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: var(--background);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-border: var(--border);
   --sidebar-ring: oklch(0.556 0 0);
   --success: oklch(0.765 0.177 163.223);
   --warning: oklch(0.828 0.189 84.429);
+  --needs-input: oklch(0.714 0.203 305.504);
   --info: oklch(0.707 0.165 254.624);
   --folder: oklch(0.852 0.199 91.936);
   --run-subagent: oklch(0.789 0.154 211.53);

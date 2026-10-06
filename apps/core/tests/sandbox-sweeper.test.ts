@@ -22,7 +22,6 @@ const releaseMock = mock(
 mock.module("../src/shared/sandbox-cleanup.ts", () => ({
   releaseExpiredSandboxes: releaseMock,
   releaseReservedSandboxes: mock(async () => 0),
-  releaseSandboxConfigInstances: mock(async () => 0),
 }));
 
 const { sweepExpiredSandboxes } =
@@ -41,7 +40,9 @@ type ExpiredReservation = ReservedSandbox & { accountId: string };
 let expired: ExpiredReservation[] = [];
 let orphans: ExpiredReservation[] = [];
 let mutateCalls: MutateCall[] = [];
-let leaseResult: (accountId: string) => boolean = (): true => true;
+let leaseResult: (accountId: string) => boolean = (
+  _accountId: string,
+): boolean => true;
 
 function accountsOf(name: string): unknown[] {
   return mutateCalls
@@ -65,7 +66,7 @@ beforeEach(() => {
   expired = [];
   orphans = [];
   mutateCalls = [];
-  leaseResult = () => true;
+  leaseResult = (_accountId: string): boolean => true;
   releaseMock.mockClear();
   runtime.query = (async (name: string) =>
     name === "listExpiredSandboxReservations" ? expired : orphans) as never;
@@ -144,7 +145,7 @@ it("defers an account whose lease is refused so its rows stop blocking the page"
 
 it("leaves an account another replica already holds to that replica", async () => {
   expired = [reservation("acct-a", "ns-1")];
-  leaseResult = () => false;
+  leaseResult = (_accountId: string): boolean => false;
 
   expect(await sweepExpiredSandboxes()).toBe(0);
   expect(releaseMock).not.toHaveBeenCalled();

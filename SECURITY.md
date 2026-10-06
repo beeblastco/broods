@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes land on the latest released minor of the `broods` CLI and SDK, and on the `main` branch. Older releases do not get fixes.
+Security fixes land on the latest minor of the current major release of the `broods` CLI and SDK, and on the `main` branch. Older releases do not get fixes.
 
 ## Reporting a vulnerability
 

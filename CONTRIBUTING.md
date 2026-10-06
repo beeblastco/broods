@@ -17,15 +17,17 @@ cp apps/core/.env.example apps/core/.env
 
 ```bash
 bun run check            # oxlint, oxfmt check, and every workspace check (dashboard adds @shadcn/lint)
-bun run test             # core unit tests (max-concurrency 1)
+bun run test             # core, convex, and broods SDK tests
 bun run build            # build the core Bun container binary
+bun run verification:test # TypeScript contracts mirrored by the Lean models
+(cd verification && lake build) # machine-check those models
 # Try a demo (from repo root):
 cd packages/demos/basic-stream && bun run start
 ```
 
 - Dashboard: `bun run format` for formatting.
 - Docs: `bun run docs` to preview locally.
-- Do not deploy locally (`bun run deploy`) unless explicitly asked. Push to `dev` or `main` and let CI/CD deploy.
+- Do not deploy locally (`bun run deploy`) unless explicitly asked. Merge to `dev` and let CI/CD deploy. `main` is protected and only moves through the "Promote dev to main" workflow.
 
 - Use Bun, not npm, yarn, or pnpm.
 - Install dependencies only from the repo root.
@@ -37,12 +39,15 @@ cd packages/demos/basic-stream && bun run start
 - Read the root `AGENTS.md` for the repo-wide rules, then the workspace's own `AGENTS.md` if it has one. Only workspaces with their own gotchas carry a guide; the rest are covered by the root file. Today that is:
   - `apps/core/AGENTS.md`: Bun container runtime, request flow, tools, channels, sandboxes, SST
   - `apps/gateway/AGENTS.md`: front-door routing, config/core split, WebSocket surfaces
+  - `apps/discord-forwarder/AGENTS.md`: Discord Gateway sockets
+  - `apps/matrix-forwarder/AGENTS.md`: Matrix long-polls and E2EE keys
   - `apps/dashboard/AGENTS.md`: Next.js dashboard, routes and components, WorkOS auth
   - `packages/convex/AGENTS.md`: Convex schema, config plane, secrets, auth
+  - `packages/broods/AGENTS.md`: published CLI + SDK, release versioning
 
 ## Code conventions
 
-- **TypeScript + ESM**, no transpile step.
+- **TypeScript + ESM.** Apps run their TypeScript directly on Bun; `packages/broods` builds to `dist/` for npm.
 - File header comments use a block docstring (`/** ... */`) with one blank line before the first import.
 - Keep docstrings short. Describe the file boundary, not a function inventory.
 - Use `key: value` object syntax instead of shorthand.

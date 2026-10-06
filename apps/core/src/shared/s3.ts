@@ -329,7 +329,11 @@ export async function writeS3Object(
   bucket: string,
   key: string,
   body: string | Uint8Array,
-  options: { contentType?: string; executable?: boolean } = {},
+  options: {
+    contentType?: string;
+    executable?: boolean;
+    access?: S3Access;
+  } = {},
 ): Promise<number> {
   const size = typeof body === "string" ? body.length : body.byteLength;
   logDebug("s3.write start", {
@@ -345,6 +349,7 @@ export async function writeS3Object(
         key.endsWith("/") ? "directory" : "file",
         options.executable === true,
       ),
+      access: options.access,
     });
     logDebug("s3.write success", { bucket: bucket, key: key, result: size });
 
@@ -406,9 +411,13 @@ async function putS3Object(
   bucket: string,
   key: string,
   body: string | Uint8Array,
-  options: { contentType?: string; metadata?: Record<string, string> } = {},
+  options: {
+    contentType?: string;
+    metadata?: Record<string, string>;
+    access?: S3Access;
+  } = {},
 ): Promise<void> {
-  await awsClient().send(
+  await awsClient(options.access).send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,

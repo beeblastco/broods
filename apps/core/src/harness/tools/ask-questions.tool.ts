@@ -38,6 +38,8 @@ export interface AskQuestionsContext {
   channel?: ChannelToolContext;
   // Tells the harness to end the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
+  // Tells the harness a question is open, blocking or not.
+  onDetachedResult?: (resultId: string) => void;
 }
 
 export interface AskQuestionsInput {
@@ -57,7 +59,7 @@ export default function askQuestionsTool(
 ): ToolSet {
   return {
     [ASK_QUESTIONS_TOOL_NAME]: tool({
-      description: `Ask the person you are working for up to ${MAX_QUESTIONS} structured questions, each with ${MIN_OPTIONS} to ${MAX_OPTIONS} options, for decisions that are theirs to make. Do not use it for confirmation you can infer from the request, the code, or a sensible default.
+      description: `Ask the person you are working for up to ${MAX_QUESTIONS} structured questions, each with ${MIN_OPTIONS} to ${MAX_OPTIONS} options, for decisions that are theirs to make. Do not use it for confirmation you can infer from the request, the code, or a sensible default. Every question already accepts the person's own typed answer, so never add an option like "Other" or "Type my own"; picking it would end the question before they could type.
 
 The tool returns a statusId at once and the answer is delivered into this conversation automatically when it arrives ("no_answer" if nobody answers in time). With blocking false (default) keep working on what does not depend on the answer. With blocking true, end your turn right after this call with no further tool calls; the answer will resume the conversation. Never ask the same question twice or poll async_status for it.`,
       inputSchema: jsonSchema<AskQuestionsInput>({
@@ -101,11 +103,6 @@ The tool returns a statusId at once and the answer is delivered into this conver
                     required: ["label"],
                     additionalProperties: false,
                   },
-                },
-                allowFreeText: {
-                  type: "boolean",
-                  description:
-                    "Accept a typed answer that is not one of the options.",
                 },
               },
               required: ["id", "header", "question", "options"],
@@ -153,6 +150,7 @@ The tool returns a statusId at once and the answer is delivered into this conver
           input: pending,
           delivery: context.delivery ?? { kind: "async" },
         });
+        context.onDetachedResult?.(resultId);
 
         if (context.channel) {
           const failure = await postToChannel(

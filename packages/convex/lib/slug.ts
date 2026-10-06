@@ -1,5 +1,6 @@
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
+import { ClientError } from "../model/clientError";
 
 /**
  * A custom stage name is an identifier, not a label: it rides the public
@@ -10,9 +11,9 @@ export const STAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 /** Trim a custom stage name and refuse anything that is not already a slug. */
 export function assertStageName(name: string): string {
   const trimmed = name.trim();
-  if (!trimmed) throw new Error("Stage name is required.");
+  if (!trimmed) throw new ClientError("Stage name is required.");
   if (!STAGE_NAME_PATTERN.test(trimmed)) {
-    throw new Error(
+    throw new ClientError(
       `Stage name must be lowercase letters, digits and dashes (try "${slugifyName(trimmed, "stage")}").`,
     );
   }
@@ -40,7 +41,7 @@ export async function uniqueProjectSlug(
   const baseSlug = slugifyName(baseName);
   let suffix = 0;
 
-  while (true) {
+  for (;;) {
     const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
     if (!(await slugTaken(ctx, orgId, candidate))) return candidate;
     suffix += 1;

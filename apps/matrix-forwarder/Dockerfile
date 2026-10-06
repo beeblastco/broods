@@ -1,5 +1,6 @@
 # Build from the monorepo root: docker build -f apps/matrix-forwarder/Dockerfile .
 # Pin the digest: the version tag is republished when the base image rebuilds.
+# checkov:skip=CKV_DOCKER_7:BUN_IMAGE defaults to a version and immutable digest; the scanner does not resolve ARG in FROM.
 ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
@@ -8,6 +9,7 @@ COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
+COPY apps/edge/package.json ./apps/edge/
 COPY apps/gateway/package.json ./apps/gateway/
 COPY apps/matrix-forwarder/package.json ./apps/matrix-forwarder/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
@@ -43,6 +45,9 @@ COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_module
 RUN bun build apps/matrix-forwarder/src/main.ts --target=bun \
     --external @matrix-org/matrix-sdk-crypto-nodejs --minify --outfile /out/main.js
 
+# Reuse the server's PORT parser in the image probe.
+RUN bun build apps/core/src/shared/env.ts --target=bun --outfile /out/health-env.mjs
+
 FROM ${BUN_IMAGE} AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -52,6 +57,9 @@ RUN addgroup --system --gid 1001 forwarder \
     && adduser --system --uid 1001 --ingroup forwarder forwarder
 COPY --from=builder --chown=1001:1001 /out/main.js ./main.js
 COPY --from=deps --chown=1001:1001 /out/node_modules ./node_modules
+COPY --from=builder --chown=1001:1001 /out/health-env.mjs ./health-env.mjs
 USER 1001
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["bun", "--input-type=module", "-e", "import { positiveIntegerEnv } from './health-env.mjs'; fetch('http://127.0.0.1:' + positiveIntegerEnv('PORT', 3000) + '/healthz', { signal: AbortSignal.timeout(4000) }).then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1));"]
 CMD ["bun", "main.js"]

@@ -2,13 +2,14 @@
  * Public org (workspace) queries and mutations. Each authenticated user can
  * own multiple orgs; membership is tracked in the `orgMembers` join table.
  */
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { internalMutation, mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
+import { ClientError } from "../model/clientError";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -40,6 +41,14 @@ const orgRoleValidator = v.union(
   v.literal("admin"),
   v.literal("member"),
 );
+
+/** What `getOrCreateActiveOrg` answers: the active org and whether it still needs an API account. */
+export const orgBootstrapValidator = v.object({
+  orgId: v.id("orgs"),
+  needsProvision: v.boolean(),
+});
+
+export type OrgBootstrap = Infer<typeof orgBootstrapValidator>;
 
 interface ActiveAccount {
   account: Doc<"accounts">;
@@ -114,10 +123,10 @@ export const adoptExternalAccount = internalMutation({
       name: args.orgName,
       slug: slug,
       ownerAuthId: owner.authId,
-      plan: "free",
+      plan: owner.plan,
       createdAt: now,
       // An adopted org is not a first-time signup: without this,
-      // project.getOrCreateDefault treats the owner's first dashboard
+      // project.openHome treats the owner's first dashboard
       // visit as onboarding and mints a randomly-named empty project.
       // This account's agents get their project from the back-sync path
       // instead, named after the account.
@@ -154,13 +163,10 @@ export const adoptExternalAccount = internalMutation({
 export const create = mutation({
   args: {
     name: v.string(),
-    plan: v.optional(
-      v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
-    ),
   },
   returns: v.id("orgs"),
   handler: async (ctx, args): Promise<Id<"orgs">> => {
-    const { name, plan } = args;
+    const { name } = args;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -176,32 +182,13 @@ export const create = mutation({
       throw new Error("User row not found; webhook sync pending");
     }
 
-    const slug = await uniqueOrgSlug(ctx, name);
-    const now = Date.now();
-    const orgId = await ctx.db.insert("orgs", {
-      name: name,
-      slug: slug,
-      ownerAuthId: authUser.id,
-      plan: plan ?? "free",
-      createdAt: now,
-    });
-
-    await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: user._id,
-      role: "owner",
-      createdAt: now,
-    });
-
-    await ctx.db.patch(user._id, { activeOrgId: orgId });
-
-    return orgId;
+    return await insertOwnedOrg(ctx, user, name);
   },
 });
 
 /**
- * Returns the caller's active (most recently joined) org, or null when they
- * have not yet created or joined one.
+ * Returns the caller's active org (chosen, else the oldest membership), or null
+ * when they have not yet created or joined one.
  */
 export const getActive = query({
   args: {},
@@ -292,54 +279,21 @@ export const getByIdForAdmin = query({
 });
 
 /**
- * Returns the caller's active org id, creating a default "My Workspace" org
- * with an owner membership if the user does not yet belong to any. The
- * broods `accounts` row is still provisioned on-demand by `org/lifecycle:provision`.
+ * Gets or creates the caller's active org and says whether its API account
+ * still needs `org/lifecycle:provision`. `broods login` bootstraps through it
+ * before minting a code; the dashboard home does the same in `project.openHome`.
  */
 export const getOrCreate = mutation({
   args: {},
-  returns: v.id("orgs"),
-  handler: async (ctx): Promise<Id<"orgs">> => {
+  returns: orgBootstrapValidator,
+  handler: async (ctx): Promise<OrgBootstrap> => {
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
     }
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) {
-      throw new Error("User row not found; webhook sync pending");
-    }
-
-    const existing = await getActiveOrgForUser(ctx, user._id);
-    if (existing) {
-      return existing._id;
-    }
-
-    const baseName = user.name?.trim()
-      ? `${user.name.trim()}'s Workspace`
-      : "My Workspace";
-    const slug = await uniqueOrgSlug(ctx, baseName);
-    const now = Date.now();
-    const orgId = await ctx.db.insert("orgs", {
-      name: baseName,
-      slug: slug,
-      ownerAuthId: authUser.id,
-      plan: "free",
-      createdAt: now,
-    });
-
-    await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: user._id,
-      role: "owner",
-      createdAt: now,
-    });
-
-    return orgId;
+    return await getOrCreateActiveOrg(ctx, authUser.id);
   },
 });
 
@@ -440,18 +394,15 @@ export const setActive = mutation({
   },
 });
 
-/** Renames an org or updates its plan. Owner/admin only. */
+/** Renames an org. Owner/admin only. The plan comes from Stripe, never from here. */
 export const update = mutation({
   args: {
     orgId: v.id("orgs"),
     name: v.optional(v.string()),
-    plan: v.optional(
-      v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
-    ),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { orgId, name, plan } = args;
+    const { orgId, name } = args;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -469,10 +420,7 @@ export const update = mutation({
 
     await requireOrgMember(ctx, orgId, user._id, "admin");
 
-    await ctx.db.patch(orgId, {
-      ...(name !== undefined ? { name: name } : {}),
-      ...(plan !== undefined ? { plan: plan } : {}),
-    });
+    if (name !== undefined) await ctx.db.patch(orgId, { name: name });
 
     return null;
   },
@@ -494,6 +442,41 @@ export async function getActiveAccountForUser(
   const active = await activeAccountForCaller(ctx, requiredRole);
 
   return active ? active.account : null;
+}
+
+/**
+ * The user's active org, created as "<name>'s Workspace" with an owner
+ * membership on first sign-in, and whether its API account is still missing.
+ * The one bootstrap behind `getOrCreate` and `project.openHome`.
+ */
+export async function getOrCreateActiveOrg(
+  ctx: MutationCtx,
+  authId: string,
+): Promise<OrgBootstrap> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  if (!user) {
+    throw new ClientError(
+      "Your account is still being set up. Try again in a moment.",
+    );
+  }
+
+  const existing = await getActiveOrgForUser(ctx, user._id);
+  const orgId =
+    existing?._id ??
+    (await insertOwnedOrg(
+      ctx,
+      user,
+      user.name?.trim() ? `${user.name.trim()}'s Workspace` : "My Workspace",
+    ));
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .unique();
+
+  return { orgId: orgId, needsProvision: account === null };
 }
 
 /**
@@ -538,13 +521,38 @@ async function activeAccountForCaller(
   return active;
 }
 
+/** Inserts an org the user owns, with an owner membership, and makes it their active org. */
+async function insertOwnedOrg(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  name: string,
+): Promise<Id<"orgs">> {
+  const now = Date.now();
+  const orgId = await ctx.db.insert("orgs", {
+    name: name,
+    slug: await uniqueOrgSlug(ctx, name),
+    ownerAuthId: user.authId,
+    plan: user.plan,
+    createdAt: now,
+  });
+  await ctx.db.insert("orgMembers", {
+    orgId: orgId,
+    userId: user._id,
+    role: "owner",
+    createdAt: now,
+  });
+  await ctx.db.patch(user._id, { activeOrgId: orgId });
+
+  return orgId;
+}
+
 async function uniqueOrgSlug(
   ctx: MutationCtx,
   baseName: string,
 ): Promise<string> {
   const baseSlug = slugifyName(baseName);
   let suffix = 0;
-  while (true) {
+  for (;;) {
     const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
     const existing = await ctx.db
       .query("orgs")

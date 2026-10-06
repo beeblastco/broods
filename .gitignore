@@ -5,7 +5,6 @@ dist/
 !.env.example
 secrets.env
 *.pem
-!apps/core/tests/helpers/fixtures/*.pem
 *.key
 *.p12
 *.pfx
@@ -25,6 +24,7 @@ build/
 
 .claude/*
 !.claude/settings.json
+!.claude/skills
 .agents/*
 !.agents/skills
 resource.enc

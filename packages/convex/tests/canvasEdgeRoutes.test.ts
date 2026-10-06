@@ -80,8 +80,8 @@ describe("routeCanvasEdges", () => {
 
     expect(agent.get("top")!.gutter).toBeNull();
     // Left of the column, one lane the two deep edges branch off.
-    expect(agent.get("deep")!.gutter?.x).toBe(232);
-    expect(agent.get("deeper")!.gutter?.x).toBe(232);
+    expect(agent.get("deep")!.gutter?.x).toBe(216);
+    expect(agent.get("deeper")!.gutter?.x).toBe(216);
     expect(
       new Set([...agent.values()].map((route) => route.busDrop)).size,
     ).toBe(1);
@@ -162,6 +162,80 @@ describe("routeCanvasEdges", () => {
       detour,
     );
     expect(crossedBoxIds(points, boxes, new Set(["left", "right"]))).toEqual(
+      [],
+    );
+  });
+
+  it("narrows a gutter that would run through a dragged neighbour", () => {
+    // 14px between the source and its neighbour: a full ARROW_RUN gutter
+    // lands inside the neighbour, so the lane takes the middle of the gap.
+    const boxes = new Map([
+      ["source", box(0, 0)],
+      ["neighbour", box(190, 0)],
+      ["target", box(480, 288)],
+    ]);
+    const mount = sideEdge("mount", boxes, "source", "right", "target", "left");
+    const { side } = routeCanvasEdges(boxes, [], [mount]);
+    const points = sideEdgePoints(
+      handlePoint(mount.source.box, mount.source.side),
+      handlePoint(mount.target.box, mount.target.side),
+      side.get("mount")!,
+    );
+
+    expect(side.get("mount")!.underY).not.toBeNull();
+    expect(crossedBoxIds(points, boxes, new Set(["source", "target"]))).toEqual(
+      [],
+    );
+  });
+
+  it("narrows an agent's gutter beside a target with a neighbour close by", () => {
+    const boxes = new Map([
+      ["agent", box(0, 0)],
+      // On the straight drop, so the edge takes the gutter left of the target.
+      ["blocker", box(430, 200)],
+      // 14px left of the target and reaching above its top, into the gutter.
+      ["neighbour", box(240, 380)],
+      ["target", box(430, 432)],
+    ]);
+    const { agent } = routeCanvasEdges(
+      boxes,
+      [{ id: "e", source: "agent", target: "target" }],
+      [],
+    );
+    const points = agentEdgePoints(
+      handlePoint(boxes.get("agent")!, "bottom"),
+      handlePoint(boxes.get("target")!, "top"),
+      agent.get("e")!,
+    );
+
+    expect(agent.get("e")!.gutter).not.toBeNull();
+    expect(crossedBoxIds(points, boxes, new Set(["agent", "target"]))).toEqual(
+      [],
+    );
+  });
+
+  it("keeps a full gutter that is clear rather than narrowing it into a blocker", () => {
+    // The neighbour sits below the approach lane, so the full gutter clears
+    // it; the middle of the gap would run through the blocker.
+    const boxes = new Map([
+      ["agent", box(0, 0)],
+      ["blocker", box(420, 200)],
+      ["neighbour", box(240, 420)],
+      ["target", box(430, 432)],
+    ]);
+    const { agent } = routeCanvasEdges(
+      boxes,
+      [{ id: "e", source: "agent", target: "target" }],
+      [],
+    );
+    const points = agentEdgePoints(
+      handlePoint(boxes.get("agent")!, "bottom"),
+      handlePoint(boxes.get("target")!, "top"),
+      agent.get("e")!,
+    );
+
+    expect(agent.get("e")!.gutter).not.toBeNull();
+    expect(crossedBoxIds(points, boxes, new Set(["agent", "target"]))).toEqual(
       [],
     );
   });

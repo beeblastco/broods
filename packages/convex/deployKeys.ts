@@ -1,23 +1,27 @@
 /**
- * Project + stage scoped deploy keys for the `broods` CLI. Unlike the org
- * Bearer secret (Settings → API Access), a deploy key authorizes only one
+ * Project + stage scoped project keys (`bpdk_…`) for the `broods` CLI. Unlike
+ * the account key (Settings → API Access), a project key authorizes only one
  * project/stage. The plaintext token is returned once at creation; only its
  * SHA-256 hash is stored.
  */
 
-import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import { type Infer, v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
-import { sha256Hex } from "./model/accountSecrets";
+import {
+  PROJECT_KEY_PREFIX,
+  randomToken,
+  sha256Hex,
+} from "./model/accountSecrets";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
 
-const DEPLOY_KEY_PREFIX = "fp_deploy_";
-
-const deployKeyDoc = v.object({
-  ...deployKeysFields,
+// What `list` sends to the browser: the row minus `keyHash`.
+const { keyHash: _keyHash, ...deployKeyListFields } = deployKeysFields;
+const deployKeyListItem = v.object({
+  ...deployKeyListFields,
   _id: v.id("deployKeys"),
   _creationTime: v.number(),
 });
@@ -51,7 +55,7 @@ export const create = mutation({
       throw new Error("Stage not found.");
     }
 
-    // A deploy key resolves to the project's org account, so that account must
+    // A project key resolves to the project's org account, so that account must
     // already be provisioned (Settings → API Access).
     const account = await ctx.db
       .query("accounts")
@@ -63,14 +67,14 @@ export const create = mutation({
       );
     }
 
-    const token = generateDeployToken();
+    const token = randomToken(PROJECT_KEY_PREFIX);
     const keyHash = await sha256Hex(token);
     const now = Date.now();
     const _id = await ctx.db.insert("deployKeys", {
       accountId: account._id,
       projectId: projectId,
       stageId: stageId,
-      name: name.trim() || "Deploy key",
+      name: name.trim() || "Project key",
       keyHash: keyHash,
       keyHint: deployKeyHint(token),
       status: "active",
@@ -84,11 +88,11 @@ export const create = mutation({
 
 export const list = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
-  returns: v.array(deployKeyDoc),
+  returns: v.array(deployKeyListItem),
   handler: async (
     ctx,
     { projectId, stageId },
-  ): Promise<Doc<"deployKeys">[]> => {
+  ): Promise<Infer<typeof deployKeyListItem>[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -102,12 +106,14 @@ export const list = query({
       return [];
     }
 
-    return ctx.db
+    const keys = await ctx.db
       .query("deployKeys")
       .withIndex("by_projectId_and_stageId", (q) =>
         q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .collect();
+
+    return keys.map(({ keyHash: _hash, ...key }) => key);
   },
 });
 
@@ -122,7 +128,7 @@ export const remove = mutation({
     }
 
     const deployKey = await ctx.db.get(deployKeyId);
-    if (!deployKey) throw new Error("Deploy key not found.");
+    if (!deployKey) throw new Error("Project key not found.");
 
     const project = await getProjectForRole(
       ctx,
@@ -130,10 +136,10 @@ export const remove = mutation({
       deployKey.projectId,
       "admin",
     );
-    if (!project) throw new Error("Deploy key not found.");
+    if (!project) throw new Error("Project key not found.");
     const stage = await getOwnedStage(ctx, user.id, deployKey.stageId);
     if (!stage || stage.projectId !== deployKey.projectId)
-      throw new Error("Deploy key not found.");
+      throw new Error("Project key not found.");
 
     await ctx.db.delete(deployKeyId);
 
@@ -143,17 +149,5 @@ export const remove = mutation({
 
 /** Masked label for listing a key without revealing it: prefix + last four chars. */
 function deployKeyHint(token: string): string {
-  return `${DEPLOY_KEY_PREFIX}…${token.slice(-4)}`;
-}
-
-function generateDeployToken(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const base64url = btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-  return `${DEPLOY_KEY_PREFIX}${base64url}`;
+  return `${PROJECT_KEY_PREFIX}…${token.slice(-4)}`;
 }

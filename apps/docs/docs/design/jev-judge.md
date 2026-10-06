@@ -119,11 +119,11 @@ A judge answer may narrow what the agent does. It may never grant capability the
 
 Bounded that way, a manipulated answer costs availability at worst. The agent declines something it would have done. It never does something it could not.
 
-Hooks are best effort by design: one that throws or times out is skipped, and the run continues unmutated. A judge deny inherits that, so it is a filter, not a control. Anything that must hold belongs in [an enforced policy](../resources.md#policies), which fails closed.
+Hooks are best effort by design: one that throws or times out is skipped, and the run continues unmutated. A judge deny inherits that, so it is a filter, not a control. Anything that must hold belongs in [an enforced policy](../guides/policies.md), which fails closed.
 
 ## Where it fires
 
-Judge is available wherever `ctx` is, so every hook in [Code Hooks](../hooks.md) can call it. What the answer is allowed to change is whatever that hook could already change.
+Judge is available wherever `ctx` is, so every hook in [Hooks](../guides/hooks.md) can call it. What the answer is allowed to change is whatever that hook could already change.
 
 | Hook                                    | Useful judge question                              |
 | --------------------------------------- | -------------------------------------------------- |

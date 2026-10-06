@@ -10,13 +10,16 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { CliManifestResource } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
-import {
-  decryptAgentConfigBlob,
-  toNestedAgentConfig,
-} from "./agentConfigCodec";
+import { toNestedAgentConfig } from "./agentConfigCodec";
+import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
+import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
+import { ClientError } from "./clientError";
+
+// Exceeds Convex's 30-minute HTTP action limit plus a 10-minute child Node action.
+const MANIFEST_SYNC_TIMEOUT_MS = 45 * 60_000;
 
 /**
  * Resource kinds owned by the account service and snapshotted per stage in
@@ -44,18 +47,20 @@ export async function accountFromSecretHash(
 
 export function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value))
-    throw new Error("Resource config must be an object");
+    throw new ClientError("Resource config must be an object");
 
   return value;
 }
 
 /**
  * Rejects a manifest whose `env("NAME")` has no value stored for the stage,
- * which would otherwise reach the runtime as a literal `${NAME}`.
+ * which would otherwise reach the runtime as a literal `${NAME}`. `stage` names
+ * the stage in the suggested commands.
  */
 export function assertEnvRefsResolved(
   resources: CliResource[],
   envValues: Record<string, string>,
+  stage: string,
 ): void {
   // Reuses the rewrite walker so collection cannot drift from substitution.
   const referenced = new Set<string>();
@@ -66,16 +71,19 @@ export function assertEnvRefsResolved(
     .filter((name) => envValues[name] === undefined)
     .sort();
   if (missing.length === 0) return;
+  // `broods env` defaults to the dev stage, so the commands must name this one.
+  const flag = `--stage ${stage}`;
 
-  throw new Error(
+  throw new ClientError(
     `env() references ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
-      "Set each one with `broods env set <NAME>` (or put it in .env.local and run `broods dev`), then sync again.",
+      `Set each one with \`broods env set <NAME> ${flag}\`, or put them in .env.local and run \`broods env sync ${flag}\`, then sync again.`,
   );
 }
 
 /**
- * Fail loudly when an old account-scoped runtime resource would shadow the new
- * stage-scoped row. Operators must migrate or delete that row explicitly.
+ * Refuse a stage-scoped workspace or sandbox whose name an account-scoped row
+ * (created through the REST API, no stage) already holds, rather than silently
+ * creating a second row with the same name and a different runtime id.
  */
 export async function assertNoAccountScopedResourceConflict(
   ctx: MutationCtx,
@@ -94,9 +102,10 @@ export async function assertNoAccountScopedResourceConflict(
   const accountScoped = rows.find((row) => row.stageId === undefined);
   if (!accountScoped) return;
 
-  throw new Error(
-    `${options.table} "${options.name}" is account-scoped legacy data. ` +
-      "Migrate it to a project/stage or delete it before syncing code-managed resources.",
+  throw new ClientError(
+    `${options.table} "${options.name}" already exists account-wide. ` +
+      "Move it to a project/stage or delete it first.",
+    "conflict",
   );
 }
 
@@ -124,7 +133,7 @@ export function assertSupportedWorkspaceSandboxMounts(
       if (!sandboxName) continue;
       const sandbox = sandboxes.get(sandboxName);
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
-      throw new Error(
+      throw new ClientError(
         `Agent "${agent.name}" workspace "${String(workspace.name ?? workspace.workspaceId ?? "<unknown>")}" uses sandbox "${sandbox.name}" ` +
           `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with ` +
           `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
@@ -139,12 +148,12 @@ export function assertSupportedWorkspaceStorage(resource: CliResource): void {
   const provider = storage.provider;
   if (provider === undefined || provider === "s3") return;
   if (provider === "vercel") {
-    throw new Error(
+    throw new ClientError(
       `Workspace "${resource.name}" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet. ` +
         `Use storage.provider "s3" or omit storage until Vercel Drive is wired.`,
     );
   }
-  throw new Error(
+  throw new ClientError(
     `Workspace "${resource.name}" config.storage.provider must be one of: s3`,
   );
 }
@@ -160,53 +169,88 @@ export async function authIdForAccount(
   return org?.ownerAuthId ?? null;
 }
 
+/**
+ * Claims the stage's next manifest revision for a sync. A sync that sends the
+ * revision it read is refused when another sync claimed one since; one that
+ * sends none claims only after the previous sync has finished.
+ * @returns the revision this sync writes
+ */
+export async function claimManifestRevision(
+  ctx: MutationCtx,
+  stageId: Id<"stages">,
+  expected: number | undefined,
+): Promise<number> {
+  const row = await stageSyncRow(ctx, stageId);
+  const current = row?.revision ?? 0;
+  const now = Date.now();
+  if (row?.activeUntil !== undefined && row.activeUntil > now) {
+    throw new ClientError(
+      "Another manifest sync is still running for this stage. Retry after it finishes.",
+      "manifest_conflict",
+    );
+  }
+  if (expected !== undefined && expected !== current) {
+    throw new ClientError(
+      `Stage changed since your last sync (revision ${current}, you sent ${expected}). Re-sync to see the new diff.`,
+      "manifest_conflict",
+    );
+  }
+  const next = current + 1;
+  const activeUntil = now + MANIFEST_SYNC_TIMEOUT_MS;
+  if (row)
+    await ctx.db.patch(row._id, { revision: next, activeUntil: activeUntil });
+  else
+    await ctx.db.insert("stageSyncs", {
+      stageId: stageId,
+      revision: next,
+      activeUntil: activeUntil,
+    });
+
+  return next;
+}
+
 export async function decryptSandboxConfig(
   sandbox: Doc<"sandboxConfigs">,
-  secret: string | undefined,
+  cipher: AccountCipher,
 ): Promise<Record<string, unknown>> {
   if (
-    !secret ||
     !sandbox.encryptedConfig ||
     !sandbox.encryptionIv ||
     !sandbox.encryptionTag
   ) {
     return {};
   }
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: sandbox.encryptedConfig,
-      iv: sandbox.encryptionIv,
-      tag: sandbox.encryptionTag,
-    },
-    secret,
-  );
+  const decrypted = await cipher.decrypt("sandboxConfigs:encryptedConfig", {
+    ciphertext: sandbox.encryptedConfig,
+    iv: sandbox.encryptionIv,
+    tag: sandbox.encryptionTag,
+  });
 
   return decrypted ?? {};
 }
 
 export async function decryptSandboxManifestConfig(
   sandbox: Doc<"sandboxConfigs">,
-  secret: string | undefined,
+  cipher: AccountCipher,
 ): Promise<Record<string, unknown>> {
   if (
-    secret &&
     sandbox.encryptedSourceConfig &&
     sandbox.sourceEncryptionIv &&
     sandbox.sourceEncryptionTag
   ) {
-    const decrypted = await decryptAgentConfigBlob(
+    const decrypted = await cipher.decrypt(
+      "sandboxConfigs:encryptedSourceConfig",
       {
         ciphertext: sandbox.encryptedSourceConfig,
         iv: sandbox.sourceEncryptionIv,
         tag: sandbox.sourceEncryptionTag,
       },
-      secret,
     );
 
     return decrypted ?? {};
   }
 
-  return await decryptSandboxConfig(sandbox, secret);
+  return await decryptSandboxConfig(sandbox, cipher);
 }
 
 export function displayStageName(name: string): string {
@@ -324,7 +368,7 @@ export async function ensureStage(
 export function envName(value: string): string {
   const trimmed = value.trim();
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
-    throw new Error(`Invalid environment variable name: ${value}`);
+    throw new ClientError(`Invalid environment variable name: ${value}`);
   }
 
   return trimmed;
@@ -334,6 +378,14 @@ export function isExternalResourceKind(
   kind: CliManifestResource["kind"],
 ): kind is ExternalResourceKind {
   return (EXTERNAL_RESOURCE_KINDS as readonly string[]).includes(kind);
+}
+
+/** The stage's manifest revision: 0 until its first sync. */
+export async function manifestRevision(
+  ctx: QueryCtx | MutationCtx,
+  stageId: Id<"stages">,
+): Promise<number> {
+  return (await stageSyncRow(ctx, stageId))?.revision ?? 0;
 }
 
 export function plainRecord(value: unknown): Record<string, unknown> {
@@ -378,11 +430,35 @@ export function renameComparableResource(
   };
 }
 
+/** Releases only this sync's claim, including when validation or an upload failed. */
+export async function releaseManifestSync(
+  ctx: MutationCtx,
+  stageId: Id<"stages">,
+  revision: number,
+): Promise<void> {
+  const row = await stageSyncRow(ctx, stageId);
+  if (row?.revision === revision)
+    await ctx.db.patch(row._id, { activeUntil: undefined });
+}
+
 export function resourceName(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed) throw new Error("Resource name is required");
+  if (!trimmed) throw new ClientError("Resource name is required");
 
   return trimmed;
+}
+
+/**
+ * Stand-in ids, shaped like native Convex ids, for the named resources a sync
+ * would create, so its id-keyed rules can run before any row exists.
+ */
+export function placeholderIds(names: string[]): Record<string, string> {
+  return Object.fromEntries(
+    names.map((name, index): [string, string] => [
+      name,
+      `placeholder${String(index).padStart(12, "0")}`,
+    ]),
+  );
 }
 
 export function rewriteEnvRefs(
@@ -598,7 +674,17 @@ function rewriteRefList(
 function sandboxProvider(sandbox: CliResource): string {
   const provider = plainRecord(sandbox.config).provider;
 
-  return typeof provider === "string" ? provider : "sandbox";
+  return typeof provider === "string" ? provider : DEFAULT_SANDBOX_PROVIDER;
+}
+
+async function stageSyncRow(
+  ctx: QueryCtx | MutationCtx,
+  stageId: Id<"stages">,
+): Promise<Doc<"stageSyncs"> | null> {
+  return await ctx.db
+    .query("stageSyncs")
+    .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
+    .unique();
 }
 
 function supportsS3WorkspaceMount(sandbox: CliResource): boolean {

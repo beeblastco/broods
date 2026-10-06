@@ -95,7 +95,7 @@ describe("account management HTTP handler", () => {
 
   it("rejects account-secret auth when creating an account", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    const accountSecret = "fp_acct_existing";
+    const accountSecret = "bask_existing";
     setStorageForTests(
       createFakeStorage({
         accounts: {
@@ -142,7 +142,7 @@ describe("account management HTTP handler", () => {
         create: async function () {
           return {
             account: fakeAccount(),
-            secret: "fp_acct_created",
+            secret: "bask_created",
           };
         },
       }),
@@ -169,7 +169,7 @@ describe("account management HTTP handler", () => {
         username: "company-a",
         description: "Company A account",
       },
-      secret: "fp_acct_created",
+      secret: "bask_created",
     });
   });
 
@@ -341,7 +341,7 @@ describe("account management HTTP handler", () => {
 
   it("lets a disabled owner retry self-delete without reopening other routes", async () => {
     stubAccountDeletionDependencies();
-    const accountSecret = "fp_acct_retry";
+    const accountSecret = "bask_retry";
     const disabledAccount = {
       ...fakeAccount(),
       secretHash: hashAccountSecret(accountSecret),
@@ -528,13 +528,13 @@ function createFakeStorage(overrides: Record<string, unknown>) {
         return [fakeAccount()];
       },
       create: async function () {
-        return { account: fakeAccount(), secret: "fp_acct_fake" };
+        return { account: fakeAccount(), secret: "bask_fake" };
       },
       update: async function () {
         return fakeAccount();
       },
       rotateSecret: async function () {
-        return { account: fakeAccount(), secret: "fp_acct_fake" };
+        return { account: fakeAccount(), secret: "bask_fake" };
       },
       remove: async function () {
         return true;
@@ -629,7 +629,6 @@ function stubAccountDeletionDependencies(): void {
       processedEventsDeleted: 0,
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
-      asyncToolGroupDeleted: 0,
       sandboxReservationDeleted: 0,
       totalDeleted: 0,
     };
@@ -644,7 +643,6 @@ function successfulDeletionResponse() {
       processedEventsDeleted: 0,
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
-      asyncToolGroupDeleted: 0,
       sandboxReservationDeleted: 0,
       filesystemObjectsDeleted: 0,
       reservedSandboxesReleased: 0,

@@ -11,8 +11,15 @@ export {
   type MicrovmHarnessAgentOptions,
   type WorkdirHarnessAgentOptions,
 } from "./runtime.ts";
-export { harnessRuntimeVersion } from "./sandbox.ts";
-export { openAiSdkHarnessSession, parkAiSdkHarnessSession } from "./session.ts";
+export {
+  harnessAdapterVersion,
+  harnessSteersMidTurn,
+} from "./adapters/index.ts";
+export {
+  harnessReservationKey,
+  openAiSdkHarnessSession,
+  parkAiSdkHarnessSession,
+} from "./session.ts";
 export type {
   AiSdkHarnessSettings,
   AiSdkHarnessSessionParking,

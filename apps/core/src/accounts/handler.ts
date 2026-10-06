@@ -1,9 +1,19 @@
-/** Account management HTTP API. */
+/**
+ * Account management HTTP API: account create and delete, the mcp-service rpc
+ * and sandbox lifecycle verbs. Other account CRUD lives in the Convex config
+ * plane.
+ */
 
+import { isUnreachableError } from "../shared/errors.ts";
 import {
   roleDenial,
   rolePrincipal,
 } from "@broods/convex/model/apiAuthorization";
+import {
+  assertSandboxBudget,
+  BudgetExhaustedError,
+  planRefusalResponse,
+} from "../harness/plan-limits.ts";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import type { SandboxExecutor } from "../harness/sandbox/types.ts";
 import {
@@ -18,7 +28,12 @@ import {
   workdirConnection,
   workdirPtyUrl,
 } from "../harness/sandbox/workdir-executor.ts";
-import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import {
+  extractBearerToken,
+  isServiceToken,
+  resolveBearerAuth,
+  type AuthContext,
+} from "../shared/auth.ts";
 import { handleMcpServiceRpc } from "./mcp-service.ts";
 import {
   recordSandboxAuditEvent,
@@ -53,6 +68,7 @@ import { isPlainObject } from "../shared/object.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";
+import { runsOnOwnCredentials } from "../shared/workspaces.ts";
 import {
   sealTerminalTicket,
   TERMINAL_TICKET_TTL_MS,
@@ -65,15 +81,13 @@ import {
   deleteAccountBundles,
 } from "./cleanup.ts";
 
-// Socket-level fetch failure codes (Bun's own names plus the Node errnos) that
-// mean the provider was never reached, as opposed to it answering with an error.
-const UNREACHABLE_ERROR_CODES = new Set([
-  "ConnectionRefused",
-  "ECONNREFUSED",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "ENOTFOUND",
-  "FailedToOpenSocket",
+// Verbs that run or wake a machine. The executor below is built from the
+// stored config with no control plane, so the budget check its wrapper does
+// for agent runs never fires here; the handler checks instead.
+const COMPUTE_ACTIONS: ReadonlySet<SandboxLifecycleAction> = new Set([
+  "exec",
+  "resume",
+  "terminal",
 ]);
 
 type SandboxLifecycleAction =
@@ -108,6 +122,7 @@ interface SandboxLifecycleContext {
   reservationKey: string;
 }
 
+/** Thrown by requireAccountAuth for a principal that gets a 401. */
 class AccountEndpointUnauthorizedError extends Error {
   constructor() {
     super("Unauthorized");
@@ -125,12 +140,17 @@ class SandboxProviderUnreachableError extends Error {
   }
 }
 
+/** Entry point for account-manage requests, called from src/server.ts. */
 export async function handler(request: CoreRequest): Promise<Response> {
   // Request-private observability scope so concurrent tenants in the shared
   // container process cannot clobber each other's log redaction/routing.
   return runWithObservabilityScope(() => handleAccountRequest(request));
 }
 
+/**
+ * Routes one account-manage request (health, self or admin account delete,
+ * mcp-service rpc, sandbox verbs, account create) behind bearer auth.
+ */
 async function handleAccountRequest(request: CoreRequest): Promise<Response> {
   const method = request.method;
   const rawPath = normalizePath(request.path);
@@ -169,12 +189,8 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       return deleteAccountResponse(account);
     }
 
-    // Agent, skills, tools, hooks, workspace-file, cron, workspace, sandbox-config, and
-    // policy CRUD moved to the Convex config plane (configHttp.ts, epic
-    // #85 phase 9); the gateway routes those paths there. Runtime reads
-    // stay in src/shared/skills.ts, hosted MCP bundle loading,
-    // workspace mount/S3 read helpers, sandbox lifecycle verbs, and the
-    // harness cron-run leaf.
+    // Other account CRUD lives in the Convex config plane
+    // (packages/convex/config/http.ts); Traefik routes those paths there.
 
     const mcpServiceResponse = await handleMcpServiceRoute(
       auth,
@@ -252,7 +268,16 @@ async function handleMcpServiceRoute(
   request: CoreRequest,
 ): Promise<Response | null> {
   if (method !== "POST" || rawPath !== "/v1/mcp-service/rpc") return null;
-  if (auth.kind !== "account") return errorResponse(403, "Forbidden");
+  // Only the config plane calls this, with the service token, which is never
+  // valid on a request that came through the edge.
+  const token = extractBearerToken(request.headers.authorization);
+  if (
+    auth.kind !== "account" ||
+    !token ||
+    !isServiceToken(request.headers, token)
+  ) {
+    return errorResponse(403, "Forbidden");
+  }
 
   return await handleMcpServiceRpc(auth.account.accountId, request);
 }
@@ -296,6 +321,10 @@ async function handleSandboxLifecycleRoute(
   );
 }
 
+/**
+ * Loads the sandbox config, checks reservation ownership and budget, then
+ * dispatches the lifecycle action to its handler below.
+ */
 async function handleSandboxLifecycle(
   method: string,
   accountId: string,
@@ -332,6 +361,16 @@ async function handleSandboxLifecycle(
       403,
       "reservationKey does not belong to this account or sandbox config",
     );
+  }
+
+  if (COMPUTE_ACTIONS.has(action) && !runsOnOwnCredentials(record.config)) {
+    try {
+      await assertSandboxBudget(accountId);
+    } catch (err) {
+      if (!(err instanceof BudgetExhaustedError)) throw err;
+
+      return planRefusalResponse({ kind: "budget", message: err.message });
+    }
   }
 
   const actor = sandboxAuditActor(body.actor);
@@ -385,6 +424,10 @@ async function auditedSandboxCall<T>(
   }
 }
 
+/**
+ * The `exec` verb: runs code on the reserved instance with bounded timeout and
+ * output, for the dashboard sandbox console.
+ */
 async function execSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -445,6 +488,10 @@ async function execSandbox(
   });
 }
 
+/**
+ * The `terminal` verb: resumes the instance if needed and seals a terminal
+ * ticket the gateway opens as a PTY or MicroVM shell WebSocket.
+ */
 async function openSandboxTerminal(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -524,6 +571,10 @@ async function openSandboxTerminal(
   });
 }
 
+/**
+ * The `refresh` verb: reads the provider's instance state into the Convex
+ * mirror, dropping the row when the instance is gone.
+ */
 async function refreshSandboxStatus(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -564,6 +615,10 @@ async function refreshSandboxStatus(
   return jsonResponse(200, { status: status, externalId: info.externalId });
 }
 
+/**
+ * The `snapshot` verb: snapshots the instance and saves it as a named account
+ * sandbox snapshot.
+ */
 async function snapshotSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -600,6 +655,10 @@ async function snapshotSandbox(
   });
 }
 
+/**
+ * The `suspend` and `resume` verbs: calls the provider and records the new
+ * instance status.
+ */
 async function suspendOrResumeSandbox(
   context: SandboxLifecycleContext,
   action: "suspend" | "resume",
@@ -624,6 +683,10 @@ async function suspendOrResumeSandbox(
   return jsonResponse(200, { status: status });
 }
 
+/**
+ * The `terminate` verb: releases the instance and removes its reservation and
+ * registry rows.
+ */
 async function terminateSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -647,6 +710,7 @@ async function terminateSandbox(
   return jsonResponse(200, { status: "terminated" });
 }
 
+/** Audits and answers 409 for a verb the provider does not support. */
 async function unsupportedSandboxAction(
   context: SandboxLifecycleContext,
   capability: string,
@@ -657,6 +721,10 @@ async function unsupportedSandboxAction(
   return errorResponse(409, message);
 }
 
+/**
+ * Disables the account, sweeps all its data and storage, then removes it.
+ * Serves both DELETE /v1/account and admin DELETE /v1/accounts/{id}.
+ */
 async function deleteAccountResponse(
   account: Extract<AuthContext, { kind: "account" }>["account"],
 ): Promise<Response> {
@@ -671,7 +739,7 @@ async function deleteAccountResponse(
   }
 
   // Cron rows and their registered schedules go with the Convex account
-  // cascade (deleteAccountContents). Nothing to sweep from core anymore.
+  // cascade (deleteAccountContentsBatch). Nothing to sweep from core.
   const [
     runtime,
     agentsDeleted,
@@ -708,6 +776,10 @@ async function deleteAccountResponse(
   });
 }
 
+/**
+ * Parses an optional exec limit from the request body, falling back to the
+ * default when missing or outside 1..max.
+ */
 function boundedInteger(
   value: unknown,
   defaultValue: number,
@@ -724,6 +796,10 @@ function boundedInteger(
   return parsed;
 }
 
+/**
+ * Maps an error thrown in handleAccountRequest to its response: 401
+ * unauthorized, 502 unreachable provider, else 400.
+ */
 function errorResponseForError(err: unknown): Response {
   if (err instanceof AccountEndpointUnauthorizedError) {
     return errorResponse(401, err.message);
@@ -738,27 +814,24 @@ function errorResponseForError(err: unknown): Response {
   );
 }
 
+/** An error's message, or the value as a string, for logs and audit rows. */
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function isUnreachableError(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    "code" in err &&
-    typeof err.code === "string" &&
-    UNREACHABLE_ERROR_CODES.has(err.code)
-  );
-}
-
+/**
+ * Narrows auth to an account principal for account endpoints, throwing for
+ * role, deployment, admin, or a disallowed service token.
+ */
 function requireAccountAuth(
   auth: AuthContext,
-  options: { allowServiceToken?: boolean; allowDeployment?: boolean } = {},
+  options: { allowServiceToken?: boolean } = {},
 ): Extract<AuthContext, { kind: "account" }>["account"] {
-  if (auth.kind === "deployment" && options.allowDeployment === true) {
-    return auth.account;
-  }
-  if (auth.kind === "deployment" || auth.kind === "role") {
+  if (
+    auth.kind === "deployment" ||
+    auth.kind === "role" ||
+    auth.kind === "agent"
+  ) {
     throw new AccountEndpointUnauthorizedError();
   }
   if (auth.kind !== "account") {
@@ -771,6 +844,10 @@ function requireAccountAuth(
   return auth.account;
 }
 
+/**
+ * Normalizes the request body's `actor` into the SandboxAuditActor recorded on
+ * each sandbox audit event.
+ */
 function sandboxAuditActor(value: unknown): SandboxAuditActor {
   if (!isPlainObject(value)) {
     return { source: "unknown" };
@@ -796,6 +873,7 @@ function sandboxAuditActor(value: unknown): SandboxAuditActor {
   };
 }
 
+/** The public account fields returned by POST /v1/accounts. */
 function toCreateAccountResponse(
   account: AccountRecord,
 ): Record<string, unknown> {

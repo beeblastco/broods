@@ -6,7 +6,9 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 
 - `apps/core` (`@broods/core`) is the agent harness. one Bun container behind gateway. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
 - `apps/lambda` is plain `.mjs` files, no build, not a workspace; `apps/core/sst.config.ts` deploys them. the AWS Lambda that runs account-uploaded hosted MCP server bundles (`handler.mjs` + `child-runner.mjs`), and the sandbox log forwarder that ships MicroVM guest logs from CloudWatch to Loki (`sandbox-log-forwarder.mjs`).
-- `apps/gateway` (`@broods/gateway`) is the front door. every public request hit this first. splits config-plane paths from core paths, and terminates the agent / observability / terminal WebSockets.
+- `apps/cloudflare-mcp` (`@broods/cloudflare-mcp`) is the hosted MCP runtime on Cloudflare Dynamic Workers. the platform sends a hosted row there when its bundle can run on Workers and the deployment runs this Worker; every other row stays on Lambda. same batch payload and NDJSON frames as the Lambda runner. `deploy.yaml` deploys its code per stage with wrangler; the infra repo owns its key.
+- `apps/edge` (`@broods/edge`) is the public route table and the Traefik config generated from it. Traefik is the front door: every public request hit it first. it splits config-plane paths from core paths, sends WebSockets to the gateway, limits per client address, sets CORS. nothing in it runs as a service.
+- `apps/gateway` (`@broods/gateway`) is the WebSocket server behind Traefik. terminates the agent / observability / terminal / machine WebSockets.
 - `apps/discord-forwarder` (`@broods/discord-forwarder`) runs the Discord Gateway sockets. Discord only POSTs interactions to a webhook; regular messages arrive over a socket, so without this a Discord agent answers `/new` and ignores every mention. one socket per bot token, one deployment, single replica.
 - `apps/matrix-forwarder` (`@broods/matrix-forwarder`) runs the Matrix `/sync` long-polls and holds each account's E2EE keys. Matrix has no webhooks, so it POSTs decrypted room messages to the channel webhook, and core sends room events (replies, reactions, typing) back through it because only it can encrypt them. one long-poll per access token, crypto store on a persistent volume, single replica.
 - `apps/dashboard` (`@broods/dashboard`) is the Next.js UI. drives core through Convex.
@@ -14,8 +16,9 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `apps/docs` (`@broods/docs`) is the Docusaurus docs. core, public API, whole architecture.
 - `packages/broods` (`broods`) is the published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
+- `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
 
-they are one product, not eight islands. gateway is the door, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
+they are one product, not thirteen islands. Traefik (`apps/edge`) is the door, the gateway own the sockets, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
 
 outside repo, sibling of checkout:
 
@@ -29,7 +32,9 @@ outside repo, sibling of checkout:
 - prefer strict type. do not reach for `isPlainObject` or `isRecord` on new code. find the real type first, or the library that already ship it. write your own type or interface when none fit. runtime guard only when the typing get too complex or too long to be worth it. when you hit that, say so to user and let them decide.
 - breaking storage or backend cutover: no compat shim for dead record format or old id unless user ask. clean reset and recreate account/resource instead. never delete live data, never deploy, without user say so.
 - do not deploy unless user ask. push to `dev`, let CI/CD do it. `main` is protected, only fast-forward from `dev` by "Promote dev to main" workflow (Actions tab, one click), that triggers prod deploy.
-- `.github/workflows/drift-cleanup.yaml` run `sst refresh` + `sst diff` nightly and delete Pulumi-tracked orphan per stage. stand up a new stage = add it to that matrix or drift eat it.
+- `.github/workflows/drift-cleanup.yaml` run `sst refresh` + `sst diff` nightly per stage, under same `sst-<stage>` lock as deploy. dev drift delete Pulumi-tracked orphan, production drift only report (job fail, no deploy). stand up a new stage = add it to that matrix or drift eat it.
+- end-to-end check, no cloud: `bun run local:up` then `bun run local:verify`. self-hosted Convex in docker + core + gateway, one stack per worktree, state in `~/.broods-local/`. set `DEEPSEEK_API_KEY` so runs hit a real model (`deepseek-flash`); without it runs stop at the provider call. change what core, gateway, convex, SDK or CLI do end to end = add or update a case in `scripts/local-verify/cases/`, and verify pass before say done. CI `local-stack` job run the same on every PR and put step timings in the job summary.
+- perf report: `bun run local:up -- --perf` then `bun run local:perf`. core answer the model in process and trace its Convex calls; the report show p50/p95 per scenario and Convex calls per turn by function. more calls than `scripts/local-verify/perf-baseline.json` fail the PR, fewer = run `local:perf -- --record` and commit the lower budget. timing drift only warn (machine dependent, baseline per platform). touch a per-turn path = read the call breakdown in the job summary before say done.
 - keep change inside workspace you touch. but public contract move = also move `apps/docs/docs/api-reference/openapi.yaml`, the docs, `packages/demos`, SDK types/client in `packages/broods`, and the focused tests.
 - Convex schema or function change = `bun run --filter @broods/convex codegen`, commit the generated diff. it is committed on purpose so core and dashboard typecheck with no local codegen.
 - React version pinned per app package. never add React to root package.

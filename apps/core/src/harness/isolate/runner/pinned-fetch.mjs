@@ -16,6 +16,11 @@ import { lookup as defaultLookup } from "node:dns/promises";
 export const BODY_LIMIT_BYTES = 5 * 1024 * 1024;
 export const FETCH_TIMEOUT_MS = 30_000;
 export const REDIRECT_LIMIT = 5;
+const CREDENTIAL_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+]);
 export const DENY_CIDRS = [
   "0.0.0.0/8",
   "10.0.0.0/8",
@@ -88,10 +93,11 @@ async function guardedFetchWithDeadline(url, init, state) {
   if (isRedirect(response.status)) {
     const location = response.headers.location;
     if (!location) throw new Error("redirect missing location");
+    const next = new URL(location, parsed);
 
     return guardedFetchWithDeadline(
-      new URL(location, parsed).toString(),
-      init,
+      next.toString(),
+      next.origin === parsed.origin ? init : withoutCredentials(init),
       {
         ...state,
         redirects: state.redirects + 1,
@@ -353,6 +359,16 @@ function concatBytes(chunks, total) {
   }
 
   return result;
+}
+
+// Like fetch, credentials never follow a redirect to another origin.
+function withoutCredentials(init) {
+  const headers = normalizeRequestHeaders(init.headers);
+  for (const key of Object.keys(headers)) {
+    if (CREDENTIAL_HEADERS.has(key.toLowerCase())) delete headers[key];
+  }
+
+  return { ...init, headers: headers };
 }
 
 function sanitizeFetchInit(init) {

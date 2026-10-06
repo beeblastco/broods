@@ -3,6 +3,7 @@
  */
 
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
+import type { SandboxUsage } from "../sandbox/live-status.ts";
 import { createMicrovmHarnessDriver } from "../sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { createWorkdirHarnessDriver } from "../sandbox/workdir-harness-driver.ts";
@@ -32,10 +33,14 @@ export interface AiSdkHarnessSandboxOptions {
   compute: AiSdkHarnessCompute;
   /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
+  onUsage?: (usage: SandboxUsage) => void;
   reservationKey: string;
+  /** Other conversations reserve the same machine; see the drivers' `shared`. */
+  shared?: boolean;
   type: AiSdkHarnessType;
 }
 
+/** Reserves the persistent machine a harness agent runs on, MicroVM for `lambda` compute and Workdir otherwise; called by `createHarnessRuntime`. */
 export function createAiSdkHarnessSandbox(
   options: AiSdkHarnessSandboxOptions,
 ): AiSdkHarnessSandbox {
@@ -50,10 +55,7 @@ export function createAiSdkHarnessSandbox(
       });
 }
 
-export function harnessRuntimeVersion(type: AiSdkHarnessType): string {
-  return harnessAdapterVersion(type);
-}
-
+/** Narrows an agent's compute to a persistent sandbox or lambda machine, or throws; `createConfiguredHarnessAgent` checks it first. */
 export function requireAiSdkHarnessCompute(
   compute: SandboxExecutorConfig,
 ): AiSdkHarnessCompute {
@@ -69,6 +71,7 @@ export function requireAiSdkHarnessCompute(
   return compute as AiSdkHarnessCompute;
 }
 
+/** MicroVM branch of `createAiSdkHarnessSandbox`: makes sure /workspace and pnpm exist before the bridge starts. */
 function createMicrovmHarnessSandbox(
   options: AiSdkHarnessSandboxOptions & {
     compute: Extract<AiSdkHarnessCompute, { provider: "lambda" }>;
@@ -92,7 +95,9 @@ function createMicrovmHarnessSandbox(
       reservationKey: reservationKey,
       config: compute,
       metadata: options.metadata,
+      onUsage: options.onUsage,
       ports: [bridgePort],
+      shared: options.shared,
     }),
     providerId: `broods-microvm-${options.type}`,
     bridgePorts: [bridgePort],
@@ -105,6 +110,7 @@ function createMicrovmHarnessSandbox(
   };
 }
 
+/** Workdir branch of `createAiSdkHarnessSandbox`: makes sure pnpm exists before the bridge starts. */
 function createWorkdirHarnessSandbox(
   options: AiSdkHarnessSandboxOptions & {
     compute: Extract<AiSdkHarnessCompute, { provider: "sandbox" }>;
@@ -124,7 +130,9 @@ function createWorkdirHarnessSandbox(
       reservationKey: reservationKey,
       config: compute,
       metadata: options.metadata,
+      onUsage: options.onUsage,
       ports: [bridgePort],
+      shared: options.shared,
     }),
     providerId: `broods-workdir-${options.type}`,
     bridgePorts: [bridgePort],
@@ -137,6 +145,7 @@ function createWorkdirHarnessSandbox(
   };
 }
 
+/** Suffixes the reservation key with harness type and version, so an adapter bump reserves a fresh machine. */
 function versionScopedReservationKey(
   reservationKey: string,
   type: AiSdkHarnessType,

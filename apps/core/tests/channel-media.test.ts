@@ -5,11 +5,12 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
-import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
+import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
+import { stubPublicDns } from "./helpers/http.ts";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
@@ -20,13 +21,18 @@ import {
   type MediaTicket,
 } from "../src/shared/media-ticket.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
-import type { S3ObjectHead } from "../src/shared/s3.ts";
+import type { S3Access, S3ObjectHead } from "../src/shared/s3.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
   type Storage,
 } from "../src/shared/storage.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
+
+const meterWrites: Array<{
+  accountId: string;
+  usage: Parameters<Storage["budgets"]["record"]>[1];
+}> = [];
 
 const headS3ObjectMock = mock(
   async (_bucket: string, _key: string): Promise<S3ObjectHead | null> => null,
@@ -36,10 +42,35 @@ const writeS3ObjectMock = mock(
     _bucket: string,
     _key: string,
     body: string | Uint8Array,
-    _options?: { contentType?: string; executable?: boolean },
+    _options?: {
+      contentType?: string;
+      executable?: boolean;
+      access?: S3Access;
+    },
   ): Promise<number> =>
     typeof body === "string" ? body.length : body.byteLength,
 );
+
+// A bring-your-own bucket is reached on a role core assumes; the session it
+// hands back is what the workspace write must carry.
+void mock.module("@aws-sdk/client-sts", () => ({
+  STSClient: class {
+    send = async (): Promise<{
+      Credentials: {
+        AccessKeyId: string;
+        SecretAccessKey: string;
+        SessionToken: string;
+      };
+    }> => ({
+      Credentials: {
+        AccessKeyId: "ASIA_BYO",
+        SecretAccessKey: "byo-secret",
+        SessionToken: "byo-token",
+      },
+    });
+  },
+  AssumeRoleCommand: class {},
+}));
 
 mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
@@ -92,16 +123,6 @@ const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
-// A self-signed pair for `public.test`, minted for a hundred years so the TLS
-// test never starts flaking on expiry.
-const TLS_CERT = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-cert.pem", import.meta.url),
-  "utf8",
-);
-const TLS_KEY = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-key.pem", import.meta.url),
-  "utf8",
-);
 
 beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
@@ -111,6 +132,17 @@ beforeEach(() => {
   headS3ObjectMock.mockClear();
   writeS3ObjectMock.mockClear();
   transcribeAudioMock.mockClear();
+  meterWrites.length = 0;
+  setStorageForTests({
+    budgets: {
+      record: async function (
+        accountId: string,
+        usage: Parameters<Storage["budgets"]["record"]>[1],
+      ): Promise<void> {
+        meterWrites.push({ accountId: accountId, usage: usage });
+      },
+    },
+  } as never);
 });
 
 afterEach(() => {
@@ -180,6 +212,45 @@ describe("ingestInboundAttachments", () => {
     expect(workspaceOptions).toEqual({ contentType: "image/png" });
     expect(storeKey).toStartWith(`attachments/${ACCOUNT}/media/`);
     expect(storeKey).toEndWith("-photo.png");
+    // Received once, metered once, however many copies are stored.
+    expect(meterWrites).toEqual([
+      { accountId: ACCOUNT, usage: { ingressGb: PNG_BYTES.byteLength / 1e9 } },
+    ]);
+  });
+
+  it("writes a bring-your-own workspace copy on the assumed role, the store copy on core's", async () => {
+    await ingestInboundAttachments([imageAttachment()], {
+      accountId: ACCOUNT,
+      channelName: "telegram",
+      eventId: "evt-1",
+      workspace: {
+        ...workspace(),
+        config: {
+          storage: {
+            provider: "s3",
+            bucket: "acme",
+            prefix: "agents/",
+            region: "eu-west-1",
+            auth: { type: "assumeRole", roleArn: "arn:aws:iam::2:role/byo" },
+          },
+        },
+      },
+    });
+
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
+    const [workspaceBucket, workspaceKey, , workspaceOptions] =
+      writeS3ObjectMock.mock.calls[0]!;
+    const [storeBucket, , , storeOptions] = writeS3ObjectMock.mock.calls[1]!;
+    expect(workspaceBucket).toBe("acme");
+    expect(workspaceKey).toStartWith("agents/media/");
+    expect(workspaceOptions?.access?.credentials).toEqual({
+      accessKeyId: "ASIA_BYO",
+      secretAccessKey: "byo-secret",
+      sessionToken: "byo-token",
+    });
+    expect(workspaceOptions?.access?.region).toBe("eu-west-1");
+    expect(storeBucket).toBe("filesystem-bucket");
+    expect(storeOptions?.access).toBeUndefined();
   });
 
   it("seals the link against the attachment store, not the workspace", async () => {
@@ -376,8 +447,14 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    // Ten accepted attachments, two copies each.
+    // Ten accepted attachments, two copies each, metered in one write.
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(20);
+    expect(meterWrites).toEqual([
+      {
+        accountId: ACCOUNT,
+        usage: { ingressGb: (10 * PNG_BYTES.byteLength) / 1e9 },
+      },
+    ]);
     expect(noteText(parts)).toContain("2 further attachment(s)");
   });
 
@@ -520,10 +597,13 @@ describe("rehydrateStoredMedia", () => {
 
   it("reads the bytes back through the channel that delivered them", async () => {
     const fetchMock = telegramFetch();
+    // The configured apiUrl is the tenant's host, so the download is pinned to
+    // where it resolves.
+    const restoreDns = stubPublicDns();
     const messages = await rehydrateStoredMedia(
       [storedMessage("file-77")],
       telegramConfig(),
-    );
+    ).finally(restoreDns);
 
     const content = messages[0]?.content;
     if (!Array.isArray(content)) throw new Error("expected message parts");

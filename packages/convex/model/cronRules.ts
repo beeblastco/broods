@@ -8,6 +8,7 @@
 
 import type { CronInfo } from "@convex-dev/crons";
 import { isPlainObject } from "./objects";
+import { ClientError } from "./clientError";
 
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
 const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
@@ -71,7 +72,8 @@ export interface NormalizedCronUpdate {
  * @throws when a field is missing, malformed, or out of bounds
  */
 export function normalizeCreateCronInput(input: unknown): NormalizedCronCreate {
-  if (!isPlainObject(input)) throw new Error("Request body must be an object");
+  if (!isPlainObject(input))
+    throw new ClientError("Request body must be an object");
 
   return {
     name: requireString(input.name, "name", 120),
@@ -105,7 +107,8 @@ export function normalizeCreateCronInput(input: unknown): NormalizedCronCreate {
  * @throws when the patch is empty or a field is malformed
  */
 export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
-  if (!isPlainObject(input)) throw new Error("Request body must be an object");
+  if (!isPlainObject(input))
+    throw new ClientError("Request body must be an object");
   const events = optionalRunPayloadToEvents(input);
   const normalized: NormalizedCronUpdate = {
     ...(input.name !== undefined
@@ -149,7 +152,9 @@ export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
       : {}),
   };
   if (Object.keys(normalized).length === 0) {
-    throw new Error("Request body must include at least one cron job field");
+    throw new ClientError(
+      "Request body must include at least one cron job field",
+    );
   }
 
   return normalized;
@@ -174,7 +179,7 @@ export function translateScheduleExpression(
     const unitMs = RATE_MS_PER_UNIT[rate[2] ?? ""];
     const count = Number(rate[1]);
     if (!unitMs || count < 1) {
-      throw new Error(
+      throw new ClientError(
         "rate(...) must use a positive count of minutes, hours, or days",
       );
     }
@@ -189,7 +194,7 @@ export function translateScheduleExpression(
   }
   const cron = /^cron\((.+)\)$/.exec(expression);
   if (!cron) {
-    throw new Error(
+    throw new ClientError(
       "scheduleExpression must use cron(...), rate(...), or at(...)",
     );
   }
@@ -224,7 +229,7 @@ function atExpressionToTimestamp(
     expression,
   );
   if (!match) {
-    throw new Error("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
+    throw new ClientError("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
   }
   const [
     ,
@@ -243,7 +248,8 @@ function atExpressionToTimestamp(
     Number(minute),
     Number(second),
   );
-  if (Number.isNaN(asUtc)) throw new Error("at(...) date is not a valid time");
+  if (Number.isNaN(asUtc))
+    throw new ClientError("at(...) date is not a valid time");
   if (!timezone) return asUtc;
 
   // Two passes pin the wall clock to the zone's offset at the target instant,
@@ -285,7 +291,7 @@ function convertDayOfWeek(field: string): string {
 function cronExpressionToCronspec(fields: string): string {
   const parts = fields.split(/\s+/);
   if (parts.length !== 6) {
-    throw new Error(
+    throw new ClientError(
       "cron(...) must have six fields: minute hour day-of-month month day-of-week year",
     );
   }
@@ -298,11 +304,15 @@ function cronExpressionToCronspec(fields: string): string {
     year = "",
   ] = parts;
   if (year !== "*") {
-    throw new Error("cron(...) year field must be *. Years cannot be pinned");
+    throw new ClientError(
+      "cron(...) year field must be *. Years cannot be pinned",
+    );
   }
   for (const field of [minute, hour, dayOfMonth, month, dayOfWeek]) {
     if (/[LW#]/i.test(field)) {
-      throw new Error(`cron(...) does not support L, W, or # in '${field}'`);
+      throw new ClientError(
+        `cron(...) does not support L, W, or # in '${field}'`,
+      );
     }
   }
 
@@ -317,12 +327,12 @@ function cronExpressionToCronspec(fields: string): string {
 
 function normalizeCronStatus(value: unknown): CronStatus {
   if (value === "active" || value === "paused") return value;
-  throw new Error("status must be active or paused");
+  throw new ClientError("status must be active or paused");
 }
 
 function normalizeEvents(value: unknown): unknown[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("events must be a non-empty array of model messages");
+    throw new ClientError("events must be a non-empty array of model messages");
   }
 
   return value;
@@ -331,7 +341,7 @@ function normalizeEvents(value: unknown): unknown[] {
 function normalizeScheduleExpression(value: unknown): string {
   const expression = requireString(value, "scheduleExpression", 256);
   if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
-    throw new Error(
+    throw new ClientError(
       "scheduleExpression must use cron(...), rate(...), or at(...)",
     );
   }
@@ -342,12 +352,12 @@ function normalizeScheduleExpression(value: unknown): string {
 function normalizeTimezone(value: unknown): string {
   const timezone = requireString(value, "timezone", 64);
   if (!TIMEZONE_PATTERN.test(timezone)) {
-    throw new Error("timezone contains unsupported characters");
+    throw new ClientError("timezone contains unsupported characters");
   }
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: timezone });
   } catch {
-    throw new Error("timezone must be a valid IANA timezone");
+    throw new ClientError("timezone must be a valid IANA timezone");
   }
 
   return timezone;
@@ -370,10 +380,11 @@ function optionalString(
   maxLength: number,
 ): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
   if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
+    throw new ClientError(`${name} must be at most ${maxLength} characters`);
 
   return trimmed.length > 0 ? trimmed : undefined;
 }
@@ -382,7 +393,7 @@ function optionalString(
 function requireDayOfWeekNumber(token: string): number {
   const value = Number(token);
   if (!Number.isInteger(value) || value < 1 || value > 7) {
-    throw new Error(
+    throw new ClientError(
       `cron(...) day-of-week must be 1-7 (1 = Sunday) or SUN-SAT, got '${token}'`,
     );
   }
@@ -395,12 +406,13 @@ function requireString(
   name: string,
   maxLength: number,
 ): string {
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
   if (trimmed.length === 0)
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
+    throw new ClientError(`${name} must be at most ${maxLength} characters`);
 
   return trimmed;
 }
@@ -413,7 +425,7 @@ function runPayloadToEvents(payload: {
   const hasInput = payload.input !== undefined;
   const hasEvents = payload.events !== undefined;
   if (hasInput === hasEvents) {
-    throw new Error("Provide exactly one of input or events");
+    throw new ClientError("Provide exactly one of input or events");
   }
   if (hasInput) {
     return [

@@ -32,7 +32,10 @@ import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
-import type { SandboxCpuSample } from "../sandbox/types.ts";
+import type {
+  SandboxCpuSample,
+  SandboxRunPrincipal,
+} from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
 import {
   listMcpTools,
@@ -40,6 +43,7 @@ import {
   type McpConnection,
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
+import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
@@ -71,6 +75,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import type { AskParent, SubagentWatch } from "./utils.ts";
 import {
   cancelScheduleTool,
   listSchedulesTool,
@@ -105,6 +110,9 @@ export interface ToolContext {
   modelProvider: unknown;
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
+  subagentWatch?: SubagentWatch;
+  // Set on a persistent subagent's run: asks the parent and waits for its answer.
+  askParent?: AskParent;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
@@ -113,6 +121,9 @@ export interface ToolContext {
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   // A blocking ask_questions call, so the loop ends the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
+  // Every row a tool leaves to settle later (an open question, a background
+  // job), so the run's trace can close as waiting on it.
+  onDetachedResult?: (resultId: string) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
   /** Model-facing tool name → MCP server row id, for per-server policy rules. */
@@ -133,6 +144,8 @@ export async function createTools(
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
     sandboxes: sandboxes,
+    principal: (): SandboxRunPrincipal | undefined =>
+      context.session?.sandboxPrincipal(),
   };
   const sandboxOptions =
     typeof defaultSandbox?.options === "object" &&
@@ -174,6 +187,9 @@ export async function createTools(
           conversationKey: context.conversationKey,
           ...(context.session.delivery
             ? { delivery: context.session.delivery }
+            : {}),
+          ...(context.onDetachedResult
+            ? { onDetachedResult: context.onDetachedResult }
             : {}),
         }
       : undefined;
@@ -286,6 +302,7 @@ export async function createTools(
         getSubagentStatusTool({
           accountId: context.accountId,
           eventId: context.session.eventId,
+          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         updateSubagentTool({
           accountId: context.accountId,
@@ -293,6 +310,7 @@ export async function createTools(
           dispatchAppliedIngress: context.dispatchAppliedIngress,
           eventId: context.session.eventId,
           session: context.session,
+          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         stopSubagentTool({
           accountId: context.accountId,
@@ -300,6 +318,10 @@ export async function createTools(
         }),
       );
     }
+  }
+
+  if (context.askParent) {
+    Object.assign(tools, askParentTool(context.askParent));
   }
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
@@ -389,6 +411,9 @@ export async function createTools(
         ...(context.onBlockingQuestion
           ? { onBlockingQuestion: context.onBlockingQuestion }
           : {}),
+        ...(context.onDetachedResult
+          ? { onDetachedResult: context.onDetachedResult }
+          : {}),
       }),
     );
   }
@@ -472,6 +497,7 @@ async function registerMcpTools(
           record,
           serverConfig.headers,
           serverConfig.oauth,
+          context.session?.principal,
         );
         // An unreachable server degrades to zero tools for this run instead
         // of killing every agent run that references it; config errors above

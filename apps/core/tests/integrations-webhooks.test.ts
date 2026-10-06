@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test";
+/** Channel routing fixtures use credentials generated for this test process. */
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHmac } from "node:crypto";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import {
   createIncomingEventRouter as createCoreIncomingEventRouter,
   type ChannelInboundEvent,
@@ -11,17 +15,20 @@ import {
 } from "../src/shared/otel.ts";
 import { coreRequest } from "./helpers/http.ts";
 
+const TELEGRAM_BOT_TOKEN = crypto.randomUUID();
+const TELEGRAM_WEBHOOK_SECRET = crypto.randomUUID();
+
 const TEST_ACCOUNT = {
   accountId: "acct_test",
   username: "test-account",
   description: "Test account",
-  secretHash: "hash",
+  secretHash: crypto.randomUUID(),
   status: "active" as const,
   config: {
     channels: {
       telegram: {
-        botToken: "bot-token",
-        webhookSecret: "telegram-secret",
+        botToken: TELEGRAM_BOT_TOKEN,
+        webhookSecret: TELEGRAM_WEBHOOK_SECRET,
         allowedChannelIds: ["123"],
       },
     },
@@ -70,9 +77,32 @@ const ZALO_AGENT = {
   },
 };
 
+const WHATSAPP_AGENT = {
+  ...TEST_AGENT,
+  config: {
+    channels: {
+      whatsapp: {
+        accessToken: "wa-token",
+        appSecret: "wa-app-secret",
+        phoneNumberId: "phone-1",
+        verifyToken: "wa-verify-token",
+      },
+    },
+  },
+};
+
 const ORIGINAL_FETCH = globalThis.fetch;
 
 describe("account webhook ingress", () => {
+  // Admitted turns fire typing and reactions through the real adapters, so
+  // every test answers them locally instead of calling Meta, Zalo or Telegram.
+  beforeEach(() => {
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> => Response.json({ ok: true }),
+      { preconnect: ORIGINAL_FETCH.preconnect },
+    );
+  });
+
   afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
     setObservabilityContext(null);
@@ -214,8 +244,8 @@ describe("account webhook ingress", () => {
       agentConfig: {
         channels: {
           telegram: {
-            botToken: "bot-token",
-            webhookSecret: "telegram-secret",
+            botToken: TELEGRAM_BOT_TOKEN,
+            webhookSecret: TELEGRAM_WEBHOOK_SECRET,
             allowedChannelIds: ["123"],
           },
         },
@@ -229,6 +259,29 @@ describe("account webhook ingress", () => {
       projectSlug: "project-one",
       stageSlug: "development",
     });
+  });
+
+  it("acks a channel message only once it is admitted", async (): Promise<void> => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
+      agentLister: async () => [TEST_AGENT],
+    });
+    let admitted = false;
+
+    const response = await routeIncomingEvent(
+      createTelegramEvent(),
+      createHandlers({
+        handleChannelRequest: async (): Promise<void> => {
+          await Bun.sleep(20);
+          admitted = true;
+        },
+      }),
+    );
+
+    // An ack the provider sees must never front a message core could lose.
+    expect(response.statusCode).toBe(200);
+    expect(admitted).toBe(true);
   });
 
   it("normalizes Pancake webhook events through account webhook routing", async () => {
@@ -481,6 +534,268 @@ describe("account webhook ingress", () => {
     });
   });
 
+  it("answers Meta's GET handshake through the WhatsApp credential holder", async () => {
+    const whatsAppAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          whatsapp: {
+            accessToken: "wa-token",
+            appSecret: "wa-app-secret",
+            phoneNumberId: "phone-1",
+            verifyToken: "wa-verify-token",
+          },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => whatsAppAgent,
+      agentLister: async () => [whatsAppAgent],
+    });
+    const handshake = (token: string): ReturnType<typeof coreRequest> =>
+      coreRequest(
+        "GET",
+        `/v1/webhooks/acct_test/whatsapp?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=1158201444`,
+      );
+
+    const accepted = await routeIncomingEvent(
+      handshake("wa-verify-token"),
+      createHandlers(),
+    );
+    const refused = await routeIncomingEvent(
+      handshake("wrong"),
+      createHandlers(),
+    );
+
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.body).toBe("1158201444");
+    expect(refused.statusCode).toBe(401);
+  });
+
+  it("admits every message of one batched WhatsApp delivery as its own run", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => WHATSAPP_AGENT,
+      agentLister: async () => [WHATSAPP_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents.map((event) => [event.eventId, event.conversationKey]),
+    ).toEqual([
+      [
+        "acct:acct_test:agent:agent_test:whatsapp:wamid.1",
+        "acct:acct_test:agent:agent_test:whatsapp:phone-1:15551111111",
+      ],
+      [
+        "acct:acct_test:agent:agent_test:whatsapp:wamid.2",
+        "acct:acct_test:agent:agent_test:whatsapp:phone-1:15552222222",
+      ],
+    ]);
+  });
+
+  it("hands each number of a shared Meta app to the agent that owns it", async () => {
+    // One Meta app, one app secret, two numbers: both agents verify the POST,
+    // and each must run only the messages sent to its own number.
+    const firstAgent = { ...WHATSAPP_AGENT, agentId: "agent_aaa" };
+    const secondAgent = {
+      ...WHATSAPP_AGENT,
+      agentId: "agent_bbb",
+      config: {
+        channels: {
+          whatsapp: {
+            ...WHATSAPP_AGENT.config.channels.whatsapp,
+            phoneNumberId: "phone-2",
+          },
+        },
+      },
+    };
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent([
+        { phoneNumberId: "phone-1", from: "15551111111", id: "wamid.1" },
+        { phoneNumberId: "phone-2", from: "15552222222", id: "wamid.2" },
+        // No agent owns this number: ignored, never a 401 Meta would count.
+        { phoneNumberId: "phone-3", from: "15553333333", id: "wamid.3" },
+      ]),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents
+        .map((event) => [event.agentId, event.eventId])
+        .sort(([left], [right]) => left!.localeCompare(right!)),
+    ).toEqual([
+      ["agent_aaa", "acct:acct_test:agent:agent_aaa:whatsapp:wamid.1"],
+      ["agent_bbb", "acct:acct_test:agent:agent_bbb:whatsapp:wamid.2"],
+    ]);
+  });
+
+  it("hands each Page of a shared Meta app to the agent that owns it, once", async () => {
+    // One Meta app, one app secret, two Pages: both agents verify the POST and
+    // each learns its own Page from its token.
+    stubPageLookup({ "fb-token-a": "page-a", "fb-token-b": "page-b" });
+    const firstAgent = messengerAgent("agent_aaa", "fb-token-a");
+    const secondAgent = messengerAgent("agent_bbb", "fb-token-b");
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createMessengerEvent([
+        { pageId: "page-a", psid: "psid-1", mid: "mid.1" },
+        { pageId: "page-b", psid: "psid-2", mid: "mid.2" },
+        // No agent owns this Page: ignored, never a 401 Meta would count.
+        { pageId: "page-c", psid: "psid-3", mid: "mid.3" },
+      ]),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(
+      handledEvents
+        .map((event) => [event.agentId, event.eventId])
+        .sort(([left], [right]) => left!.localeCompare(right!)),
+    ).toEqual([
+      ["agent_aaa", "acct:acct_test:agent:agent_aaa:messenger:psid-1:mid.1"],
+      ["agent_bbb", "acct:acct_test:agent:agent_bbb:messenger:psid-2:mid.2"],
+    ]);
+  });
+
+  it("admits two messages to one Page as two runs", async () => {
+    stubPageLookup({ "fb-token-one": "page-one" });
+    const agent = messengerAgent("agent_test", "fb-token-one");
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => agent,
+      agentLister: async () => [agent],
+    });
+
+    const response = await routeIncomingEvent(
+      createMessengerEvent([
+        { pageId: "page-one", psid: "psid-1", mid: "mid.1" },
+        { pageId: "page-one", psid: "psid-2", mid: "mid.2" },
+      ]),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.conversationKey)).toEqual([
+      "acct:acct_test:agent:agent_test:messenger:page-one:psid-1",
+      "acct:acct_test:agent:agent_test:messenger:page-one:psid-2",
+    ]);
+  });
+
+  it("still gives a delivery to one agent when two share a channel app", async () => {
+    // Zalo, like Slack, carries no per-entry owner, so both answering would
+    // mean two replies to one message. The lowest agentId takes it.
+    const firstAgent = { ...ZALO_AGENT, agentId: "agent_aaa" };
+    const secondAgent = { ...ZALO_AGENT, agentId: "agent_bbb" };
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => firstAgent,
+      agentLister: async () => [secondAgent, firstAgent],
+    });
+
+    const response = await routeIncomingEvent(
+      createZaloEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.agentId)).toEqual(["agent_aaa"]);
+  });
+
+  it("still admits the rest of a WhatsApp batch when one admission fails", async () => {
+    const handledEvents: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => WHATSAPP_AGENT,
+      agentLister: async () => [WHATSAPP_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createWhatsAppBatchEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          if (event.eventId.endsWith("wamid.1")) {
+            throw new Error("admission failed");
+          }
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+    expect(handledEvents.map((event) => event.eventId)).toEqual([
+      "acct:acct_test:agent:agent_test:whatsapp:wamid.2",
+    ]);
+  });
+
+  it("answers a GET no channel claims as live, query string or not", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => PANCAKE_AGENT,
+      agentLister: async () => [PANCAKE_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      coreRequest(
+        "GET",
+        "/v1/webhooks/acct_test/pancake?secret=pancake-secret",
+      ),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(responseJson(response)).toEqual({ status: "ok", method: "POST" });
+  });
+
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
@@ -499,7 +814,188 @@ describe("account webhook ingress", () => {
       error: { message: "Unauthorized" },
     });
   });
+
+  it("answers Meta's GET handshake through the Messenger credential holder", async () => {
+    const messengerAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          messenger: {
+            appSecret: "fb-app-secret",
+            pageAccessToken: "fb-page-token",
+            verifyToken: "fb-verify-token",
+          },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => messengerAgent,
+      agentLister: async () => [messengerAgent],
+    });
+    const get = (query: string): ReturnType<typeof coreRequest> =>
+      coreRequest("GET", `/v1/webhooks/acct_test/messenger${query}`);
+
+    const accepted = await routeIncomingEvent(
+      get(
+        "?hub.mode=subscribe&hub.verify_token=fb-verify-token&hub.challenge=77",
+      ),
+      createHandlers(),
+    );
+    const refused = await routeIncomingEvent(
+      get("?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=77"),
+      createHandlers(),
+    );
+    const live = await routeIncomingEvent(get(""), createHandlers());
+
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.body).toBe("77");
+    expect(refused.statusCode).toBe(401);
+    expect(live.statusCode).toBe(200);
+    expect(responseJson(live)).toEqual({ status: "ok", method: "POST" });
+  });
+
+  it("verifies Twilio's signature over the public webhook URL", async () => {
+    const originalBaseUrl = process.env.PUBLIC_BASE_URL;
+    process.env.PUBLIC_BASE_URL = "https://gateway.broods.test/";
+    const twilioAgent = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          twilio: { accountSid: "AC1", authToken: "twilio-auth-token" },
+        },
+      },
+    };
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => twilioAgent,
+      agentLister: async () => [twilioAgent],
+    });
+    const handledEvents: ChannelInboundEvent[] = [];
+    const form = new URLSearchParams({
+      Body: "hello",
+      From: "+15551234567",
+      MessageSid: "SM1",
+      NumMedia: "0",
+      To: "+15550001111",
+    });
+    const signature = twilioSignature(
+      "https://gateway.broods.test/v1/webhooks/acct_test/twilio",
+      form,
+    );
+    const send = (sig: string): ReturnType<typeof routeIncomingEvent> =>
+      routeIncomingEvent(
+        coreRequest(
+          "POST",
+          "/v1/webhooks/acct_test/twilio",
+          {
+            "content-type": "application/x-www-form-urlencoded",
+            "x-twilio-signature": sig,
+          },
+          form.toString(),
+        ),
+        createHandlers({
+          handleChannelRequest: async (event) => {
+            handledEvents.push(event);
+          },
+        }),
+      );
+
+    try {
+      const accepted = await send(signature);
+      await accepted.afterResponse;
+      const refused = await send("forged");
+
+      expect(accepted.statusCode).toBe(200);
+      expect(accepted.body).toBe("<Response></Response>");
+      expect(handledEvents).toHaveLength(1);
+      expect(refused.statusCode).toBe(401);
+    } finally {
+      if (originalBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+      else process.env.PUBLIC_BASE_URL = originalBaseUrl;
+    }
+  });
+
+  it("hands a Twilio message to the agent that owns the number texted", async () => {
+    const originalBaseUrl = process.env.PUBLIC_BASE_URL;
+    process.env.PUBLIC_BASE_URL = "https://gateway.broods.test";
+    // Two numbers on one Twilio account share its auth token, so both agents
+    // verify every delivery.
+    const numberAgent = (agentId: string, phoneNumber: string) => ({
+      ...TEST_AGENT,
+      agentId: agentId,
+      config: {
+        channels: {
+          twilio: {
+            accountSid: "AC1",
+            authToken: "twilio-auth-token",
+            phoneNumber: phoneNumber,
+          },
+        },
+      },
+    });
+    const agents = [
+      numberAgent("agent_a", "+15550000001"),
+      numberAgent("agent_b", "+15550000002"),
+    ];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async (_accountId, agentId) =>
+        agents.find((agent) => agent.agentId === agentId) ?? null,
+      agentLister: async () => agents,
+    });
+    const handledEvents: ChannelInboundEvent[] = [];
+    const form = new URLSearchParams({
+      Body: "hello b",
+      From: "+15551234567",
+      MessageSid: "SM2",
+      NumMedia: "0",
+      To: "+15550000002",
+    });
+
+    try {
+      const response = await routeIncomingEvent(
+        coreRequest(
+          "POST",
+          "/v1/webhooks/acct_test/twilio",
+          {
+            "content-type": "application/x-www-form-urlencoded",
+            "x-twilio-signature": twilioSignature(
+              "https://gateway.broods.test/v1/webhooks/acct_test/twilio",
+              form,
+            ),
+          },
+          form.toString(),
+        ),
+        createHandlers({
+          handleChannelRequest: async (event) => {
+            handledEvents.push(event);
+          },
+        }),
+      );
+      await response.afterResponse;
+
+      expect(response.statusCode).toBe(200);
+      expect(handledEvents.map((event) => event.agentId)).toEqual(["agent_b"]);
+    } finally {
+      if (originalBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+      else process.env.PUBLIC_BASE_URL = originalBaseUrl;
+    }
+  });
 });
+
+// Twilio's scheme: the URL, then every field name and value in name order,
+// HMAC-SHA1 with the auth token, base64.
+function twilioSignature(url: string, form: URLSearchParams): string {
+  return createHmac("sha1", "twilio-auth-token")
+    .update(
+      `${url}${[...form]
+        .sort(([left], [right]) => (left < right ? -1 : 1))
+        .map(([name, value]) => `${name}${value}`)
+        .join("")}`,
+    )
+    .digest("base64");
+}
 
 function createHandlers(
   overrides: Partial<{
@@ -595,6 +1091,84 @@ function createPancakeEvent(): ReturnType<typeof coreRequest> {
   );
 }
 
+// One signed Meta delivery, one entry per message. By default two customers
+// writing to `phone-1`.
+function createWhatsAppBatchEvent(
+  messages: { phoneNumberId: string; from: string; id: string }[] = [
+    { phoneNumberId: "phone-1", from: "15551111111", id: "wamid.1" },
+    { phoneNumberId: "phone-1", from: "15552222222", id: "wamid.2" },
+  ],
+): ReturnType<typeof coreRequest> {
+  const body = JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: messages.map((message) => ({
+      id: "waba-1",
+      changes: [
+        {
+          field: "messages",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { phone_number_id: message.phoneNumberId },
+            contacts: [
+              { profile: { name: message.from }, wa_id: message.from },
+            ],
+            messages: [
+              {
+                from: message.from,
+                id: message.id,
+                timestamp: "1713916800",
+                type: "text",
+                text: { body: `hello from ${message.from}` },
+              },
+            ],
+          },
+        },
+      ],
+    })),
+  });
+  const signature = createHmac("sha256", "wa-app-secret")
+    .update(body)
+    .digest("hex");
+
+  return coreRequest(
+    "POST",
+    "/v1/webhooks/acct_test/whatsapp",
+    { "x-hub-signature-256": `sha256=${signature}` },
+    body,
+  );
+}
+
+// One signed Messenger delivery, one entry per message, all under one app.
+function createMessengerEvent(
+  messages: { pageId: string; psid: string; mid: string }[],
+): ReturnType<typeof coreRequest> {
+  const body = JSON.stringify({
+    object: "page",
+    entry: messages.map((message) => ({
+      id: message.pageId,
+      time: 1_760_000_000_000,
+      messaging: [
+        {
+          sender: { id: message.psid },
+          recipient: { id: message.pageId },
+          timestamp: 1_760_000_000_000,
+          message: { mid: message.mid, text: `hello from ${message.psid}` },
+        },
+      ],
+    })),
+  });
+  const signature = createHmac("sha256", "fb-app-secret")
+    .update(body)
+    .digest("hex");
+
+  return coreRequest(
+    "POST",
+    "/v1/webhooks/acct_test/messenger",
+    { "x-hub-signature-256": `sha256=${signature}` },
+    body,
+  );
+}
+
 function createZaloEvent(
   body: unknown = zaloUpdate(),
   headers: Record<string, string> = {
@@ -612,7 +1186,7 @@ function createZaloEvent(
 function createTelegramEvent(
   body: unknown = telegramUpdate(),
   headers: Record<string, string> = {
-    "x-telegram-bot-api-secret-token": "telegram-secret",
+    "x-telegram-bot-api-secret-token": TELEGRAM_WEBHOOK_SECRET,
   },
   rawPath = "/v1/webhooks/acct_test/telegram",
   rawQueryString = "",
@@ -622,6 +1196,24 @@ function createTelegramEvent(
     rawQueryString ? `${rawPath}?${rawQueryString}` : rawPath,
     headers,
     body,
+  );
+}
+
+// Graph answers `/me` with the Page each access token belongs to.
+function stubPageLookup(pages: Record<string, string>): void {
+  globalThis.fetch = Object.assign(
+    async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      const page = pages[url.searchParams.get("access_token") ?? ""];
+
+      return page
+        ? Response.json({ id: page })
+        : Response.json(
+            { error: { message: "unknown token" } },
+            { status: 400 },
+          );
+    },
+    { preconnect: ORIGINAL_FETCH.preconnect },
   );
 }
 
@@ -674,6 +1266,22 @@ interface ResponseShape {
   headers?: Record<string, string>;
   body?: string;
   afterResponse?: Promise<void>;
+}
+
+function messengerAgent(agentId: string, pageAccessToken: string): AgentRecord {
+  return {
+    ...TEST_AGENT,
+    agentId: agentId,
+    config: {
+      channels: {
+        messenger: {
+          appSecret: "fb-app-secret",
+          pageAccessToken: pageAccessToken,
+          verifyToken: "fb-verify-token",
+        },
+      },
+    },
+  };
 }
 
 function responseJson(response: { body?: unknown }): Record<string, unknown> {

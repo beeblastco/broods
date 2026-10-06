@@ -21,10 +21,10 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
-import { decryptAgentConfigBlob } from "./agentConfigCodec";
+import { accountCipher, hasEncryptionSecret } from "./accountKeys";
 import { applyTidyLayout } from "./canvasLayout";
 import { loadMcpServersByNode } from "./mcp";
-import { isPlainObject } from "./objects";
+import { isPlainObject, stableJson } from "./objects";
 
 /** The stored layout normalized and indexed by id and back-references. */
 type ExistingApiCanvas = {
@@ -39,10 +39,8 @@ type ApiWiringSync = ExistingApiCanvas & {
   ctx: MutationCtx;
   projectId: Id<"projects">;
   stageId: Id<"stages">;
-  secret: string;
   configs: Doc<"agentConfigs">[];
   /** Lazily loaded skill names per owning account. */
-  skillNamesByAccount: Map<Id<"accounts">, Set<string>>;
   desiredEdges: Map<string, CanvasEdge>;
   desiredWiringNodeIds: Set<string>;
   workspaceReferenced: Set<string>;
@@ -73,8 +71,7 @@ export async function syncApiAgentCanvasWiring(
   const { projectId, stageId } = options;
   // Without the shared secret no blob can be decrypted, so no wiring is known;
   // leave the canvas untouched rather than pruning edges we cannot recompute.
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
+  if (!hasEncryptionSecret()) {
     return;
   }
 
@@ -102,9 +99,7 @@ export async function syncApiAgentCanvasWiring(
     ctx: ctx,
     projectId: projectId,
     stageId: stageId,
-    secret: secret,
     configs: configs,
-    skillNamesByAccount: new Map(),
     desiredEdges: new Map(),
     desiredWiringNodeIds: new Set(),
     workspaceReferenced: new Set(),
@@ -119,13 +114,21 @@ export async function syncApiAgentCanvasWiring(
 
   stampWorkspaceReadOnly(sync);
   const reconciled = reconcileApiWiring(sync);
+  const nodes = applyTidyLayout(
+    reconciled.nextNodes,
+    reconciled.nextEdges,
+    await loadMcpServersByNode(ctx, stageId),
+  );
+  // Runs on every API agent write; most of them do not change the wiring.
+  if (
+    stableJson(layout.nodes) === stableJson(nodes) &&
+    stableJson(layout.edges) === stableJson(reconciled.nextEdges)
+  ) {
+    return;
+  }
 
   await ctx.db.patch(layout._id, {
-    nodes: applyTidyLayout(
-      reconciled.nextNodes,
-      reconciled.nextEdges,
-      await loadMcpServersByNode(ctx, stageId),
-    ),
+    nodes: nodes,
     edges: reconciled.nextEdges,
     updatedAt: Date.now(),
   });
@@ -138,7 +141,7 @@ function addDefaultEdge(
   target: string,
 ): void {
   const id = `xy-edge__${source}-${target}`;
-  edges.set(id, { id: id, source: source, target: target, animated: true });
+  edges.set(id, { id: id, source: source, target: target });
 }
 
 /**
@@ -155,7 +158,6 @@ function addMountEdge(
     id: id,
     source: workspaceNodeId,
     target: sandboxNodeId,
-    animated: false,
   });
 }
 
@@ -200,7 +202,6 @@ function indexExistingCanvas(layout: Doc<"canvasLayouts">): ExistingApiCanvas {
       id: String(edge.id),
       source: String(edge.source),
       target: String(edge.target),
-      animated: edge.animated,
     }),
   );
   const nextById = new Map(existingNodes.map((node) => [node.id, node]));
@@ -307,28 +308,6 @@ async function resolveSandboxNode(
   return node.id;
 }
 
-/** Skill names for one owning account, loaded once per pass. */
-async function skillNamesForAccount(
-  sync: ApiWiringSync,
-  ownerAccountId: Id<"accounts">,
-): Promise<Set<string>> {
-  const cached = sync.skillNamesByAccount.get(ownerAccountId);
-  if (cached) {
-    return cached;
-  }
-  const names = new Set(
-    (
-      await sync.ctx.db
-        .query("skills")
-        .withIndex("by_accountId", (q) => q.eq("accountId", ownerAccountId))
-        .collect()
-    ).map((skill) => skill.name),
-  );
-  sync.skillNamesByAccount.set(ownerAccountId, names);
-
-  return names;
-}
-
 /**
  * Stamp the resolved read-only state onto referenced workspace nodes; an
  * explicit `false` clears a stale flag once a writer exists.
@@ -382,14 +361,13 @@ async function wireAgentConfig(
   const agent = agentRowId ? await sync.ctx.db.get(agentRowId) : null;
   const nested =
     agent?.encryptedConfig && agent.encryptionIv && agent.encryptionTag
-      ? await decryptAgentConfigBlob(
-          {
-            ciphertext: agent.encryptedConfig,
-            iv: agent.encryptionIv,
-            tag: agent.encryptionTag,
-          },
-          sync.secret,
-        )
+      ? await (
+          await accountCipher(sync.ctx, agent.accountId)
+        ).decrypt("agents:encryptedConfig", {
+          ciphertext: agent.encryptedConfig,
+          iv: agent.encryptionIv,
+          tag: agent.encryptionTag,
+        })
       : null;
   if (!agent || !nested) {
     const agentNode = sync.existingByAgentConfigId.get(config._id);
@@ -446,7 +424,7 @@ async function wireAgentConfig(
     skills.enabled !== false &&
     Array.isArray(skills.allowed)
   ) {
-    await wireAgentSkills(sync, {
+    wireAgentSkills(sync, {
       agent: agent,
       agentNodeId: agentNode.id,
       allowed: skills.allowed,
@@ -463,21 +441,21 @@ async function wireAgentConfig(
 }
 
 /** Agent→skill wiring from `skills.allowed`, scoped to the owning account. */
-async function wireAgentSkills(
+function wireAgentSkills(
   sync: ApiWiringSync,
   options: {
     agent: Doc<"agents">;
     agentNodeId: string;
     allowed: unknown[];
   },
-): Promise<void> {
-  const skillNames = await skillNamesForAccount(sync, options.agent.accountId);
+): void {
   for (const entry of options.allowed) {
     if (typeof entry !== "string" || !entry.trim()) continue;
     // Allowed refs are `<accountId>/<name>` paths; the node id carries the
     // owning account so same-named skills never alias across accounts.
     const name = entry.slice(entry.lastIndexOf("/") + 1).trim();
-    if (!name || !skillNames.has(name)) continue;
+    // Skills live in S3, which a mutation cannot list, so the ref is trusted.
+    if (!name) continue;
     const skillNodeId = `api-skill-${options.agent.accountId}-${name}`;
     const skillNode = upsertWiringNode(
       sync,
@@ -517,7 +495,6 @@ function wireAgentSubagents(
         id: id,
         source: options.agentNodeId,
         target: calleeNodeId,
-        animated: false,
       });
     }
   }

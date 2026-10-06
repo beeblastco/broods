@@ -1,9 +1,9 @@
 /**
  * Public config-plane HTTP surface: agents, skills, mcp, hooks, workspace
  * files, crons, workspaces, sandboxes, policies, and roles served straight
- * from Convex. The gateway forwards these paths here; response shapes match
+ * from Convex. Traefik routes these paths here (`apps/edge`); response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
- * the account Bearer secret, or an fp_sts_ role session checked against its
+ * the account key, or a bsts_ role session checked against its
  * role's policy at this funnel. This file is the router; each resource
  * family's handlers live in `config/routes/`.
  */
@@ -15,14 +15,25 @@ import {
   rolePrincipal,
   type ApiResource,
 } from "../model/apiAuthorization";
-import type { ConfigAuditActor } from "../model/auditEvents";
+import type { AuditActor } from "../model/auditEvents";
+import { CLIENT_ERROR_STATUS, clientErrorData } from "../model/clientError";
 import { POLICY_STILL_REFERENCED } from "../model/policyReferences";
+import { resolveRequestId, withRequestId } from "../model/requestId";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
+import {
+  handleAuditRoute,
+  parseAuditRoute,
+  type AuditLeaf,
+} from "./routes/audit";
 import {
   handleAgentChannelDirectoryRoute,
   handleAgentConfigRoute,
 } from "./routes/agents";
 import { handleChannelRecordRoute } from "./routes/channels";
+import {
+  handleConnectionsRoute,
+  parseConnectionsPath,
+} from "./routes/connections";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
@@ -30,7 +41,12 @@ import { handleMcpRoute, handleMcpUploadsRoute } from "./routes/mcp";
 import { handlePolicyConfigRoute } from "./routes/policies";
 import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
-import { auditActorForAuth, jsonError, requireAccount } from "./routes/shared";
+import {
+  auditActorForAuth,
+  jsonError,
+  requireAccount,
+  runTokenRefusal,
+} from "./routes/shared";
 import { handleSkillRoute } from "./routes/skills";
 import {
   handleDownloadRedeemRoute,
@@ -55,21 +71,41 @@ type ConfigRoute =
   | { kind: "agents"; agentId?: string }
   | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
   | { kind: "env"; name?: string }
+  | { kind: "audit"; leaf: AuditLeaf }
   | { kind: "roles"; roleId?: string };
 
 type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
 
-export const handle = httpAction(async (ctx, req): Promise<Response> => {
+export const handle = httpAction(async (ctx, req): Promise<Response> =>
+  withRequestId(
+    await handleConfigRequest(ctx, req),
+    resolveRequestId(req.headers.get("x-request-id")),
+  ),
+);
+
+async function handleConfigRequest(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response> {
   // Only a role is scoped below the account, so every other caller already
   // reads the resources a policy refusal would name.
   let readsPolicyReferences = true;
   try {
     const pathname = new URL(req.url).pathname;
 
-    // The exchange authenticates its own caller kinds (account secret, CLI
+    const refusal = runTokenRefusal(req);
+    if (refusal) return refusal;
+
+    // The exchange authenticates its own caller kinds (account key, CLI
     // token, runtime key), so it runs before the shared bearer funnel.
     if (pathname === "/v1/account/assume-role") {
       return await handleAssumeRoleRoute(ctx, req);
+    }
+
+    // Authenticates itself too: account key or CLI login, never a role session.
+    const connectionsPath = parseConnectionsPath(pathname);
+    if (connectionsPath) {
+      return await handleConnectionsRoute(ctx, req, connectionsPath);
     }
 
     const accountRoute = parseAccountRoute(pathname);
@@ -92,7 +128,7 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     // edit roles could grant itself anything.
     if (route.kind === "roles") {
       if (accountAuth.kind !== "account") {
-        return jsonError(403, "Role management requires the account secret");
+        return jsonError(403, "Role management requires the account key");
       }
 
       return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);
@@ -113,28 +149,25 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
 
     return await dispatchResourceRoute(ctx, req, account._id, actor, route);
   } catch (err) {
-    if (
-      err instanceof Error &&
-      err.message.startsWith(POLICY_STILL_REFERENCED)
-    ) {
-      // The refusal names the agents and channel records that still list the
-      // policy. A role holding only policies:write may not read either, so it
-      // gets the refusal without the names.
-      return jsonError(
-        409,
-        readsPolicyReferences
-          ? err.message
-          : `${POLICY_STILL_REFERENCED} an agent or a channel record still lists this policy. Detach it before deleting it.`,
-      );
+    const clientError = clientErrorData(err);
+    if (clientError) {
+      // The policy refusal names the agents and channel records that still
+      // list the policy. A role holding only policies:write may not read
+      // either, so it gets the refusal without the names.
+      const message =
+        !readsPolicyReferences &&
+        clientError.message.startsWith(POLICY_STILL_REFERENCED)
+          ? `${POLICY_STILL_REFERENCED} an agent or a channel record still lists this policy. Detach it before deleting it.`
+          : clientError.message;
+
+      return jsonError(CLIENT_ERROR_STATUS[clientError.code], message);
     }
-    if (isClientInputError(err)) {
-      return jsonError(clientErrorStatus(err), err.message);
-    }
+    if (err instanceof SyntaxError) return jsonError(400, err.message);
     console.error("config HTTP request failed", err);
 
     return jsonError(500, "Internal server error");
   }
-});
+}
 
 /** Build an `authorize()` resource, dropping an absent id. */
 function apiResource(
@@ -178,36 +211,16 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("agents", route.agentId);
     case "env":
       return apiResource("env", route.name);
+    case "audit":
+      return apiResource("audit", undefined);
   }
-}
-
-/**
- * Map a client-input error to its HTTP status. Core returned 401 for
- * foreign-account skill paths and 404 for dangling agent references
- * (errorResponseForError); everything else is a plain 400.
- * @param error the recognized client-input error
- * @returns the HTTP status core used for this message
- */
-function clientErrorStatus(error: Error): number {
-  if (error.message.startsWith("Skill path belongs to another account:"))
-    return 401;
-  if (error.message.startsWith("Agent name already exists:")) return 409;
-  if (
-    error.message.startsWith("Skill not found:") ||
-    error.message.startsWith("Subagent not found:") ||
-    error.message.startsWith("Agent policy not found:")
-  ) {
-    return 404;
-  }
-
-  return 400;
 }
 
 async function dispatchResourceRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   route: ResourceRoute,
 ): Promise<Response> {
   switch (route.kind) {
@@ -306,80 +319,9 @@ async function dispatchResourceRoute(
         actor,
         route.name,
       );
+    case "audit":
+      return await handleAuditRoute(ctx, req, accountId, actor, route.leaf);
   }
-}
-
-function isClientInputError(error: unknown): error is Error {
-  if (!(error instanceof Error)) return false;
-  if (error instanceof SyntaxError) return true;
-
-  return [
-    "Request body",
-    "source must",
-    "files must",
-    "Each file",
-    "JSON skills",
-    "Skill ",
-    "Duplicate skill ",
-    "Invalid skill ",
-    "Invalid request JSON:",
-    "Invalid skill path:",
-    "Skill path belongs",
-    "Skill not found:",
-    "Subagent not found:",
-    "Agent policy not found:",
-    "Agent name already exists:",
-    "SKILL.md ",
-    "GitHub skill URL ",
-    "GitHub archive ",
-    "url must ",
-    "path ",
-    "path and ",
-    "contentBase64 ",
-    "config must",
-    "config.",
-    "e2b ",
-    "Invalid workspace path",
-    "Invalid workspace file path",
-    "Invalid destination path",
-    "Workspace uploads ",
-    "Workspace file not found",
-    "Workspace path not found",
-    "name must",
-    "username must",
-    "url must",
-    "headers must",
-    "headers names",
-    "headers values",
-    "allowedTools",
-    "disabled must",
-    "MCP server",
-    "agentId must",
-    "Agent config ",
-    "description must",
-    "conversationKey must",
-    "scheduleExpression must",
-    "timezone ",
-    "status must",
-    "policy ",
-    "Policy document",
-    "Policy rule",
-    "Policy does not belong",
-    "roleId must",
-    "ttlSeconds must",
-    "projectId and stageId",
-    "projectId must",
-    "stageId must",
-    "Sandbox config does not belong",
-    "Workspace config does not belong",
-    "events must",
-    "Provide exactly one of",
-    "limit must",
-    "Cron job agentId ",
-    "unknown env vars:",
-    "env name must",
-    "env value must",
-  ].some((prefix) => error.message.startsWith(prefix));
 }
 
 /** Match `/v1/agents/{id}/channels/{type}/directory` and `/v1/agents[/{id}]`. */
@@ -407,6 +349,9 @@ function parseAgentRoute(pathname: string): ConfigRoute | null {
 
 /** Match the flat collection-or-item routes with no nested subresources. */
 function parseCollectionRoute(pathname: string): ConfigRoute | null {
+  const audit = parseAuditRoute(pathname);
+  if (audit) return { kind: "audit", leaf: audit };
+
   const env = pathname.match(/^\/v1\/env(?:\/([^/]+))?$/);
   if (env)
     return {

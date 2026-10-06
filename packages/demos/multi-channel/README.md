@@ -1,11 +1,12 @@
 # Multi-channel (Slack + Telegram + GitHub)
 
+1. Set the rooms the agent answers in, in `.env.local`: `SLACK_GENERAL_CHANNEL_ID`, `SLACK_OPS_CHANNEL_ID`, `TELEGRAM_PRIMARY_CHAT_ID`, `TELEGRAM_SECONDARY_CHAT_ID`.
 1. Run `bun install` and `bun run dev` to sync channels.
-2. Run `bun run register` to auto-register webhook URLs for all configured channels.
+1. Run `bun run register` to auto-register webhook URLs for all configured channels.
 
 ## Slack
 
-Auto-registers via Slack's Manifest API when `SLACK_CONFIG_TOKEN`, `SLACK_CONFIG_REFRESH_TOKEN`, and `SLACK_APP_ID` are set in `.env.local`. Otherwise prints the webhook URL for manual configuration.
+Auto-registers via Slack's Manifest API when `SLACK_CONFIG_TOKEN`, `SLACK_CONFIG_REFRESH_TOKEN`, and `SLACK_APP_ID` are set in `.env.local`. Otherwise prints the webhook URL for manual configuration. The manifest update renames the app to `SLACK_APP_NAME` (default `Broods demo`).
 
 Generate the config token pair from the Slack app's App Manifest page. This is separate from OAuth bot-token rotation in OAuth & Permissions; the demo keeps `SLACK_BOT_TOKEN` as the bot token used by the deployed agent and `SLACK_SIGNING_SECRET` as the webhook verification secret.
 

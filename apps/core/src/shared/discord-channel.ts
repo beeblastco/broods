@@ -2,6 +2,8 @@
 
 import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
 import { ConsoleLogger, type Attachment, type FileUpload } from "chat";
+import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
+import { timingSafeStringEqual } from "./auth.ts";
 import {
   channelAttachmentBytes,
   channelAttachmentName,
@@ -11,9 +13,11 @@ import {
   type ChannelImage,
   type ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
+import { channelApiFetch, publicHostFetch } from "./http.ts";
 import { logWarn } from "./log.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 // Discord channel types that are threads. A message inside one of these keys its
@@ -145,8 +149,37 @@ export interface DiscordSource {
 // per-tenant config scoping, durable session setup, and Convex conversation
 // history writes. The SDK also keeps the lower-level hooks this needs protected
 // (`verifySignature`, `parseSlashCommand`, requestContext), so this subclass is an
-// access shim and nothing else. Delete it if those hooks become public.
+// access shim, plus the tenant `apiUrl` guard on the SDK's REST call.
 class BroodsDiscordAdapter extends DiscordAdapter {
+  // A tenant `apiUrl` is their host, so the bot token only goes there pinned to
+  // a checked public address with redirects refused. Discord itself keeps the
+  // SDK's own call.
+  protected override async discordFetch(
+    path: string,
+    method: string,
+    body?: unknown,
+  ): Promise<Response> {
+    if (new URL(this.apiBaseUrl).host === "discord.com") {
+      return super.discordFetch(path, method, body);
+    }
+    const response = await publicHostFetch(`${this.apiBaseUrl}${path}`, {
+      method: method,
+      headers: {
+        Authorization: `Bot ${await this.resolveBotToken()}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Discord API error: ${response.status} ${await response.text()}`,
+      );
+    }
+
+    return response;
+  }
+
   verifyRequestSignature(
     body: string,
     signature: string | null | undefined,
@@ -209,7 +242,12 @@ export function createDiscordChannel(
 
     authenticate: function (req) {
       if ("x-discord-gateway-token" in req.headers) {
-        return req.headers["x-discord-gateway-token"] === botToken;
+        const provided = req.headers["x-discord-gateway-token"];
+
+        return (
+          typeof provided === "string" &&
+          timingSafeStringEqual(provided, botToken)
+        );
       }
 
       return discord.verifyRequestSignature(
@@ -220,7 +258,14 @@ export function createDiscordChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const payload = JSON.parse(req.body) as DiscordInteractionPayload;
+      const body = parseChannelWebhookBody<DiscordInteractionPayload>(
+        "discord",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const payload = body.payload;
       const gatewayEvent = parseForwardedGatewayEvent(
         discord,
         payload as DiscordForwardedEventPayload,
@@ -615,7 +660,7 @@ async function callDiscordApi(
   body: Record<string, unknown>,
 ): Promise<void> {
   const base = (apiUrl ?? "https://discord.com/api/v10").replace(/\/+$/, "");
-  const response = await fetch(`${base}/${path}`, {
+  const response = await channelApiFetch(apiUrl)(`${base}/${path}`, {
     method: "POST",
     headers: {
       authorization: `Bot ${botToken}`,
@@ -631,15 +676,19 @@ async function callDiscordApi(
   }
 }
 
+// The url comes from a forwarded gateway event the tenant can write, so it gets
+// the same private-address guard and size cap as every other channel's media.
 async function fetchDiscordFile(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+  const response = await guardedFetch(url, undefined, {
+    binary: true,
+    bodyLimitBytes: MAX_ATTACHMENT_BYTES,
+    timeoutMs: DISCORD_FETCH_TIMEOUT_MS,
   });
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(`Discord answered ${response.status}`);
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  return Buffer.from(response.bodyBytes);
 }
 
 /**

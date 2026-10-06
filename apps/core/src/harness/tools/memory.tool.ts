@@ -113,8 +113,8 @@ Usage notes:
           // that merely cross-references this slug in its description never matches.
           // Safe as a BRE: the slug charset is [a-z0-9-] and the title has no `]`.
           const indexLinePattern = `^- \\[[^]]*](${slug}\\.md) — `;
-          // Same base64 + `sync` discipline as the write tool: commit both files to the
-          // S3 Files server before the sandbox freezes. The workspace is a mountpoint-s3
+          // Same base64 + `sync` discipline as the write tool: upload both files
+          // before the sandbox freezes. The workspace is a mountpoint-s3
           // FUSE mount that rejects O_APPEND and rename() with EPERM, so surviving index
           // lines go into a shell variable and the index is rewritten in one `>` pass.
           // No `>>`, no `mv`, no temp files. Replacing the entry's line instead of

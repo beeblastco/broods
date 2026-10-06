@@ -25,6 +25,8 @@ if (import.meta.main) {
   let ready = false;
 
   const server = Bun.serve({
+    // A Matrix event is capped at 64 KiB, so no honest send comes near this.
+    maxRequestBodySize: 1024 * 1024,
     port: config.port,
     fetch: (request: Request): Promise<Response> =>
       handleRequest(forwarder, ready, request),

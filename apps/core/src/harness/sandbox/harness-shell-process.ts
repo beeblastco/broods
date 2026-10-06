@@ -9,7 +9,9 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { shellQuote } from "./utils.ts";
 
-const PROCESS_CHUNK_BYTES = 64 * 1024;
+// Raw bytes per chunk read. Base64 grows them to 240 KB, under the 256 KB of
+// stdout one MicroVM exec returns.
+const FILE_CHUNK_BYTES = 180 * 1024;
 const PROCESS_POLL_INTERVAL_MS = 25;
 
 export interface HarnessShellExecutor {
@@ -24,6 +26,32 @@ export interface HarnessShellExecutor {
     stdout: string;
     stderr: string;
   }>;
+}
+
+/**
+ * One chunk of a sandbox file from `offset`, or null when the file does not exist.
+ * Process output streams poll it, and MicroVM `readFile` loops it, comparing
+ * `stamp` (size, inode, change time) across chunks to catch a file that changed.
+ */
+export async function readFileChunk(
+  executor: HarnessShellExecutor,
+  path: string,
+  offset: number,
+  abortSignal?: AbortSignal,
+): Promise<{ bytes: Uint8Array; stamp: string } | null> {
+  const q = shellQuote(path);
+  const result = await executor.exec(
+    `if [ -f ${q} ]; then stat -c '%s %i %z' ${q}; tail -c +${offset + 1} ${q} | head -c ${FILE_CHUNK_BYTES} | base64 | tr -d '\\n'; elif [ ! -e ${q} ]; then exit 44; else exit 45; fi`,
+    abortSignal ? { abortSignal: abortSignal } : undefined,
+  );
+  if (result.exitCode === 44) return null;
+  if (result.exitCode !== 0) throw shellProcessError("read file", result);
+  const [stamp = "", encoded = ""] = result.stdout.split("\n");
+
+  return {
+    bytes: new Uint8Array(Buffer.from(encoded.trim(), "base64")),
+    stamp: stamp,
+  };
 }
 
 interface HarnessShellProcessOptions {
@@ -129,7 +157,7 @@ export class HarnessShellProcess {
   }
 
   async #waitForExit(): Promise<{ exitCode: number }> {
-    while (true) {
+    for (;;) {
       const status = await this.#status();
       if (status.state !== "running") {
         const result = {
@@ -203,7 +231,7 @@ export async function readHarnessStream(
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
-    while (true) {
+    for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
       chunks.push(value);
@@ -240,20 +268,21 @@ function processFileStream(
       void (async () => {
         let offset = 0;
         try {
-          while (!cancelled) {
-            const chunk = await readProcessChunk(executor, path, offset);
+          for (;;) {
+            if (cancelled) break;
+            const chunk =
+              (await readFileChunk(executor, path, offset))?.bytes ??
+              new Uint8Array();
             if (chunk.byteLength > 0) {
               controller.enqueue(chunk);
               offset += chunk.byteLength;
             }
             const current = await status();
             if (current.state !== "running") {
-              while (true) {
-                const finalChunk = await readProcessChunk(
-                  executor,
-                  path,
-                  offset,
-                );
+              for (;;) {
+                const finalChunk =
+                  (await readFileChunk(executor, path, offset))?.bytes ??
+                  new Uint8Array();
                 if (finalChunk.byteLength === 0) break;
                 controller.enqueue(finalChunk);
                 offset += finalChunk.byteLength;
@@ -305,21 +334,6 @@ function raceWithAbort<T>(
       .then(resolve, reject)
       .finally(() => abortSignal.removeEventListener("abort", abort));
   });
-}
-
-async function readProcessChunk(
-  executor: HarnessShellExecutor,
-  path: string,
-  offset: number,
-): Promise<Uint8Array> {
-  const result = await executor.exec(
-    `if [ -f ${shellQuote(path)} ]; then dd if=${shellQuote(path)} bs=1 skip=${offset} count=${PROCESS_CHUNK_BYTES} 2>/dev/null | base64 | tr -d '\\n'; fi`,
-  );
-  if (result.exitCode !== 0) {
-    throw shellProcessError("read process output", result);
-  }
-
-  return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
 }
 
 function shellProcessError(

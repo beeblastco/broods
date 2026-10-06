@@ -57,6 +57,7 @@ export interface AsyncToolPendingResult {
 
 type ToolEntry = ToolSet[string];
 
+/** Runs `async: true` tools in the background for one turn and feeds their results back; the handler builds one per run. */
 export class AsyncToolCoordinator {
   private readonly completions: AsyncToolCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
@@ -72,6 +73,7 @@ export class AsyncToolCoordinator {
       DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
   ) {}
 
+  /** Wraps the tools named in `asyncToolNames` so they return a statusId and run in the background. */
   dispatch: RunAsyncToolDispatch = (
     tools: ToolSet,
     asyncToolNames: AsyncToolNames,
@@ -88,13 +90,15 @@ export class AsyncToolCoordinator {
     );
   };
 
+  /** Calls still running; the handler checks it before waiting. */
   get pendingCount(): number {
     return this.pending.size;
   }
 
+  /** Waits for in-flight calls up to the wait budget, heartbeating meanwhile; the handler calls it before draining. */
   async waitForIdle(
     options: {
-      onHeartbeat?: (pendingCount: number) => void;
+      onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
   ): Promise<"idle" | "timeout"> {
     while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
@@ -110,13 +114,15 @@ export class AsyncToolCoordinator {
       ]);
 
       if (this.pending.size > 0) {
-        options.onHeartbeat?.(this.pending.size);
+        // Awaited, so a heartbeat that finds the run lost ends the wait.
+        await options.onHeartbeat?.(this.pending.size);
       }
     }
 
     return this.pending.size === 0 ? "idle" : "timeout";
   }
 
+  /** Persists finished results into the parent conversation and returns how many; the handler calls it once the wait ends. */
   async drainCompletionsToParent(): Promise<number> {
     if (this.completions.length === 0) {
       return 0;
@@ -130,6 +136,7 @@ export class AsyncToolCoordinator {
     return completions.length;
   }
 
+  /** Like `drainCompletionsToParent`, but also fails and injects calls still pending; the handler uses it when the wait timed out. */
   async drainCompletionsAndTimeoutsToParent(): Promise<number> {
     if (this.completions.length === 0 && this.pending.size === 0) {
       return 0;
@@ -170,6 +177,7 @@ export class AsyncToolCoordinator {
     return batch.length;
   }
 
+  /** Used by `dispatch`: swaps a tool's execute for one that records a pending row, starts the call, and returns a statusId. */
   private wrapTool(toolName: string, entry: ToolEntry): ToolEntry {
     if (!entry.execute) {
       logWarn("Async tool config ignored because tool has no local execute", {
@@ -217,6 +225,7 @@ export class AsyncToolCoordinator {
     return wrapped as unknown as ToolEntry;
   }
 
+  /** Runs a wrapped call in the background and tracks it as pending until it settles. */
   private startToolCall(options: AsyncToolCall): void {
     const promise = this.runToolCall(options)
       .catch((error) =>
@@ -242,6 +251,7 @@ export class AsyncToolCoordinator {
     });
   }
 
+  /** Body of `startToolCall`: executes the tool, stores its output as completed, and queues it for the parent. */
   private async runToolCall(options: AsyncToolCall): Promise<void> {
     logInfo("Async tool call started", {
       parentEventId: this.parentSession.eventId,
@@ -266,6 +276,7 @@ export class AsyncToolCoordinator {
     });
   }
 
+  /** Records a finished call (marking failures in Convex) and queues it for the parent unless a timeout drain already took it. */
   private async completeToolCall(
     completion: AsyncToolCompletion,
   ): Promise<void> {
@@ -298,12 +309,14 @@ export class AsyncToolCoordinator {
     });
   }
 
+  /** Resolves on the next completion or settle; `waitForIdle` races it against the heartbeat. */
   private nextStateChange(): Promise<void> {
     return new Promise((resolve) => {
       this.waiters.add(resolve);
     });
   }
 
+  /** Wakes every `nextStateChange` waiter. */
   private notifyCompletion(): void {
     for (const waiter of this.waiters) {
       waiter();
@@ -312,6 +325,7 @@ export class AsyncToolCoordinator {
   }
 }
 
+/** Formats an async tool result as the user message injected into the parent; used by the drains and by the handler's continuation run. */
 export function completionToParentMessage(
   completion: AsyncToolCompletion,
 ): UserModelMessage {
@@ -340,6 +354,7 @@ export function completionToParentMessage(
   };
 }
 
+/** Rewrites a binary or URL file part into its JSON form (base64 or href) so it can be stored in Convex. */
 function canonicalizeAsyncToolContentPart(part: unknown): unknown {
   if (
     !isRecord(part) ||
@@ -384,6 +399,7 @@ function canonicalizeAsyncToolContentPart(part: unknown): unknown {
   return part;
 }
 
+/** Canonicalizes each part of a `content` tool output before `runToolCall` stores it. */
 function canonicalizeAsyncToolOutput(output: unknown): unknown {
   if (
     !isRecord(output) ||
@@ -399,6 +415,7 @@ function canonicalizeAsyncToolOutput(output: unknown): unknown {
   };
 }
 
+/** Renders a tool input as text for the injected parent message. */
 function formatUnknown(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -410,6 +427,7 @@ function formatUnknown(value: unknown): string {
   }
 }
 
+/** Loose object guard for the tool output canonicalizers. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
@@ -424,6 +442,7 @@ function pendingResultText(resultId: string, status: string): string {
   ].join("\n");
 }
 
+/** Awaits a tool's output; for a streaming tool, keeps only the last chunk. */
 async function resolveToolOutput(
   output: ReturnType<ToolExecute>,
 ): Promise<unknown> {

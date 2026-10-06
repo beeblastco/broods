@@ -25,18 +25,23 @@ import {
 import { logWarn } from "../../discord-forwarder/src/log.ts";
 import type { MatrixClient, RoomEvent, SyncResponse } from "./matrix.ts";
 
+/** How long a room found unencrypted stays so before it is asked again. */
+const PLAIN_ROOM_TTL_MS = 60_000;
+
 type OutgoingRequest = Awaited<
   ReturnType<OlmMachine["outgoingRequests"]>
 >[number];
 
 export class RoomCrypto {
   private readonly client: MatrixClient;
-  private readonly encryptedRooms = new Set<string>();
+  /** Room id to whether it is encrypted, and until when that answer holds. */
+  private readonly encryption = new Map<
+    string,
+    { encrypted: boolean; expiresMs: number }
+  >();
   private readonly machine: OlmMachine;
   /** OlmMachine wants one key claim and one outgoing-request flush at a time. */
   private queue: Promise<unknown> = Promise.resolve();
-  /** Room id to its joined members, dropped when a sync reports device changes. */
-  private readonly roomMembers = new Map<string, string[]>();
 
   private constructor(client: MatrixClient, machine: OlmMachine) {
     this.client = client;
@@ -84,29 +89,36 @@ export class RoomCrypto {
     return { ...event, content: plaintext.content, type: plaintext.type };
   }
 
-  /** Shares the room key with every joined member's devices, then returns `m.room.encrypted` content. */
+  /**
+   * Shares the room key with every joined member's devices, then returns
+   * `m.room.encrypted` content. `signal` bounds every homeserver call on the way.
+   */
   async encrypt(
     roomId: string,
     type: string,
     content: Record<string, unknown>,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    // Fetched outside the lock: a member list is the homeserver's, not the
-    // machine's, so holding the store for it stalls every other room.
-    const joined = await this.members(roomId);
+    // Fetched on every send, never cached: the sync filter drops membership
+    // events, so a cached list would keep sharing keys with someone who left.
+    // Outside the lock, because holding the store for it stalls every room.
+    const joined = await this.client.joinedMembers(roomId, signal);
 
     return this.exclusive(async (): Promise<Record<string, unknown>> => {
-      const members = joined.map((userId): UserId => new UserId(userId));
+      // The lock can be held by a sync's flush for longer than the deadline.
+      signal.throwIfAborted();
+      const members = toUserIds([...joined.keys()]);
       const room = new RoomId(roomId);
       await this.machine.updateTrackedUsers(members);
-      await this.flushOutgoing();
+      await this.flushOutgoing(signal);
       const claim = await this.machine.getMissingSessions(members);
-      if (claim !== null) await this.send(claim);
+      if (claim !== null) await this.send(claim, signal);
       for (const request of await this.machine.shareRoomKey(
         room,
         members,
         new EncryptionSettings(),
       )) {
-        await this.send(request);
+        await this.send(request, signal);
       }
       const ciphertext: Record<string, unknown> = JSON.parse(
         await this.machine.encryptRoomEvent(
@@ -120,11 +132,20 @@ export class RoomCrypto {
     });
   }
 
-  /** Encryption cannot be turned off in a room, so only `true` is cached. */
-  async isEncrypted(roomId: string): Promise<boolean> {
-    if (this.encryptedRooms.has(roomId)) return true;
-    const encrypted = await this.client.roomEncrypted(roomId);
-    if (encrypted) this.encryptedRooms.add(roomId);
+  /**
+   * Encryption cannot be turned off in a room, so `true` is kept for good.
+   * `false` is asked again after PLAIN_ROOM_TTL_MS, since a room can turn it on.
+   */
+  async isEncrypted(roomId: string, signal: AbortSignal): Promise<boolean> {
+    const cached = this.encryption.get(roomId);
+    if (cached !== undefined && cached.expiresMs > Date.now()) {
+      return cached.encrypted;
+    }
+    const encrypted = await this.client.roomEncrypted(roomId, signal);
+    this.encryption.set(roomId, {
+      encrypted: encrypted,
+      expiresMs: encrypted ? Infinity : Date.now() + PLAIN_ROOM_TTL_MS,
+    });
 
     return encrypted;
   }
@@ -141,16 +162,6 @@ export class RoomCrypto {
         response.device_one_time_keys_count ?? {},
         response.device_unused_fallback_key_types ?? [],
       );
-      // A user who joins an encrypted room arrives in `changed` and one who
-      // leaves arrives in `left`, so either list means a cached member list is
-      // stale. `left` matters most: `encrypt` hands that list to
-      // `shareRoomKey`, which would give a departed user the next room key.
-      if (
-        response.device_lists?.changed?.length ||
-        response.device_lists?.left?.length
-      ) {
-        this.roomMembers.clear();
-      }
       try {
         await this.flushOutgoing();
       } catch (error) {
@@ -169,25 +180,24 @@ export class RoomCrypto {
     return result;
   }
 
-  private async flushOutgoing(): Promise<void> {
+  /** Without `signal`, each request gets the client's own deadline. */
+  private async flushOutgoing(signal?: AbortSignal): Promise<void> {
     for (const request of await this.machine.outgoingRequests()) {
-      await this.send(request);
+      await this.send(request, signal);
     }
   }
 
-  /** Joined user ids, cached so a reply does not cost a round trip to list them. */
-  private async members(roomId: string): Promise<string[]> {
-    const cached = this.roomMembers.get(roomId);
-    if (cached) return cached;
-    const joined = [...(await this.client.joinedMembers(roomId)).keys()];
-    this.roomMembers.set(roomId, joined);
-
-    return joined;
-  }
-
-  private async send(request: OutgoingRequest): Promise<void> {
+  private async send(
+    request: OutgoingRequest,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const [method, path] = route(request);
-    const response = await this.client.rawRequest(method, path, request.body);
+    const response = await this.client.rawRequest(
+      method,
+      path,
+      request.body,
+      signal,
+    );
     await this.machine.markRequestAsSent(request.id, request.type, response);
   }
 }

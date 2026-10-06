@@ -4,6 +4,8 @@
  * safe for any Convex runtime). Keep S3-backed skill storage in model/skills.ts.
  */
 
+import { ClientError } from "./clientError";
+
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
@@ -23,7 +25,7 @@ export function validateSkillName(value: unknown): asserts value is string {
     value.includes("claude") ||
     /<[^>]*>/.test(value)
   ) {
-    throw new Error(
+    throw new ClientError(
       "Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words",
     );
   }
@@ -43,7 +45,7 @@ export function validateSkillDescription(
     value.length > MAX_SKILL_DESCRIPTION_LENGTH ||
     /<[^>]*>/.test(value)
   ) {
-    throw new Error(
+    throw new ClientError(
       "Skill description must be non-empty, max 1024 chars, and cannot contain XML tags",
     );
   }
@@ -57,7 +59,7 @@ export function validateSkillDescription(
  */
 export function normalizeBundlePath(value: string): string {
   if (typeof value !== "string") {
-    throw new Error("Skill file path must be a string");
+    throw new ClientError("Skill file path must be a string");
   }
 
   const trimmed = value.trim();
@@ -68,7 +70,7 @@ export function normalizeBundlePath(value: string): string {
     trimmed.includes("\0") ||
     trimmed.split("/").some((part) => part === ".." || part === "")
   ) {
-    throw new Error(`Invalid skill file path: ${value}`);
+    throw new ClientError(`Invalid skill file path: ${value}`);
   }
 
   return trimmed;
@@ -85,7 +87,7 @@ export function parseSkillMarkdown(markdown: string): {
 } {
   const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match?.[1]) {
-    throw new Error("SKILL.md must start with YAML frontmatter");
+    throw new ClientError("SKILL.md must start with YAML frontmatter");
   }
 
   const frontmatter = parseSimpleYamlFrontmatter(match[1]);
@@ -120,15 +122,15 @@ export function parseGitHubSkillUrl(value: unknown): {
   archiveUrl: string;
 } {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("url must be a non-empty string");
+    throw new ClientError("url must be a non-empty string");
   }
 
   const url = new URL(value.trim());
   if (url.protocol !== "https:" || url.hostname !== "github.com") {
-    throw new Error("GitHub skill URL must use https://github.com");
+    throw new ClientError("GitHub skill URL must use https://github.com");
   }
   if (/%2e/i.test(value.trim()) || value.trim().includes("..")) {
-    throw new Error(
+    throw new ClientError(
       "Invalid skill file path: GitHub URL must not contain path traversal",
     );
   }
@@ -137,7 +139,7 @@ export function parseGitHubSkillUrl(value: unknown): {
     .split("/")
     .filter(Boolean);
   if (!owner || !repo || kind !== "tree" || !ref) {
-    throw new Error(
+    throw new ClientError(
       "GitHub skill URL must be https://github.com/{owner}/{repo}/tree/{ref}/{path}",
     );
   }
@@ -199,6 +201,6 @@ function stripYamlScalarQuotes(value: string): string {
  */
 function assertSafeGitHubSegment(value: string, name: string): void {
   if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
-    throw new Error(`GitHub ${name} contains unsupported characters`);
+    throw new ClientError(`GitHub ${name} contains unsupported characters`);
   }
 }

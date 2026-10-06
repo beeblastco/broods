@@ -2,13 +2,7 @@
  * Transactional persistence for the core runtime.
  */
 
-import {
-  getConvexSize,
-  type Infer,
-  type ObjectType,
-  v,
-  type Value,
-} from "convex/values";
+import { getConvexSize, type Infer, v, type Value } from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -23,6 +17,11 @@ import {
   runtimeAsyncToolResultsFields,
   sandboxProviderValidator,
 } from "./schema";
+import {
+  accountIdFromKey,
+  requireActiveAccount,
+  requireActiveKeyAccount,
+} from "./model/activeAccount";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 // Bytes and not rows bound a page: the per-query read limit counts bytes, and
@@ -45,13 +44,19 @@ const RUNTIME_DELETE_BATCH_SIZE = 100;
 // without deleting the sandbox first strands the machine.
 export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
 
-// `events` is a whole step in one write. `cursor` + `event` is the single-event
-// shape core sent before it batched, kept until that core has rolled out.
-export const conversationEventArgs = {
-  cursor: v.optional(v.string()),
-  event: v.optional(v.any()),
-  events: v.optional(v.array(v.object({ cursor: v.string(), event: v.any() }))),
-};
+/** A whole step's history rows in one write, in cursor order. */
+export const conversationEventsValidator = v.array(
+  v.object({ cursor: v.string(), event: v.any() }),
+);
+
+/** How an async run ended, or what it waits on, as its polling row records it. */
+export const asyncAgentOutcomeValidator = v.object({
+  status: runtimeAsyncAgentResultsFields.status,
+  response: v.optional(v.any()),
+  error: v.optional(v.string()),
+  approvals: v.optional(v.array(v.any())),
+  questions: v.optional(v.array(v.any())),
+});
 
 const asyncAgentDoc = v.object({
   ...runtimeAsyncAgentResultsFields,
@@ -70,19 +75,21 @@ const asyncToolDoc = v.object({
   _creationTime: v.number(),
 });
 
-const toolGroupDoc = v.object({
-  accountId: v.string(),
-  parentEventId: v.string(),
-  resultIds: v.array(v.string()),
-  sealed: v.boolean(),
-  expiresAt: v.number(),
-  _id: v.id("runtimeAsyncToolGroups"),
-  _creationTime: v.number(),
-});
-
 const sandboxReservationSummary = v.object({
   ...reservedSandboxValidator.fields,
-  accountId: v.string(),
+  accountId: v.id("accounts"),
+  ttlSeconds: v.optional(v.number()),
+});
+
+const sandboxReleaseTarget = v.object({
+  externalId: v.union(v.string(), v.null()),
+  instance: v.union(
+    v.object({
+      ownCredentials: v.boolean(),
+      sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+    }),
+    v.null(),
+  ),
 });
 
 interface SandboxReservationPage {
@@ -152,35 +159,14 @@ export const releaseClaim = internalMutation({
 });
 
 /**
- * The events either accepted arg shape carries, in the order given.
- * @throws when the call carries no event at all
- */
-export function conversationEventsFromArgs(
-  args: ObjectType<typeof conversationEventArgs>,
-): { cursor: string; event: unknown }[] {
-  const entries = [
-    ...(args.events ?? []),
-    ...(args.cursor !== undefined
-      ? [{ cursor: args.cursor, event: args.event }]
-      : []),
-  ];
-  if (entries.length === 0) {
-    throw new Error("No conversation events given");
-  }
-
-  return entries;
-}
-
-/**
  * @returns null after the events are persisted
  */
 export const appendConversationEvent = internalMutation({
-  args: { conversationKey: v.string(), ...conversationEventArgs },
+  args: { conversationKey: v.string(), events: conversationEventsValidator },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
-    for (const entry of conversationEventsFromArgs(args)) {
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
+    for (const entry of args.events) {
       await ctx.db.insert("runtimeConversationEvents", {
         accountId: accountId,
         conversationKey: args.conversationKey,
@@ -251,6 +237,7 @@ export const getHarnessSession = internalQuery({
       ),
       sessionId: v.string(),
       resumeState: v.any(),
+      reservationKey: v.optional(v.string()),
     }),
     v.null(),
   ),
@@ -274,6 +261,7 @@ export const getHarnessSession = internalQuery({
       harnessType: row.harnessType,
       sessionId: row.sessionId,
       resumeState: row.resumeState,
+      reservationKey: row.reservationKey,
     };
   },
 });
@@ -290,11 +278,11 @@ export const saveHarnessSession = internalMutation({
     ),
     sessionId: v.string(),
     resumeState: v.any(),
+    reservationKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
     const serializedResumeState = JSON.stringify(args.resumeState);
     if (serializedResumeState === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
@@ -319,6 +307,7 @@ export const saveHarnessSession = internalMutation({
       harnessType: args.harnessType,
       sessionId: args.sessionId,
       resumeState: args.resumeState,
+      reservationKey: args.reservationKey,
       updatedAt: Date.now(),
     };
     if (existing) {
@@ -345,7 +334,7 @@ export const clearConversation = internalMutation({
     ctx,
     args,
   ): Promise<{ deleted: number; hasMore: boolean }> => {
-    await requireActiveAccount(ctx, accountIdFromKey(args.conversationKey));
+    await requireActiveKeyAccount(ctx, args.conversationKey);
     const rows = await ctx.db
       .query("runtimeConversationEvents")
       .withIndex("by_conversationKey_and_cursor", (q) =>
@@ -377,8 +366,7 @@ export const createAsyncAgentResult = internalMutation({
   args: { eventId: v.string(), conversationKey: v.string() },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
     const existing = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
@@ -415,41 +403,53 @@ export const getAsyncAgentResult = internalQuery({
 });
 
 /**
+ * Records an async run's outcome on its polling row. Used by subagents and by
+ * async runs without a live ingress owner; `runtimeIngress.settle` writes the
+ * same row in the envelope's transaction.
  * @returns null after the result is updated
  */
 export const updateAsyncAgentResult = internalMutation({
-  args: {
-    eventId: v.string(),
-    status: runtimeAsyncAgentResultsFields.status,
-    response: v.optional(v.any()),
-    error: v.optional(v.string()),
-    approvals: v.optional(v.array(v.any())),
-    questions: v.optional(v.array(v.any())),
-  },
+  args: { eventId: v.string(), ...asyncAgentOutcomeValidator.fields },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .unique();
-    if (!row) throw new Error("Async agent result not found");
-    await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, {
-      status: args.status,
-      response: args.response,
-      error: args.error,
-      approvals: args.approvals,
-      questions: args.questions,
-      updatedAt: new Date().toISOString(),
-      expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
-    });
+    if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
+      throw new Error("Async agent result not found");
+    }
 
     return null;
   },
 });
 
 /**
- * Creates an async tool row and registers it in its fan-in group atomically.
+ * Patches the polling row for `eventId` with a run's outcome.
+ * @returns false when the row no longer exists
+ */
+export async function writeAsyncAgentResult(
+  ctx: MutationCtx,
+  eventId: string,
+  outcome: Infer<typeof asyncAgentOutcomeValidator>,
+): Promise<boolean> {
+  const row = await ctx.db
+    .query("runtimeAsyncAgentResults")
+    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+    .unique();
+  if (!row) return false;
+  await requireActiveAccount(ctx, row.accountId);
+  await ctx.db.patch(row._id, {
+    status: outcome.status,
+    response: outcome.response,
+    error: outcome.error,
+    approvals: outcome.approvals,
+    questions: outcome.questions,
+    updatedAt: new Date().toISOString(),
+    expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
+  });
+
+  return true;
+}
+
+/**
+ * Creates an async tool row.
  * @returns whether a new result row was created
  */
 export const createAsyncToolResult = internalMutation({
@@ -462,13 +462,10 @@ export const createAsyncToolResult = internalMutation({
     input: v.any(),
     delivery: v.optional(v.any()),
     completionToken: v.optional(v.string()),
-    // A group of exactly one row can be sealed on insert.
-    sealed: v.optional(v.boolean()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
     const existing = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
@@ -476,19 +473,8 @@ export const createAsyncToolResult = internalMutation({
     if (existing) {
       return false;
     }
-    const group = args.delivery
-      ? await ctx.db
-          .query("runtimeAsyncToolGroups")
-          .withIndex("by_parentEventId", (q) =>
-            q.eq("parentEventId", args.parentEventId),
-          )
-          .unique()
-      : null;
-    if (group?.sealed) {
-      throw new Error("Cannot register an async tool result in a sealed group");
-    }
     const now = new Date().toISOString();
-    const { completionToken, sealed, ...persistedArgs } = args;
+    const { completionToken, ...persistedArgs } = args;
     await ctx.db.insert("runtimeAsyncToolResults", {
       accountId: accountId,
       ...persistedArgs,
@@ -500,22 +486,6 @@ export const createAsyncToolResult = internalMutation({
       updatedAt: now,
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
-    if (args.delivery) {
-      if (group && !group.resultIds.includes(args.resultId))
-        await ctx.db.patch(group._id, {
-          resultIds: [...group.resultIds, args.resultId],
-          ...(sealed ? { sealed: true } : {}),
-          expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
-        });
-      else if (!group)
-        await ctx.db.insert("runtimeAsyncToolGroups", {
-          accountId: accountId,
-          parentEventId: args.parentEventId,
-          resultIds: [args.resultId],
-          sealed: sealed === true,
-          expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
-        });
-    }
 
     return true;
   },
@@ -583,23 +553,6 @@ export const getAsyncToolToken = internalQuery({
 });
 
 /**
- * @returns the public sibling result documents
- */
-export const listAsyncToolResults = internalQuery({
-  args: { parentEventId: v.string() },
-  returns: v.array(asyncToolDoc),
-  handler: async (ctx, args) =>
-    (
-      await ctx.db
-        .query("runtimeAsyncToolResults")
-        .withIndex("by_parentEventId", (q) =>
-          q.eq("parentEventId", args.parentEventId),
-        )
-        .take(1000)
-    ).map(hideCompletionTokenHash),
-});
-
-/**
  * Lists the still-processing rows one tool left on a conversation, oldest
  * first. The ask_questions intake reads this to find the prompt a reply answers.
  * @returns the public result documents still waiting to settle
@@ -622,45 +575,6 @@ export const listPendingAsyncToolResults = internalQuery({
 });
 
 /**
- * @returns the fan-in group or null when it does not exist
- */
-export const getAsyncToolGroup = internalQuery({
-  args: { parentEventId: v.string() },
-  returns: v.union(toolGroupDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"runtimeAsyncToolGroups"> | null> =>
-    await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_parentEventId", (q) =>
-        q.eq("parentEventId", args.parentEventId),
-      )
-      .unique(),
-});
-
-/**
- * Seals a fan-in group after every sibling has been registered.
- * @returns the sealed group or null when it does not exist
- */
-export const sealAsyncToolGroup = internalMutation({
-  args: { parentEventId: v.string() },
-  returns: v.union(toolGroupDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"runtimeAsyncToolGroups"> | null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_parentEventId", (q) =>
-        q.eq("parentEventId", args.parentEventId),
-      )
-      .unique();
-    if (!row) {
-      return null;
-    }
-    await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, { sealed: true });
-
-    return { ...row, sealed: true };
-  },
-});
-
-/**
  * Settles or observes an async tool row with optional processing-only CAS
  * semantics.
  * @returns the updated public row, or null when the conditional update is rejected
@@ -671,7 +585,6 @@ export const updateAsyncToolResult = internalMutation({
     status: runtimeAsyncToolResultsFields.status,
     response: v.optional(v.any()),
     error: v.optional(v.string()),
-    observed: v.optional(v.boolean()),
     onlyWhenProcessing: v.optional(v.boolean()),
   },
   returns: v.union(asyncToolDoc, v.null()),
@@ -695,26 +608,40 @@ export const updateAsyncToolResult = internalMutation({
             response: undefined,
             error: REPLACED_SANDBOX_ERROR,
           }
-        : {
-            status: args.status,
-            response:
-              args.observed !== undefined && args.response === undefined
-                ? row.response
-                : args.response,
-            error:
-              args.observed !== undefined && args.error === undefined
-                ? row.error
-                : args.error,
-          };
+        : { status: args.status, response: args.response, error: args.error };
     const patch = {
       ...outcome,
-      observed: args.observed ?? row.observed,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     };
     await ctx.db.patch(row._id, patch);
 
     return hideCompletionTokenHash({ ...row, ...patch });
+  },
+});
+
+/**
+ * Marks a finished async tool row observed, so its result is not delivered
+ * again. A row still running is left alone.
+ * @returns null after the row is marked or skipped
+ */
+export const observeAsyncToolResult = internalMutation({
+  args: { resultId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
+      .unique();
+    if (!row || row.status === "processing") return null;
+    await requireActiveAccount(ctx, row.accountId);
+    await ctx.db.patch(row._id, {
+      observed: true,
+      updatedAt: new Date().toISOString(),
+      expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
+    });
+
+    return null;
   },
 });
 
@@ -735,6 +662,64 @@ export const getSandboxReservation = internalQuery({
         )
         .unique()
     )?.externalId ?? null,
+});
+
+/**
+ * What a release needs to pick credentials: the reserved machine, and the
+ * instance row's record of whose credentials it runs on and which config
+ * reserved it. The row is a best-effort mirror, so it is returned only while
+ * it still names `externalId`, or the reserved machine when none is given.
+ * With no reservation, the mirror row's own machine is the target.
+ * @returns the reserved provider id, or null, and the matching instance row, or null
+ */
+export const getSandboxReleaseTarget = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    provider: sandboxProviderValidator,
+    reservationKey: v.string(),
+    externalId: v.optional(v.string()),
+  },
+  returns: sandboxReleaseTarget,
+  handler: async (ctx, args): Promise<Infer<typeof sandboxReleaseTarget>> => {
+    const reservation = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    const instances = (
+      await ctx.db
+        .query("sandboxInstances")
+        .withIndex("by_reservationKey", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .collect()
+    ).filter(
+      (row) =>
+        row.accountId === args.accountId && row.provider === args.provider,
+    );
+    // A mirror row a failed teardown left behind still names its machine.
+    const externalId =
+      args.externalId ??
+      (reservation?.accountId === args.accountId
+        ? reservation.externalId
+        : instances[0]?.externalId) ??
+      null;
+    if (!externalId) return { externalId: null, instance: null };
+    const instance = instances.find((row) => row.externalId === externalId);
+
+    return {
+      externalId: externalId,
+      instance: instance
+        ? {
+            ownCredentials: instance.ownCredentials === true,
+            sandboxConfigId: instance.sandboxConfigId,
+          }
+        : null,
+    };
+  },
 });
 
 /**
@@ -794,6 +779,7 @@ export const listExpiredSandboxReservations = internalQuery({
       provider: row.provider,
       reservationKey: row.reservationKey,
       externalId: row.externalId,
+      ttlSeconds: row.ttlSeconds,
     }));
   },
 });
@@ -886,7 +872,8 @@ export const claimSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
-    accountId: v.string(),
+    accountId: v.id("accounts"),
+    ttlSeconds: v.optional(v.number()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -905,9 +892,12 @@ export const claimSandboxReservation = internalMutation({
       return false;
     }
     await ctx.db.insert("sandboxReservations", {
-      ...args,
-      expiresAt:
-        Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
+      accountId: args.accountId,
+      provider: args.provider,
+      reservationKey: args.reservationKey,
+      externalId: args.externalId,
+      expiresAt: reservationExpiresAt(args.ttlSeconds),
+      ttlSeconds: args.ttlSeconds,
     });
 
     return true;
@@ -925,7 +915,8 @@ export const saveSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
-    accountId: v.string(),
+    accountId: v.id("accounts"),
+    ttlSeconds: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -946,8 +937,7 @@ export const saveSandboxReservation = internalMutation({
       return null;
     }
     await ctx.db.patch(row._id, {
-      expiresAt:
-        Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
+      expiresAt: reservationExpiresAt(args.ttlSeconds ?? row.ttlSeconds),
     });
 
     return null;
@@ -963,7 +953,7 @@ export const saveSandboxReservation = internalMutation({
  */
 export const deferSandboxReservations = internalMutation({
   args: {
-    accountId: v.string(),
+    accountId: v.id("accounts"),
     reservations: v.array(
       v.object({
         provider: sandboxProviderValidator,
@@ -973,8 +963,6 @@ export const deferSandboxReservations = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    const expiresAt =
-      Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS;
     let deferred = 0;
     for (const reservation of args.reservations) {
       const row = await ctx.db
@@ -986,7 +974,9 @@ export const deferSandboxReservations = internalMutation({
         )
         .unique();
       if (!row || row.accountId !== args.accountId) continue;
-      await ctx.db.patch(row._id, { expiresAt: expiresAt });
+      await ctx.db.patch(row._id, {
+        expiresAt: reservationExpiresAt(row.ttlSeconds),
+      });
       deferred += 1;
     }
 
@@ -1009,7 +999,7 @@ export const deleteSandboxReservation = internalMutation({
     reservationKey: v.string(),
     expectedExternalId: v.optional(v.string()),
     onlyExpired: v.optional(v.boolean()),
-    accountId: v.string(),
+    accountId: v.id("accounts"),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -1046,7 +1036,7 @@ export const deleteSandboxReservation = internalMutation({
  * Every table reached here is keyed by the account-and-agent scoped
  * conversation key, which lets each read be a prefix range over that key rather
  * than a scan of the account's rows. Tables with no conversation key
- * (`runtimeClaims`, async tool groups, sandbox reservations) stay with
+ * (`runtimeClaims`, sandbox reservations) stay with
  * `deleteAccountRuntimeData`: they carry no agent, so no prefix identifies them.
  *
  * Like the account purge, this accepts an agent that is already gone: the caller
@@ -1055,7 +1045,7 @@ export const deleteSandboxReservation = internalMutation({
  */
 export const deleteAgentRuntimeData = internalMutation({
   args: {
-    accountId: v.string(),
+    accountId: v.id("accounts"),
     agentId: v.string(),
   },
   returns: v.object({
@@ -1087,7 +1077,7 @@ export const deleteAgentRuntimeData = internalMutation({
       .take(RUNTIME_DELETE_BATCH_SIZE);
     const ingressRows = await ctx.db
       .query("runtimeIngressEnvelopes")
-      .withIndex("by_conversationKey_and_sequence", (q) =>
+      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
         q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
       )
       .take(RUNTIME_DELETE_BATCH_SIZE);
@@ -1111,7 +1101,7 @@ export const deleteAgentRuntimeData = internalMutation({
       .take(RUNTIME_DELETE_BATCH_SIZE);
     const asyncToolRows = await ctx.db
       .query("runtimeAsyncToolResults")
-      .withIndex("by_conversationKey", (q) =>
+      .withIndex("by_conversationKey_and_toolName_and_status", (q) =>
         q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
       )
       .take(RUNTIME_DELETE_BATCH_SIZE);
@@ -1171,13 +1161,12 @@ export const deleteAgentRuntimeData = internalMutation({
  * @returns per-table deletion counts and their total
  */
 export const deleteAccountRuntimeData = internalMutation({
-  args: { accountId: v.string() },
+  args: { accountId: v.id("accounts") },
   returns: v.object({
     conversationsDeleted: v.number(),
     processedEventsDeleted: v.number(),
     asyncAgentResultDeleted: v.number(),
     asyncToolResultDeleted: v.number(),
-    asyncToolGroupDeleted: v.number(),
     harnessSessionDeleted: v.number(),
     sandboxReservationDeleted: v.number(),
     totalDeleted: v.number(),
@@ -1197,7 +1186,9 @@ export const deleteAccountRuntimeData = internalMutation({
       .take(100);
     const ingressRows = await ctx.db
       .query("runtimeIngressEnvelopes")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .withIndex("by_accountId_and_runId", (q) =>
+        q.eq("accountId", args.accountId),
+      )
       .take(100);
     const applicationRows = await ctx.db
       .query("runtimeIngressApplications")
@@ -1215,10 +1206,6 @@ export const deleteAccountRuntimeData = internalMutation({
       .query("runtimeAsyncToolResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .take(100);
-    const groupRows = await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-      .take(100);
     const reservationRows = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -1232,7 +1219,6 @@ export const deleteAccountRuntimeData = internalMutation({
       ...harnessSessionRows,
       ...agentRows,
       ...toolRows,
-      ...groupRows,
       ...reservationRows,
     ])
       await ctx.db.delete(row._id);
@@ -1246,7 +1232,6 @@ export const deleteAccountRuntimeData = internalMutation({
         applicationRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
-      asyncToolGroupDeleted: groupRows.length,
       harnessSessionDeleted: harnessSessionRows.length,
       sandboxReservationDeleted: reservationRows.length,
       totalDeleted:
@@ -1258,7 +1243,6 @@ export const deleteAccountRuntimeData = internalMutation({
         harnessSessionRows.length +
         agentRows.length +
         toolRows.length +
-        groupRows.length +
         reservationRows.length,
     };
   },
@@ -1288,16 +1272,10 @@ export const pruneExpired = internalMutation({
       .query("runtimeAsyncToolResults")
       .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
       .take(100);
-    const groups = await ctx.db
-      .query("runtimeAsyncToolGroups")
-      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
-      .take(100);
-    const rows = [...claims, ...agentResults, ...toolResults, ...groups];
+    const rows = [...claims, ...agentResults, ...toolResults];
     for (const row of rows) await ctx.db.delete(row._id);
     if (
-      [claims, agentResults, toolResults, groups].some(
-        (batch) => batch.length === 100,
-      )
+      [claims, agentResults, toolResults].some((batch) => batch.length === 100)
     ) {
       await ctx.scheduler.runAfter(0, internal.runtime.pruneExpired, {});
     }
@@ -1305,18 +1283,6 @@ export const pruneExpired = internalMutation({
     return rows.length;
   },
 });
-
-/**
- * @param value account-scoped runtime key
- * @returns embedded account ID
- * @throws when the key has no valid account prefix
- */
-function accountIdFromKey(value: string): string {
-  const match = /^acct:([^:]+):/.exec(value);
-  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
-
-  return match[1];
-}
 
 /**
  * @param accountId owning account ID
@@ -1355,22 +1321,24 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
 }
 
 /**
+ * The idle deadline a claim or refresh writes. Core passes a shorter window for a
+ * sandbox only one conversation uses; it never extends past the default.
+ */
+function reservationExpiresAt(ttlSeconds: number | undefined): number {
+  const ttl = Math.min(
+    Math.max(ttlSeconds ?? SANDBOX_RESERVATION_TTL_SECONDS, 60),
+    SANDBOX_RESERVATION_TTL_SECONDS,
+  );
+
+  return Math.floor(Date.now() / 1000) + ttl;
+}
+
+/**
  * Requires an account to exist and remain active in the runtime-write transaction.
  * @param ctx Convex mutation context
  * @param accountId account ID embedded in the runtime row or key
  * @throws when the account is missing, disabled, or malformed
  */
-async function requireActiveAccount(
-  ctx: MutationCtx,
-  accountId: string,
-): Promise<void> {
-  const normalized = ctx.db.normalizeId("accounts", accountId);
-  const account = normalized ? await ctx.db.get(normalized) : null;
-  if (!account || account.status !== "active") {
-    throw new Error(`Account is not active: ${accountId}`);
-  }
-}
-
 async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,

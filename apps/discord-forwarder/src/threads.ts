@@ -20,14 +20,16 @@ import {
   type DiscordChannel,
   type ForwardedThread,
 } from "./discord.ts";
-import { logWarn, tokenHint } from "./log.ts";
+
+// Oldest entries are evicted past this, so a bot in many busy guilds cannot grow
+// the cache without bound.
+const MAX_CACHED_CHANNELS = 10_000;
 
 export class ThreadDirectory {
   private readonly botToken: string;
   // Channel types never change, so one resolved answer holds for the life of
   // the process. Failed lookups are not cached, so a rate limit self-heals.
   private readonly cache = new Map<string, ForwardedThread | null>();
-  private readonly hint: string;
   // Lookups already in the air, so a burst of messages in one uncached thread
   // shares a single request instead of racing to make the same one. The cache
   // alone cannot do this: it is only written once the response has landed, which
@@ -39,10 +41,13 @@ export class ThreadDirectory {
 
   constructor(botToken: string) {
     this.botToken = botToken;
-    this.hint = tokenHint(botToken);
   }
 
-  /** The thread `channelId` is, or null when it is an ordinary channel. */
+  /**
+   * The thread `channelId` is, or null when it is an ordinary channel. Rejects
+   * when Discord will not say, so the caller drops the message rather than
+   * forward it keyed to the parent-less conversation.
+   */
   async resolve(channelId: string): Promise<ForwardedThread | null> {
     const cached = this.cache.get(channelId);
     if (cached !== undefined) return cached;
@@ -57,41 +62,42 @@ export class ThreadDirectory {
     return lookup;
   }
 
-  // Answers null on any failure rather than throwing: this runs inside a socket
-  // event handler, where an escaping rejection would take the process down and
-  // turn one bad lookup into a restart that spends IDENTIFY budget.
+  /** Retries once after the wait a 429 names, and throws on any other failure. */
   private async fetchChannel(
     channelId: string,
-  ): Promise<DiscordChannel | null> {
-    let detail: string;
-    try {
-      const response = await fetch(`${DISCORD_API_URL}/channels/${channelId}`, {
-        headers: { Authorization: `Bot ${this.botToken}` },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (response.ok) return (await response.json()) as DiscordChannel;
-      detail = `HTTP ${response.status}`;
-    } catch (error) {
-      detail = error instanceof Error ? error.message : String(error);
-    }
-    logWarn("Discord channel lookup failed", {
-      channelId: channelId,
-      detail: detail,
-      tokenHint: this.hint,
+    retried = false,
+  ): Promise<DiscordChannel> {
+    const response = await fetch(`${DISCORD_API_URL}/channels/${channelId}`, {
+      headers: { Authorization: `Bot ${this.botToken}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    if (response.ok) return (await response.json()) as DiscordChannel;
+    if (response.status === 429 && !retried) {
+      // Seconds, possibly fractional. Capped so one lookup cannot hold a
+      // message for as long as a global rate limit lasts.
+      const retryAfterSeconds =
+        Number(response.headers.get("retry-after")) || 1;
+      await Bun.sleep(Math.min(FETCH_TIMEOUT_MS, retryAfterSeconds * 1_000));
 
-    return null;
+      return this.fetchChannel(channelId, true);
+    }
+
+    throw new Error(
+      `Discord channel ${channelId} lookup failed: HTTP ${response.status}`,
+    );
   }
 
-  /** Resolves and caches, or answers null without caching when the call failed. */
+  /** Resolves and caches; a failed lookup rejects and caches nothing. */
   private async lookup(channelId: string): Promise<ForwardedThread | null> {
     const channel = await this.fetchChannel(channelId);
-    if (!channel) return null;
-
     const thread =
       THREAD_CHANNEL_TYPES.has(channel.type) && channel.parent_id
         ? { id: channel.id, parent_id: channel.parent_id }
         : null;
+    if (this.cache.size >= MAX_CACHED_CHANNELS) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) this.cache.delete(oldest);
+    }
     this.cache.set(channelId, thread);
 
     return thread;

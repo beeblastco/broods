@@ -1,5 +1,5 @@
 /**
- * Project + stage scoped runtime API keys (`fp_agent_…`).
+ * Project + stage scoped runtime keys (`bsk_…`).
  *
  * One key per stage invokes any deployed agent in it; the agent is chosen
  * per request by id. The dashboard surfaces the key/URLs; the CLI mints it on
@@ -8,26 +8,30 @@
  * recover it for dashboard streaming and CLI reconnect without rotating.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
+  internalMutation,
   internalQuery,
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from "../_generated/server";
-import { authKit } from "../auth";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "../model/agentConfigCodec";
+import { authKit, deriveName } from "../auth";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
-import { sha256Hex } from "../model/accountSecrets";
+import { accountDoc } from "../account/accounts";
+import {
+  randomToken,
+  RUNTIME_KEY_PREFIX,
+  sha256Hex,
+} from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
@@ -36,7 +40,15 @@ import {
   STAGE_SESSION_TICKET_TTL_MS,
 } from "../model/stageSessionTicket";
 
-export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
+/** A minted stage ticket plus the slugs the gateway's observability path uses. */
+export const stageSessionValidator = v.object({
+  token: v.string(),
+  expiresAt: v.number(),
+  projectSlug: v.string(),
+  stageSlug: v.string(),
+});
+
+export type StageSession = Infer<typeof stageSessionValidator>;
 
 /** Safe runtime deployment scope returned to core without stored credentials. */
 const agentDeploymentScopeValidator = v.object({
@@ -56,6 +68,16 @@ const ensureReturn = v.object({
   keyHint: v.string(),
   rawApiKey: v.string(),
 });
+
+/** The revealed runtime key plus who minted it and when it last authenticated a request. */
+const revealedKeyValidator = v.object({
+  apiKey: v.string(),
+  createdAt: v.optional(v.number()),
+  createdBy: v.optional(v.string()),
+  lastUsedAt: v.optional(v.number()),
+});
+
+export type RevealedKey = Infer<typeof revealedKeyValidator>;
 
 /** Public (hash-free) view of a stage deployment for the dashboard. */
 const stageDeploymentView = v.object({
@@ -100,6 +122,7 @@ export const ensureForStage = mutation({
       stageId: stageId,
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
+      createdBy: deriveName(authUser),
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
       accountId: context.account._id,
@@ -155,10 +178,14 @@ export const getByAgentId = internalQuery({
   },
 });
 
-/** Resolve a runtime API key hash to the account and scope it invokes. */
+/** Resolve a runtime key hash to the account and scope it invokes. */
 export const getByApiKeyHash = internalQuery({
   args: { apiKeyHash: v.string() },
-  returns: v.union(agentDeploymentScopeValidator, v.null()),
+  // The account rides along so core authenticates a runtime key in one call.
+  returns: v.union(
+    v.object({ ...agentDeploymentScopeValidator.fields, account: accountDoc }),
+    v.null(),
+  ),
   handler: async (ctx, { apiKeyHash }) => {
     const deployment = await ctx.db
       .query("agentDeployments")
@@ -176,6 +203,7 @@ export const getByApiKeyHash = internalQuery({
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
       stageSlug: deployment.stageSlug,
+      account: account,
     };
   },
 });
@@ -236,44 +264,66 @@ export const mintStageSession = mutation({
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
+    const session = await mintStageSessionTicket(ctx, projectId, stageId);
 
-    const deployment = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_projectId_and_stageId_and_status", (q) =>
-        q
-          .eq("projectId", projectId)
-          .eq("stageId", stageId)
-          .eq("status", "active"),
-      )
-      .first();
-    if (!deployment) return null;
-
-    const expiresAt = Date.now() + STAGE_SESSION_TICKET_TTL_MS;
-    const token = await sealStageSessionTicket(
-      {
-        accountId: deployment.accountId,
-        endpointId: deployment.endpointId,
-        projectSlug: deployment.projectSlug,
-        stageSlug: deployment.stageSlug,
-        expiresAt: expiresAt,
-      },
-      stageTicketSecret(),
-    );
-
-    return { token: token, expiresAt: expiresAt };
+    return session
+      ? { token: session.token, expiresAt: session.expiresAt }
+      : null;
   },
 });
 
 /**
+ * Seal a stage session ticket for the stage's active deployment. The caller
+ * has already checked the member may read that stage. Null before the first
+ * deploy. The slugs are what the gateway's observability path matches on.
+ */
+export async function mintStageSessionTicket(
+  ctx: QueryCtx,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+): Promise<StageSession | null> {
+  const deployment = await ctx.db
+    .query("agentDeployments")
+    .withIndex("by_projectId_and_stageId_and_status", (q) =>
+      q
+        .eq("projectId", projectId)
+        .eq("stageId", stageId)
+        .eq("status", "active"),
+    )
+    .first();
+  if (!deployment) return null;
+
+  const expiresAt = Date.now() + STAGE_SESSION_TICKET_TTL_MS;
+  const token = await sealStageSessionTicket(
+    {
+      accountId: deployment.accountId,
+      endpointId: deployment.endpointId,
+      projectSlug: deployment.projectSlug,
+      stageSlug: deployment.stageSlug,
+      expiresAt: expiresAt,
+    },
+    stageTicketSecret(),
+  );
+
+  return {
+    token: token,
+    expiresAt: expiresAt,
+    projectSlug: deployment.projectSlug,
+    stageSlug: deployment.stageSlug,
+  };
+}
+
+/**
  * Org admin only: decrypts the stage's stored runtime key so it can be copied
- * without re-minting. Returns null when the stage has no deployment yet, and
- * for members, who stream logs/traces through `mintStageSession` instead.
- * Reactive by design, so a freshly generated key appears without a reload.
+ * without re-minting, with its created and last-used metadata. Returns null
+ * when the stage has no deployment yet, and for members, who stream
+ * logs/traces through `mintStageSession` instead. Reactive by design, so a
+ * freshly generated key appears without a reload.
  */
 export const revealKeyForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
-  returns: v.union(v.string(), v.null()),
-  handler: async (ctx, { projectId, stageId }): Promise<string | null> => {
+  returns: v.union(revealedKeyValidator, v.null()),
+  handler: async (ctx, { projectId, stageId }): Promise<RevealedKey | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -291,7 +341,32 @@ export const revealKeyForStage = query({
       .first();
     if (!deployment) return null;
 
-    return decryptApiKey(deployment);
+    return {
+      apiKey: await decryptApiKey(ctx, deployment),
+      createdAt: deployment.createdAt,
+      createdBy: deployment.createdBy,
+      lastUsedAt: deployment.lastUsedAt,
+    };
+  },
+});
+
+/**
+ * Core calls this in the background after a runtime key authenticates a
+ * request, throttled per key in process, so it is not a write per request.
+ */
+export const touchLastUsed = internalMutation({
+  args: { apiKeyHash: v.string(), usedAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { apiKeyHash, usedAt }): Promise<null> => {
+    const deployment = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_apiKeyHash", (q) => q.eq("apiKeyHash", apiKeyHash))
+      .unique();
+    if (deployment && (deployment.lastUsedAt ?? 0) < usedAt) {
+      await ctx.db.patch(deployment._id, { lastUsedAt: usedAt });
+    }
+
+    return null;
   },
 });
 
@@ -322,6 +397,7 @@ export const rotate = mutation({
       stageId: stageId,
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
+      createdBy: deriveName(authUser),
       rotate: true,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
@@ -330,7 +406,7 @@ export const rotate = mutation({
       stageId: stageId,
       action: "key-rotated",
       endpointId: result.endpointId,
-      summary: "Stage runtime key rotated",
+      summary: "Runtime key rotated",
     });
 
     return toEnsureReturn(result);
@@ -351,6 +427,8 @@ export async function ensureStageDeployment(
     stageId: Id<"stages">;
     projectSlug: string;
     stageSlug: string;
+    /** Display name stamped on a newly minted or rotated key. */
+    createdBy?: string;
     rotate?: boolean;
   },
 ): Promise<EnsureResult> {
@@ -385,23 +463,23 @@ export async function ensureStageDeployment(
       projectSlug: args.projectSlug,
       stageSlug: args.stageSlug,
       keyHint: existing.keyHint,
-      rawApiKey: await decryptApiKey(existing),
+      rawApiKey: await decryptApiKey(ctx, existing),
     };
   }
 
-  const rawApiKey = generateDeploymentKey();
-  const apiKeyHash = await sha256Hex(rawApiKey);
-  const keyHint = deploymentKeyHint(rawApiKey);
-  const encryptedKey = await encryptApiKey(rawApiKey);
+  const rawApiKey = randomToken(RUNTIME_KEY_PREFIX);
+  const keyFields = await runtimeKeyFields(ctx, args.accountId, rawApiKey);
+  const keyHint = keyFields.keyHint;
   const now = Date.now();
 
   if (existing) {
     await ctx.db.patch(existing._id, {
-      apiKeyHash: apiKeyHash,
-      keyHint: keyHint,
-      ...encryptedKey,
+      ...keyFields,
       projectSlug: args.projectSlug,
       stageSlug: args.stageSlug,
+      createdAt: now,
+      createdBy: args.createdBy,
+      lastUsedAt: undefined,
       updatedAt: now,
     });
     await refreshAccountChannelEndpoints(ctx, args.accountId);
@@ -425,9 +503,9 @@ export async function ensureStageDeployment(
     endpointId: endpointId,
     projectSlug: args.projectSlug,
     stageSlug: args.stageSlug,
-    apiKeyHash: apiKeyHash,
-    keyHint: keyHint,
-    ...encryptedKey,
+    ...keyFields,
+    createdAt: now,
+    createdBy: args.createdBy,
     updatedAt: now,
   });
   await refreshAccountChannelEndpoints(ctx, args.accountId);
@@ -442,58 +520,56 @@ export async function ensureStageDeployment(
   };
 }
 
-async function decryptApiKey(deployment: {
-  apiKeyCiphertext: string;
-  apiKeyIv: string;
-  apiKeyTag: string;
-}): Promise<string> {
-  const decoded = await decryptAgentConfigBlob(
-    {
-      ciphertext: deployment.apiKeyCiphertext,
-      iv: deployment.apiKeyIv,
-      tag: deployment.apiKeyTag,
-    },
-    encryptionSecret(),
-  );
-  const value = (decoded as { value?: unknown } | null)?.value;
+/** Decrypt a deployment's stored runtime key. */
+async function decryptApiKey(
+  ctx: QueryCtx | MutationCtx,
+  deployment: {
+    accountId: Id<"accounts">;
+    apiKeyCiphertext: string;
+    apiKeyIv: string;
+    apiKeyTag: string;
+  },
+): Promise<string> {
+  const cipher = await accountCipher(ctx, deployment.accountId);
+  const decoded = await cipher.decrypt("agentDeployments:apiKeyCiphertext", {
+    ciphertext: deployment.apiKeyCiphertext,
+    iv: deployment.apiKeyIv,
+    tag: deployment.apiKeyTag,
+  });
+  const value = decoded?.value;
 
   if (typeof value !== "string")
-    throw new Error("Stored runtime API key is invalid");
+    throw new Error("Stored runtime key is invalid");
 
   return value;
 }
 
-function deploymentKeyHint(token: string): string {
-  return `${DEPLOYMENT_KEY_PREFIX}…${token.slice(-4)}`;
-}
-
-async function encryptApiKey(rawApiKey: string): Promise<{
-  apiKeyCiphertext: string;
-  apiKeyIv: string;
-  apiKeyTag: string;
-}> {
-  const blob = await encryptAgentConfigBlob(
-    { value: rawApiKey },
-    encryptionSecret(),
-  );
+/**
+ * The stored columns for a runtime key: its hash, masked hint and blob sealed
+ * under the account's key. Minting writes these.
+ */
+async function runtimeKeyFields(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  rawApiKey: string,
+): Promise<
+  Pick<
+    Doc<"agentDeployments">,
+    "apiKeyHash" | "keyHint" | "apiKeyCiphertext" | "apiKeyIv" | "apiKeyTag"
+  >
+> {
+  const cipher = await accountCipherForWrite(ctx, accountId);
+  const blob = await cipher.encrypt("agentDeployments:apiKeyCiphertext", {
+    value: rawApiKey,
+  });
 
   return {
+    apiKeyHash: await sha256Hex(rawApiKey),
+    keyHint: `${RUNTIME_KEY_PREFIX}…${rawApiKey.slice(-4)}`,
     apiKeyCiphertext: blob.ciphertext,
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,
   };
-}
-
-/** Secret for AES-GCM encrypting the runtime key at rest (shared with env vars). */
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime API keys",
-    );
-  }
-
-  return secret;
 }
 
 /** Stable opaque endpoint handle for a stage's runtime API. */
@@ -501,22 +577,10 @@ function endpointIdForStage(stageId: Id<"stages">): string {
   return `stage-${stageId.slice(-8)}`;
 }
 
-function generateDeploymentKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const base64url = btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-  return `${DEPLOYMENT_KEY_PREFIX}${base64url}`;
-}
-
 /** Record a dashboard deployment mutation without storing runtime keys. */
 async function recordDeploymentAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: {
     accountId: Id<"accounts">;
     projectId: Id<"projects">;
@@ -526,7 +590,7 @@ async function recordDeploymentAudit(
     summary: string;
   },
 ): Promise<void> {
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: input.accountId,
     projectId: input.projectId,
     stageId: input.stageId,

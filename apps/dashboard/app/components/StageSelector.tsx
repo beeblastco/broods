@@ -19,6 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import { FieldError } from "@/app/components/ui/field";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import {
@@ -30,6 +31,7 @@ import {
 } from "@/app/components/ui/select";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { useStage } from "@/app/hooks/useStage";
+import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -109,6 +111,8 @@ export function StageSelector(): React.JSX.Element | null {
   const [isCreating, setIsCreating] = useState(false);
   const [isInitializingProduction, setIsInitializingProduction] =
     useState(false);
+  // The last create or initialize failure, shown in whichever dialog is open.
+  const [error, setError] = useState<string | null>(null);
 
   const developmentStage = stages?.find(
     (stage) => stage.kind === "development",
@@ -125,22 +129,6 @@ export function StageSelector(): React.JSX.Element | null {
       ensureDefault({ projectId: projectId }).catch(console.error);
     }
   }, [projectId, stages, developmentStage, ensureDefault]);
-
-  // Auto-select the default stage when stages load or selection becomes invalid
-  useEffect(() => {
-    if (!stages || stages.length === 0) return;
-    const currentValid = stages.some((e: Doc<"stages">) => e._id === stageId);
-    if (!currentValid) {
-      const defaultStage =
-        stages.find(
-          (e: Doc<"stages">) => e.kind === "development" && e.isDefault,
-        ) ??
-        stages.find((e: Doc<"stages">) => e.kind === "development") ??
-        stages.find((e: Doc<"stages">) => e.isDefault) ??
-        stages[0];
-      setStageId(defaultStage._id);
-    }
-  }, [stages, stageId, setStageId]);
 
   if (!projectId) {
     return null;
@@ -161,6 +149,7 @@ export function StageSelector(): React.JSX.Element | null {
 
   function handleSelectStage(stage: Doc<"stages">): void {
     if (stage.kind === "production" && !stage.deploymentRegion) {
+      setError(null);
       setProductionOpen(true);
 
       return;
@@ -176,12 +165,14 @@ export function StageSelector(): React.JSX.Element | null {
       return;
     }
 
+    setError(null);
     setProductionOpen(true);
   }
 
   async function handleCreate(): Promise<void> {
     if (!newName.trim() || !projectId) return;
     setIsCreating(true);
+    setError(null);
     try {
       const newId = await createStage({
         projectId: projectId,
@@ -196,6 +187,8 @@ export function StageSelector(): React.JSX.Element | null {
       setNewName("");
       setCreateMode("empty");
       setDuplicateFromId(null);
+    } catch (err) {
+      setError(toErrorMessage(err));
     } finally {
       setIsCreating(false);
     }
@@ -206,6 +199,7 @@ export function StageSelector(): React.JSX.Element | null {
     const sourceStageId = developmentStage?._id;
     if (!sourceStageId) return;
     setIsInitializingProduction(true);
+    setError(null);
     try {
       const productionId = await initializeProduction({
         projectId: projectId,
@@ -214,6 +208,8 @@ export function StageSelector(): React.JSX.Element | null {
       });
       setStageId(productionId);
       setProductionOpen(false);
+    } catch (err) {
+      setError(toErrorMessage(err));
     } finally {
       setIsInitializingProduction(false);
     }
@@ -277,6 +273,7 @@ export function StageSelector(): React.JSX.Element | null {
                 className="cursor-pointer"
                 onClick={() => {
                   setDuplicateFromId(stageId);
+                  setError(null);
                   setCreateOpen(true);
                 }}
               >
@@ -383,6 +380,7 @@ export function StageSelector(): React.JSX.Element | null {
                   </Select>
                 </div>
               )}
+              <FieldError>{error}</FieldError>
             </div>
 
             <DialogFooter>
@@ -396,7 +394,7 @@ export function StageSelector(): React.JSX.Element | null {
               </Button>
               <Button
                 type="submit"
-                className="cursor-pointer disabled:cursor-not-allowed"
+                className="cursor-pointer"
                 disabled={
                   !newName.trim() ||
                   isCreating ||
@@ -451,6 +449,7 @@ export function StageSelector(): React.JSX.Element | null {
                 </button>
               ))}
             </div>
+            <FieldError>{error}</FieldError>
           </div>
 
           <DialogFooter>
@@ -464,7 +463,7 @@ export function StageSelector(): React.JSX.Element | null {
             </Button>
             <Button
               type="button"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={!developmentStage || isInitializingProduction}
               onClick={handleInitializeProduction}
             >

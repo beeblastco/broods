@@ -13,6 +13,7 @@
 import type { api } from "@broods/convex/_generated/api";
 import {
   agentEdgePoints,
+  ARROW_RUN,
   routeCanvasEdges,
   sideEdgePoints,
   type AgentEdgeRequest,
@@ -43,8 +44,10 @@ import {
 } from "@broods/convex/model/canvasLayout";
 import {
   applyNodeChanges,
+  getSmoothStepPath,
   type Edge,
   type EdgeChange,
+  type GetSmoothStepPathParams,
   type Node,
   type NodeChange,
   type XYPosition,
@@ -321,6 +324,22 @@ export function sideEdgePath(
     (from.x + to.x) / 2,
     (from.y + to.y) / 2,
   ];
+}
+
+/**
+ * Step path for an edge the router skipped, with the routed edges' corners and
+ * a last run long enough for the arrowhead to lie straight.
+ */
+export function stepEdgePath(
+  params: Omit<GetSmoothStepPathParams, "borderRadius" | "offset">,
+): [string, number, number] {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    ...params,
+    borderRadius: EDGE_CORNER_RADIUS,
+    offset: ARROW_RUN,
+  });
+
+  return [path, labelX, labelY];
 }
 
 function addBundle(

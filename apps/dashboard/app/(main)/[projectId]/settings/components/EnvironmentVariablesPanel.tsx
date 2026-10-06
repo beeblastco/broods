@@ -1,10 +1,12 @@
 "use client";
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
+import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -46,6 +48,7 @@ export function EnvironmentVariablesPanel({
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // Keyed by variable id. Every reveal is audited server-side.
   const [revealedState, setRevealedState] = useState<{
     stageId: Id<"stages"> | null;
@@ -92,6 +95,7 @@ export function EnvironmentVariablesPanel({
   async function handleAdd(): Promise<void> {
     if (!name.trim() || busy || !stageId) return;
     setBusy(true);
+    setError(null);
     try {
       await setVariable({
         projectId: projectId,
@@ -102,6 +106,8 @@ export function EnvironmentVariablesPanel({
       setName("");
       setValue("");
       setAdding(false);
+    } catch (err) {
+      setError(toErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -163,33 +169,42 @@ export function EnvironmentVariablesPanel({
               </code>
               {canWrite && (
                 <>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    className="shrink-0 cursor-pointer"
-                    title={
+                  <IconTooltip
+                    label={
                       revealed[v._id] !== undefined
-                        ? "Hide value"
-                        : "Reveal value"
+                        ? `Hide ${v.name}`
+                        : `Reveal ${v.name}`
                     }
-                    onClick={() => toggleReveal(v._id)}
                   >
-                    {revealed[v._id] !== undefined ? (
-                      <EyeOff className="size-3.5" />
-                    ) : (
-                      <Eye className="size-3.5" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted-destructive"
-                    className="shrink-0 cursor-pointer"
-                    onClick={() => setDeletingVar(v)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted"
+                      className="shrink-0 cursor-pointer"
+                      onClick={() =>
+                        toggleReveal(v._id).catch((err) =>
+                          setError(toErrorMessage(err)),
+                        )
+                      }
+                    >
+                      {revealed[v._id] !== undefined ? (
+                        <EyeOff className="size-3.5" />
+                      ) : (
+                        <Eye className="size-3.5" />
+                      )}
+                    </Button>
+                  </IconTooltip>
+                  <IconTooltip label={`Delete ${v.name}`}>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted-destructive"
+                      className="shrink-0 cursor-pointer"
+                      onClick={() => setDeletingVar(v)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </IconTooltip>
                 </>
               )}
             </div>
@@ -201,6 +216,7 @@ export function EnvironmentVariablesPanel({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="KEY_NAME"
+              aria-label="Variable name"
               className={cn(FIELD_CLASS, "md:text-xs")}
               autoFocus
             />
@@ -208,16 +224,14 @@ export function EnvironmentVariablesPanel({
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="value"
+              aria-label="Variable value"
               className={cn(FIELD_CLASS, "md:text-xs")}
             />
             <Button
               variant="ghost"
               size="icon-xs"
               tone="muted"
-              className={cn(
-                "shrink-0",
-                !name.trim() || busy ? "cursor-not-allowed" : "cursor-pointer",
-              )}
+              className="shrink-0 cursor-pointer"
               disabled={!name.trim() || busy}
               onClick={handleAdd}
               title="Add variable"
@@ -234,6 +248,7 @@ export function EnvironmentVariablesPanel({
                 setAdding(false);
                 setName("");
                 setValue("");
+                setError(null);
               }}
               title="Cancel"
               aria-label="Cancel"
@@ -252,6 +267,7 @@ export function EnvironmentVariablesPanel({
             Add Variable
           </Button>
         ) : null}
+        {error ? <p className="text-xs text-destructive">{error}</p> : null}
       </Section>
 
       {deletingVar && (

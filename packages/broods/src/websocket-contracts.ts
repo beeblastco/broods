@@ -28,7 +28,6 @@ export interface PendingQuestion {
     header: string;
     question: string;
     options: { label: string; description?: string }[];
-    allowFreeText?: boolean;
   }[];
 }
 
@@ -45,6 +44,11 @@ export type AgentRunAnswerInput = {
   events?: never;
 };
 
+/**
+ * A frame too large for NATS arrives as its own `type` with `truncated: true`
+ * and `originalBytes`, its payload dropped. Read the full result from the run
+ * status.
+ */
 export type WebSocketStreamMessage =
   | AgentStreamPart
   | { type: "question-request"; questions: PendingQuestion[] }

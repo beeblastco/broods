@@ -7,20 +7,28 @@ on:
       - dev
     paths:
       - "apps/discord-forwarder/**"
-      # The two core modules the forwarder imports by relative path. Nothing
-      # declares that dependency, so name them here or a rename ships broken.
+      # The core module the forwarder imports by relative path. Nothing declares
+      # that dependency, so name it here or a rename ships broken.
       - "apps/core/src/shared/env.ts"
-      - "apps/core/src/shared/convex/client.ts"
-      # Copied into the image, and it owns the config-plane query the forwarder
-      # reads, so a change there ships broken without a rebuild.
+      # Owns the config-plane query the forwarder reads by name, so a change
+      # there ships broken without a rebuild.
       - "packages/convex/**"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/build-discord-forwarder.yaml"
+  # checkov:skip=CKV_GHA_7:The boolean rollout input controls deployment only; the image is always built from github.sha.
   workflow_dispatch:
+    inputs:
+      rollout:
+        description: "Roll this build onto the one release every stage shares, prod included"
+        type: boolean
+        default: false
 
 env:
   IMAGE_NAME: ghcr.io/beeblastco/broods-discord-forwarder
+
+# Each job grants only the token permissions it needs.
+permissions: {}
 
 jobs:
   build:
@@ -30,20 +38,20 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 
@@ -57,28 +65,28 @@ jobs:
         run: bun run --filter @broods/discord-forwarder test
 
       - name: Build and push image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: apps/discord-forwarder/Dockerfile
           push: true
           # The floating branch tag only for dev and main: a feature branch's
           # name has a slash, which no image tag may hold, so a manual dispatch
-          # to test a branch on the dev stage ships by sha alone.
+          # from one ships by sha alone.
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ (github.ref_name == 'dev' || github.ref_name == 'main') && format('{0}:{1}', env.IMAGE_NAME, github.ref_name) || '' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=broods-discord-forwarder
+          cache-to: type=gha,mode=max,scope=broods-discord-forwarder
 
-  # One release, not one per stage: it serves every config plane, so there is no
-  # `-dev` variant to choose between. Rolled from `dev` alone because `main` only
-  # ever fast-forwards from it. A `main` build is never newer than the `dev` one
-  # that already shipped, so rolling on both would reinstall older code on
-  # promote.
+  # One release, not one per stage: it serves every config plane, prod included.
+  # So a push to `dev` builds and tests without shipping, and the roll happens on
+  # `main`, which promote.yaml dispatches once it fast-forwards. A manual
+  # dispatch with `rollout` ticked rolls whatever branch it ran on, to try a
+  # change before promote. That serves prod traffic too.
   rollout:
     needs: build
-    if: ${{ github.ref_name == 'dev' }}
+    if: ${{ github.ref_name == 'main' || inputs.rollout }}
     # No prerequisite gate: this image depends on neither Convex nor the
     # AWS data plane. The grant is still required because rollout.yaml
     # declares it and a called workflow can never hold more than its caller.

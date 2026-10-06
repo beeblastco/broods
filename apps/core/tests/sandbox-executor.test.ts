@@ -125,6 +125,13 @@ const deleteSandboxInstanceMock = mock(
 let resolveSandboxInstanceUpsert: (() => void) | undefined;
 let waitForSandboxInstanceUpsert = false;
 const removeSandboxInstanceMock = mock(async () => {});
+const recordSandboxBurstMock = mock(
+  async (
+    _accountId: string,
+    _externalId: string,
+    _totals: { vcpuSeconds: number; gbSeconds: number },
+  ) => true,
+);
 const upsertSandboxInstanceMock = mock(async () => {
   if (!waitForSandboxInstanceUpsert) return;
   await new Promise<void>((resolve) => {
@@ -148,6 +155,7 @@ let microvmExecPayload = {
   duration_ms: 5,
   stdout: "shell ok\n",
   stderr: "",
+  truncated: false,
 };
 let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
 const microvmSendMock = mock(async (command: { _type?: string }) => {
@@ -276,6 +284,10 @@ mock.module("@vercel/sandbox", () => ({
 }));
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+  getSandboxReleaseTarget: mock(async () => ({
+    externalId: null,
+    instance: null,
+  })),
   getSandboxExternalId: getSandboxExternalIdMock,
   getSandboxReservationRecord: getSandboxReservationRecordMock,
   claimSandboxInstance: claimSandboxInstanceMock,
@@ -284,6 +296,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 }));
 
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  recordSandboxBurst: recordSandboxBurstMock,
   removeSandboxInstance: removeSandboxInstanceMock,
   upsertSandboxInstance: upsertSandboxInstanceMock,
 }));
@@ -369,6 +382,7 @@ beforeEach(() => {
     duration_ms: 5,
     stdout: "shell ok\n",
     stderr: "",
+    truncated: false,
   };
 });
 
@@ -419,18 +433,35 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  it("creates E2B, Daytona, and Vercel executor adapters", () => {
+  it("resolves every built-in provider from the registry", () => {
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
-    expect(createSandboxExecutor({ provider: "e2b" }).constructor.name).toBe(
-      "E2BSandboxExecutor",
-    );
+    const executorOf = (provider: string, options = {}): string =>
+      createSandboxExecutor({ provider: provider, options: options })
+        .constructor.name;
+    expect(executorOf("e2b")).toBe("E2BSandboxExecutor");
+    expect(executorOf("daytona")).toBe("DaytonaSandboxExecutor");
+    expect(executorOf("vercel")).toBe("VercelSandboxExecutor");
+    expect(executorOf("machine")).toBe("MachineSandboxExecutor");
+    expect(executorOf("custom")).toBe("HttpSandboxExecutor");
     expect(
-      createSandboxExecutor({ provider: "daytona" }).constructor.name,
-    ).toBe("DaytonaSandboxExecutor");
-    expect(createSandboxExecutor({ provider: "vercel" }).constructor.name).toBe(
-      "VercelSandboxExecutor",
+      executorOf("sandbox", {
+        workdirUrl: "https://workdir.example.com",
+        apiKey: "key",
+      }),
+    ).toBe("WorkdirSandboxExecutor");
+  });
+
+  it("throws on a stored provider this build does not know", () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    expect(() => createSandboxExecutor({ provider: "nope" })).toThrow(
+      "sandbox provider nope is not supported",
+    );
+    expect(() => createSandboxExecutor({ provider: "constructor" })).toThrow(
+      "sandbox provider constructor is not supported",
     );
   });
 
@@ -524,6 +555,46 @@ describe("createSandboxExecutor", () => {
       bodies.filter((code) => code.includes("mountpoint -q ")),
     ).toHaveLength(4);
     expect(bodies.at(-1)).toBe("echo persisted");
+  });
+
+  it("reports a MicroVM's burst totals only when they grow", async () => {
+    const original = microvmExecPayload;
+    recordSandboxBurstMock.mockClear();
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      controlPlane: {
+        accountId: "account-burst",
+        name: "burst",
+        specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+      },
+    });
+    const run = async (vcpuSeconds: number): Promise<void> => {
+      microvmExecPayload = {
+        ...original,
+        burst: { vcpu_seconds: vcpuSeconds, gb_seconds: 0 },
+      } as typeof original;
+      await executor.run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
+    };
+
+    try {
+      await run(4);
+      await run(4);
+      await run(6);
+    } finally {
+      microvmExecPayload = original;
+    }
+
+    expect(recordSandboxBurstMock.mock.calls).toEqual([
+      ["account-burst", "microvm-1", { vcpuSeconds: 4, gbSeconds: 0 }],
+      ["account-burst", "microvm-1", { vcpuSeconds: 6, gbSeconds: 0 }],
+    ]);
   });
 
   it("removes an ephemeral mirror only after its non-blocking upsert settles", async () => {
@@ -632,6 +703,38 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("refuses a snapshot pin outside the platform image account and ignores image options", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    for (const snapshot of [
+      "arn:aws:lambda:us-east-1:999999999999:microvm-image:foreign",
+      "arn:aws:lambda:eu-west-1:123456789012:microvm-image:curated",
+      "img_curated_python",
+    ]) {
+      await expect(
+        createSandboxExecutor({
+          provider: "lambda",
+          snapshot: snapshot,
+        }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }),
+      ).rejects.toThrow("config.snapshot must name a platform MicroVM image");
+    }
+
+    await createSandboxExecutor({
+      provider: "lambda",
+      options: {
+        imageIdentifier:
+          "arn:aws:lambda:us-east-1:999999999999:microvm-image:foreign",
+        imageVersion: "7",
+      },
+    }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+
+    expect(microvmRunInput()).toMatchObject({
+      imageIdentifier: process.env.MICROVM_IMAGE_IDENTIFIER,
+    });
+    expect(microvmRunInput()).not.toHaveProperty("imageVersion");
+  });
+
   it("runs a stateless MicroVM with default internet egress and no workspace mount", async () => {
     const {
       createSandboxExecutor,
@@ -670,6 +773,28 @@ describe("createSandboxExecutor", () => {
     });
   });
 
+  it("fails a Harness command whose output the MicroVM cut", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const created = await executor.acquireHarnessReservation({
+      reservationKey: "acct:agent:harness",
+    });
+    microvmExecPayload = { ...microvmExecPayload, truncated: true };
+
+    await expect(
+      executor.runHarnessCommand({
+        microvmId: created.microvmId,
+        endpoint: created.endpoint,
+        code: "base64 < large.bin",
+      }),
+    ).rejects.toThrow("passed the exec cap");
+  });
+
   it("exposes persistent MicroVM reservations and port-scoped auth to the Harness driver", async () => {
     const {
       createSandboxExecutor,
@@ -693,6 +818,7 @@ describe("createSandboxExecutor", () => {
       "lambda",
       "acct:agent:harness",
       "microvm-1",
+      undefined,
       undefined,
     );
 
@@ -2140,6 +2266,56 @@ describe("MicroVM capacity refusal", () => {
       process.env.MICROVM_IMAGE_IDENTIFIER,
     );
   });
+
+  it("holds the fallback to the budget when the primary ran on the account's own key", async () => {
+    const { runSandbox } =
+      await import("../src/harness/tools/filesystem-utils.ts");
+    const { BudgetExhaustedError, resetPlanLimitsForTests } =
+      await import("../src/harness/plan-limits.ts");
+    const { resetStorageForTests, setStorageForTests } =
+      await import("../src/shared/storage.ts");
+    resetPlanLimitsForTests();
+    setStorageForTests({
+      budgets: {
+        get: async () => ({
+          enforced: true,
+          plan: "free",
+          month: "2026-09",
+          usedPercent: 100,
+          runsPerMinute: 600,
+          warned: true,
+        }),
+      },
+    } as never);
+    daytonaCreateMock.mockImplementationOnce(async () => {
+      throw new Error("No available runners");
+    });
+
+    try {
+      // The account's own Daytona key skips the budget; the MicroVM fallback
+      // runs on the platform's AWS account, so it does not.
+      await expect(
+        runSandbox(
+          {
+            provider: "daytona",
+            fallbackProvider: "lambda",
+            options: { apiKey: "daytona-key" },
+            controlPlane: {
+              accountId: "acct_1",
+              name: "own-daytona",
+              specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+              ownCredentials: true,
+            },
+          },
+          undefined,
+          "echo ok",
+        ),
+      ).rejects.toBeInstanceOf(BudgetExhaustedError);
+    } finally {
+      resetStorageForTests();
+      resetPlanLimitsForTests();
+    }
+  });
 });
 
 describe("classifyVercelError", () => {
@@ -2321,6 +2497,60 @@ describe("mergeSandboxEnv", () => {
       "ENV",
       "PROMPT_COMMAND",
       "__CB_TOKEN",
+    ]) {
+      expect(RESERVED_SANDBOX_ENV_KEYS.has(key)).toBe(true);
+    }
+  });
+});
+
+describe("mergeSandboxEnv with a run principal", () => {
+  it("lays the BROODS_* identity over account and request env, and reserves the names", async () => {
+    const { mergeSandboxEnv, RESERVED_SANDBOX_ENV_KEYS } =
+      await import("../src/harness/sandbox/utils.ts");
+    const principal = {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      runToken: "brt_token",
+      baseUrl: "https://api.example.test",
+    };
+    expect(
+      mergeSandboxEnv(
+        { BROODS_RUN_TOKEN: "spoofed-by-account", KEEP: "yes" },
+        { BROODS_AGENT_ID: "spoofed-by-request", NEW: "1" },
+        principal,
+      ),
+    ).toEqual({
+      KEEP: "yes",
+      NEW: "1",
+      BROODS_ACCOUNT_ID: "acct_1",
+      BROODS_AGENT_ID: "agent_1",
+      BROODS_RUN_TOKEN: "brt_token",
+      BROODS_BASE_URL: "https://api.example.test",
+    });
+    // Only core sets the names: neither layer plants one where core sets none.
+    const planted = {
+      BROODS_AGENT_ID: "spoofed",
+      BROODS_BASE_URL: "https://elsewhere.example.test",
+    };
+    expect(mergeSandboxEnv({ ...planted, KEEP: "yes" }, planted)).toEqual({
+      KEEP: "yes",
+    });
+    expect(
+      mergeSandboxEnv(planted, undefined, {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        runToken: "brt_token",
+      }),
+    ).toEqual({
+      BROODS_ACCOUNT_ID: "acct_1",
+      BROODS_AGENT_ID: "agent_1",
+      BROODS_RUN_TOKEN: "brt_token",
+    });
+    for (const key of [
+      "BROODS_ACCOUNT_ID",
+      "BROODS_AGENT_ID",
+      "BROODS_BASE_URL",
+      "BROODS_RUN_TOKEN",
     ]) {
       expect(RESERVED_SANDBOX_ENV_KEYS.has(key)).toBe(true);
     }

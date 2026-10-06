@@ -2,17 +2,37 @@
  * AWS Lambda entry for the hosted MCP runner. Resolves the uploaded bundle,
  * runs one batch of requests (#397) in a child Node process with a scrubbed
  * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
- * frames to core. The child stays warm keyed by accountId + sha256 (#189),
- * bounded and retired on any batch-level failure. Under MCP_TENANT_ISOLATION,
- * PER_TENANT gives each account its own execution environments; the child stays a
- * containment layer, not a trust boundary. Same-UID, so keep the execution
- * role empty.
+ * frames to core. The child stays warm keyed by tenantId + sha256 (#189),
+ * bounded and retired on any batch-level failure. Core sets tenantId to
+ * `accountId:agentId` (the accountId alone for an account-surface probe), so
+ * two agents of one account never share a child. The function is shared by
+ * default, so warm environments can serve several accounts. With
+ * MCP_TENANT_ISOLATION it runs PER_TENANT: core invokes with that same
+ * tenantId as the Lambda TenantId, and Lambda gives each tenant its own
+ * execution environments. The child stays a containment layer, not a trust
+ * boundary. Same-UID, so keep the execution role empty.
+ *
+ * Event: { mode: "mcp", toolName, tenantId, expectedSha256,
+ * bundleUrl | bundleSourceB64, requests: [{ id, mcpRequest: { method,
+ * headers, body } }] }. Core builds it in
+ * apps/core/src/harness/mcp/hosted.ts (McpHostPayload); the two roll together.
+ * Every `mcpRequest.headers` carries the calling agent as `X-Broods-Agent-Id`
+ * and, when the requester is known, `X-Broods-Principal` (base64url JSON of
+ * the delegation chain), so a bundle can authorize per agent. They ride each
+ * request, not the batch: one batch is one agent, but its calls come from
+ * different requesters.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +85,7 @@ export const handler = streamifyResponse(async (event, responseStream) => {
     state = matchesWarm(key) ? warm : null;
     if (warm && !state) retire(warm);
     if (!state) {
+      reapStrays();
       // Started before the spawn so the S3 round trip overlaps Node's startup,
       // and done here rather than in the child because this process is warm
       // across invocations and keeps its connection to S3; a fresh child would
@@ -313,6 +334,25 @@ function spawnChild(key, home, bundle) {
   return state;
 }
 
+// This process and every parent up to init, as /proc directory names.
+function ancestorPids() {
+  const pids = new Set();
+  let pid = String(process.pid);
+  while (pid !== "0" && !pids.has(pid)) {
+    pids.add(pid);
+    try {
+      // The ppid follows the state field after comm's closing paren; comm
+      // itself can hold spaces.
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      pid = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] ?? "0";
+    } catch {
+      break;
+    }
+  }
+
+  return pids;
+}
+
 function childRunnerPath() {
   const root = process.env.LAMBDA_TASK_ROOT;
 
@@ -360,7 +400,7 @@ function lineStartsWith(linePrefix, linePrefixLen, prefix) {
   );
 }
 
-// Only the exact accountId + sha256 the child was spawned for, and never past
+// Only the exact tenantId + sha256 the child was spawned for, and never past
 // its call or idle bounds.
 function matchesWarm(key) {
   if (!warm || warm.dead || warm.key !== key) return false;
@@ -384,24 +424,50 @@ function positiveEnvInt(name, fallback) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
+// Kill every process of this UID that is not this handler or one of its
+// ancestors. A bundle can setsid() out of the group killGroup reaches, and the
+// survivor would share /proc with the next account's child in this warm
+// environment. Runs before each spawn, so a new child never starts next to one.
+// No-op off Linux. The function has no extensions; one would be killed here.
+function reapStrays() {
+  let pids;
+  try {
+    pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
+  } catch {
+    return;
+  }
+  const uid = process.getuid?.();
+  const keep = ancestorPids();
+  for (const pid of pids) {
+    if (keep.has(pid)) continue;
+    try {
+      if (statSync(`/proc/${pid}`).uid !== uid) continue;
+      process.kill(Number(pid), "SIGKILL");
+    } catch {
+      // Exited between the listing and the kill.
+    }
+  }
+}
+
 // Dispose one child: clear the warm slot if it holds it, SIGKILL its group.
 function retire(state) {
   if (warm === state) warm = null;
   killGroup(state.child);
 }
 
-// Reuse needs the tenant identity in the key: without accountId the call runs
-// in a one-shot child exactly as before.
+// Reuse needs the tenant identity in the key: without tenantId the call runs
+// in a one-shot child exactly as before. Core's batch key is the same string,
+// so a child only ever serves one agent's calls.
 function reuseKey(event) {
   if (process.env.MCP_CHILD_REUSE === "0") return null;
   if (
-    typeof event.accountId !== "string" ||
+    typeof event.tenantId !== "string" ||
     typeof event.expectedSha256 !== "string"
   ) {
     return null;
   }
 
-  return `${event.accountId}:${event.expectedSha256}`;
+  return `${event.tenantId}:${event.expectedSha256}`;
 }
 
 // A minimal, credential-free env. Explicitly no AWS_*/Lambda vars so user code

@@ -4,7 +4,7 @@
 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import module from "node:module";
 import { tmpdir } from "node:os";
@@ -24,6 +24,11 @@ import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
+import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
+import {
+  WORKSPACE_ISOLATION_LEVELS,
+  isWorkspaceIsolation,
+} from "../../convex/model/workspaceIsolation.ts";
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -93,10 +98,18 @@ export const defineDiscordChannel = passthrough;
 export const defineDiscordConnection = passthrough;
 export const defineGitHubChannel = passthrough;
 export const defineGitHubConnection = passthrough;
+export const defineGoogleChatChannel = passthrough;
+export const defineGoogleChatConnection = passthrough;
 export const defineHarness = passthrough;
+export const defineInstagramChannel = passthrough;
+export const defineInstagramConnection = passthrough;
+export const defineLinearChannel = passthrough;
+export const defineLinearConnection = passthrough;
 export const defineMatrixChannel = passthrough;
 export const defineMatrixConnection = passthrough;
 export const defineMcp = passthrough;
+export const defineMessengerChannel = passthrough;
+export const defineMessengerConnection = passthrough;
 export const definePancakeChannel = passthrough;
 export const definePancakeConnection = passthrough;
 export const definePolicy = passthrough;
@@ -104,8 +117,14 @@ export const defineSandbox = passthrough;
 export const defineSkill = passthrough;
 export const defineSlackChannel = passthrough;
 export const defineSlackConnection = passthrough;
+export const defineTeamsChannel = passthrough;
+export const defineTeamsConnection = passthrough;
 export const defineTelegramChannel = passthrough;
 export const defineTelegramConnection = passthrough;
+export const defineTwilioChannel = passthrough;
+export const defineTwilioConnection = passthrough;
+export const defineWhatsAppChannel = passthrough;
+export const defineWhatsAppConnection = passthrough;
 export const defineWorkspace = passthrough;
 export const defineZaloChannel = passthrough;
 export const defineZaloConnection = passthrough;
@@ -150,6 +169,11 @@ export async function compileProject(
   const cwd = options.cwd ?? process.cwd();
   loadBroodsRuntimeConfig(cwd);
   const root = resolve(cwd, PROJECT_DIR);
+  if (!existsSync(root)) {
+    throw new Error(
+      `No ${PROJECT_DIR}/ folder in ${cwd}. Run \`broods dev\` to scaffold one.`,
+    );
+  }
   const files = await listTypeScriptFiles(root);
   const exports = await loadExports(files);
   const config = await findConfig(exports, cwd, options.project);
@@ -465,14 +489,17 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
 function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
   if (resource.kind !== "workspace") return;
   const config = resource.config as unknown as Record<string, unknown>;
-  if (typeof config.partitioned === "string") {
+  if (
+    config.partitioned !== undefined &&
+    !isWorkspaceIsolation(config.partitioned)
+  ) {
     throw new Error(
-      `Workspace "${resource.name}" config.partitioned must be a boolean; string modes are not supported.`,
+      `Workspace "${resource.name}" config.partitioned must be one of: ${WORKSPACE_ISOLATION_LEVELS.join(", ")}`,
     );
   }
   if (config.isolation !== undefined) {
     throw new Error(
-      `Workspace "${resource.name}" config.isolation is no longer supported; use partitioned: true.`,
+      `Workspace "${resource.name}" config.isolation is no longer supported; use partitioned.`,
     );
   }
 }
@@ -531,10 +558,10 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
           .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
           .filter((entry): entry is WorkspaceResource => Boolean(entry))
       : [];
+    // Only the per-conversation split needs a channel partition; "agent" splits
+    // on its own.
     const partitionedWorkspaces = attachedWorkspaces.filter(
-      (workspace) =>
-        (workspace.config as unknown as Record<string, unknown>).partitioned ===
-        true,
+      (workspace) => workspace.config.partitioned === "conversation",
     );
     const partitionedChannels = channelDefinitions.filter(
       (channel) => channel.partition,
@@ -543,7 +570,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     if (partitionedChannels.length > 0 && partitionedWorkspaces.length === 0) {
       const channel = partitionedChannels[0]!;
       throw new Error(
-        `Agent "${resource.name}" connection "${channel.type}" defines partition, but no attached workspace has partitioned: true.`,
+        `Agent "${resource.name}" connection "${channel.type}" defines partition, but no attached workspace has partitioned: "conversation".`,
       );
     }
 
@@ -700,7 +727,7 @@ function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
 function sandboxProvider(sandbox: SandboxResource): string {
   return typeof sandbox.config.provider === "string"
     ? sandbox.config.provider
-    : "sandbox";
+    : "lambda";
 }
 
 // Resource files skip the typecheck and CLI sync keeps unknown names as-is, so a
@@ -1044,17 +1071,11 @@ async function normalizeConfig(
 
   if (resource.kind === "workspace") {
     const config = { ...(resource.config as Record<string, unknown>) };
-    // Authoring says `partitioned`; storage still reads `isolation`.
-    if (config.partitioned !== undefined) {
-      if (typeof config.partitioned !== "boolean") {
-        throw new Error(
-          `Workspace "${resource.name}" config.partitioned must be a boolean`,
-        );
-      }
-      const partitioned = config.partitioned;
-      delete config.partitioned;
-      if (partitioned) config.isolation = true;
-    }
+    // Authoring says `partitioned`; storage says `isolation` (the shape check
+    // above already refused anything but a level).
+    const isolation = config.partitioned;
+    delete config.partitioned;
+    if (isolation !== undefined) config.isolation = isolation;
 
     return rewriteValues(config);
   }
@@ -1079,6 +1100,7 @@ async function normalizeConfig(
     const agent = config.agent;
     config.agentId = isResource(agent) ? agent.name : agent;
     config.name = config.name ?? resource.name;
+    if (config.status === undefined) config.status = "active";
     delete config.agent;
     // Mirror the agent direct API: collapse the `input` shorthand into the
     // canonical events list so local and remote manifests diff identically.
@@ -1597,11 +1619,15 @@ async function buildBundleModule(options: {
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
+  /** A Workers build resolves the Workers export conditions and no Node builtins. */
+  workers?: boolean;
 }): Promise<string> {
   const build = await esbuild({
     entryPoints: [options.entryPoint],
     bundle: true,
-    platform: "node",
+    ...(options.workers
+      ? { platform: "browser", conditions: ["workerd", "worker", "browser"] }
+      : { platform: "node" }),
     format: "esm",
     minify: false,
     write: false,
@@ -1695,12 +1721,32 @@ async function normalizeMcpConfig(
     const shimPath = join(shimDir, "mcp-handler.mjs");
     await writeFile(shimPath, mcpShimSource(entry), "utf8");
     await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
-    bundle = await buildBundleModule({
-      entryPoint: shimPath,
-      label: "MCP server bundle",
-      manifestPath: manifestPath,
-      plugins: [sdkStubPlugin(shimDir)],
-    });
+    const build = (workers: boolean): Promise<string> =>
+      buildBundleModule({
+        entryPoint: shimPath,
+        label: "MCP server bundle",
+        manifestPath: manifestPath,
+        plugins: [sdkStubPlugin(shimDir)],
+        workers: workers,
+      });
+    // Ship the Workers build only when the config plane will place it on
+    // Workers: runtime "auto", within the 10 MB Worker cap, passing the same
+    // scan and loading as a handler. Anything else ships the Node build,
+    // which runs on Lambda.
+    const workersBundle =
+      config.runtime === "lambda"
+        ? undefined
+        : await build(true).catch((): undefined => undefined);
+    bundle =
+      workersBundle !== undefined &&
+      Buffer.byteLength(workersBundle) <= INLINE_MCP_BUNDLE_BYTES &&
+      isWorkersSafeBundle(workersBundle) &&
+      (await assertServableMcpBundle(manifestPath, workersBundle).then(
+        (): boolean => true,
+        (): boolean => false,
+      ))
+        ? workersBundle
+        : await build(false);
   } finally {
     await rm(shimDir, { recursive: true, force: true });
   }
@@ -1715,6 +1761,8 @@ async function normalizeMcpConfig(
   return {
     ...(rewriteValues(rest) as Record<string, unknown>),
     bundle: bundle,
+    // The server hashes an inline bundle itself; the diff compares this.
+    sha256: sha256Hex(bundle),
   };
 }
 

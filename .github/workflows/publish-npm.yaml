@@ -15,6 +15,9 @@ concurrency:
   group: publish-npm-${{ github.ref_name }}
   cancel-in-progress: false
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
   publish:
     # main-only; dispatching already requires write access, so manual re-runs
@@ -27,19 +30,19 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # next-version.ts anchors on the newest broods-v* tag and reads the
           # commits since it, so the release needs full history and the tags.
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 
       - name: Setup Node for npm publish
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -96,15 +99,30 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # A declared prerelease (`1.0.0-rc.1`) goes to `next`, so a plain
+      # `npm i broods` keeps getting the last stable release.
       - name: Publish to npm
         if: steps.npm-version.outputs.exists == 'false'
         working-directory: packages/broods
-        run: npm publish
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --tag next
+          else
+            npm publish
+          fi
 
       # Tag prefixed, not a bare `v0.6.0`: this monorepo publishes one package
-      # today but the tag namespace has to survive a second one.
+      # today but the tag namespace has to survive a second one. Runs even when
+      # the version was already on npm, so a publish whose tagging failed gets
+      # its tag on the next run instead of never, on the commit npm recorded
+      # for it rather than today's head.
       - name: Tag and release
-        if: steps.npm-version.outputs.exists == 'false'
+        if: steps.package.outputs.bump != 'none'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -118,9 +136,15 @@ jobs:
             exit 0
           fi
 
+          TARGET="$(npm view "broods@$VERSION" gitHead 2>/dev/null || true)"
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --target "${TARGET:-$GITHUB_SHA}" \
             --title "broods $VERSION" \
-            --generate-notes
+            --generate-notes \
+            "${flags[@]}"
           echo "Published and released **broods $VERSION** ([npm](https://www.npmjs.com/package/broods/v/$VERSION))." >> "$GITHUB_STEP_SUMMARY"

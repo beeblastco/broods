@@ -10,6 +10,8 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { sandboxConfigsFields, paginationCursorFields } from "../schema";
+import { assertSealedUnderCurrentKey } from "../model/accountKeys";
+import { ClientError } from "../model/clientError";
 
 const sandboxConfigDoc = v.object({
   ...sandboxConfigsFields,
@@ -88,6 +90,9 @@ export const create = internalMutation({
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
     }
+    await assertSealedUnderCurrentKey(ctx, args.accountId, [
+      args.encryptedConfig,
+    ]);
 
     const now = Date.now();
 
@@ -119,16 +124,17 @@ export const update = internalMutation({
     const { accountId, sandboxId, ...patch } = args;
     const normalized = ctx.db.normalizeId("sandboxConfigs", sandboxId);
     if (!normalized) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== accountId) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }
+    await assertSealedUnderCurrentKey(ctx, accountId, [patch.encryptedConfig]);
 
     await ctx.db.patch(normalized, {
       ...(patch.name !== undefined && { name: patch.name }),
@@ -160,13 +166,13 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("sandboxConfigs", args.sandboxId);
     if (!normalized) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }

@@ -6,7 +6,7 @@
  */
 
 const API_PREFIX = "/_matrix/client/v3";
-/** Deadline for every call except `/sync`, which sets its own. */
+/** Deadline for a call whose caller passes no signal, and the least a `/sync` waits. */
 const REQUEST_TIMEOUT_MS = 30_000;
 /** How long past the long-poll timeout a sync may hang before it is aborted. */
 const SYNC_GRACE_MS = 15_000;
@@ -72,10 +72,16 @@ export class MatrixClient {
   /** User id to display name for everyone joined; no display name maps to undefined. */
   async joinedMembers(
     roomId: string,
+    signal?: AbortSignal,
   ): Promise<Map<string, string | undefined>> {
     const response = await this.request<{
       joined: Record<string, { display_name?: string | null }>;
-    }>("GET", `/rooms/${encodeURIComponent(roomId)}/joined_members`);
+    }>(
+      "GET",
+      `/rooms/${encodeURIComponent(roomId)}/joined_members`,
+      undefined,
+      signal,
+    );
     const members = new Map<string, string | undefined>();
     for (const [userId, member] of Object.entries(response.joined)) {
       members.set(userId, member.display_name ?? undefined);
@@ -88,21 +94,34 @@ export class MatrixClient {
   async rawRequest(
     method: string,
     path: string,
-    body: string,
+    body: string | undefined,
+    signal?: AbortSignal,
   ): Promise<string> {
-    return this.call(
-      method,
-      path,
-      body,
-      AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    );
+    const response = await fetch(`${this.apiUrl}${API_PREFIX}${path}`, {
+      body: body,
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      method: method,
+      // The account's token rides every call, and the client-server API never
+      // redirects, so a redirect here would hand it to another host.
+      redirect: "error",
+      signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const text = await response.text();
+    if (!response.ok) throw toMatrixError(response.status, text);
+
+    return text;
   }
 
-  async roomEncrypted(roomId: string): Promise<boolean> {
+  async roomEncrypted(roomId: string, signal?: AbortSignal): Promise<boolean> {
     try {
       await this.request(
         "GET",
         `/rooms/${encodeURIComponent(roomId)}/state/m.room.encryption/`,
+        undefined,
+        signal,
       );
     } catch (error) {
       if (error instanceof MatrixError && error.status === 404) return false;
@@ -117,11 +136,13 @@ export class MatrixClient {
     roomId: string,
     type: string,
     content: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<string> {
     const response = await this.request<{ event_id: string }>(
       "PUT",
       `/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(type)}/${crypto.randomUUID()}`,
       content,
+      signal,
     );
 
     return response.event_id;
@@ -145,9 +166,13 @@ export class MatrixClient {
       timeout: String(options.timeoutMs),
     });
     if (options.since !== undefined) query.set("since", options.since);
+    // Floored: the first sync asks for timeout 0 yet still has to build a
+    // response for every joined room.
     const signal = AbortSignal.any([
       options.signal,
-      AbortSignal.timeout(options.timeoutMs + SYNC_GRACE_MS),
+      AbortSignal.timeout(
+        Math.max(options.timeoutMs, REQUEST_TIMEOUT_MS) + SYNC_GRACE_MS,
+      ),
     ]);
 
     return this.request<SyncResponse>(
@@ -162,37 +187,13 @@ export class MatrixClient {
     return this.request<WhoAmI>("GET", "/account/whoami");
   }
 
-  private async call(
-    method: string,
-    path: string,
-    body: string | undefined,
-    signal: AbortSignal,
-  ): Promise<string> {
-    const response = await fetch(`${this.apiUrl}${API_PREFIX}${path}`, {
-      body: body,
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      method: method,
-      // The account's token rides every call, and the client-server API never
-      // redirects, so a redirect here would hand it to another host.
-      redirect: "error",
-      signal: signal,
-    });
-    const text = await response.text();
-    if (!response.ok) throw toMatrixError(response.status, text);
-
-    return text;
-  }
-
   private async request<T>(
     method: string,
     path: string,
     body?: object,
-    signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal?: AbortSignal,
   ): Promise<T> {
-    const text = await this.call(
+    const text = await this.rawRequest(
       method,
       path,
       body === undefined ? undefined : JSON.stringify(body),

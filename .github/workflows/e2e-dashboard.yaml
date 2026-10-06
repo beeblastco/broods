@@ -9,6 +9,10 @@ name: Dashboard e2e
 # Needs the probe account in the target environment: DASHBOARD_E2E_EMAIL and
 # DASHBOARD_E2E_PASSWORD, a WorkOS user with email + password auth. The suites
 # provision its org and project on first sign-in.
+#
+# workflow_run always runs on the default branch (dev), and the production
+# environment only deploys from main. So a main build dispatches this workflow
+# on main, and that run probes production.
 
 on:
   workflow_run:
@@ -17,6 +21,7 @@ on:
     branches:
       - dev
       - main
+  # checkov:skip=CKV_GHA_7:The manual URL selects the dashboard to test; this workflow does not produce build artifacts.
   workflow_dispatch:
     inputs:
       base_url:
@@ -24,21 +29,53 @@ on:
         required: false
         type: string
 
+# Each job grants only the token permissions it needs.
+permissions: {}
+
 jobs:
+  dispatch-main:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the production probe on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run e2e-dashboard.yaml --repo "$GITHUB_REPOSITORY" --ref main
+
   deployed:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch != 'main') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Checkout is all this job does with the token; deny everything else.
     permissions:
       contents: read
-    environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'development' }}
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     env:
-      E2E_BASE_URL: ${{ inputs.base_url || ((github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app') }}
+      E2E_BASE_URL: ${{ inputs.base_url || (github.ref_name == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app') }}
       E2E_EMAIL: ${{ secrets.DASHBOARD_E2E_EMAIL }}
       E2E_PASSWORD: ${{ secrets.DASHBOARD_E2E_PASSWORD }}
       E2E_PROJECT_ID: ${{ vars.DASHBOARD_E2E_PROJECT_ID }}
     steps:
+      - name: Validate the probe destination
+        env:
+          DEFAULT_PROBE_ORIGIN: ${{ github.ref_name == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app' }}
+          # Administrators can approve preview origins in this environment.
+          EXTRA_PROBE_ORIGINS: ${{ vars.DASHBOARD_E2E_ALLOWED_ORIGINS }}
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from urllib.parse import urlsplit
+
+          target = urlsplit(os.environ["E2E_BASE_URL"])
+          allowed = {os.environ["DEFAULT_PROBE_ORIGIN"], *os.environ.get("EXTRA_PROBE_ORIGINS", "").split()}
+          origin = f"{target.scheme}://{target.netloc}"
+          if target.scheme != "https" or target.username or target.password or origin not in allowed:
+              raise SystemExit("Probe destination must be an approved HTTPS origin. Configure DASHBOARD_E2E_ALLOWED_ORIGINS for previews.")
+          PYTHON
+
       - name: Require the probe account
         # A silent skip would look like a passing suite, so missing setup fails.
         shell: bash
@@ -63,7 +100,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 

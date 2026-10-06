@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * The plaintext secret is shown exactly once after provision or rotate; only
+ * The plaintext account key is shown exactly once after provision or rotate; only
  * its hash is stored, so it can never be read back.
  */
 
+import { CopyRow, useCopied } from "@/app/components/CopyButton";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -18,11 +19,13 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   org: Doc<"orgs">;
@@ -41,10 +44,8 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
-
-  const harnessUrl =
-    process.env.NEXT_PUBLIC_BROODS_HARNESS_URL ?? "(not configured)";
+  const secretCopy = useCopied(revealedSecret ?? "");
+  const coreEndpoint = resolveCoreEndpoint();
 
   async function handleProvision(): Promise<void> {
     setPending(true);
@@ -54,7 +55,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
       setRevealedSecret(result.secret);
       setShowSecret(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Provision failed");
+      setError(toErrorMessage(err));
     } finally {
       setPending(false);
     }
@@ -69,16 +70,10 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
       setShowSecret(true);
       setRotateOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Rotate failed");
+      setError(toErrorMessage(err));
     } finally {
       setPending(false);
     }
-  }
-
-  function copy(text: string, label: string): void {
-    navigator.clipboard.writeText(text);
-    setCopied(label);
-    setTimeout(() => setCopied(null), 1500);
   }
 
   if (account === undefined) {
@@ -103,14 +98,14 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             This organization is not yet provisioned with a broods account.
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Provisioning creates the backend tenant and issues a one-time Bearer
-            secret. Save it now. It will not be shown again.
+            Provisioning creates the backend tenant and issues a one-time
+            account key. Save it now. It will not be shown again.
           </p>
           {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
           {canWrite && (
             <Button
               size="sm"
-              className="mt-4 cursor-pointer disabled:cursor-not-allowed"
+              className="mt-4 cursor-pointer"
               disabled={pending}
               onClick={handleProvision}
             >
@@ -142,34 +137,35 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
           <Label variant="muted" className="text-xs">
             Account ID
           </Label>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-              {account.accountId}
-            </code>
-            <Button
-              variant="outline"
-              size="sm"
-              className="cursor-pointer"
-              onClick={() => copy(account.accountId, "accountId")}
-            >
-              <Copy className="size-3.5 mr-1" />
-              {copied === "accountId" ? "Copied" : "Copy"}
-            </Button>
-          </div>
+          <CopyRow
+            value={account.accountId}
+            className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+          >
+            <span className="flex-1 truncate">{account.accountId}</span>
+          </CopyRow>
         </div>
 
         <div className="grid gap-1">
           <Label variant="muted" className="text-xs">
             Base URL
           </Label>
-          <code className="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
-            {harnessUrl}
-          </code>
+          {coreEndpoint.ok ? (
+            <CopyRow
+              value={coreEndpoint.httpBaseUrl}
+              className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+            >
+              <span className="flex-1 truncate">
+                {coreEndpoint.httpBaseUrl}
+              </span>
+            </CopyRow>
+          ) : (
+            <p className="text-xs text-warning">{coreEndpoint.message}</p>
+          )}
         </div>
 
         <div className="grid gap-1">
           <Label variant="muted" className="text-xs">
-            Bearer secret
+            Account key
           </Label>
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
@@ -194,31 +190,31 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
                 variant="outline"
                 size="sm"
                 className="cursor-pointer"
-                onClick={() => copy(revealedSecret, "secret")}
+                onClick={secretCopy.copy}
               >
                 <Copy className="size-3.5 mr-1" />
-                {copied === "secret" ? "Copied" : "Copy"}
+                {secretCopy.copied ? "Copied" : "Copy"}
               </Button>
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Secrets are hashed at rest. Rotating issues a new one and
-            invalidates the previous secret immediately.
+            The key is hashed at rest. Rotating issues a new one and invalidates
+            the previous key immediately.
           </p>
         </div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           <div>
-            <p className="text-sm font-medium text-foreground">Rotate secret</p>
+            <p className="text-sm font-medium text-foreground">Rotate key</p>
             <p className="text-xs text-muted-foreground">
-              The previous Bearer token will stop working.
+              The previous account key will stop working.
             </p>
           </div>
           {canWrite && (
             <Button
               variant="outline"
               size="sm"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={pending}
               onClick={() => setRotateOpen(true)}
             >
@@ -234,9 +230,9 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
       <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rotate Bearer secret?</DialogTitle>
+            <DialogTitle>Rotate account key?</DialogTitle>
             <DialogDescription>
-              The current Bearer token will stop working immediately. Anything
+              The current account key will stop working immediately. Anything
               using it (curl scripts, integrations) must be updated.
             </DialogDescription>
           </DialogHeader>
@@ -250,7 +246,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
               Cancel
             </Button>
             <Button
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               onClick={handleRotate}
               disabled={pending}
             >
@@ -281,6 +277,7 @@ function NewSecretDialog({
   onClose: () => void;
 }): React.JSX.Element {
   const [open, setOpen] = useState(true);
+  const { copied, failed, copy } = useCopied(secret);
 
   return (
     <Dialog
@@ -294,22 +291,23 @@ function NewSecretDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Save your new Bearer secret</DialogTitle>
+          <DialogTitle>Save your new account key</DialogTitle>
           <DialogDescription>
-            Copy this token now. It will not be shown again.
+            Copy this key now. It will not be shown again.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 py-2">
           <Input readOnly value={secret} className="font-mono text-xs" />
+          {failed ? (
+            <p role="alert" className="text-sm text-destructive">
+              Copy failed. Try again or select and copy the token manually.
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
-          <Button
-            variant="outline"
-            className="cursor-pointer"
-            onClick={() => navigator.clipboard.writeText(secret)}
-          >
+          <Button variant="outline" className="cursor-pointer" onClick={copy}>
             <Copy className="size-4 mr-1" />
-            Copy
+            {copied ? "Copied" : "Copy"}
           </Button>
           <Button
             className="cursor-pointer"

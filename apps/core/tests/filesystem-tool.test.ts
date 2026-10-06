@@ -83,6 +83,10 @@ const getSandboxExternalIdMock = mock(
 );
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+  getSandboxReleaseTarget: mock(async () => ({
+    externalId: null,
+    instance: null,
+  })),
   getSandboxExternalId: getSandboxExternalIdMock,
   getSandboxReservationRecord: mock(
     async (): Promise<{ externalId: string; claimedAt: number } | null> => null,
@@ -406,6 +410,39 @@ describe("sandbox tool set", () => {
         workspace_root: "/mnt/workspaces",
       },
     });
+  });
+
+  it.each([
+    [{ exit_code: 1, stdout: "", stderr: "" }, "[exit code 1]"],
+    [
+      { exit_code: 2, stdout: "", stderr: "ls: nope" },
+      "ls: nope\n[exit code 2]",
+    ],
+    [
+      { exit_code: 124, timed_out: true, stdout: "partial\n", stderr: "" },
+      "partial\n[timed out, exit code 124]",
+    ],
+  ])("bash reports a failed run %#", async (response, expected) => {
+    microvmFetchMock.mockImplementationOnce(microvmFetchResponse);
+    microvmFetchMock.mockImplementationOnce(
+      async (_url: string, init: { body: string }) => {
+        const payload = JSON.parse(init.body);
+
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            runtime: payload.runtime,
+            timed_out: false,
+            duration_ms: 8,
+            ...response,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
+    const bash = await tool("bash", workspaceCtx());
+
+    expect(await bash.execute({ command: "test -f missing" })).toBe(expected);
   });
 
   it("bash pty:true attaches the command to a real guest pseudo-terminal", async () => {
@@ -1258,16 +1295,25 @@ describe("write/edit approval policy", () => {
     expect(mounted.workspaceName).toBe("notes");
   });
 
-  it("bash refuses a selection that names both a workspace and the sandbox", async () => {
+  it("bash runs on the named sandbox when a workspace is named too", async () => {
     const bash = await tool("bash", borrowedSandboxCtx());
+    const result = await bash.execute({
+      command: "echo hi",
+      workspace: "notes",
+      sandbox: "own-sandbox",
+    });
+    // The approval gate and policy input already let the sandbox win, so the tool
+    // must too, and say so.
+    expect(result).toContain(
+      "ran on sandbox own-sandbox with no workspace mounted; workspace notes was ignored",
+    );
+    expect(lastSandboxExec().payload.namespace).toBeUndefined();
+
+    // With no workspace at all the run lands on the default, and the note names it.
+    const stateless = await tool("bash", statelessCtx());
     await expect(
-      bash.execute({
-        command: "echo hi",
-        workspace: "notes",
-        sandbox: "own-sandbox",
-      }),
-    ).rejects.toThrow("not both");
-    expect(microvmFetchMock).not.toHaveBeenCalled();
+      stateless.execute({ command: "echo hi", workspace: "notes" }),
+    ).resolves.toContain("ran on sandbox own-sandbox");
   });
 
   it("the standalone sandbox target follows the agent sandbox's own mode", async () => {

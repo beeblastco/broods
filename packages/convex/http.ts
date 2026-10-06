@@ -15,7 +15,10 @@ import {
   httpHandle as cliProjectsHttp,
   httpOnboarding as cliOnboardingHttp,
 } from "./cli/projects";
-import { httpHandle as cliStagesHttp } from "./cli/stages";
+import {
+  httpHandle as cliStagesHttp,
+  sessionHttpHandle as cliStageSessionHttp,
+} from "./cli/stages";
 import { handle as configHttp } from "./config/http";
 
 const http = httpRouter();
@@ -53,7 +56,7 @@ http.route({
 });
 
 // Bare `/v1/account/projects` only: the `/v1/account/projects/` prefix routes
-// below carry a project name and belong to the deploy-key handler.
+// below carry a project name and belong to the project-key handler.
 http.route({
   path: "/v1/account/projects",
   method: "GET",
@@ -79,6 +82,12 @@ http.route({
 });
 
 http.route({
+  path: "/v1/account/stage-session",
+  method: "POST",
+  handler: cliStageSessionHttp,
+});
+
+http.route({
   pathPrefix: "/v1/account/projects/",
   method: "GET",
   handler: cliHttp,
@@ -96,11 +105,36 @@ http.route({
   handler: cliHttp,
 });
 
-// Public config-plane surface: account metadata/rotation,
+// Public config-plane surface: account metadata/rotation, connections,
 // agents, skills, mcp, hooks, workspace files, crons, workspaces, sandbox configs,
 // and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });
 http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
+http.route({
+  path: "/v1/account/connections",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "PUT",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "DELETE",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "POST",
+  handler: configHttp,
+});
 http.route({
   path: "/v1/account/rotate-secret",
   method: "POST",
@@ -258,6 +292,11 @@ http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
+// The audit ledger: list, verify, and the one webhook sink per account.
+http.route({ path: "/v1/audit", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "PUT", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "DELETE", handler: configHttp });
 
 export default http;
 
@@ -302,16 +341,20 @@ async function handleStripeWebhook(
   try {
     await processEvent(ctx, components.stripe, event, stripe);
 
+    if (event.type === "checkout.session.completed") {
+      await linkCheckoutToUser(ctx, stripe, event.data.object);
+    }
+    // Plan sync needs no checkout case: Stripe also sends
+    // customer.subscription.created for the subscription a checkout starts.
     if (
+      event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      const subscription = event.data.object as Stripe.Subscription;
-      const authId = subscription.metadata.authId;
+      const authId = event.data.object.metadata.userId;
       if (authId) {
         await ctx.runMutation(internal.stripe.syncPlanInternal, {
           authId: authId,
-          status: subscription.status,
         });
       }
     }
@@ -322,4 +365,57 @@ async function handleStripeWebhook(
   }
 
   return Response.json({ received: true });
+}
+
+/**
+ * Link a Payment Link checkout to the Broods user in `client_reference_id` by
+ * stamping `metadata.userId` on its subscription and customer. The
+ * customer.subscription.updated that follows files the subscription under the
+ * user and syncs the plan. API checkouts set the metadata up front and carry
+ * no `client_reference_id`, so they skip this.
+ */
+async function linkCheckoutToUser(
+  ctx: ActionCtx,
+  stripe: Stripe,
+  session: Stripe.Checkout.Session,
+): Promise<void> {
+  const authId = session.client_reference_id;
+  const subscriptionId = stripeId(session.subscription);
+  const customerId = stripeId(session.customer);
+  if (session.mode !== "subscription" || !authId) return;
+  if (!subscriptionId || !customerId) return;
+
+  const liveIds = await ctx.runQuery(
+    internal.stripe.getLiveSubscriptionIdsInternal,
+    { authId: authId },
+  );
+  if (liveIds === null) {
+    console.warn(`Checkout ${session.id} names unknown user ${authId}`);
+
+    return;
+  }
+  const otherIds = liveIds.filter((id) => id !== subscriptionId);
+  if (otherIds.length > 0) {
+    console.warn(
+      `User ${authId} paid ${subscriptionId} while ${otherIds.join(", ")} is still live`,
+    );
+  }
+
+  await stripe.subscriptions.update(subscriptionId, {
+    metadata: { userId: authId },
+  });
+  await stripe.customers.update(customerId, { metadata: { userId: authId } });
+  // customer.updated does not copy `metadata.userId` onto the component's
+  // customer row (only customer.created does), so file it here. The portal
+  // finds the customer by that key.
+  await ctx.runMutation(components.stripe.public.createOrUpdateCustomer, {
+    stripeCustomerId: customerId,
+    email: session.customer_details?.email ?? undefined,
+    metadata: { userId: authId },
+  });
+}
+
+/** The id of an expandable Stripe field, whether or not it was expanded. */
+function stripeId(field: string | { id: string } | null): string | null {
+  return typeof field === "string" ? field : (field?.id ?? null);
 }

@@ -9,9 +9,11 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import {
+  deleteAgentRow,
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
+import { deleteAgentConfig } from "./model/agentRuntimeSecrets";
 import { accountIdForProject } from "./model/auditEvents";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
@@ -276,9 +278,9 @@ export const remove = mutation({
 
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
- * deployments and linked broods `agents` rows), the canvas layout, MCP
- * servers, env vars, and deploy keys. A linked `agents` row goes only when the
- * project's account owns it.
+ * deployments and linked broods `agents` rows with their crons), the canvas
+ * layout, MCP servers, env vars, and project keys. A linked `agents` row goes
+ * only when the project's account owns it.
  */
 export async function deleteStageContents(
   ctx: MutationCtx,
@@ -302,23 +304,12 @@ export async function deleteStageContents(
         accountId,
       )
     : [];
-  for (const agentId of new Set(ownAgents.map((agent) => agent._id))) {
-    await ctx.db.delete(agentId);
-  }
+  const unique = new Map(ownAgents.map((agent) => [agent._id, agent]));
+  for (const agent of unique.values()) await deleteAgentRow(ctx, agent);
 
-  for (const config of configs) {
-    // Runtime secrets are keyed to the agent config, so they orphan unless
-    // deleted alongside it.
-    const runtimeSecrets = await ctx.db
-      .query("agentRuntimeSecrets")
-      .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-      .collect();
-    for (const secret of runtimeSecrets) await ctx.db.delete(secret._id);
+  for (const config of configs) await deleteAgentConfig(ctx, config._id);
 
-    await ctx.db.delete(config._id);
-  }
-
-  // The stage's runtime API key is scoped to (project, stage), not
+  // The stage's runtime key is scoped to (project, stage), not
   // to an agent config, so it must be deleted here or it would keep
   // authenticating requests against a deleted stage.
   const stageDeployments = await ctx.db
@@ -329,6 +320,12 @@ export async function deleteStageContents(
     .collect();
   for (const deployment of stageDeployments)
     await ctx.db.delete(deployment._id);
+
+  const syncs = await ctx.db
+    .query("stageSyncs")
+    .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
+    .collect();
+  for (const sync of syncs) await ctx.db.delete(sync._id);
 
   const layouts = await ctx.db
     .query("canvasLayouts")
@@ -342,7 +339,9 @@ export async function deleteStageContents(
   // bundle is left to the account-level sweep; nothing else references it.
   const mcpRows = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   for (const server of mcpRows) await ctx.db.delete(server._id);
 
@@ -382,7 +381,9 @@ export async function deleteStageContents(
   // stageId, so anything left behind is unreachable once the stage is gone.
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   for (const policy of policies) await ctx.db.delete(policy._id);
 
@@ -436,7 +437,7 @@ export async function duplicateStageContents(
   // row id, so the clones need the new ids before step 2 remaps them.
   const sourceMcpServers = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) =>
+    .withIndex("by_stageId_and_status_and_name", (q) =>
       q.eq("stageId", sourceStageId).eq("status", "active"),
     )
     .collect();
@@ -670,7 +671,7 @@ async function hasStageContents(
   // treating it as occupied silently skips the clone into production.
   const server = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) =>
+    .withIndex("by_stageId_and_status_and_name", (q) =>
       q.eq("stageId", stageId).eq("status", "active"),
     )
     .first();

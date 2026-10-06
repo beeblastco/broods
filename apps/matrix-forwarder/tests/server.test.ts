@@ -84,6 +84,21 @@ describe("the HTTP surface", () => {
     expect(failed.status).toBe(502);
     expect(invalid.status).toBe(400);
   });
+
+  it("answers 409 for an account that stopped for good", async () => {
+    const response = await handleRequest(
+      forwarder({ "token-a": { ...account(), state: "failed" } }),
+      true,
+      post(
+        "/v1/send",
+        { content: {}, roomId: "!r", type: "m.room.message" },
+        "token-a",
+      ),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("Matrix account stopped");
+  });
 });
 
 function account(failing = false): ForwarderAccount & {

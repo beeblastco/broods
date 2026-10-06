@@ -43,6 +43,13 @@ export async function handleRequest(
   if (!accessToken || !account) {
     return new Response("Unknown Matrix access token", { status: 401 });
   }
+  // Not a homeserver blip: retrying cannot help until the token changes.
+  if (account.state === "failed") {
+    return new Response(
+      "Matrix account stopped and will not restart until its access token changes",
+      { status: 409 },
+    );
+  }
   const body: unknown = await request.json().catch((): null => null);
 
   try {

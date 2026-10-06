@@ -31,7 +31,7 @@ export const { authKitEvent } = authKit.events({
     if (existing) {
       await ctx.db.patch(existing._id, {
         email: event.data.email,
-        name: deriveName(event.data),
+        name: existing.nameEdited ? existing.name : deriveName(event.data),
         avatarUrl: avatarUrl,
       });
 
@@ -64,7 +64,7 @@ export const { authKitEvent } = authKit.events({
 
     await ctx.db.patch(user._id, {
       email: event.data.email,
-      name: deriveName(event.data),
+      name: user.nameEdited ? user.name : deriveName(event.data),
       avatarUrl: avatarUrl,
     });
   },
@@ -97,7 +97,8 @@ export const { authKitEvent } = authKit.events({
   "session.revoked": async (): Promise<void> => {},
 });
 
-function deriveName(data: {
+/** Display name for a WorkOS user: first + last name, else the email. Also stamps who minted a runtime key. */
+export function deriveName(data: {
   firstName?: string | null;
   lastName?: string | null;
   email: string;

@@ -1,11 +1,20 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (fp_sts_), and account-secret
- * hash lookup. Persistence is reached via `getStorage().accounts.*` so the
- * auth path is identical through the Convex-backed account store.
+ * server-side actions), assume-role session (bsts_), stage session ticket
+ * (bdts_), run token (brt_, minted by core for one agent run), runtime key
+ * (bsk_, whose lastUsedAt is written here, throttled), and account-key hash
+ * lookup (bask_). Each prefix goes straight to its one lookup; any other
+ * token is refused without one.
+ * Persistence is reached via `getStorage()` so the auth path is identical
+ * through the Convex-backed store.
  */
 
+import {
+  ACCOUNT_KEY_PREFIX,
+  RUNTIME_KEY_PREFIX,
+} from "@broods/convex/model/accountSecrets";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import {
@@ -15,7 +24,15 @@ import {
 import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
+import { waitUntil } from "./in-flight.ts";
+import { openRunToken } from "./run-token.ts";
 import { getStorage } from "./storage.ts";
+
+const KEY_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+
+// Last lastUsedAt write per runtime key hash. Core runs single replica, so
+// this in-process map is the whole throttle.
+const keyLastUsedWrites = new Map<string, number>();
 
 export type AuthContext =
   | { kind: "admin" }
@@ -29,7 +46,7 @@ export type AuthContext =
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
-      // Set for a member-minted fp_dts_ ticket, unset for the embeddable key.
+      // Set for a member-minted bdts_ ticket, unset for the embeddable key.
       stageTicket?: true;
     }
   | {
@@ -38,7 +55,37 @@ export type AuthContext =
       kind: "role";
       account: AccountRecord;
       role: RolePrincipal;
+    }
+  | {
+      // One agent run, from the brt_ token core handed its sandbox. It may
+      // only read its own agent's runs; integrations.ts refuses the rest.
+      kind: "agent";
+      account: AccountRecord;
+      agentId: string;
     };
+
+/**
+ * Whether a runtime key's lastUsedAt write is due, recording `now` when it
+ * is. `resolveBearerAuth` calls it so a key costs one Convex write per
+ * interval instead of one per request.
+ */
+export function claimLastUsedWrite(
+  writes: Map<string, number>,
+  apiKeyHash: string,
+  now: number,
+  intervalMs: number = KEY_LAST_USED_WRITE_INTERVAL_MS,
+): boolean {
+  const last = writes.get(apiKeyHash);
+  if (last !== undefined && now - last < intervalMs) return false;
+  // Expired entries would be claimed again anyway, so drop them to keep the
+  // map to keys used within the last interval.
+  for (const [hash, at] of writes) {
+    if (now - at >= intervalMs) writes.delete(hash);
+  }
+  writes.set(apiKeyHash, now);
+
+  return true;
+}
 
 export function extractBearerToken(
   authorization: string | undefined,
@@ -57,7 +104,7 @@ export function extractBearerToken(
   return token;
 }
 
-/** The service token is in-cluster only: never valid on a gateway-proxied request. */
+/** The service token is in-cluster only: never valid on a request through the public door. */
 export function isServiceToken(
   headers: Record<string, string>,
   token: string,
@@ -77,13 +124,17 @@ export async function resolveBearerAuth(
   const token = extractBearerToken(headers.authorization);
   if (!token) return null;
 
-  // fp_sts_ is prefix-routed: a role session resolves as a role or not at all.
+  // bsts_ is prefix-routed: a role session resolves as a role or not at all.
   if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
     return await resolveRoleSessionAuth(token);
   }
-  // fp_dts_ likewise: a dashboard stage session is a deployment or nothing.
+  // bdts_ likewise: a dashboard stage session is a deployment or nothing.
   if (token.startsWith(STAGE_SESSION_TICKET_PREFIX)) {
     return await resolveStageSessionAuth(token);
+  }
+  // brt_ likewise: a run token is its agent or nothing.
+  if (token.startsWith(RUN_TOKEN_PREFIX)) {
+    return await resolveRunTokenAuth(token);
   }
 
   const adminSecret = optionalEnv("ADMIN_ACCOUNT_SECRET");
@@ -103,32 +154,14 @@ export async function resolveBearerAuth(
     return { kind: "account", account: account, viaServiceToken: true };
   }
 
-  const deployment = await getStorage().agentDeployments.getByApiKeyHash(
-    sha256Hex(token),
-  );
-  if (deployment) {
-    const account = await getStorage().accounts.getById(deployment.accountId);
-    if (!account || account.status !== "active") return null;
-
-    return {
-      kind: "deployment",
-      account: account,
-      endpointId: deployment.endpointId,
-      projectSlug: deployment.projectSlug,
-      stageSlug: deployment.stageSlug,
-    };
+  if (token.startsWith(ACCOUNT_KEY_PREFIX)) {
+    return await resolveAccountSecretAuth(token, options);
+  }
+  if (token.startsWith(RUNTIME_KEY_PREFIX)) {
+    return await resolveRuntimeKeyAuth(token);
   }
 
-  const account = await getStorage().accounts.getBySecretHash(
-    hashAccountSecret(token),
-  );
-  if (
-    !account ||
-    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
-  )
-    return null;
-
-  return { kind: "account", account: account };
+  return null;
 }
 
 // Hashing both sides keeps the comparison constant-time regardless of length.
@@ -142,7 +175,34 @@ export function timingSafeStringEqual(
   return timingSafeEqual(actualDigest, expectedDigest);
 }
 
-/** Resolve an fp_sts_ token to role auth via the config-plane session store. */
+/** Resolve an account key to its account; a disabled one only when the caller allows it. */
+async function resolveAccountSecretAuth(
+  token: string,
+  options: { allowDisabledAccountSecret?: boolean },
+): Promise<AuthContext | null> {
+  const account = await getStorage().accounts.getBySecretHash(
+    hashAccountSecret(token),
+  );
+  if (
+    !account ||
+    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
+  )
+    return null;
+
+  return { kind: "account", account: account };
+}
+
+/** Resolve a brt_ token to the agent it was minted for. */
+async function resolveRunTokenAuth(token: string): Promise<AuthContext | null> {
+  const subject = openRunToken(token);
+  if (!subject) return null;
+  const account = await getStorage().accounts.getById(subject.accountId);
+  if (!account || account.status !== "active") return null;
+
+  return { kind: "agent", account: account, agentId: subject.agentId };
+}
+
+/** Resolve a bsts_ token to role auth via the config-plane session store. */
 async function resolveRoleSessionAuth(
   token: string,
 ): Promise<AuthContext | null> {
@@ -156,8 +216,30 @@ async function resolveRoleSessionAuth(
   return { kind: "role", account: account, role: principal };
 }
 
+/** Resolve a runtime key in one lookup, stamping its lastUsedAt (throttled). */
+async function resolveRuntimeKeyAuth(
+  token: string,
+): Promise<AuthContext | null> {
+  const apiKeyHash = sha256Hex(token);
+  const deployment =
+    await getStorage().agentDeployments.getByApiKeyHash(apiKeyHash);
+  if (!deployment || deployment.account.status !== "active") return null;
+  const now = Date.now();
+  if (claimLastUsedWrite(keyLastUsedWrites, apiKeyHash, now)) {
+    waitUntil(getStorage().agentDeployments.touchLastUsed(apiKeyHash, now));
+  }
+
+  return {
+    kind: "deployment",
+    account: deployment.account,
+    endpointId: deployment.endpointId,
+    projectSlug: deployment.projectSlug,
+    stageSlug: deployment.stageSlug,
+  };
+}
+
 /**
- * Resolve an fp_dts_ ticket the config plane minted for an org member. It is
+ * Resolve a bdts_ ticket the config plane minted for an org member. It is
  * the stage's deployment credential for its lifetime, so it lands on the same
  * `deployment` branch a runtime key does, marked so the embeddable-key limits
  * skip it.

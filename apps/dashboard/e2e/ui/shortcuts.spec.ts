@@ -133,6 +133,32 @@ test("a bare key is a command outside a text field and typing inside one", async
   await expect(ran(page)).toHaveCount(1);
 });
 
+test("Escape closes the panel from a text field, unless the field spends it", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+
+  await page.locator('[data-fixture="editable"] input').click();
+  await page.keyboard.press("Escape");
+  await expect(ran(page)).toHaveText(["command panel.toggle"]);
+
+  await page.locator('[data-fixture="consumes-escape"] input').click();
+  await page.keyboard.press("Escape");
+  await expect(ran(page)).toHaveCount(1);
+
+  // Escape that cancels an input method's composition is the IME's, not ours.
+  await page.locator('[data-fixture="editable"] input').evaluate((field) =>
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        isComposing: true,
+        key: "Escape",
+      }),
+    ),
+  );
+  await expect(ran(page)).toHaveCount(1);
+});
+
 test("+ types in a field instead of zooming the canvas behind it", async ({
   page,
 }) => {
@@ -270,18 +296,6 @@ test("the palette hands an unmatched query to the dock instead of guessing", asy
   ).toBeVisible();
   await expect(dock.locator("[data-plan-step]")).toHaveCount(0);
   await expect(ran(page)).toHaveCount(0);
-});
-
-test("the corner launcher opens the dock, then steps out of its way", async ({
-  page,
-}) => {
-  await openSurfaces(page);
-  const launcher = page.locator("[data-copilot-launcher]");
-  await expect(launcher).toBeVisible();
-
-  await launcher.click();
-  await expect(page.getByRole("complementary")).toBeVisible();
-  await expect(launcher).toHaveCount(0);
 });
 
 test("the dock keeps its thread while the page underneath carries on", async ({

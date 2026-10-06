@@ -10,6 +10,12 @@ export type AsyncAgentStatus =
   | "awaiting_input"
   | "completed"
   | "failed";
+/** How an async run ended, or what it waits on, as its polling row records it. */
+export type AsyncAgentOutcome =
+  | { status: "completed"; response: JSONValue }
+  | { status: "failed"; error: string }
+  | { status: "awaiting_approval"; approvals: ToolApprovalSummary[] }
+  | { status: "awaiting_input"; questions: PendingQuestionSummary[] };
 export interface AsyncAgentResultRecord {
   accountId: string;
   eventId: string;
@@ -34,43 +40,13 @@ export function getAsyncAgentResult(
 ): Promise<AsyncAgentResultRecord | null> {
   return runtime.query("getAsyncAgentResult", { eventId: eventId });
 }
-export async function markAsyncAgentResultCompleted(options: {
-  eventId: string;
-  response: JSONValue;
-}): Promise<void> {
+/** Records a run's outcome on its polling row, outside any envelope settle. */
+export async function recordAsyncAgentResult(
+  eventId: string,
+  outcome: AsyncAgentOutcome,
+): Promise<void> {
   await runtime.mutate("updateAsyncAgentResult", {
-    eventId: options.eventId,
-    status: "completed",
-    response: options.response,
-  });
-}
-export async function markAsyncAgentResultFailed(options: {
-  eventId: string;
-  error: string;
-}): Promise<void> {
-  await runtime.mutate("updateAsyncAgentResult", {
-    eventId: options.eventId,
-    status: "failed",
-    error: options.error,
-  });
-}
-export async function markAsyncAgentResultAwaitingApproval(options: {
-  eventId: string;
-  approvals: ToolApprovalSummary[];
-}): Promise<void> {
-  await runtime.mutate("updateAsyncAgentResult", {
-    eventId: options.eventId,
-    status: "awaiting_approval",
-    approvals: options.approvals,
-  });
-}
-export async function markAsyncAgentResultAwaitingInput(options: {
-  eventId: string;
-  questions: PendingQuestionSummary[];
-}): Promise<void> {
-  await runtime.mutate("updateAsyncAgentResult", {
-    eventId: options.eventId,
-    status: "awaiting_input",
-    questions: options.questions,
+    eventId: eventId,
+    ...outcome,
   });
 }

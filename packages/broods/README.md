@@ -28,8 +28,8 @@ npm install -g broods
 broods dev
 ```
 
-`broods update` installs the newest release over the copy you are running, and
-`broods dev` says so when one is out.
+`broods update` installs the newest release of the major you run over the copy
+you are running, and `broods dev` says so when one is out.
 
 `ai` is a peer dependency that bun, npm and pnpm install automatically, so the
 CLI and your project share one copy. On a package manager that does not
@@ -59,7 +59,7 @@ const result = await client.run(api.agents.myAgent, {
 console.log(result.text);
 ```
 
-Runtime calls use a stage runtime API key. After `broods deploy`, the CLI
+Runtime calls use a runtime key. After `broods deploy`, the CLI
 writes `BROODS_API_KEY` to `.env.local`; the SDK also accepts `apiKey`,
 `BROODS_API_KEY`, `baseUrl`, and `BROODS_BASE_URL`.
 
@@ -73,11 +73,11 @@ your code.
 
 **Dynamic config at runtime (`BroodsAccountClient`).** A multi-tenant product
 that provisions one agent per customer creates and mutates config while it runs.
-For that, use the account config client with your account secret. It is the
+For that, use the account config client with your account key. It is the
 complete typed client for the account config plane: agents, sandboxes (config +
 suspend/resume/terminate/snapshot/terminal), workspaces (config + file
 upload/rename/delete/download), tools, policies, skills, crons (+ run history),
-and the account itself (metadata, secret rotation, deletion). It is a separate,
+and the account itself (metadata, key rotation, deletion). It is a separate,
 dependency-free entry point (`broods/account`) built on plain `fetch`, so it
 also works in edge runtimes such as Convex actions and Cloudflare Workers where
 the main SDK entry (which reads `.env` files from disk) cannot load:
@@ -86,7 +86,7 @@ the main SDK entry (which reads `.env` files from disk) cannot load:
 import { BroodsAccountClient, envPlaceholder } from "broods/account";
 
 // baseUrl defaults to https://gateway.broods.app (override with BROODS_BASE_URL);
-// the secret falls back to BROODS_ACCOUNT_SECRET from the runtime's environment.
+// the account key falls back to BROODS_ACCOUNT_SECRET from the runtime's environment.
 const account = new BroodsAccountClient({
   accountSecret: process.env.BROODS_ACCOUNT_SECRET,
 });
@@ -101,7 +101,7 @@ const created = await account.createAgent({
   },
 });
 
-// Store an account secret once, then reference it from any dynamic agent.
+// Store an account-wide variable once, then reference it from any dynamic agent.
 // Reads list only names/timestamps; secret values are never returned.
 await account.setEnvVar("OVH_API_KEY", process.env.OVH_API_KEY!);
 await account.updateAgent(created.agentId, {
@@ -142,7 +142,7 @@ const runs = await account.listCronRuns("cron_1", { limit: 20 });
 // Persistent sandbox lifecycle is driven by reservationKey.
 await account.suspendSandbox(sandbox.sandboxId, "ws-namespace");
 
-// Rotate the account secret when needed (the returned secret is shown once).
+// Rotate the account key when needed (the new key is returned once, as `secret`).
 const { secret } = await account.rotateSecret();
 ```
 

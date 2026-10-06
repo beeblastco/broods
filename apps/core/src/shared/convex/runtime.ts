@@ -8,16 +8,15 @@ const internal: any = require("@broods/convex/_generated/api").internal;
 // Convex module export as well as the exact function path sent to Convex.
 export const runtimeQueries = {
   getAsyncAgentResult: internal.runtime.getAsyncAgentResult,
-  getAsyncToolGroup: internal.runtime.getAsyncToolGroup,
   getAsyncToolResult: internal.runtime.getAsyncToolResult,
   getAsyncToolToken: internal.runtime.getAsyncToolToken,
   getConversationTarget: internal.runtimeIngress.getConversationTarget,
   getHarnessSession: internal.runtime.getHarnessSession,
+  getSandboxReleaseTarget: internal.runtime.getSandboxReleaseTarget,
   getSandboxReservation: internal.runtime.getSandboxReservation,
   getSandboxReservationRecord: internal.runtime.getSandboxReservationRecord,
   listAccountSandboxReservations:
     internal.runtime.listAccountSandboxReservations,
-  listAsyncToolResults: internal.runtime.listAsyncToolResults,
   listConversationEvents: internal.runtime.listConversationEvents,
   listExpiredSandboxReservations:
     internal.runtime.listExpiredSandboxReservations,
@@ -39,10 +38,10 @@ export const runtimeMutations = {
   deferSandboxReservations: internal.runtime.deferSandboxReservations,
   deleteAccountRuntimeData: internal.runtime.deleteAccountRuntimeData,
   deleteSandboxReservation: internal.runtime.deleteSandboxReservation,
+  observeAsyncToolResult: internal.runtime.observeAsyncToolResult,
   releaseClaim: internal.runtime.releaseClaim,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   saveHarnessSession: internal.runtime.saveHarnessSession,
-  sealAsyncToolGroup: internal.runtime.sealAsyncToolGroup,
   updateAsyncAgentResult: internal.runtime.updateAsyncAgentResult,
   updateAsyncToolResult: internal.runtime.updateAsyncToolResult,
   acceptIngress: internal.runtimeIngress.accept,
@@ -51,9 +50,11 @@ export const runtimeMutations = {
     internal.runtimeIngress.appendConversationEvent,
   applyIngressSteering: internal.runtimeIngress.applySteering,
   clearFencedConversation: internal.runtimeIngress.clearConversation,
+  recoverQueuedIngress: internal.runtimeIngress.recoverQueued,
   releaseIngressOwner: internal.runtimeIngress.releaseOwner,
   renewIngressOwner: internal.runtimeIngress.renewOwner,
   settleIngress: internal.runtimeIngress.settle,
+  stepIngressBoundary: internal.runtimeIngress.stepBoundary,
   stopIngressOwner: internal.runtimeIngress.stopOwner,
   takeNextIngress: internal.runtimeIngress.takeNext,
 } as const;
@@ -61,7 +62,11 @@ export const runtimeMutations = {
 type RuntimeQueryName = keyof typeof runtimeQueries;
 type RuntimeMutationName = keyof typeof runtimeMutations;
 
-/** Mutable call boundary used by focused core tests without a live deployment. */
+/**
+ * Mutable call boundary used by focused core tests without a live deployment.
+ * Mutations skip the client's process-wide FIFO queue, so concurrent runs never
+ * wait on each other; a caller that needs an order awaits it.
+ */
 export const runtime = {
   query: function <T>(
     name: RuntimeQueryName,
@@ -76,9 +81,8 @@ export const runtime = {
     name: RuntimeMutationName,
     args: Record<string, unknown>,
   ): Promise<T> {
-    return getConvexClient().mutation(
-      runtimeMutations[name],
-      args as any,
-    ) as Promise<T>;
+    return getConvexClient().mutation(runtimeMutations[name], args as any, {
+      skipQueue: true,
+    }) as Promise<T>;
   },
 };

@@ -2,8 +2,8 @@
  * Example: webhook subscription flow via declarative broods resources.
  *
  * Creates a pre-deployed agent with webhook events configured.
- * Lifecycle events are delivered to the mock webhook endpoint.
- * Check CloudWatch Logs for the mock-webhook-subscribe Lambda to see received events.
+ * Lifecycle events are POSTed to WEBHOOK_URL, signed with WEBHOOK_SECRET in
+ * `X-Webhook-Signature`. Point WEBHOOK_URL at any HTTPS endpoint you can read.
  */
 
 import { BroodsClient } from "broods";

@@ -1,12 +1,35 @@
 /**
  * Stripe subscription queries, checkout/portal actions, and webhook plan sync.
+ * Checkout goes through the Stripe Payment Link in `STRIPE_PRO_PAYMENT_LINK`
+ * when set, so Stripe owns the price and trial; otherwise through an API
+ * Checkout Session for `STRIPE_PRO_PRICE_ID`.
  */
 
 import { StripeSubscriptions } from "@convex-dev/stripe";
 import { v } from "convex/values";
+import type Stripe from "stripe";
 import { components } from "./_generated/api";
-import { action, internalMutation, query } from "./_generated/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  query,
+} from "./_generated/server";
 import { authKit } from "./auth";
+import { ClientError } from "./model/clientError";
+
+// A subscription in one of these statuses is over: it no longer blocks a new
+// checkout and is not the one billing shows.
+const ENDED_STATUSES: ReadonlyArray<Stripe.Subscription.Status> = [
+  "canceled",
+  "incomplete_expired",
+];
+
+// Statuses that grant the paid plan.
+const PAID_STATUSES: ReadonlyArray<Stripe.Subscription.Status> = [
+  "active",
+  "trialing",
+];
 
 export const stripeClient = new StripeSubscriptions(components.stripe);
 
@@ -16,6 +39,34 @@ export const createCheckoutSession = action({
   handler: async (ctx, args): Promise<{ url: string }> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("Not authenticated");
+
+    // Stops a second click or tab. It reads webhook-synced rows, so a checkout
+    // paid seconds ago can still slip through; Stripe's "limit customers to
+    // one subscription" Checkout setting closes that window.
+    const subs = await ctx.runQuery(
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: authUser.id },
+    );
+    if (subs.some((sub) => !isEnded(sub.status))) {
+      throw new ClientError(
+        "Already subscribed; use Manage Billing to change plan",
+        "conflict",
+      );
+    }
+
+    // The link carries no customer or metadata. The webhook reads
+    // `client_reference_id` off checkout.session.completed and stamps
+    // `metadata.userId` on the subscription and customer.
+    const paymentLink = process.env.STRIPE_PRO_PAYMENT_LINK;
+    if (paymentLink) {
+      const url = new URL(paymentLink);
+      url.searchParams.set("client_reference_id", authUser.id);
+      if (authUser.email) {
+        url.searchParams.set("prefilled_email", authUser.email);
+      }
+
+      return { url: url.toString() };
+    }
 
     const { customerId } = await stripeClient.getOrCreateCustomer(ctx, {
       userId: authUser.id,
@@ -31,7 +82,9 @@ export const createCheckoutSession = action({
       mode: "subscription",
       successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
       cancelUrl: safeDashboardUrl(args.cancelUrl, "cancelUrl"),
-      subscriptionMetadata: { authId: authUser.id },
+      // The component files a subscription under `metadata.userId`; billing
+      // info and plan sync look it up by that key.
+      subscriptionMetadata: { userId: authUser.id },
     });
 
     if (!session.url) throw new Error("No checkout URL returned");
@@ -71,26 +124,70 @@ export const getBillingInfo = query({
       { userId: authUser.id },
     );
 
-    return subs[0] ?? null;
+    // Any subscription that is not over, including past_due and unpaid ones,
+    // so the dashboard offers the portal to fix payment instead of checkout.
+    return subs.find((sub) => !isEnded(sub.status)) ?? null;
   },
 });
 
+/**
+ * Ids of a user's subscriptions that have not ended, or null when `authId` is
+ * not a Broods user. The webhook checks both before it links a Payment Link
+ * checkout to the user.
+ */
+export const getLiveSubscriptionIdsInternal = internalQuery({
+  args: { authId: v.string() },
+  returns: v.union(v.null(), v.array(v.string())),
+  handler: async (ctx, args): Promise<Array<string> | null> => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .unique();
+    if (!user) return null;
+
+    const subs = await ctx.runQuery(
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: args.authId },
+    );
+
+    return subs
+      .filter((sub) => !isEnded(sub.status))
+      .map((sub) => sub.stripeSubscriptionId);
+  },
+});
+
+/**
+ * Recompute a user's plan from their synced subscriptions. The webhook runs
+ * it after `processEvent`. `users.plan` is the source of truth; orgs the user
+ * owns carry a copy so the CLI and org settings read it off the org.
+ */
 export const syncPlanInternal = internalMutation({
-  args: { authId: v.string(), status: v.string() },
+  args: { authId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
-      .first();
-
+      .unique();
     if (!user) return null;
 
-    const plan =
-      args.status === "active" || args.status === "trialing"
-        ? ("pro" as const)
-        : ("free" as const);
-    await ctx.db.patch(user._id, { plan: plan });
+    const subs = await ctx.runQuery(
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: args.authId },
+    );
+    const paid = subs.some((sub) =>
+      PAID_STATUSES.some((status) => status === sub.status),
+    );
+    const plan = paid ? ("pro" as const) : ("free" as const);
+    if (user.plan !== plan) await ctx.db.patch(user._id, { plan: plan });
+
+    const orgs = await ctx.db
+      .query("orgs")
+      .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", args.authId))
+      .collect();
+    for (const org of orgs) {
+      if (org.plan !== plan) await ctx.db.patch(org._id, { plan: plan });
+    }
 
     return null;
   },
@@ -107,20 +204,25 @@ function allowedDashboardOrigin(): string | null {
   return null;
 }
 
+/** Whether a subscription status means it is over. */
+function isEnded(status: string): boolean {
+  return ENDED_STATUSES.some((ended) => ended === status);
+}
+
 /** Validate Stripe return URLs so callers cannot choose arbitrary domains. */
 function safeDashboardUrl(value: string, label: string): string {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`${label} must be a valid URL`);
+    throw new ClientError(`${label} must be a valid URL`);
   }
 
   const allowed = allowedDashboardOrigin();
   const isLocalDev =
     url.hostname === "localhost" || url.hostname === "127.0.0.1";
   if (allowed ? url.origin !== allowed : !isLocalDev) {
-    throw new Error(`${label} must use the configured dashboard origin`);
+    throw new ClientError(`${label} must use the configured dashboard origin`);
   }
 
   return url.toString();

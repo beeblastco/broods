@@ -1,5 +1,10 @@
 "use client";
 
+import { RuntimeKeyView } from "@/app/(main)/[projectId]/dashboard/components/RuntimeKeyDialog";
+import {
+  ConnectionsView,
+  type Connection,
+} from "@/app/(main)/settings/connections/components/ConnectionsPanel";
 import {
   CANVAS_EDGE_TYPES,
   CANVAS_NODE_TYPES,
@@ -28,6 +33,7 @@ import {
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { StatusDot } from "@/app/components/StatusDot";
+import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import {
   ContextMenu,
@@ -95,6 +101,7 @@ import {
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
+import { UsageChartStandIn } from "./UsageChartStandIn";
 
 const LEVEL_OPTIONS = [
   { value: "all", label: "All levels" },
@@ -274,7 +281,25 @@ const DROP_NODES: Node[] = applyTidyLayout(
 /** The url MCP frame starts collapsed, so the fixture shows both frame states. */
 const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";
 
+// What a production client receives when a Convex action throws a plain Error.
+const CONVEX_SERVER_ERROR = new Error(
+  "[CONVEX A(org/lifecycle:provision)] [Request ID: 4f1c9a2e7b3d0a51] Server Error\n  Called by client",
+);
+
 const subscribeNever = (): (() => void) => () => {};
+
+/** The account's ChatGPT plan, signed in; the gallery also renders none. */
+const CONNECTION_FIXTURES: Connection[] = [
+  {
+    type: "chatgpt",
+    clientId: "oaiapp_fixture",
+    hostId: "urn:uuid:fixture",
+    email: "owner@example.com",
+    scopes: ["openid", "chatgpt.tokens.use.direct"],
+    expiresAt: 0,
+    updatedAt: 0,
+  },
+];
 
 export function UiGallery(): React.JSX.Element {
   const [level, setLevel] = useState("INFO");
@@ -293,6 +318,34 @@ export function UiGallery(): React.JSX.Element {
     () => false,
   );
   const dashboardTab = useSearchParams().get("tab");
+
+  if (dashboardTab === "connections") {
+    return (
+      <main
+        data-hydrated={hydrated ? "true" : undefined}
+        className="mx-auto grid w-full max-w-2xl gap-10 px-6 pt-6 pb-12"
+      >
+        <ConnectionsView
+          connections={CONNECTION_FIXTURES}
+          canWrite={true}
+          onDisconnect={() => {}}
+        />
+        <ConnectionsView
+          connections={[]}
+          canWrite={true}
+          onDisconnect={() => {}}
+        />
+      </main>
+    );
+  }
+
+  if (dashboardTab === "credential-copy") {
+    return (
+      <main data-hydrated={hydrated ? "true" : undefined}>
+        <RuntimeKeyView apiKey="clipboard fixture" />
+      </main>
+    );
+  }
 
   // A trace link keeps the path and swaps ?tab=, so the dashboard stand-in
   // answers the same parameter the dashboard page does.
@@ -332,11 +385,15 @@ export function UiGallery(): React.JSX.Element {
           onClear={() => {}}
           onRefresh={() => {}}
           refreshDisabled={false}
-          refreshSpinning={false}
           refreshTitle="Refresh"
           isError={false}
         />
         <LogTableStandIn />
+      </section>
+
+      <section data-fixture="usage-chart" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Usage chart</h2>
+        <UsageChartStandIn />
       </section>
 
       <section data-fixture="canvas-controls" className="flex flex-col gap-2">
@@ -498,6 +555,23 @@ export function UiGallery(): React.JSX.Element {
           >
             <StandInTable />
           </DetailSplit>
+        </div>
+      </section>
+
+      <section data-fixture="status-page" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Status page under the header</h2>
+        {/* The home route's setup failure and the project guard render it
+            below the header, so it has to fill that box, not the viewport. */}
+        <div className="flex h-64 w-160 flex-col border border-border">
+          <div className="h-10 shrink-0 border-b border-border" />
+          <div data-status-frame className="min-h-0 flex-1">
+            <StatusPage
+              title="Workspace setup failed"
+              error={CONVEX_SERVER_ERROR}
+            >
+              <Button className="cursor-pointer">Retry</Button>
+            </StatusPage>
+          </div>
         </div>
       </section>
 

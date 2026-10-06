@@ -18,7 +18,7 @@ import {
   type CliResource,
 } from "./cliSync";
 import { loadMcpServersByNode } from "./mcp";
-import { isPlainObject } from "./objects";
+import { isPlainObject, stableJson } from "./objects";
 import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 
 type CanvasCliResource = CliResource & {
@@ -90,7 +90,7 @@ export async function syncCanvasLayoutForManifest(
     (
       await ctx.db
         .query("mcp")
-        .withIndex("by_stageId_and_status", (q) =>
+        .withIndex("by_stageId_and_status_and_name", (q) =>
           q.eq("stageId", stageId).eq("status", "active"),
         )
         .collect()
@@ -277,8 +277,8 @@ function addAgentWorkspaceEdges(options: {
 
 /**
  * Default agent→service edge (agent→sandbox, agent→workspace): top/bottom handles,
- * rendered by the dashboard's DeletableEdge. `animated: true` gives the flowing
- * dashed look the dashboard uses for these connections.
+ * rendered by the dashboard's DeletableEdge. Never animated: an animated edge
+ * repaints the canvas every frame.
  */
 function addDesiredDefaultEdge(
   edges: Map<string, CanvasEdge>,
@@ -286,7 +286,7 @@ function addDesiredDefaultEdge(
   target: string,
 ): void {
   const id = `xy-edge__${source}-${target}`;
-  edges.set(id, { id: id, source: source, target: target, animated: true });
+  edges.set(id, { id: id, source: source, target: target });
 }
 
 /**
@@ -302,7 +302,7 @@ function addDesiredMountEdge(
   targetHandle: string,
 ): void {
   const id = `mount:${source}-${sourceHandle}-${target}-${targetHandle}`;
-  edges.set(id, { id: id, source: source, target: target, animated: false });
+  edges.set(id, { id: id, source: source, target: target });
 }
 
 /**
@@ -316,7 +316,7 @@ function addDesiredSubagentEdge(
   target: string,
 ): void {
   const id = `subagent:${source}-right-${target}-left`;
-  edges.set(id, { id: id, source: source, target: target, animated: false });
+  edges.set(id, { id: id, source: source, target: target });
 }
 
 function cliResourceKeyForNode(node: CanvasNode): string {
@@ -637,7 +637,6 @@ function normalizeCanvasEdge(edge: CanvasEdge): CanvasEdge {
     id: String(edge.id),
     source: String(edge.source),
     target: String(edge.target),
-    animated: edge.animated,
   };
 }
 
@@ -668,6 +667,13 @@ async function persistCanvasLayout(
     await loadMcpServersByNode(ctx, options.stageId),
   );
   if (options.layout) {
+    // Every open canvas subscribes to this doc; skip a deploy that moved nothing.
+    if (
+      stableJson(options.layout.nodes) === stableJson(nextNodes) &&
+      stableJson(options.layout.edges) === stableJson(options.nextEdges)
+    ) {
+      return;
+    }
     await ctx.db.patch(options.layout._id, {
       nodes: nextNodes,
       edges: options.nextEdges,

@@ -64,12 +64,16 @@ function deploymentStorage(): Storage {
           endpointId: "env-endpoint",
           projectSlug: "demo",
           stageSlug: "development",
+          account: account,
         };
       },
+      touchLastUsed: async function () {},
     },
   } as unknown as Storage;
 }
 
 function event(method: string, rawPath: string): CoreRequest {
-  return coreRequest(method, rawPath, { authorization: "Bearer runtime-key" });
+  return coreRequest(method, rawPath, {
+    authorization: "Bearer bsk_runtime-key",
+  });
 }

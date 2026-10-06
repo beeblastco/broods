@@ -11,6 +11,11 @@
 import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject } from "./objects";
+import { ClientError } from "./clientError";
+import {
+  WORKSPACE_ISOLATION_LEVELS,
+  type WorkspaceIsolation,
+} from "./workspaceIsolation";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
@@ -57,7 +62,7 @@ export interface WorkspaceStorageConfig {
 
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
-  isolation?: boolean;
+  isolation?: WorkspaceIsolation;
   // Named harness features, each with its own options (no top-level enabled):
   // workspace = the <workspace> prompt, memory = structured memory.
   harness?: {
@@ -90,20 +95,22 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     return { storage: { provider: "s3" } };
   }
   if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
+    throw new ClientError("config must be an object");
   }
 
   const config = value;
   const storage = normalizeWorkspaceStorage(config.storage);
-  assertOptionalBoolean(config.isolation, "config.isolation");
-  const isolation = config.isolation as boolean | undefined;
-
+  assertOptionalEnum(
+    config.isolation,
+    "config.isolation",
+    WORKSPACE_ISOLATION_LEVELS,
+  );
   let harness:
     | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
     | undefined;
   if (config.harness !== undefined) {
     if (!isPlainObject(config.harness)) {
-      throw new Error("config.harness must be an object");
+      throw new ClientError("config.harness must be an object");
     }
     const workspacePrompt = normalizeHarnessFeature(
       config.harness.workspace,
@@ -123,7 +130,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   return {
     storage: storage,
-    ...(isolation === true ? { isolation: true } : {}),
+    ...(config.isolation ? { isolation: config.isolation } : {}),
     ...(harness ? { harness: harness } : {}),
   };
 }
@@ -138,7 +145,8 @@ export function normalizeCreateWorkspaceConfigInput(value: unknown): {
   description?: string;
   config: WorkspaceConfig;
 } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const name = requireString(value.name, "name");
   const description = optionalString(value.description, "description");
   const config = normalizeWorkspaceConfig(value.config);
@@ -160,7 +168,8 @@ export function normalizeUpdateWorkspaceConfigInput(
   existingConfig: WorkspaceConfig,
   value: unknown,
 ): { name?: string; description?: string | null; config: WorkspaceConfig } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
 
   const config =
     "config" in value
@@ -196,7 +205,7 @@ export function workspaceStorageOwnAuth(
 ): WorkspaceStorageOwnAuth | undefined {
   if (storage.endpoint) {
     if (!storage.bucket) {
-      throw new Error(
+      throw new ClientError(
         "config.storage.endpoint requires config.storage.bucket; the managed bucket has no custom endpoint",
       );
     }
@@ -209,18 +218,20 @@ export function workspaceStorageOwnAuth(
       (name) => process.env[name]?.toLowerCase() === bucket,
     )
   ) {
-    throw new Error(
+    throw new ClientError(
       "config.storage.bucket must be a bucket you own; omit it to use the managed bucket",
     );
   }
   if (storage.auth?.type !== "assumeRole") {
-    throw new Error(
+    throw new ClientError(
       'config.storage.auth.type "assumeRole" is required when config.storage.bucket is set; a named bucket is only reached with its own credentials',
     );
   }
   const roleAccountId = ROLE_ARN_PATTERN.exec(storage.auth.roleArn)?.[1];
   if (!roleAccountId) {
-    throw new Error("config.storage.auth.roleArn must be an IAM role ARN");
+    throw new ClientError(
+      "config.storage.auth.roleArn must be an IAM role ARN",
+    );
   }
   if (
     process.env.AWS_ACCOUNT_ID === roleAccountId ||
@@ -228,7 +239,7 @@ export function workspaceStorageOwnAuth(
       process.env[name]?.includes(`::${roleAccountId}:`),
     )
   ) {
-    throw new Error(
+    throw new ClientError(
       "config.storage.auth.roleArn must not be a role in the platform AWS account",
     );
   }
@@ -271,27 +282,27 @@ export async function workspaceNamespace(
  * @throws when the path is empty or contains traversal segments
  */
 export function normalizeFilePath(value: unknown): string {
-  if (typeof value !== "string") throw new Error("path is required");
+  if (typeof value !== "string") throw new ClientError("path is required");
   const path = value.trim().replace(/^\/+|\/+$/g, "");
   const parts = path.split("/");
   if (
     !path ||
     parts.some((part) => part.length === 0 || part === "." || part === "..")
   )
-    throw new Error("Invalid workspace file path");
+    throw new ClientError("Invalid workspace file path");
 
   return path;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) throw new Error("config must be an object");
+  if (!isPlainObject(value)) throw new ClientError("config must be an object");
 
   return value;
 }
 
 function assertOptionalBoolean(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean`);
+    throw new ClientError(`${name} must be a boolean`);
   }
 }
 
@@ -299,12 +310,12 @@ function assertOptionalEnum<T extends string>(
   value: unknown,
   name: string,
   allowed: readonly T[],
-): void {
+): asserts value is T | undefined {
   if (
     value !== undefined &&
     (typeof value !== "string" || !allowed.includes(value as T))
   ) {
-    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+    throw new ClientError(`${name} must be one of: ${allowed.join(", ")}`);
   }
 }
 
@@ -331,7 +342,7 @@ function normalizeHarnessFeature(
     return undefined;
   }
   if (!isPlainObject(value)) {
-    throw new Error(`${name} must be an object`);
+    throw new ClientError(`${name} must be an object`);
   }
   assertOptionalBoolean(value.enabled, `${name}.enabled`);
 
@@ -344,10 +355,10 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
     return { provider: "s3" };
   }
   if (!isPlainObject(value)) {
-    throw new Error("config.storage must be an object");
+    throw new ClientError("config.storage must be an object");
   }
   if (value.provider === "vercel") {
-    throw new Error(
+    throw new ClientError(
       'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
     );
   }
@@ -362,7 +373,7 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
   const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
   const prefix = optionalString(value.prefix, "config.storage.prefix");
   if (bucket && !prefix?.replace(/^\/+|\/+$/g, "")) {
-    throw new Error(
+    throw new ClientError(
       "config.storage.prefix is required when config.storage.bucket is set; the sandbox mount is scoped to that prefix",
     );
   }
@@ -387,7 +398,7 @@ function normalizeWorkspaceStorageAuth(
     return undefined;
   }
   if (!isPlainObject(value)) {
-    throw new Error("config.storage.auth must be an object");
+    throw new ClientError("config.storage.auth must be an object");
   }
   if (value.type === "managed") {
     return { type: "managed" };
@@ -405,14 +416,15 @@ function normalizeWorkspaceStorageAuth(
       ...(externalId ? { externalId: externalId } : {}),
     };
   }
-  throw new Error(
+  throw new ClientError(
     "config.storage.auth.type must be one of: managed, assumeRole",
   );
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -420,7 +432,7 @@ function optionalString(value: unknown, name: string): string | undefined {
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();

@@ -13,7 +13,8 @@ import type {
   ChannelIngressEvent,
   ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
+import { channelApiFetch } from "./http.ts";
 import { logWarn } from "./log.ts";
 import { GITHUB_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -136,7 +137,14 @@ export function createGitHubChannel(
     parse: function (req): ChannelParseResult | Promise<ChannelParseResult> {
       const event = req.headers["x-github-event"];
       const deliveryId = req.headers["x-github-delivery"];
-      const payload = JSON.parse(req.body) as GitHubWebhookPayload;
+      const body = parseChannelWebhookBody<GitHubWebhookPayload>(
+        "github",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const payload = body.payload;
 
       if (event === "ping") {
         return {
@@ -384,8 +392,9 @@ async function createGitHubRestClient(options: {
     /\/+$/,
     "",
   );
+  const request = channelApiFetch(options.apiUrl);
   const appJwt = createGitHubAppJwt(options.appId, options.privateKey);
-  const tokenResponse = await fetch(
+  const tokenResponse = await request(
     `${baseApiUrl}/app/installations/${options.installationId}/access_tokens`,
     {
       method: "POST",
@@ -408,7 +417,7 @@ async function createGitHubRestClient(options: {
 
   return {
     get: async function <T>(path: string): Promise<T> {
-      const response = await fetch(`${baseApiUrl}${path}`, {
+      const response = await request(`${baseApiUrl}${path}`, {
         method: "GET",
         headers: {
           Accept: "application/vnd.github+json",

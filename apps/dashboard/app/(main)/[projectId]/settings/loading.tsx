@@ -1,5 +1,5 @@
-import { SidebarPageSkeleton } from "@/app/components/SidebarPageSkeleton";
+import { PageSkeleton } from "@/app/components/PageSkeleton";
 
 export default function SettingsLoading(): React.JSX.Element {
-  return <SidebarPageSkeleton title="Settings" tabCount={5} />;
+  return <PageSkeleton />;
 }

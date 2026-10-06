@@ -76,7 +76,6 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
       processedEventsDeleted: 0,
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
-      asyncToolGroupDeleted: 0,
       sandboxReservationDeleted: 0,
       totalDeleted: 1,
     };
@@ -145,6 +144,13 @@ it("releases a live reservation without the expiry condition before the cascade"
     },
   } as never);
   runtime.query = (async (name: string, args: Record<string, unknown>) => {
+    // The release looks up each provider's machine by key; only `sandbox` holds one.
+    if (name === "getSandboxReleaseTarget") {
+      return {
+        externalId: args.provider === "sandbox" ? "sbx_live" : null,
+        instance: null,
+      };
+    }
     order.push(name);
     expect(args.accountId).toBe("acct_test");
 
@@ -173,7 +179,6 @@ it("releases a live reservation without the expiry condition before the cascade"
       processedEventsDeleted: 0,
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
-      asyncToolGroupDeleted: 0,
       sandboxReservationDeleted: 0,
       totalDeleted: 0,
     };

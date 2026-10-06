@@ -15,13 +15,18 @@
 
 import type { ChannelConnection } from "@broods/convex/channel/connections";
 import { ConvexClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import type { ConfigPlane } from "./config.ts";
 import { logWarn } from "./log.ts";
 
-// ConvexClient's typed `onUpdate` only accepts public function refs and the
-// backend exposes this as an internalQuery, so the ref is cast at the boundary
-// exactly as apps/core does. Deploy-key auth permits the call.
-const internal: any = require("@broods/convex/_generated/api").internal;
+// Built by name rather than read off the generated `internal` api, whose types
+// pull the whole backend into this build. ConvexClient only takes public refs,
+// so this one claims to be; deploy-key auth is what permits the internalQuery.
+const listConnections = makeFunctionReference<
+  "query",
+  { channel: string },
+  ChannelConnection[]
+>("channel/connections:listConnections");
 
 /** Handle over every plane subscription; close it on shutdown. */
 export interface ConnectionWatch {
@@ -99,7 +104,7 @@ export function watchChannelConnections<T>(
   const clients = planes.map((plane): ConvexClient => {
     const client = planeClient(plane);
     client.onUpdate(
-      internal.channel.connections.listConnections,
+      listConnections,
       { channel: channel },
       (rows: ChannelConnection[]): void => {
         latest.set(plane.name, resolve(plane, rows));

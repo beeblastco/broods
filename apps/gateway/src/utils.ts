@@ -1,9 +1,10 @@
 import type { ApiError } from "../../../packages/convex/model/apiError.ts";
+import { DEFAULT_ORIGINS } from "../../edge/src/origins.ts";
 
 export {
   resolveRequestId,
   withRequestId,
-} from "../../core/src/shared/request-id.ts";
+} from "../../../packages/convex/model/requestId.ts";
 export {
   jsonError,
   rateLimitHeaders,
@@ -19,9 +20,9 @@ export type GatewayLimits = {
 
 export const decoder = new TextDecoder();
 /** Subprotocol the gateway selects so a token-bearing handshake completes. */
-export const WEBSOCKET_SUBPROTOCOL = "broods.v1";
+const WEBSOCKET_SUBPROTOCOL = "broods.v1";
 /** `Sec-WebSocket-Protocol` entry prefix that carries the credential. */
-export const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
+const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
 const maxBunIdleTimeoutSeconds = 255;
 
 /** The message from either shape core puts in `error`: envelope or plain text. */
@@ -55,116 +56,47 @@ export function errorMessage(error: unknown): string {
 
 export function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
-  if (!trimmed) throw new Error("Gateway requires BROODS_CORE_URLS");
+  if (!trimmed) throw new Error("Gateway requires BROODS_CORE_URL");
 
   return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed)
     ? trimmed
     : `https://${trimmed}`;
 }
 
-export function normalizedCoreBaseUrls(values: string[]): string[] {
-  const urls = [
-    ...new Set(
-      values
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .map(normalizeBaseUrl),
-    ),
-  ];
-  if (urls.length === 0) throw new Error("Gateway requires BROODS_CORE_URLS");
-
-  return urls;
-}
-
-export function bearerToken(value: string | null): string | null {
-  const match = value?.match(/^Bearer\s+(.+)$/i);
-
-  return match?.[1]?.trim() || null;
-}
-
 /**
  * WebSocket credential: the Authorization header, else the token carried as a
  * `broods.token.<token>` entry in `Sec-WebSocket-Protocol` (browsers cannot
- * set headers on an upgrade, and the query string ends up in access logs),
- * else the legacy `?token=` query parameter.
+ * set headers on an upgrade). A `?token=` query parameter is ignored, with a
+ * warning: query strings end up in access logs.
  */
-export function websocketToken(request: Request, url: URL): string {
-  return (
+export function websocketToken(request: Request): string {
+  const token = (
     bearerToken(request.headers.get("authorization")) ??
     subprotocolToken(request) ??
-    url.searchParams.get("token") ??
     ""
   ).trim();
+  const url = new URL(request.url);
+  if (!token && url.searchParams.has("token")) {
+    console.warn(
+      `ignored WebSocket credential in ?token= on ${url.pathname}; send it as Sec-WebSocket-Protocol "broods.token.<key>"`,
+    );
+  }
+
+  return token;
 }
 
 /**
  * Response headers for an upgrade. A client that offered subprotocols fails
  * the handshake unless the server selects one, so `broods.v1` is echoed back;
- * the token entry is never echoed.
+ * the token entry is never echoed. Undefined, never `{}`, when `broods.v1`
+ * was not offered: Bun's `server.upgrade` throws on an empty headers object.
  */
-export function websocketUpgradeHeaders(request: Request): HeadersInit {
+export function websocketUpgradeHeaders(
+  request: Request,
+): HeadersInit | undefined {
   return offeredSubprotocols(request).includes(WEBSOCKET_SUBPROTOCOL)
     ? { "Sec-WebSocket-Protocol": WEBSOCKET_SUBPROTOCOL }
-    : {};
-}
-
-/** Log once per upgrade when the credential arrived through the query string. */
-export function warnDeprecatedQueryToken(request: Request, url: URL): void {
-  if (
-    bearerToken(request.headers.get("authorization")) ||
-    subprotocolToken(request) ||
-    !url.searchParams.get("token")
-  ) {
-    return;
-  }
-  console.warn(
-    `deprecated WebSocket credential in ?token= on ${url.pathname}; send it as Sec-WebSocket-Protocol "broods.token.<key>"`,
-  );
-}
-
-/**
- * CORS headers for a browser request, scoped to the same allowlist that gates
- * WebSocket upgrades. Empty when the request carries no `Origin` (a server
- * caller, e.g. Convex or a channel webhook) or the origin is not allowed, so a
- * disallowed cross-origin call gets no `Access-Control-Allow-Origin` and the
- * browser blocks it. Credentials are never allowed: the dashboard authenticates
- * with a bearer token, not a cookie.
- */
-export function corsHeaders(
-  origin: string | null,
-  allowedPatterns: string[],
-  forwardAccountId = false,
-): Record<string, string> {
-  if (!origin?.trim() || !isOriginAllowed(origin, allowedPatterns)) return {};
-
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": forwardAccountId
-      ? "authorization, content-type, x-request-id, x-account-id"
-      : "authorization, content-type, x-request-id",
-    "Access-Control-Max-Age": "600",
-    Vary: "Origin",
-  };
-}
-
-/** Stamp a response with the CORS headers for its origin, overwriting any it set. */
-export function withCors(
-  response: Response,
-  origin: string | null,
-  allowedPatterns: string[],
-  forwardAccountId = false,
-): Response {
-  const cors = corsHeaders(origin, allowedPatterns, forwardAccountId);
-  if (Object.keys(cors).length === 0) return response;
-  const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(cors)) headers.set(name, value);
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: headers,
-  });
+    : undefined;
 }
 
 export function allowedOriginPatternsFromEnv(
@@ -178,7 +110,7 @@ export function allowedOriginPatternsFromEnv(
       .filter(Boolean);
   }
 
-  return ["broods.app", "*.broods.app", "localhost", "127.0.0.1"];
+  return [...DEFAULT_ORIGINS];
 }
 
 export function isOriginAllowed(
@@ -272,6 +204,12 @@ export async function mapWithConcurrency<T, R>(
   );
 
   return results;
+}
+
+function bearerToken(value: string | null): string | null {
+  const match = value?.match(/^Bearer\s+(.+)$/i);
+
+  return match?.[1]?.trim() || null;
 }
 
 function offeredSubprotocols(request: Request): string[] {

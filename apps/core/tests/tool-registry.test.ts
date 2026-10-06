@@ -1478,6 +1478,7 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
   return {
     accounts: {} as never,
     agents: {} as never,
+    budgets: {} as never,
     channelRecords: {} as never,
     agentDeployments: {} as never,
     crons: crons as Storage["crons"],
@@ -1487,8 +1488,10 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     accountHooks: {} as never,
     machineConnections: {} as never,
     mcp: {} as never,
+    connections: {} as never,
     roleSessions: {} as never,
     taskUsage: {} as never,
+    auditLedger: { append: async (): Promise<void> => {} },
   };
 }
 

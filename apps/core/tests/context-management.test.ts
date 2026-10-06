@@ -102,7 +102,7 @@ const compactingAgentConfig = {
     modelId: "gemini-test",
   },
   session: {
-    compaction: {
+    autoCompaction: {
       enabled: true,
       maxContextLength: 1,
     },
@@ -211,33 +211,28 @@ describe("session system context", () => {
     );
   });
 
-  it("gives a scheduling agent one clock reading for the whole run", async () => {
+  it("keeps the clock out of the system prompt and in the environment block", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const session = await newSession({
       scheduler: { enabled: true },
     });
 
-    const first = await session.createEphemeralTurnContext([
+    const turnContext = await session.createEphemeralTurnContext([
       { role: "user", content: "remind me at 8:45 tonight" },
     ]);
-    const second = await session.createEphemeralTurnContext([
-      { role: "user", content: "and again tomorrow" },
-    ]);
-    const schedulerPrompt = first.system.find((message) =>
+    const schedulerPrompt = turnContext.system.find((message) =>
       message.content.includes("<scheduler>"),
     )?.content;
+    const environment = session.environmentText();
 
-    expect(schedulerPrompt).toMatch(
-      /The current time is \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)/,
+    // A timestamp in the system prompt would invalidate the prompt cache for
+    // everything after it; the environment block goes last instead.
+    expect(schedulerPrompt).toContain("The current time is in <environment>");
+    expect(schedulerPrompt).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(environment).toMatch(
+      /^<environment>\n[\s\S]*now: \w+day, \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)[\s\S]*<\/environment>$/,
     );
-    expect(schedulerPrompt).toContain(
-      "list_schedules is what is actually pending",
-    );
-    // A timestamp that moved between steps would invalidate the prompt cache.
-    expect(
-      second.system.find((message) => message.content.includes("<scheduler>"))
-        ?.content,
-    ).toBe(schedulerPrompt);
+    expect(session.environmentText()).toBe(environment);
   });
 
   it("withholds the scheduling clock until the agent opts in", async () => {
@@ -338,7 +333,7 @@ describe("session system context", () => {
       'this conversation\'s scope is "slack:T1:C2"',
     );
     expect(memoryGuidance).toContain("memory/MEMORY.md");
-    expect(memoryGuidance).toContain("Today is");
+    expect(memoryGuidance).not.toContain("Today is");
     const workspacePrompt = writableContext.system.find((message) =>
       message.content.includes("<workspace>"),
     )?.content;
@@ -900,7 +895,6 @@ describe("context prepare", () => {
 
       expect(turnContext.messages).toHaveLength(3);
       expect(turnContext.timings?.phases.historyRows).toBe(3);
-      expect(turnContext.timings?.compaction).toBeUndefined();
       // One S3 read for the memory index, one for the skill, before the
       // system prompt was built.
       expect(readS3TextMock).toHaveBeenCalledTimes(2);
@@ -922,67 +916,328 @@ describe("context prepare", () => {
     }
   });
 
-  it("ends the prepare window where compaction starts", async () => {
-    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+  it("re-reads history before a step only after the session writes a system row", async () => {
     const history = await stubHistory(userRows(2));
     const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const stubbedQuery = runtime.query;
     const originalMutate = runtime.mutate;
-    runtime.mutate = (async () => "cursor") as typeof runtime.mutate;
+    const reads: string[] = [];
+    runtime.query = (async (name: string, args: Record<string, unknown>) => {
+      reads.push(name);
+
+      return stubbedQuery(name as never, args);
+    }) as typeof runtime.query;
+    runtime.mutate = (async () => null) as typeof runtime.mutate;
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext();
+      const prepareReads = reads.length;
+
+      await session.loadRefreshedSystemPromptParts({
+        systemContextSnapshot: turnContext.systemContextSnapshot,
+      });
+      expect(reads).toHaveLength(prepareReads);
+
+      await session.persistModelMessages([
+        { role: "system", content: "steer" },
+      ]);
+      await session.loadRefreshedSystemPromptParts({
+        systemContextSnapshot: turnContext.systemContextSnapshot,
+      });
+      expect(reads.slice(prepareReads)).toEqual(["listConversationEvents"]);
+    } finally {
+      runtime.mutate = originalMutate;
+      history.restore();
+    }
+  });
+
+  it.each([
+    ["before", false],
+    ["after", true],
+  ])(
+    "keeps the turn's input once when the history read lands %s its write",
+    async (_when: string, readSeesWrite: boolean): Promise<void> => {
+      const { runtime } = await import("../src/shared/convex/runtime.ts");
+      const originalQuery = runtime.query;
+      const originalMutate = runtime.mutate;
+      const written: StoredConversationEventPage["page"] = [];
+      const wrote = Promise.withResolvers<void>();
+      runtime.mutate = (async (
+        _name: string,
+        args: { events: [] },
+      ): Promise<null> => {
+        written.push(...args.events);
+        wrote.resolve();
+
+        return null;
+      }) as typeof runtime.mutate;
+      runtime.query = (async (
+        name: string,
+      ): Promise<StoredConversationEventPage | null> => {
+        if (name !== "listConversationEvents") return null;
+        if (readSeesWrite) await wrote.promise;
+
+        return {
+          page: [...userRows(2), ...written],
+          isDone: true,
+          continueCursor: null,
+        };
+      }) as typeof runtime.query;
+      try {
+        const session = await newSession({ skills: { enabled: false } });
+        const turnContext = await session.createTurnContext(
+          [{ role: "system", content: "one turn only" }],
+          [
+            { role: "user", content: "new question" },
+            { role: "system", content: "ephemeral", persist: false },
+          ],
+        );
+
+        expect(written).toHaveLength(1);
+        expect(turnContext.messages.map((message) => message.content)).toEqual([
+          "message 0",
+          "message 1",
+          "new question",
+        ]);
+        expect(turnContext.ephemeralSystem).toEqual([
+          { role: "system", content: "ephemeral" },
+          { role: "system", content: "one turn only" },
+        ]);
+      } finally {
+        runtime.query = originalQuery;
+        runtime.mutate = originalMutate;
+      }
+    },
+  );
+
+  it("keeps cursor order when a newer context row lands before the turn's input", async (): Promise<void> => {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalQuery = runtime.query;
+    const originalMutate = runtime.mutate;
+    // A context-only channel message, written without the lease after the
+    // input's cursor was minted but before the input's write landed.
+    const newer: StoredConversationEventPage["page"][number] = {
+      cursor: "9999-12-31T00:00:00.000Z#context#0000",
+      event: {
+        version: 1,
+        sourceEventId: "context",
+        message: { role: "user", content: "channel chatter" },
+      },
+    };
+    runtime.mutate = (async (): Promise<null> => null) as typeof runtime.mutate;
+    runtime.query = (async (
+      name: string,
+    ): Promise<StoredConversationEventPage | null> =>
+      name === "listConversationEvents"
+        ? { page: [...userRows(2), newer], isDone: true, continueCursor: null }
+        : null) as typeof runtime.query;
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext(
+        [],
+        [{ role: "user", content: "new question" }],
+      );
+
+      expect(turnContext.messages.map((message) => message.content)).toEqual([
+        "message 0",
+        "message 1",
+        "new question",
+        "channel chatter",
+      ]);
+    } finally {
+      runtime.query = originalQuery;
+      runtime.mutate = originalMutate;
+    }
+  });
+
+  it("never compacts while preparing a turn, however long the history", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const history = await stubHistory(userRows(50));
     try {
       const session = await newSession({
         ...compactingAgentConfig,
         skills: { enabled: false },
       });
       const turnContext = await session.createTurnContext();
-      const timings = turnContext.timings;
 
-      expect(generateTextMock).toHaveBeenCalledTimes(1);
-      expect(timings?.compaction?.startedMs).toBe(timings!.prepareEndedMs);
-      expect(timings!.compaction!.endedMs).toBeGreaterThanOrEqual(
-        timings!.compaction!.startedMs,
-      );
+      // Compaction only follows a finished turn, never the start of one.
+      expect(generateTextMock).not.toHaveBeenCalled();
+      expect(turnContext.messages).toHaveLength(50);
     } finally {
       history.restore();
-      runtime.mutate = originalMutate;
     }
   });
 });
 
-describe("session compaction", () => {
-  it("does not compact when disabled", async () => {
-    const { compactSessionContext } =
-      await import("../src/harness/compaction.ts");
+describe("auto-compaction threshold", () => {
+  it("is on by default and starts at 500000 input tokens", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
-    const result = await compactSessionContext({
+    expect(shouldAutoCompact({}, 499_999)).toBe(false);
+    expect(shouldAutoCompact({}, 500_000)).toBe(true);
+    expect(shouldAutoCompact({ session: {} }, 2_000_000)).toBe(true);
+  });
+
+  it("follows the agent's switch and threshold", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    const off = { session: { autoCompaction: { enabled: false } } };
+    const low = { session: { autoCompaction: { maxContextLength: 1_000 } } };
+
+    expect(shouldAutoCompact(off, 10_000_000)).toBe(false);
+    expect(shouldAutoCompact(low, 999)).toBe(false);
+    expect(shouldAutoCompact(low, 1_000)).toBe(true);
+  });
+
+  it("never compacts when the provider reported no input tokens", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+
+    expect(shouldAutoCompact(compactingAgentConfig, undefined)).toBe(false);
+  });
+});
+
+describe("auto-compaction after a turn", () => {
+  it("summarizes the stored history once the last call crossed the threshold", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const history = await stubHistory(userRows(3));
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate;
+    const writes: string[] = [];
+    runtime.mutate = (async (name: string) => {
+      writes.push(name);
+
+      return ["cursor"];
+    }) as typeof runtime.mutate;
+    try {
+      const session = await newSession(compactingAgentConfig);
+
+      expect(await session.compactConversation("")).toBe(3);
+      expect(generateTextMock).toHaveBeenCalledTimes(1);
+      expect(writes).toContain("appendConversationEvent");
+    } finally {
+      runtime.mutate = originalMutate;
+      history.restore();
+    }
+  });
+
+  it("leaves a conversation that is never stored alone", async () => {
+    const { Session } = await import("../src/harness/session.ts");
+    const ephemeral = new Session({
+      eventId: "event",
       conversationKey: "conversation",
-      system: [],
-      messages: [{ role: "user", content: "hello" }],
-      agentConfig: {},
+      accountId: "acct",
+      agentId: "agent",
+      agentConfig: compactingAgentConfig,
+      persist: false,
     });
 
-    expect(result).toBeNull();
+    expect(await ephemeral.compactConversation("")).toBe(0);
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
-  it("uses the configured model when enabled context exceeds the limit", async () => {
-    const { compactSessionContext, isCompactionSummaryMessage } =
+  it("skips a model call when nothing was said since the last summary", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const history = await stubHistory([
+      {
+        cursor: "1",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: {
+            role: "system",
+            content:
+              "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
+          },
+        },
+      },
+    ]);
+    try {
+      const session = await newSession(compactingAgentConfig);
+
+      expect(await session.compactConversation("")).toBe(0);
+      expect(generateTextMock).not.toHaveBeenCalled();
+    } finally {
+      history.restore();
+    }
+  });
+
+  it("skips a conversation waiting on a tool approval", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const history = await stubHistory([
+      {
+        cursor: "1",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: { role: "user", content: "delete a file" },
+        },
+      },
+      {
+        cursor: "2",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "tool-call-1",
+                toolName: "bash",
+                input: { shell: "rm file.txt" },
+              },
+              {
+                type: "tool-approval-request",
+                approvalId: "approval-1",
+                toolCallId: "tool-call-1",
+              },
+            ],
+          },
+        },
+      },
+      {
+        cursor: "3",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: {
+            role: "tool",
+            content: [
+              {
+                type: "tool-approval-response",
+                approvalId: "approval-1",
+                approved: true,
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    try {
+      const session = await newSession(compactingAgentConfig);
+
+      expect(await session.compactConversation("")).toBe(0);
+      expect(generateTextMock).not.toHaveBeenCalled();
+    } finally {
+      history.restore();
+    }
+  });
+});
+
+describe("conversation summary", () => {
+  it("uses the agent's own model", async () => {
+    const { summarizeConversation, isCompactionSummaryMessage } =
       await import("../src/harness/compaction.ts");
 
-    const result = await compactSessionContext({
+    const result = await summarizeConversation({
       conversationKey: "conversation",
-      system: [{ role: "system", content: "system" }],
+      priorSummaries: [],
       messages: [
-        { role: "user", content: "old user content that should be summarized" },
-        {
-          role: "assistant",
-          content: "old assistant content that should be summarized",
-        },
-        { role: "user", content: "current request" },
+        { role: "user", content: "old user content" },
+        { role: "assistant", content: "old assistant content" },
       ],
       agentConfig: compactingAgentConfig,
     });
 
-    expect(result).toBeDefined();
     expect(isCompactionSummaryMessage(result!)).toBe(true);
     expect(createGoogleMock).toHaveBeenCalledWith({
       apiKey: "google-key",
@@ -990,65 +1245,6 @@ describe("session compaction", () => {
     });
     expect(googleModelMock).toHaveBeenCalledWith("gemini-test");
     expect(generateTextMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("measures the pruned view, so a stored tool result the model never gets does not trigger it", async () => {
-    const { compactSessionContext } =
-      await import("../src/harness/compaction.ts");
-    const messages = [
-      { role: "user", content: "read the log" },
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "tool-call",
-            toolCallId: "tool-call-1",
-            toolName: "bash",
-            input: { shell: "cat log" },
-          },
-        ],
-      },
-      {
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: "tool-call-1",
-            toolName: "bash",
-            output: { type: "text", value: "log line\n".repeat(500) },
-          },
-        ],
-      },
-      { role: "assistant", content: "the log is clean" },
-      { role: "user", content: "thanks" },
-    ] as actualAi.ModelMessage[];
-    const compaction = { enabled: true, maxContextLength: 1_000 };
-
-    expect(
-      await compactSessionContext({
-        conversationKey: "conversation",
-        system: [],
-        messages: messages,
-        agentConfig: {
-          ...compactingAgentConfig,
-          session: { compaction: compaction },
-        },
-      }),
-    ).toBeNull();
-    expect(generateTextMock).not.toHaveBeenCalled();
-
-    // With pruning off the model gets the tool result, so it counts.
-    expect(
-      await compactSessionContext({
-        conversationKey: "conversation",
-        system: [],
-        messages: messages,
-        agentConfig: {
-          ...compactingAgentConfig,
-          session: { compaction: compaction, pruning: { enabled: false } },
-        },
-      }),
-    ).not.toBeNull();
   });
 
   it("summarizes on demand regardless of config, folding instructions in", async () => {
@@ -1065,6 +1261,7 @@ describe("session compaction", () => {
       agentConfig: {
         provider: { google: { apiKey: "google-key" } },
         model: { provider: "google" as const, modelId: "gemini-test" },
+        session: { autoCompaction: { enabled: false } },
       },
       instructions: "keep the deploy decisions",
     });
@@ -1074,49 +1271,43 @@ describe("session compaction", () => {
     const options = generateTextMock.mock.calls[0]?.[0] as
       | { messages: Array<{ content: string }> }
       | undefined;
-    // The manual path passes every message, trailing user message included,
-    // and the instructions ride the per-call user message.
     expect(options?.messages[0]?.content).toContain("trailing user message");
     expect(options?.messages[0]?.content).toContain(
       "keep the deploy decisions",
     );
   });
 
-  it("includes previous compaction summaries when compacting again", async () => {
-    const { compactSessionContext } =
+  it("folds previous summaries into the next one", async () => {
+    const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
-    const priorSummary = {
-      role: "system",
-      content:
-        "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
-    } as const;
 
-    await compactSessionContext({
+    await summarizeConversation({
       conversationKey: "conversation",
-      system: [priorSummary],
-      messages: [
-        { role: "assistant", content: "new assistant content" },
-        { role: "user", content: "current request" },
+      priorSummaries: [
+        {
+          role: "system",
+          content:
+            "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
+        },
       ],
+      messages: [{ role: "assistant", content: "new assistant content" }],
       agentConfig: compactingAgentConfig,
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as
       | { messages: Array<{ content: string }> }
       | undefined;
-    const compactionPrompt = options?.messages[0]?.content;
-    expect(compactionPrompt).toContain("Earlier summary.");
-    expect(compactionPrompt).toContain("new assistant content");
-    expect(compactionPrompt).not.toContain("current request");
+    expect(options?.messages[0]?.content).toContain("Earlier summary.");
+    expect(options?.messages[0]?.content).toContain("new assistant content");
   });
 
-  it("strips reasoning before building compaction prompts", async () => {
-    const { compactSessionContext } =
+  it("strips reasoning before building the summary request", async () => {
+    const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
 
-    await compactSessionContext({
+    await summarizeConversation({
       conversationKey: "conversation",
-      system: [],
+      priorSummaries: [],
       messages: [
         { role: "user", content: "old request" },
         {
@@ -1126,7 +1317,6 @@ describe("session compaction", () => {
             { type: "text", text: "visible assistant answer" },
           ],
         },
-        { role: "user", content: "current request" },
       ],
       agentConfig: compactingAgentConfig,
     });
@@ -1134,86 +1324,23 @@ describe("session compaction", () => {
     const options = generateTextMock.mock.calls[0]?.[0] as
       | { messages: Array<{ content: string }> }
       | undefined;
-    const compactionPrompt = options?.messages[0]?.content;
-    expect(compactionPrompt).not.toContain("private scratch work");
-    expect(compactionPrompt).toContain("visible assistant answer");
+    expect(options?.messages[0]?.content).not.toContain("private scratch work");
+    expect(options?.messages[0]?.content).toContain("visible assistant answer");
   });
 
-  it("keeps approval requests with approval responses after compaction", async () => {
-    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { selectPostCompactionPendingMessages } =
-      await import("../src/harness/session.ts");
-    const approvalRequest = {
-      role: "assistant",
-      content: [
-        {
-          type: "tool-call",
-          toolCallId: "tool-call-1",
-          toolName: "bash",
-          input: { shell: "rm file.txt" },
-        },
-        {
-          type: "tool-approval-request",
-          approvalId: "approval-1",
-          toolCallId: "tool-call-1",
-        },
-      ],
-    } as actualAi.ModelMessage;
-    const approvalResponse = {
-      role: "tool",
-      content: [
-        {
-          type: "tool-approval-response",
-          approvalId: "approval-1",
-          approved: true,
-        },
-      ],
-    } as actualAi.ModelMessage;
-
-    expect(
-      selectPostCompactionPendingMessages([
-        { role: "user", content: "old request" },
-        approvalRequest,
-        approvalResponse,
-      ]),
-    ).toEqual([approvalRequest, approvalResponse]);
-  });
-
-  it("does not compact pending approval resumes", async () => {
-    const { compactSessionContext } =
+  it("returns nothing when there is nothing to summarize", async () => {
+    const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
 
-    const result = await compactSessionContext({
-      conversationKey: "conversation",
-      system: [],
-      messages: [
-        { role: "user", content: "delete a file" },
-        {
-          role: "assistant",
-          content: [
-            { type: "reasoning", text: "approval resume reasoning" },
-            {
-              type: "tool-approval-request",
-              approvalId: "approval-1",
-              toolCallId: "tool-call-1",
-            },
-          ],
-        },
-        {
-          role: "tool",
-          content: [
-            {
-              type: "tool-approval-response",
-              approvalId: "approval-1",
-              approved: true,
-            },
-          ],
-        },
-      ] as actualAi.ModelMessage[],
-      agentConfig: compactingAgentConfig,
-    });
-
-    expect(result).toBeNull();
+    expect(
+      await summarizeConversation({
+        conversationKey: "conversation",
+        priorSummaries: [],
+        messages: [],
+        agentConfig: compactingAgentConfig,
+      }),
+    ).toBeNull();
+    expect(generateTextMock).not.toHaveBeenCalled();
   });
 });
 

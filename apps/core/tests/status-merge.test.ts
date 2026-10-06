@@ -22,7 +22,7 @@ const { handler } = await import("../src/harness/handler.ts");
 const ACCOUNT: AccountRecord = {
   accountId: "acct_1",
   username: "tester",
-  secretHash: hashAccountSecret("fp_acct_known-secret"),
+  secretHash: hashAccountSecret("bask_known-secret"),
   status: "active",
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
@@ -71,7 +71,7 @@ afterEach(() => {
 function statusRequest(): Promise<Response> {
   return handler(
     coreRequest("GET", `/v1/runs/${RUN_ID}`, {
-      authorization: "Bearer fp_acct_known-secret",
+      authorization: "Bearer bask_known-secret",
     }),
   );
 }
@@ -165,6 +165,14 @@ describe("status route ingress/async merge", () => {
     const payload = await responseJson(await statusRequest());
     expect(payload.status).toBe("queued");
     expect(payload.requestedMode).toBe("reject");
+  });
+
+  it("names the agent the stored run belongs to", async () => {
+    ingressRow = ingress({ agentId: "agent_child" });
+    asyncRow = null;
+
+    const payload = await responseJson(await statusRequest());
+    expect(payload.agentId).toBe("agent_child");
   });
 
   it("returns 404 when the run id resolves to nothing", async () => {

@@ -1,7 +1,7 @@
 /**
  * Account role CRUD and assume-role session storage. Roles are scoped API
  * credentials: their policy is a PolicyDocument over the API action namespace,
- * and a role is exchanged for a short-lived fp_sts_ session via
+ * and a role is exchanged for a short-lived bsts_ session via
  * `POST /v1/account/assume-role`. Only session-token hashes are stored.
  */
 
@@ -22,6 +22,7 @@ import {
 } from "../model/policyRules";
 import { createRoleId } from "../model/roleRules";
 import { accountRolesFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const DEFAULT_PRUNE_BATCH_SIZE = 100;
 
@@ -201,7 +202,7 @@ export const removeInternal = internalMutation({
 });
 
 /**
- * Resolve an fp_sts_ token hash to its role principal. Null for unknown or
+ * Resolve a bsts_ token hash to its role principal. Null for unknown or
  * expired sessions and disabled or deleted roles; the caller loads the
  * account and checks its status.
  */
@@ -276,14 +277,14 @@ async function resolveRoleScope(
 ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> } | null> {
   if (projectId === undefined && stageId === undefined) return null;
   // Structural scope is the deployKeys shape: a stage inside a project, or
-  // account-wide. Half a scope would silently widen what fp_agent_ can assume.
+  // account-wide. Half a scope would silently widen what a runtime key can assume.
   if (projectId === undefined || stageId === undefined) {
-    throw new Error("projectId and stageId must be provided together");
+    throw new ClientError("projectId and stageId must be provided together");
   }
   const normalizedProjectId = ctx.db.normalizeId("projects", projectId);
   const normalizedStageId = ctx.db.normalizeId("stages", stageId);
   if (!normalizedProjectId || !normalizedStageId) {
-    throw new Error("projectId and stageId must reference this account");
+    throw new ClientError("projectId and stageId must reference this account");
   }
   const [stage, owningAccountId] = await Promise.all([
     ctx.db.get(normalizedStageId),
@@ -294,7 +295,7 @@ async function resolveRoleScope(
     stage.projectId !== normalizedProjectId ||
     owningAccountId !== accountId
   ) {
-    throw new Error("projectId and stageId must reference this account");
+    throw new ClientError("projectId and stageId must reference this account");
   }
 
   return { projectId: normalizedProjectId, stageId: normalizedStageId };

@@ -4,15 +4,21 @@
  * Node-runtime S3 bundle writers for Convex config-plane resources. Bundles
  * arrive by storage id, never as an argument. See model/bundles.ts for why.
  * The MCP writer also verifies client-uploaded bundles (sha256 and size cap)
- * here, where the bytes are read anyway.
+ * and decides where they can run, here, where the bytes are read anyway.
  */
 
 import { createHash } from "node:crypto";
 import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { accountHookBundleStorageKey } from "../model/accountHooks";
-import { MAX_MCP_BUNDLE_BYTES, mcpBundleStorageKey } from "../model/mcp";
+import { isWorkersSafeBundle } from "../model/isolateSafety";
+import {
+  MAX_INLINE_BUNDLE_BYTES,
+  MAX_MCP_BUNDLE_BYTES,
+  mcpBundleStorageKey,
+} from "../model/mcp";
 import { writeS3Object } from "../model/s3";
+import { ClientError } from "../model/clientError";
 
 /**
  * @param accountId account id owning the hook
@@ -40,6 +46,8 @@ export const putHookBundle = internalAction({
  * 2). The bundle may be a direct client upload (#190), so the declared sha256
  * and the size cap are verified against the raw bytes first. Failing here
  * turns a corrupt upload into an upload error instead of a broken server.
+ * `workersCompatible` marks a bundle Cloudflare Dynamic Workers can run: under
+ * the Worker size cap and passing the static scan.
  */
 export const putMcpBundle = internalAction({
   args: {
@@ -47,22 +55,30 @@ export const putMcpBundle = internalAction({
     sha256: v.string(),
     storageId: v.id("_storage"),
   },
-  returns: v.string(),
-  handler: async (ctx, args): Promise<string> => {
+  returns: v.object({ key: v.string(), workersCompatible: v.boolean() }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ key: string; workersCompatible: boolean }> => {
     const bytes = await bundleBytes(ctx, args.storageId);
     if (bytes.byteLength > MAX_MCP_BUNDLE_BYTES) {
-      throw new Error(
+      throw new ClientError(
         `bundle must be at most ${MAX_MCP_BUNDLE_BYTES} bytes (got ${bytes.byteLength})`,
       );
     }
     const actualSha = createHash("sha256").update(bytes).digest("hex");
     if (actualSha !== args.sha256) {
-      throw new Error(
+      throw new ClientError(
         "bundle sha256 does not match the uploaded bytes; re-upload and retry",
       );
     }
 
-    return await writeBundleObject(args, mcpBundleStorageKey, bytes);
+    return {
+      key: await writeBundleObject(args, mcpBundleStorageKey, bytes),
+      workersCompatible:
+        bytes.byteLength <= MAX_INLINE_BUNDLE_BYTES &&
+        isWorkersSafeBundle(bytes.toString("utf8")),
+    };
   },
 });
 
@@ -71,7 +87,7 @@ async function bundleBytes(
   storageId: string,
 ): Promise<Buffer> {
   const blob = await ctx.storage.get(storageId);
-  if (!blob) throw new Error("bundle is missing from Convex storage");
+  if (!blob) throw new ClientError("bundle is missing from Convex storage");
 
   return Buffer.from(await blob.arrayBuffer());
 }

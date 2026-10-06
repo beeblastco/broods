@@ -8,6 +8,8 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Broods Dashboard",
   description: "",
+  // Everything past sign-in is behind auth; nothing here is for search engines.
+  robots: { index: false, follow: false },
 };
 
 export default async function RootLayout({

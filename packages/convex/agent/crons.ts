@@ -27,6 +27,7 @@ import {
   normalizeUpdateCronInput,
 } from "../model/cronRules";
 import {
+  deleteCron,
   deleteRegistrationIfExists,
   registerSchedule,
   unregisterSchedule,
@@ -36,6 +37,7 @@ import { cronsInProject } from "../model/projectScope";
 import { toCronResponse } from "../model/responses";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CRON_RUN_PAGE_WINDOW = 1000;
@@ -47,11 +49,8 @@ const cronDoc = v.object({
   _creationTime: v.number(),
 });
 
-const cronLastStatusValidator = v.union(
-  v.literal("started"),
-  v.literal("completed"),
-  v.literal("failed"),
-);
+// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it.
+const projectCronDoc = cronDoc.omit("lastRunId");
 
 const cronRunDoc = v.object({
   ...cronRunsFields,
@@ -69,22 +68,8 @@ export const completeRun = internalMutation({
     result: v.any(),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, cronId, runId, result }): Promise<null> => {
-    const run = await ctx.db.get(runId);
-    if (!run || run.accountId !== accountId || run.cronId !== cronId) {
-      throw new Error(
-        "Cron job run does not belong to the supplied accountId and cronId",
-      );
-    }
-
-    await ctx.db.patch(runId, {
-      status: "completed",
-      result: result,
-      completedAt: Date.now(),
-    });
-
-    return null;
-  },
+  handler: (ctx, args): Promise<null> =>
+    settleRun(ctx, args, { status: "completed", result: args.result }),
 });
 
 /**
@@ -119,45 +104,64 @@ export const create = internalMutation({
     });
     const created = await ctx.db.get(cronId);
     if (!created) throw new Error("Failed to fetch created cron job");
-    const schedule = await registerSchedule(ctx, created, {
+    const scheduledRunId = await registerSchedule(ctx, created, {
       onPastAt: "throw",
     });
-    if (schedule.scheduledRunId !== undefined) {
-      await ctx.db.patch(cronId, { scheduledRunId: schedule.scheduledRunId });
+    if (scheduledRunId !== undefined) {
+      await ctx.db.patch(cronId, { scheduledRunId: scheduledRunId });
     }
 
     return toCronResponse(created);
   },
 });
 
-/** Creates a cron job run history row when a schedule fires. */
+/**
+ * Creates a cron job run history row when a schedule fires, and makes it the
+ * run the cron's last status follows unless a later fire already did.
+ */
 export const createRun = internalMutation({
   args: {
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
     eventId: v.string(),
     conversationKey: v.string(),
+    firedAt: v.number(),
   },
   returns: v.id("cronRuns"),
-  handler: async (ctx, args): Promise<Id<"cronRuns">> => {
+  handler: async (ctx, { firedAt, ...args }): Promise<Id<"cronRuns">> => {
     const cron = await getOwned(ctx, args.accountId, args.cronId);
     if (!cron) {
-      throw new Error("Cron job does not belong to the supplied accountId");
+      throw new ClientError(
+        "Cron job does not belong to the supplied accountId",
+      );
     }
 
-    return await ctx.db.insert("cronRuns", {
+    const startedAt = Date.now();
+    const runId = await ctx.db.insert("cronRuns", {
       ...args,
       status: "started",
-      startedAt: Date.now(),
+      startedAt: startedAt,
     });
+    if (isLatestFire(cron, firedAt)) {
+      await ctx.db.patch(cron._id, {
+        lastRunId: runId,
+        lastStatus: "started",
+        lastError: undefined,
+        lastInvokedAt: firedAt,
+        updatedAt: startedAt,
+      });
+    }
+
+    return runId;
   },
 });
 
 /**
- * POST one fired cron job to the gateway's /v1/cron-runs leaf, where core
- * starts the configured agent. The crons component (and the Convex scheduler
- * for one-time jobs) invokes this with the same {kind, accountId, cronId}
- * payload EventBridge used to deliver, so core is untouched.
+ * POST one fired cron job straight to core's in-cluster /v1/cron-runs leaf
+ * (the gateway 404s that path), where core starts the configured agent. The
+ * crons component (and the Convex scheduler for one-time jobs) invokes this
+ * with the same {kind, accountId, cronId} payload EventBridge used to
+ * deliver, so core is untouched.
  */
 export const dispatch = internalAction({
   args: { accountId: v.id("accounts"), cronId: v.id("crons") },
@@ -205,22 +209,8 @@ export const failRun = internalMutation({
     error: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, cronId, runId, error }): Promise<null> => {
-    const run = await ctx.db.get(runId);
-    if (!run || run.accountId !== accountId || run.cronId !== cronId) {
-      throw new Error(
-        "Cron job run does not belong to the supplied accountId and cronId",
-      );
-    }
-
-    await ctx.db.patch(runId, {
-      status: "failed",
-      error: error,
-      completedAt: Date.now(),
-    });
-
-    return null;
-  },
+  handler: (ctx, args): Promise<null> =>
+    settleRun(ctx, args, { status: "failed", error: args.error }),
 });
 
 export const getById = internalQuery({
@@ -306,8 +296,8 @@ export const listPage = internalQuery({
  */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
-  returns: v.array(cronDoc),
-  handler: async (ctx, args): Promise<Doc<"crons">[]> => {
+  returns: v.array(projectCronDoc),
+  handler: async (ctx, args): Promise<Omit<Doc<"crons">, "lastRunId">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -320,7 +310,9 @@ export const listForProject = query({
     const accountId = await accountIdForProject(ctx, args.projectId);
     if (!accountId) return [];
 
-    return await cronsInProject(ctx, args.projectId, accountId);
+    const crons = await cronsInProject(ctx, args.projectId, accountId);
+
+    return crons.map(({ lastRunId: _lastRunId, ...cron }) => cron);
   },
 });
 
@@ -403,31 +395,35 @@ export const pruneExpiredRuns = internalMutation({
 });
 
 /**
- * Records the result of an invocation. Status transitions:
- * undefined -> started -> completed | failed.
+ * Records a fire that failed before it had a run row, such as a plan refusal,
+ * unless a later fire already reported. It detaches the last run, so an older
+ * run settling later leaves it alone.
  */
-export const recordInvocation = internalMutation({
+export const recordFailedFire = internalMutation({
   args: {
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
-    lastStatus: cronLastStatusValidator,
-    lastError: v.optional(v.string()),
-    lastInvokedAt: v.optional(v.number()),
+    error: v.string(),
+    firedAt: v.number(),
   },
   returns: v.null(),
   handler: async (
     ctx,
-    { accountId, cronId, lastStatus, lastError, lastInvokedAt },
+    { accountId, cronId, error, firedAt },
   ): Promise<null> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) {
-      throw new Error("Cron job does not belong to the supplied accountId");
+      throw new ClientError(
+        "Cron job does not belong to the supplied accountId",
+      );
     }
 
+    if (!isLatestFire(cron, firedAt)) return null;
     await ctx.db.patch(cronId, {
-      lastStatus: lastStatus,
-      lastError: lastError,
-      lastInvokedAt: lastInvokedAt ?? Date.now(),
+      lastRunId: undefined,
+      lastStatus: "failed",
+      lastError: error,
+      lastInvokedAt: firedAt,
       updatedAt: Date.now(),
     });
 
@@ -436,9 +432,7 @@ export const recordInvocation = internalMutation({
 });
 
 /**
- * Delete a cron job and its schedule in one transaction. Run history can
- * exceed one transaction, so a scheduled mutation drains it in bounded
- * batches after this commits.
+ * Delete a cron job and its schedule in one transaction (`deleteCron`).
  * @param accountId account id owning the cron job
  * @param cronId the cron job id
  * @returns true when the job existed and was removed
@@ -449,12 +443,7 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const cron = await getOwnedByString(ctx, args.accountId, args.cronId);
     if (!cron) return false;
-    await unregisterSchedule(ctx, cron);
-    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
-      accountId: cron.accountId,
-      cronId: cron._id,
-    });
-    await ctx.db.delete(cron._id);
+    await deleteCron(ctx, cron);
 
     return true;
   },
@@ -463,7 +452,7 @@ export const remove = internalMutation({
 /**
  * Drains a deleted cron's run history: deletes one bounded batch per
  * invocation and reschedules itself until none remain. Scheduled by
- * `purgeProject`, which deletes the cron row in its own transaction; run rows
+ * `deleteCron`, which deletes the cron row in its own transaction; run rows
  * stay reachable through the account+cron index prefix.
  */
 export const removeRunsCascade = internalMutation({
@@ -534,13 +523,12 @@ export const update = internalMutation({
       updated.status !== existing.status;
     if (scheduleChanged) {
       await unregisterSchedule(ctx, existing);
-      const schedule = await registerSchedule(ctx, updated, {
+      updated.scheduledRunId = await registerSchedule(ctx, updated, {
         onPastAt:
           updated.scheduleExpression !== existing.scheduleExpression
             ? "throw"
             : "run",
       });
-      updated.scheduledRunId = schedule.scheduledRunId;
     }
     await ctx.db.patch(existing._id, {
       ...defined,
@@ -589,7 +577,7 @@ async function getOwnedAgent(
   const normalized = ctx.db.normalizeId("agents", agentId);
   const agent = normalized ? await ctx.db.get(normalized) : null;
   if (!agent || agent.accountId !== accountId) {
-    throw new Error("Cron job agentId must reference an existing agent");
+    throw new ClientError("Cron job agentId must reference an existing agent");
   }
 
   return agent;
@@ -604,4 +592,48 @@ async function getOwnedByString(
   const normalized = ctx.db.normalizeId("crons", cronId);
 
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
+}
+
+/** Whether a fire scheduled at `firedAt` is at least as late as the one the cron shows. */
+function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
+  return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
+}
+
+/**
+ * Records a run's outcome once, for `completeRun` and `failRun`, and on the
+ * cron while it is still the cron's last run. A run already settled, or
+ * drained with its one-time cron, is left alone; a run of another account or
+ * cron is refused.
+ */
+async function settleRun(
+  ctx: MutationCtx,
+  ids: {
+    accountId: Id<"accounts">;
+    cronId: Id<"crons">;
+    runId: Id<"cronRuns">;
+  },
+  outcome:
+    | { status: "completed"; result: unknown }
+    | { status: "failed"; error: string },
+): Promise<null> {
+  const run = await ctx.db.get(ids.runId);
+  if (!run) return null;
+  if (run.accountId !== ids.accountId || run.cronId !== ids.cronId) {
+    throw new ClientError(
+      "Cron job run does not belong to the supplied accountId and cronId",
+    );
+  }
+  if (run.status !== "started") return null;
+  const now = Date.now();
+  await ctx.db.patch(ids.runId, { ...outcome, completedAt: now });
+  const cron = await ctx.db.get(ids.cronId);
+  if (cron?.lastRunId === ids.runId) {
+    await ctx.db.patch(ids.cronId, {
+      lastStatus: outcome.status,
+      lastError: outcome.status === "failed" ? outcome.error : undefined,
+      updatedAt: now,
+    });
+  }
+
+  return null;
 }

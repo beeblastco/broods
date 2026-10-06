@@ -7,47 +7,106 @@ import type {
   HarnessAgentResumeSessionState,
   HarnessAgentSession,
 } from "@ai-sdk/harness/agent";
-import type { Session } from "../session.ts";
+import { isSandboxGoneError } from "../sandbox/utils.ts";
+import type { Session, StoredHarnessSession } from "../session.ts";
+import { logWarn } from "../../shared/log.ts";
 import {
   harnessSessionParking,
+  harnessSharesSandbox,
   type AiSdkHarnessType,
 } from "./adapters/index.ts";
+
+export interface HarnessReservationOptions {
+  /** The agent-level key its first sandbox reserves on, when it reserves one. */
+  agentReservationKey: string | undefined;
+  conversationKey: string;
+  /** The task asked for a machine of its own. */
+  isolated: boolean;
+  stored: StoredHarnessSession | null;
+  type: AiSdkHarnessType;
+}
 
 export interface OpenAiSdkHarnessSessionOptions {
   abortSignal: AbortSignal;
   agent: HarnessAgent;
-  broodsSession: Session;
+  stored: StoredHarnessSession | null;
   type: AiSdkHarnessType;
 }
 
 export interface ParkAiSdkHarnessSessionOptions {
   broodsSession: Session;
   nativeSession: HarnessAgentSession;
+  /** Stored with the checkpoint so the next turn resumes on the same machine. */
+  reservationKey: string;
   successful: boolean;
   type: AiSdkHarnessType;
 }
 
+/**
+ * The reservation a harness conversation runs on; the run loop in `harness.ts` calls it.
+ * A stored session keeps its own (older rows fall back to the conversation key). A new
+ * one shares the agent's machine unless the task is isolated or the adapter can't share.
+ */
+export function harnessReservationKey(
+  options: HarnessReservationOptions,
+): string {
+  if (options.stored) {
+    return options.stored.reservationKey ?? options.conversationKey;
+  }
+  if (options.isolated || !harnessSharesSandbox(options.type)) {
+    return options.conversationKey;
+  }
+
+  return options.agentReservationKey ?? options.conversationKey;
+}
+
+/**
+ * Starts the native session for a harness turn, resuming the stored one when it
+ * exists. Called by the run loop in `harness.ts`; a released machine starts fresh.
+ */
 export async function openAiSdkHarnessSession(
   options: OpenAiSdkHarnessSessionOptions,
 ): Promise<HarnessAgentSession> {
-  const stored = await options.broodsSession.loadHarnessSession();
+  const stored = options.stored;
   if (stored && stored.harnessType !== options.type) {
     throw new Error(
       `Conversation is already bound to the ${stored.harnessType} harness; clear it before switching to ${options.type}`,
     );
   }
 
-  return options.agent.createSession({
-    sessionId: stored?.sessionId ?? crypto.randomUUID(),
-    ...(stored
-      ? {
-          resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
-        }
-      : {}),
-    abortSignal: options.abortSignal,
-  });
+  if (!stored) {
+    return options.agent.createSession({
+      sessionId: crypto.randomUUID(),
+      abortSignal: options.abortSignal,
+    });
+  }
+  try {
+    return await options.agent.createSession({
+      sessionId: stored.sessionId,
+      resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
+      abortSignal: options.abortSignal,
+    });
+  } catch (error) {
+    // The machine idled past its reservation window and was released. The
+    // conversation continues on a fresh machine and native session; only the
+    // harness-side context of earlier turns is lost.
+    if (!isSandboxGoneError(error)) throw error;
+    logWarn("Harness machine was released; starting a fresh session", {
+      sessionId: stored.sessionId,
+      reservationKey: stored.reservationKey,
+    });
+
+    return options.agent.createSession({
+      sessionId: crypto.randomUUID(),
+      abortSignal: options.abortSignal,
+    });
+  }
 }
 
+/**
+ * Detaches or stops the native session after a turn and saves its resume state on
+ * the Broods session. Called by the run loop in `harness.ts`; destroys it on failure.
+ */
 export async function parkAiSdkHarnessSession(
   options: ParkAiSdkHarnessSessionOptions,
 ): Promise<void> {
@@ -61,6 +120,7 @@ export async function parkAiSdkHarnessSession(
       harnessType: options.type,
       sessionId: options.nativeSession.sessionId,
       resumeState: resumeState,
+      reservationKey: options.reservationKey,
     });
   } catch (error) {
     await options.nativeSession.destroy().catch(() => {});

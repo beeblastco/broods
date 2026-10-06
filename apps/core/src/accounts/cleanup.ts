@@ -1,6 +1,6 @@
 /**
  * Account deletion cleanup across Convex runtime state and the account's S3
- * prefixes (workspaces, attachment store, skills, tool/hook bundles). CRUD for
+ * prefixes (workspaces, attachment store, skills, hook and MCP bundles). CRUD for
  * these resources lives in the Convex config plane; only the deletion sweep
  * belongs here.
  */
@@ -28,7 +28,6 @@ export interface AccountCleanupSummary {
   processedEventsDeleted: number;
   asyncAgentResultDeleted: number;
   asyncToolResultDeleted: number;
-  asyncToolGroupDeleted: number;
   sandboxReservationDeleted: number;
   filesystemObjectsDeleted: number;
   reservedSandboxesReleased: number;
@@ -40,8 +39,10 @@ interface SandboxReservationPage {
   isDone: boolean;
 }
 
-// Inbound chat media kept for the account's conversations, outside every
-// workspace mount. The conversations go with the Convex cascade; this is the bytes.
+/**
+ * Deletes the account's inbound chat media, kept outside every workspace mount.
+ * The conversations go with the Convex cascade; this is the bytes.
+ */
 export async function deleteAccountAttachments(
   accountId: string,
 ): Promise<number> {
@@ -51,8 +52,10 @@ export async function deleteAccountAttachments(
   return deleteS3Prefix(bucket, attachmentStorePrefix(accountId));
 }
 
-// Bundle metadata lives in Convex; only the executable module bytes are stored
-// under these account-prefixed S3 keys.
+/**
+ * Deletes the account's hook and hosted MCP bundle bytes from S3; their
+ * metadata lives in Convex.
+ */
 export async function deleteAccountBundles(accountId: string): Promise<number> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
   const encodedAccountId = encodeURIComponent(accountId);
@@ -64,6 +67,11 @@ export async function deleteAccountBundles(accountId: string): Promise<number> {
   return hooks + mcp;
 }
 
+/**
+ * Account-delete sweep of runtime state: releases reserved sandboxes, clears
+ * Convex runtime rows and workspace files, then drops sandbox and workspace
+ * configs. Called by deleteAccountResponse.
+ */
 export async function deleteAccountRuntimeData(
   account: AccountRecord,
 ): Promise<AccountCleanupSummary> {
@@ -103,23 +111,15 @@ export async function deleteAccountRuntimeData(
   };
 }
 
+/** Deletes the account's skill files from the skills bucket. */
 export async function deleteAccountSkills(accountId: string): Promise<number> {
   return deleteS3Prefix(skillsBucketName(), `${accountId}/`);
 }
 
-export async function deleteWorkspaceFilesystem(
-  accountId: string,
-  workspaceId: string,
-  storage: WorkspaceStorageConfig | undefined,
-): Promise<number> {
-  if (!storage?.bucket && !optionalEnv("FILESYSTEM_BUCKET_NAME")) return 0;
-  const target = await resolveS3ReadTarget(
-    workspaceReadContext(storage, workspaceNamespace(accountId, workspaceId)),
-  );
-
-  return deleteS3Prefix(target.bucket, target.prefix, target.access);
-}
-
+/**
+ * Repeats the batched deleteAccountRuntimeData Convex mutation until it deletes
+ * nothing, summing the per-table counts.
+ */
 async function deleteConvexRuntimeRows(
   accountId: string,
 ): Promise<
@@ -133,7 +133,6 @@ async function deleteConvexRuntimeRows(
     processedEventsDeleted: 0,
     asyncAgentResultDeleted: 0,
     asyncToolResultDeleted: 0,
-    asyncToolGroupDeleted: 0,
     sandboxReservationDeleted: 0,
   };
   for (
@@ -148,7 +147,6 @@ async function deleteConvexRuntimeRows(
     totals.processedEventsDeleted += batch.processedEventsDeleted;
     totals.asyncAgentResultDeleted += batch.asyncAgentResultDeleted;
     totals.asyncToolResultDeleted += batch.asyncToolResultDeleted;
-    totals.asyncToolGroupDeleted += batch.asyncToolGroupDeleted;
     totals.sandboxReservationDeleted += batch.sandboxReservationDeleted;
     if (batch.totalDeleted === 0) return totals;
   }
@@ -158,6 +156,27 @@ async function deleteConvexRuntimeRows(
   );
 }
 
+/**
+ * Deletes one workspace's S3 prefix (its own bucket or the shared filesystem
+ * bucket); used per workspace during account cleanup.
+ */
+async function deleteWorkspaceFilesystem(
+  accountId: string,
+  workspaceId: string,
+  storage: WorkspaceStorageConfig | undefined,
+): Promise<number> {
+  if (!storage?.bucket && !optionalEnv("FILESYSTEM_BUCKET_NAME")) return 0;
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(storage, workspaceNamespace(accountId, workspaceId)),
+  );
+
+  return deleteS3Prefix(target.bucket, target.prefix, target.access);
+}
+
+/**
+ * Deletes the S3 files of every workspace the account had, one after another,
+ * returning the object count.
+ */
 async function deleteWorkspaceFilesystems(
   accountId: string,
   workspaces: Array<{

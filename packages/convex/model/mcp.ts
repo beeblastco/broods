@@ -2,8 +2,9 @@
  * Shared validation for MCP server registrations (#331). One normalizer
  * serves every write path (CLI sync, direct API, dashboard). A `url` makes an "http" row
  * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
- * a "hosted" row served by the mcp-runner Lambda, hashed here so sha256
- * always travels with the bundle. Auth header values may carry ${NAME}
+ * a "hosted" row, hashed here so sha256 always travels with the bundle; the
+ * S3 bundle writer (aws/bundles.ts) marks whether Cloudflare Dynamic Workers
+ * can run it. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one
  * instead of an inline secret. `oauth` follows the same rule: clientSecret
@@ -13,7 +14,8 @@
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
-import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
+import { ACCOUNT_ENV_REFS_ONLY_PATTERN } from "./envRefs";
+import { ClientError } from "./clientError";
 
 const MAX_ALLOWED_TOOLS = 256;
 /**
@@ -22,7 +24,7 @@ const MAX_ALLOWED_TOOLS = 256;
  * packages/broods/src/manifest.ts (the published CLI cannot import this
  * package). Change both or the CLI accepts what the config plane rejects.
  */
-const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
+export const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
 /** Ceiling for a hosted MCP server bundle by either upload path (#190). */
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 
@@ -35,15 +37,17 @@ const MAX_URL_LENGTH = 2048;
 /** RFC 9110 field-name token characters. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
-/** Headers whose values carry credentials and so must use a ${NAME} ref. */
-const SENSITIVE_HEADER_NAMES = new Set([
-  "api-key",
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "x-api-key",
-  "x-auth-token",
-]);
+/** Header names whose values carry credentials and so must use a ${NAME} ref. */
+export const SENSITIVE_HEADER_NAME_PATTERN =
+  /auth|token|secret|key|cookie|password|credential/i;
+
+/**
+ * A credential header value with no inline secret: `${NAME}` refs only, after
+ * an optional auth scheme word (`Bearer ${TOKEN}`). Anchored, so a literal
+ * beside a ref (`Bearer sk-live ${X}`) is refused. Members see only these.
+ */
+export const CREDENTIAL_HEADER_VALUE_PATTERN =
+  /^(?:[A-Za-z]+ )?(?:\$\{[A-Z][A-Z0-9_]*\})+$/;
 
 /**
  * Server names become the `server__tool` namespace prefix inside provider
@@ -59,6 +63,9 @@ const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export type McpPlacement = { sandbox: string | null; transport: McpTransport };
 
 export type McpTransport = "http" | "hosted" | "machine";
+
+/** Where a hosted server may run: "auto" picks Workers when the bundle can run there. */
+export type McpRuntime = "auto" | "lambda";
 
 /**
  * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
@@ -90,6 +97,8 @@ export interface McpInput {
    */
   bundleStorageId?: string;
   sha256?: string;
+  /** Hosted-only: "lambda" keeps the server off Cloudflare Workers. */
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
   allowedTools?: string[];
@@ -98,7 +107,8 @@ export interface McpInput {
 
 /**
  * Invariants on the row a create or update produces, whichever side brings
- * each field: a machine row names its sandbox, and oauth needs an external row
+ * each field: a machine row names its sandbox, only a hosted row picks a
+ * runtime, and oauth needs an external row
  * with an https url (the minted bearer rides every request) and no
  * Authorization header (core mints it itself).
  */
@@ -106,31 +116,39 @@ export function assertMcpRow(row: {
   transport: McpTransport;
   url?: string;
   sandbox?: string;
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
 }): void {
   if (row.transport === "machine" && !row.sandbox) {
-    throw new Error("a machine MCP server needs the sandbox that serves it");
+    throw new ClientError(
+      "a machine MCP server needs the sandbox that serves it",
+    );
   }
   // A patch that carries headers alone leaves `transport` unset, so the body
   // normalizer's own check never sees it.
   if (row.transport === "machine" && row.headers !== undefined) {
-    throw new Error("headers do not apply to a machine server");
+    throw new ClientError("headers do not apply to a machine server");
+  }
+  if (row.runtime !== undefined && row.transport !== "hosted") {
+    throw new ClientError(
+      `runtime applies to hosted (bundle) servers, not ${row.transport}`,
+    );
   }
   if (row.oauth === undefined) return;
   if (row.transport !== "http") {
-    throw new Error(
+    throw new ClientError(
       `oauth applies to external (url) servers, not ${row.transport}`,
     );
   }
   if (row.url !== undefined && new URL(row.url).protocol !== "https:") {
-    throw new Error(
+    throw new ClientError(
       "oauth needs an https url; the minted token rides every request",
     );
   }
   const authorization = authorizationHeaderName(row.headers);
   if (authorization !== undefined) {
-    throw new Error(
+    throw new ClientError(
       `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
     );
   }
@@ -160,7 +178,7 @@ export async function loadMcpServersByNode(
 ): Promise<Map<string, McpPlacement>> {
   const servers = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) =>
+    .withIndex("by_stageId_and_status_and_name", (q) =>
       q.eq("stageId", stageId).eq("status", "active"),
     )
     .collect();
@@ -198,7 +216,7 @@ export async function normalizeMcpInput(
   options: { requireConnection: boolean },
 ): Promise<McpInput> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    throw new Error("Request body must be a JSON object");
+    throw new ClientError("Request body must be a JSON object");
   }
   const record = body as Record<string, unknown>;
   const input: McpInput = {};
@@ -222,17 +240,18 @@ export async function normalizeMcpInput(
   }
   if (record.disabled !== undefined) {
     if (typeof record.disabled !== "boolean") {
-      throw new Error("disabled must be a boolean");
+      throw new ClientError("disabled must be a boolean");
     }
     input.disabled = record.disabled;
   }
   if (input.transport === "machine" && input.headers !== undefined) {
-    throw new Error("headers do not apply to a machine server");
+    throw new ClientError("headers do not apply to a machine server");
   }
   if (options.requireConnection) {
-    if (input.name === undefined) throw new Error("name must be provided");
+    if (input.name === undefined)
+      throw new ClientError("name must be provided");
     if (input.transport === undefined) {
-      throw new Error(
+      throw new ClientError(
         "url must be provided, or bundle for a hosted server, or sandbox for a server on a machine",
       );
     }
@@ -246,17 +265,17 @@ function normalizeAllowedTools(value: unknown): string[] {
     !Array.isArray(value) ||
     value.some((entry) => typeof entry !== "string")
   ) {
-    throw new Error("allowedTools must be an array of tool names");
+    throw new ClientError("allowedTools must be an array of tool names");
   }
   if (value.length > MAX_ALLOWED_TOOLS) {
-    throw new Error(
+    throw new ClientError(
       `allowedTools must list at most ${MAX_ALLOWED_TOOLS} tools`,
     );
   }
   const names = value as string[];
   for (const name of names) {
     if (!MCP_TOOL_NAME_PATTERN.test(name)) {
-      throw new Error(
+      throw new ClientError(
         `allowedTools entries must match ${MCP_TOOL_NAME_PATTERN}: ${name}`,
       );
     }
@@ -267,11 +286,11 @@ function normalizeAllowedTools(value: unknown): string[] {
 
 function normalizeBundle(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
-    throw new Error("bundle must be a non-empty string of module source");
+    throw new ClientError("bundle must be a non-empty string of module source");
   }
   // TextEncoder, not Buffer: this runs in Convex's V8 isolate too.
   if (new TextEncoder().encode(value).byteLength > MAX_INLINE_BUNDLE_BYTES) {
-    throw new Error(
+    throw new ClientError(
       `inline bundle must be at most ${MAX_INLINE_BUNDLE_BYTES} bytes; upload larger bundles (up to ${MAX_MCP_BUNDLE_BYTES}) to an upload URL and pass bundleStorageId`,
     );
   }
@@ -296,13 +315,13 @@ function normalizeConnection(
       typeof record.bundleStorageId !== "string" ||
       record.bundleStorageId.length === 0
     ) {
-      throw new Error("bundleStorageId must be a non-empty storage id");
+      throw new ClientError("bundleStorageId must be a non-empty storage id");
     }
     if (
       typeof record.sha256 !== "string" ||
       !SHA256_HEX_PATTERN.test(record.sha256)
     ) {
-      throw new Error(
+      throw new ClientError(
         "bundleStorageId needs sha256, the hex digest of the uploaded bytes",
       );
     }
@@ -311,9 +330,12 @@ function normalizeConnection(
   }
   if (record.sandbox !== undefined) {
     if (typeof record.sandbox !== "string" || record.sandbox.length === 0) {
-      throw new Error("sandbox must be the name of a machine sandbox");
+      throw new ClientError("sandbox must be the name of a machine sandbox");
     }
     input.sandbox = record.sandbox;
+  }
+  if (record.runtime !== undefined) {
+    input.runtime = normalizeRuntime(record.runtime);
   }
   const connections = [
     input.url,
@@ -322,7 +344,7 @@ function normalizeConnection(
     input.sandbox,
   ].filter((value) => value !== undefined);
   if (connections.length > 1) {
-    throw new Error(
+    throw new ClientError(
       "url, bundle, bundleStorageId and sandbox are mutually exclusive",
     );
   }
@@ -335,7 +357,7 @@ function normalizeConnection(
 
 function normalizeDescription(value: unknown): string {
   if (typeof value !== "string" || value.length > MAX_DESCRIPTION_LENGTH) {
-    throw new Error(
+    throw new ClientError(
       `description must be a string of at most ${MAX_DESCRIPTION_LENGTH} characters`,
     );
   }
@@ -343,33 +365,46 @@ function normalizeDescription(value: unknown): string {
   return value;
 }
 
-function normalizeHeaders(value: unknown): Record<string, string> {
+/**
+ * Static request headers an account configures for a server it names: RFC 9110
+ * names, single-line bounded values, and a credential header only as a
+ * `${NAME}` env ref. Shared with the custom sandbox provider's headers, whose
+ * update passes the `stored` values: one sent back unchanged was a ref that a
+ * code sync resolved, so it is kept.
+ */
+export function normalizeHeaders(
+  value: unknown,
+  stored: Record<string, string> = {},
+): Record<string, string> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("headers must be an object of header name to value");
+    throw new ClientError("headers must be an object of header name to value");
   }
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length > MAX_HEADERS) {
-    throw new Error(`headers must contain at most ${MAX_HEADERS} entries`);
+    throw new ClientError(
+      `headers must contain at most ${MAX_HEADERS} entries`,
+    );
   }
   const headers: Record<string, string> = {};
   for (const [name, headerValue] of entries) {
     if (!HEADER_NAME_PATTERN.test(name)) {
-      throw new Error(`headers names must be RFC 9110 tokens: ${name}`);
+      throw new ClientError(`headers names must be RFC 9110 tokens: ${name}`);
     }
     if (
       typeof headerValue !== "string" ||
       headerValue.length > MAX_HEADER_VALUE_LENGTH ||
       /[\r\n]/.test(headerValue)
     ) {
-      throw new Error(
+      throw new ClientError(
         `headers values must be single-line strings of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
     if (
-      SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) &&
-      !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(headerValue)
+      SENSITIVE_HEADER_NAME_PATTERN.test(name) &&
+      !CREDENTIAL_HEADER_VALUE_PATTERN.test(headerValue) &&
+      stored[name] !== headerValue
     ) {
-      throw new Error(
+      throw new ClientError(
         `headers values for ${name} must reference an account env var like \${NAME}, not an inline secret`,
       );
     }
@@ -381,7 +416,7 @@ function normalizeHeaders(value: unknown): Record<string, string> {
 
 function normalizeName(value: unknown): string {
   if (typeof value !== "string" || !MCP_NAME_PATTERN.test(value)) {
-    throw new Error(
+    throw new ClientError(
       "name must be 1-32 lowercase letters, digits or hyphens, starting with a letter",
     );
   }
@@ -403,7 +438,7 @@ function normalizeOauth(
   const value = record.oauth;
   if (value === undefined || value === null) return;
   if (typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(
+    throw new ClientError(
       "oauth must be an object with clientId, clientSecret and refreshToken",
     );
   }
@@ -419,12 +454,12 @@ function normalizeOauth(
       fieldValue.length > MAX_HEADER_VALUE_LENGTH ||
       /[\r\n]/.test(fieldValue)
     ) {
-      throw new Error(
+      throw new ClientError(
         `oauth.${name} must be a single-line string of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
-    if (secret && !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(fieldValue)) {
-      throw new Error(
+    if (secret && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(fieldValue)) {
+      throw new ClientError(
         `oauth.${name} must reference an account env var like \${NAME}, not an inline secret`,
       );
     }
@@ -437,7 +472,7 @@ function normalizeOauth(
       : normalizeUrl(oauth.tokenUrl);
   // The refresh request carries the client secret in its body.
   if (tokenUrl !== undefined && new URL(tokenUrl).protocol !== "https:") {
-    throw new Error("oauth.tokenUrl must use https");
+    throw new ClientError("oauth.tokenUrl must use https");
   }
   input.oauth = {
     clientId: field("clientId", false),
@@ -447,9 +482,17 @@ function normalizeOauth(
   };
 }
 
+function normalizeRuntime(value: unknown): McpRuntime {
+  if (value !== "auto" && value !== "lambda") {
+    throw new ClientError('runtime must be "auto" or "lambda"');
+  }
+
+  return value;
+}
+
 function normalizeUrl(value: unknown): string {
   if (typeof value !== "string" || value.length > MAX_URL_LENGTH) {
-    throw new Error(
+    throw new ClientError(
       `url must be a string of at most ${MAX_URL_LENGTH} characters`,
     );
   }
@@ -457,13 +500,13 @@ function normalizeUrl(value: unknown): string {
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error(`url must be a valid absolute URL: ${value}`);
+    throw new ClientError(`url must be a valid absolute URL: ${value}`);
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error("url must use http or https");
+    throw new ClientError("url must use http or https");
   }
   if (parsed.username !== "" || parsed.password !== "") {
-    throw new Error(
+    throw new ClientError(
       "url must not embed credentials; put them in headers as ${NAME} refs",
     );
   }

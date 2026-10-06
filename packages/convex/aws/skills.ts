@@ -21,6 +21,7 @@ import {
   type SkillMetadata,
   type StoredSkill,
 } from "../model/skills";
+import { ClientError } from "../model/clientError";
 
 const skillMetadata = v.object({
   name: v.string(),
@@ -50,18 +51,28 @@ export const createSkill = internalAction({
   },
   returns: storedSkill,
   handler: async (_ctx, args): Promise<StoredSkill> => {
-    const files = await resolveSkillBundleFiles(args.input);
-    const { metadata } = validateSkillBundle(files);
-    if (
-      args.expectedName !== undefined &&
-      metadata.name !== args.expectedName
-    ) {
-      throw new Error(
-        "Skill name in SKILL.md must match the requested skill name",
+    const files = await validatedSkillFiles(args.input, args.expectedName);
+
+    return await createOrReplaceSkill(args.accountId, files);
+  },
+});
+
+/**
+ * Checks CLI skill bundles the way `createSkill` does, without storing them,
+ * so a manifest sync can refuse a bad one before it uploads anything.
+ */
+export const validateSkills = internalAction({
+  args: { skills: v.array(v.object({ name: v.string(), files: v.any() })) },
+  returns: v.null(),
+  handler: async (_ctx, args): Promise<null> => {
+    for (const skill of args.skills) {
+      await validatedSkillFiles(
+        { source: "files", files: skill.files },
+        skill.name,
       );
     }
 
-    return await createOrReplaceSkill(args.accountId, files);
+    return null;
   },
 });
 
@@ -114,7 +125,7 @@ async function resolveSkillBundleFiles(
   input: unknown,
 ): Promise<SkillBundleFile[]> {
   if (!isPlainObject(input)) {
-    throw new Error("Request body must be an object");
+    throw new ClientError("Request body must be an object");
   }
 
   const record = input;
@@ -125,7 +136,7 @@ async function resolveSkillBundleFiles(
         typeof record.description !== "string" ||
         typeof record.content !== "string"
       ) {
-        throw new Error(
+        throw new ClientError(
           "JSON skills require name, description, and content strings",
         );
       }
@@ -138,19 +149,19 @@ async function resolveSkillBundleFiles(
     }
     case "files": {
       if (!Array.isArray(record.files) || record.files.length === 0) {
-        throw new Error("files must be a non-empty array");
+        throw new ClientError("files must be a non-empty array");
       }
 
       return record.files.map((item) => {
         if (!isPlainObject(item)) {
-          throw new Error("Each file must be an object");
+          throw new ClientError("Each file must be an object");
         }
         const candidate = item;
         if (
           typeof candidate.path !== "string" ||
           typeof candidate.contentBase64 !== "string"
         ) {
-          throw new Error("Each file requires path and contentBase64");
+          throw new ClientError("Each file requires path and contentBase64");
         }
 
         return {
@@ -165,6 +176,22 @@ async function resolveSkillBundleFiles(
     case "github":
       return fetchGitHubSkillFiles(record.url);
     default:
-      throw new Error("source must be one of: json, files, github");
+      throw new ClientError("source must be one of: json, files, github");
   }
+}
+
+/** Resolves a bundle and applies `createSkill`'s rules, name match included. */
+async function validatedSkillFiles(
+  input: unknown,
+  expectedName: string | undefined,
+): Promise<SkillBundleFile[]> {
+  const files = await resolveSkillBundleFiles(input);
+  const { metadata } = validateSkillBundle(files);
+  if (expectedName !== undefined && metadata.name !== expectedName) {
+    throw new ClientError(
+      "Skill name in SKILL.md must match the requested skill name",
+    );
+  }
+
+  return files;
 }

@@ -1,7 +1,7 @@
 /**
  * Dashboard-facing API for MCP servers, backed by the same `mcp` rows the CLI
- * syncs and the runtime connects to. Saves probe the server through core (in
- * the sandboxed Lambda for hosted rows) before the row is written; the tool
+ * syncs and the runtime connects to. Saves probe the server through core (on
+ * the runtime the hosted row will use, Lambda or Workers) before the row is written; the tool
  * explorer's list/call verbs ride the same service-auth bridge.
  */
 
@@ -17,9 +17,15 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { mcpDoc } from "./account/mcp";
-import { storeMcpBundle } from "./model/bundles";
+import { mcpFields } from "./schema";
+import { storeMcpBundle, type StoredMcpBundle } from "./model/bundles";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./model/envRefs";
-import { normalizeMcpInput, type McpInput } from "./model/mcp";
+import { REDACTED_SECRET_VALUE } from "./model/configValues";
+import {
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+  normalizeMcpInput,
+  type McpInput,
+} from "./model/mcp";
 import { stripUndefined } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -49,6 +55,8 @@ interface ResolvedConnection {
   headers?: Record<string, string>;
   bundleStorageKey?: string;
   sha256?: string;
+  /** So the save-time probe runs where the row will. */
+  workersCompatible?: boolean;
 }
 
 /** One canvas-owned server as `listByStage` returns it. */
@@ -113,7 +121,27 @@ export const getByNode = query({
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
 
-    return await activeServerByNode(ctx, stageId, nodeId);
+    const server = await activeServerByNode(ctx, stageId, nodeId);
+    if (
+      !server?.headers ||
+      (await getProjectForRole(ctx, authUser.id, projectId, "admin"))
+    ) {
+      return server;
+    }
+
+    // Members see which headers exist and their ${NAME} refs, never a value.
+    // Only admins save, so a masked value never travels back to the row.
+    return {
+      ...server,
+      headers: Object.fromEntries(
+        Object.entries(server.headers).map(([name, value]) => [
+          name,
+          CREDENTIAL_HEADER_VALUE_PATTERN.test(value)
+            ? value
+            : REDACTED_SECRET_VALUE,
+        ]),
+      ),
+    };
   },
 });
 
@@ -155,7 +183,7 @@ export const listByStage = query({
 
     const servers = await ctx.db
       .query("mcp")
-      .withIndex("by_stageId_and_status", (q) =>
+      .withIndex("by_stageId_and_status_and_name", (q) =>
         q.eq("stageId", stageId).eq("status", "active"),
       )
       .collect();
@@ -278,6 +306,7 @@ export const saveForNode = action({
     sourceCode: v.optional(v.string()),
     description: v.optional(v.string()),
     disabled: v.optional(v.boolean()),
+    runtime: mcpFields.runtime,
   },
   returns: v.object({
     serverId: v.id("mcp"),
@@ -303,6 +332,7 @@ export const saveForNode = action({
         headers: args.headers,
         description: args.description,
         disabled: args.disabled,
+        runtime: args.runtime,
       }),
       { requireConnection: context.existing === null },
     );
@@ -454,8 +484,9 @@ async function resolveConnection(
   input: McpInput,
 ): Promise<ResolvedConnection> {
   const existing = context.existing;
+  // A save that carries no connection (enabled, runtime) keeps the row's own.
   const transport: ResolvedConnection["transport"] =
-    input.transport === "hosted" ? "hosted" : "http";
+    (input.transport ?? existing?.transport) === "hosted" ? "hosted" : "http";
   if (transport === "http") {
     const url = input.url ?? existing?.url;
     if (!url) throw new Error("Provide the server url before saving it.");
@@ -474,8 +505,7 @@ async function resolveConnection(
 
   return stripUndefined({
     transport: transport,
-    bundleStorageKey: stored.bundleStorageKey,
-    sha256: stored.sha256,
+    ...stored,
     headers: input.headers ?? existing?.headers,
   });
 }
@@ -485,21 +515,20 @@ async function storeBundle(
   ctx: ActionCtx,
   context: NodeContext,
   input: McpInput,
-): Promise<{ bundleStorageKey: string; sha256: string } | null> {
-  const bundleStorageKey = await storeMcpBundle(
+): Promise<StoredMcpBundle | null> {
+  const stored = await storeMcpBundle(
     ctx,
     context.accountId,
     input,
     context.existing,
   );
-  if (bundleStorageKey !== undefined) {
-    return { bundleStorageKey: bundleStorageKey, sha256: input.sha256! };
-  }
+  if (stored !== undefined) return stored;
   const existing = context.existing;
   if (existing?.bundleStorageKey && existing.sha256) {
     return {
       bundleStorageKey: existing.bundleStorageKey,
       sha256: existing.sha256,
+      workersCompatible: existing.workersCompatible,
     };
   }
 
@@ -521,6 +550,7 @@ async function writeRow(
     name: input.name,
     description: input.description,
     disabled: input.disabled,
+    runtime: input.runtime,
     sourceCode: sourceCode,
   });
   if (context.existing) {

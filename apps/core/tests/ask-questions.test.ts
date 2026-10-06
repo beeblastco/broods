@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
-import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
+import {
+  rootEventId,
+  type AsyncToolResultRecord,
+} from "../src/harness/async-tool-result.ts";
 import {
   answersFromChoice,
   answersFromText,
@@ -52,22 +55,40 @@ afterEach((): void => {
   mutations.length = 0;
 });
 
+describe("rootEventId", () => {
+  it("strips every continuation suffix back to the event a person started", () => {
+    const asked = "acct:a:agent:b:tg:1:msg-9";
+    const answered = `${asked}:async-question:async_tool_1:async-tools`;
+
+    expect(rootEventId(asked)).toBe(asked);
+    expect(rootEventId(answered)).toBe(asked);
+    expect(rootEventId(`${answered}:async-bg:async_tool_2:async-tools`)).toBe(
+      asked,
+    );
+  });
+});
+
 describe("ask_questions tool", () => {
-  it("leaves a sealed question row and posts the numbered prompt", async () => {
+  it("leaves a question row and posts the numbered prompt", async () => {
     stubMutations();
     const sendText = mock(async (_text: string): Promise<void> => {});
+    const detached: string[] = [];
     const execute = toolExecute(
       askQuestionsTool({
         conversationKey: CONVERSATION_KEY,
         eventId: "event-1",
         delivery: { kind: "async" },
         channel: channelContext({ sendText: sendText }),
+        onDetachedResult: (resultId): void => {
+          detached.push(resultId);
+        },
       }),
     );
 
     const output = await execute({ questions: [QUESTION] });
 
     expect(output.blocking).toBe(false);
+    expect(detached).toEqual([output.statusId]);
     expect(output.statusId).toMatch(/^async_tool_/);
     expect(mutations).toHaveLength(1);
     expect(mutations[0]!.name).toBe("createAsyncToolResult");
@@ -77,7 +98,6 @@ describe("ask_questions tool", () => {
       conversationKey: CONVERSATION_KEY,
       toolName: "ask_questions",
       delivery: { kind: "async" },
-      sealed: true,
       input: {
         questions: [QUESTION],
         blocking: false,
@@ -85,7 +105,9 @@ describe("ask_questions tool", () => {
       },
     });
     expect(sendText.mock.calls).toEqual([
-      ["Which stage should this go to?\n1. dev - current default\n2. prod"],
+      [
+        "Which stage should this go to?\n1. dev - current default\n2. prod\nOr reply with your own answer.",
+      ],
     ]);
   });
 
@@ -169,14 +191,17 @@ describe("question answers", () => {
     expect(answersFromText(PENDING, "1")?.note).toBeUndefined();
   });
 
-  it("takes free text only when the question allows it", () => {
-    expect(answersFromText(PENDING, "staging please")).toBeUndefined();
-    expect(
-      answersFromText(
-        { ...PENDING, questions: [{ ...QUESTION, allowFreeText: true }] },
-        "staging please",
-      )?.answers,
-    ).toEqual({ deploy_target: ["staging please"] });
+  it("takes any other typed reply as the person's own answer", () => {
+    // Otherwise the reply runs as a new turn while the question stays open,
+    // and the agent asks again instead of reading the answer.
+    expect(answersFromText(PENDING, "staging please")?.answers).toEqual({
+      deploy_target: ["staging please"],
+    });
+  });
+
+  it("leaves the question open for a reply with no text", () => {
+    // An attachment-only message must still reach normal ingestion.
+    expect(answersFromText(PENDING, "  ")).toBeUndefined();
   });
 
   it("says so when a typed reply only answers the first of several", () => {
@@ -242,11 +267,10 @@ describe("question answers", () => {
     ]);
   });
 
-  it("renders the free-text hint only when the question allows it", () => {
-    expect(formatQuestionsText([QUESTION])).not.toContain("your own answer");
-    expect(
-      formatQuestionsText([{ ...QUESTION, allowFreeText: true }]),
-    ).toContain("Or reply with your own answer.");
+  it("always tells the person they can reply with their own answer", () => {
+    expect(formatQuestionsText([QUESTION])).toContain(
+      "Or reply with your own answer.",
+    );
   });
 });
 

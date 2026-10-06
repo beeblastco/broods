@@ -8,7 +8,7 @@
  * agent configs, no canvas, no env vars, no crons, no workspace files or blobs.
  *
  * Project management spans every stage of a project, so the HTTP endpoints
- * authenticate with a `broods login` token rather than a stage-scoped deploy
+ * authenticate with a `broods login` token rather than a stage-scoped project
  * key, exactly as the stage endpoint does.
  */
 
@@ -21,10 +21,11 @@ import {
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { sha256Hex } from "../model/accountSecrets";
+import { cliLoginTokenHash } from "./auth";
 import { purgeProject } from "../model/cascade";
 import { getProjectForRole } from "../model/ownership/project";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import { clientErrorResponse } from "../model/clientError";
 
 // Counts stop at this many rows per table so an org full of large projects
 // cannot push `listByAccount` past Convex's per-transaction read limits. A
@@ -49,14 +50,12 @@ const projectValidator = v.object({
 /** HTTP endpoint for `broods project list` and `broods project delete`. */
 export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
-    const auth = await bearerAuth(req);
-    if (!auth) {
-      return jsonError(401, "Authorization Bearer token is required");
-    }
-
-    const resolved = await ctx.runMutation(internal.cli.auth.resolveCliToken, {
-      tokenHash: auth.secretHash,
-    });
+    const tokenHash = await cliLoginTokenHash(req);
+    const resolved = tokenHash
+      ? await ctx.runMutation(internal.cli.auth.resolveCliToken, {
+          tokenHash: tokenHash,
+        })
+      : null;
     if (!resolved) {
       return jsonError(401, "Project commands require a `broods login` token");
     }
@@ -96,32 +95,28 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
 
     return methodNotAllowed(["GET", "DELETE"]);
   } catch (error) {
-    console.error("CLI project request failed", error);
+    const clientError = clientErrorResponse(error);
+    if (clientError) return clientError;
     if (error instanceof SyntaxError || error instanceof URIError) {
       return jsonError(400, "Request body or path is invalid");
     }
-    const detail = error instanceof Error ? error.message : "";
+    console.error("CLI project request failed", error);
 
-    return jsonError(
-      500,
-      detail ? `Project request failed: ${detail}` : "Project request failed",
-    );
+    return jsonError(500, "Project request failed");
   }
 });
 
 /** HTTP onboarding endpoint for CLI project/org selection. */
 export const httpOnboarding = httpAction(async (ctx, req) => {
   try {
-    const auth = await bearerAuth(req);
-    if (!auth) {
-      return jsonError(401, "Authorization Bearer token is required");
-    }
+    const tokenHash = await cliLoginTokenHash(req);
+    if (!tokenHash) return jsonError(401, "Invalid CLI token");
 
     if (req.method === "GET") {
       const context = await ctx.runMutation(
         internal.cli.auth.getOnboardingContext,
         {
-          tokenHash: auth.secretHash,
+          tokenHash: tokenHash,
         },
       );
       if (!context) return jsonError(401, "Invalid CLI token");
@@ -138,7 +133,7 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
         const context = await ctx.runMutation(
           internal.cli.auth.createOnboardingOrg,
           {
-            tokenHash: auth.secretHash,
+            tokenHash: tokenHash,
             name: body.createOrgName,
           },
         );
@@ -155,7 +150,7 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
       const context = await ctx.runMutation(
         internal.cli.auth.selectOnboardingOrg,
         {
-          tokenHash: auth.secretHash,
+          tokenHash: tokenHash,
           orgId: body.orgId as Id<"orgs">,
         },
       );
@@ -252,20 +247,6 @@ export const removeByAccount = internalMutation({
     return summary;
   },
 });
-
-async function bearerAuth(
-  req: Request,
-): Promise<{ secretHash: string } | null> {
-  const header = req.headers.get("Authorization") ?? "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  return {
-    secretHash: await sha256Hex(match[1]),
-  };
-}
 
 async function summarize(
   ctx: MutationCtx | QueryCtx,

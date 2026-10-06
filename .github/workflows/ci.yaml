@@ -1,4 +1,4 @@
-# CI for community / OSS builds (PRs + non-main pushes).
+# CI for community / OSS builds (PRs + pushes to dev).
 # Validates the core SST app (Convex path), SDK/Convex types, gateway, and
 # dashboard before branch deployment workflows are allowed to become the first
 # place cross-workspace failures appear.
@@ -10,13 +10,26 @@ on:
   # checks on `dev`, and a workflow a path filter skips never reports them, so a
   # docs-only pull request would wait forever on a check that cannot arrive.
   pull_request:
+  # dev only: a branch push is already tested by its pull request. No path
+  # filter either: promote.yaml waits on these checks on dev's head, so a
+  # docs-only head that skipped them would stall the promote.
   push:
-    branches-ignore:
-      - main
-    paths-ignore:
-      - "apps/docs/**"
-      - ".github/workflows/deploy-docs.yaml"
-      - "**/*.md"
+    branches:
+      - dev
+
+# A new push to a pull request cancels its stale run. A dev run is never
+# cancelled mid-run; a newer dev push only replaces a queued one, and
+# promote.yaml reads dev's head, which always keeps its run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Each job grants only the token permissions it needs.
+permissions: {}
+
+env:
+  # The isolate runner's native addon, pinned like apps/core/Dockerfile.
+  ISOLATED_VM_VERSION: 7.0.0
 
 jobs:
   validate:
@@ -25,17 +38,16 @@ jobs:
       contents: read
     env:
       AWS_REGION: ${{ vars.DEV_AWS_REGION || 'us-east-1' }}
-      # sst.config.ts reads these at runtime (no in-source defaults). The postinstall
-      # `sst install` needs them set, or it fails with "Project name is required".
+      # sst.config.ts reads these at runtime (no in-source defaults).
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 
@@ -45,28 +57,35 @@ jobs:
         # regenerate the prompt artifacts they need.
         run: bun install --ignore-scripts --frozen-lockfile
 
-      - name: Lint
-        # Reported separately from `bun run check` (which also runs it) so a lint
-        # failure is not read as a type error.
-        run: bun run lint
-
-      - name: Format check
-        run: bun run format:check
-
-      - name: Typecheck
+      - name: Lint, format check and typecheck
         run: bun run check
+
+      - name: Read the Node version
+        id: node
+        run: echo "version=$(node -v)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the isolated-vm build
+        id: ivm-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: /tmp/broods-ivm/node_modules
+          key: isolated-vm-${{ env.ISOLATED_VM_VERSION }}-node-${{ steps.node.outputs.version }}-${{ runner.os }}
 
       - name: Prepare isolate runner
         # The real isolated-vm tests in apps/core/tests/isolate-executor.test.ts
         # skip unless BROODS_TEST_ISOLATE_RUNNER_PATH points at a runner with the
         # native addon built (Bun cannot load it; the tests spawn node).
+        env:
+          IVM_CACHE_HIT: ${{ steps.ivm-cache.outputs.cache-hit }}
         run: |
-          mkdir -p /tmp/broods-ivm-test
+          mkdir -p /tmp/broods-ivm
           # Whole directory, not a file list: the runner imports its siblings, and
           # naming them here means a new one silently fails every isolate test.
-          cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm-test/
-          npm install --prefix /tmp/broods-ivm-test isolated-vm@7.0.0
-          echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm-test/runner.mjs" >> "$GITHUB_ENV"
+          cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm/
+          if [[ "$IVM_CACHE_HIT" != "true" ]]; then
+            npm install --prefix /tmp/broods-ivm "isolated-vm@$ISOLATED_VM_VERSION"
+          fi
+          echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm/runner.mjs" >> "$GITHUB_ENV"
 
       - name: Run unit tests
         run: bun run test
@@ -84,7 +103,7 @@ jobs:
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The range scan needs history.
           fetch-depth: 0
@@ -124,10 +143,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 
@@ -139,18 +158,33 @@ jobs:
         # worse than no gate, so it is tested before it is trusted.
         run: bun run bench:test
 
+      - name: Read the Node version
+        id: node
+        run: echo "version=$(node -v)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the isolated-vm build
+        id: ivm-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: /tmp/broods-ivm/node_modules
+          key: isolated-vm-${{ env.ISOLATED_VM_VERSION }}-node-${{ steps.node.outputs.version }}-${{ runner.os }}
+
       - name: Prepare what the runtime cases need
         # The harness imports a generated prompt that the skipped postinstall
-        # writes; the CLI startup cases run the built dist; the isolate cases
-        # spawn the Node runner with its native addon, prepared the same way
-        # the validate job prepares it for the isolate tests.
+        # writes; the CLI cases run the built dist; the isolate cases spawn the
+        # Node runner with its native addon, prepared the same way the validate
+        # job prepares it for the isolate tests.
+        env:
+          IVM_CACHE_HIT: ${{ steps.ivm-cache.outputs.cache-hit }}
         run: |
           (cd apps/core && bun run scripts/compaction-prompt.ts)
           bun run --filter broods build
-          mkdir -p /tmp/broods-ivm-bench
-          cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm-bench/
-          npm install --prefix /tmp/broods-ivm-bench isolated-vm@7.0.0
-          echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm-bench/runner.mjs" >> "$GITHUB_ENV"
+          mkdir -p /tmp/broods-ivm
+          cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm/
+          if [[ "$IVM_CACHE_HIT" != "true" ]]; then
+            npm install --prefix /tmp/broods-ivm "isolated-vm@$ISOLATED_VM_VERSION"
+          fi
+          echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm/runner.mjs" >> "$GITHUB_ENV"
 
       - name: Check performance against baselines
         run: bun bench/run.ts --check --out bench-result.json
@@ -173,6 +207,55 @@ jobs:
             bench/baselines.json
           retention-days: 30
 
+  local-stack:
+    # Convex and Traefik in docker plus core and gateway, driven through the
+    # Traefik edge by scripts/local-verify. Pull requests only, so one push
+    # runs it once. Traefik's access log lands in the uploaded logs.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts --frozen-lockfile
+
+      - name: Start the local stack
+        run: bun run local:up
+
+      - name: Verify through the edge
+        run: bun run local:verify
+
+      - name: Perf report
+        # Restarts core with the model answered in process. More Convex calls
+        # per turn than scripts/local-verify/perf-baseline.json fails the job;
+        # timing drift only warns, since runners differ.
+        run: |
+          bun run local:up -- --perf
+          bun run local:perf
+
+      - name: Upload stack logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: local-stack-${{ github.run_id }}
+          path: |
+            ~/.broods-local/*/logs/
+            ~/.broods-local/*/perf.jsonl
+            ~/.broods-local/*/convex-calls.jsonl
+          if-no-files-found: ignore
+          retention-days: 14
+
   app-surfaces:
     runs-on: ubuntu-24.04
     permissions:
@@ -189,55 +272,46 @@ jobs:
       WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Nothing in this job pushes, so it needs no token left on disk.
           persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 
       - name: Install dependencies
         run: bun install --ignore-scripts --frozen-lockfile
 
-      - name: Check gateway
-        run: bun run --filter @broods/gateway check
-
+      # Types and lint for every workspace run once, in validate's `bun run
+      # check`, and the convex tests in its `bun run test`.
       - name: Test gateway
         run: bun run --filter @broods/gateway test
 
-      - name: Check discord forwarder
-        run: bun run --filter @broods/discord-forwarder check
+      - name: Test edge routes
+        run: bun run --filter @broods/edge test
 
       - name: Test discord forwarder
         run: bun run --filter @broods/discord-forwarder test
 
-      - name: Check matrix forwarder
-        run: bun run --filter @broods/matrix-forwarder check
-
       - name: Test matrix forwarder
         run: bun run --filter @broods/matrix-forwarder test
 
-      - name: Check convex
-        run: bun run --filter @broods/convex check
-
-      - name: Test convex
-        run: bun run --filter @broods/convex test
-
-      - name: Check dashboard
-        run: bun run --filter @broods/dashboard check
+      - name: Test Cloudflare MCP runtime
+        run: bun run --filter @broods/cloudflare-mcp test
 
       - name: Test dashboard
         run: bun run --filter @broods/dashboard test
 
       - name: Require the dashboard probe account
-        # Pull requests from this repo only: a fork gets no secrets. A silent
+        # Pull requests from this repo only: a fork gets no secrets, and a
+        # Dependabot pull request gets only Dependabot's own. A silent
         # skip would look like a passing suite, so missing setup fails here,
         # before the build: an unset NEXT_PUBLIC_CONVEX_URL would bake the
         # placeholder in and the signed-in suite would time out instead.
-        if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+        if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
         shell: bash
         env:
           NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
@@ -278,7 +352,7 @@ jobs:
         # The build this job just made, served the way the image serves it
         # (the standalone server.js), against the dev Convex and WorkOS.
         # Playwright starts the server and waits on /healthz.
-        if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+        if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
         env:
           E2E_SERVER_COMMAND: bun .next/standalone/apps/dashboard/server.js
           WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
@@ -291,12 +365,57 @@ jobs:
           cd apps/dashboard
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
           cp -r public .next/standalone/apps/dashboard/public
-          bunx playwright test --project=app --project=perf
+          # @rollout tests need Convex functions this build calls that the dev
+          # backend only has after the merge; e2e-dashboard.yaml runs them
+          # after the rollout.
+          bunx playwright test --project=app --project=perf --grep-invert @rollout
 
       - name: Upload traces of a failed signed-in run
-        if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+        if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dashboard-e2e-${{ github.run_id }}
           path: apps/dashboard/test-results
           if-no-files-found: ignore
+
+  docs:
+    # Builds the docs on a pull request that touches them, so a broken link
+    # (`onBrokenLinks: "throw"`) fails here and not in the promote to main.
+    # Not a required check: on a pull request without docs changes it skips
+    # the build and still reports.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The merge commit and its base parent, enough to diff the pull request.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Check for docs changes
+        id: changed
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- apps/docs; then
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Bun
+        if: steps.changed.outputs.docs == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        # Hoisted like deploy-docs.yaml, so the Docusaurus theme packages share
+        # one React context.
+        if: steps.changed.outputs.docs == 'true'
+        run: bun install --ignore-scripts --frozen-lockfile --linker hoisted
+
+      - name: Build docs
+        if: steps.changed.outputs.docs == 'true'
+        run: bun run docs:build

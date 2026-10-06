@@ -6,6 +6,7 @@
 import { sha256Hex } from "./accountSecrets";
 import { isIsolateSafeBundle } from "./isolateSafety";
 import { isPlainObject } from "./objects";
+import { ClientError } from "./clientError";
 
 export const AGENT_HOOK_EVENT_NAMES = [
   "agent.started",
@@ -82,7 +83,7 @@ export async function normalizeAccountHookUpload(
   options: { requireBundle: boolean },
 ): Promise<NormalizedAccountHookUpload> {
   if (!isPlainObject(input)) {
-    throw new Error("hook upload body must be an object");
+    throw new ClientError("hook upload body must be an object");
   }
 
   const value = input as AccountHookUploadInput;
@@ -91,7 +92,7 @@ export async function normalizeAccountHookUpload(
   if (value.name !== undefined) {
     result.name = normalizeHookName(value.name);
   } else if (options.requireBundle) {
-    throw new Error("hook.name is required");
+    throw new ClientError("hook.name is required");
   }
 
   if (value.description !== undefined) {
@@ -101,14 +102,14 @@ export async function normalizeAccountHookUpload(
   if (value.events !== undefined) {
     result.events = normalizeEvents(value.events);
   } else if (options.requireBundle) {
-    throw new Error("hook.events is required");
+    throw new ClientError("hook.events is required");
   }
 
   if (value.bundle !== undefined) {
     result.bundle = normalizeBundle(value.bundle);
     result.sha256 = await sha256Hex(result.bundle);
   } else if (options.requireBundle) {
-    throw new Error("hook.bundle is required");
+    throw new ClientError("hook.bundle is required");
   }
 
   return result as NormalizedAccountHookUpload;
@@ -116,13 +117,15 @@ export async function normalizeAccountHookUpload(
 
 function normalizeBundle(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
-    throw new Error("hook.bundle must be a non-empty string");
+    throw new ClientError("hook.bundle must be a non-empty string");
   }
   if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
-    throw new Error(`hook.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
+    throw new ClientError(
+      `hook.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`,
+    );
   }
   if (!isIsolateSafeBundle(value)) {
-    throw new Error(
+    throw new ClientError(
       "hook.bundle must be isolate-safe: node: imports, bare package imports, require(), process, and __dirname are not allowed",
     );
   }
@@ -132,7 +135,7 @@ function normalizeBundle(value: unknown): string {
 
 function normalizeDescription(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("hook.description must be a non-empty string");
+    throw new ClientError("hook.description must be a non-empty string");
   }
 
   return value.trim();
@@ -140,7 +143,7 @@ function normalizeDescription(value: unknown): string {
 
 function normalizeEvents(value: unknown): AgentHookEventName[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("hook.events must be a non-empty array");
+    throw new ClientError("hook.events must be a non-empty array");
   }
   const events: AgentHookEventName[] = [];
   for (const event of value) {
@@ -148,7 +151,7 @@ function normalizeEvents(value: unknown): AgentHookEventName[] {
       typeof event !== "string" ||
       !AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName)
     ) {
-      throw new Error(
+      throw new ClientError(
         `hook.events must contain only: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
       );
     }
@@ -162,11 +165,11 @@ function normalizeEvents(value: unknown): AgentHookEventName[] {
 
 function normalizeHookName(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("hook.name must be a non-empty string");
+    throw new ClientError("hook.name must be a non-empty string");
   }
   const name = value.trim();
   if (!HOOK_NAME_PATTERN.test(name)) {
-    throw new Error(
+    throw new ClientError(
       "hook.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
     );
   }

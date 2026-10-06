@@ -5,6 +5,7 @@
  * constraints: SKILL.md at root required, text files only, 5 MB per file /
  * 30 MB total. Publish action pushes the files to the broods account.
  */
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -19,16 +20,9 @@ import {
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
-import {
-  AlertTriangle,
-  BookOpen,
-  Eye,
-  EyeOff,
-  Loader2,
-  Send,
-  X,
-} from "lucide-react";
+import { AlertTriangle, BookOpen, Eye, EyeOff, Send, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 const ALLOWED_EXTENSIONS = new Set([
   "css",
@@ -155,7 +149,7 @@ export function SkillFilesTab({
           message: `Published "${result.name}" successfully.`,
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
+        const msg = toErrorMessage(err);
         if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
           clearSkillsBearerToken();
         }
@@ -279,7 +273,7 @@ export function SkillFilesTab({
       {promptMode && (
         <div className="shrink-0 p-2">
           <TokenPrompt
-            label="Bearer token to publish"
+            label="Account key to publish"
             onConfirm={(token) => void runWithToken(token)}
             onCancel={() => setPromptMode(null)}
           />
@@ -311,29 +305,28 @@ export function SkillFilesTab({
           <Button
             size="sm"
             variant="outline"
-            className="h-7 flex-1 cursor-pointer text-2xs disabled:cursor-not-allowed"
+            className="h-7 flex-1 cursor-pointer text-2xs"
             disabled={isBusy || !hasSkillMd}
             title={!hasSkillMd ? "SKILL.md is required" : undefined}
             onClick={handlePublishClick}
           >
-            {status.type === "publishing" ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <Send className="size-3" />
-            )}
-            Publish to account
+            <Send className="size-3" />
+            {status.type === "publishing"
+              ? "Publishing…"
+              : "Publish to account"}
           </Button>
           {getSkillsBearerToken() && (
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              tone="muted"
-              className="size-7 cursor-pointer"
-              title="Clear saved Bearer token"
-              onClick={() => clearSkillsBearerToken()}
-            >
-              <X className="size-3" />
-            </Button>
+            <IconTooltip label="Clear saved account key">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                tone="muted"
+                className="size-7 cursor-pointer"
+                onClick={() => clearSkillsBearerToken()}
+              >
+                <X className="size-3" />
+              </Button>
+            </IconTooltip>
           )}
         </div>
       )}
@@ -410,7 +403,7 @@ function CreateSkillMdForm({
       </div>
       <Button
         size="sm"
-        className="h-7 cursor-pointer self-end text-2xs disabled:cursor-not-allowed"
+        className="h-7 cursor-pointer self-end text-2xs"
         disabled={!nameValid || !desc.trim()}
         onClick={() => onSubmit(name, desc.trim())}
       >
@@ -449,38 +442,43 @@ function TokenPrompt({
         </button>
       </div>
       <p className="text-3xs text-muted-foreground">
-        Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
-        session only.
+        Your account key (starts with <code>bask_</code>). Saved in session
+        only.
       </p>
       <div className="flex items-center gap-1.5">
         <Input
           ref={ref}
           type={show ? "text" : "password"}
           value={draft}
-          placeholder="fp_acct_…"
+          placeholder="bask_…"
           className="h-7 flex-1 font-mono text-2xs"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
-            if (e.key === "Escape") onCancel();
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            }
           }}
         />
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="cursor-pointer"
-          onClick={() => setShow((v) => !v)}
-        >
-          {show ? (
-            <EyeOff className="size-3.5" />
-          ) : (
-            <Eye className="size-3.5" />
-          )}
-        </Button>
+        <IconTooltip label={show ? "Hide key" : "Show key"}>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className="cursor-pointer"
+            onClick={() => setShow((v) => !v)}
+          >
+            {show ? (
+              <EyeOff className="size-3.5" />
+            ) : (
+              <Eye className="size-3.5" />
+            )}
+          </Button>
+        </IconTooltip>
       </div>
       <Button
         size="sm"
-        className="h-7 cursor-pointer self-end text-2xs disabled:cursor-not-allowed"
+        className="h-7 cursor-pointer self-end text-2xs"
         disabled={!draft.trim()}
         onClick={() => onConfirm(draft.trim())}
       >

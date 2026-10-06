@@ -4,6 +4,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { sha256Hex } from "../model/accountSecrets";
 import { translateScheduleExpression } from "../model/cronRules";
 import { cronSchedules } from "../model/cronSchedules";
 import schema from "../schema";
@@ -35,6 +36,133 @@ describe("list", () => {
       (await tt.query(internal.agent.crons.list, { accountId: accountId }))
         .length,
     ).toBe(2);
+  });
+});
+
+describe("run history", () => {
+  test("a settled run keeps its first outcome, and a drained run settles as a no-op", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await startRun(tt, accountId, cronId, 1_000);
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+    await tt.mutation(internal.agent.crons.failRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      error: "late throw",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+      result: "done",
+    });
+
+    await tt.run((ctx) => ctx.db.delete(runId));
+    await expect(
+      tt.mutation(internal.agent.crons.failRun, {
+        accountId: accountId,
+        cronId: cronId,
+        runId: runId,
+        error: "after the drain",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  test("an older run settling late leaves the newer run's status on the cron", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const older = await startRun(tt, accountId, cronId, 1_000);
+    const newer = await startRun(tt, accountId, cronId, 2_000);
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: newer,
+      result: "done",
+    });
+    await tt.mutation(internal.agent.crons.failRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: older,
+      error: "already processing another turn",
+    });
+
+    const cron = await tt.run((ctx) => ctx.db.get(cronId));
+    expect(cron).toMatchObject({ lastRunId: newer, lastStatus: "completed" });
+    expect(cron?.lastError).toBeUndefined();
+  });
+
+  test("a run settling after a refused fire leaves the refusal on the cron", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await startRun(tt, accountId, cronId, 1_000);
+
+    await tt.mutation(internal.agent.crons.recordFailedFire, {
+      accountId: accountId,
+      cronId: cronId,
+      error: "monthly compute allowance used",
+      firedAt: 2_000,
+    });
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+      lastStatus: "failed",
+      lastError: "monthly compute allowance used",
+    });
+  });
+
+  test("an older fire refused late leaves the newer run on the cron", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await startRun(tt, accountId, cronId, 2_000);
+
+    await tt.mutation(internal.agent.crons.recordFailedFire, {
+      accountId: accountId,
+      cronId: cronId,
+      error: "monthly compute allowance used",
+      firedAt: 1_000,
+    });
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+      lastRunId: runId,
+      lastStatus: "completed",
+      lastInvokedAt: 2_000,
+    });
+  });
+});
+
+describe("agent delete", () => {
+  test("deleting an agent takes its crons and leaves the others", async (): Promise<void> => {
+    const tt = t();
+    const { accountId, agentId } = await seed(tt);
+
+    await tt.mutation(internal.agent.agents.remove, {
+      accountId: accountId,
+      agentId: agentId,
+    });
+
+    expect(
+      (await tt.query(internal.agent.crons.list, { accountId: accountId })).map(
+        (cron): string => cron.name,
+      ),
+    ).toEqual(["theirs"]);
   });
 });
 
@@ -258,6 +386,108 @@ describe("create/update/remove", () => {
 });
 
 /** One account whose two agents own one cron job each. */
+describe("CLI cron delete", () => {
+  test("deletes only the route stage's job of that name", async () => {
+    const tt = t();
+    const secret = "bask_secret_cron_delete";
+    const { devCronId, prodCronId } = await tt.run(async (ctx) => {
+      const now = Date.now();
+      const orgId = await ctx.db.insert("orgs", {
+        name: "beeblast",
+        slug: "beeblast",
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: now,
+      });
+      const accountId = await ctx.db.insert("accounts", {
+        orgId: orgId,
+        username: "beeblast",
+        secretHash: await sha256Hex(secret),
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: orgId,
+        name: "demo-app",
+        slug: "demo-app",
+        updatedAt: now,
+      });
+      const cronIds: Id<"crons">[] = [];
+      // Production first, so an account-wide first-match would pick its job.
+      for (const [stageName, kind] of [
+        ["Production", "production"],
+        ["Development", "development"],
+      ] as const) {
+        const stageId = await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectId,
+          name: stageName,
+          kind: kind,
+          isDefault: kind === "development",
+          updatedAt: now,
+        });
+        const agentId = await ctx.db.insert("agents", {
+          accountId: accountId,
+          name: `${kind}-agent`,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await ctx.db.insert("agentConfigs", {
+          authId: "auth_owner",
+          name: "planner",
+          agentId: agentId,
+          projectId: projectId,
+          stageId: stageId,
+          managedBy: "cli",
+          updatedAt: now,
+        });
+        cronIds.push(
+          await ctx.db.insert("crons", {
+            accountId: accountId,
+            name: "nightly",
+            agentId: agentId,
+            events: [],
+            scheduleExpression: "rate(1 day)",
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+      }
+
+      return { prodCronId: cronIds[0]!, devCronId: cronIds[1]! };
+    });
+
+    const response = await tt.fetch(
+      "/v1/account/projects/demo-app/stages/development/resources/cron/nightly",
+      { method: "DELETE", headers: { Authorization: `Bearer ${secret}` } },
+    );
+
+    expect(response.status).toBeLessThan(300);
+    const remaining = await tt.run(async (ctx) => ({
+      dev: await ctx.db.get(devCronId),
+      prod: await ctx.db.get(prodCronId),
+    }));
+    expect(remaining.dev).toBeNull();
+    expect(remaining.prod).not.toBeNull();
+  });
+});
+
+/** Seeds an account and returns its agent's cron. */
+async function firstCron(
+  tt: T,
+): Promise<{ accountId: Id<"accounts">; cronId: Id<"crons"> }> {
+  const { accountId, agentId } = await seed(tt);
+  const [cron] = await tt.query(internal.agent.crons.list, {
+    accountId: accountId,
+    agentId: agentId,
+  });
+
+  return { accountId: accountId, cronId: cron!._id };
+}
+
 async function seed(
   tt: T,
 ): Promise<{ accountId: Id<"accounts">; agentId: Id<"agents"> }> {
@@ -300,5 +530,20 @@ async function seed(
     }
 
     return { accountId: accountId, agentId: agentId };
+  });
+}
+
+async function startRun(
+  tt: T,
+  accountId: Id<"accounts">,
+  cronId: Id<"crons">,
+  firedAt: number,
+): Promise<Id<"cronRuns">> {
+  return await tt.mutation(internal.agent.crons.createRun, {
+    accountId: accountId,
+    cronId: cronId,
+    eventId: `event-${firedAt}`,
+    conversationKey: "api:cron",
+    firedAt: firedAt,
   });
 }

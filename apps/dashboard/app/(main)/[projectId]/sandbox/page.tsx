@@ -6,42 +6,26 @@
  * /v1/sandboxes endpoints.
  */
 
-import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
+import { pickTab, SANDBOX_TABS } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
-import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { SandboxInstancesTable } from "./components/SandboxInstancesTable";
 import type { SandboxObservabilityScope } from "./components/SandboxLogTail";
 import { SandboxPolicyTable } from "./components/SandboxPolicyTable";
 import { SandboxSnapshotsTable } from "./components/SandboxSnapshotsTable";
 
-type SandboxView = "instances" | "snapshots" | "security" | "networking";
-
-const VIEWS: Array<{ id: SandboxView; label: string }> = [
-  { id: "instances", label: "Instances" },
-  { id: "snapshots", label: "Snapshots" },
-  { id: "security", label: "Security" },
-  { id: "networking", label: "Networking" },
-];
-
 export default function SandboxPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
-  const { stageId } = useStage();
+  const { stageId: activeStageId } = useStage();
   const stages = useQuery(api.stage.list, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
-  const activeStage =
-    stages?.find((stage) => stage._id === stageId) ??
-    stages?.find((stage) => stage.isDefault) ??
-    stages?.[0] ??
-    null;
-  const activeStageId = activeStage?._id ?? null;
   const instances = useQuery(
     api.sandbox.instances.listForActiveOrg,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
@@ -54,9 +38,9 @@ export default function SandboxPage(): React.JSX.Element {
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const observability = useObservabilityScope(projectId, activeStageId);
 
-  const [view, setView] = useState<SandboxView>("instances");
-  const activeLabel =
-    VIEWS.find((tab) => tab.id === view)?.label ?? "Sandboxes";
+  const searchParams = useSearchParams();
+  const tab = pickTab(SANDBOX_TABS, searchParams.get("tab"));
+  const view = tab.id;
   // The instances view carries a detail column beside a wide table, so it
   // gets the full width the observability tabs get; the rest stay readable.
   const contentWidth = view === "instances" ? "max-w-none" : "max-w-7xl";
@@ -69,73 +53,37 @@ export default function SandboxPage(): React.JSX.Element {
     account === undefined;
 
   return (
-    <div className="flex h-full">
-      <aside className="flex w-48 shrink-0 flex-col bg-transparent">
-        <div className="px-6 pt-9.25 pb-3">
-          <h2 className="text-xl font-semibold text-foreground">Sandboxes</h2>
-        </div>
-        <nav className="flex flex-col gap-0.5 px-3">
-          {VIEWS.map((tab) => (
-            <Button
-              key={tab.id}
-              variant="nav"
-              size="sm"
-              data-active={view === tab.id}
-              className="w-full justify-start cursor-pointer"
-              onClick={() => setView(tab.id)}
-            >
-              {tab.label}
-            </Button>
-          ))}
-        </nav>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col overflow-auto">
-        <div
-          className={cn(
-            "mx-auto w-full shrink-0 px-6 pt-9.25 pb-5",
-            contentWidth,
-          )}
-        >
-          <h2 className="text-xl font-semibold text-foreground">
-            {activeLabel}
-          </h2>
-        </div>
-        <div
-          className={cn(
-            "mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-6 pb-12",
-            contentWidth,
-          )}
-        >
-          <p className="shrink-0 text-xs text-muted-foreground">
-            Live sandbox instances and their snapshots, plus the computers
-            connected through broods machine. broods owns the runtime; the
-            dashboard drives suspend, resume, terminate, and snapshot.
-          </p>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : !account ? (
-            <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
-              <p className="text-sm text-muted-foreground">
-                Your organization is not provisioned yet. Provision the broods
-                account in settings before using sandboxes.
-              </p>
-            </div>
-          ) : view === "instances" ? (
-            <SandboxInstancesTable
-              instances={instances}
-              machines={machines}
-              projectId={projectId}
-              observability={observability}
-            />
-          ) : view === "snapshots" ? (
-            <SandboxSnapshotsTable snapshots={snapshots} />
-          ) : view === "security" ? (
-            <SandboxPolicyTable instances={instances} dimension="security" />
-          ) : (
-            <SandboxPolicyTable instances={instances} dimension="networking" />
-          )}
-        </div>
+    <div className="flex h-full min-w-0 flex-col overflow-auto">
+      <h1 className="sr-only">{tab.label}</h1>
+      <div
+        className={cn(
+          "mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-6 pt-6 pb-12",
+          contentWidth,
+        )}
+      >
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : !account ? (
+          <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              Your organization is not provisioned yet. Provision the broods
+              account in settings before using sandboxes.
+            </p>
+          </div>
+        ) : view === "instances" ? (
+          <SandboxInstancesTable
+            instances={instances}
+            machines={machines}
+            projectId={projectId}
+            observability={observability}
+          />
+        ) : view === "snapshots" ? (
+          <SandboxSnapshotsTable snapshots={snapshots} />
+        ) : view === "security" ? (
+          <SandboxPolicyTable instances={instances} dimension="security" />
+        ) : (
+          <SandboxPolicyTable instances={instances} dimension="networking" />
+        )}
       </div>
     </div>
   );

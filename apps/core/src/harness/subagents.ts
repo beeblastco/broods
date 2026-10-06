@@ -14,9 +14,13 @@ import {
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
-import { logError, logInfo } from "../shared/log.ts";
-import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
-import { getObservabilityContext } from "../shared/otel.ts";
+import { delegatedChain, runPrincipal } from "../shared/domain/principal.ts";
+import { collectSecretValues, logError, logInfo } from "../shared/log.ts";
+import type { NatsPublisher } from "../shared/nats.ts";
+import {
+  getObservabilityContext,
+  runWithObservabilityScope,
+} from "../shared/otel.ts";
 import {
   createRunId,
   createSubagentTaskId,
@@ -26,8 +30,8 @@ import {
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
-  markAsyncAgentResultCompleted,
-  markAsyncAgentResultFailed,
+  recordAsyncAgentResult,
+  type AsyncAgentOutcome,
 } from "./async-agent-result.ts";
 import {
   readAgentFullStream,
@@ -40,8 +44,9 @@ import {
   createAgentHookDispatcher,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
-import { acceptIngress } from "./ingress.ts";
+import { acceptIngress, outcomeSettlement } from "./ingress.ts";
 import type { IngressDispatchScope } from "./integrations.ts";
+import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
@@ -64,6 +69,8 @@ import {
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+// How long a child's ask_parent waits for the parent's answer.
+const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 
 interface SubagentCompletion {
   taskId: string;
@@ -96,6 +103,8 @@ interface ResolvedSubagentTask {
   parentEphemeralSystem: SystemModelMessage[];
   persistent: boolean;
   resuming: boolean;
+  /** Harness children only: a machine of its own instead of the agent's shared one. */
+  isolatedSandbox: boolean;
 }
 
 interface SubagentStreamState {
@@ -126,6 +135,24 @@ export class SubagentCoordinator {
     Omit<SubagentCompletion, "status" | "response" | "error" | "visibleResult">
   >();
   private readonly waiters = new Set<() => void>();
+  // Child runs whose outcome is recorded; a later failure never overwrites it.
+  private readonly recorded = new Set<string>();
+  // Result rows the model already read through get_subagent_status.
+  private readonly delivered = new Set<string>();
+  // Questions children asked, queued for the parent's next step.
+  private readonly questions: Array<{
+    taskId: string;
+    message: UserModelMessage;
+  }> = [];
+  // Set once no parent pass can answer, so ask_parent returns at once.
+  private questionsClosed = false;
+  // A child blocked in ask_parent, by taskId, resolved by the parent's answer.
+  private readonly openQuestions = new Map<
+    string,
+    (answer: string | null) => void
+  >();
+  // Read, but that tool result is not saved to the parent yet.
+  private readonly readUnsaved = new Set<string>();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -160,11 +187,8 @@ export class SubagentCoordinator {
     parentMessages: ModelMessage[],
     parentEphemeralSystem: SystemModelMessage[] = [],
   ): Promise<RunSubagentDispatchResult> => {
-    // Capture the parent's trace/task id now, while the parent's observability
-    // context is still active (this runs synchronously inside the parent's
-    // run_subagent tool call). Each child is its own top-level trace that links
-    // back to the parent. Read here, not in the detached child, because concurrent
-    // children overwrite the module-global observability context.
+    // Capture the parent's trace/task id now, inside the parent's run_subagent
+    // tool call. Each child is its own top-level trace that links back to it.
     const parentObs = getObservabilityContext();
     const subagentParent: SubagentParentContext | undefined = parentObs?.traceId
       ? {
@@ -222,10 +246,14 @@ export class SubagentCoordinator {
 
   async waitForIdle(
     options: {
-      onHeartbeat?: (pendingCount: number) => void;
+      onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
-  ): Promise<"idle" | "timeout"> {
-    while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
+  ): Promise<"idle" | "question" | "timeout"> {
+    while (
+      this.pending.size > 0 &&
+      this.questions.length === 0 &&
+      Date.now() < this.waitUntilMs
+    ) {
       const heartbeatAt = Math.min(
         Date.now() + HEARTBEAT_INTERVAL_MS,
         this.waitUntilMs,
@@ -236,24 +264,202 @@ export class SubagentCoordinator {
       ]);
 
       if (this.pending.size > 0) {
-        options.onHeartbeat?.(this.pending.size);
+        // Awaited, so a heartbeat that finds the run lost ends the wait.
+        await options.onHeartbeat?.(this.pending.size);
       }
     }
+
+    if (this.questions.length > 0) return "question";
 
     return this.pending.size === 0 ? "idle" : "timeout";
   }
 
+  /**
+   * Waits until one of this turn's subagents records its outcome or settles, up
+   * to `timeoutMs` or the parent's wait budget. get_subagent_status uses it, so a
+   * status check spends one model step per change instead of one per instant
+   * "processing". It returns before the child's queued follow-ups drain.
+   */
+  async waitForSettled(
+    taskId: string,
+    timeoutMs: number,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
+    const pending = this.pending.get(taskId);
+    if (!pending || abortSignal?.aborted) {
+      return;
+    }
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<boolean>((resolve): void => {
+      onAbort = (): void => resolve(true);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+    });
+    const eventId = this.pendingMetadata.get(taskId)?.eventId;
+    const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
+    const settled = pending.then((): boolean => true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<boolean>((resolve): void => {
+      timer = setTimeout((): void => resolve(true), deadline - Date.now());
+    });
+    try {
+      while (
+        this.questions.length === 0 &&
+        !(eventId !== undefined && this.recorded.has(eventId))
+      ) {
+        const done = await Promise.race([
+          settled,
+          aborted,
+          timedOut,
+          this.nextStateChange().then((): boolean => false),
+        ]);
+        if (done) {
+          return;
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Records that get_subagent_status showed the model this run's outcome, by
+   * the result row's event id. It counts once `confirmDelivered` runs after
+   * that tool result is saved, so a failed save still gets the injection.
+   */
+  markDelivered(eventId: string): void {
+    this.readUnsaved.add(eventId);
+  }
+
+  /**
+   * Called once the parent's step output is saved. Each result read by then
+   * never starts another pass: a queued injection is dropped now and one that
+   * is enqueued later is skipped.
+   */
+  confirmDelivered(): void {
+    for (const eventId of this.readUnsaved) {
+      this.delivered.add(eventId);
+      // A finish hook's rewrite never reached the model through the tool.
+      const index = this.completions.findIndex(
+        (completion): boolean =>
+          completion.eventId === eventId &&
+          completion.visibleResult === undefined,
+      );
+      if (index !== -1) {
+        this.completions.splice(index, 1);
+      }
+    }
+    this.readUnsaved.clear();
+  }
+
   async drainCompletionsToParent(): Promise<number> {
-    if (this.completions.length === 0) {
-      return 0;
+    return (await this.takeParentMessages()).length;
+  }
+
+  /**
+   * Moves queued results and questions into the parent conversation and returns
+   * them. The parent's step boundary calls it, so they reach the model mid-pass.
+   */
+  async takeParentMessages(): Promise<UserModelMessage[]> {
+    const completions = this.completions.splice(0);
+    const questions = this.questions.splice(0);
+    // One write each, so a failure puts back only what was not saved yet, and a
+    // later step or drain delivers it without repeating the rest.
+    for (const [index, completion] of completions.entries()) {
+      await this.parentSession
+        .persistModelMessages([completionToParentMessage(completion)])
+        .catch((error: unknown): never => {
+          this.completions.unshift(...completions.slice(index));
+          this.restoreQuestions(questions);
+          throw error;
+        });
+    }
+    for (const [index, question] of questions.entries()) {
+      await this.parentSession
+        .persistModelMessages([question.message])
+        .catch((error: unknown): never => {
+          this.restoreQuestions(questions.slice(index));
+          throw error;
+        });
     }
 
-    const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(
-      completions.map(completionToParentMessage),
-    );
+    return [
+      ...completions.map(completionToParentMessage),
+      ...questions.map((question): UserModelMessage => question.message),
+    ];
+  }
 
-    return completions.length;
+  /**
+   * A child's ask_parent: queues the question for the parent and waits for the
+   * answer, which update_subagent delivers. Null when the parent does not answer
+   * in time, the child stops, it already has a question open, or no parent pass
+   * is left to answer.
+   */
+  async askParent(
+    taskId: string,
+    question: string,
+    abortSignal?: AbortSignal,
+  ): Promise<string | null> {
+    const metadata = this.pendingMetadata.get(taskId);
+    if (
+      !metadata ||
+      this.questionsClosed ||
+      this.openQuestions.has(taskId) ||
+      abortSignal?.aborted
+    ) {
+      return null;
+    }
+    const budgetMs = Math.max(
+      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
+      0,
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const answer = new Promise<string | null>((resolve): void => {
+      this.openQuestions.set(taskId, resolve);
+      timer = setTimeout((): void => resolve(null), budgetMs);
+      onAbort = (): void => resolve(null);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+    });
+    this.questions.push({
+      taskId: taskId,
+      message: questionToParentMessage(metadata, question),
+    });
+    this.notifyCompletion();
+    const result = await answer;
+    clearTimeout(timer);
+    if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
+    // A question nobody answered in time is not left for the parent to answer.
+    this.openQuestions.delete(taskId);
+    const queued = this.questions.findIndex((open) => open.taskId === taskId);
+    if (queued !== -1) {
+      this.questions.splice(queued, 1);
+    }
+
+    return result;
+  }
+
+  /**
+   * For a parent that cannot run another pass: every open question resolves
+   * with no answer, and later ones return at once.
+   */
+  closeQuestions(): void {
+    this.questionsClosed = true;
+    this.questions.length = 0;
+    for (const resolve of this.openQuestions.values()) resolve(null);
+    this.openQuestions.clear();
+  }
+
+  /** Hands the parent's message to a child blocked in ask_parent; false when none is. */
+  answerQuestion(taskId: string, answer: string): boolean {
+    const resolve = this.openQuestions.get(taskId);
+    if (!resolve) {
+      return false;
+    }
+    this.openQuestions.delete(taskId);
+    resolve(answer);
+
+    return true;
   }
 
   async drainCompletionsAndTimeoutsToParent(): Promise<number> {
@@ -283,6 +489,8 @@ export class SubagentCoordinator {
 
     this.pending.clear();
     this.pendingMetadata.clear();
+    // The parent stops waiting, so no answer is coming.
+    this.closeQuestions();
     const batch = [...completions, ...timeouts];
     await this.parentSession.persistModelMessages(
       batch.map(completionToParentMessage),
@@ -335,6 +543,7 @@ export class SubagentCoordinator {
         parentEphemeralSystem: parentEphemeralSystem,
         persistent: persistent,
         resuming: resuming,
+        isolatedSandbox: task.isolated === true,
       };
     }
 
@@ -361,6 +570,7 @@ export class SubagentCoordinator {
       parentEphemeralSystem: parentEphemeralSystem,
       persistent: persistent,
       resuming: resuming,
+      isolatedSandbox: task.isolated === true,
     };
   }
 
@@ -374,7 +584,7 @@ export class SubagentCoordinator {
     }
 
     const agent = await getStorage().agents.getById(accountId, agentId);
-    if (!agent || agent.status !== "active") {
+    if (!agent) {
       throw new Error(`Subagent not found: ${agentId}`);
     }
 
@@ -396,7 +606,13 @@ export class SubagentCoordinator {
     const trackedPublisher = publisher
       ? bestEffortSubagentPublisher(publisher, streamState, task.taskId)
       : undefined;
-    const promise = this.runTask(task, subagentParent, trackedPublisher)
+    // The child gets its own observability cell, seeded from the parent's. On
+    // the shared cell the parent's pass ending blanked the child's scope, so its
+    // steps never reached the dashboard, and each child relabeled the parent.
+    const promise = runWithObservabilityScope(
+      () => this.runTask(task, subagentParent, trackedPublisher),
+      getObservabilityContext(),
+    )
       .then(async () => {
         await trackedPublisher?.publish({ type: "done" });
       })
@@ -509,6 +725,16 @@ export class SubagentCoordinator {
       trigger: this.parentSession.trigger,
       persist: task.persistent,
       policyDelivery: this.parentSession.policyDelivery,
+      // The child acts as its own agent, delegated to by the parent's chain.
+      principal: this.parentSession.principal
+        ? runPrincipal(
+            {
+              accountId: this.parentSession.principal.accountId,
+              agentId: task.agentId,
+            },
+            delegatedChain(this.parentSession.principal),
+          )
+        : undefined,
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
@@ -535,7 +761,19 @@ export class SubagentCoordinator {
             approvalRequested = true;
           },
         },
-        subagentParent ? { subagentParent: subagentParent } : {},
+        {
+          ...(subagentParent ? { subagentParent: subagentParent } : {}),
+          isolatedSandbox: task.isolatedSandbox,
+          ...(task.persistent
+            ? {
+                askParent: (
+                  question: string,
+                  abortSignal?: AbortSignal,
+                ): Promise<string | null> =>
+                  this.askParent(task.taskId, question, abortSignal),
+              }
+            : {}),
+        },
       );
 
       if (publisher) {
@@ -562,17 +800,18 @@ export class SubagentCoordinator {
       );
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
-      await childSession
-        .settleIngress("failed", { error: errorText })
-        .catch((settlementError) => {
-          logError("Failed to settle subagent ingress failure", {
-            taskId: task.taskId,
-            error:
-              settlementError instanceof Error
-                ? settlementError.message
-                : String(settlementError),
-          });
+      await this.recordOutcome(childSession, task, {
+        status: "failed",
+        error: errorText,
+      }).catch((settlementError: unknown): void => {
+        logError("Failed to record subagent failure", {
+          taskId: task.taskId,
+          error:
+            settlementError instanceof Error
+              ? settlementError.message
+              : String(settlementError),
         });
+      });
       await this.drainChildConversation(
         childSession,
         task,
@@ -598,8 +837,8 @@ export class SubagentCoordinator {
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
-    await markAsyncAgentResultCompleted({
-      eventId: task.eventId,
+    await this.recordOutcome(childSession, task, {
+      status: "completed",
       response: finalResponse,
     });
     await this.completeTask({
@@ -611,16 +850,8 @@ export class SubagentCoordinator {
       status: "completed",
       response: finalResponse,
     });
-    // The durable result is authoritative. Settlement and queued-drain failures
-    // must not turn this completed task into a second failed completion.
-    await childSession
-      .settleIngress("completed", { result: finalResponse })
-      .catch((error) => {
-        logError("Failed to settle completed subagent ingress", {
-          taskId: task.taskId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+    // The durable result is authoritative. A queued-drain failure must not
+    // turn this completed task into a second failed completion.
     await this.drainChildConversation(
       childSession,
       task,
@@ -632,6 +863,36 @@ export class SubagentCoordinator {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+  }
+
+  /**
+   * Records a child run's outcome on its envelope and polling row in one
+   * mutation, once. A child that owns no envelope, or whose settle fails,
+   * still records the row.
+   */
+  private async recordOutcome(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+    outcome: AsyncAgentOutcome,
+  ): Promise<void> {
+    if (this.recorded.has(task.eventId)) return;
+    const { status, ...settlement } = outcomeSettlement(outcome);
+    const settled = await childSession
+      .settleIngress(status, {
+        ...settlement,
+        asyncResult: { eventIds: [task.eventId], outcome: outcome },
+      })
+      .catch((error: unknown): boolean => {
+        logError("Failed to settle subagent ingress", {
+          taskId: task.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        return false;
+      });
+    if (!settled) await recordAsyncAgentResult(task.eventId, outcome);
+    this.recorded.add(task.eventId);
+    this.notifyCompletion();
   }
 
   /**
@@ -676,7 +937,6 @@ export class SubagentCoordinator {
           eventId: next.eventId,
           resuming: true,
           inheritedContext: false,
-          ...(next.agentConfig ? { agentConfig: next.agentConfig } : {}),
         },
         subagentParent,
         publisher,
@@ -716,7 +976,7 @@ export class SubagentCoordinator {
     const transferred = await this.dispatchNextIngress(childSession, {
       accountId: requireParentAccountId(this.parentSession),
       agentId: task.agentId,
-      agentConfig: task.agentConfig,
+      subagentConfig: task.agentConfig,
       conversationKey: task.conversationKey,
       publicConversationKey: task.publicConversationKey,
       endpointId: this.parentSession.endpointId,
@@ -760,7 +1020,6 @@ export class SubagentCoordinator {
         publicConversationKey: task.publicConversationKey,
         statusUrl: subagentStatusPath(task),
       },
-      agentConfig: task.agentConfig,
     });
     if (
       admission.outcome !== "owner" ||
@@ -803,9 +1062,12 @@ export class SubagentCoordinator {
   private async completeTask(completion: SubagentCompletion): Promise<void> {
     const shouldInjectToParent = this.pending.has(completion.taskId);
 
-    if (completion.status === "failed") {
-      await markAsyncAgentResultFailed({
-        eventId: completion.eventId,
+    if (
+      completion.status === "failed" &&
+      !this.recorded.has(completion.eventId)
+    ) {
+      await recordAsyncAgentResult(completion.eventId, {
+        status: "failed",
         error: completion.error ?? "Subagent task failed",
       }).catch((error) => {
         logError("Failed to mark subagent task failed", {
@@ -863,7 +1125,11 @@ export class SubagentCoordinator {
         inject = false;
       }
     }
-    if (inject) {
+    if (
+      inject &&
+      (completion.visibleResult !== undefined ||
+        !this.delivered.has(completion.eventId))
+    ) {
       this.completions.push(completion);
     }
     this.notifyCompletion();
@@ -934,6 +1200,17 @@ export class SubagentCoordinator {
     return mutation?.visibleResult as JSONValue | undefined;
   }
 
+  // Puts unsaved questions back; one whose child stopped waiting stays dropped.
+  private restoreQuestions(
+    questions: Array<{ taskId: string; message: UserModelMessage }>,
+  ): void {
+    this.questions.unshift(
+      ...questions.filter((open): boolean =>
+        this.openQuestions.has(open.taskId),
+      ),
+    );
+  }
+
   private nextStateChange(): Promise<void> {
     return new Promise((resolve) => {
       this.waiters.add(resolve);
@@ -993,6 +1270,30 @@ function bestEffortSubagentPublisher(
   };
 }
 
+function questionToParentMessage(
+  task: Omit<
+    SubagentCompletion,
+    "status" | "response" | "error" | "visibleResult"
+  >,
+  question: string,
+): UserModelMessage {
+  const metadata = [
+    `taskId: ${task.taskId}`,
+    `agentId: ${task.agentId}`,
+    `conversationKey: ${task.conversationKey}`,
+  ].join("\n");
+
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `Subagent question for the parent. The subagent is paused until you answer with update_subagent (mode "steer") using this taskId and agentId.\n${metadata}\n\nQuestion:\n${question}`,
+      },
+    ],
+  };
+}
+
 function completionToParentMessage(
   completion: SubagentCompletion,
 ): UserModelMessage {
@@ -1030,13 +1331,11 @@ function createSubagentPublisher(
   parentSession: Session,
   task: ResolvedSubagentTask,
 ): NatsPublisher | undefined {
-  const natsUrl = process.env.NATS_URL?.trim();
-  if (!natsUrl) {
+  if (!process.env.NATS_URL?.trim()) {
     return undefined;
   }
 
   return new LiveNatsPublisher(
-    natsUrl,
     {
       accountId: requireParentAccountId(parentSession),
       agentId: task.agentId,
@@ -1044,7 +1343,7 @@ function createSubagentPublisher(
       eventId: task.taskId,
       connectionId: task.taskId,
     },
-    process.env.NATS_TOKEN?.trim() || undefined,
+    collectSecretValues(task.agentConfig),
   );
 }
 

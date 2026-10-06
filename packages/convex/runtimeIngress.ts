@@ -13,12 +13,18 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { isPlainObject } from "./model/objects";
-import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
 import {
-  appliedIngressModeValidator,
+  asyncAgentOutcomeValidator,
+  conversationEventsValidator,
+  writeAsyncAgentResult,
+} from "./runtime";
+import {
+  channelTargetRefsFields,
+  ingressConfigRefValidator,
   ingressModeValidator,
   ingressStatusValidator,
 } from "./schema";
+import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 
 const CLEAR_BATCH_SIZE = 100;
 
@@ -26,18 +32,27 @@ const CLEAR_BATCH_SIZE = 100;
 // expired) are excluded at the index, not filtered after the read: they retain
 // their stale expiresAt for the whole status retention window, and scanning
 // them every sweep re-reads every retained payload.
-const EXPIRABLE_STATUSES = [
-  "accepted",
-  "queued",
-  "applied",
-  "processing",
-] as const;
+// `accepted` and `applied` exist only in the public status type; no envelope
+// row is ever written with them.
+const EXPIRABLE_STATUSES = ["queued", "processing"] as const;
 
 const MAX_DRAIN_ENVELOPES = 100;
+
+// `renewOwner` skips the write while more than this fraction of the TTL remains.
+const RENEW_AFTER_TTL_FRACTION = 0.9;
 
 // Statuses whose rows only await retention deletion; scanned by their own
 // index so the sweep never touches a row it is not about to delete.
 const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
+
+// Spread into every terminal patch. Nothing reads a settled row's payload
+// (duplicate replay compares `payloadDigest`), so it should not sit in the
+// table for the whole status retention window.
+const RELEASED_PAYLOAD = {
+  events: [],
+  configRef: undefined,
+  ephemeralSystem: undefined,
+};
 
 // appliedEnvelopeValidator stays ahead of admissionResultValidator, which embeds it.
 const appliedEnvelopeValidator = v.object({
@@ -45,11 +60,11 @@ const appliedEnvelopeValidator = v.object({
   events: v.array(v.any()),
   delivery: v.any(),
   requestedMode: ingressModeValidator,
-  appliedMode: appliedIngressModeValidator,
+  appliedMode: ingressModeValidator,
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
-  agentConfig: v.optional(v.any()),
+  configRef: v.optional(ingressConfigRefValidator),
   ephemeralSystem: v.optional(v.array(v.any())),
 });
 
@@ -75,19 +90,31 @@ const admissionResultValidator = v.object({
   recovered: v.optional(appliedEnvelopeValidator),
 });
 
-const channelTargetValidator = v.object({
-  agentConfig: v.any(),
+const recoveredIngressValidator = v.object({
+  accountId: v.id("accounts"),
+  agentId: v.string(),
+  conversationKey: v.string(),
+  applied: appliedEnvelopeValidator,
+});
+
+// What a channel session keeps so a cron, background job or inter-session
+// message can reach it again: the place, and the rows core rebuilds the run's
+// config from. Never the config itself, which holds decrypted secrets.
+const channelTargetFields = {
   channelName: v.string(),
   source: v.record(v.string(), v.any()),
-});
+  ...channelTargetRefsFields,
+};
+
+const channelTargetValidator = v.object(channelTargetFields);
 
 const ingressStatusResultValidator = v.object({
   eventId: v.string(),
-  runId: v.optional(v.string()),
+  runId: v.string(),
   agentId: v.string(),
   conversationKey: v.string(),
   requestedMode: ingressModeValidator,
-  appliedMode: v.optional(appliedIngressModeValidator),
+  appliedMode: v.optional(ingressModeValidator),
   appliedToEventId: v.optional(v.string()),
   status: ingressStatusValidator,
   createdAt: v.number(),
@@ -111,6 +138,11 @@ const ownerRenewalResultValidator = v.union(
   v.literal("stopped"),
   v.literal("stale"),
 );
+
+const stepBoundaryResultValidator = v.object({
+  renewal: ownerRenewalResultValidator,
+  steering: v.union(appliedEnvelopeValidator, v.null()),
+});
 
 // The part of a channel delivery that names who sent the message.
 type DeliverySender = { identity?: { userId?: string } } | null | undefined;
@@ -141,7 +173,7 @@ export const accept = internalMutation({
     events: v.array(v.any()),
     delivery: v.any(),
     requestedMode: ingressModeValidator,
-    agentConfig: v.optional(v.any()),
+    configRef: v.optional(ingressConfigRefValidator),
     channelTarget: v.optional(channelTargetValidator),
     ephemeralSystem: v.optional(v.array(v.any())),
     sizeBytes: v.number(),
@@ -315,32 +347,31 @@ export const appendConversationEvent = internalMutation({
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
-    ...conversationEventArgs,
+    events: conversationEventsValidator,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
-    await requireActiveAccount(ctx, coordinator.accountId);
-    for (const entry of conversationEventsFromArgs(args)) {
-      await ctx.db.insert("runtimeConversationEvents", {
-        accountId: coordinator.accountId,
-        conversationKey: args.conversationKey,
-        cursor: entry.cursor,
-        event: entry.event,
-      });
-    }
+    await insertOwnedEvents(ctx, coordinator, args.events);
 
     return null;
   },
 });
 
-/** Applies the contiguous FIFO steer prefix at one step boundary. */
+/**
+ * Applies the contiguous FIFO steer prefix at one step boundary. Claims nothing
+ * once a stop is requested for this generation, so a stop that lands after
+ * core's renew leaves the steer queued for the next turn.
+ */
 export const applySteering = internalMutation({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
+    // A harness turn takes a steer only as text: claim the plain-text prefix
+    // and leave the rest queued for the next turn.
+    textOnly: v.optional(v.boolean()),
   },
   returns: v.union(appliedEnvelopeValidator, v.null()),
   handler: async (
@@ -349,83 +380,8 @@ export const applySteering = internalMutation({
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
     const coordinator = await requireOwner(ctx, { ...args, now: now });
-    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    const rows = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-        q.eq("conversationKey", args.conversationKey).eq("status", "queued"),
-      )
-      .take(MAX_DRAIN_ENVELOPES);
-    const active = rows.filter((row) => row.expiresAt > now);
-    const steering = active[0]?.requestedMode === "steer";
-    // A steer joins the running turn, so it must come from that turn's sender.
-    const owner = steering
-      ? await ctx.db
-          .query("runtimeIngressEnvelopes")
-          .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
-          .unique()
-      : null;
-    const selected = steering
-      ? contiguousModePrefix(active, owner?.delivery)
-      : [];
-    if (selected.length === 0) {
-      if (
-        queue.queuedCount !== coordinator.queuedCount ||
-        queue.queuedBytes !== coordinator.queuedBytes
-      ) {
-        await ctx.db.patch(coordinator._id, {
-          ...queue,
-          leaseExpiresAt: now + args.leaseTtlMs,
-          updatedAt: now,
-        });
-      }
 
-      return null;
-    }
-    const eventIds = selected.map((row) => row.eventId);
-    const applicationId = `${args.ownerEventId}:steer:${args.ownerGeneration}:${selected[0]!.sequence}`;
-    for (const row of selected) {
-      await ctx.db.patch(row._id, {
-        status: "processing",
-        appliedMode: "steer",
-        appliedToEventId: args.ownerEventId,
-        applicationId: applicationId,
-        ownerGeneration: args.ownerGeneration,
-        updatedAt: now,
-      });
-    }
-    await ctx.db.insert("runtimeIngressApplications", {
-      accountId: coordinator.accountId,
-      conversationKey: args.conversationKey,
-      applicationId: applicationId,
-      appliedMode: "steer",
-      appliedToEventId: args.ownerEventId,
-      contributingEventIds: eventIds,
-      ownerGeneration: args.ownerGeneration,
-      createdAt: now,
-      expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
-    });
-    const removedBytes = selected.reduce(
-      (total, row) => total + row.sizeBytes,
-      0,
-    );
-    await ctx.db.patch(coordinator._id, {
-      queuedCount: Math.max(0, queue.queuedCount - selected.length),
-      queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
-      leaseExpiresAt: now + args.leaseTtlMs,
-      updatedAt: now,
-    });
-
-    return {
-      eventId: args.ownerEventId,
-      events: selected.flatMap((row) => row.events),
-      delivery: selected[0]!.delivery,
-      requestedMode: "steer" as const,
-      appliedMode: "steer" as const,
-      appliedToEventId: args.ownerEventId,
-      contributingEventIds: eventIds,
-      ownerGeneration: args.ownerGeneration,
-    };
+    return await claimSteering(ctx, coordinator, args, now);
   },
 });
 
@@ -469,7 +425,7 @@ export const clearConversation = internalMutation({
 /** Returns the durable channel destination for one existing agent session. */
 export const getConversationTarget = internalQuery({
   args: {
-    accountId: v.string(),
+    accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
   },
@@ -477,20 +433,19 @@ export const getConversationTarget = internalQuery({
   handler: async (
     ctx,
     args,
-  ): Promise<NonNullable<
-    Doc<"runtimeConversationCoordinators">["channelTarget"]
-  > | null> => {
+  ): Promise<Infer<typeof channelTargetValidator> | null> => {
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const coordinator = await getCoordinator(ctx, args.conversationKey);
+    const target = coordinator?.channelTarget;
     if (
-      !coordinator ||
+      !target ||
       coordinator.accountId !== args.accountId ||
       coordinator.agentId !== args.agentId
     ) {
       return null;
     }
 
-    return coordinator.channelTarget ?? null;
+    return target;
   },
 });
 
@@ -592,12 +547,17 @@ export const maintain = internalMutation({
       const coordinator = await getCoordinator(ctx, row.conversationKey);
       if (
         row.status === "processing" &&
-        coordinator?.leaseExpiresAt &&
-        coordinator.leaseExpiresAt > now
+        coordinator &&
+        hasActiveOwner(coordinator, now) &&
+        row.ownerGeneration === coordinator.ownerGeneration
       ) {
+        // The owner is alive. Move the row off the head of the due range, or
+        // 100 long runs would fill every batch and starve real expiries.
+        await ctx.db.patch(row._id, { expiresAt: coordinator.leaseExpiresAt });
         continue;
       }
       await ctx.db.patch(row._id, {
+        ...RELEASED_PAYLOAD,
         status: "expired",
         error:
           row.status === "queued"
@@ -615,8 +575,7 @@ export const maintain = internalMutation({
       } else if (
         coordinator?.ownerEventId &&
         row.ownerGeneration === coordinator.ownerGeneration &&
-        coordinator.leaseExpiresAt !== undefined &&
-        coordinator.leaseExpiresAt <= now
+        !hasActiveOwner(coordinator, now)
       ) {
         await ctx.db.patch(coordinator._id, {
           ownerEventId: undefined,
@@ -658,6 +617,61 @@ export const maintain = internalMutation({
     }
 
     return { expired: expired, deleted: deleted };
+  },
+});
+
+/**
+ * Promotes the oldest queued group of each conversation that has queued work
+ * but no live owner. Admission already recovers a conversation when its next
+ * message arrives; this is for the ones nobody writes to again, such as the
+ * queue behind a run that core handed back at shutdown. Core calls it on boot
+ * and on a timer, then dispatches every returned application, whose lease it
+ * now holds.
+ */
+export const recoverQueued = internalMutation({
+  args: { leaseTtlMs: v.number() },
+  returns: v.array(recoveredIngressValidator),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof recoveredIngressValidator>[]> => {
+    const now = Date.now();
+    // Bounded like maintain. A page full of queues behind live owners delays
+    // the rest to a later sweep, which the next message would also unblock.
+    const rows = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_status_and_expiresAt", (q) =>
+        q.eq("status", "queued").gt("expiresAt", now),
+      )
+      .take(MAX_DRAIN_ENVELOPES);
+    const recovered: Infer<typeof recoveredIngressValidator>[] = [];
+    const visited = new Set<string>();
+    for (const row of rows) {
+      if (visited.has(row.conversationKey)) continue;
+      visited.add(row.conversationKey);
+      const coordinator = await getCoordinator(ctx, row.conversationKey);
+      if (!coordinator || hasActiveOwner(coordinator, now)) continue;
+      const account = await ctx.db.get(coordinator.accountId);
+      if (account?.status !== "active") continue;
+      await expireStaleOwner(ctx, coordinator, now);
+      const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+      const applied = await promoteQueuedGroup(ctx, {
+        coordinator: coordinator,
+        queue: queue,
+        now: now,
+        leaseTtlMs: args.leaseTtlMs,
+        ownerGeneration: coordinator.ownerGeneration + 1,
+      });
+      if (!applied) continue;
+      recovered.push({
+        accountId: coordinator.accountId,
+        agentId: coordinator.agentId,
+        conversationKey: coordinator.conversationKey,
+        applied: applied,
+      });
+    }
+
+    return recovered;
   },
 });
 
@@ -712,16 +726,18 @@ export const renewOwner = internalMutation({
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return "stopped" as const;
     }
-    await ctx.db.patch(coordinator._id, {
-      leaseExpiresAt: now + args.leaseTtlMs,
-      updatedAt: now,
-    });
+    await renewHeldLease(ctx, coordinator, args.leaseTtlMs, now);
 
     return "renewed" as const;
   },
 });
 
-/** Settles every envelope whose work was applied to the current owner event. */
+/**
+ * Settles every envelope whose work was applied to the current owner event.
+ * An async run passes its polling rows as `asyncResult`; they are written in
+ * the same transaction, and only by the settle that finishes the owner's own
+ * envelope, so they can never disagree with it.
+ */
 export const settle = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -730,55 +746,64 @@ export const settle = internalMutation({
     status: v.union(v.literal("completed"), v.literal("failed")),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
+    asyncResult: v.optional(
+      v.object({
+        eventIds: v.array(v.string()),
+        outcome: asyncAgentOutcomeValidator,
+      }),
+    ),
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const coordinator = await requireOwner(ctx, args);
-    const now = Date.now();
-    // A failed settle that was preceded by /stop for this generation is a
-    // deliberate stop, not a fault, so mark it and pollers can tell them apart.
-    const stoppedByUser =
-      args.status === "failed" &&
-      coordinator.stopRequestedGeneration === args.ownerGeneration;
-    const ids = new Set<Id<"runtimeIngressEnvelopes">>();
-    // Page by sequence so more than one drain batch of contributors still
-    // settles; a fixed take() would leave the tail stuck in processing.
-    let afterSequence = -1;
-    while (true) {
-      const rows = await ctx.db
-        .query("runtimeIngressEnvelopes")
-        .withIndex(
-          "by_conversationKey_and_appliedToEventId_and_sequence",
-          (q) =>
-            q
-              .eq("conversationKey", args.conversationKey)
-              .eq("appliedToEventId", args.ownerEventId)
-              .gt("sequence", afterSequence),
-        )
-        .take(MAX_DRAIN_ENVELOPES);
-      for (const row of rows) ids.add(row._id);
-      if (rows.length < MAX_DRAIN_ENVELOPES) break;
-      afterSequence = rows[rows.length - 1]!.sequence;
-    }
-    const own = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
-      .unique();
-    if (own?.conversationKey === args.conversationKey) ids.add(own._id);
-    for (const id of ids) {
-      const row = await ctx.db.get(id);
-      if (!row || ["completed", "failed", "expired"].includes(row.status))
-        continue;
-      await ctx.db.patch(id, {
-        status: args.status,
-        updatedAt: now,
-        ...(stoppedByUser ? { stoppedByUser: true } : {}),
-        ...(args.result !== undefined ? { result: args.result } : {}),
-        ...(args.error !== undefined ? { error: args.error } : {}),
-      });
+    const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
+    if (args.asyncResult && settled.ownerFinished) {
+      for (const eventId of args.asyncResult.eventIds) {
+        await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
+      }
     }
 
-    return ids.size;
+    return settled.count;
+  },
+});
+
+/**
+ * One model step boundary in one transaction: the fenced append of the step's
+ * rows, the stop check, the lease renewal, and the steer claim. A stale owner
+ * writes nothing. A stop keeps the rows, as `renewOwner` beside a fenced append
+ * did, and claims no steer.
+ */
+export const stepBoundary = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+    leaseTtlMs: v.number(),
+    events: v.optional(conversationEventsValidator),
+  },
+  returns: stepBoundaryResultValidator,
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof stepBoundaryResultValidator>> => {
+    const now = Date.now();
+    let coordinator: Doc<"runtimeConversationCoordinators">;
+    try {
+      coordinator = await requireOwner(ctx, { ...args, now: now });
+    } catch {
+      return { renewal: "stale" as const, steering: null };
+    }
+    if (args.events && args.events.length > 0) {
+      await insertOwnedEvents(ctx, coordinator, args.events);
+    }
+    if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
+      return { renewal: "stopped" as const, steering: null };
+    }
+    // A claimed steer extends the lease itself.
+    const steering = await claimSteering(ctx, coordinator, args, now);
+    if (!steering) await renewHeldLease(ctx, coordinator, args.leaseTtlMs, now);
+
+    return { renewal: "renewed" as const, steering: steering };
   },
 });
 
@@ -816,13 +841,23 @@ export const stopOwner = internalMutation({
   },
 });
 
-/** Applies the oldest runnable group, or releases ownership when none remains. */
+/**
+ * Applies the oldest runnable group, or releases ownership when none remains.
+ * With `settle`, first settles the owner's envelopes in the same transaction.
+ */
 export const takeNext = internalMutation({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
+    settle: v.optional(
+      v.object({
+        status: v.union(v.literal("completed"), v.literal("failed")),
+        result: v.optional(v.any()),
+        error: v.optional(v.string()),
+      }),
+    ),
   },
   returns: v.union(appliedEnvelopeValidator, v.null()),
   handler: async (
@@ -831,6 +866,12 @@ export const takeNext = internalMutation({
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
     const coordinator = await requireOwner(ctx, { ...args, now: now });
+    if (args.settle) {
+      await settleAppliedEnvelopes(ctx, coordinator, {
+        ...args,
+        ...args.settle,
+      });
+    }
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
     const promoted = await promoteQueuedGroup(ctx, {
       coordinator: coordinator,
@@ -855,13 +896,6 @@ export const takeNext = internalMutation({
     return promoted;
   },
 });
-
-function accountIdFromKey(value: string): string {
-  const match = /^acct:([^:]+):/.exec(value);
-  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
-
-  return match[1];
-}
 
 /** Verifies that server-derived account and agent scope match the conversation key. */
 function assertConversationScope(
@@ -891,7 +925,7 @@ function buildAdmissionEnvelope(
     delivery: unknown;
     requestedMode: Infer<typeof ingressModeValidator>;
     ownerTaskId?: string;
-    agentConfig?: unknown;
+    configRef?: Infer<typeof ingressConfigRefValidator>;
     ephemeralSystem?: unknown[];
     sizeBytes: number;
     envelopeTtlMs: number;
@@ -917,9 +951,7 @@ function buildAdmissionEnvelope(
     ...(args.ownerTaskId !== undefined
       ? { ownerTaskId: args.ownerTaskId }
       : {}),
-    ...(args.agentConfig !== undefined
-      ? { agentConfig: args.agentConfig }
-      : {}),
+    ...(args.configRef !== undefined ? { configRef: args.configRef } : {}),
     ...(args.ephemeralSystem !== undefined
       ? { ephemeralSystem: args.ephemeralSystem }
       : {}),
@@ -978,7 +1010,7 @@ async function checkDuplicateAdmission(
     return {
       outcome: "duplicate" as const,
       eventId: existing.eventId,
-      ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
+      runId: existing.runId,
       status: existing.status,
       ...(existing.ownerGeneration !== undefined
         ? { ownerGeneration: existing.ownerGeneration }
@@ -997,6 +1029,106 @@ async function checkDuplicateAdmission(
   return null;
 }
 
+/**
+ * `applySteering`'s body once the fence passed; `stepBoundary` runs it too.
+ * Claims nothing once a stop is requested for this generation.
+ */
+async function claimSteering(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  args: {
+    conversationKey: string;
+    ownerEventId: string;
+    ownerGeneration: number;
+    leaseTtlMs: number;
+    textOnly?: boolean;
+  },
+  now: number,
+): Promise<Infer<typeof appliedEnvelopeValidator> | null> {
+  if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
+    return null;
+  }
+  const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+  const rows = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q.eq("conversationKey", args.conversationKey).eq("status", "queued"),
+    )
+    .take(MAX_DRAIN_ENVELOPES);
+  const active = rows.filter((row) => row.expiresAt > now);
+  const steering = active[0]?.requestedMode === "steer";
+  // A steer joins the running turn, so it must come from that turn's sender.
+  const owner = steering
+    ? await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
+        .unique()
+    : null;
+  const prefix = steering ? contiguousModePrefix(active, owner?.delivery) : [];
+  const firstNotText = args.textOnly
+    ? prefix.findIndex((row) => !row.events.every(isPlainUserText))
+    : -1;
+  const selected = firstNotText === -1 ? prefix : prefix.slice(0, firstNotText);
+  if (selected.length === 0) {
+    if (
+      queue.queuedCount !== coordinator.queuedCount ||
+      queue.queuedBytes !== coordinator.queuedBytes
+    ) {
+      await ctx.db.patch(coordinator._id, {
+        ...queue,
+        leaseExpiresAt: now + args.leaseTtlMs,
+        updatedAt: now,
+      });
+    }
+
+    return null;
+  }
+  const eventIds = selected.map((row) => row.eventId);
+  const applicationId = `${args.ownerEventId}:steer:${args.ownerGeneration}:${selected[0]!.sequence}`;
+  for (const row of selected) {
+    await ctx.db.patch(row._id, {
+      status: "processing",
+      appliedMode: "steer",
+      appliedToEventId: args.ownerEventId,
+      applicationId: applicationId,
+      ownerGeneration: args.ownerGeneration,
+      updatedAt: now,
+    });
+  }
+  await ctx.db.insert("runtimeIngressApplications", {
+    accountId: coordinator.accountId,
+    conversationKey: args.conversationKey,
+    applicationId: applicationId,
+    appliedMode: "steer",
+    appliedToEventId: args.ownerEventId,
+    contributingEventIds: eventIds,
+    ownerGeneration: args.ownerGeneration,
+    createdAt: now,
+    expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
+  });
+  const removedBytes = selected.reduce(
+    (total, row) => total + row.sizeBytes,
+    0,
+  );
+  await ctx.db.patch(coordinator._id, {
+    queuedCount: Math.max(0, queue.queuedCount - selected.length),
+    queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
+    leaseExpiresAt: now + args.leaseTtlMs,
+    updatedAt: now,
+  });
+
+  return {
+    eventId: args.ownerEventId,
+    events: selected.flatMap((row) => row.events),
+    delivery: selected[0]!.delivery,
+    requestedMode: "steer" as const,
+    appliedMode: "steer" as const,
+    appliedToEventId: args.ownerEventId,
+    contributingEventIds: eventIds,
+    ownerGeneration: args.ownerGeneration,
+  };
+}
+
 /** One envelope row as the status shape the public status route answers with. */
 function ingressStatusResult(
   row: Doc<"runtimeIngressEnvelopes">,
@@ -1007,7 +1139,7 @@ function ingressStatusResult(
 
   return {
     eventId: row.eventId,
-    ...(row.runId !== undefined ? { runId: row.runId } : {}),
+    runId: row.runId,
     agentId: row.agentId,
     conversationKey: row.conversationKey,
     requestedMode: row.requestedMode,
@@ -1026,6 +1158,52 @@ function ingressStatusResult(
       ? { publicDeploymentIngress: publicDeploymentIngress }
       : {}),
   };
+}
+
+/** Inserts history rows for an owner the fence just accepted, all or none. */
+async function insertOwnedEvents(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  events: { cursor: string; event: unknown }[],
+): Promise<void> {
+  await requireActiveAccount(ctx, coordinator.accountId);
+  for (const entry of events) {
+    await ctx.db.insert("runtimeConversationEvents", {
+      accountId: coordinator.accountId,
+      conversationKey: coordinator.conversationKey,
+      cursor: entry.cursor,
+      event: entry.event,
+    });
+  }
+}
+
+/**
+ * Whether a stored ingress event is a user message made only of text. Events
+ * are stored as `v.any()`, so this reads the model message shape at run time.
+ */
+function isPlainUserText(event: unknown): boolean {
+  if (
+    typeof event !== "object" ||
+    event === null ||
+    !("role" in event) ||
+    event.role !== "user" ||
+    !("content" in event)
+  ) {
+    return false;
+  }
+  const content = event.content;
+
+  return (
+    typeof content === "string" ||
+    (Array.isArray(content) &&
+      content.every(
+        (part: unknown): boolean =>
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          part.type === "text",
+      ))
+  );
 }
 
 /**
@@ -1053,7 +1231,7 @@ function contiguousModePrefix(
 async function createCoordinator(
   ctx: MutationCtx,
   options: {
-    accountId: string;
+    accountId: Id<"accounts">;
     agentId: string;
     conversationKey: string;
     now: number;
@@ -1094,6 +1272,7 @@ async function expireQueuedEnvelopes(
     expiredCount += 1;
     expiredBytes += row.sizeBytes;
     await ctx.db.patch(row._id, {
+      ...RELEASED_PAYLOAD,
       status: "expired",
       error: "Ingress expired before it reached a runnable boundary",
       updatedAt: now,
@@ -1112,8 +1291,7 @@ async function expireStaleOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
 ): Promise<void> {
-  if (!coordinator.ownerEventId || !coordinator.leaseExpiresAt) return;
-  if (coordinator.leaseExpiresAt >= now) return;
+  if (!coordinator.ownerEventId || hasActiveOwner(coordinator, now)) return;
   const envelope = await ctx.db
     .query("runtimeIngressEnvelopes")
     .withIndex("by_eventId", (q) => q.eq("eventId", coordinator.ownerEventId!))
@@ -1124,6 +1302,7 @@ async function expireStaleOwner(
     !["completed", "failed", "expired"].includes(envelope.status)
   ) {
     await ctx.db.patch(envelope._id, {
+      ...RELEASED_PAYLOAD,
       status: "expired",
       error: "Conversation owner lease expired before completion",
       updatedAt: now,
@@ -1143,11 +1322,17 @@ async function getCoordinator(
     .unique();
 }
 
-/** Returns whether the coordinator currently has an unexpired owner. */
+/**
+ * Whether the coordinator has an owner whose lease has not ended. A lease that
+ * ends this millisecond is still live; the fence and every expiry agree on it.
+ */
 function hasActiveOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
-): boolean {
+): coordinator is Doc<"runtimeConversationCoordinators"> & {
+  ownerEventId: string;
+  leaseExpiresAt: number;
+} {
   return Boolean(
     coordinator.ownerEventId &&
     coordinator.leaseExpiresAt &&
@@ -1256,7 +1441,7 @@ async function promoteQueuedGroup(
   appliedToEventId: string;
   contributingEventIds: string[];
   ownerGeneration: number;
-  agentConfig?: unknown;
+  configRef?: Infer<typeof ingressConfigRefValidator>;
   ephemeralSystem?: unknown[];
 } | null> {
   const { coordinator, queue, now } = options;
@@ -1326,9 +1511,7 @@ async function promoteQueuedGroup(
     appliedToEventId: appliedToEventId,
     contributingEventIds: eventIds,
     ownerGeneration: options.ownerGeneration,
-    ...(first.agentConfig !== undefined
-      ? { agentConfig: first.agentConfig }
-      : {}),
+    ...(first.configRef !== undefined ? { configRef: first.configRef } : {}),
     ...(first.ephemeralSystem !== undefined
       ? { ephemeralSystem: first.ephemeralSystem }
       : {}),
@@ -1367,17 +1550,26 @@ function publicDeploymentIngressFromDelivery(
   };
 }
 
-/** Requires the account to exist and remain active in the write transaction. */
-async function requireActiveAccount(
+/**
+ * Extends a lease the fence just accepted, once a tenth of the TTL has passed.
+ * Core renews every second while a harness turn runs, so most renewals stay
+ * read-only and do not invalidate `isCurrentOwner` readers.
+ */
+async function renewHeldLease(
   ctx: MutationCtx,
-  accountId: string,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  leaseTtlMs: number,
+  now: number,
 ): Promise<void> {
-  const normalized = ctx.db.normalizeId("accounts", accountId);
-  const account = normalized ? await ctx.db.get(normalized) : null;
-  if (!account || account.status !== "active") {
-    throw new Error(`Account is not active: ${accountId}`);
-  }
+  const remainingMs = (coordinator.leaseExpiresAt ?? 0) - now;
+  if (remainingMs > leaseTtlMs * RENEW_AFTER_TTL_FRACTION) return;
+  await ctx.db.patch(coordinator._id, {
+    leaseExpiresAt: now + leaseTtlMs,
+    updatedAt: now,
+  });
 }
+
+/** Requires the account to exist and remain active in the write transaction. */
 
 /** Requires the exact owner event and fencing generation for a mutation. */
 async function requireOwner(
@@ -1395,11 +1587,77 @@ async function requireOwner(
     !coordinator ||
     coordinator.ownerEventId !== options.ownerEventId ||
     coordinator.ownerGeneration !== options.ownerGeneration ||
-    !coordinator.leaseExpiresAt ||
-    coordinator.leaseExpiresAt < now
+    !hasActiveOwner(coordinator, now)
   ) {
     throw new Error("Stale conversation owner generation");
   }
 
   return coordinator;
+}
+
+/**
+ * Marks the owner event and every envelope applied to it terminal; used by
+ * `settle` and `takeNext`.
+ * @returns how many envelopes it covered, and whether the owner's own envelope
+ * finished in this call
+ */
+async function settleAppliedEnvelopes(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  args: {
+    conversationKey: string;
+    ownerEventId: string;
+    ownerGeneration: number;
+    status: "completed" | "failed";
+    result?: unknown;
+    error?: string;
+  },
+): Promise<{ count: number; ownerFinished: boolean }> {
+  const now = Date.now();
+  // A failed settle that was preceded by /stop for this generation is a
+  // deliberate stop, not a fault, so mark it and pollers can tell them apart.
+  const stoppedByUser =
+    args.status === "failed" &&
+    coordinator.stopRequestedGeneration === args.ownerGeneration;
+  const ids = new Set<Id<"runtimeIngressEnvelopes">>();
+  // Page by sequence so more than one drain batch of contributors still
+  // settles; a fixed take() would leave the tail stuck in processing.
+  let afterSequence = -1;
+  for (;;) {
+    const rows = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_conversationKey_and_appliedToEventId_and_sequence", (q) =>
+        q
+          .eq("conversationKey", args.conversationKey)
+          .eq("appliedToEventId", args.ownerEventId)
+          .gt("sequence", afterSequence),
+      )
+      .take(MAX_DRAIN_ENVELOPES);
+    for (const row of rows) ids.add(row._id);
+    if (rows.length < MAX_DRAIN_ENVELOPES) break;
+    afterSequence = rows[rows.length - 1]!.sequence;
+  }
+  const own = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
+    .unique();
+  if (own?.conversationKey === args.conversationKey) ids.add(own._id);
+  let ownerFinished = false;
+  for (const id of ids) {
+    const row = await ctx.db.get(id);
+    // Only running rows settle: a finished run stays finished, and a queued row
+    // never ran, so it waits for its own owner or expiry.
+    if (row?.status !== "processing") continue;
+    await ctx.db.patch(id, {
+      ...RELEASED_PAYLOAD,
+      status: args.status,
+      updatedAt: now,
+      ...(stoppedByUser ? { stoppedByUser: true } : {}),
+      ...(args.result !== undefined ? { result: args.result } : {}),
+      ...(args.error !== undefined ? { error: args.error } : {}),
+    });
+    if (id === own?._id) ownerFinished = true;
+  }
+
+  return { count: ids.size, ownerFinished: ownerFinished };
 }

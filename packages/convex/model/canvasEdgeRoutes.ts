@@ -24,8 +24,15 @@
 
 import type { LayoutPosition, LayoutRect } from "./canvasLayout";
 
+/**
+ * The shortest last run into a handle: an arrowhead (9px) plus a rounded
+ * corner (8px), past the few pixels a handle sits outside its box, so the
+ * arrow lies straight instead of bending round the corner into the node.
+ */
+export const ARROW_RUN = 24;
+
 /** Above a target's top, or below the boxes a side edge runs under, the first lane. */
-const APPROACH_INSET = 12;
+const APPROACH_INSET = ARROW_RUN;
 
 /** How far past its ends one agent's bus keeps other agents' buses off its lane. */
 const BUS_END_GAP = 24;
@@ -40,7 +47,7 @@ const BUS_SPACING = 16;
 const FAN_INSET = 16;
 
 /** Between a box's side and the gutter lane nearest it. */
-const GUTTER_INSET = 8;
+const GUTTER_INSET = ARROW_RUN;
 
 /** Distance between two parallel runs. */
 export const LANE_SPACING = 8;
@@ -235,14 +242,18 @@ export function routeCanvasEdges(
   for (const leg of legs
     .filter((item) => item.blocked)
     .sort((a, b) => a.end.y - b.end.y || a.id.localeCompare(b.id))) {
-    const toLeft = leg.start.x <= leg.end.x;
+    const side = leg.start.x <= leg.end.x ? "left" : "right";
     leg.gutterX = takeLane(
       verticals,
       leg.request.source,
-      toLeft
-        ? leg.target.x - GUTTER_INSET
-        : leg.target.x + leg.target.width + GUTTER_INSET,
-      toLeft ? -1 : 1,
+      gutterBase(
+        leg.target,
+        side,
+        boxes,
+        leg.start.y,
+        leg.end.y - APPROACH_INSET,
+      ),
+      directionOf(side),
       leg.start.y,
       leg.end.y,
       LANE_SPACING,
@@ -459,11 +470,39 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): T[][] {
   return [...groups.values()];
 }
 
-/** The gutter lane nearest a top-level box on one side. */
-function gutterBase(box: LayoutRect, side: SideEnd["side"]): number {
-  return side === "right"
-    ? box.x + box.width + GUTTER_INSET
-    : box.x - GUTTER_INSET;
+/**
+ * The gutter lane nearest a top-level box on one side, for a vertical run from
+ * `from` down to `to`: GUTTER_INSET out when that run crosses no box, else the
+ * middle of the gap to the nearest box level with it when that is clear, else
+ * GUTTER_INSET out anyway. A side edge's run ends under boxes not placed yet,
+ * so it leaves `to` open.
+ */
+function gutterBase(
+  box: LayoutRect,
+  side: SideEnd["side"],
+  boxes: ReadonlyMap<string, LayoutRect>,
+  from: number,
+  to = Infinity,
+): number {
+  const edge = side === "right" ? box.x + box.width : box.x;
+  const direction = directionOf(side);
+  const clear = (x: number): boolean =>
+    ![...boxes.values()].some((other) =>
+      segmentCrosses({ x: x, y: from }, { x: x, y: to }, other),
+    );
+  const full = edge + direction * GUTTER_INSET;
+  if (clear(full)) return full;
+
+  let gap = Infinity;
+  for (const other of boxes.values()) {
+    if (other.y >= to || other.y + other.height <= from) continue;
+    const distance =
+      side === "right" ? other.x - edge : edge - (other.x + other.width);
+    if (distance > 0) gap = Math.min(gap, distance);
+  }
+  const middle = edge + (direction * gap) / 2;
+
+  return gap < Infinity && clear(middle) ? middle : full;
 }
 
 function overlaps(a: LayoutRect, b: LayoutRect): boolean {
@@ -602,8 +641,8 @@ function routeSide(
 
   const sourceOuter = boxes.get(edge.source.outerId) ?? edge.source.box;
   const targetOuter = boxes.get(edge.target.outerId) ?? edge.target.box;
-  const sourceBase = gutterBase(sourceOuter, edge.source.side);
-  const targetBase = gutterBase(targetOuter, edge.target.side);
+  const sourceBase = gutterBase(sourceOuter, edge.source.side, boxes, start.y);
+  const targetBase = gutterBase(targetOuter, edge.target.side, boxes, end.y);
   const left = Math.min(sourceBase, targetBase);
   const right = Math.max(sourceBase, targetBase);
   const band: LayoutRect = {

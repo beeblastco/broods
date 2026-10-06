@@ -40,6 +40,11 @@ export type ObservabilityLogEntry = {
 // task row with a jump-to-parent link. Children ("model.step", "tool.call", and
 // "phase" timeline spans like cold start, context prepare, and compaction) share
 // the traceId of the root they belong to.
+//
+// A root that ended cleanly but left something open closes "needs_input" (on the
+// person) or "waiting" (on work that settles by itself), with `task.waiting_on`
+// saying what. Every run a request spawns, answer continuations included, carries
+// the request's event id as `task.id`, or as `task.root_id` when its own differs.
 export type ObservabilitySpanRow = {
   traceId: string;
   spanId: string;
@@ -49,13 +54,17 @@ export type ObservabilitySpanRow = {
   startTimeMs: number;
   endTimeMs: number;
   durationMs: number;
-  status: "running" | "ok" | "error";
+  status: "running" | "waiting" | "needs_input" | "ok" | "error";
   endpointId?: string;
   agentId?: string;
   conversationKey?: string;
   attributes?: Record<string, unknown>;
   error?: string;
 };
+
+// What a "waiting" or "needs_input" root is blocked on: the person for a
+// question or approval, finishing work for a subagent or tool.
+export type TaskWaitingOn = "question" | "approval" | "subagent" | "tool";
 
 export type ObservabilitySubscribeMessage = {
   type: "subscribe";

@@ -229,13 +229,18 @@ function fakeStorage(): Storage {
       disable: none,
       remove: async () => false,
     },
+    budgets: {
+      get: none,
+      record: async () => {},
+      claimWarning: async () => false,
+    },
     agents: {
       getById: none,
-      list: empty,
+      listForProduction: empty,
       listForEndpoint: empty,
       removeAllForAccount: zero,
     },
-    agentDeployments: { getByApiKeyHash: none },
+    agentDeployments: { getByApiKeyHash: none, touchLastUsed: async () => {} },
     channelRecords: {
       getByExternalId: none,
       getById: none,
@@ -250,8 +255,6 @@ function fakeStorage(): Storage {
       list: empty,
       remove: async () => false,
       update: none,
-      markStarted: async () => undefined,
-      markCompleted: async () => undefined,
       markFailed: async () => undefined,
       createRun: async () => {
         throw new Error("not in bench");
@@ -269,8 +272,10 @@ function fakeStorage(): Storage {
     accountHooks: { getById: none, removeAllForAccount: zero },
     mcp: { getById: none, removeAllForAccount: zero },
     agentPolicies: { getById: none },
+    connections: { load: none, saveRefreshed: async () => false },
     roleSessions: { resolveByTokenHash: none },
     taskUsage: { record: async () => undefined },
+    auditLedger: { append: async () => undefined },
   };
 }
 
@@ -309,8 +314,13 @@ function session(): Session {
     filesystemNamespace: (): string => "fs-bench",
     resolvedWorkspaces: (): never[] => [],
     sandboxes: (): never[] => [],
+    environmentText: (): string => "<environment>",
     persistModelMessages: async (): Promise<never[]> => [],
     renewConversationLease: async (): Promise<"renewed"> => "renewed",
+    stepBoundary: async (): Promise<{
+      renewal: "renewed";
+      steering: null;
+    }> => ({ renewal: "renewed", steering: null }),
     applySteeringIngress: async (): Promise<null> => null,
     appendIngressEvents: async (): Promise<null> => null,
     loadRefreshedSystemPromptParts: async (): Promise<{

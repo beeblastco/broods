@@ -34,6 +34,11 @@ import { logError, logInfo, logWarn, tokenHint } from "./log.ts";
 // watchdog in `dial`.
 const CONNECT_DEADLINE_MS = 30_000;
 
+// Discord asks for a random 1-5s wait after INVALID_SESSION before the next
+// IDENTIFY or RESUME.
+const INVALID_SESSION_MIN_WAIT_MS = 1_000;
+const INVALID_SESSION_WAIT_SPREAD_MS = 4_000;
+
 // Sent when we close a socket ourselves and mean to RESUME. 1000 and 1001 tell
 // Discord the session is finished, which makes the next connect a fresh IDENTIFY.
 const RESUMABLE_CLOSE_CODE = 4000;
@@ -92,6 +97,16 @@ export class GatewaySocket {
     socket?.close(1000, "forwarder shutting down");
   }
 
+  /**
+   * Closes `socket` and schedules the re-dial now instead of waiting for its
+   * close event, which a partitioned socket may never deliver. The late close
+   * event, if it comes, fails the `socket !== this.socket` guard.
+   */
+  private abandon(socket: WebSocket, reason: string, minDelayMs = 0): void {
+    socket.close(RESUMABLE_CLOSE_CODE, reason);
+    this.handleClose(socket, RESUMABLE_CLOSE_CODE, reason, minDelayMs);
+  }
+
   private clearTimers(): void {
     if (this.connectTimer) clearTimeout(this.connectTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
@@ -148,7 +163,7 @@ export class GatewaySocket {
       logWarn("Discord gateway never became ready, reconnecting", {
         tokenHint: this.hint,
       });
-      socket.close(RESUMABLE_CLOSE_CODE, "never became ready");
+      this.abandon(socket, "never became ready");
     }, CONNECT_DEADLINE_MS);
   }
 
@@ -158,7 +173,12 @@ export class GatewaySocket {
     this.sessionId = null;
   }
 
-  private handleClose(socket: WebSocket, code: number, reason: string): void {
+  private handleClose(
+    socket: WebSocket,
+    code: number,
+    reason: string,
+    minDelayMs = 0,
+  ): void {
     if (socket !== this.socket) return;
     this.clearTimers();
     this.socket = null;
@@ -180,7 +200,7 @@ export class GatewaySocket {
       this.forgetSession();
     }
 
-    this.scheduleReconnect(code, reason);
+    this.scheduleReconnect(code, reason, minDelayMs);
   }
 
   private handlePayload(
@@ -195,13 +215,20 @@ export class GatewaySocket {
     if (payload.op === GatewayOpcode.Hello) {
       const hello = payload.d as GatewayHello;
       this.awaitingAck = false;
+      const intervalMs = heartbeatIntervalMs(hello.heartbeat_interval);
       // Discord sends one HELLO per connection, but a second would orphan the
-      // first interval past `clearTimers`, leaving it beating on a dead socket.
+      // first timer past `clearTimers`, leaving it beating on a dead socket.
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = setInterval(
-        (): void => this.heartbeat(socket),
-        heartbeatIntervalMs(hello.heartbeat_interval),
-      );
+      // Discord wants the first beat jittered across one interval so sockets
+      // that reconnected together do not beat in lockstep.
+      this.heartbeatTimer = setTimeout((): void => {
+        // Armed before the beat, so a beat that abandons the socket clears it.
+        this.heartbeatTimer = setInterval(
+          (): void => this.heartbeat(socket),
+          intervalMs,
+        );
+        this.heartbeat(socket);
+      }, intervalMs * Math.random());
       this.send(
         socket,
         resuming ? this.resumePayload() : this.identifyPayload(),
@@ -225,16 +252,21 @@ export class GatewaySocket {
       return;
     }
 
-    // 7 asks for a reconnect and keeps the session; 9 says the session is gone.
-    // Both are handled by closing and letting the close handler dial again.
+    // 7 asks for a reconnect and keeps the session. 9 says the session is gone
+    // unless `d` is true, and asks for a 1-5s wait before the next dial.
     if (payload.op === GatewayOpcode.Reconnect) {
-      socket.close(RESUMABLE_CLOSE_CODE, "gateway asked for a reconnect");
+      this.abandon(socket, "gateway asked for a reconnect");
 
       return;
     }
     if (payload.op === GatewayOpcode.InvalidSession) {
-      this.forgetSession();
-      socket.close(RESUMABLE_CLOSE_CODE, "gateway invalidated the session");
+      if (payload.d !== true) this.forgetSession();
+      this.abandon(
+        socket,
+        "gateway invalidated the session",
+        INVALID_SESSION_MIN_WAIT_MS +
+          Math.random() * INVALID_SESSION_WAIT_SPREAD_MS,
+      );
 
       return;
     }
@@ -267,15 +299,15 @@ export class GatewaySocket {
 
   /**
    * An interval tick that finds the previous beat still unacknowledged means the
-   * socket is a zombie: open, but nothing is coming back. Close it and let the
-   * close handler re-dial with a RESUME.
+   * socket is a zombie: open, but nothing is coming back. Abandon it and re-dial
+   * with a RESUME.
    */
   private heartbeat(socket: WebSocket): void {
     if (this.awaitingAck) {
       logWarn("Discord gateway heartbeat unacknowledged, reconnecting", {
         tokenHint: this.hint,
       });
-      socket.close(RESUMABLE_CLOSE_CODE, "heartbeat not acknowledged");
+      this.abandon(socket, "heartbeat not acknowledged");
 
       return;
     }
@@ -342,9 +374,16 @@ export class GatewaySocket {
     };
   }
 
-  private scheduleReconnect(code: number, reason: string): void {
+  private scheduleReconnect(
+    code: number,
+    reason: string,
+    minDelayMs: number,
+  ): void {
     const { botToken, budget, config } = this.options;
-    const delayMs = backoffDelayMs(this.attempt, config.backoffCeilingMs);
+    const delayMs = Math.max(
+      minDelayMs,
+      backoffDelayMs(this.attempt, config.backoffCeilingMs),
+    );
     this.attempt += 1;
     this.state = "backoff";
     logWarn("Discord gateway closed, reconnecting", {

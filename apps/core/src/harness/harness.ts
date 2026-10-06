@@ -1,6 +1,7 @@
 /**
- * Agent-side harness core.
- * Keep turn context assembly, model invocation, and tools orchestration here.
+ * The model/tool loop for one agent run: streamText or an AI SDK Harness turn,
+ * its tracing, usage and lifecycle events. The handler assembles the turn
+ * context before it; session.ts loads and saves conversation state.
  */
 
 import {
@@ -24,42 +25,52 @@ import {
   type ModelMessage,
   type StepResult,
   type SystemModelMessage,
+  type TextStreamPart,
   type ToolApprovalRequestOutput,
   type ToolCallPart,
   type ToolSet,
+  type TypedToolCall,
   type UserModelMessage,
 } from "ai";
-import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
-import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
-import { extractText } from "../shared/channels.ts";
+import {
+  HarnessCapabilityUnsupportedError,
+  type HarnessAgentSession,
+} from "@ai-sdk/harness/agent";
+import type {
+  ObservabilitySpanRow,
+  TaskWaitingOn,
+} from "../../../../packages/broods/src/observability-contracts.ts";
+import { extractText, type ChannelQuestion } from "../shared/channels.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import {
   AGENT_MAX_TURN_UNLIMITED,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
+import { principalChainLabel } from "../shared/domain/principal.ts";
+import { positiveIntegerEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
+import { waitUntil } from "../shared/in-flight.ts";
 import {
   collectSecretValues,
   logError,
   logInfo,
   logWarn,
-  redact,
+  redactSerialized,
   redactSensitiveText,
 } from "../shared/log.ts";
 import {
   ensureObservabilityStream,
-  flushObservabilityNats,
-  getObservabilityNatsConn,
+  getSharedNatsConn,
   tracesSubject,
 } from "../shared/nats.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
-  forceFlushOtel,
   getObservabilityContext,
   getTracer,
   mintSpanId,
   mintTraceId,
   observabilityAttributes,
+  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
@@ -74,9 +85,21 @@ import {
 } from "./hook-dispatcher.ts";
 import {
   createConfiguredHarnessAgent,
+  harnessReservationKey,
+  harnessSteersMidTurn,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
+  type AiSdkHarnessType,
 } from "./ai-sdk-harness/index.ts";
+import {
+  agentSandboxStatus,
+  formatSandboxStatus,
+  occupySandbox,
+  sandboxNeighbours,
+  type SandboxUsage,
+} from "./sandbox/live-status.ts";
+import { configString } from "./sandbox/utils.ts";
+import { shouldAutoCompact } from "./compaction.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import {
@@ -103,13 +126,20 @@ import {
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
-import type { PendingQuestionSummary } from "./questions.ts";
+import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
+import {
+  formatQuestionsText,
+  openQuestion,
+  type PendingQuestionSummary,
+} from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
+import type { AskParent, SubagentWatch } from "./tools/utils.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
+/** Default step cap when the agent config sets no `agent.maxTurn`. */
 const MAX_AGENT_ITERATIONS = 30;
 // Tools whose successful call already delivered the run's output to a channel
 // or another session. Some models (gemini flash) legitimately stop with no
@@ -123,17 +153,35 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "send-sticker",
 ]);
 const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
-/** Thrown when an owner is stopped; callers match on it to skip result delivery. */
+// How long a model may stay silent before its run fails; overridable by
+// MODEL_FIRST_CHUNK_TIMEOUT_MS and MODEL_CHUNK_TIMEOUT_MS.
+const DEFAULT_MODEL_FIRST_CHUNK_TIMEOUT_MS = 300_000;
+const DEFAULT_MODEL_CHUNK_TIMEOUT_MS = 300_000;
+// Parts after which the model is starting a new call, not mid-stream.
+const MODEL_CALL_BOUNDARY_PART_TYPES: ReadonlySet<string> = new Set([
+  "start",
+  "start-step",
+  "finish-step",
+  "tool-result",
+  "tool-error",
+  "tool-output-denied",
+]);
+// A machine only one conversation uses is released after a day idle instead of
+// the default week, so abandoned subagent tasks stop holding machines.
+const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
+/** Failure text of a stopped run; handler and subagents match on it to treat a stop as intended, not a failure. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
-// Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
-// I/O show in full on the dashboard (delivered full-fidelity over the live
-// JetStream path); still well under the NATS 1MB max-payload ceiling. Tempo may
-// truncate further on its side, but that only affects history older than the
-// JetStream replay window.
+// Harness types whose runtime refused a mid-turn message in this process.
+const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
+// Per-attribute cap on serialized trace payloads. Generous so reasoning and
+// tool I/O show in full on the dashboard, still well under the NATS 1MB
+// max-payload ceiling.
 const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
 // Tracing labels a run with its request. The whole text is already in
 // model.input, so this only has to fill one row.
 const MAX_TASK_INPUT_CHARS = 500;
+// The usage tab shows one line of it per task, and the row is kept 90 days.
+const USAGE_INPUT_PREVIEW_CHARS = 160;
 
 const SPAN_ENCODER = new TextEncoder();
 
@@ -149,6 +197,7 @@ const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
   "file",
 ]);
 
+/** An open model.step or tool.call span plus the ids its live NATS rows reuse. */
 type TrackedSpan = {
   otelSpan: Span;
   otelContext: OtelContext;
@@ -162,6 +211,7 @@ type TrackedSpan = {
 
 type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
 type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
+/** One tool call as the finish and failure logs and lifecycle events report it. */
 type ToolCallSummary = {
   toolCallId: string;
   toolName: string;
@@ -170,12 +220,14 @@ type ToolCallSummary = {
   success?: boolean;
 };
 
+/** A tool call waiting on a person's approval, handed to `onApprovalRequired`. */
 export type ToolApprovalSummary = Pick<ApprovalRequestOutput, "approvalId"> & {
   toolCallId: ApprovalToolCall["toolCallId"];
   toolName: ApprovalToolCall["toolName"];
   input: ApprovalToolCall["input"];
 };
 
+/** How the caller delivers a run's outcome: final text, error, pending approvals or questions. */
 export interface AgentReplyHooks {
   onFinalText(response: JSONValue): Promise<void>;
   onErrorText(error: string): Promise<void>;
@@ -197,10 +249,20 @@ export interface SubagentParentContext {
 export interface AgentLoopOptions {
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSubagents?: RunSubagentDispatch;
+  subagentWatch?: SubagentWatch;
+  // Present on a persistent subagent's run; backs its ask_parent tool.
+  askParent?: AskParent;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; links its trace to the parent's.
   subagentParent?: SubagentParentContext;
+  // The subagent task asked for a harness machine of its own instead of the
+  // agent's shared one. Read on the conversation's first turn only; later turns
+  // resume on whatever machine that turn stored.
+  isolatedSandbox?: boolean;
+  // In-process work the handler still waits on once this pass ends, so its
+  // trace closes as waiting rather than ok.
+  pendingWork?: () => TaskWaitingOn | undefined;
   // Request-shared hook dispatcher (one storage load + one ctx.state per
   // request); the loop builds its own when the handler does not pass one.
   hooks?: HookDispatcher;
@@ -214,8 +276,10 @@ export interface AgentLoopOptions {
 // so a caller that drains the stream by hand can still settle the run.
 export type AgentLoopStream = ReturnType<typeof streamText> & {
   consumeStream(): Promise<void>;
-  // `drained` false means the caller stopped reading with the model still
-  // running, so the run is aborted before it is settled.
+  /**
+   * `drained` false means the caller stopped reading with the model still
+   * running, so the run is aborted before it is settled.
+   */
   ensureFinalized(drained: boolean): Promise<void>;
   didFail(): boolean;
   failureText(): string | null;
@@ -229,9 +293,10 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
 // Every consumer reads through this so a run is finalized, and aborted when
 // the consumer stops early, no matter how the read loop exits. A consumer that
 // drains the stream itself when it gives up passes false: the run has to
-// survive the early exit for that drain to finish it.
+// survive the early exit for that drain to finish it. `raw` parts never leave
+// this reader; the Claude Code harness forwards whole upstream messages as them.
 export async function* readAgentFullStream(
-  stream: AgentLoopStream,
+  stream: Pick<AgentLoopStream, "stream" | "ensureFinalized">,
   abortOnEarlyExit = true,
 ): AsyncIterable<unknown> {
   const reader = stream.stream.getReader();
@@ -243,6 +308,7 @@ export async function* readAgentFullStream(
         drained = true;
         break;
       }
+      if (value.type === "raw") continue;
       yield value;
     }
   } finally {
@@ -255,6 +321,10 @@ export async function* readAgentFullStream(
   }
 }
 
+/**
+ * Runs one model pass for a turn and returns its stream; the handler and
+ * subagents read it through `readAgentFullStream`.
+ */
 export async function runAgentLoop(
   session: Session,
   turnContext: TurnContextSnapshot,
@@ -265,7 +335,10 @@ export async function runAgentLoop(
   let didFail = false;
   let failureText: string | null = null;
   let systemContextSnapshot = turnContext.systemContextSnapshot;
-  const configuredModel = resolveConfiguredModel(agentConfig);
+  const configuredModel = resolveConfiguredModel(
+    agentConfig,
+    session.accountId,
+  );
   const lifecycle = createAgentLifecycleEmitter(
     session,
     agentConfig,
@@ -278,7 +351,8 @@ export async function runAgentLoop(
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
   // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
-  // sandboxUsage row at finalize. CPU only arrives for sandbox/lambda execs.
+  // sandboxUsage row at finalize. CPU only arrives from sandbox execs and
+  // hosted MCP calls.
   const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
   // Per-call compute, so the tool.call span can report what that one call cost.
   // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
@@ -286,6 +360,7 @@ export async function runAgentLoop(
     string,
     { type: string; cpuUsec: number }
   >();
+  /** Passed to the tool registry as `onSandboxCpu`; folds each CPU sample into the usage buckets. */
   const recordSandboxCpu = (sample: SandboxCpuSample): void => {
     if (!(sample.cpuUsec > 0)) return;
     if (sample.role === "tool" && sample.toolCallId !== undefined) {
@@ -310,10 +385,10 @@ export async function runAgentLoop(
       });
     }
   };
-  // Accumulated sandbox CPU split by role (agent's own sandbox vs hosted MCP
-  // sandboxes), so the dashboard can stream the Compute chart live off the running
-  // root span instead of waiting for the finalize write. Empty until a sandbox
-  // exec reports CPU.
+  /**
+   * Sandbox CPU so far split by role (agent's own sandbox vs hosted MCP), for
+   * the live root span re-published after each step. Empty until CPU arrives.
+   */
   const sandboxCpuRoleAttributes = (): Record<string, number> => {
     let agent = 0;
     let tool = 0;
@@ -328,12 +403,9 @@ export async function runAgentLoop(
     };
   };
 
-  // Start the durable root span (agent.task) up front so the same trace id is
-  // stamped on every log line and NATS span row AND exported to Tempo. That shared
-  // id links logs<->traces in Grafana. When OTel is not initialised the tracer is a
-  // noop and its context is all-zero, so fall back to freshly minted ids for the
-  // live/NATS path. project/stage come from the auth scope on the session's
-  // endpointId; empty for non-deployment (channel/cron).
+  // Start the root span up front so one trace id is on every log line, NATS
+  // span row and Tempo span. A noop tracer (OTel not initialised) has all-zero
+  // ids, so the live NATS path falls back to freshly minted ones.
   const runStartedAt = Date.now();
   const observabilityScope = {
     accountId: session.accountId ?? "",
@@ -378,6 +450,9 @@ export async function runAgentLoop(
     ...(session.agentId ? { agentId: session.agentId } : {}),
     conversationKey: session.conversationKey,
   };
+  // Registers this run on the machine it works on so a neighbour's environment
+  // counts it; released when usage finalizes.
+  let releaseSandboxOccupancy: (() => void) | undefined;
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
@@ -390,42 +465,59 @@ export async function runAgentLoop(
     ]),
   });
 
-  const traceAttribute = (value: unknown): string => {
-    const safeValue = redact(
+  /** Serializes any value for a span attribute, with run secrets redacted and long text truncated. */
+  const traceAttribute = (value: unknown): string =>
+    redactSerialized(
       value,
       getObservabilityContext()?.secretValues ?? [],
+      MAX_TRACE_ATTRIBUTE_CHARS,
     );
-    let serialized: string;
-    try {
-      serialized =
-        safeValue === undefined
-          ? ""
-          : typeof safeValue === "string"
-            ? safeValue
-            : JSON.stringify(safeValue);
-    } catch {
-      serialized = String(safeValue);
-    }
-    if (serialized.length <= MAX_TRACE_ATTRIBUTE_CHARS) return serialized;
 
-    return `${serialized.slice(0, MAX_TRACE_ATTRIBUTE_CHARS)}...[truncated]`;
-  };
-
+  // A bash-only agent's machine status is read here; a harness run reads its own
+  // once the session holds the machine, below.
+  const agentMachine =
+    agentConfig.harness === undefined && resolvedWorkspaces.length === 0
+      ? agentSandboxStatus(sandboxes[0], session.eventId)
+      : undefined;
+  const agentMachineKey = configString(
+    sandboxes[0]?.sandbox.options?.reservationKey,
+  );
+  if (agentMachine && agentMachineKey) {
+    releaseSandboxOccupancy = occupySandbox(agentMachineKey, session.eventId, {
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+    });
+  }
+  const environment = session.environmentText(
+    agentMachine ? formatSandboxStatus(agentMachine) : [],
+  );
+  // Labels the run in Tracing and its row in the usage tab.
+  const taskInput = traceAttribute(latestUserText(turnContext.messages)).slice(
+    0,
+    MAX_TASK_INPUT_CHARS,
+  );
   // Reassigned once the tool set is known, so the live root span carries the
   // tools injected into the model alongside its system prompt and messages.
+  const principalChain =
+    session.principal && principalChainLabel(session.principal);
   let rootRunningAttributes: Record<string, string | number | boolean> = {
+    "agent.environment": traceAttribute(environment),
+    ...(session.principal
+      ? { "principal.agentId": session.principal.agentId }
+      : {}),
+    ...(principalChain ? { "principal.chain": principalChain } : {}),
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
-    "task.input": traceAttribute(latestUserText(turnContext.messages)).slice(
-      0,
-      MAX_TASK_INPUT_CHARS,
-    ),
+    "task.input": taskInput,
     "agent.message_count": turnContext.messages.length,
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
     "model.input": traceAttribute(turnContext.messages),
     ...systemTraceAttributes(turnContext.system, traceAttribute),
+    ...(rootEventId(session.eventId) !== session.eventId
+      ? { "task.root_id": rootEventId(session.eventId) }
+      : {}),
     ...(subagentParent
       ? {
           "parent.task_id": subagentParent.parentTaskId,
@@ -449,10 +541,10 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
-  // Emit a closed child phase span under the root task. Used for the timeline
-  // phases that wrap the model loop (cold start, context prepare, compaction) so
-  // a slow turn can be attributed to non-model work. Best-effort: telemetry must
-  // never break the run, and a noop tracer/unscoped run emits nothing.
+  /**
+   * Emits a closed phase span under the root for non-model work (cold start,
+   * context prepare, compaction), so a slow turn can be attributed. Best-effort.
+   */
   const emitPhaseSpan = (
     phaseName: string,
     label: string,
@@ -505,8 +597,8 @@ export async function runAgentLoop(
   };
 
   // Cold start is charged to the first run in this execution environment; later
-  // (warm) runs consume nothing. Context prepare and compaction come from the
-  // turn context the handler assembled before this loop began.
+  // (warm) runs consume nothing. Context prepare comes from the turn context
+  // the handler assembled before this loop began.
   const coldStart = consumeColdStart(runStartedAt);
   if (coldStart) {
     emitPhaseSpan(
@@ -541,21 +633,13 @@ export async function runAgentLoop(
       durationMs: prepareEndedMs - prepareStartedMs,
       ...phases,
     });
-    if (turnContext.timings.compaction) {
-      emitPhaseSpan(
-        "phase.compaction",
-        "Compaction",
-        turnContext.timings.compaction.startedMs,
-        turnContext.timings.compaction.endedMs,
-      );
-    }
   }
 
   const configuredApprovals = new Map<string, true>();
   const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
     session.delivery?.kind === "channel" ? session.delivery : undefined;
-  const builtTools = {
+  const builtTools: ToolSet = {
     ...(await createTools(
       {
         accountId: session.accountId,
@@ -571,6 +655,9 @@ export async function runAgentLoop(
         onSandboxCpu: recordSandboxCpu,
         onBlockingQuestion: (question): void => {
           questionSummaries.push(question);
+        },
+        onDetachedResult: (resultId): void => {
+          detachedResultIds.push(resultId);
         },
         approvalRequirements: configuredApprovals,
         policyMcpIdsByName: policyMcpIdsByName,
@@ -593,6 +680,10 @@ export async function runAgentLoop(
         // dispatcher into the tool registry for this one model run. Ephemeral
         // system messages are request-local, so pass the current turn copy into
         // child dispatch instead of expecting the coordinator to reload it.
+        ...(options.subagentWatch
+          ? { subagentWatch: options.subagentWatch }
+          : {}),
+        ...(options.askParent ? { askParent: options.askParent } : {}),
         ...(options.dispatchSubagents
           ? {
               dispatchSubagents: (tasks, messages) =>
@@ -606,9 +697,9 @@ export async function runAgentLoop(
       },
       agentConfig,
     )),
-  } satisfies ToolSet;
-  // Wrap tool execution so tool.call.started hooks can deny/edit args and
-  // tool.result hooks can transform output (no-op when no such hooks exist).
+  };
+  // Hooks let tool.call.started deny or edit args and tool.result transform
+  // output; the owner fence rechecks conversation ownership before each call.
   const tools = wrapToolsWithOwnerFence(
     wrapToolsWithHooks(builtTools, hooks),
     session,
@@ -621,6 +712,7 @@ export async function runAgentLoop(
       stage: session.stageSlug,
       endpointId: session.endpointId,
       agentId: session.agentId,
+      principal: session.principal,
       conversationKey: session.conversationKey,
       delivery: session.policyDelivery?.kind ?? "direct",
       channel:
@@ -652,6 +744,7 @@ export async function runAgentLoop(
   );
   let approvalSummaries: ToolApprovalSummary[] = [];
   const questionSummaries: PendingQuestionSummary[] = [];
+  const detachedResultIds: string[] = [];
   let finalResponse: JSONValue | undefined;
   let lastStepText = "";
 
@@ -660,6 +753,7 @@ export async function runAgentLoop(
   const stepSpans = new Map<number, TrackedSpan>();
   const toolSpans = new Map<string, TrackedSpan>();
   const toolStepNumbers = new Map<string, number | undefined>();
+  /** Opens a model.step or tool.call OTel span and keeps the ids its live NATS row reuses. */
   const startTrackedSpan = (
     name: "model.step" | "tool.call",
     startTimeMs: number,
@@ -696,16 +790,9 @@ export async function runAgentLoop(
 
   // Per-step timing state, read when each step's span closes.
   const stepStartedAt = new Map<number, number>();
-  // Time-to-first-token per step. onChunk has no step number, so the first chunk
-  // after each step start is attributed to the active step. A step decomposes into
-  // three non-overlapping segments that sum to its duration:
-  //   ttft      = step start      -> first model chunk   (queue/prefill wait)
-  //   streaming = first model chunk -> last model chunk   (pure token generation)
-  //   tool wait = last model chunk  -> step finish         (tool execution; shown
-  //               as the child tool.call spans, so streaming must NOT include it)
-  // The last model chunk is the last generation delta (text / reasoning / tool-input
-  // / tool-call); the post-execution `tool-result` chunk is deliberately excluded so
-  // a slow tool never inflates the streaming number and misleads optimization.
+  // First and last generated chunk per step, attributed to the active step since
+  // onChunk has no step number. They split a step into ttft, streaming and tool
+  // wait; tool results are not generation, so a slow tool never inflates streaming.
   const firstChunkAt = new Map<number, number>();
   const lastModelChunkAt = new Map<number, number>();
   // Per-part streaming windows (first/last delta per kind) so the dashboard can show
@@ -718,8 +805,10 @@ export async function runAgentLoop(
   // The SDK retries a failed stream start inside the ttft window with nothing
   // recorded; attemptRecordingMiddleware fills this per doStream call.
   const stepAttempts = new Map<number, ModelAttempt[]>();
-  // ttft = retry_wait (failed attempts + backoff) + the final attempt's real
-  // server wait, so a retried 429 is distinguishable from queueing.
+  /**
+   * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
+   * server wait, so a retried 429 is distinguishable from queueing.
+   */
   const attemptAttributes = (
     stepNumber: number,
     stepStartMs: number,
@@ -750,11 +839,37 @@ export async function runAgentLoop(
     modelProvider: configuredModel.providerName,
     modelId: agentConfig.model?.modelId,
   };
+  // Once the model has answered with no tool call left, a long context folds
+  // into a summary before the next queued message runs. A harness adapter keeps
+  // its own context, so its turns never compact the stored one.
+  const autoCompact = async (
+    lastInputTokens: number | undefined,
+  ): Promise<void> => {
+    if (harnessRuntime || !shouldAutoCompact(agentConfig, lastInputTokens)) {
+      return;
+    }
+    const startedMs = Date.now();
+    let compacted = 0;
+    try {
+      compacted = await session.compactConversation("");
+    } catch (err) {
+      logError("Auto-compaction failed; the turn keeps its full history", {
+        ...logContext,
+        error: errorMessage(err),
+      });
+    }
+    if (compacted > 0) {
+      emitPhaseSpan("phase.compaction", "Compaction", startedMs, Date.now(), {
+        "compaction.message_count": compacted,
+        "compaction.input_tokens": lastInputTokens ?? 0,
+      });
+    }
+  };
 
   // Finalize-once guard: usage is written exactly once per task and the root OTel
   // span is ended once. Finalization happens after terminal logs/replies so those
-  // records retain tenant/trace context, then explicitly flushes before returning
-  // to avoid losing buffered telemetry during shutdown or suspension.
+  // records retain tenant/trace context. The usage write runs in the background
+  // and shutdown drains it before flushing the exporters.
   let usageFinalized = false;
   let finishObserved = false;
   let persistedResponseCount = 0;
@@ -762,6 +877,51 @@ export async function runAgentLoop(
   let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
+  /**
+   * What a run that ended cleanly still waits on, the person first: an approval
+   * or an open question needs them, while subagents, async tools and background
+   * jobs settle by themselves. Empty when it failed or nothing is left open.
+   * `questions` is what the person was asked, for the trace's wait row.
+   */
+  const openWorkAfterRun = async (
+    status: "completed" | "failed",
+  ): Promise<{ waitingOn?: TaskWaitingOn; questions: ChannelQuestion[] }> => {
+    if (status === "failed") return { questions: [] };
+    if (approvalSummaries.length > 0) {
+      return { waitingOn: "approval", questions: [] };
+    }
+    const rows = await Promise.all(
+      detachedResultIds.map((resultId) =>
+        getAsyncToolResult(resultId).catch(() => null),
+      ),
+    );
+    const open = rows.filter((row) => row?.status === "processing");
+    const questions = open.flatMap(
+      (row): ChannelQuestion[] =>
+        openQuestion(row, session.conversationKey)?.pending.questions ?? [],
+    );
+    // The rows, not questionSummaries: an answer can settle one before the run
+    // ends. A blocking question whose row could not be read still counts.
+    const unread = questionSummaries
+      .filter(
+        (summary) => rows[detachedResultIds.indexOf(summary.statusId)] === null,
+      )
+      .flatMap((summary) => summary.questions);
+    if (questions.length > 0 || unread.length > 0) {
+      return { waitingOn: "question", questions: [...questions, ...unread] };
+    }
+    const pending = options.pendingWork?.();
+    if (pending) return { waitingOn: pending, questions: [] };
+
+    return {
+      ...(open.length > 0 ? { waitingOn: "tool" } : {}),
+      questions: [],
+    };
+  };
+  /**
+   * Settles the run once: closes open spans and the root span, then writes task
+   * usage. Called from onEnd, the setup failure path and `ensureFinalized`.
+   */
   const finalizeUsage = async (
     status: "completed" | "failed",
     usage: LanguageModelUsage | undefined,
@@ -772,7 +932,11 @@ export async function runAgentLoop(
   ): Promise<void> => {
     if (usageFinalized) return;
     usageFinalized = true;
+    releaseSandboxOccupancy?.();
     const taskTokens = usageTokenTotals(usage);
+    const { waitingOn, questions: openQuestions } =
+      await openWorkAfterRun(status);
+    const rootStatus = rootSpanStatus(status, waitingOn);
 
     const context = getObservabilityContext();
     const sanitizedError = error
@@ -848,14 +1012,23 @@ export async function runAgentLoop(
       startTimeMs: runStartedAt,
       endTimeMs: endTimeMs,
       durationMs: durationMs,
-      status: status === "completed" ? "ok" : "error",
+      status: rootStatus,
       endpointId: session.endpointId,
       agentId: session.agentId,
       conversationKey: session.conversationKey,
       attributes: {
         ...rootRunningAttributes,
         ...systemTraceAttributes(turnContext.system, traceAttribute),
-        "task.state": status,
+        ...(waitingOn
+          ? { "task.state": rootStatus, "task.waiting_on": waitingOn }
+          : { "task.state": status }),
+        ...(openQuestions.length > 0
+          ? {
+              "task.questions": traceAttribute(
+                formatQuestionsText(openQuestions),
+              ),
+            }
+          : {}),
         "agent.step_count": stepCount,
         "agent.tool_call_count": toolCallCount,
         "agent.model_provider": configuredModel.providerName,
@@ -892,49 +1065,53 @@ export async function runAgentLoop(
       // Best-effort: never fail the agent path.
     }
 
-    // Live publish via NATS. Awaited below before the flush so the terminal span's
-    // bytes are queued and drained to the durable stream. Otherwise a fresh
-    // dashboard load can keep a stale "running" copy of an already-finished task.
+    // Live publish via NATS, tracked with the usage write so shutdown drains the
+    // terminal span. Otherwise a fresh dashboard load can keep a stale "running"
+    // copy of an already-finished task.
     const rootPublished = publishSpan(rootSpanRow);
-
     try {
-      await recordTaskUsage({
-        accountId: session.accountId ?? "",
-        endpointId: session.endpointId,
-        agentId: session.agentId ?? "unknown",
-        conversationKey: session.conversationKey,
-        // One row per model pass: a continuation pass shares the eventId.
-        taskId: `${session.eventId}#${traceId}`,
-        modelProvider: configuredModel.providerName ?? "unknown",
-        modelId: agentConfig.model?.modelId ?? "unknown",
-        finishedAt: endTimeMs,
-        durationMs: durationMs,
-        status: status,
-        inputTokens: taskTokens.inputTokens,
-        outputTokens: taskTokens.outputTokens,
-        reasoningTokens: taskTokens.reasoningTokens,
-        cachedInputTokens: taskTokens.cachedInputTokens,
-        cacheWriteTokens: taskCacheWriteTokens,
-        totalTokens: taskTokens.totalTokens,
-        runtimeKind: "lambda",
-        runtimeWallMs: durationMs,
-        runtimeMemoryMb: parseInt(
-          process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE ?? "0",
-          10,
-        ),
-        sandboxUsage: [...sandboxUsageByKey.values()],
-        stepCount: stepCount,
-        toolCallCount: toolCallCount,
-      });
-      // Wait for the terminal span's publish to be issued, then flush the OTLP
-      // exporters (Tempo/Loki) AND the live NATS connection so the durable
-      // OBSERVABILITY stream captures every span/log before the container
-      // freezes. A publish still in flight at return is lost.
-      await rootPublished;
-      await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
+      // Off the turn's tail: the stream closes, takeNext and the channel reply
+      // go out without waiting. Its own scope keeps this run's context, so a
+      // failed write still logs with the tenant scope. Shutdown drains it.
+      const usageRecorded = runWithObservabilityScope(
+        () =>
+          recordTaskUsage({
+            accountId: session.accountId ?? "",
+            endpointId: session.endpointId,
+            agentId: session.agentId ?? "unknown",
+            principalChain: session.principal?.chain,
+            conversationKey: session.conversationKey,
+            // One row per model pass: a continuation pass shares the eventId.
+            taskId: `${session.eventId}#${traceId}`,
+            modelProvider: configuredModel.providerName ?? "unknown",
+            modelId: agentConfig.model?.modelId ?? "unknown",
+            finishedAt: endTimeMs,
+            durationMs: durationMs,
+            status: status,
+            inputTokens: taskTokens.inputTokens,
+            outputTokens: taskTokens.outputTokens,
+            reasoningTokens: taskTokens.reasoningTokens,
+            cachedInputTokens: taskTokens.cachedInputTokens,
+            cacheWriteTokens: taskCacheWriteTokens,
+            totalTokens: taskTokens.totalTokens,
+            runtimeKind: "container",
+            runtimeWallMs: durationMs,
+            // The pod is shared by every run, so this is its resident size when the
+            // run ended, not memory the run owned.
+            runtimeMemoryMb: Math.round(
+              process.memoryUsage().rss / 1024 / 1024,
+            ),
+            sandboxUsage: [...sandboxUsageByKey.values()],
+            stepCount: stepCount,
+            toolCallCount: toolCallCount,
+            inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
+          }),
+        context,
+      );
+      waitUntil(Promise.allSettled([usageRecorded, rootPublished]));
     } finally {
       // The container process is reused, so never retain one task's tenant,
-      // trace, or secret values after its exporters have flushed.
+      // trace, or secret values past the run.
       setObservabilityContext(parentObservabilityContext);
     }
   };
@@ -1015,8 +1192,12 @@ export async function runAgentLoop(
     model: attemptTrackedModel,
     instructions: turnContext.system,
     // History messages carry envelope fields (metadata/createdAt) for hook
-    // payloads; the model must see clean AI SDK shapes.
-    messages: stripEnvelopeFieldsFromMessages(turnContext.messages),
+    // payloads; the model must see clean AI SDK shapes. The live environment
+    // goes last so everything before it stays a cached prefix.
+    messages: withEnvironment(
+      stripEnvelopeFieldsFromMessages(turnContext.messages),
+      environment,
+    ),
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
     ...(toolApproval ? { toolApproval: toolApproval } : {}),
@@ -1037,7 +1218,11 @@ export async function runAgentLoop(
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
-      const renewal = await session.renewConversationLease();
+      // One mutation stores the step, renews the lease and claims steers, so a
+      // steer is never claimed by a turn whose step failed to store or stopped.
+      const { renewal, steering } = await session.stepBoundary(
+        responseMessages.slice(persistedResponseCount),
+      );
       if (renewal === "stopped") {
         throw new Error(USER_STOP_MESSAGE);
       }
@@ -1046,12 +1231,8 @@ export async function runAgentLoop(
           "Conversation ownership changed before the next model step",
         );
       }
-      // Before steering, so a steer message is stored after the step it interrupted.
-      await session.persistModelMessages(
-        responseMessages.slice(persistedResponseCount),
-      );
       persistedResponseCount = responseMessages.length;
-      const steering = await session.applySteeringIngress();
+      options.subagentWatch?.confirmDelivered();
       let stepMessages = messages;
       if (steering) {
         const steeringEvents = steering.events as ConversationIngressEvent[];
@@ -1078,6 +1259,17 @@ export async function runAgentLoop(
           appliedMode: steering.appliedMode,
         });
       }
+      // Subagent results and questions that arrived during this pass join it
+      // here, so the model sees them now instead of in a later pass.
+      const parentMessages =
+        (await options.subagentWatch?.takeParentMessages()) ?? [];
+      if (parentMessages.length > 0) {
+        stepMessages = [...stepMessages, ...parentMessages];
+        logInfo("Subagent messages applied at AI SDK step boundary", {
+          eventId: session.eventId,
+          messageCount: parentMessages.length,
+        });
+      }
       // `systemContextSnapshot` is the persisted system-message snapshot from
       // session.ts. Refresh it before each step so dynamic system context added
       // during a tool loop is included without replaying the full conversation.
@@ -1093,16 +1285,11 @@ export async function runAgentLoop(
 
       return {
         instructions: refreshed.system,
-        ...(steering ? { messages: stepMessages } : {}),
+        ...(stepMessages !== messages ? { messages: stepMessages } : {}),
       };
     },
     onChunk: ({ chunk }) => {
-      // First generated chunk of the active step marks the model's time-to-first-token.
-      // Synchronous and cheap; onChunk pauses the stream until it returns.
-      // v7 routes EVERY stream part through onChunk, including boundary and
-      // lifecycle parts (start-step, finish-step, finish, …) and post-execution
-      // tool results, so gate on generated-content parts only; anything else
-      // would skew the time-to-first/last-token windows.
+      // Kept synchronous and cheap: onChunk pauses the stream until it returns.
       if (!MODEL_CONTENT_CHUNK_TYPES.has(chunk.type)) return;
       const step = activeStepNumber;
       if (step === undefined) return;
@@ -1371,13 +1558,10 @@ export async function runAgentLoop(
         });
       }
 
-      // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)
-      // by the AI SDK; cast to the shape extractCacheWriteTokens expects.
-      const meta = providerMetadata as Record<string, unknown> | undefined;
       const stepTokens = usageTokenTotals(usage);
       taskCacheWriteTokens +=
         stepTokens.cacheWriteTokens ||
-        extractCacheWriteTokens(configuredModel.providerName, meta);
+        extractCacheWriteTokens(configuredModel.providerName, providerMetadata);
       // An aborted run never reaches onEnd, so finished steps are summed here.
       // onEnd replaces both with its own totals.
       const soFar = usageTokenTotals(taskUsage);
@@ -1469,7 +1653,7 @@ export async function runAgentLoop(
         },
       );
 
-      // Publish the model.step span (tree: agent.task -> model.step -> tool.call).
+      // Publish the model.step span (tree: root -> model.step -> tool.call).
       // Tool spans reference this stepSpanId as their parent; without it they
       // would be orphaned in the trace view.
       const tracked = stepSpans.get(stepNumber);
@@ -1580,7 +1764,6 @@ export async function runAgentLoop(
         });
       }
       stepSpans.delete(stepNumber);
-      firstChunkAt.delete(stepNumber);
       if (activeStepNumber === stepNumber) {
         activeStepNumber = undefined;
       }
@@ -1662,6 +1845,7 @@ export async function runAgentLoop(
             : unpersisted,
         );
         persistedResponseCount = responseMessages.length;
+        options.subagentWatch?.confirmDelivered();
 
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
@@ -1777,6 +1961,7 @@ export async function runAgentLoop(
             toolCalls: toLifecycleValue(tools.toolCalls),
             response: toLifecycleValue(finalResponse),
           });
+          await autoCompact(steps.at(-1)?.usage.inputTokens);
 
           return;
         }
@@ -1792,6 +1977,7 @@ export async function runAgentLoop(
           toolCalls: toLifecycleValue(tools.toolCalls),
           response: toLifecycleValue(finalResponse),
         });
+        await autoCompact(steps.at(-1)?.usage.inputTokens);
       } catch (err) {
         const errorText = errorMessage(err);
         const tools = summarizeToolsUsed(toolCallSummaries);
@@ -1837,6 +2023,8 @@ export async function runAgentLoop(
     | undefined;
   let stream: ReturnType<typeof streamText>;
   const usesAiSdkHarness = agentConfig.harness !== undefined;
+  let harnessReservation: string | undefined;
+  let harnessEnvironment: string | undefined;
   try {
     if (usesAiSdkHarness) {
       if (policyToolApproval) {
@@ -1845,44 +2033,116 @@ export async function runAgentLoop(
         );
       }
       await applyHarnessSteeringBeforeTurn(session, turnContext);
-    }
-    harnessRuntime = usesAiSdkHarness
-      ? createConfiguredHarnessAgent({
-          agentConfig: agentConfig,
-          compute: requireHarnessSandbox(sandboxes[0]?.sandbox),
-          id: session.agentId,
-          instructions: turnContext.system
-            .map((message) => message.content)
-            .join("\n\n"),
-          metadata: sandboxMetadata,
-          reservationKey: session.conversationKey,
-          skills: await session.loadHarnessSkills(),
-          toolApproval:
-            configuredApprovals.size > 0
-              ? Object.fromEntries(
-                  [...configuredApprovals.keys()].map((name) => [
-                    name,
-                    "user-approval" as const,
-                  ]),
-                )
-              : undefined,
-          tools: tools,
-        })
-      : undefined;
-    if (harnessRuntime) {
+      const harnessType = agentConfig.harness!.type;
+      const stored = await session.loadHarnessSession();
+      const reservationKey = harnessReservationKey({
+        agentReservationKey: agentMachineKey,
+        conversationKey: session.conversationKey,
+        isolated: options.isolatedSandbox === true,
+        stored: stored,
+        type: harnessType,
+      });
+      harnessReservation = reservationKey;
+      const shared = reservationKey !== session.conversationKey;
+      const compute = requireHarnessSandbox(sandboxes[0]?.sandbox);
+      let usage: SandboxUsage | undefined;
+      harnessRuntime = createConfiguredHarnessAgent({
+        agentConfig: agentConfig,
+        compute:
+          shared || !compute.controlPlane
+            ? compute
+            : {
+                ...compute,
+                controlPlane: {
+                  ...compute.controlPlane,
+                  releaseAfterIdleSeconds: ISOLATED_SANDBOX_RELEASE_SECONDS,
+                },
+              },
+        id: session.agentId,
+        instructions: turnContext.system
+          .map((message) => message.content)
+          .join("\n\n"),
+        metadata: sandboxMetadata,
+        onUsage: (reported): void => {
+          usage = reported;
+        },
+        reservationKey: reservationKey,
+        shared: shared,
+        skills: await session.loadHarnessSkills(),
+        toolApproval:
+          configuredApprovals.size > 0
+            ? Object.fromEntries(
+                [...configuredApprovals.keys()].map((name) => [
+                  name,
+                  "user-approval" as const,
+                ]),
+              )
+            : undefined,
+        tools: tools,
+      });
+      releaseSandboxOccupancy = occupySandbox(
+        harnessRuntime.reservationKey,
+        session.eventId,
+        { agentId: session.agentId, conversationKey: session.conversationKey },
+      );
       activeHarnessSession = await openAiSdkHarnessSession({
         abortSignal: runAbort.signal,
         agent: harnessRuntime.agent,
-        broodsSession: session,
-        type: agentConfig.harness!.type,
+        stored: stored,
+        type: harnessType,
       });
       stopHarnessLeaseMonitor = startHarnessLeaseMonitor(session, runAbort);
+      harnessEnvironment = session.environmentText(
+        formatSandboxStatus({
+          name: sandboxes[0]!.name,
+          provider: compute.provider,
+          specs: compute.controlPlane?.specs,
+          state: "running",
+          shared: shared,
+          usage: usage,
+          neighbours: sandboxNeighbours(
+            harnessRuntime.reservationKey,
+            session.eventId,
+          ),
+        }),
+      );
+      // The trace carries the environment the model actually received.
+      rootRunningAttributes = {
+        ...rootRunningAttributes,
+        "agent.environment": traceAttribute(harnessEnvironment),
+      };
+      otelRootSpan.setAttributes(rootRunningAttributes);
     }
     stream = harnessRuntime
       ? await harnessRuntime.agent.stream({
-          messages: harnessPromptMessages(turnContext.messages),
+          messages: harnessPromptMessages(
+            turnContext.messages,
+            harnessEnvironment ?? environment,
+          ),
           session: activeHarnessSession!,
           abortSignal: runAbort.signal,
+          // The same step and tool hooks as streamText, so a harness run
+          // traces every step. onEnd stays out: finalizeHarnessStream calls it
+          // after the native session is parked.
+          // Steering that arrives mid-turn joins the running turn at the next
+          // step, where the adapter can take it.
+          onStepStart:
+            harnessSteersMidTurn(agentConfig.harness!.type) &&
+            !MID_TURN_STEERING_UNSUPPORTED.has(agentConfig.harness!.type)
+              ? async (event): Promise<void> => {
+                  await streamOptions.onStepStart?.(event);
+                  // A claimed steer that was not saved or handed over fails
+                  // the run, so its envelope settles failed, not seen.
+                  await steerHarnessTurn(
+                    session,
+                    activeHarnessSession!,
+                    agentConfig.harness!.type,
+                  ).catch((error: unknown): void => runAbort.abort(error));
+                }
+              : streamOptions.onStepStart,
+          onStepEnd: streamOptions.onStepEnd,
+          onToolExecutionStart: streamOptions.onToolExecutionStart,
+          onToolExecutionEnd: streamOptions.onToolExecutionEnd,
         })
       : streamText(streamOptions);
   } catch (error) {
@@ -1904,7 +2164,16 @@ export async function runAgentLoop(
     );
     throw terminalError;
   }
+  void watchModelStream(stream.fullStream, usesAiSdkHarness, (error): void => {
+    if (runAbort.signal.aborted) return;
+    terminalError ??= error;
+    runAbort.abort(error);
+  });
   let harnessStreamFinalized = false;
+  /**
+   * Parks the AI SDK Harness session once its stream ends, and fires onEnd or
+   * onError when the harness never did. A no-op for runs without a harness.
+   */
   const finalizeHarnessStream = async (
     streamError?: unknown,
   ): Promise<void> => {
@@ -1921,6 +2190,7 @@ export async function runAgentLoop(
       await parkAiSdkHarnessSession({
         broodsSession: session,
         nativeSession: activeHarnessSession,
+        reservationKey: harnessReservation ?? session.conversationKey,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });
@@ -1950,12 +2220,12 @@ export async function runAgentLoop(
     }
   };
 
-  // Guarantee finalizeUsage runs even when onEnd/onError never fire. The AI SDK
-  // skips onEnd when a run errors before any step completes (e.g. a usage-limit
-  // error on the first model call) and only onError fires, so a caller that
-  // drains the stream directly would never finalize and the task span would
-  // spin "running" forever. Idempotent via usageFinalized.
   const originalConsumeStream = stream.consumeStream.bind(stream);
+  /**
+   * Settles the run when onEnd never did (the SDK skips it when the run errors
+   * early), aborting it first if the caller stopped reading. Called by
+   * `readAgentFullStream` and the wrapped consumeStream; idempotent.
+   */
   const ensureFinalized = async (drained: boolean): Promise<void> => {
     if (!drained && !finishObserved) {
       terminalError ??= new Error("Caller stopped reading the stream");
@@ -1989,9 +2259,11 @@ export async function runAgentLoop(
     );
   };
 
-  // Wrap consumeStream so finalizeUsage fires in a finally block even when
-  // streamText throws hard (e.g. network failure before any chunk arrives) and
-  // onEnd / onError never run.
+  /**
+   * Wrap consumeStream so finalizeUsage fires in a finally block even when
+   * streamText throws hard (e.g. network failure before any chunk arrives) and
+   * onEnd / onError never run.
+   */
   const wrappedConsumeStream = async (): Promise<void> => {
     try {
       await originalConsumeStream();
@@ -2032,12 +2304,10 @@ export function latestUserText(messages: ModelMessage[]): string {
   return message ? extractText(message.content).trim() : "";
 }
 
-// The system prompt is assembled per turn from the agent config plus every
-// injected block (memory index, workspace/memory/scheduler/skills/subagent
-// harness prompts, loaded skills, persisted system context, steering). Traces
-// carry the joined text the provider is actually instructed with, so a reader
-// can see the whole context a run had rather than only its chat messages. The
-// counts ride alongside because `serialize` truncates oversized payloads.
+/**
+ * The joined system prompt the provider received, for the root and step spans.
+ * The counts ride alongside because `serialize` truncates oversized payloads.
+ */
 export function systemTraceAttributes(
   system: SystemModelMessage[],
   serialize: (value: unknown) => string,
@@ -2068,6 +2338,7 @@ export function toolSpanDurationMs(
   return Math.max(0, handlerNowMs - startTimeMs);
 }
 
+/** The redacted, user-facing text for a run failure, used for replies, logs and lifecycle events. */
 function errorMessage(error: unknown): string {
   const rawMessage = toErrorMessage(error);
   // This text reaches the end user via reply.onErrorText, so it must pass the
@@ -2097,6 +2368,10 @@ function errorMessage(error: unknown): string {
   return message;
 }
 
+/**
+ * Drains queued steering into the turn context before a HarnessAgent turn
+ * starts, and rebuilds the system prompt when any arrived.
+ */
 async function applyHarnessSteeringBeforeTurn(
   session: Session,
   turnContext: TurnContextSnapshot,
@@ -2138,7 +2413,83 @@ async function applyHarnessSteeringBeforeTurn(
   });
 }
 
-function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {
+/**
+ * Saves steering that arrived during a HarnessAgent turn, then hands it to the
+ * running turn, which takes it at its next safe input boundary. Only for
+ * adapters that accept mid-turn messages; the rest get it before their next
+ * turn. A hand-over that fails throws and fails the run; the steer is already
+ * in history, so a retry still reads it.
+ */
+async function steerHarnessTurn(
+  session: Session,
+  harnessSession: HarnessAgentSession,
+  type: AiSdkHarnessType,
+): Promise<void> {
+  // Only plain-text steers can be handed over; the rest stay queued for the
+  // next turn, which takes them whole.
+  const steering = await session.applySteeringIngress({ textOnly: true });
+  if (!steering) {
+    return;
+  }
+  const events = steering.events as ConversationIngressEvent[];
+  const text = events
+    .flatMap((event): string[] =>
+      event.role === "user" ? [extractText(event.content).trim()] : [],
+    )
+    .filter(Boolean)
+    .join("\n\n");
+  await session.appendIngressEvents(events);
+  if (text) {
+    await harnessSession
+      .experimental_steerTurn(text)
+      .catch((error: unknown): never => {
+        // This runtime cannot take one at all, so later turns in this process
+        // leave steers queued for the next turn instead.
+        if (error instanceof HarnessCapabilityUnsupportedError) {
+          MID_TURN_STEERING_UNSUPPORTED.add(type);
+        }
+        throw error;
+      });
+  }
+  logInfo("Steering ingress applied during HarnessAgent turn", {
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+    steeringEventCount: steering.contributingEventIds.length,
+  });
+}
+
+/**
+ * The history with the live environment after it. It rides on the person's
+ * latest message when that comes last, so the model still reads one request,
+ * and comes as its own message after a tool result.
+ */
+function withEnvironment(
+  messages: ModelMessage[],
+  environment: string,
+): ModelMessage[] {
+  const last = messages.at(-1);
+  if (last?.role !== "user") {
+    return [...messages, { role: "user", content: environment }];
+  }
+  const content =
+    typeof last.content === "string"
+      ? [{ type: "text" as const, text: last.content }]
+      : last.content;
+
+  return [
+    ...messages.slice(0, -1),
+    { ...last, content: [...content, { type: "text", text: environment }] },
+  ];
+}
+
+/**
+ * The new turn an AI SDK Harness session receives. A tool continuation stays
+ * assistant + tool as it is; a user turn carries the live environment.
+ */
+function harnessPromptMessages(
+  messages: ModelMessage[],
+  environment: string,
+): ModelMessage[] {
   const lastMessage = messages.at(-1);
   if (lastMessage?.role === "tool") {
     const assistantIndex = messages.findLastIndex(
@@ -2162,18 +2513,21 @@ function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {
       "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
     );
   }
-  if (userMessages.length === 1) {
-    return userMessages;
-  }
   const content = userMessages.flatMap((message) =>
     typeof message.content === "string"
       ? [{ type: "text" as const, text: message.content }]
       : message.content,
   );
 
-  return [{ role: "user", content: content }];
+  return withEnvironment(
+    userMessages.length === 1
+      ? userMessages
+      : [{ role: "user", content: content }],
+    environment,
+  );
 }
 
+/** The agent's first sandbox, which a harness run needs to run on. */
 function requireHarnessSandbox(
   sandbox: SandboxExecutorConfig | undefined,
 ): SandboxExecutorConfig {
@@ -2186,6 +2540,11 @@ function requireHarnessSandbox(
   return sandbox;
 }
 
+/**
+ * Renews the conversation lease every second during a HarnessAgent turn and
+ * aborts the run on a stop, a lost lease or repeated renewal failures.
+ * Returns the function that stops the monitor.
+ */
 function startHarnessLeaseMonitor(
   session: Session,
   abortController: AbortController,
@@ -2221,6 +2580,72 @@ function startHarnessLeaseMonitor(
   return () => clearInterval(timer);
 }
 
+/**
+ * Fails the run when its model goes silent: no first chunk of a model call
+ * within MODEL_FIRST_CHUNK_TIMEOUT_MS, or no chunk within MODEL_CHUNK_TIMEOUT_MS
+ * of the last. The clock stops while a tool call is open, so a long tool never
+ * reads as a stalled model. A provider-executed call only stops it on a
+ * harness, whose native tools (bash) are provider-executed; on streamText its
+ * result streams back from the model itself. It reads its own copy of the stream, which covers
+ * streamText and HarnessAgent alike: the SDK's `timeout.chunkMs` keeps ticking
+ * through tool execution, and HarnessAgent ignores `timeout`.
+ */
+async function watchModelStream(
+  parts: AsyncIterable<TextStreamPart<ToolSet>>,
+  harness: boolean,
+  fail: (error: Error) => void,
+): Promise<void> {
+  const firstChunkMs = positiveIntegerEnv(
+    "MODEL_FIRST_CHUNK_TIMEOUT_MS",
+    DEFAULT_MODEL_FIRST_CHUNK_TIMEOUT_MS,
+  );
+  const chunkMs = positiveIntegerEnv(
+    "MODEL_CHUNK_TIMEOUT_MS",
+    DEFAULT_MODEL_CHUNK_TIMEOUT_MS,
+  );
+  const openToolCalls = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (limitMs: number): void => {
+    clearTimeout(timer);
+    if (openToolCalls.size > 0) return;
+    timer = setTimeout((): void => {
+      fail(
+        new Error(
+          `The model sent no output for ${Math.ceil(limitMs / 1000)}s, so the run was stopped`,
+        ),
+      );
+    }, limitMs);
+    timer.unref?.();
+  };
+  arm(firstChunkMs);
+  try {
+    for await (const part of parts) {
+      // The model is done; onEnd may still be persisting.
+      if (part.type === "finish") break;
+      if (
+        part.type === "tool-call" &&
+        (harness || part.providerExecuted !== true)
+      ) {
+        openToolCalls.add(part.toolCallId);
+      } else if (
+        part.type === "tool-result" ||
+        part.type === "tool-error" ||
+        part.type === "tool-output-denied"
+      ) {
+        openToolCalls.delete(part.toolCallId);
+      }
+      arm(
+        MODEL_CALL_BOUNDARY_PART_TYPES.has(part.type) ? firstChunkMs : chunkMs,
+      );
+    }
+  } catch {
+    // The run's own reader reports a failed stream.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One provider call warning as a single line, for the per-step warning log. */
 function formatCallWarning(warning: {
   type: string;
   feature?: string;
@@ -2234,23 +2659,39 @@ function formatCallWarning(warning: {
   return [warning.type, subject, detail].filter(Boolean).join(": ");
 }
 
+/** A duration for log messages. */
 function formatDuration(durationMs: number | undefined): string {
   return typeof durationMs === "number"
     ? `${durationMs}ms`
     : "unknown duration";
 }
 
+/** Token usage as one phrase for the step and invocation log messages. */
 function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
 
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
 }
 
-// Best-effort and non-blocking: returns once the span's bytes reach the NATS
-// client. A caller needing delivery before the container freezes (the terminal
-// span) awaits this, then flushObservabilityNats(); others ignore it.
+/** The root's closing status: a clean run that left something open waits on it. */
+function rootSpanStatus(
+  status: "completed" | "failed",
+  waitingOn: TaskWaitingOn | undefined,
+): ObservabilitySpanRow["status"] {
+  if (status === "failed") return "error";
+  if (!waitingOn) return "ok";
+
+  return waitingOn === "question" || waitingOn === "approval"
+    ? "needs_input"
+    : "waiting";
+}
+
+/**
+ * Publishes a span row to the dashboard's live trace stream over NATS. Best-effort:
+ * the terminal span is tracked for shutdown, other callers ignore it.
+ */
 function publishSpan(row: ObservabilitySpanRow): Promise<void> {
-  const connPromise = getObservabilityNatsConn();
+  const connPromise = getSharedNatsConn();
   if (!connPromise) return Promise.resolve();
 
   const ctx = getObservabilityContext();
@@ -2279,6 +2720,7 @@ function publishSpan(row: ObservabilitySpanRow): Promise<void> {
     });
 }
 
+/** The text of an `error-text` tool output, so onToolExecutionEnd marks that call failed. */
 function toolOutputErrorText(output: unknown): string | undefined {
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return undefined;
@@ -2291,9 +2733,11 @@ function toolOutputErrorText(output: unknown): string | undefined {
     : undefined;
 }
 
-// Fold an agent.started hook return into the turn context: `system` is appended
-// as a system message (also to ephemeralSystem so it survives prepareStep
-// refreshes), and `messages` replaces the conversation the model sees.
+/**
+ * Fold an agent.started hook return into the turn context: `system` is appended
+ * as a system message (also to ephemeralSystem so it survives prepareStep
+ * refreshes), and `messages` replaces the conversation the model sees.
+ */
 function applyAgentStartedMutation(
   turnContext: TurnContextSnapshot,
   mutation: Record<string, unknown> | undefined,
@@ -2326,6 +2770,7 @@ function applyAgentStartedMutation(
   }
 }
 
+/** Loose check that a hook's messages override entry looks like a model message. */
 function isModelMessageShape(entry: unknown): boolean {
   return (
     isPlainObject(entry) &&
@@ -2335,9 +2780,11 @@ function isModelMessageShape(entry: unknown): boolean {
   );
 }
 
-// Fold an agent.finished hook's { output } into the final response. On the
-// streaming (SSE) path the tokens are already sent, so this changes the
-// delivered/stored final result, not the already-streamed text.
+/**
+ * Fold an agent.finished hook's { output } into the final response. On the
+ * streaming (SSE) path the tokens are already sent, so this changes the
+ * delivered/stored final result, not the already-streamed text.
+ */
 async function foldAgentFinished(
   hooks: HookDispatcher,
   response: JSONValue,
@@ -2356,6 +2803,7 @@ async function foldAgentFinished(
     : response;
 }
 
+/** Every tool approval request across a finished run's steps, read by onEnd. */
 function extractApprovalRequests(
   steps: Array<StepResult<ToolSet>>,
 ): ApprovalRequestOutput[] {
@@ -2370,6 +2818,7 @@ function extractApprovalRequests(
   );
 }
 
+/** The approval summary onEnd hands to hooks and `onApprovalRequired`. */
 function summarizeApprovalRequest(
   request: ApprovalRequestOutput,
 ): ToolApprovalSummary {
@@ -2381,45 +2830,22 @@ function summarizeApprovalRequest(
   };
 }
 
+/** Merges an update into a tool call's summary, keyed by call id, as the loop's tool hooks fire. */
 function recordToolCallSummary(
   summaries: Map<string, ToolCallSummary>,
-  toolCall: unknown,
+  toolCall: TypedToolCall<ToolSet>,
   update: Partial<Omit<ToolCallSummary, "toolCallId" | "toolName">>,
 ): void {
-  const identity = toolCallIdentity(toolCall);
-  if (!identity) {
-    return;
-  }
-
-  const existing = summaries.get(identity.toolCallId);
-  summaries.set(identity.toolCallId, {
+  const existing = summaries.get(toolCall.toolCallId);
+  summaries.set(toolCall.toolCallId, {
     ...existing,
-    ...identity,
+    toolCallId: toolCall.toolCallId,
+    toolName: toolCall.toolName,
     ...update,
   });
 }
 
-function toolCallIdentity(
-  toolCall: unknown,
-): Pick<ToolCallSummary, "toolCallId" | "toolName"> | null {
-  if (!toolCall || typeof toolCall !== "object") {
-    return null;
-  }
-
-  const record = toolCall as Record<string, unknown>;
-  if (
-    typeof record.toolCallId !== "string" ||
-    typeof record.toolName !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    toolCallId: record.toolCallId,
-    toolName: record.toolName,
-  };
-}
-
+/** Tool names, per-tool counts and step-ordered calls for the finish and failure logs and events. */
 function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>): {
   toolsUsed: string[];
   toolUsage: Record<string, number>;
@@ -2446,6 +2872,10 @@ function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>): {
   };
 }
 
+/**
+ * Puts the tool call before each approval request that lacks one, so the
+ * persisted history can resume the call once it is approved.
+ */
 function withApprovalToolCalls(
   messages: ModelMessage[],
   approvalRequests: ApprovalRequestOutput[],
@@ -2485,10 +2915,16 @@ function withApprovalToolCalls(
       return [toToolCallPart(toolCall), part];
     });
 
-    return { ...message, content: content } satisfies AssistantModelMessage;
+    const withToolCalls: AssistantModelMessage = {
+      ...message,
+      content: content,
+    };
+
+    return withToolCalls;
   });
 }
 
+/** An approval request's tool call as a message part, for `withApprovalToolCalls`. */
 function toToolCallPart(toolCall: ApprovalToolCall): ToolCallPart {
   return {
     type: "tool-call",
@@ -2498,6 +2934,7 @@ function toToolCallPart(toolCall: ApprovalToolCall): ToolCallPart {
   };
 }
 
+/** The `errorDetails` of a failure log: name, message, status fields and a short stack. */
 function serializeError(error: unknown): Record<string, unknown> {
   if (!error || typeof error !== "object") {
     return { message: String(error) };

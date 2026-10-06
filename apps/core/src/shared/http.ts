@@ -29,6 +29,24 @@ const PUBLIC_HOSTS_MAX = 1_024;
 
 const publicHosts = new Map<string, { address: string; expiresAt: number }>();
 
+// The two fetches `channelApiFetch` hands out, shaped as `typeof fetch` for
+// SDKs that take one. The plain one reads the global per call, so a fetch
+// swapped in later (a test stub) still applies.
+const PUBLIC_HOST_FETCH: typeof fetch = Object.assign(
+  (
+    input: string | URL | Request,
+    init?: BunFetchRequestInit,
+  ): Promise<Response> => publicHostFetch(input, init),
+  { preconnect: fetch.preconnect },
+);
+const GLOBAL_FETCH: typeof fetch = Object.assign(
+  (
+    input: string | URL | Request,
+    init?: BunFetchRequestInit,
+  ): Promise<Response> => fetch(input, init),
+  { preconnect: fetch.preconnect },
+);
+
 /**
  * A transport-neutral inbound request. The server builds one per HTTP request;
  * handlers never see the underlying runtime. Headers are lowercased and the
@@ -155,6 +173,15 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   }
 
   return url;
+}
+
+/**
+ * The `fetch` a channel reaches its provider API with. A configured `apiUrl` is
+ * the tenant's host, so it takes `publicHostFetch`; the provider's own default
+ * host takes plain `fetch`.
+ */
+export function channelApiFetch(apiUrl: string | undefined): typeof fetch {
+  return apiUrl ? PUBLIC_HOST_FETCH : GLOBAL_FETCH;
 }
 
 /**

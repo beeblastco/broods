@@ -1,7 +1,7 @@
 /**
  * CLI manifest sync for code-defined Broods resources.
  *
- * Authenticates with the org Bearer secret and writes desired-state resources
+ * Authenticates with the account key and writes desired-state resources
  * into the SaaS project/stage model before syncing runtime agent rows. This
  * file holds the registered Convex functions; the sync passes and shared
  * helpers live in `model/cliSync*.ts`.
@@ -9,21 +9,24 @@
 
 import { v } from "convex/values";
 import type { GeneratedIds } from "./types";
-import type { Id } from "../_generated/dataModel";
-import { internalMutation, internalQuery } from "../_generated/server";
-import { ensureStageDeployment } from "../agent/deployments";
+import type { Doc, Id } from "../_generated/dataModel";
 import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "../model/agentConfigCodec";
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "../_generated/server";
+import { ensureStageDeployment } from "../agent/deployments";
+import { accountCipher } from "../model/accountKeys";
+import { sha256Hex } from "../model/accountSecrets";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
   auditDetailsJson,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
 import {
   accountFromSecretHash,
+  claimManifestRevision,
   assertEnvRefsResolved,
   assertSupportedWorkspaceSandboxMounts,
   authIdForAccount,
@@ -31,7 +34,9 @@ import {
   ensureStage,
   envName,
   isExternalResourceKind,
+  manifestRevision,
   resourceName,
+  releaseManifestSync,
   snapshotExternalConfig,
   type ExternalResourceKind,
 } from "../model/cliSync";
@@ -49,6 +54,7 @@ import {
   resourcesForStage,
 } from "../model/cliSyncManifest";
 import {
+  assertManifestResources,
   deleteAgentResource,
   deleteSandboxResource,
   deleteWorkspaceResource,
@@ -56,18 +62,28 @@ import {
   prunePolicyResources,
   pruneSandboxResources,
   pruneWorkspaceResources,
+  type ReservationHolder,
+  sandboxConfigByName,
   syncAgentResources,
   syncPolicyResources,
   syncSandboxResources,
   syncWorkspaceResources,
+  undeclaredSandboxConfigs,
+  undeclaredWorkspaceConfigs,
+  workspaceConfigByName,
 } from "../model/cliSyncResources";
 import {
   assertEnvironmentVariableUnreferenced,
-  hashEnvironmentValue,
   loadEnvironmentVariableValues,
+  upsertEnvironmentVariable,
 } from "../model/environmentValues";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
+import { ClientError } from "../model/clientError";
+import { workspaceNamespace } from "../model/workspaceRules";
+
+// `touchProject` bumps `updatedAt` at most this often.
+const PROJECT_TOUCH_INTERVAL_MS = 60_000;
 
 const resourceValidator = v.object({
   kind: v.union(
@@ -133,37 +149,119 @@ export const deleteResourceBySecretHash = internalMutation({
     ),
     name: v.string(),
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.object({ reserved: v.boolean() }),
+  handler: async (ctx, args): Promise<{ reserved: boolean }> => {
     const { secretHash, project, stage, kind, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
-    if (!resolved) throw new Error("Project/stage not found");
+    if (!resolved)
+      throw new ClientError("Project/stage not found", "not_found");
     const normalizedName = resourceName(name);
+    const stageId = resolved.stageDoc._id;
 
+    let reserved = false;
     if (kind === "agent") {
       await deleteAgentResource(
         ctx,
         account._id,
         resolved.projectDoc._id,
-        resolved.stageDoc._id,
+        stageId,
         normalizedName,
       );
     } else if (kind === "workspace") {
-      await deleteWorkspaceResource(ctx, resolved.stageDoc._id, normalizedName);
+      await deleteWorkspaceResource(ctx, stageId, normalizedName);
     } else {
-      await deleteSandboxResource(ctx, resolved.stageDoc._id, normalizedName);
+      reserved = await deleteSandboxResource(ctx, stageId, normalizedName);
     }
+    await touchProject(ctx, resolved.projectDoc);
 
-    await ctx.db.patch(resolved.projectDoc._id, { updatedAt: Date.now() });
-
-    return null;
+    return { reserved: reserved };
   },
 });
 
 /**
- * Creates the synced stage's runtime API key (`fp_agent_…`) when it has none,
+ * The reservation holders (sandbox config ids, workspace namespaces) of the
+ * CLI rows a prune (`resources`: the synced manifest) or a single delete
+ * (`kind` + `name`) is about to remove.
+ */
+export const deleteTargetsBySecretHash = internalQuery({
+  args: {
+    secretHash: v.string(),
+    project: v.string(),
+    stage: v.string(),
+    target: v.union(
+      v.object({ resources: v.array(resourceValidator) }),
+      v.object({
+        kind: v.union(v.literal("workspace"), v.literal("sandbox")),
+        name: v.string(),
+      }),
+    ),
+  },
+  returns: v.array(
+    v.union(
+      v.object({ sandboxConfigId: v.id("sandboxConfigs") }),
+      v.object({ namespace: v.string() }),
+    ),
+  ),
+  handler: async (ctx, args): Promise<ReservationHolder[]> => {
+    const { secretHash, project, stage, target } = args;
+    const account = await accountFromSecretHash(ctx, secretHash);
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
+    if (!resolved) return [];
+    const stageId = resolved.stageDoc._id;
+
+    let sandboxes: Doc<"sandboxConfigs">[];
+    let workspaces: Doc<"workspaceConfigs">[];
+    if ("resources" in target) {
+      sandboxes = await undeclaredSandboxConfigs(
+        ctx,
+        stageId,
+        target.resources,
+      );
+      workspaces = await undeclaredWorkspaceConfigs(
+        ctx,
+        stageId,
+        target.resources,
+      );
+    } else if (target.kind === "sandbox") {
+      const sandbox = await sandboxConfigByName(
+        ctx,
+        stageId,
+        resourceName(target.name),
+      );
+      sandboxes = sandbox?.managedBy === "cli" ? [sandbox] : [];
+      workspaces = [];
+    } else {
+      const workspace = await workspaceConfigByName(
+        ctx,
+        stageId,
+        resourceName(target.name),
+      );
+      sandboxes = [];
+      workspaces = workspace?.managedBy === "cli" ? [workspace] : [];
+    }
+    const namespaces = await Promise.all(
+      workspaces.map(
+        async (workspace): Promise<string> =>
+          await workspaceNamespace(account._id, workspace._id),
+      ),
+    );
+
+    return [
+      ...sandboxes.map((sandbox): ReservationHolder => ({
+        sandboxConfigId: sandbox._id,
+      })),
+      ...namespaces.map((namespace): ReservationHolder => ({
+        namespace: namespace,
+      })),
+    ];
+  },
+});
+
+/**
+ * Creates the synced stage's runtime key (`bsk_…`) when it has none,
  * so the CLI can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
  * so reconnecting clients do not need to rotate the key.
  */
@@ -173,6 +271,8 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
     project: v.string(),
     stage: v.string(),
     rotate: v.optional(v.boolean()),
+    /** WorkOS id of the CLI-login user, so a key it mints shows who made it. */
+    createdByAuthId: v.optional(v.string()),
     auditSync: v.optional(
       v.object({
         resourceCount: v.number(),
@@ -209,6 +309,13 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
     );
     if (!resolved) return null;
     const { projectDoc, stageDoc } = resolved;
+    const createdByAuthId = args.createdByAuthId;
+    const creator = createdByAuthId
+      ? await ctx.db
+          .query("users")
+          .withIndex("by_authId", (q) => q.eq("authId", createdByAuthId))
+          .unique()
+      : null;
     const result = await ensureStageDeployment(ctx, {
       authId: projectDoc.authId,
       accountId: account._id,
@@ -216,14 +323,15 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       stageId: stageDoc._id,
       projectSlug: projectDoc.slug ?? resourceName(args.project),
       stageSlug: stageDoc.name.toLowerCase(),
+      createdBy: creator?.name,
       rotate: args.rotate === true,
     });
     if (args.auditSync) {
-      const actor: ConfigAuditActor = {
+      const actor: AuditActor = {
         kind: args.auditSync.actorKind,
         id: args.auditSync.actorId,
       };
-      await insertConfigAuditEvent(ctx.db, {
+      await appendAuditEvent(ctx.db, {
         accountId: account._id,
         projectId: projectDoc._id,
         stageId: stageDoc._id,
@@ -260,24 +368,48 @@ export const ensureScopeBySecretHash = internalMutation({
     secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
+    revision: v.optional(v.number()),
   },
   returns: v.object({
     projectId: v.id("projects"),
     stageId: v.id("stages"),
+    revision: v.number(),
   }),
   handler: async (
     ctx,
     args,
-  ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> }> => {
+  ): Promise<{
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    revision: number;
+  }> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
+    // The PUT's first write, so a sync refused here writes nothing.
+    const revision = await claimManifestRevision(
+      ctx,
+      stageDoc._id,
+      args.revision,
+    );
 
     return {
       projectId: projectDoc._id,
       stageId: stageDoc._id,
+      revision: revision,
     };
+  },
+});
+
+/** Ends the manifest action's claim; an older action cannot release a newer sync. */
+export const finishManifestSync = internalMutation({
+  args: { stageId: v.id("stages"), revision: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await releaseManifestSync(ctx, args.stageId, args.revision);
+
+    return null;
   },
 });
 
@@ -301,7 +433,7 @@ export const getEnvBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<{ value: string } | null> => {
     const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return null;
     const normalizedName = envName(name);
@@ -314,18 +446,12 @@ export const getEnvBySecretHash = internalMutation({
       .unique();
     if (!existing) return null;
 
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-      throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables",
-      );
-    }
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: existing.ciphertext, iv: existing.iv, tag: existing.tag },
-      secret,
+    const cipher = await accountCipher(ctx, account._id);
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      existing,
     );
-    const revealed = decrypted as { value?: unknown } | null;
-    const value = typeof revealed?.value === "string" ? revealed.value : "";
+    const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: resolved.projectDoc._id,
@@ -352,7 +478,7 @@ export const getManifestBySecretHash = internalQuery({
   },
   returns: v.union(
     v.null(),
-    v.object({ manifest: v.any(), ids: idsValidator }),
+    v.object({ manifest: v.any(), ids: idsValidator, revision: v.number() }),
   ),
   handler: async (ctx, args) => {
     const { secretHash, project, stage } = args;
@@ -382,6 +508,7 @@ export const getManifestBySecretHash = internalQuery({
         resources: resources,
       },
       ids: ids,
+      revision: await manifestRevision(ctx, stageDoc._id),
     };
   },
 });
@@ -389,6 +516,9 @@ export const getManifestBySecretHash = internalQuery({
 /**
  * Names, update times and value digests for the CLI `env list` / `env sync`.
  * Values are never returned, since they are encrypted at rest and write-only.
+ * The digest is SHA-256 of the plaintext computed per request, so the CLI can
+ * compare it to its own hash of `.env.local`; the stored `valueDigest` is an
+ * HMAC under the account key and would not match anything a client computes.
  */
 export const listEnvBySecretHash = internalQuery({
   args: {
@@ -400,18 +530,18 @@ export const listEnvBySecretHash = internalQuery({
     v.object({
       name: v.string(),
       updatedAt: v.number(),
-      valueDigest: v.optional(v.string()),
+      valueDigest: v.string(),
     }),
   ),
   handler: async (
     ctx,
     args,
   ): Promise<
-    Array<{ name: string; updatedAt: number; valueDigest?: string }>
+    Array<{ name: string; updatedAt: number; valueDigest: string }>
   > => {
     const { secretHash, project, stage } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return [];
 
@@ -424,13 +554,26 @@ export const listEnvBySecretHash = internalQuery({
       )
       .collect();
 
-    return variables
-      .map((variable) => ({
+    const cipher = await accountCipher(ctx, account._id);
+    const entries: Array<{
+      name: string;
+      updatedAt: number;
+      valueDigest: string;
+    }> = [];
+    for (const variable of variables) {
+      const decrypted = await cipher.decrypt(
+        "environmentVariables:ciphertext",
+        variable,
+      );
+      const value = typeof decrypted?.value === "string" ? decrypted.value : "";
+      entries.push({
         name: variable.name,
         updatedAt: variable.updatedAt,
-        ...(variable.valueDigest ? { valueDigest: variable.valueDigest } : {}),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+        valueDigest: await sha256Hex(value),
+      });
+    }
+
+    return entries.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 
@@ -445,6 +588,7 @@ export const listExternalResourcesForAccount = internalQuery({
       kind: v.union(v.literal("skill"), v.literal("hook"), v.literal("mcp")),
       name: v.string(),
       stageId: v.id("stages"),
+      externalId: v.string(),
     }),
   ),
   handler: async (
@@ -455,6 +599,7 @@ export const listExternalResourcesForAccount = internalQuery({
       kind: "skill" | "hook" | "mcp";
       name: string;
       stageId: Id<"stages">;
+      externalId: string;
     }>
   > => {
     const rows = await ctx.db
@@ -466,7 +611,46 @@ export const listExternalResourcesForAccount = internalQuery({
       kind: row.kind,
       name: row.name,
       stageId: row.stageId,
+      externalId: row.externalId,
     }));
+  },
+});
+
+/**
+ * Deletes the stage's undeclared CLI workspaces and sandbox configs, keeping
+ * any sandbox config that still holds a reserved instance. Runs after the sync
+ * and after the HTTP layer tried to terminate their instances. Returns the
+ * kept resources.
+ */
+export const pruneSandboxesBySecretHash = internalMutation({
+  args: {
+    secretHash: v.string(),
+    manifest: manifestValidator,
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args): Promise<string[]> => {
+    const { secretHash, manifest } = args;
+    const account = await accountFromSecretHash(ctx, secretHash);
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      manifest.project,
+      manifest.stage,
+    );
+    if (!resolved)
+      throw new ClientError("Project/stage not found", "not_found");
+    const { projectDoc, stageDoc } = resolved;
+
+    await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
+    const sandboxes = await pruneSandboxResources(
+      ctx,
+      stageDoc._id,
+      manifest.resources,
+    );
+    await touchProject(ctx, projectDoc);
+
+    return sandboxes.map((name): string => `sandbox "${name}"`);
   },
 });
 
@@ -486,7 +670,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
     const existing = await ctx.db
@@ -563,9 +747,10 @@ export const removeEnvBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<{ removed: boolean }> => {
     const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
-    if (!resolved) throw new Error("Project/stage not found");
+    if (!resolved)
+      throw new ClientError("Project/stage not found", "not_found");
     const normalizedName = envName(name);
 
     const existing = await ctx.db
@@ -621,14 +806,15 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(
       ctx,
       account,
       args.project,
       args.stage,
     );
-    if (!resolved) throw new Error("Project or stage not found");
+    if (!resolved)
+      throw new ClientError("Project or stage not found", "not_found");
     const authId = await authIdForAccount(ctx, account);
     if (!authId) throw new Error("Account org owner not found");
     const nodeId = canvasNodeId("skill", resourceName(args.skillName));
@@ -666,14 +852,20 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
 });
 
 /**
- * Resolves a CLI Bearer token hash to the account secret hash it authorizes with.
- * The org Bearer secret grants full account access (`scoped: false`); a project +
- * stage deploy key grants access only when the route resolves to the exact
+ * Resolves a CLI Bearer token hash to the account key hash it authorizes with.
+ * `keyKind` comes from the token's prefix, so each kind costs one lookup.
+ * The account key grants full account access (`scoped: false`); a project
+ * key grants access only when the route resolves to the exact
  * project/stage the key is bound to (`scoped: true`). Returns null when the
  * token is unknown, revoked, or out of scope.
  */
 export const resolveCliAuth = internalQuery({
-  args: { tokenHash: v.string(), project: v.string(), stage: v.string() },
+  args: {
+    tokenHash: v.string(),
+    keyKind: v.union(v.literal("account"), v.literal("project")),
+    project: v.string(),
+    stage: v.string(),
+  },
   returns: v.union(
     v.null(),
     v.object({
@@ -692,11 +884,15 @@ export const resolveCliAuth = internalQuery({
     scoped: boolean;
     deployKeyId?: Id<"deployKeys">;
   } | null> => {
-    const { tokenHash, project, stage } = args;
+    const { tokenHash, keyKind, project, stage } = args;
 
-    const account = await accountFromSecretHash(ctx, tokenHash);
-    if (account)
-      return { accountId: account._id, secretHash: tokenHash, scoped: false };
+    if (keyKind === "account") {
+      const account = await accountFromSecretHash(ctx, tokenHash);
+
+      return account
+        ? { accountId: account._id, secretHash: tokenHash, scoped: false }
+        : null;
+    }
 
     const deployKey = await ctx.db
       .query("deployKeys")
@@ -737,65 +933,59 @@ export const setEnvBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const { secretHash, project, stage, name, value } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, project);
     const stageDoc = await ensureStage(ctx, projectDoc, stage);
-    const normalizedName = envName(name);
-    const existing = await ctx.db
-      .query("environmentVariables")
-      .withIndex("by_stageId_and_name", (q) =>
-        q.eq("stageId", stageDoc._id).eq("name", normalizedName),
-      )
-      .unique();
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-      throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
-      );
-    }
-    const encrypted = await encryptAgentConfigBlob({ value: value }, secret);
-    const valueDigest = await hashEnvironmentValue(value);
-    const now = Date.now();
+    await upsertEnvironmentVariable(ctx, {
+      projectId: projectDoc._id,
+      stageId: stageDoc._id,
+      name: envName(name),
+      value: value,
+    });
 
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        valueDigest: valueDigest,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.insert("environmentVariables", {
-        projectId: projectDoc._id,
-        stageId: stageDoc._id,
-        name: normalizedName,
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        valueDigest: valueDigest,
-        updatedAt: now,
-      });
-    }
-    await refreshAgentConfigsForEnvironmentVariable(
+    return null;
+  },
+});
+
+/**
+ * Runs the rules `syncManifestBySecretHash` applies to a manifest, before the
+ * PUT uploads any of its skills, hooks or MCP servers. Their refs carry
+ * placeholder ids, since those rows may not exist yet.
+ */
+export const validateManifestForStage = internalQuery({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+    manifest: manifestValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const envValues = await loadEnvironmentVariableValues(
       ctx,
-      projectDoc._id,
-      stageDoc._id,
-      normalizedName,
-      value,
+      args.projectId,
+      args.stageId,
     );
-    await refreshSandboxConfigsForEnvironmentVariable(
+    const externalIds = await externalIdsForStage(
       ctx,
-      projectDoc._id,
-      stageDoc._id,
-      normalizedName,
-      value,
+      args.projectId,
+      args.stageId,
+    );
+    assertManifestResources(
+      args.manifest.resources,
+      envValues,
+      externalIds.mcp,
+      args.manifest.stage,
     );
 
     return null;
   },
 });
 
+/**
+ * Create, rename and update the manifest's resources. `prune` also drops
+ * undeclared agents, channel records and policies; sandbox configs and
+ * workspaces go in `pruneSandboxesBySecretHash`.
+ */
 export const syncManifestBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
@@ -810,7 +1000,7 @@ export const syncManifestBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const { secretHash, manifest, prune } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     assertSupportedWorkspaceSandboxMounts(manifest.resources);
 
     const projectDoc = await ensureProject(ctx, account, manifest.project);
@@ -820,7 +1010,7 @@ export const syncManifestBySecretHash = internalMutation({
       projectDoc._id,
       stageDoc._id,
     );
-    assertEnvRefsResolved(manifest.resources, envValues);
+    assertEnvRefsResolved(manifest.resources, envValues, manifest.stage);
     const workspaceIds = await syncWorkspaceResources(
       ctx,
       account._id,
@@ -881,8 +1071,6 @@ export const syncManifestBySecretHash = internalMutation({
       );
       await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
       await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
-      await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
-      await pruneSandboxResources(ctx, stageDoc._id, manifest.resources);
     }
 
     await syncCanvasLayoutForManifest(ctx, {
@@ -894,7 +1082,7 @@ export const syncManifestBySecretHash = internalMutation({
       sandboxIds: sandboxIds,
     });
 
-    await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
+    await touchProject(ctx, projectDoc);
     const ids: GeneratedIds = {
       agents: agentIds,
       workspaces: workspaceIds,
@@ -927,3 +1115,14 @@ export const syncManifestBySecretHash = internalMutation({
     };
   },
 });
+
+// Nearly every dashboard subscription reads the project doc, and `broods dev`
+// syncs on every file save. The gallery only needs "recently deployed".
+async function touchProject(
+  ctx: MutationCtx,
+  project: Doc<"projects">,
+): Promise<void> {
+  const now = Date.now();
+  if (now - project.updatedAt < PROJECT_TOUCH_INTERVAL_MS) return;
+  await ctx.db.patch(project._id, { updatedAt: now });
+}

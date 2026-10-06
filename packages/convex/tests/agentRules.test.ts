@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertAgentRuntimeRefs,
   defaultSandboxOf,
+  isProviderToolName,
   mergeAgentConfig,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
@@ -120,6 +121,84 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.trace must be one of: enabled, disabled");
   });
 
+  it("holds Linear to its URL, identity and secret settings", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: { id: "lin", apiUrl: "https://169.254.169.254/graphql" },
+        },
+      }),
+    ).toThrow("must not point to a private or internal address");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { linear: { id: "lin", apiKey: "lin_api_key" } },
+      }),
+    ).toThrow("config.channels.linear.userName is required");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: {
+            id: "lin",
+            apiKey: "lin_api_key",
+            userName: " ",
+            webhookSecret: "lin-secret",
+          },
+        },
+      }),
+    ).toThrow("config.channels.linear.userName is required");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          linear: { id: "lin", apiKey: "lin_api_key", userName: "acme-agent" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
+    );
+    expect(
+      redactConfigSecrets({
+        channels: {
+          linear: { apiKey: "lin-key", webhookSecret: "lin-secret" },
+        },
+      }),
+    ).toEqual({
+      channels: {
+        linear: { apiKey: "********", webhookSecret: "********" },
+      },
+    });
+  });
+
+  it("holds Twilio to its URL and identity settings", () => {
+    for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"]) {
+      expect(() =>
+        normalizeAgentConfig({
+          channels: { twilio: { id: "sms", [key]: "https://169.254.169.254" } },
+        }),
+      ).toThrow("must not point to a private or internal address");
+    }
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { twilio: { id: "sms", messagingServiceSid: "+1555" } },
+      }),
+    ).toThrow("config.channels.twilio.messagingServiceSid must be");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { twilio: { id: "sms", phoneNumber: "+1 (555) 000-1111" } },
+      }),
+    ).toThrow("config.channels.twilio.phoneNumber must be");
+    expect(
+      redactConfigSecrets({
+        channels: {
+          twilio: { accountSid: "AC1", authToken: "twilio-token" },
+        },
+      }),
+    ).toEqual({
+      channels: {
+        twilio: { accountSid: "AC1", authToken: "********" },
+      },
+    });
+  });
+
   it("validates one reach pair for every provider and rejects the retired keys", () => {
     expect(
       normalizeAgentConfig({
@@ -213,6 +292,14 @@ describe("agent rules", () => {
         },
       }),
     ).toThrow("must not point to a private or internal address");
+    // Core posts to every channel apiUrl from inside the cluster.
+    for (const channel of ["discord", "github", "slack", "telegram"]) {
+      expect(() =>
+        normalizeAgentConfig({
+          channels: { [channel]: { id: "c", apiUrl: "http://10.43.0.1:80#" } },
+        }),
+      ).toThrow(`config.channels.${channel}.apiUrl must use https`);
+    }
     // A patch may rotate the token alone; the merged config still has the URL.
     expect(
       normalizeAgentConfigPatch({
@@ -269,10 +356,34 @@ describe("agent rules", () => {
     });
     expect(() =>
       normalizeAgentConfig({
-        session: { compaction: { maxContextLength: 500_001 } },
+        session: { autoCompaction: { maxContextLength: 10_000_001 } },
       }),
     ).toThrow(
-      "config.session.compaction.maxContextLength must be an integer from 1 to 500000",
+      "config.session.autoCompaction.maxContextLength must be an integer from 1 to 10000000",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        session: { autoCompaction: { enabled: "yes" } },
+      }),
+    ).toThrow("config.session.autoCompaction.enabled must be a boolean");
+    expect(
+      normalizeAgentConfig({
+        session: {
+          autoCompaction: { enabled: false, maxContextLength: 500_000 },
+        },
+      }),
+    ).toEqual({
+      session: {
+        autoCompaction: { enabled: false, maxContextLength: 500_000 },
+      },
+    });
+    // The old key would otherwise be dropped silently and auto-compaction left on.
+    expect(() =>
+      normalizeAgentConfig({
+        session: { compaction: { enabled: true } },
+      }),
+    ).toThrow(
+      "config.session.compaction was renamed to config.session.autoCompaction",
     );
     expect(() => normalizeAgentConfig({ model: { apiKey: "x" } })).toThrow(
       "config.model.apiKey is not supported; use config.model.providerOptions for provider-specific settings",
@@ -332,6 +443,24 @@ describe("agent rules", () => {
     ).toThrow(
       "config.provider.custom.base_url must not point to a private or internal address",
     );
+    // Every endpoint a factory reads is held to the base URL's rule, not only
+    // the two spellings broods names itself.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          openrouter: { apiKey: "sk", baseUrl: "https://169.254.169.254" },
+        },
+      }),
+    ).toThrow(
+      "config.provider.openrouter.baseUrl must not point to a private or internal address",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          openrouter: { apiKey: "sk", decisionsBaseURL: "http://example.com" },
+        },
+      }),
+    ).toThrow("config.provider.openrouter.decisionsBaseURL must use https");
     expect(
       normalizeAgentConfig({
         provider: { custom: { base_url: "https://api.example.com" } },
@@ -451,6 +580,138 @@ describe("agent rules", () => {
         channels: { zalo: { id: "zalo", webhookSecret: "short" } },
       }),
     ).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
+  });
+
+  it("keeps Messenger and Instagram Graph settings out of the URL path", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { messenger: { id: "fb", apiVersion: "../me" } },
+      }),
+    ).toThrow('config.channels.messenger.apiVersion must look like "v21.0"');
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { instagram: { id: "ig", accountId: "1/../me" } },
+      }),
+    ).toThrow(
+      "config.channels.instagram.accountId must be the numeric Instagram account id",
+    );
+    expect(
+      normalizeAgentConfig({
+        channels: {
+          instagram: {
+            id: "ig",
+            accessToken: "ig-token",
+            accountId: "17841400000000000",
+            apiVersion: "v26.0",
+            appSecret: "ig-secret",
+            verifyToken: "ig-verify",
+          },
+        },
+      }),
+    ).toMatchObject({
+      channels: { instagram: { accountId: "17841400000000000" } },
+    });
+  });
+
+  it("refuses Messenger and Instagram credentials core could not run", () => {
+    // Core builds no adapter without all of them, so the channel would
+    // silently never answer.
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          instagram: { id: "ig", accountId: "17841400000000000" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.instagram.accessToken is required when config.channels.instagram.accountId is set",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          messenger: { id: "fb", pageAccessToken: "fb-token", appSecret: "s" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.messenger.verifyToken is required when config.channels.messenger.appSecret is set",
+    );
+    // Core treats an empty credential as unset, so it would never answer either.
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          messenger: {
+            id: "fb",
+            appSecret: "  ",
+            pageAccessToken: "",
+            verifyToken: "",
+          },
+        },
+      }),
+    ).toThrow("config.channels.messenger.appSecret must be a non-empty string");
+    // A patch may rotate one secret alone; the merged config still has the rest.
+    expect(
+      normalizeAgentConfigPatch({
+        channels: { messenger: { id: "fb", pageAccessToken: "rotated" } },
+      }),
+    ).toEqual({
+      channels: { messenger: { id: "fb", pageAccessToken: "rotated" } },
+    });
+  });
+
+  it("holds WhatsApp, Teams and Google Chat to their verification settings", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          whatsapp: { id: "wa", apiUrl: "https://169.254.169.254" },
+        },
+      }),
+    ).toThrow("must not point to a private or internal address");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { whatsapp: { id: "wa", apiVersion: "../me" } },
+      }),
+    ).toThrow('config.channels.whatsapp.apiVersion must look like "v25.0"');
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { teams: { id: "teams", appId: "app", appPassword: "pw" } },
+      }),
+    ).toThrow(
+      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          teams: {
+            id: "teams",
+            appId: "app",
+            appPassword: "pw",
+            appTenantId: "  ",
+          },
+        },
+      }),
+    ).toThrow(
+      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
+    );
+    expect(
+      normalizeAgentConfig({
+        channels: {
+          teams: { id: "teams", appId: "app", appType: "MultiTenant" },
+        },
+      }),
+    ).toMatchObject({ channels: { teams: { appType: "MultiTenant" } } });
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { gchat: { id: "gchat", credentials: "{}" } },
+      }),
+    ).toThrow(
+      "config.channels.gchat needs endpointUrl or googleChatProjectNumber to verify webhooks",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          gchat: { id: "gchat", endpointUrl: "http://example.com/hook" },
+        },
+      }),
+    ).toThrow("config.channels.gchat.endpointUrl must use https");
   });
 
   it("validates harness configs", () => {
@@ -821,5 +1082,20 @@ describe("config patch pre-validation", () => {
     ).toThrow(
       "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
     );
+  });
+});
+
+describe("isProviderToolName", () => {
+  it("keeps the subagent tool names for the harness", () => {
+    for (const name of [
+      "ask_parent",
+      "get_subagent_status",
+      "run_subagent",
+      "stop_subagent",
+      "update_subagent",
+    ]) {
+      expect(isProviderToolName(name)).toBe(false);
+    }
+    expect(isProviderToolName("web_search")).toBe(true);
   });
 });

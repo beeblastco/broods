@@ -2,13 +2,11 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   getAsyncAgentResult,
-  markAsyncAgentResultAwaitingApproval,
-  markAsyncAgentResultCompleted,
+  recordAsyncAgentResult,
 } from "../src/harness/async-agent-result.ts";
 import {
   createPendingAsyncToolResult,
   getAsyncToolResult,
-  sealDetachedAsyncToolGroup,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
 } from "../src/harness/async-tool-result.ts";
@@ -16,7 +14,8 @@ import {
 const originalQuery = runtime.query;
 const originalMutation = runtime.mutate;
 const queryMock = mock(
-  async (_name: string, _args: Record<string, unknown>) => null,
+  async (_name: string, _args: Record<string, unknown>): Promise<unknown> =>
+    null,
 );
 const mutationMock = mock(
   async (name: string, _args: Record<string, unknown>) =>
@@ -41,12 +40,12 @@ describe("async agent result persistence", () => {
         input: { shell: "true" },
       },
     ];
-    await markAsyncAgentResultAwaitingApproval({
-      eventId: "event-1",
+    await recordAsyncAgentResult("event-1", {
+      status: "awaiting_approval",
       approvals: approvals,
     });
-    await markAsyncAgentResultCompleted({
-      eventId: "event-1",
+    await recordAsyncAgentResult("event-1", {
+      status: "completed",
       response: { answer: "done" },
     });
     expect(mutationMock.mock.calls[0]).toEqual([
@@ -133,25 +132,14 @@ describe("async tool result persistence", () => {
     });
   });
 
-  it("sorts fan-in ids and exposes general results without callback-token reads", async () => {
+  it("exposes general results without callback-token reads", async () => {
     queryMock.mockResolvedValueOnce({
       resultId: "result-1",
       status: "completed",
     } as never);
-    mutationMock.mockResolvedValueOnce({
-      parentEventId: "event-1",
-      resultIds: ["result-2", "result-1"],
-      sealed: true,
-    } as never);
     runtime.query = queryMock as never;
-    runtime.mutate = mutationMock as never;
     await expect(getAsyncToolResult("result-1")).resolves.toMatchObject({
       status: "completed",
-    });
-    await expect(sealDetachedAsyncToolGroup("event-1")).resolves.toEqual({
-      parentEventId: "event-1",
-      resultIds: ["result-1", "result-2"],
-      sealed: true,
     });
     expect(queryMock).toHaveBeenCalledWith("getAsyncToolResult", {
       resultId: "result-1",

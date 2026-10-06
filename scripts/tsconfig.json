@@ -4,6 +4,6 @@
     "types": ["bun"],
     "noEmit": true
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../packages/broods/src/assets.d.ts"],
   "exclude": ["node_modules"]
 }

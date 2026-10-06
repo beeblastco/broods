@@ -3,7 +3,12 @@ import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import { collectUsageRollups, usageGrainForBinSeconds } from "../logs";
+import {
+  collectUsageRollups,
+  collectUsageTasks,
+  parseModelKeys,
+  usageGrainForBinSeconds,
+} from "../logs";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -113,7 +118,7 @@ test("recordTaskUsage folds each sample into 5m, hour, and day buckets", async (
   ]);
 });
 
-test("long ranges read day-grain rows; 5m still merges legacy rows", async () => {
+test("each range reads only its own grain", async () => {
   const tt = t();
   const accountId = await seedAccount(tt);
 
@@ -151,11 +156,6 @@ test("long ranges read day-grain rows; 5m still merges legacy rows", async () =>
       grain: "5m" as const,
       bucketStart: Date.UTC(2026, 0, 15, 13, 5),
     });
-    // Legacy pre-backfill row: no grain, implicitly 5m.
-    await ctx.db.insert("usageRollups", {
-      ...base,
-      bucketStart: Date.UTC(2026, 0, 15, 13, 10),
-    });
   });
 
   // The 30d range displays 24h bins, so it must select the day grain.
@@ -171,8 +171,77 @@ test("long ranges read day-grain rows; 5m still merges legacy rows", async () =>
   const fiveMinuteRows = await tt.run(
     async (ctx) => await collectUsageRollups(ctx, ENDPOINT_ID, "5m", startMs),
   );
-  expect(fiveMinuteRows.map((row) => row.grain ?? "legacy").sort()).toEqual([
-    "5m",
-    "legacy",
+  expect(fiveMinuteRows.map((row) => row.grain)).toEqual(["5m"]);
+});
+
+test("collectUsageTasks reads only tasks that finished inside the bin", async () => {
+  const tt = t();
+  const accountId = await seedAccount(tt);
+  const binStart = Date.UTC(2026, 0, 15, 13, 0);
+  const binEnd = binStart + HOUR_MS;
+  for (const [taskId, finishedAt] of [
+    ["before#t0", binStart - 1],
+    ["first#t1", binStart],
+    ["last#t2", binEnd - 1],
+    ["after#t3", binEnd],
+  ] as const) {
+    await tt.mutation(internal.usage.recordTaskUsage, {
+      ...taskUsageArgs(accountId, taskId, finishedAt),
+      inputPreview: `prompt for ${taskId}`,
+    });
+  }
+
+  const rows = await tt.run(
+    async (ctx) =>
+      await collectUsageTasks(ctx, ENDPOINT_ID, binStart, binEnd, 10),
+  );
+  expect(rows.map((row) => row.taskId)).toEqual(["first#t1", "last#t2"]);
+  expect(rows[0].inputPreview).toBe("prompt for first#t1");
+});
+
+test("collectUsageTasks for one model skips other models before the limit", async () => {
+  const tt = t();
+  const accountId = await seedAccount(tt);
+  const binStart = Date.UTC(2026, 0, 15, 13, 0);
+  for (const [taskId, modelId] of [
+    ["other#t0", "other-model"],
+    ["other#t1", "other-model"],
+    ["kept#t2", "claude-test"],
+  ] as const) {
+    await tt.mutation(internal.usage.recordTaskUsage, {
+      ...taskUsageArgs(accountId, taskId, binStart + 1),
+      modelId: modelId,
+    });
+  }
+
+  const rows = await tt.run(
+    async (ctx) =>
+      await collectUsageTasks(
+        ctx,
+        ENDPOINT_ID,
+        binStart,
+        binStart + HOUR_MS,
+        1,
+        {
+          modelProvider: "anthropic",
+          modelId: "claude-test",
+        },
+      ),
+  );
+  expect(rows.map((row) => row.taskId)).toEqual(["kept#t2"]);
+});
+
+test("parseModelKeys scans each model once and skips keys without a provider", () => {
+  expect(
+    parseModelKeys([
+      "anthropic::claude-sonnet-5",
+      "anthropic::claude-sonnet-5",
+      "no-separator",
+      "::orphan",
+      "vercel::openai/gpt-5.4",
+    ]),
+  ).toEqual([
+    { modelProvider: "anthropic", modelId: "claude-sonnet-5" },
+    { modelProvider: "vercel", modelId: "openai/gpt-5.4" },
   ]);
 });

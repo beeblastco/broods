@@ -40,14 +40,56 @@ test("org deletion drains account contents in scheduled batches", async () => {
         role: "owner",
         createdAt: now,
       });
-      // More rows than one deletion batch holds, so the drain must reschedule
-      // itself at least once to finish.
+      await ctx.db.insert("accountRoles", {
+        accountId: accountId,
+        roleId: "brole_test",
+        name: "reader",
+        status: "active",
+        policy: { version: 1, rules: [] },
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("usageMeters", {
+        accountId: accountId,
+        month: "2026-09",
+        sandboxVcpuSeconds: 1,
+        sandboxGbSeconds: 2,
+        sandboxSnapshotGb: 0,
+        hostedMcpGbSeconds: 0,
+        hostedMcpRequests: 0,
+        storageGbMonths: 0,
+        egressGb: 0,
+        updatedAt: now,
+      });
+      await ctx.db.insert("usageDays", {
+        accountId: accountId,
+        day: "2026-09-01",
+        sandboxVcpuSeconds: 1,
+        sandboxGbSeconds: 2,
+        sandboxSnapshotGb: 0,
+        hostedMcpGbSeconds: 0,
+        hostedMcpRequests: 0,
+        storageGbMonths: 0,
+        egressGb: 0,
+        ingressGb: 0,
+        updatedAt: now,
+      });
+      await ctx.db.insert("accountKeys", {
+        accountId: accountId,
+        keyId: "key_1",
+        kekId: "kek_1",
+        wrappedKey: "iv.sealed",
+        createdAt: now,
+      });
+      // Account-scoped rows no project purge reaches, more than one deletion
+      // batch holds, so the drain must reschedule itself at least once.
       for (let index = 0; index < 150; index += 1) {
-        await ctx.db.insert("skills", {
+        await ctx.db.insert("accountEnvVars", {
           accountId: accountId,
-          name: `skill-${index}`,
-          s3Key: `skills/${index}`,
-          createdAt: now,
+          name: `VAR_${index}`,
+          ciphertext: "ct",
+          iv: "iv",
+          tag: "tag",
           updatedAt: now,
         });
       }
@@ -71,11 +113,15 @@ test("org deletion drains account contents in scheduled batches", async () => {
 
     await t.run(async (ctx) => {
       expect(await ctx.db.get(accountId)).toBeNull();
-      const skills = await ctx.db
-        .query("skills")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      const envVars = await ctx.db
+        .query("accountEnvVars")
+        .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
         .collect();
-      expect(skills).toHaveLength(0);
+      expect(envVars).toHaveLength(0);
+      expect(await ctx.db.query("accountKeys").collect()).toEqual([]);
+      expect(await ctx.db.query("accountRoles").collect()).toEqual([]);
+      expect(await ctx.db.query("usageMeters").collect()).toEqual([]);
+      expect(await ctx.db.query("usageDays").collect()).toEqual([]);
     });
   } finally {
     vi.useRealTimers();

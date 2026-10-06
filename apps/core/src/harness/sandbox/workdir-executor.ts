@@ -22,6 +22,7 @@ import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
   type SandboxRunMetadata,
   workdirSizeResources,
@@ -50,6 +51,7 @@ import {
 import {
   type ResolvedS3Mount,
   type S3MountContext,
+  mountAttribution,
   mountRoleArn,
   resolveS3Mount,
   resolveS3MountIdentity,
@@ -77,7 +79,6 @@ import {
   SandboxGoneError,
   sandboxReservationKey,
   shellQuote,
-  stripTrailingSlashes,
   truncateText,
   workspacePath,
 } from "./utils.ts";
@@ -111,10 +112,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     this.#client = workdirClient(config);
   }
 
+  // A `shared` machine is kept when its first setup fails: another conversation
+  // may already hold it, and the unset onCreate marker makes the next acquire retry.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<WorkdirHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -129,7 +133,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         this.#workDir(request.reservationKey),
       );
     } catch (error) {
-      if (reservation.isFirstCreate) {
+      if (reservation.isFirstCreate && request.shared !== true) {
         await this.release(request).catch(() => {});
       }
       throw error;
@@ -155,7 +159,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
     );
     if (!externalId) {
-      throw new Error("no reserved workdir sandbox for this Harness session");
+      throw new SandboxGoneError(
+        "no reserved workdir sandbox for this Harness session",
+      );
     }
     const sandbox = await this.#reconnect(externalId);
     await this.#runLifecycle(sandbox, this.#workDir(request.reservationKey));
@@ -164,6 +170,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       externalId,
       this.#config.controlPlane?.accountId,
+      this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
     // row; recoverable on the next call, so it never holds up the session.
@@ -213,7 +220,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         `timeout -k 5 ${request.timeoutSeconds} bash -c ${shellQuote(request.code)}`,
         {
           ...(cwd ? { cwd: cwd } : {}),
-          env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+          env: mergeSandboxEnv(
+            this.#config.envVars,
+            request.envVars,
+            request.principal,
+          ),
         },
       );
       const stdout = truncateText(
@@ -486,7 +497,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 
   // Throws when the run carries no workspace namespace.
-  #s3Context(request: { namespace?: string }): S3MountContext {
+  #s3Context(
+    request: Pick<SandboxRunRequest, "namespace" | "metadata">,
+  ): S3MountContext {
     if (!request.namespace) {
       throw new Error(
         "workdir AWS S3 workspace mount requires a workspace namespace.",
@@ -505,6 +518,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         optionalEnv("AWS_REGION") ??
         optionalEnv("AWS_DEFAULT_REGION"),
       endpoint: configString(options.s3Endpoint),
+      attribution: mountAttribution(this.#config, request),
     };
   }
 
@@ -558,9 +572,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     // Declarative mount creds come from the guest secret env (named org secrets).
     if (mounts) startup.secrets = s3SecretNames(options);
 
-    // The first-class `snapshot` pin wins; `options.image` stays a back-compat alias.
-    const image =
-      configString(this.#config.snapshot) ?? configString(options.image);
+    const image = configString(this.#config.snapshot);
 
     return {
       ...(workdirResources(this.#config)
@@ -668,6 +680,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           externalId,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
         void upsertSandboxInstance(
           this.#config.controlPlane,
@@ -699,6 +712,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           created.id,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
         await upsertSandboxInstance(
@@ -807,7 +821,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // when a remount is due.
   async #ensureS3Mount(
     sandbox: Sandbox,
-    request: { namespace?: string; workspaceRoot?: string },
+    request: Pick<
+      SandboxRunRequest,
+      "namespace" | "workspaceRoot" | "metadata"
+    >,
     isFirstCreate: boolean,
     minted?: Promise<ResolvedS3Mount>,
   ): Promise<void> {

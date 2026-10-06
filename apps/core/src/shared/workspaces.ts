@@ -3,11 +3,15 @@
  *
  * Agents reference standalone, account-scoped sandbox / workspace records by id.
  * This module resolves those references into concrete runtime configs and derives
- * each workspace's filesystem namespace. The namespace is scoped by
- * `accountId:workspaceId`, NOT agent or conversation, so agents that share a
- * workspaceId read and write the SAME files.
+ * each workspace's filesystem namespace. The base namespace is scoped by
+ * `accountId:workspaceId`, so agents that share a workspaceId read and write the
+ * SAME files unless the record sets `isolation`: "conversation" adds a folder per
+ * channel partition, "agent" a folder per agent. The full namespace is what a
+ * sandbox reserves on and what the mount's STS session is scoped to, so an
+ * isolated folder is its own VM and its own S3 prefix.
  */
 
+import { STATELESS_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxRules";
 import type {
   ChannelPartition,
   AgentConfig,
@@ -19,9 +23,14 @@ import type {
 } from "./domain/sandbox-config.ts";
 import type {
   WorkspaceConfig,
+  WorkspaceIsolation,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
-import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
+import {
+  agentNamespaceFolder,
+  normalizeFilesystemNamespace,
+} from "./runtime-keys.ts";
+import { resolveSandboxLifecycle } from "./sandbox.ts";
 import {
   resolveSandboxSpecs,
   type SandboxControlPlane,
@@ -43,7 +52,8 @@ export type WorkspaceSandboxConfig = SandboxConfig & {
 //   - the FIRST workspace in the list is the default (used when the model omits `workspace`).
 //   - `sandbox` undefined => the workspace is read-only (write/edit/grep/bash are not
 //     exposed). read/glob then run through `readMount` (a service-managed read-only
-//     Lambda mount) by default, or straight from S3 when the ref opts out with `sandbox: null`.
+//     Lambda mount) by default, or straight from S3 when the ref opts out with
+//     `sandbox: null` or the workspace brings its own bucket.
 export interface ResolvedWorkspace {
   name: string;
   workspaceId: string;
@@ -51,10 +61,10 @@ export interface ResolvedWorkspace {
   description?: string;
   config: WorkspaceConfig;
   sandbox?: WorkspaceSandboxConfig;
-  // Read-only read runner. Set when the workspace has no effective sandbox AND the
-  // ref did not explicitly opt out with `sandbox: null`. read/glob use it to read
-  // through the mount so they see committed writes immediately; undefined => read S3
-  // directly (the `sandbox: null` opt-out, which skips Lambda/VPC but lags mount writes).
+  // Read-only read runner. Set when the workspace has no effective sandbox, the ref
+  // did not opt out with `sandbox: null`, and the workspace uses the managed bucket.
+  // read/glob use it to read through the mount so they see committed writes
+  // immediately; undefined => read S3 directly (skips Lambda/VPC but lags mount writes).
   readMount?: SandboxConfig;
 }
 
@@ -73,6 +83,7 @@ export interface ResolvedAgentRuntime {
 }
 
 export interface WorkspaceIsolationScope {
+  agentId?: string;
   channelName?: string;
   channelScopeKey?: string;
   conversationKey?: string;
@@ -133,13 +144,26 @@ export function agentSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
 }
 
+/**
+ * The namespace one run mounts: the base for a shared workspace, a folder per
+ * agent under `agent/` for "agent" isolation, or the channel partition's folder
+ * for "conversation" isolation. Cleanup derives the same string to find what a
+ * run left behind.
+ */
 export function isolatedWorkspaceNamespace(
   baseNamespace: string,
-  isolation: boolean | undefined,
+  isolation: WorkspaceIsolation | undefined,
   scope: WorkspaceIsolationScope = {},
 ): string {
-  if (isolation !== true) {
+  if (isolation === undefined) {
     return baseNamespace;
+  }
+  if (isolation === "agent") {
+    if (!scope.agentId) {
+      throw new Error('Workspace isolation "agent" requires an agent identity');
+    }
+
+    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
   }
 
   const partition = scope.partition;
@@ -282,20 +306,16 @@ export async function resolveAgentRuntime(
       } else {
         effectiveSandbox = sandbox;
       }
-      // The file tools need an S3 mount, and a machine has none: they would act
-      // on the daemon's own disk instead.
-      if (effectiveSandbox?.provider === "machine") {
-        throw new Error(
-          `Workspace "${ref.name}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
-        );
-      }
+      const ownBucket = Boolean(record.config.storage?.bucket);
+      assertSandboxReachesWorkspace(ref.name, effectiveSandbox, ownBucket);
       // Read-only workspace (no effective sandbox): default to reading through a
       // service-managed read-only Lambda mount (network denied, cheapest mount slot)
       // so reads reflect committed writes immediately. The existing `sandbox: null`
       // opt-out ("no sandbox, no compute") also skips the mount: read straight from
-      // S3 instead.
+      // S3 instead, and so does a workspace on its own bucket (see
+      // assertSandboxReachesWorkspace).
       const readMount: SandboxConfig | undefined =
-        !effectiveSandbox && ref.sandbox !== null
+        !effectiveSandbox && ref.sandbox !== null && !ownBucket
           ? { provider: "lambda", network: { mode: "deny-all" } }
           : undefined;
       workspaces.push({
@@ -304,7 +324,7 @@ export async function resolveAgentRuntime(
         namespace: isolatedWorkspaceNamespace(
           workspaceNamespace(accountId, ref.workspaceId),
           record.config.isolation,
-          isolationScope,
+          { ...isolationScope, agentId: identity.agentId },
         ),
         ...(record.description ? { description: record.description } : {}),
         config: record.config,
@@ -346,6 +366,33 @@ export function resolveWorkspaceRefs(
   return agentConfig.workspaces ?? [];
 }
 
+/**
+ * True when the account's own provider account pays for this sandbox, so the
+ * platform must not meter it or hold it to the plan's budget. Mirrors where
+ * each executor takes its credentials: the config's own key wins over the
+ * platform env. A MicroVM always runs on the platform's AWS account; a machine
+ * is the user's computer and a custom server is the account's own compute.
+ */
+export function runsOnOwnCredentials(config: SandboxConfig): boolean {
+  const options = config.options ?? {};
+  const has = (key: string): boolean =>
+    typeof options[key] === "string" && options[key] !== "";
+  switch (config.provider) {
+    case "daytona":
+    case "e2b":
+      return has("apiKey");
+    case "vercel":
+      return has("token");
+    case "sandbox":
+      return has("workdirUrl");
+    case "machine":
+    case "custom":
+      return true;
+    case "lambda":
+      return false;
+  }
+}
+
 export function workspaceNamespace(
   accountId: string | undefined,
   workspaceId: string,
@@ -366,6 +413,31 @@ export function workspaceNamespacesForAccount(
   return workspaceIds.map((workspaceId) =>
     workspaceNamespace(accountId, workspaceId),
   );
+}
+
+// The file tools need the workspace's S3 mount. A stateless provider has none (a
+// machine's would act on the daemon's own disk, a custom server is never handed
+// mount credentials), and a MicroVM network other than allow-all only routes to
+// the managed bucket, so it can never mount a bucket the workspace names itself.
+function assertSandboxReachesWorkspace(
+  workspaceName: string,
+  sandbox: WorkspaceSandboxConfig | undefined,
+  ownBucket: boolean,
+): void {
+  if (sandbox && STATELESS_SANDBOX_PROVIDERS.has(sandbox.provider)) {
+    throw new Error(
+      `Workspace "${workspaceName}" cannot run on a ${sandbox.provider} sandbox; give it its own sandbox or set sandbox: null`,
+    );
+  }
+  if (
+    sandbox?.provider === "lambda" &&
+    sandbox.network?.mode !== "allow-all" &&
+    ownBucket
+  ) {
+    throw new Error(
+      `Workspace "${workspaceName}" uses its own bucket, which a lambda sandbox reaches only with network allow-all; set that or sandbox: null`,
+    );
+  }
 }
 
 // bash picks a sandbox by record name, so two records under one name would leave
@@ -416,7 +488,7 @@ function reservedAgentSandbox(
 /**
  * Build the control-plane identity for a sandbox config so a reserved instance can
  * mirror itself into the Convex `sandboxInstances` registry (account, config row,
- * display name, size specs).
+ * display name, size specs, and the idle timeout the meter bills it up to).
  */
 function sandboxControlPlane(
   accountId: string,
@@ -438,5 +510,8 @@ function sandboxControlPlane(
     ...(record.config.permissionMode
       ? { permissionMode: record.config.permissionMode }
       : {}),
+    ...(runsOnOwnCredentials(record.config) ? { ownCredentials: true } : {}),
+    idleTimeoutSeconds: resolveSandboxLifecycle(record.config.lifecycle)
+      .idleTimeoutSeconds,
   };
 }

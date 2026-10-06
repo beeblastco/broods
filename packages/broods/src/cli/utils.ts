@@ -7,16 +7,26 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { Writable } from "node:stream";
 import {
+  gatewayUrlForDashboard,
   readStoredAuth,
   stripTrailingSlash,
   writeStoredAuth,
   type StoredAuthConfig,
 } from "../config.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
-import { formatChoiceRow } from "./output.ts";
+import { cliFetch } from "../sync.ts";
+import { formatChoiceRow, formatWarning } from "./output.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
+
+const DASHBOARD_LOGIN_TIMEOUT =
+  "Timed out waiting for browser login to complete.\n" +
+  "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
+  "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
+  "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
+  "cliAuth Convex functions or no active API account (Settings -> API Access).";
 
 /** Options whose value is a separate token, so both have to leave a prompt. */
 const VALUE_OPTIONS = new Set([
@@ -39,8 +49,43 @@ interface LoginCallback {
   baseUrl: string;
 }
 
+interface CallbackOptions<T> {
+  /** Preferred port; a busy one falls back to any free port unless `fixedPort`. */
+  port: number;
+  fixedPort: boolean;
+  path: string;
+  /** Turns the callback query into its result; a throw fails the login. */
+  read: (params: URLSearchParams) => T;
+  /** What the browser tab shows once `read` succeeds. */
+  done: string;
+}
+
+/**
+ * The command that opens `url` in the default browser. Windows skips `cmd /c
+ * start`, whose parser cuts the URL at the first `&`.
+ */
+export function browserCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "darwin") return { command: "open", args: [url] };
+  if (platform === "win32") {
+    return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] };
+  }
+
+  return { command: "xdg-open", args: [url] };
+}
+
+/**
+ * True when `name` is passed. A value option also counts as `name=value`, a
+ * boolean flag only bare, so `--yes=false` never skips a confirmation.
+ */
 export function hasFlag(args: string[], name: string): boolean {
-  return args.includes(name);
+  const inline = VALUE_OPTIONS.has(name) ? `${name}=` : null;
+
+  return args.some(
+    (arg) => arg === name || (inline !== null && arg.startsWith(inline)),
+  );
 }
 
 export function isPlainObject(
@@ -49,10 +94,20 @@ export function isPlainObject(
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The value of the first `name value` or `name=value`. An empty `name=` reads
+ * as missing, so callers that reject a bare flag reject it too.
+ */
 export function optionValue(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === name) return args[index + 1];
+    if (arg?.startsWith(`${name}=`)) {
+      return arg.slice(name.length + 1) || undefined;
+    }
+  }
 
-  return index >= 0 ? args[index + 1] : undefined;
+  return undefined;
 }
 
 /**
@@ -87,7 +142,13 @@ export async function loginWithBrowser(
   const codeChallenge = createHash("sha256")
     .update(codeVerifier)
     .digest("base64url");
-  const { code, close } = await waitForCallback(state);
+  const { code, close } = await waitForCallback(state, {
+    port: callbackPort(),
+    fixedPort: Boolean(process.env.BROODS_LOGIN_PORT),
+    path: "/callback",
+    read: readLoginCallback,
+    done: "broods CLI login complete. You can close this tab.",
+  });
 
   try {
     const callbackUrl = code.callbackUrl;
@@ -99,16 +160,20 @@ export async function loginWithBrowser(
         code_challenge: codeChallenge,
       });
     await assertCliAuthRouteExists(startUrl);
-    openBrowser(startUrl);
+    // Printed first, so a machine with no browser still has the link.
     console.log(`Opening ${startUrl}`);
-    const login = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
+    openBrowser(startUrl);
+    const login = await waitWithTimeout(code.promise);
     // The dashboard advertises the API base URL in the callback; the
     // exchange and all later sync/env calls go there directly.
-    const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
-    });
+    const response = await cliFetch(
+      `${login.baseUrl}/v1/account/auth/exchange`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
+      },
+    );
     if (!response.ok) {
       throw new Error(
         `Login exchange failed: ${response.status} ${await response.text()}`,
@@ -139,17 +204,21 @@ export async function loginWithBrowser(
 
 export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
-  const auth = await readStoredAuth();
+  const auth = readStoredAuth(baseUrl);
   if (!auth) {
+    const dashboardUrl = process.env.BROODS_DASHBOARD_URL;
+    const server =
+      baseUrl ??
+      process.env.BROODS_BASE_URL ??
+      (dashboardUrl ? gatewayUrlForDashboard(dashboardUrl) : undefined);
     throw new Error(
-      "Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.",
+      server
+        ? `Not logged in to ${stripTrailingSlash(server)}. Run \`broods login\`.`
+        : "Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.",
     );
   }
 
-  return {
-    ...auth,
-    ...(baseUrl ? { baseUrl: stripTrailingSlash(baseUrl) } : {}),
-  };
+  return auth;
 }
 
 /**
@@ -170,15 +239,28 @@ export async function promptConfirm(question: string): Promise<boolean> {
   }
 }
 
+/**
+ * Reads a secret without echoing it: readline still edits the line, but writes
+ * every keystroke to a stream that drops it.
+ */
 export async function promptSecret(label: string): Promise<string> {
-  const rl = createInterface({ input: input, output: output });
+  output.write(`${label}: `);
+  const muted = new Writable({
+    write: (_chunk, _encoding, callback): void => callback(),
+  });
+  const rl = createInterface({
+    input: input,
+    output: muted,
+    terminal: input.isTTY === true,
+  });
   try {
-    const value = await rl.question(`${label}: `);
+    const value = await rl.question("");
     if (!value) throw new Error(`${label} is required`);
 
     return value;
   } finally {
     rl.close();
+    output.write("\n");
   }
 }
 
@@ -214,7 +296,7 @@ export async function promptSelect<T>(
       : `Choose 1-${options.length} [${fallback + 1}]: `;
   const rl = createInterface({ input: input, output: output });
   try {
-    while (true) {
+    for (;;) {
       const answer = (await rl.question(question)).trim();
       if (answer === "" && fallback !== undefined) return options[fallback]!;
       const index = Number(answer);
@@ -287,25 +369,138 @@ export async function promptText(
   }
 }
 
+/**
+ * Opens `url` in the default browser, detached so the CLI never waits on it.
+ * Best effort: with no launcher (SSH, containers) the printed URL is the way in.
+ */
+export function openBrowser(url: string): void {
+  const { command, args } = browserCommand(url);
+  const child = spawn(command, args, { stdio: "ignore", detached: true });
+  child.on("error", (error): void => {
+    console.error(
+      formatWarning(
+        `Could not open a browser (${error.message}). Open the URL above to continue.`,
+        { stream: "stderr" },
+      ),
+    );
+  });
+  child.unref();
+}
+
+/**
+ * Listens on 127.0.0.1 for one OAuth-style browser redirect carrying
+ * `expectedState`. A redirect with any other state is refused and ignored,
+ * so a stray tab cannot end the login.
+ */
+export function waitForCallback<T>(
+  expectedState: string,
+  options: CallbackOptions<T>,
+): Promise<{
+  code: { callbackUrl: string; promise: Promise<T> };
+  close: () => void;
+}> {
+  return new Promise((resolve, reject) => {
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (
+        url.pathname !== options.path ||
+        url.searchParams.get("state") !== expectedState
+      ) {
+        res.writeHead(400).end("Invalid callback.");
+
+        return;
+      }
+      try {
+        const result = options.read(url.searchParams);
+        res.writeHead(200, { "Content-Type": "text/plain" }).end(options.done);
+        callbackResolve(result);
+      } catch (error) {
+        res
+          .writeHead(400, { "Content-Type": "text/plain" })
+          .end(error instanceof Error ? error.message : String(error));
+        callbackReject(error);
+      }
+    });
+
+    let callbackResolve!: (callback: T) => void;
+    let callbackReject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      callbackResolve = res;
+      callbackReject = rej;
+    });
+
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (
+        !options.fixedPort &&
+        options.port !== 0 &&
+        error.code === "EADDRINUSE"
+      ) {
+        server.listen(0, "127.0.0.1");
+
+        return;
+      }
+      reject(error);
+    });
+    server.listen(options.port, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Failed to allocate callback port"));
+
+        return;
+      }
+      resolve({
+        code: {
+          callbackUrl: `http://127.0.0.1:${address.port}${options.path}`,
+          promise: promise,
+        },
+        close: () => server.close(),
+      });
+    });
+  });
+}
+
+/**
+ * Race a promise against a timeout so a stalled browser login surfaces an
+ * actionable error instead of hanging the CLI forever. For `broods login` the
+ * most common cause is the dashboard's cliAuth Convex functions not being
+ * deployed in the target stage, which makes /cli-auth/start return a 500 in
+ * the browser and never redirect back to the local callback.
+ */
+export async function waitWithTimeout<T>(
+  promise: Promise<T>,
+  message: string = DASHBOARD_LOGIN_TIMEOUT,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), LOGIN_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Fails early with a hint when the dashboard has no `/cli-auth/start`. */
 async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
-  const response = await fetch(startUrl, {
+  const response = await cliFetch(startUrl, {
     method: "GET",
     redirect: "manual",
   });
   if (response.status === 404) {
     const url = new URL(startUrl);
     throw new Error(
-      `${url.origin} does not expose /cli-auth/start yet. Deploy the dashboard changes first, ` +
-        `or use --dashboard-url http://localhost:3000 with a local dashboard dev server.`,
+      `${url.origin} has no broods login page. Check that --dashboard-url points at your broods dashboard.`,
     );
   }
   if (response.status >= 500) {
     throw new Error(
-      `Dashboard CLI auth route failed: ${response.status} ${await response.text()}`,
+      `The broods login page failed: ${response.status} ${await response.text()}`,
     );
   }
 }
 
+/** The `broods login` callback port: `BROODS_LOGIN_PORT`, else a free one. */
 function callbackPort(): number {
   const raw = process.env.BROODS_LOGIN_PORT;
   if (raw) {
@@ -317,126 +512,20 @@ function callbackPort(): number {
   return 18987;
 }
 
-function openBrowser(url: string): void {
-  const command =
-    process.platform === "darwin"
-      ? "open"
-      : process.platform === "win32"
-        ? "cmd"
-        : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", url] : [url];
-  const child = spawn(command, args, { stdio: "ignore", detached: true });
-  child.unref();
-}
-
-function waitForCallback(expectedState: string): Promise<{
-  code: { callbackUrl: string; promise: Promise<LoginCallback> };
-  close: () => void;
-}> {
-  return new Promise((resolve, reject) => {
-    const server = createServer((req, res) => {
-      try {
-        const url = new URL(req.url ?? "/", "http://127.0.0.1");
-        const state = url.searchParams.get("state");
-        const code = url.searchParams.get("code");
-        const baseUrl = url.searchParams.get("base_url");
-        if (state !== expectedState || !code) {
-          res.writeHead(400).end("Invalid broods login callback.");
-
-          return;
-        }
-        if (!baseUrl) {
-          res
-            .writeHead(400)
-            .end(
-              "Login callback omitted base_url; update the dashboard deployment.",
-            );
-          callbackReject(
-            new Error(
-              "Login callback did not advertise the API base URL (base_url). " +
-                "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
-            ),
-          );
-
-          return;
-        }
-        res
-          .writeHead(200, { "Content-Type": "text/plain" })
-          .end("broods CLI login complete. You can close this tab.");
-        callbackResolve({
-          code: code,
-          baseUrl: stripTrailingSlash(baseUrl),
-        });
-      } catch (error) {
-        callbackReject(error);
-      }
-    });
-
-    let callbackResolve!: (callback: LoginCallback) => void;
-    let callbackReject!: (error: unknown) => void;
-    const promise = new Promise<LoginCallback>((res, rej) => {
-      callbackResolve = res;
-      callbackReject = rej;
-    });
-
-    const requestedPort = callbackPort();
-    server.on("error", (error: NodeJS.ErrnoException) => {
-      if (
-        !process.env.BROODS_LOGIN_PORT &&
-        requestedPort !== 0 &&
-        error.code === "EADDRINUSE"
-      ) {
-        server.listen(0, "127.0.0.1");
-
-        return;
-      }
-      reject(error);
-    });
-    server.listen(requestedPort, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("Failed to allocate callback port"));
-
-        return;
-      }
-      resolve({
-        code: {
-          callbackUrl: `http://127.0.0.1:${address.port}/callback`,
-          promise: promise,
-        },
-        close: () => server.close(),
-      });
-    });
-  });
-}
-
-/**
- * Race a promise against a timeout so a stalled browser login surfaces an
- * actionable error instead of hanging the CLI forever. The most common cause is
- * the dashboard's cliAuth Convex functions not being deployed in the target
- * stage, which makes /cli-auth/start return a 500 in the browser and never
- * redirect back to the local callback.
- */
-async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          new Error(
-            "Timed out waiting for browser login to complete.\n" +
-              "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
-              "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
-              "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
-              "cliAuth Convex functions or no active API account (Settings -> API Access).",
-          ),
-        ),
-      ms,
+/** The dashboard's redirect: the login code and the API base URL it advertises. */
+function readLoginCallback(params: URLSearchParams): LoginCallback {
+  // The dashboard sends `error` instead of a code when it cannot log in.
+  const failure = params.get("error");
+  if (failure) throw new Error(`Login failed: ${failure}`);
+  const code = params.get("code");
+  if (!code) throw new Error("Login callback carried no code.");
+  const baseUrl = params.get("base_url");
+  if (!baseUrl) {
+    throw new Error(
+      "Login callback did not advertise the API base URL (base_url). " +
+        "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
     );
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
   }
+
+  return { code: code, baseUrl: stripTrailingSlash(baseUrl) };
 }

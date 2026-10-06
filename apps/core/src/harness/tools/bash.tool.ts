@@ -10,10 +10,7 @@ import { getHarnessPublicUrl } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logDebug, logInfo, logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import type {
-  ResolvedAgentSandbox,
-  ResolvedWorkspace,
-} from "../../shared/workspaces.ts";
+import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
   bindAsyncToolResultSandbox,
   createDetachedAsyncToolResult,
@@ -36,10 +33,10 @@ import {
   runSandbox,
   runSandboxBackground,
   runtimeDescription,
+  sandboxParamChoices,
   sandboxRunMetadata,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
-  selectableSandboxes,
   targetsAgentSandbox,
   workspaceParamSchema,
   writesOutsideAllowed,
@@ -82,22 +79,21 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           if (onSandbox !== undefined && selected === undefined) {
             return toolError("Error: sandbox must be the name of a sandbox");
           }
-          // Silently preferring one would let the policy layer be told a workspace
-          // that the run never touches, so an incoherent selection is refused.
-          if (workspace !== undefined && selected !== undefined) {
-            return toolError(
-              "Error: pass either workspace or sandbox, not both — they select different places to run",
-            );
-          }
           // Resolved before the workspace fallback so a name that picks nothing
           // selectable is refused instead of quietly landing in the default workspace.
           const picked = resolveAgentSandbox(context, selected);
-          const ws = targetsAgentSandbox(context, {
+          // Same rule as the approval gate and policy input: a named sandbox wins.
+          const onAgentSandbox = targetsAgentSandbox(context, {
             workspace: workspace,
             sandbox: selected,
-          })
+          });
+          const ws = onAgentSandbox
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
+          const ignoredWorkspace =
+            onAgentSandbox && workspace !== undefined
+              ? `Note: ran on sandbox ${picked?.name} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
+              : "";
           // A read-only workspace must not fall through to the default sandbox: the
           // approval gate skipped it expecting this refusal.
           const sandbox = ws ? ws.sandbox : picked?.sandbox;
@@ -135,12 +131,14 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           });
 
           return toolText(
-            formatRunText(
-              await runSandbox(sandbox, ws?.namespace, effective, {
-                onSandboxCpu: context.onSandboxCpu,
-                metadata: sandboxRunMetadata(context, ws),
-              }),
-            ),
+            ignoredWorkspace +
+              formatRunText(
+                await runSandbox(sandbox, ws?.namespace, effective, {
+                  onSandboxCpu: context.onSandboxCpu,
+                  metadata: sandboxRunMetadata(context, ws),
+                  principal: context.principal?.(),
+                }),
+              ),
           );
         } catch (cause) {
           return toolError(
@@ -189,7 +187,7 @@ function description(context: SandboxToolContext): string {
 Usage notes:
 - ${runtimes}
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
 - ${state}${sandboxesNote(context)}`;
   }
 
@@ -199,7 +197,7 @@ Usage notes:
 - The selected workspace's sandbox may restrict runtimes; commands using disallowed runtimes are rejected before execution.
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
 - DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
@@ -245,7 +243,7 @@ async function dispatchBackground(
     );
   }
 
-  // Create the sealed tracking row BEFORE launching so a fast job's callback
+  // Create the tracking row BEFORE launching so a fast job's callback
   // can never arrive before the row exists.
   await createDetachedAsyncToolResult({
     eventId: context.background.eventId,
@@ -265,6 +263,7 @@ async function dispatchBackground(
     delivery: context.background.delivery ?? { kind: "async" },
     completionToken: completionToken,
   });
+  context.background.onDetachedResult?.(resultId);
 
   try {
     const handle = await runSandboxBackground(
@@ -441,16 +440,6 @@ ${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 // What the `sandbox` param offers. A lone default with no workspace is where bash
 // already runs, so it earns no field; beside a workspace or another sandbox it is a
 // choice.
-function sandboxParamChoices(
-  context: SandboxToolContext,
-): ResolvedAgentSandbox[] {
-  const choices = selectableSandboxes(context);
-  const onlyTheDefault =
-    choices.length === 1 && context.workspaces.length === 0;
-
-  return onlyTheDefault ? [] : choices;
-}
-
 // `sandbox` names the sandbox to run on.
 function sandboxParamSchema(
   context: SandboxToolContext,
@@ -459,15 +448,13 @@ function sandboxParamSchema(
   if (choices.length === 0) {
     return undefined;
   }
-  const mutuallyExclusive =
-    context.workspaces.length > 0
-      ? " Mutually exclusive with `workspace`."
-      : "";
+  const ignoresWorkspace =
+    context.workspaces.length > 0 ? " When set, `workspace` is ignored." : "";
 
   return {
     type: "string",
     enum: choices.map((choice): string => choice.name),
-    description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${mutuallyExclusive}`,
+    description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${ignoresWorkspace}`,
   };
 }
 

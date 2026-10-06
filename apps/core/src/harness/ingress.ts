@@ -1,11 +1,23 @@
 /**
  * Transport-neutral ingress admission and status helpers.
  * Convex owns atomic FIFO and fencing; handlers decide how accepted work is delivered.
+ * Every lease this process takes or gives back goes through here, which is how
+ * shutdown knows what to hand back when runs outlive the drain deadline.
  */
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
-import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import { queuedCommand } from "../shared/commands.ts";
+import {
+  applyRunOverrides,
+  toRuntimeAgentConfig,
+  type AgentConfig,
+  type RunOverrides,
+} from "../shared/domain/agent-config.ts";
+import {
+  channelRuntimeAgentConfig,
+  resolveChannelAgentId,
+} from "../shared/domain/channel-record.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import {
   accountAgentScopedKey,
@@ -13,12 +25,18 @@ import {
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
 } from "../shared/runtime-keys.ts";
+import { getStorage } from "../shared/storage.ts";
+import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 
 export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const DEFAULT_INGRESS_MAX_COUNT = 100;
 export const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_CONVERSATION_LEASE_TTL_MS = 15 * 60 * 1000;
+
+// The leases this process holds, keyed by conversation: Convex allows one
+// owner per conversation at a time.
+const liveOwners = new Map<string, LiveOwner>();
 
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
 export type AppliedIngressMode = IngressMode;
@@ -31,6 +49,34 @@ export type IngressStatus =
   | "failed"
   | "expired";
 
+/** One conversation lease this process holds, as Convex fences it. */
+export interface LiveOwner {
+  conversationKey: string;
+  ownerEventId: string;
+  ownerGeneration: number;
+}
+
+/** An async run's polling rows, settled in the same mutation as its envelope. */
+export interface AsyncResultSettlement {
+  eventIds: string[];
+  outcome: AsyncAgentOutcome;
+}
+
+/** The terminal outcome `takeNextIngress` can settle in the same mutation. */
+export interface IngressSettlement {
+  status: "completed" | "failed";
+  result?: unknown;
+  error?: string;
+}
+
+/** Queued work `recoverQueuedIngress` promoted, and the scope it runs under. */
+export interface RecoveredIngress {
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+  applied: AppliedIngress;
+}
+
 export interface PublicDeploymentIngress {
   accountId: string;
   endpointId: string;
@@ -38,10 +84,42 @@ export interface PublicDeploymentIngress {
   projectSlug: string;
 }
 
-export interface ConversationDispatchTarget {
-  agentConfig: AgentConfig;
-  channelName: string;
+/** The rows a channel session's run config is rebuilt from on re-entry. */
+export interface ChannelTargetRefs {
+  // The agent whose channel credentials verified the delivery, when another
+  // agent runs the conversation. Absent means the running agent holds them.
+  credentialAgentId?: string;
+  channelRecordId?: string;
+}
+
+/**
+ * Where a channel session replies, as Convex keeps it. Never the config: that
+ * holds decrypted secrets, so core rebuilds it with `loadChannelSessionConfig`.
+ */
+export interface ConversationDispatchTarget extends IngressChannelRef {
   source: Record<string, unknown>;
+}
+
+/** The channel and rows a channel session's config is narrowed by. */
+export interface IngressChannelRef extends ChannelTargetRefs {
+  channelName: string;
+}
+
+/**
+ * What an envelope keeps to rebuild its run config when it is dispatched,
+ * instead of the resolved config with its decrypted secrets: the request's
+ * own model override, and for a channel session the channel and rows its
+ * config is narrowed by. `{}` is the agent's own config as it is now.
+ */
+export interface IngressConfigRef {
+  model?: RunOverrides["model"];
+  channel?: IngressChannelRef;
+}
+
+/** A run's resolved config beside the ref its envelope stores to rebuild it. */
+export interface IngressRunConfig {
+  agentConfig: AgentConfig;
+  configRef: IngressConfigRef;
 }
 
 export interface SessionMessageInput {
@@ -55,11 +133,14 @@ export interface SessionMessageResult {
 }
 
 export interface PreparedSessionMessage {
-  candidate: Omit<IngressCandidate, "agentConfig" | "delivery" | "events"> & {
-    agentConfig: AgentConfig;
+  candidate: Omit<IngressCandidate, "configRef" | "delivery" | "events"> & {
+    configRef: IngressConfigRef;
     delivery: Extract<IngressDelivery, { kind: "channel" }>;
     events: UserModelMessage[];
   };
+  // The target session's config, for the owner run; the candidate only
+  // carries the ref to rebuild it.
+  agentConfig: AgentConfig;
   publicEventId: string;
   publicConversationKey: string;
 }
@@ -119,8 +200,13 @@ export interface IngressCandidate {
   delivery: IngressDelivery;
   // Per-request execution context persisted with the envelope so a queued
   // request runs under its own config/overrides, never a previous owner's.
-  agentConfig?: AgentConfig;
+  // Absent only on a subagent's envelopes, which run on the config their
+  // dispatch scope holds; any other envelope without one is failed.
+  configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
+  // Set on a turn a channel delivered: pins this conversation's channel target
+  // so a later cron or inter-session message can reach it.
+  channelTarget?: ChannelTargetRefs;
 }
 
 export interface AppliedIngress {
@@ -132,7 +218,7 @@ export interface AppliedIngress {
   appliedToEventId: string;
   contributingEventIds: string[];
   ownerGeneration: number;
-  agentConfig?: AgentConfig;
+  configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
 }
 
@@ -177,12 +263,20 @@ export interface IngressStatusRecord {
 
 /** Atomically admits one candidate into the durable conversation coordinator. */
 export async function acceptIngress(
-  candidate: IngressCandidate,
+  input: IngressCandidate,
 ): Promise<IngressAdmission> {
+  // A queued command waits its own turn behind the active one: as a steer it
+  // would reach the running model as text, and a collect would batch it.
+  const candidate: IngressCandidate = queuedCommand(
+    input.events,
+    input.delivery.kind === "channel" ? input.delivery.channel : undefined,
+  )
+    ? { ...input, requestedMode: "followup" }
+    : input;
   const serializedPayload = JSON.stringify({
     events: candidate.events,
-    ...(candidate.agentConfig !== undefined
-      ? { agentConfig: candidate.agentConfig }
+    ...(candidate.configRef !== undefined
+      ? { configRef: candidate.configRef }
       : {}),
     ...(candidate.ephemeralSystem !== undefined
       ? { ephemeralSystem: candidate.ephemeralSystem }
@@ -198,17 +292,18 @@ export async function acceptIngress(
       activeOwnerOnly: candidate.activeOwnerOnly,
       expectedOwnerTaskId: candidate.expectedOwnerTaskId,
       ownerTaskId: candidate.ownerTaskId,
-      agentConfig: candidate.agentConfig,
+      configRef: candidate.configRef,
       ephemeralSystem: candidate.ephemeralSystem,
     }),
   );
 
-  return runtime.mutate<IngressAdmission>("acceptIngress", {
-    ...candidate,
-    ...(candidate.delivery.kind === "channel" && candidate.agentConfig
+  const { channelTarget, ...admitted } = candidate;
+  const admission = await runtime.mutate<IngressAdmission>("acceptIngress", {
+    ...admitted,
+    ...(candidate.delivery.kind === "channel" && channelTarget
       ? {
           channelTarget: {
-            agentConfig: candidate.agentConfig,
+            ...channelTarget,
             channelName: candidate.delivery.channel,
             source: candidate.delivery.source ?? {},
           },
@@ -222,6 +317,25 @@ export async function acceptIngress(
     maxQueuedCount: DEFAULT_INGRESS_MAX_COUNT,
     maxQueuedBytes: DEFAULT_INGRESS_MAX_BYTES,
   });
+  if (admission.recovered) {
+    trackOwner({
+      conversationKey: candidate.conversationKey,
+      ownerEventId: admission.recovered.eventId,
+      ownerGeneration: admission.recovered.ownerGeneration,
+    });
+  }
+  if (
+    admission.outcome === "owner" &&
+    admission.ownerGeneration !== undefined
+  ) {
+    trackOwner({
+      conversationKey: candidate.conversationKey,
+      ownerEventId: candidate.eventId,
+      ownerGeneration: admission.ownerGeneration,
+    });
+  }
+
+  return admission;
 }
 
 /** Applies waiting steer envelopes at the current AI SDK step boundary. */
@@ -229,6 +343,7 @@ export function applySteering(options: {
   conversationKey: string;
   ownerEventId: string;
   ownerGeneration: number;
+  textOnly?: boolean;
 }): Promise<AppliedIngress | null> {
   return runtime.mutate("applyIngressSteering", {
     ...options,
@@ -266,6 +381,130 @@ export function getIngressStatusByEventId(options: {
   eventId: string;
 }): Promise<IngressStatusRecord | null> {
   return runtime.query("getIngressStatusByEventId", options);
+}
+
+/**
+ * Hands back every lease this process still holds, failing its run, so the
+ * conversation is not locked for the lease TTL after the process is gone.
+ * Shutdown calls it once runs outlive the drain deadline. Queued work stays
+ * queued for `recoverQueuedIngress` on the next pod.
+ * @returns how many leases were handed back
+ */
+export async function interruptLiveOwners(error: string): Promise<number> {
+  const owners = [...liveOwners.values()];
+  const results = await Promise.allSettled(
+    owners.map(async (owner): Promise<void> => {
+      // Fenced: a run that settled on its own meanwhile makes this a no-op.
+      await settleIngress({ ...owner, status: "failed", error: error }).catch(
+        (): number => 0,
+      );
+      await releaseIngressOwner(owner);
+    }),
+  );
+
+  return results.filter((result): boolean => result.status === "fulfilled")
+    .length;
+}
+
+/**
+ * The config a re-entered channel session runs on: a cron, a send-message, a
+ * settled background job, a continue. Rebuilt from the live agent, credential
+ * holder and record every time, the way a webhook turn would build it now, so
+ * a rotated key or a changed tool applies to the next run.
+ */
+export async function loadChannelSessionConfig(options: {
+  accountId: string;
+  agentId: string;
+  target: IngressChannelRef;
+}): Promise<IngressRunConfig> {
+  const { accountId, target } = options;
+  const storage = getStorage();
+  const [agent, credentialHolder, record] = await Promise.all([
+    storage.agents.getById(accountId, options.agentId),
+    target.credentialAgentId
+      ? storage.agents.getById(accountId, target.credentialAgentId)
+      : null,
+    target.channelRecordId
+      ? storage.channelRecords.getById(accountId, target.channelRecordId)
+      : null,
+  ]);
+  if (!agent) {
+    throw new Error(`Agent not found: ${options.agentId}`);
+  }
+  const activeRecord = record?.status === "active" ? record : undefined;
+  const boundAgentId = activeRecord && resolveChannelAgentId(activeRecord);
+  // A pinned record that is gone may have been replaced with other rules, and
+  // one now bound elsewhere hands the place to that agent. Either way the
+  // next channel turn repins; until then this session is not reachable.
+  if (
+    (target.channelRecordId && !activeRecord) ||
+    (boundAgentId && boundAgentId !== options.agentId) ||
+    (target.credentialAgentId && !credentialHolder)
+  ) {
+    throw new Error("Channel session is no longer bound to this agent");
+  }
+
+  return {
+    agentConfig: channelRuntimeAgentConfig(
+      {
+        agent: agent,
+        ...(activeRecord ? { record: activeRecord } : {}),
+      },
+      target.channelName,
+      (credentialHolder ?? agent).config,
+    ),
+    configRef: {
+      channel: {
+        channelName: target.channelName,
+        ...(target.credentialAgentId
+          ? { credentialAgentId: target.credentialAgentId }
+          : {}),
+        ...(target.channelRecordId
+          ? { channelRecordId: target.channelRecordId }
+          : {}),
+      },
+    },
+  };
+}
+
+/**
+ * The config a dispatched envelope runs on, rebuilt from the live rows its
+ * ref names: the channel session's narrowed config, or the agent's own with
+ * the request's model override. A subagent's envelope has no ref and runs on
+ * `subagentConfig`. Throws for any other envelope without a ref, a deleted
+ * agent or an unbound channel session; the caller fails the envelope with it.
+ */
+export async function loadAppliedIngressConfig(options: {
+  accountId: string;
+  agentId: string;
+  configRef: IngressConfigRef | undefined;
+  subagentConfig?: AgentConfig;
+}): Promise<AgentConfig> {
+  const { accountId, agentId, configRef } = options;
+  if (!configRef) {
+    if (options.subagentConfig) {
+      return options.subagentConfig;
+    }
+    throw new Error("Queued turn was admitted before config refs; retry");
+  }
+  if (configRef.channel) {
+    const loaded = await loadChannelSessionConfig({
+      accountId: accountId,
+      agentId: agentId,
+      target: configRef.channel,
+    });
+
+    return loaded.agentConfig;
+  }
+  const agent = await getStorage().agents.getById(accountId, agentId);
+  if (!agent) {
+    throw new Error(`Agent not found: ${agentId}`);
+  }
+
+  return applyRunOverrides(
+    toRuntimeAgentConfig(agent.config),
+    configRef.model ? { model: configRef.model } : undefined,
+  );
 }
 
 export async function prepareSessionMessage(options: {
@@ -315,11 +554,17 @@ export async function prepareSessionMessage(options: {
     options.agentId,
   );
 
+  const { agentConfig, configRef } = await loadChannelSessionConfig({
+    accountId: options.accountId,
+    agentId: options.agentId,
+    target: target,
+  });
+
   return {
     candidate: {
       accountId: options.accountId,
       agentId: options.agentId,
-      agentConfig: target.agentConfig,
+      configRef: configRef,
       eventId: eventId,
       runId: createRunId(),
       conversationKey: conversationKey,
@@ -341,12 +586,59 @@ export async function prepareSessionMessage(options: {
         source: target.source,
       },
     },
+    agentConfig: agentConfig,
     publicEventId: publicEventId,
     publicConversationKey: publicConversationKey,
   };
 }
 
-/** Settles every envelope applied to one active event under the fencing token. */
+/**
+ * Promotes queued work whose conversation has no live owner: its owner handed
+ * the lease back at shutdown, or died and let it expire. The caller must
+ * dispatch every returned application; it now holds each lease.
+ */
+export async function recoverQueuedIngress(): Promise<RecoveredIngress[]> {
+  const recovered = await runtime.mutate<RecoveredIngress[]>(
+    "recoverQueuedIngress",
+    { leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS },
+  );
+  for (const entry of recovered) {
+    trackOwner({
+      conversationKey: entry.conversationKey,
+      ownerEventId: entry.applied.eventId,
+      ownerGeneration: entry.applied.ownerGeneration,
+    });
+  }
+
+  return recovered;
+}
+
+/** Gives the lease back, only while the caller still holds that generation. */
+export async function releaseIngressOwner(owner: LiveOwner): Promise<void> {
+  await runtime.mutate("releaseIngressOwner", {
+    conversationKey: owner.conversationKey,
+    ownerEventId: owner.ownerEventId,
+    ownerGeneration: owner.ownerGeneration,
+  });
+  forgetOwner(owner);
+}
+
+/** Extends the lease while the caller still holds that generation, or reports it stopped or stale. */
+export function renewIngressOwner(
+  owner: LiveOwner,
+): Promise<"renewed" | "stopped" | "stale"> {
+  return runtime.mutate("renewIngressOwner", {
+    conversationKey: owner.conversationKey,
+    ownerEventId: owner.ownerEventId,
+    ownerGeneration: owner.ownerGeneration,
+    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  });
+}
+
+/**
+ * Settles every envelope applied to one active event under the fencing token,
+ * and an async run's polling rows in the same mutation.
+ */
 export function settleIngress(options: {
   conversationKey: string;
   ownerEventId: string;
@@ -354,20 +646,59 @@ export function settleIngress(options: {
   status: "completed" | "failed";
   result?: unknown;
   error?: string;
+  asyncResult?: AsyncResultSettlement;
 }): Promise<number> {
   return runtime.mutate("settleIngress", options);
 }
 
-/** Takes the next FIFO follow-up or contiguous collect application. */
-export function takeNextIngress(options: {
-  conversationKey: string;
-  ownerEventId: string;
-  ownerGeneration: number;
-}): Promise<AppliedIngress | null> {
-  return runtime.mutate("takeNextIngress", {
+/**
+ * The envelope settlement that records an async run's outcome. A run waiting on
+ * approval or input completes its envelope with what it waits on.
+ */
+export function outcomeSettlement(
+  outcome: AsyncAgentOutcome,
+): IngressSettlement {
+  if (outcome.status === "completed") {
+    return { status: "completed", result: outcome.response };
+  }
+  if (outcome.status === "failed") {
+    return { status: "failed", error: outcome.error };
+  }
+
+  return { status: "completed", result: outcome };
+}
+
+/** Takes the next FIFO follow-up or contiguous collect application, settling first when given one. */
+export async function takeNextIngress(
+  options: LiveOwner,
+  settle?: IngressSettlement,
+): Promise<AppliedIngress | null> {
+  const next = await runtime.mutate<AppliedIngress | null>("takeNextIngress", {
     ...options,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+    ...(settle ? { settle: settle } : {}),
   });
+  // Either the lease moved to the next application or it was released.
+  forgetOwner(options);
+  if (next) {
+    trackOwner({
+      conversationKey: options.conversationKey,
+      ownerEventId: next.eventId,
+      ownerGeneration: next.ownerGeneration,
+    });
+  }
+
+  return next;
+}
+
+function forgetOwner(owner: LiveOwner): void {
+  const held = liveOwners.get(owner.conversationKey);
+  if (
+    held?.ownerEventId === owner.ownerEventId &&
+    held.ownerGeneration === owner.ownerGeneration
+  ) {
+    liveOwners.delete(owner.conversationKey);
+  }
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -379,4 +710,8 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)]
     .map((byte): string => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function trackOwner(owner: LiveOwner): void {
+  liveOwners.set(owner.conversationKey, owner);
 }

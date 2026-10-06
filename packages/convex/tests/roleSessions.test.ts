@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /**
  * Config-plane HTTP tests for account roles: the assume-role exchange
- * (account secret and stage runtime key callers), session expiry, disabled
+ * (account key and runtime key callers), session expiry, disabled
  * roles, and route enforcement of a role session's policy.
  */
 
@@ -10,18 +10,19 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
+import type { ApiErrorBody } from "../model/apiError";
 import type { PolicyDocument } from "../model/policyRules";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const ACCOUNT_SECRET = "fp_acct_test-owner-secret";
+const ACCOUNT_SECRET = "bask_test-owner-secret";
 const AGENTS_READ_POLICY: PolicyDocument = {
   version: 1,
   rules: [{ id: "read-agents", effect: "allow", actions: ["agents:read"] }],
 };
 const AUTH_ID = "auth_owner";
-const RUNTIME_KEY = "fp_agent_test-runtime-key";
+const RUNTIME_KEY = "bsk_stage-runtime-key";
 
 const roleTest = () => convexTest(schema, modules);
 
@@ -120,7 +121,7 @@ async function seed(t: T): Promise<Seeded> {
       projectSlug: "demo-app",
       stageSlug: "production",
       apiKeyHash: await sha256Hex(RUNTIME_KEY),
-      keyHint: "fp_agent_...-key",
+      keyHint: "bsk_...-key",
       apiKeyCiphertext: "ct",
       apiKeyIv: "iv",
       apiKeyTag: "tag",
@@ -137,7 +138,7 @@ async function seed(t: T): Promise<Seeded> {
 }
 
 describe("POST /v1/account/assume-role", () => {
-  test("account secret mints a working fp_sts_ session", async () => {
+  test("account key mints a working bsts_ session", async () => {
     const t = roleTest();
     const seeded = await seed(t);
     const roleId = await createRole(t, seeded);
@@ -148,7 +149,7 @@ describe("POST /v1/account/assume-role", () => {
       token: string;
       expiresAt: string;
     };
-    expect(body.token.startsWith("fp_sts_")).toBe(true);
+    expect(body.token.startsWith("bsts_")).toBe(true);
     expect(Date.parse(body.expiresAt)).toBeGreaterThan(Date.now());
 
     const agents = await t.fetch("/v1/agents", {
@@ -193,7 +194,7 @@ describe("role sessions on config-plane routes", () => {
     const t = roleTest();
     const seeded = await seed(t);
     const roleId = await createRole(t, seeded);
-    const token = "fp_sts_expired-token";
+    const token = "bsts_expired-token";
     const tokenHash = await sha256Hex(token);
     await t.run(async (ctx) => {
       await ctx.db.insert("roleSessions", {
@@ -242,5 +243,31 @@ describe("role sessions on config-plane routes", () => {
     // Sessions cannot chain into new sessions.
     const chained = await assumeRole(t, token, { roleId: roleId });
     expect(chained.status).toBe(401);
+  });
+});
+
+describe("POST /v1/roles", () => {
+  test("rejects the retired tools:write action with a 400", async () => {
+    const t = roleTest();
+    await seed(t);
+
+    const response = await t.fetch("/v1/roles", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCOUNT_SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "tool-writer",
+        policy: {
+          version: 1,
+          rules: [{ id: "tools", effect: "allow", actions: ["tools:write"] }],
+        },
+      }),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as ApiErrorBody;
+    expect(body.error.message).toContain("actions[] must be one of");
+    expect(body.error.message).not.toContain("tools:");
   });
 });

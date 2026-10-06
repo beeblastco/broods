@@ -8,10 +8,7 @@ import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
 import { createAccountSecret, sha256Hex } from "../../model/accountSecrets";
 import { roleDenial, rolePrincipal } from "../../model/apiAuthorization";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import {
   auditActorForAuth,
@@ -23,7 +20,9 @@ import {
   requireAdminAuth,
   requireSelfAccount,
   writeAudit,
+  type ConfigAuth,
 } from "./shared";
+import { ClientError } from "../../model/clientError";
 
 type AccountHttpRoute =
   | { kind: "self" }
@@ -33,9 +32,12 @@ type AccountHttpRoute =
   | { kind: "adminRotate"; accountId: string }
   | { kind: "adminUnknown" };
 
+const MAX_AUDIT_RETENTION_DAYS = 3650;
+
 type AccountUpdateInput = {
   username?: string;
   description?: string | null;
+  auditRetentionDays?: number | null;
 };
 
 /**
@@ -59,10 +61,7 @@ export async function handleAccountRoute(
       // Rotating the master secret from a session would be privilege
       // escalation, so no role policy can grant it.
       if (route.kind === "selfRotate") {
-        return jsonError(
-          403,
-          "Role sessions may not rotate the account secret",
-        );
+        return jsonError(403, "Role sessions may not rotate the account key");
       }
       const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
         type: "account",
@@ -75,12 +74,7 @@ export async function handleAccountRoute(
       if (req.method === "GET")
         return json({ account: toPublicAccount(account) });
       if (req.method === "PATCH")
-        return await updateAccountResponse(
-          ctx,
-          account._id,
-          actor,
-          await parseJsonRequest(req),
-        );
+        return await patchSelfResponse(ctx, req, accountAuth, actor);
 
       return methodNotAllowed(["GET", "PATCH"]);
     }
@@ -166,9 +160,10 @@ export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
  * @returns normalized account update input
  */
 function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   if ("config" in value)
-    throw new Error(
+    throw new ClientError(
       "Agent config must be updated through /v1/agents/{agentId}",
     );
   const normalized: AccountUpdateInput = {
@@ -183,12 +178,63 @@ function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
               : optionalString(value.description, "description"),
         }
       : {}),
+    ...(value.auditRetentionDays !== undefined
+      ? { auditRetentionDays: retentionDays(value.auditRetentionDays) }
+      : {}),
   };
   if (Object.keys(normalized).length === 0) {
-    throw new Error("Request body must include username or description");
+    throw new ClientError(
+      "Request body must include username, description or auditRetentionDays",
+    );
   }
 
   return normalized;
+}
+
+/**
+ * `PATCH /v1/account` for the caller's own account. Retention decides when
+ * ledger rows are deleted, so a role that sets `auditRetentionDays` needs
+ * audit:write on top of the account:write the route already checked.
+ */
+async function patchSelfResponse(
+  ctx: ActionCtx,
+  req: Request,
+  auth: Extract<ConfigAuth, { kind: "account" | "role" }>,
+  actor: AuditActor,
+): Promise<Response> {
+  const input = await parseJsonRequest(req);
+  if (
+    auth.kind === "role" &&
+    normalizeAccountUpdateInput(input).auditRetentionDays !== undefined
+  ) {
+    const denial = roleDenial(rolePrincipal(auth.role), req.method, {
+      type: "audit",
+    });
+    if (denial) return jsonError(403, denial);
+  }
+
+  return await updateAccountResponse(ctx, auth.account._id, actor, input);
+}
+
+/**
+ * Audit retention in whole days, or null to return to the default.
+ * @param value raw value
+ * @returns days, or null for the default
+ */
+function retentionDays(value: unknown): number | null {
+  if (value === null) return null;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_AUDIT_RETENTION_DAYS
+  ) {
+    throw new ClientError(
+      `auditRetentionDays must be an integer between 1 and ${MAX_AUDIT_RETENTION_DAYS}, or null`,
+    );
+  }
+
+  return value;
 }
 
 /**
@@ -199,7 +245,8 @@ function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
  */
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -212,14 +259,14 @@ function optionalString(value: unknown, name: string): string | undefined {
  */
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();
 }
 
 /**
- * Rotate an account secret hash and return the one-time plaintext secret.
+ * Rotate an account key: store the new hash and return the one-time plaintext.
  * @param ctx Convex action context
  * @param accountId account id to rotate
  * @returns rotate-secret response
@@ -227,7 +274,7 @@ function requireString(value: unknown, name: string): string {
 async function rotateAccountSecretResponse(
   ctx: ActionCtx,
   accountId: string,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   const existing = await getAccountById(ctx, accountId);
   if (!existing) return jsonError(404, "Account not found");
@@ -246,7 +293,7 @@ async function rotateAccountSecretResponse(
       actor: actor,
       action: "secret-rotated",
       resource: { kind: "account", id: existing._id, name: updated.username },
-      summary: "Account secret rotated",
+      summary: "Account key rotated",
     });
   }
 
@@ -265,6 +312,9 @@ function toPublicAccount(account: Doc<"accounts">): Record<string, unknown> {
     username: account.username,
     ...(account.description ? { description: account.description } : {}),
     status: account.status,
+    ...(account.auditRetentionDays !== undefined
+      ? { auditRetentionDays: account.auditRetentionDays }
+      : {}),
     createdAt: new Date(account.createdAt).toISOString(),
     updatedAt: new Date(account.updatedAt).toISOString(),
   };
@@ -279,7 +329,7 @@ function toPublicAccount(account: Doc<"accounts">): Record<string, unknown> {
 async function updateAccountResponse(
   ctx: ActionCtx,
   accountId: string,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: unknown,
 ): Promise<Response> {
   const existing = await getAccountById(ctx, accountId);
@@ -290,6 +340,9 @@ async function updateAccountResponse(
     ...(patch.username !== undefined ? { username: patch.username } : {}),
     ...(patch.description !== undefined
       ? { description: patch.description }
+      : {}),
+    ...(patch.auditRetentionDays !== undefined
+      ? { auditRetentionDays: patch.auditRetentionDays }
       : {}),
   });
   const updated: Doc<"accounts"> | null = await ctx.runQuery(

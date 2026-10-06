@@ -2,6 +2,7 @@
 
 /** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { cn } from "@/app/lib/utils";
@@ -14,7 +15,6 @@ import {
   Folder,
   FolderOpen,
   FolderUp,
-  Loader2,
   Pencil,
   RefreshCw,
   Trash2,
@@ -23,6 +23,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProps } from "react-file-icon";
 import { FileIcon, defaultStyles } from "react-file-icon";
+import { toErrorMessage } from "@/app/lib/errors";
 
 type FileRecord = {
   _id?: Id<"workspaceFiles">;
@@ -70,7 +71,6 @@ export function WorkspaceFilesTab({
   const removeFolderMut = useMutation(api.workspace.files.removeFolder);
   const renameMut = useMutation(api.workspace.files.rename);
   const listRuntimeFiles = useAction(api.workspace.filesPublic.list);
-  const migrateLegacyFiles = useAction(api.workspace.filesPublic.migrateLegacy);
   const uploadRuntimeFile = useAction(api.workspace.filesPublic.upload);
   const removeRuntimePath = useAction(api.workspace.filesPublic.remove);
   const renameRuntimePath = useAction(api.workspace.filesPublic.rename);
@@ -148,9 +148,8 @@ export function WorkspaceFilesTab({
       });
     }
     const request = ++refreshRequestRef.current;
-    const pending = migrateLegacyFiles({
+    const pending = listRuntimeFiles({
       projectId: projectId,
-      nodeId: nodeId,
       workspaceId: workspaceId,
     });
     refreshPromiseRef.current = pending;
@@ -162,11 +161,7 @@ export function WorkspaceFilesTab({
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load workspace files.",
-        );
+        setError(toErrorMessage(err));
         if (!cached) setRuntimeFiles([]);
       })
       .finally(() => {
@@ -177,14 +172,7 @@ export function WorkspaceFilesTab({
     return () => {
       cancelled = true;
     };
-  }, [
-    applyRuntimeFiles,
-    cacheKey,
-    migrateLegacyFiles,
-    nodeId,
-    projectId,
-    workspaceId,
-  ]);
+  }, [applyRuntimeFiles, cacheKey, listRuntimeFiles, projectId, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -229,11 +217,7 @@ export function WorkspaceFilesTab({
           });
           await refreshRuntimeFiles(false, true);
         } catch (err) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Failed to delete workspace path.",
-          );
+          setError(toErrorMessage(err));
           await refreshRuntimeFiles(false, true);
         }
 
@@ -374,7 +358,7 @@ export function WorkspaceFilesTab({
               mimeType: file.type || undefined,
             });
           } catch (err) {
-            entryError = err instanceof Error ? err.message : "Upload failed.";
+            entryError = toErrorMessage(err);
           } finally {
             setUploading((prev) => {
               const next = new Set(prev);
@@ -387,7 +371,7 @@ export function WorkspaceFilesTab({
         if (entryError) setError(entryError);
         if (workspaceId) await refreshRuntimeFiles(false, true);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Upload failed.");
+        setError(toErrorMessage(err));
         // The folder-creation path can fail before the loop starts; clear
         // every pending path so no row is left spinning forever.
         setUploading((prev) => {
@@ -497,17 +481,17 @@ export function WorkspaceFilesTab({
           });
           await refreshRuntimeFiles(false, true);
         } catch (err) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Failed to rename workspace path.",
-          );
+          setError(toErrorMessage(err));
           await refreshRuntimeFiles(false, true);
         }
 
         return;
       }
-      await renameMut({ fileId: node._id!, newName: newName });
+      try {
+        await renameMut({ fileId: node._id!, newName: newName });
+      } catch (err) {
+        setError(toErrorMessage(err));
+      }
     },
     [
       applyRuntimeFiles,
@@ -538,54 +522,51 @@ export function WorkspaceFilesTab({
       {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-end gap-0.5 px-3 py-2">
         {workspaceId && (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            className="cursor-pointer disabled:cursor-not-allowed"
-            title="Refresh workspace files"
-            disabled={isRefreshing}
-            onClick={(e) => {
-              e.stopPropagation();
-              void refreshRuntimeFiles(true, true).catch((err) => {
-                setError(
-                  err instanceof Error
-                    ? err.message
-                    : "Failed to refresh workspace files.",
-                );
-              });
-            }}
-          >
-            <RefreshCw
-              className={cn("size-3.5", isRefreshing && "animate-spin")}
-            />
-          </Button>
+          <IconTooltip label="Refresh workspace files">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="cursor-pointer"
+              disabled={isRefreshing}
+              onClick={(e) => {
+                e.stopPropagation();
+                void refreshRuntimeFiles(true, true).catch((err) => {
+                  setError(toErrorMessage(err));
+                });
+              }}
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
+          </IconTooltip>
         )}
         {canWrite && (
           <>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="cursor-pointer"
-              title="Upload files"
-              onClick={(e) => {
-                e.stopPropagation();
-                fileInputRef.current?.click();
-              }}
-            >
-              <Upload className="size-3.5" />
-            </Button>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="cursor-pointer"
-              title="Upload folder"
-              onClick={(e) => {
-                e.stopPropagation();
-                folderInputRef.current?.click();
-              }}
-            >
-              <FolderUp className="size-3.5" />
-            </Button>
+            <IconTooltip label="Upload files">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+              >
+                <Upload className="size-3.5" />
+              </Button>
+            </IconTooltip>
+            <IconTooltip label="Upload folder">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  folderInputRef.current?.click();
+                }}
+              >
+                <FolderUp className="size-3.5" />
+              </Button>
+            </IconTooltip>
           </>
         )}
       </div>
@@ -626,7 +607,7 @@ export function WorkspaceFilesTab({
       <div className="flex-1 overflow-y-auto">
         {files === undefined ? (
           <div className="flex items-center justify-center py-10">
-            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Loading…</span>
           </div>
         ) : tree.length === 0 && uploading.size === 0 ? (
           <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
@@ -674,7 +655,7 @@ export function WorkspaceFilesTab({
                   key={`uploading-${path}`}
                   className="flex h-5.5 items-center gap-1.5 pl-5 text-xs text-muted-foreground"
                 >
-                  <Loader2 className="size-3 animate-spin" />
+                  <Upload className="size-3" />
                   <span className="truncate font-mono">{name}</span>
                 </div>
               );
@@ -876,7 +857,7 @@ async function readAllEntries(
   reader: FileSystemDirectoryReader,
 ): Promise<FileSystemEntry[]> {
   const all: FileSystemEntry[] = [];
-  while (true) {
+  for (;;) {
     const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
       reader.readEntries(resolve, reject);
     });
@@ -1062,34 +1043,36 @@ function TreeRow({
             )}
           >
             {isUploading ? (
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              <Upload className="size-3.5 text-muted-foreground" />
             ) : canWrite ? (
               <>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className="size-5 cursor-pointer"
-                  title="Rename"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRenameStart(node.path);
-                  }}
-                >
-                  <Pencil className="size-3.5" />
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  tone="destructive"
-                  className="size-5 cursor-pointer"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(node);
-                  }}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                <IconTooltip label={`Rename ${node.name}`}>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="size-5 cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRenameStart(node.path);
+                    }}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                </IconTooltip>
+                <IconTooltip label={`Delete ${node.name}`}>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    tone="destructive"
+                    className="size-5 cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(node);
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </IconTooltip>
               </>
             ) : null}
           </span>

@@ -18,12 +18,14 @@ import {
 
 export const CODEX_HARNESS_VERSION = VERSION;
 
+/** Builds the Codex adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createCodexAdapter(
   settings?: CodexHarnessSettings,
 ): HarnessAgentAdapter {
   return createCodex(settings);
 }
 
+/** Builds the Codex adapter from an agent config; the adapter registry calls it for `harness.type` codex. */
 export function createConfiguredCodexAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

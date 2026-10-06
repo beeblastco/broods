@@ -6,7 +6,7 @@
 
 A serverless, multi-account AI agent harness built on Bun and AWS data-plane services. Configure agents, connect them to Telegram, Discord, Slack, Matrix, GitHub, and more, and run them with your own model keys.
 
-This is the open-source engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
+This is the source-available engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
 
 > [!WARNING]
 > **Pre-release.**
@@ -23,7 +23,7 @@ This is the open-source engine behind [Broods](https://github.com/beeblastco). T
 - **Container agent runtime.** One Bun container handles account management, streaming agent execution, webhooks, async work, and cron runs behind the gateway.
 - **Multi-tenant.** Each account has its own encrypted config, hashed API secret, and isolated data.
 - **Bring your own model.** Google, OpenAI, AWS Bedrock, Vercel AI Gateway, or custom providers via the Vercel AI SDK.
-- **Multi-channel.** Telegram, Discord, Slack, Matrix, GitHub, Facebook Messenger (Pancake), and Zalo are built in.
+- **Multi-channel.** Telegram, Discord, Slack, Matrix, GitHub, Linear, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Facebook Messenger and Instagram DMs are built in.
 - **Extensible.** Skills, subagents, workspaces, sandboxes, cron jobs, async tools, and custom uploaded tools.
 
 ---
@@ -59,10 +59,10 @@ broods stage create staging --from development   # clone a stage to work on
 broods stage use staging
 ```
 
-See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough,
-and the [CLI reference](apps/docs/docs/cli.md) for every command.
+See the [Quickstart](apps/docs/docs/quickstart.md) for the full walkthrough,
+and the [CLI reference](apps/docs/docs/reference/cli.md) for every command.
 
-For self-hosted deployments, see the [Deployment guide](apps/docs/docs/deployment.md).
+For self-hosted deployments, see the [Self-hosting guide](apps/docs/docs/internals/self-hosting.md).
 
 ---
 
@@ -72,10 +72,11 @@ After deploying, try the runnable demos in `packages/demos/`:
 
 ```bash
 bun run --filter broods build   # once, from repo root
-cp packages/demos/.env.example packages/demos/.env.local
+cp packages/demos/.env.example packages/demos/basic-stream/.env.local
 cd packages/demos/basic-stream && bun run start
-cd packages/demos/basic-async && bun run start
 ```
+
+Bun reads `.env.local` from the folder a demo runs in, so each demo needs its own copy.
 
 See `packages/demos/README.md` for the full list of demos and setup steps.
 
@@ -83,11 +84,13 @@ See `packages/demos/README.md` for the full list of demos and setup steps.
 
 ## Documentation
 
-- [Getting Started](apps/docs/docs/getting-started.md). Install the CLI, define your first agent, and run it in 5 minutes.
-- [Resource Configuration](apps/docs/docs/resources.md). Full reference for `defineAgent`, `defineSandbox`, channels, skills, tools, and cron jobs.
-- [SDK & Runtime API](apps/docs/docs/sdk.md). Typed SDK usage, curl equivalents, and WebSocket streaming.
-- [Architecture](apps/docs/docs/architecture.md). How the platform works.
-- [Deployment](apps/docs/docs/deployment.md). SST, secrets, and CI/CD.
+The docs have two parts. User docs are for building agents on Broods. Internals are for working on Broods itself.
+
+- [Quickstart](apps/docs/docs/quickstart.md). Deploy an agent, chat with it, and call it from code in five minutes.
+- [Concepts](apps/docs/docs/concepts.md). Projects, stages, resources, runs and credentials.
+- [Configuration](apps/docs/docs/reference/configuration.md). Every `define*` helper and its fields.
+- [SDK](apps/docs/docs/reference/sdk.md) and [HTTP API](apps/docs/docs/reference/http-api.md). Calling agents from code.
+- [Internals](apps/docs/docs/internals/index.md). Architecture, self-hosting, operations and CI/CD.
 - [API Reference](apps/docs/docs/api-reference/openapi.yaml). OpenAPI spec.
 
 Preview the docs locally:
@@ -126,5 +129,5 @@ CI runs on every PR via `.github/workflows/ci.yaml`.
 
 ## License
 
-Core server and application code is licensed under [FSL-1.1-Apache-2.0](LICENSE.md).
+Core server and application code is licensed under [FSL-1.1-Apache-2.0](LICENSE.md): source-available now, and each release becomes Apache 2.0 two years after it ships.
 The `broods` npm package in `packages/broods` is licensed separately under MIT.

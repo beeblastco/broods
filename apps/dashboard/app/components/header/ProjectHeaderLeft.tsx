@@ -10,11 +10,11 @@ export function ProjectHeaderLeft(): React.JSX.Element {
 
   return (
     <>
-      <div className="h-4 w-px bg-border" />
+      <div className="h-4 w-px shrink-0 bg-border" />
       <ProjectSelector />
       {hasProject && (
         <>
-          <div className="h-4 w-px bg-border" />
+          <div className="h-4 w-px shrink-0 bg-border" />
           <StageSelector />
         </>
       )}

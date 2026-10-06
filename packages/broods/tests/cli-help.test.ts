@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -20,9 +20,11 @@ afterEach(async () => {
 
 async function runCli(
   args: string[],
+  envLocal = "",
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const cwd = await mkdtemp(join(tmpdir(), "broods-help-"));
   workdirs.push(cwd);
+  if (envLocal) await writeFile(join(cwd, ".env.local"), envLocal);
   const proc = Bun.spawn({
     cmd: [process.execPath, CLI, ...args],
     cwd: cwd,
@@ -53,6 +55,45 @@ test("the bare CLI lists commands and points at per-command help", async () => {
   expect(result.stdout).toContain("Run `broods <command> --help`");
   // Subcommands belong to the command's own page, not the top-level list.
   expect(result.stdout).not.toContain("org create");
+});
+
+test("the bare CLI shows where the next command acts, read from .env.local", async () => {
+  const result = await runCli(
+    [],
+    "BROODS_PROJECT=my-app\nBROODS_STAGE=staging\n",
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("project  my-app");
+  expect(result.stdout).toContain("stage    staging");
+  expect(result.stdout).toContain("broods dev");
+});
+
+test("deploy help names production even when another stage is selected", async () => {
+  const result = await runCli(
+    ["deploy", "--help"],
+    "BROODS_PROJECT=my-app\nBROODS_STAGE=staging\n",
+  );
+
+  expect(result.stdout).toContain(
+    "my-app → production  (ignores stage staging)",
+  );
+});
+
+test("deploy help adds no note when no stage is selected", async () => {
+  const result = await runCli(["deploy", "--help"], "BROODS_PROJECT=my-app\n");
+
+  expect(result.stdout).toContain("my-app → production");
+  expect(result.stdout).not.toContain("ignores stage");
+});
+
+test("a grouped command with no subcommand leads its page with the target", async () => {
+  const result = await runCli(
+    ["env"],
+    "BROODS_PROJECT=my-app\nBROODS_STAGE=qa\n",
+  );
+
+  expect(result.stdout).toContain("my-app → qa");
 });
 
 test.each(["org", "stage", "env", "agent"])(

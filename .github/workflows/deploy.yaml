@@ -16,6 +16,7 @@ on:
       - "apps/dashboard/**"
       - ".github/workflows/deploy-docs.yaml"
       - "**/*.md"
+  # checkov:skip=CKV_GHA_7:The stage selects the deployment target; source is pinned to the triggering ref and stage is passed through an environment variable.
   workflow_dispatch:
     inputs:
       stage:
@@ -26,6 +27,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+
+# Each job grants only the token permissions it needs.
+permissions: {}
 
 jobs:
   validate:
@@ -44,10 +48,10 @@ jobs:
       PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 
@@ -74,8 +78,11 @@ jobs:
     # Resolves CONVEX_URL/CONVEX_DEPLOY_KEY from the matching environment:
     # production (prod Convex) on main, development (dev Convex) otherwise.
     environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.event.inputs.stage || '', 'production')) && 'production' || 'development' }}
+    # One lock per SST stage, shared with drift-cleanup.yaml, so a drift
+    # reconcile never runs against a stage mid-deploy. Every production-*
+    # stage shares one key because stage=production deploys all of them.
     concurrency:
-      group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
+      group: sst-${{ startsWith(inputs.stage || (github.ref == 'refs/heads/main' && 'production' || 'dev'), 'production') && 'production' || inputs.stage || 'dev' }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -113,7 +120,7 @@ jobs:
       # workflow bootstraps the region by running one repo-only SST deploy, mirroring the
       # source image, then running the final deploy with sandbox functions enabled.
       # Dev falls back to the legacy repo-wide SANDBOX_IMAGE_READY for backward compatibility.
-      # See docs/workspace/sandbox/lambda.md.
+      # See apps/docs/docs/internals/ci-cd.md.
       SANDBOX_IMAGE_READY_DEV: ${{ vars.SANDBOX_IMAGE_READY_DEV || vars.SANDBOX_IMAGE_READY || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
@@ -132,6 +139,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # Stage names become SST state keys and lines in GITHUB_ENV.
+          if [[ -n "${INPUT_STAGE:-}" && ! "$INPUT_STAGE" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            echo "Invalid SST stage name." >&2
+            exit 1
+          fi
+          case "${INPUT_STAGE:-}" in
+            production|production-eu-west-1|production-us-east-1|production-ap-southeast-1) ;;
+            production*) echo "Unsupported production stage." >&2; exit 1 ;;
+          esac
 
           sandbox_ready_for_region() {
             case "$1" in
@@ -167,6 +184,10 @@ jobs:
             if [[ -z "${target_stage:-}" ]]; then
               continue
             fi
+            if [[ "$target_stage" == production* && "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "Stage $target_stage deploys only from main (this run is on $GITHUB_REF). Promote to main first." >&2
+              exit 1
+            fi
             if [[ -z "${target_region:-}" ]]; then
               echo "Missing AWS region for stage: $target_stage" >&2
               exit 1
@@ -191,15 +212,15 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
@@ -208,7 +229,7 @@ jobs:
         run: bun install --ignore-scripts --no-save
 
       - name: Setup crane
-        uses: imjasonh/setup-crane@v0.7
+        uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
       - name: Clear stale SST deploy lock
         shell: bash
@@ -226,6 +247,9 @@ jobs:
       - name: Deploy SST app
         working-directory: apps/core
         shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
 
@@ -250,6 +274,37 @@ jobs:
               echo "Deploy failed, retrying in 15s..."
               sleep 15
             done
+          }
+
+          # The hosted MCP runtime on Cloudflare Dynamic Workers, named and
+          # pointed at the bundle bucket by the target's SST outputs. Code only:
+          # infra owns its MCP_API_KEY secret, which survives each deploy. Its
+          # R2 bucket (wrangler.jsonc) only caches S3 bundles, so each deploy
+          # sets its 30-day expiry (r2-lifecycle.json) and every copy is
+          # refetched from S3 after that.
+          # Production stays on Lambda until infra routes production core to it.
+          # A failure only warns, so it never stops the remaining SST targets.
+          deploy_mcp_worker() {
+            local target_stage="$1"
+            local target_region="$2"
+            if [[ "$target_stage" == production* || -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+              echo "Cloudflare MCP runtime not deployed for $target_stage; skipping."
+              return 0
+            fi
+            local worker bundles
+            if ! worker="$(jq -er .cloudflareMcpWorkerName .sst/outputs.json)" ||
+              ! bundles="$(jq -er .toolBundlesBucketName .sst/outputs.json)"; then
+              echo "::warning::SST outputs missing for $target_stage; Cloudflare MCP runtime not deployed"
+              return 0
+            fi
+            if ! (cd ../cloudflare-mcp &&
+              { bunx wrangler r2 bucket info broods-mcp-bundles >/dev/null 2>&1 ||
+                bunx wrangler r2 bucket create broods-mcp-bundles; } &&
+              bunx wrangler r2 bucket lifecycle set broods-mcp-bundles --file r2-lifecycle.json --force &&
+              bunx wrangler deploy --name "$worker" \
+                --var "BUNDLE_ORIGIN:https://${bundles}.s3.${target_region}.amazonaws.com"); then
+              echo "::warning::Cloudflare MCP runtime deploy failed for $worker"
+            fi
           }
 
           ecr_login() {
@@ -304,4 +359,5 @@ jobs:
             fi
 
             deploy_target "$target_stage" "$target_region" "$target_sandbox_ready"
+            deploy_mcp_worker "$target_stage" "$target_region"
           done <<< "$DEPLOY_TARGETS"

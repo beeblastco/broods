@@ -2,12 +2,62 @@
 
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { Attachment, StreamOptions } from "chat";
+import { z } from "zod";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
+import { logWarn, redactSensitiveText } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
+import { getObservabilityContext } from "./otel.ts";
 
 /** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
+
+// What a Retry tap or typed reply sends after a failed run.
+const RETRY_REPLY = "Retry";
+
+// The id an ask_questions button carries back: statusId, question, option.
+// 53 bytes at most, under Telegram's 64-byte callback_data cap.
+const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
+
+// A provider error saying the conversation no longer fits what the model takes
+// per request, whether the context window or a per-minute token cap.
+const CONTEXT_LIMIT_PATTERN =
+  /request too large|context (length|window)|prompt is too long|input is too long|exceeds the maximum number of tokens/i;
+
+// The fix to append to any other provider error, first match wins. A provider
+// that already says when to retry ("try again in 37s", "later") gets no hint,
+// so that entry stays ahead of the quota and rate limit ones.
+const ERROR_HINTS: [RegExp, string | null][] = [
+  [/\b(try|retry) (again )?(in \d|later)/i, null],
+  [
+    /usage limit|quota|insufficient (balance|.*credit)|credit balance|purchase credits|upgrade your (token )?plan/i,
+    "Add credits or upgrade the plan with the model provider.",
+  ],
+  [
+    /rate.?limit|\b429\b|too many requests|overloaded/i,
+    "Try again in a moment.",
+  ],
+  [/\btimed? ?out\b|\betimedout\b|\beconnreset\b/i, "Try again."],
+];
+
+// Channels whose plain messages are parsed for slash commands like /new.
+const INLINE_COMMAND_CHANNELS = new Set([
+  "discord",
+  "gchat",
+  "instagram",
+  "matrix",
+  "messenger",
+  "slack",
+  "teams",
+  "telegram",
+  "twilio",
+  "whatsapp",
+  "zalo",
+]);
+
+// Any JSON object. Fields stay as the provider sent them, nulls included; each
+// adapter reads what it needs through its own payload type.
+const WEBHOOK_BODY = z.looseObject({});
 
 export type ChannelIngressEvent =
   | UserModelMessage
@@ -38,6 +88,9 @@ export interface ChannelActions {
   // Providers without one omit it and the numbered `text` goes out as plain
   // text, answered by a reply.
   sendQuestions?(prompt: ChannelQuestionPrompt): Promise<void>;
+  // Optional buttons under a message; a tap arrives as the person sending that
+  // reply. Providers without them omit it and the reply is spelled out instead.
+  sendReplyButtons?(text: string, replies: string[]): Promise<void>;
   // Optional provider-native sticker delivery. Providers decide whether the
   // value is a sticker id, file id, or public URL.
   sendSticker?(sticker: string): Promise<void>;
@@ -60,7 +113,6 @@ export interface ChannelQuestion {
   header: string;
   question: string;
   options: ChannelQuestionOption[];
-  allowFreeText?: boolean;
 }
 
 /** A button click on a posted question, by position. */
@@ -127,12 +179,12 @@ export interface InboundMessage {
   /**
    * Pictures, documents, voice notes and videos that arrived with the message, in
    * the wide Chat SDK attachment shape because inbound is whatever the provider
-   * sent. Adapters name the attachment and leave the bytes alone: parsing runs
-   * before the webhook is acknowledged, so downloading there would hold the
-   * provider's connection open for the length of a video. `fetchData` is the
-   * adapter's own authenticated reader (Telegram resolves a file id through
-   * getFile and signs the download with the bot token; Slack sends a bearer header
-   * for a private file), called once the turn is already running.
+   * sent. Adapters name the attachment and leave the bytes alone, so parsing
+   * stays cheap. `fetchData` is the adapter's own authenticated reader (Telegram
+   * resolves a file id through getFile and signs the download with the bot token;
+   * Slack sends a bearer header for a private file). `ingestChannelAttachments`
+   * calls it after parse and before admission, inside the ACK budget, so a
+   * queued turn still carries its media.
    */
   attachments?: Attachment[];
   events?: ChannelIngressEvent[];
@@ -155,6 +207,14 @@ export interface ParsedChannelContext {
   ack?: ChannelResponse;
 }
 
+// Several turns in one delivery, when a provider batches them into one POST.
+// Each runs on its own, in order; `ack` answers the whole delivery.
+export interface ParsedChannelBatch {
+  kind: "batch";
+  results: Array<ParsedChannelMessage | ParsedChannelContext>;
+  ack?: ChannelResponse;
+}
+
 export interface ParsedChannelCleanup {
   kind: "cleanup";
   channelName: string;
@@ -170,12 +230,25 @@ export interface ParsedChannelCleanup {
 export type ChannelParseResult =
   | ParsedChannelMessage
   | ParsedChannelContext
+  | ParsedChannelBatch
   | ParsedChannelCleanup
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
 
+/** A verified webhook body, or the ignore an adapter returns when it is not a JSON object. */
+export type ChannelWebhookBody<T> =
+  | { kind: "payload"; payload: T }
+  | { kind: "ignore"; reason: "invalid_payload" };
+
 export interface ChannelAdapter {
   readonly name: string;
+  /**
+   * Set when one provider app can serve several agents and every entry of a
+   * delivery names its owner (a WhatsApp number, a Page, an Instagram account). Each agent whose
+   * credentials verify the delivery parses it and keeps only its own entries.
+   * Unset, the lowest verifying agentId takes the whole delivery.
+   */
+  readonly routesEachEntry?: true;
   canHandle(req: ChannelRequest): boolean;
   authenticate(req: ChannelRequest): boolean | Promise<boolean>;
   /**
@@ -251,6 +324,37 @@ export function channelAttachmentName(
     : `file${attachment.type === "image" ? ".png" : ""}`;
 }
 
+/**
+ * Splits a reply into pieces a provider with a hard length cap accepts, never
+ * inside a surrogate pair. Zalo and Twilio send each piece as its own message.
+ */
+export function chunkChannelText(text: string, limit: number): string[] {
+  if (text.length === 0) {
+    return [""];
+  }
+
+  const chunks: string[] = [];
+  for (let offset = 0; offset < text.length;) {
+    let end = Math.min(offset + limit, text.length);
+    const previousCodeUnit = text.charCodeAt(end - 1);
+    const nextCodeUnit = text.charCodeAt(end);
+    if (
+      end < text.length &&
+      previousCodeUnit >= 0xd800 &&
+      previousCodeUnit <= 0xdbff &&
+      nextCodeUnit >= 0xdc00 &&
+      nextCodeUnit <= 0xdfff
+    ) {
+      // Never split a pair; when it alone is wider than the limit, keep it whole.
+      end = end - 1 > offset ? end - 1 : end + 1;
+    }
+    chunks.push(text.slice(offset, end));
+    offset = end;
+  }
+
+  return chunks;
+}
+
 export function extractText(content: UserContent): string {
   if (typeof content === "string") return content;
 
@@ -262,8 +366,33 @@ export function extractText(content: UserContent): string {
     .join("");
 }
 
-export function formatChannelErrorText(error: string): string {
-  return `⚠️ ${simplifyErrorText(error)}`;
+/**
+ * The chat line for a failed turn. Pass the channel so a fix that needs a slash
+ * command is only offered where the channel parses one.
+ */
+export function formatChannelErrorText(
+  error: string,
+  channelName?: string,
+): string {
+  return `⚠️ ${simplifyErrorText(error, supportsInlineCommands(channelName))}`;
+}
+
+/**
+ * Posts a failed run's error with a way to retry it: a Retry button where the
+ * provider has buttons, a line saying to reply "retry" everywhere else. Either
+ * way the retry is a normal message, so the next turn picks up the kept work.
+ */
+export async function sendChannelFailure(
+  channel: ChannelActions,
+  text: string,
+): Promise<void> {
+  if (channel.sendReplyButtons) {
+    await channel.sendReplyButtons(text, [RETRY_REPLY]);
+    return;
+  }
+  await channel.sendText(
+    `${text}\nReply "${RETRY_REPLY.toLowerCase()}" to try again.`,
+  );
 }
 
 /**
@@ -283,6 +412,63 @@ export function isAllowedId(
 }
 
 /**
+ * Adapters call this in `parse`, after `authenticate`, instead of a bare
+ * `JSON.parse`. A malformed or non-object body is logged without its content
+ * and comes back as an `invalid_payload` ignore the adapter returns as is.
+ */
+export function parseChannelWebhookBody<T extends object>(
+  channel: string,
+  body: string,
+): ChannelWebhookBody<T> {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    logWarn("Channel webhook body rejected", {
+      channel: channel,
+      reason: "malformed_json",
+    });
+
+    return { kind: "ignore", reason: "invalid_payload" };
+  }
+  const result = WEBHOOK_BODY.safeParse(json);
+  if (!result.success) {
+    logWarn("Channel webhook body rejected", {
+      channel: channel,
+      reason: result.error.issues[0]?.message ?? "not_an_object",
+    });
+
+    return { kind: "ignore", reason: "invalid_payload" };
+  }
+
+  // The one cast: the object is the provider payload the adapter's type describes.
+  return { kind: "payload", payload: result.data as T };
+}
+
+/** The click a button id stands for; undefined when it is not a question button. */
+export function parseQuestionButtonId(
+  id: string | undefined,
+): ChannelQuestionAnswer | undefined {
+  const match = QUESTION_BUTTON_PATTERN.exec(id ?? "");
+  if (!match) return undefined;
+
+  return {
+    statusId: match[1]!,
+    questionIndex: Number(match[2]),
+    optionIndex: Number(match[3]),
+  };
+}
+
+/** The id a channel puts on one ask_questions option button. */
+export function questionButtonId(
+  statusId: string,
+  questionIndex: number,
+  optionIndex: number,
+): string {
+  return `q:${statusId}:${questionIndex}:${optionIndex}`;
+}
+
+/**
  * No list stays null, which the reach gate reads as open. An empty `Set` means
  * the opposite, so the distinction cannot be dropped at the call site.
  */
@@ -290,27 +476,35 @@ export function reachSet(ids: string[] | undefined): Set<string> | null {
   return ids ? new Set(ids) : null;
 }
 
-// Provider/runtime errors reach the chat raw and ugly ("Failed after 3 attempts.
-// Last error: Token Plan usage limit reached … (2056)"). Strip the retry wrapper
-// and map the common conditions to one short, actionable line; otherwise pass the
-// cleaned message through so unexpected errors are still legible.
-function simplifyErrorText(raw: string): string {
-  const afterRetry = raw.match(/Last error:\s*(.+)$/is);
-  let message = (afterRetry?.[1] ?? raw).trim();
-  if (
-    /usage limit|quota|insufficient.*credit|purchase credits|upgrade your (token )?plan/i.test(
-      message,
-    )
-  ) {
-    return "Usage limit reached. Add credits or upgrade your plan, then try again.";
-  }
-  if (/rate.?limit|\b429\b|too many requests/i.test(message)) {
-    return "The model is busy right now. Try again in a moment.";
-  }
-  if (/timed? ?out|etimedout|econnreset|network/i.test(message)) {
-    return "The request timed out. Try again.";
-  }
-  message = message.replace(/\s*\(\d{3,}\)\s*$/, "").trim(); // drop trailing provider codes like (2056)
+/** Whether plain messages on this channel are parsed for slash commands. */
+export function supportsInlineCommands(
+  channelName: string | undefined,
+): boolean {
+  return channelName !== undefined && INLINE_COMMAND_CHANNELS.has(channelName);
+}
 
-  return message || "Something went wrong while generating a reply. Try again.";
+// Provider/runtime errors reach the chat wrapped ("Failed after 6 attempts. Last
+// error: AI_APICallError: Request too large for gpt-6-luna in organization …").
+// Keep the provider's own reason so the chat says what actually failed, drop the
+// wrappers, OpenAI's org id and docs link, and add the one step that fixes it.
+function simplifyErrorText(raw: string, commands: boolean): string {
+  const text = redactSensitiveText(
+    raw,
+    getObservabilityContext()?.secretValues,
+  );
+  const message = (text.match(/Last error:\s*(.+)$/is)?.[1] ?? text)
+    .replace(/^AI_\w+:\s*/, "")
+    .replace(/ in organization org-[\w-]+/, "")
+    .replace(/ ?Visit https?:\/\/\S+ to learn more\./g, "")
+    .trim();
+  if (!message) {
+    return "Something went wrong while generating a reply. Try again.";
+  }
+  const hint = CONTEXT_LIMIT_PATTERN.test(message)
+    ? commands
+      ? "Send /compact to summarize the conversation, or /new to start over if that fails."
+      : "Start a new conversation to continue."
+    : ERROR_HINTS.find(([pattern]) => pattern.test(message))?.[1];
+
+  return hint ? `${message.replace(/[.!?]$/, "")}. ${hint}` : message;
 }

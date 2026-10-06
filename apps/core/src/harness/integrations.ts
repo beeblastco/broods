@@ -27,11 +27,14 @@ import type {
   ChannelRequest,
   ChannelResponse,
   InboundMessage,
+  ParsedChannelContext,
+  ParsedChannelMessage,
 } from "../shared/channels.ts";
 import {
   extractText,
   formatChannelErrorText,
   reachSet,
+  supportsInlineCommands,
 } from "../shared/channels.ts";
 import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
@@ -40,22 +43,27 @@ import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
 import {
   applyRunOverrides,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
-  toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
   type ChannelPartition,
   type AgentConfig,
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
+import type { PrincipalLink } from "../shared/domain/principal.ts";
 import {
-  applyChannelRecord,
   channelActorRoles,
   channelRecordMatchesWorkspace,
+  channelRuntimeAgentConfig,
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
 import { getHarnessPublicUrl, optionalEnv } from "../shared/env.ts";
+import {
+  createGoogleChatChannel,
+  parseServiceAccountKey,
+} from "../shared/gchat-channel.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
+import { createInstagramChannel } from "../shared/instagram-channel.ts";
 import type { QuestionAnswer } from "../../../../packages/broods/src/websocket-contracts.ts";
 import {
   errorResponse,
@@ -63,6 +71,7 @@ import {
   methodNotAllowed,
   type CoreRequest,
 } from "../shared/http.ts";
+import { createLinearChannel } from "../shared/linear-channel.ts";
 import {
   collectSecretValues,
   logDebug,
@@ -78,6 +87,7 @@ import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
   mintTraceId,
+  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { createPancakeChannel } from "../shared/pancake-channel.ts";
@@ -99,14 +109,18 @@ import {
 } from "../shared/runtime-keys.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
+import { createMessengerChannel } from "../shared/messenger-channel.ts";
 import { createSlackChannel } from "../shared/slack-channel.ts";
 import type { AgentDeploymentScope } from "../shared/storage.ts";
 import { getStorage } from "../shared/storage.ts";
+import { createTeamsChannel } from "../shared/teams-channel.ts";
 import { createTelegramChannel } from "../shared/telegram-channel.ts";
+import { createTwilioChannel } from "../shared/twilio-channel.ts";
 import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
+import { createWhatsAppChannel } from "../shared/whatsapp-channel.ts";
 import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
   applyMessageSendingHook,
@@ -121,6 +135,8 @@ import {
   getIngressStatus,
   getIngressStatusByEventId,
   type AppliedIngress,
+  type ChannelTargetRefs,
+  type IngressConfigRef,
   type IngressMode,
   type IngressStatusRecord,
   type PublicDeploymentIngress,
@@ -133,11 +149,21 @@ import {
 import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
+// How long a channel webhook waits for admission before it acks anyway. Under
+// Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
+const CHANNEL_ACK_BUDGET_MS = 2_000;
 // Bound so one inbound webhook cannot fan out into an unbounded credential scan.
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // The single runtime entry point; sync or background is a body field.
 const RUN_PATH = "/v1/runs";
 const RUN_PATH_PREFIX = `${RUN_PATH}/`;
+
+// One receiver's reading of a delivery: an answer the provider needs right
+// away, nothing to run, or turns whose admission is still in flight.
+type ChannelReceipt =
+  | { kind: "response"; response: ChannelResponse }
+  | { kind: "ignore"; response: ChannelResponse }
+  | { kind: "accepted"; ack: ChannelResponse; admitted?: Promise<void> };
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -155,10 +181,19 @@ type ChannelTarget =
   | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
   | { kind: "unavailable" };
 
+// An agent whose channel credentials verified a delivery, with the adapter
+// that verified it and now parses it.
+interface ChannelReceiver {
+  agent: AgentRecord;
+  adapter: ChannelAdapter;
+}
+
 // With no agent in the webhook URL, "nobody configures this channel", "nobody's
 // credentials verified" and "the scan broke" are the operator's whole diagnosis.
+// A holder is one receiver, or every verifying one when the adapter
+// `routesEachEntry`.
 type ChannelCredentialHolder =
-  | { kind: "holder"; agent: AgentRecord }
+  | { kind: "holder"; receivers: ChannelReceiver[] }
   | { kind: "unconfigured"; configured: boolean }
   | { kind: "unknown-stage" }
   | { kind: "unverified" }
@@ -168,8 +203,15 @@ export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
   agentConfig: AgentConfig;
-  // Per-deployment id from the runtime key, when the request authenticated with a
-  // deployment key. Scopes realtime telemetry to the dashboard's deployment view.
+  // How a queued envelope rebuilds `agentConfig` when it runs; the stored
+  // envelope carries this, never the config. Absent on a subagent child.
+  configRef?: IngressConfigRef;
+  // Set on a subagent's run, to the config it runs on. That config derives
+  // from its parent, so no ref can rebuild it and its ref-less controls run on
+  // this.
+  subagentConfig?: AgentConfig;
+  // Per-deployment id from the runtime key, when the request authenticated with
+  // one. Scopes realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
   // Project and stage slugs from the runtime key scope, forwarded to the
   // harness so it can build NATS observability subjects for live streaming.
@@ -215,22 +257,29 @@ export interface DirectInboundEvent {
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
+  // Who asked, as the router authenticated it, or the chain of the run that
+  // sent a session message. Absent on a rebuilt envelope: nothing is guessed.
+  principalChain?: PrincipalLink[];
   // Answers to open ask_questions prompts. A request carrying these settles
   // the prompts and resumes the conversation; it runs no turn of its own.
   answers?: QuestionAnswer[];
 }
 
-/** The scope a queued envelope needs to be rebuilt into its own run. */
+/**
+ * The scope a queued envelope needs to be rebuilt into its own run. It names
+ * no config: the envelope's ref rebuilds one. Only a subagent's scope carries
+ * `subagentConfig`, for the ref-less controls of that subagent.
+ */
 export type IngressDispatchScope = Pick<
   DirectInboundEvent,
   | "accountId"
   | "agentId"
-  | "agentConfig"
   | "conversationKey"
   | "publicConversationKey"
   | "endpointId"
   | "projectSlug"
   | "stageSlug"
+  | "subagentConfig"
 >;
 
 export type DispatchAppliedIngress = (
@@ -260,7 +309,7 @@ export interface StatusInboundEvent extends StatusRunTarget {
 }
 
 // Background-job completion posted by the detached job itself. Authenticated by
-// the per-job token (matched against the stored row), so no account secret rides
+// the per-job token (matched against the stored row), so no account key rides
 // inside the sandbox.
 export interface SandboxJobCompletionInboundEvent {
   resultId: string;
@@ -287,6 +336,9 @@ export interface ChannelInboundEvent {
   channelName: string;
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
+  // The rows this turn's config came from, pinned so a later re-entry into the
+  // session rebuilds it instead of reading a stored copy.
+  channelTarget?: ChannelTargetRefs;
   channel: ChannelActions;
   channelFactory?: (source: Record<string, unknown>) => ChannelActions;
   commandToken?: string;
@@ -334,6 +386,7 @@ export interface IntegrationRoutingOptions {
     accountId: string,
     agentId: string,
   ) => Promise<AgentRecord | null>;
+  /** The production-stage agents the bare webhook URL routes to. */
   agentLister?: (accountId: string) => Promise<AgentRecord[]>;
   stageAgentLister?: (
     accountId: string,
@@ -399,7 +452,8 @@ interface HttpRoutingContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-// `endpointId` absent means the bare production URL, which scans the account.
+// `endpointId` absent means the bare production URL, which scans the account's
+// production stages.
 interface WebhookRoute {
   accountId: string;
   channelName: string;
@@ -442,7 +496,7 @@ export function createIncomingEventRouter(
   const agentLister =
     options.agentLister ??
     ((accountId: string): Promise<AgentRecord[]> =>
-      getStorage().agents.list(accountId));
+      getStorage().agents.listForProduction(accountId));
   const stageAgentLister =
     options.stageAgentLister ??
     ((accountId: string, endpointId: string): Promise<AgentRecord[]> =>
@@ -506,7 +560,9 @@ async function handleHttpRequest(
   if (method === "GET" && request.path.startsWith(RUN_PATH_PREFIX)) {
     const auth = await context.authResolver(headers);
     const account =
-      auth?.kind === "account" || auth?.kind === "deployment"
+      auth?.kind === "account" ||
+      auth?.kind === "deployment" ||
+      auth?.kind === "agent"
         ? auth.account
         : null;
     if (!account) {
@@ -543,6 +599,9 @@ async function handleHttpRequest(
           return errorResponse(403, denial.message, { code: denial.code });
         }
       }
+      if (auth?.kind === "agent" && ingress.agentId !== auth.agentId) {
+        return runTokenScopeResponse(auth.agentId);
+      }
 
       return handlers.handleStatusRequest(parsed);
     } catch (err) {
@@ -550,14 +609,18 @@ async function handleHttpRequest(
     }
   }
 
-  if (method === "GET") {
-    return jsonResponse(200, {
-      status: "ok",
-      method: "POST",
-    });
+  // A provider console may GET a webhook URL to check it is live. A GET with a
+  // query string may be a subscription handshake (Meta's `hub.challenge`), so
+  // it goes to the channels like a delivery and is answered as live when none
+  // claims it. Any other GET is a path core does not serve; `/healthz` is
+  // answered in server.ts.
+  if (method === "GET" && !(request.search && matchWebhookPath(request.path))) {
+    return matchWebhookPath(request.path)
+      ? jsonResponse(200, { status: "ok", method: "POST" })
+      : notFoundResponse();
   }
 
-  if (method !== "POST") {
+  if (method !== "GET" && method !== "POST") {
     return methodNotAllowed(["GET", "POST"]);
   }
 
@@ -668,6 +731,11 @@ async function handleHttpRequest(
     // Without an agent in the URL these three cases would all collapse into one
     // 404, so keep them apart: nothing configures the channel, something does
     // but no credentials verified, or the scan itself failed.
+    // A GET no channel claims is the liveness check, whatever its query string
+    // carries (Pancake's `?secret=`, a cache-buster).
+    if (holder.kind === "unconfigured" && method === "GET") {
+      return jsonResponse(200, { status: "ok", method: "POST" });
+    }
     if (holder.kind === "unconfigured") {
       logWarn("Webhook channel not configured by any agent", {
         accountId: account.accountId,
@@ -705,48 +773,11 @@ async function handleHttpRequest(
     if (holder.kind === "unavailable") {
       return notFoundResponse();
     }
-    const agent = holder.agent;
-
-    const accountChannelRegistry = createChannelRegistry(agent.config);
-    const accountChannel = accountChannelRegistry.webhookChannels.find(
-      (channel) =>
-        channel.name === channelName && channel.canHandle(channelRequest),
-    );
-
-    logDebug("Webhook received", {
-      accountId: account.accountId,
-      agentId: agentId,
-      channel: channelName,
-      method: request.method,
-      rawPath: request.path,
-      channelConfigured: accountChannelRegistry.webhookChannels.some(
-        (channel) => channel.name === channelName,
-      ),
-      channelMatched: !!accountChannel,
-    });
-
-    if (!accountChannel) {
-      const isConfigured = accountChannelRegistry.webhookChannels.some(
-        (channel) => channel.name === channelName,
-      );
-
-      return integrationNotConfigured(
-        isConfigured ? `Webhook ${channelName}` : channelName,
-      );
-    }
-
-    const deployment = await context.deploymentLoader(
-      account.accountId,
-      agent.agentId,
-    );
-
     return handleChannelWebhook(
-      accountChannel,
+      holder.receivers,
       channelRequest,
       handlers,
       account,
-      agent,
-      deployment,
       context,
     );
   }
@@ -756,11 +787,12 @@ async function handleHttpRequest(
   const auth = await context.authResolver(request.headers);
 
   // Scope resolution for the realtime observability gateway. The gateway calls
-  // this server-side with the client's runtime key to learn which NATS subjects
-  // and Loki/Tempo labels it may stream. Scope comes from the key, never the
-  // client, so a deployment key is required and the response is its own scope.
+  // this server-side with the client's credential to learn which NATS subjects
+  // and Loki/Tempo labels it may stream. Scope comes from the credential, never
+  // the client. Only a member's stage ticket qualifies: the embeddable runtime
+  // key sits in frontends, and logs carry every user's chats and tool payloads.
   if (isObservabilityScopePath(request.path)) {
-    if (auth?.kind !== "deployment") {
+    if (auth?.kind !== "deployment" || auth.stageTicket !== true) {
       return unauthorizedResponse();
     }
 
@@ -772,13 +804,18 @@ async function handleHttpRequest(
     });
   }
 
+  // A run token reads its own agent's runs, above. It starts none yet.
+  if (auth?.kind === "agent") {
+    return runTokenScopeResponse(auth.agentId);
+  }
+
   // Everything below dispatches a run, whatever path it arrived on. Keying
   // this on the recognized path shapes let a POST to a retired URL through.
   if (!context.directApiEnabled) {
     return directApiDisabledResponse();
   }
 
-  // A project+stage runtime key works on both /v1/runs and the scoped
+  // A runtime key works on both /v1/runs and the scoped
   // /v1/projects/{project}/stages/{stage}/agents/{endpointId} URL. When the
   // scoped path is present it must match the key's stage; the agent itself is
   // chosen by the request body's agentId and loaded against the key's account.
@@ -788,13 +825,16 @@ async function handleHttpRequest(
     }
 
     try {
-      const parsed = await parseDirectPayload(
-        request.body,
-        request.headers,
-        auth.account,
-        context,
-        auth,
-      );
+      const parsed = {
+        ...(await parseDirectPayload(
+          request.body,
+          request.headers,
+          auth.account,
+          context,
+          auth,
+        )),
+        principalChain: [{ kind: "api", keyKind: "deployment" } as const],
+      };
       if (parsed.background) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
@@ -830,7 +870,7 @@ async function handleHttpRequest(
     }
   }
 
-  // The scoped public URL only accepts a deployment key.
+  // The scoped public URL only accepts a runtime key.
   if (publicEndpoint) {
     return unauthorizedResponse();
   }
@@ -841,12 +881,15 @@ async function handleHttpRequest(
   }
 
   try {
-    const parsed = await parseDirectPayload(
-      request.body,
-      request.headers,
-      account,
-      context,
-    );
+    const parsed = {
+      ...(await parseDirectPayload(
+        request.body,
+        request.headers,
+        account,
+        context,
+      )),
+      principalChain: [{ kind: "api", keyKind: "account" } as const],
+    };
     if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -886,8 +929,9 @@ async function findChannelCredentialHolder(
 ): Promise<ChannelCredentialHolder> {
   let listed: AgentRecord[];
   try {
-    // A stage-scoped URL narrows the scan to that stage, so a sibling stage
-    // holding the same provider credentials is never a candidate.
+    // Each URL scans only its own stage: the stage URL that stage's agents, the
+    // bare URL the production stages' agents. A sibling stage holding the same
+    // provider credentials is never a candidate.
     listed = endpointId
       ? await context.stageAgentLister(accountId, endpointId)
       : await context.agentLister(accountId);
@@ -910,13 +954,12 @@ async function findChannelCredentialHolder(
   // account whose 30th agent owns the Slack app must still be reachable. Sort
   // first: the cap is applied while scanning, so ordering it afterwards would
   // still leave *which* agents were considered up to the lister.
-  const candidates: Array<{ agent: AgentRecord; adapter: ChannelAdapter }> = [];
+  const candidates: ChannelReceiver[] = [];
   let configured = false;
   let truncated = false;
   for (const candidate of [...listed].sort((left, right) =>
     left.agentId.localeCompare(right.agentId),
   )) {
-    if (candidate.status !== "active") continue;
     // Cheap key check before building any adapter: an unauthenticated caller
     // should not make us instantiate SDK clients for every agent in the account.
     if (!candidate.config.channels?.[channelName]) continue;
@@ -944,23 +987,28 @@ async function findChannelCredentialHolder(
   // Sort before authenticating. With no agent in the URL this scan is the only
   // thing choosing a receiver, so two agents sharing one provider app must not
   // resolve differently between requests. Pick the same one every time and say
-  // so, since the channel record is what disambiguates them.
+  // so, since the channel record is what disambiguates them. An adapter that
+  // `routesEachEntry` names each entry's owner itself, so every verifying
+  // agent receives the delivery and keeps its own entries.
   candidates.sort((left, right) =>
     left.agent.agentId.localeCompare(right.agent.agentId),
   );
+  const receivers: ChannelReceiver[] = [];
   for (const candidate of candidates) {
-    if (await candidate.adapter.authenticate(request)) {
-      if (candidates.length > 1) {
-        logInfo("Channel credentials matched multiple agents", {
-          accountId: accountId,
-          channel: channelName,
-          candidates: candidates.length,
-          receivingAgentId: candidate.agent.agentId,
-        });
-      }
-
-      return { kind: "holder", agent: candidate.agent };
-    }
+    if (!(await candidate.adapter.authenticate(request))) continue;
+    receivers.push(candidate);
+    if (!candidate.adapter.routesEachEntry) break;
+  }
+  if (receivers.length > 0 && candidates.length > 1) {
+    logInfo("Channel credentials matched multiple agents", {
+      accountId: accountId,
+      channel: channelName,
+      candidates: candidates.length,
+      receivingAgentIds: receivers.map((receiver) => receiver.agent.agentId),
+    });
+  }
+  if (receivers.length > 0) {
+    return { kind: "holder", receivers: receivers };
   }
 
   return candidates.length > 0
@@ -1025,8 +1073,8 @@ async function resolveChannelTarget(
   }
 
   const bound = await context.agentLoader(account.accountId, boundAgentId);
-  if (!bound || bound.status !== "active") {
-    logWarn("Channel record binds an agent that is missing or inactive", {
+  if (!bound) {
+    logWarn("Channel record binds an agent that is missing", {
       accountId: account.accountId,
       channel: channelName,
       channelRecordId: record.channelRecordId,
@@ -1116,42 +1164,88 @@ function channelReplySource(
   return adapter.applyReplyIn(message.source, replyIn);
 }
 
-/** Scope the run to this channel's own config, then layer the record over it. */
-function channelRuntimeAgentConfig(
-  target: { agent: AgentRecord; record?: ChannelRecord },
-  channelName: string,
-  credentialHolderConfig: AgentConfig,
-): AgentConfig {
-  const targetConfig = toChannelRuntimeAgentConfig(
-    target.agent.config,
-    channelName,
-  );
-  const credentialChannel = credentialHolderConfig.channels?.[channelName];
-  const config = credentialChannel
-    ? {
-        ...targetConfig,
-        channels: {
-          ...targetConfig.channels,
-          [channelName]: credentialChannel,
-        },
-      }
-    : targetConfig;
-
-  return target.record
-    ? applyChannelRecord(config, target.record, channelName)
-    : config;
-}
-
+/**
+ * Admit a verified delivery through every receiver the credential scan found.
+ * A direct response from a receiver answers the provider at once. Otherwise
+ * one ack budget bounds admission for all of them; whatever is still admitting
+ * when it runs out carries on in the background after the ack.
+ */
 async function handleChannelWebhook(
-  adapter: ChannelAdapter,
+  receivers: ChannelReceiver[],
   request: ChannelRequest,
   handlers: IntegrationHandlers,
   account: AccountRecord,
-  agent: AgentRecord,
-  deployment: AgentDeploymentScope | null,
   context: HttpRoutingContext,
 ): Promise<Response> {
+  const admissions: Promise<void>[] = [];
+  let ack: ChannelResponse | undefined;
+  let ignored: ChannelResponse | undefined;
+  try {
+    for (const receiver of receivers) {
+      const receipt = await receiveChannelWebhook(
+        receiver,
+        request,
+        handlers,
+        account,
+        context,
+      );
+      if (receipt.kind === "response") {
+        return toResponse(receipt.response);
+      }
+      if (receipt.kind === "ignore") {
+        ignored ??= receipt.response;
+        continue;
+      }
+      ack ??= receipt.ack;
+      if (receipt.admitted) {
+        // Handled here, so a failure while later receivers parse is not an
+        // unhandled rejection; the race below still sees it.
+        receipt.admitted.catch((): void => {});
+        admissions.push(receipt.admitted);
+      }
+    }
+    if (admissions.length > 0) {
+      const admitted = Promise.all(admissions).then((): void => undefined);
+      context.waitUntil(admitted);
+      let ackTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        admitted,
+        new Promise<void>((resolve): void => {
+          ackTimer = setTimeout(resolve, CHANNEL_ACK_BUDGET_MS);
+        }),
+      ]);
+      clearTimeout(ackTimer);
+    }
+
+    return toResponse(ack ?? ignored ?? { statusCode: 200 });
+  } catch (err) {
+    logError("Failed to process webhook request", {
+      channel: receivers[0]?.adapter.name,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return errorResponse(500, "Internal server error");
+  }
+}
+
+/**
+ * Parse a delivery with one receiver's adapter, under that agent's deployment
+ * scope, and start admitting the turns it keeps. The credential scan already
+ * authenticated the request with this same adapter.
+ */
+async function receiveChannelWebhook(
+  receiver: ChannelReceiver,
+  request: ChannelRequest,
+  handlers: IntegrationHandlers,
+  account: AccountRecord,
+  context: HttpRoutingContext,
+): Promise<ChannelReceipt> {
+  const { adapter, agent } = receiver;
   const waitUntil = context.waitUntil;
+  const deployment = await context.deploymentLoader(
+    account.accountId,
+    agent.agentId,
+  );
   const previousObservabilityContext = getObservabilityContext();
   if (deployment) {
     setObservabilityContext({
@@ -1175,22 +1269,13 @@ async function handleChannelWebhook(
       method: request.method,
     });
 
-    if (!(await adapter.authenticate(request))) {
-      logWarn("Channel webhook authentication failed", {
-        channel: adapter.name,
-        accountId: account.accountId,
-        agentId: agent.agentId,
-      });
-
-      return unauthorizedResponse();
-    }
-
     const parsed = await adapter.parse(request);
     logDebug("Channel webhook parsed", {
       channel: adapter.name,
       accountId: account.accountId,
       agentId: agent.agentId,
       kind: parsed.kind,
+      ...(parsed.kind === "batch" ? { size: parsed.results.length } : {}),
       ...(parsed.kind === "message"
         ? {
             eventId: parsed.message.eventId,
@@ -1211,7 +1296,7 @@ async function handleChannelWebhook(
         statusCode: parsed.response.statusCode,
       });
 
-      return toResponse(parsed.response);
+      return { kind: "response", response: parsed.response };
     }
 
     // Webhook is valid enough to accept, but should not run the agent.
@@ -1225,7 +1310,10 @@ async function handleChannelWebhook(
         statusCode: parsed.response?.statusCode ?? 200,
       });
 
-      return toResponse(parsed.response ?? { statusCode: 200 });
+      return {
+        kind: "ignore",
+        response: parsed.response ?? { statusCode: 200 },
+      };
     }
 
     if (parsed.kind === "cleanup") {
@@ -1249,97 +1337,76 @@ async function handleChannelWebhook(
         ),
       );
 
-      return toResponse(response);
+      return { kind: "accepted", ack: response };
     }
 
-    if (parsed.kind === "context") {
-      const { message, ack } = parsed;
-      const response = ack ?? { statusCode: 200 };
-      const target = await resolveChannelTarget(
-        context,
-        account,
-        agent,
-        message.channelName,
-        message.identity,
-      );
-      if (target.kind === "unavailable") {
-        logWarn("Channel context dropped; record lookup unavailable", {
-          channel: adapter.name,
-          accountId: account.accountId,
-          conversationKey: message.conversationKey,
-        });
+    // A batch admits its turns in order, each on its own; one that fails is
+    // logged and the rest still run.
+    const admitted =
+      parsed.kind === "batch"
+        ? runWithObservabilityScope(async (): Promise<void> => {
+            for (const result of parsed.results) {
+              try {
+                const admit = await acceptChannelTurn(
+                  adapter,
+                  result,
+                  handlers,
+                  account,
+                  agent,
+                  deployment,
+                  context,
+                );
+                await admit?.();
+              } catch (err) {
+                logError("Channel batch turn not admitted", {
+                  channel: adapter.name,
+                  accountId: account.accountId,
+                  eventId: result.message.eventId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+          }, getObservabilityContext())
+        : (
+            await acceptChannelTurn(
+              adapter,
+              parsed,
+              handlers,
+              account,
+              agent,
+              deployment,
+              context,
+            )
+          )?.();
 
-        return toResponse(response);
-      }
-      const targetDeployment =
-        target.agent.agentId === agent.agentId
-          ? deployment
-          : await context.deploymentLoader(
-              account.accountId,
-              target.agent.agentId,
-            );
-      const contextIdentity = identityWithChannelRoles(
-        message.identity,
-        target.record,
-      );
-      logInfo("Channel webhook accepted as context", {
-        channel: adapter.name,
-        accountId: account.accountId,
-        agentId: target.agent.agentId,
-        channelRecordId: target.record?.channelRecordId,
-        eventId: message.eventId,
-        conversationKey: message.conversationKey,
-        statusCode: response.statusCode,
-      });
-
-      waitUntil(
-        Promise.resolve().then(() =>
-          handlers.handleChannelContext?.({
-            eventId: accountAgentScopedKey(
-              account.accountId,
-              target.agent.agentId,
-              message.eventId,
-            ),
-            conversationKey: accountAgentScopedKey(
-              account.accountId,
-              target.agent.agentId,
-              message.conversationKey,
-            ),
-            content: message.content,
-            ...(message.attachments?.length
-              ? { attachments: message.attachments }
-              : {}),
-            events: message.events ?? [
-              { role: "user", content: message.content },
-            ],
-            channelName: message.channelName,
-            ...(contextIdentity ? { identity: contextIdentity } : {}),
-            source: message.source,
-            accountId: account.accountId,
-            agentId: target.agent.agentId,
-            agentConfig: channelRuntimeAgentConfig(
-              target,
-              message.channelName,
-              agent.config,
-            ),
-            ...(targetDeployment
-              ? {
-                  endpointId: targetDeployment.endpointId,
-                  projectSlug: targetDeployment.projectSlug,
-                  stageSlug: targetDeployment.stageSlug,
-                }
-              : {}),
-          }),
-        ),
-      );
-
-      return toResponse(response);
+    return {
+      kind: "accepted",
+      ack: parsed.ack ?? { statusCode: 200 },
+      ...(admitted ? { admitted: admitted } : {}),
+    };
+  } finally {
+    if (deployment) {
+      setObservabilityContext(previousObservabilityContext);
     }
+  }
+}
 
-    // The promise is deferred by one microtask so this request's scoped context
-    // is restored in finally before background channel processing establishes
-    // its own context.
-    const { message, ack } = parsed;
+// Resolve one parsed turn's record and target and apply its policy. A context
+// turn is stored in the background and a refused one answered here; both give
+// back nothing. A turn to run gives back its admission, which the caller starts
+// and races against the ack budget.
+async function acceptChannelTurn(
+  adapter: ChannelAdapter,
+  result: ParsedChannelMessage | ParsedChannelContext,
+  handlers: IntegrationHandlers,
+  account: AccountRecord,
+  agent: AgentRecord,
+  deployment: AgentDeploymentScope | null,
+  context: HttpRoutingContext,
+): Promise<(() => Promise<void>) | undefined> {
+  const waitUntil = context.waitUntil;
+  if (result.kind === "context") {
+    const { message, ack } = result;
     const response = ack ?? { statusCode: 200 };
     const target = await resolveChannelTarget(
       context,
@@ -1349,30 +1416,14 @@ async function handleChannelWebhook(
       message.identity,
     );
     if (target.kind === "unavailable") {
-      logWarn("Channel turn refused; record lookup unavailable", {
+      logWarn("Channel context dropped; record lookup unavailable", {
         channel: adapter.name,
         accountId: account.accountId,
         conversationKey: message.conversationKey,
       });
-      waitUntil(
-        adapter
-          .actions(message)
-          .sendText(
-            formatChannelErrorText(
-              "I can't reach my channel configuration right now. Try again in a moment.",
-            ),
-          )
-          .catch(() => {}),
-      );
 
-      return toResponse(response);
+      return undefined;
     }
-    // The rewritten source is what every later reply routes on, so a background
-    // job's delayed answer lands in the same place this turn's did.
-    const source = channelReplySource(adapter, message, target.record);
-    // Replies go out through the adapter that received the webhook, the same
-    // provider app, even when the channel record hands the run to another agent.
-    const channel = adapter.actions({ ...message, source: source });
     const targetDeployment =
       target.agent.agentId === agent.agentId
         ? deployment
@@ -1380,7 +1431,11 @@ async function handleChannelWebhook(
             account.accountId,
             target.agent.agentId,
           );
-    logInfo("Channel webhook accepted for async processing", {
+    const contextIdentity = identityWithChannelRoles(
+      message.identity,
+      target.record,
+    );
+    logInfo("Channel webhook accepted as context", {
       channel: adapter.name,
       accountId: account.accountId,
       agentId: target.agent.agentId,
@@ -1390,36 +1445,132 @@ async function handleChannelWebhook(
       statusCode: response.statusCode,
     });
 
-    const identity = identityWithChannelRoles(message.identity, target.record);
-    const targetConfig = channelRuntimeAgentConfig(
-      target,
-      message.channelName,
-      agent.config,
-    );
-    const refusal = await refuseChannelInvoke(
-      targetConfig,
-      account,
-      target.agent.agentId,
-      message.channelName,
-      identity,
-    );
-    if (refusal) {
-      waitUntil(
-        channel
-          .sendText(formatChannelErrorText(refusal))
-          .catch((err: unknown) => {
-            logError("Failed to send channel policy refusal", {
-              channel: adapter.name,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }),
-      );
-
-      return toResponse(response);
-    }
-
     waitUntil(
       Promise.resolve().then(() =>
+        handlers.handleChannelContext?.({
+          eventId: accountAgentScopedKey(
+            account.accountId,
+            target.agent.agentId,
+            message.eventId,
+          ),
+          conversationKey: accountAgentScopedKey(
+            account.accountId,
+            target.agent.agentId,
+            message.conversationKey,
+          ),
+          content: message.content,
+          ...(message.attachments?.length
+            ? { attachments: message.attachments }
+            : {}),
+          events: message.events ?? [
+            { role: "user", content: message.content },
+          ],
+          channelName: message.channelName,
+          ...(contextIdentity ? { identity: contextIdentity } : {}),
+          source: message.source,
+          accountId: account.accountId,
+          agentId: target.agent.agentId,
+          agentConfig: channelRuntimeAgentConfig(
+            target,
+            message.channelName,
+            agent.config,
+          ),
+          ...(targetDeployment
+            ? {
+                endpointId: targetDeployment.endpointId,
+                projectSlug: targetDeployment.projectSlug,
+                stageSlug: targetDeployment.stageSlug,
+              }
+            : {}),
+        }),
+      ),
+    );
+
+    return undefined;
+  }
+
+  const { message, ack } = result;
+  const response = ack ?? { statusCode: 200 };
+  const target = await resolveChannelTarget(
+    context,
+    account,
+    agent,
+    message.channelName,
+    message.identity,
+  );
+  if (target.kind === "unavailable") {
+    logWarn("Channel turn refused; record lookup unavailable", {
+      channel: adapter.name,
+      accountId: account.accountId,
+      conversationKey: message.conversationKey,
+    });
+    waitUntil(
+      adapter
+        .actions(message)
+        .sendText(
+          formatChannelErrorText(
+            "I can't reach my channel configuration right now. Try again in a moment.",
+          ),
+        )
+        .catch(() => {}),
+    );
+
+    return undefined;
+  }
+  // The rewritten source is what every later reply routes on, so a background
+  // job's delayed answer lands in the same place this turn's did.
+  const source = channelReplySource(adapter, message, target.record);
+  // Replies go out through the adapter that received the webhook, the same
+  // provider app, even when the channel record hands the run to another agent.
+  const channel = adapter.actions({ ...message, source: source });
+  const targetDeployment =
+    target.agent.agentId === agent.agentId
+      ? deployment
+      : await context.deploymentLoader(account.accountId, target.agent.agentId);
+  logInfo("Channel webhook accepted", {
+    channel: adapter.name,
+    accountId: account.accountId,
+    agentId: target.agent.agentId,
+    channelRecordId: target.record?.channelRecordId,
+    eventId: message.eventId,
+    conversationKey: message.conversationKey,
+    statusCode: response.statusCode,
+  });
+
+  const identity = identityWithChannelRoles(message.identity, target.record);
+  const targetConfig = channelRuntimeAgentConfig(
+    target,
+    message.channelName,
+    agent.config,
+  );
+  const refusal = await refuseChannelInvoke(
+    targetConfig,
+    account,
+    target.agent.agentId,
+    message.channelName,
+    identity,
+  );
+  if (refusal) {
+    waitUntil(
+      channel
+        .sendText(formatChannelErrorText(refusal))
+        .catch((err: unknown) => {
+          logError("Failed to send channel policy refusal", {
+            channel: adapter.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }),
+    );
+
+    return undefined;
+  }
+
+  // Admission runs before the ack, so a delivery the provider saw acked is
+  // durably queued; the agent run goes to the worker pool. Its own scope,
+  // because it can outlive this request, whose finally restores the context.
+  return (): Promise<void> =>
+    runWithObservabilityScope(
+      (): Promise<void> =>
         processChannelMessage(
           {
             eventId: accountAgentScopedKey(
@@ -1442,6 +1593,14 @@ async function handleChannelWebhook(
             channelName: message.channelName,
             ...(identity ? { identity: identity } : {}),
             source: source,
+            channelTarget: {
+              ...(target.agent.agentId !== agent.agentId
+                ? { credentialAgentId: agent.agentId }
+                : {}),
+              ...(target.record
+                ? { channelRecordId: target.record.channelRecordId }
+                : {}),
+            },
             channel: channel,
             channelFactory: (replySource): ChannelActions =>
               adapter.actions({ ...message, source: replySource }),
@@ -1459,22 +1618,8 @@ async function handleChannelWebhook(
           },
           handlers,
         ),
-      ),
+      getObservabilityContext(),
     );
-
-    return toResponse(response);
-  } catch (err) {
-    logError("Failed to process webhook request", {
-      channel: adapter.name,
-      error: err instanceof Error ? err.message : String(err),
-    });
-
-    return errorResponse(500, "Internal server error");
-  } finally {
-    if (deployment) {
-      setObservabilityContext(previousObservabilityContext);
-    }
-  }
 }
 
 async function cleanupChannelPartitions(options: {
@@ -1500,13 +1645,11 @@ async function cleanupChannelPartitions(options: {
       options.accountId,
       ref.workspaceId,
     );
-    if (!record || record.config.isolation !== true) {
-      continue;
-    }
+    if (record?.config.isolation !== "conversation") continue;
 
     const namespace = isolatedWorkspaceNamespace(
       workspaceNamespace(options.accountId, ref.workspaceId),
-      record.config.isolation,
+      "conversation",
       {
         channelName: options.channelName,
         channelScopeKey: channelScopeKeyFromConversation(
@@ -1567,6 +1710,11 @@ export function attachMetadataToLatestUserIngress(
   return events;
 }
 
+/**
+ * Run the inbound hook and acknowledgements, then admit the message. Resolves
+ * after admission, with the agent run already on a worker slot. Never
+ * rejects: a failure is answered in the channel.
+ */
 async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
@@ -1660,7 +1808,7 @@ async function processChannelMessage(
         : (resolveCommandToken(content, event.source, event.channelName) ??
           undefined),
     });
-    logInfo("Channel message processing completed", {
+    logInfo("Channel message admitted", {
       channel: event.channelName,
       accountId: event.accountId,
       agentId: event.agentId,
@@ -1675,7 +1823,7 @@ async function processChannelMessage(
       error: error,
     });
     await event.channel
-      .sendText(formatChannelErrorText(error))
+      .sendText(formatChannelErrorText(error, event.channelName))
       .catch((sendErr) => {
         logError("Failed to send channel error message", {
           channel: event.channelName,
@@ -1779,16 +1927,6 @@ function resolveCommandToken(
   return null;
 }
 
-function supportsInlineCommands(channelName: string): boolean {
-  return (
-    channelName === "discord" ||
-    channelName === "matrix" ||
-    channelName === "slack" ||
-    channelName === "telegram" ||
-    channelName === "zalo"
-  );
-}
-
 function toResponse(response: ChannelResponse): Response {
   return new Response(response.body ?? "", {
     status: response.statusCode ?? 200,
@@ -1806,22 +1944,36 @@ function directApiDisabledResponse(): Response {
 
 function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
+  const googleChatChannel = createGoogleChatChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
+  const linearChannel = createLinearChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
+  const teamsChannel = createTeamsChannelFromConfig(config);
+  const twilioChannel = createTwilioChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
   const matrixChannel = createMatrixChannelFromConfig(config);
+  const instagramChannel = createInstagramChannelFromConfig(config);
+  const messengerChannel = createMessengerChannelFromConfig(config);
+  const whatsAppChannel = createWhatsAppChannelFromConfig(config);
 
   return {
     webhookChannels: [
       telegramChannel,
+      googleChatChannel,
       githubChannel,
+      linearChannel,
       slackChannel,
       discordChannel,
       pancakeChannel,
+      teamsChannel,
+      twilioChannel,
       zaloChannel,
       matrixChannel,
+      instagramChannel,
+      messengerChannel,
+      whatsAppChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
@@ -1915,6 +2067,15 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(text);
 }
 
+/** The one refusal a run token gets outside reading its own agent's runs. */
+function runTokenScopeResponse(agentId: string): Response {
+  return errorResponse(
+    403,
+    `A run token may only GET /v1/runs/{runId} for agent ${agentId}'s runs. Starting runs with a run token is not enabled yet.`,
+    { code: "run_token_scope" },
+  );
+}
+
 /** The two invoke shapes: project/stage scoped, and bare agent id. */
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
   const scoped = rawPath.match(
@@ -1997,15 +2158,16 @@ async function parseDirectPayload(
     throw new Error("Request body must include agentId");
   }
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
-  const agent = await context.agentLoader(account.accountId, agentId);
-  if (!agent || agent.status !== "active") {
+  const [agent, deployment] = await Promise.all([
+    context.agentLoader(account.accountId, agentId),
+    deploymentAuth
+      ? context.deploymentLoader(account.accountId, agentId)
+      : Promise.resolve(null),
+  ]);
+  if (!agent) {
     throw new DirectNotFoundError("Agent not found");
   }
-  const embeddableKey = await admitStageCredential(
-    deploymentAuth,
-    agent,
-    context,
-  );
+  const embeddableKey = admitStageCredential(deploymentAuth, agent, deployment);
 
   const rawEventId = assertValidPublicEventId(record.eventId as string);
   const conversation = directConversationKeys(
@@ -2057,6 +2219,7 @@ async function parseDirectPayload(
       toRuntimeAgentConfig(agent.config),
       overrides,
     ),
+    configRef: { model: overrides?.model },
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
     runId: createRunId(),
@@ -2144,24 +2307,23 @@ function assertOneDirectPayloadShape(
 }
 
 /**
- * Throws unless the agent is public and in the credential's stage. True for
- * the embeddable runtime key, false for a member's ticket or no credential.
+ * Throws unless the agent is in the credential's stage, and public for the
+ * embeddable runtime key. True for that key, false for a member's ticket or
+ * no credential.
  */
-async function admitStageCredential(
+function admitStageCredential(
   auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
   agent: AgentRecord,
-  context: Pick<HttpRoutingContext, "deploymentLoader">,
-): Promise<boolean> {
+  deployment: AgentDeploymentScope | null,
+): boolean {
   if (!auth) return false;
   // Another stage's agent answers like an unknown one, so nothing leaks.
-  if (
-    !deploymentScopeMatches(
-      auth,
-      await context.deploymentLoader(agent.accountId, agent.agentId),
-    )
-  ) {
+  if (!deploymentScopeMatches(auth, deployment)) {
     throw new DirectNotFoundError("Agent not found");
   }
+  // publicAccess opens an agent to the frontend key. A member's ticket
+  // already reads every trace in the stage, so it runs private agents too.
+  if (auth.stageTicket === true) return false;
   if (agent.config.publicAccess !== true) {
     throw new DirectForbiddenError(
       `Agent ${agent.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
@@ -2169,7 +2331,7 @@ async function admitStageCredential(
     );
   }
 
-  return auth.stageTicket !== true;
+  return true;
 }
 
 /** The embeddable key picks neither prompt nor spend unless the agent opts in. */
@@ -2562,6 +2724,37 @@ function createTelegramChannelFromConfig(
   );
 }
 
+function createGoogleChatChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.gchat;
+  if (
+    !channel?.credentials ||
+    !(channel.endpointUrl || channel.googleChatProjectNumber)
+  ) {
+    return null;
+  }
+  const credentials = parseServiceAccountKey(channel.credentials);
+  if (!credentials) {
+    logWarn(
+      "config.channels.gchat.credentials is not a service-account key JSON",
+    );
+
+    return null;
+  }
+
+  return createGoogleChatChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    credentials: credentials,
+    endpointUrl: channel.endpointUrl,
+    googleChatProjectNumber: channel.googleChatProjectNumber,
+    userName: channel.userName,
+    workspaceAddOnServiceAccountEmail:
+      channel.workspaceAddOnServiceAccountEmail,
+  });
+}
+
 function createGitHubChannelFromConfig(
   config: AgentConfig,
 ): ChannelAdapter | null {
@@ -2584,6 +2777,24 @@ function createGitHubChannelFromConfig(
       triggerOnPROpen: channel.triggerOnPROpen,
     },
   );
+}
+
+function createLinearChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.linear;
+  if (!channel?.apiKey || !channel.webhookSecret || !channel.userName) {
+    return null;
+  }
+
+  return createLinearChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiKey: channel.apiKey,
+    apiUrl: channel.apiUrl,
+    userName: channel.userName,
+    webhookSecret: channel.webhookSecret,
+  });
 }
 
 function createSlackChannelFromConfig(
@@ -2645,6 +2856,30 @@ function createPancakeChannelFromConfig(
   );
 }
 
+function createTeamsChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.teams;
+  if (
+    !channel?.appId ||
+    !channel.appPassword ||
+    (channel.appType !== "MultiTenant" && !channel.appTenantId)
+  ) {
+    return null;
+  }
+
+  return createTeamsChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    appId: channel.appId,
+    appPassword: channel.appPassword,
+    appTenantId: channel.appTenantId,
+    appType: channel.appType,
+    userName: channel.userName,
+  });
+}
+
 function createMatrixChannelFromConfig(
   config: AgentConfig,
 ): ChannelAdapter | null {
@@ -2666,6 +2901,29 @@ function createMatrixChannelFromConfig(
   });
 }
 
+function createTwilioChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.twilio;
+  if (!channel?.accountSid || !channel.authToken) {
+    return null;
+  }
+
+  return createTwilioChannel({
+    accountSid: channel.accountSid,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    authToken: channel.authToken,
+    messagingServiceSid: channel.messagingServiceSid,
+    phoneNumber: channel.phoneNumber,
+    publicBaseUrl: getHarnessPublicUrl(),
+    statusCallbackUrl: channel.statusCallbackUrl,
+    userName: channel.userName,
+    webhookUrl: channel.webhookUrl,
+  });
+}
+
 function createZaloChannelFromConfig(
   config: AgentConfig,
 ): ChannelAdapter | null {
@@ -2677,5 +2935,75 @@ function createZaloChannelFromConfig(
   return createZaloChannel(channel.botToken, channel.webhookSecret, {
     allowedChannelIds: reachSet(channel.allowedChannelIds),
     allowedUserIds: reachSet(channel.allowedUserIds),
+  });
+}
+
+function createInstagramChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.instagram;
+  if (
+    !channel?.accessToken ||
+    !channel.accountId ||
+    !channel.appSecret ||
+    !channel.verifyToken
+  ) {
+    return null;
+  }
+
+  return createInstagramChannel({
+    accessToken: channel.accessToken,
+    accountId: channel.accountId,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
+  });
+}
+
+function createMessengerChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.messenger;
+  if (!channel?.appSecret || !channel.pageAccessToken || !channel.verifyToken) {
+    return null;
+  }
+
+  return createMessengerChannel({
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    pageAccessToken: channel.pageAccessToken,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
+  });
+}
+
+function createWhatsAppChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.whatsapp;
+  if (
+    !channel?.accessToken ||
+    !channel.appSecret ||
+    !channel.phoneNumberId ||
+    !channel.verifyToken
+  ) {
+    return null;
+  }
+
+  return createWhatsAppChannel({
+    accessToken: channel.accessToken,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    apiVersion: channel.apiVersion,
+    appSecret: channel.appSecret,
+    phoneNumberId: channel.phoneNumberId,
+    userName: channel.userName,
+    verifyToken: channel.verifyToken,
   });
 }

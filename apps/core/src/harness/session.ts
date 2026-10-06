@@ -23,12 +23,15 @@ import type {
   ChannelPartition,
   AgentConfig,
 } from "../shared/domain/agent-config.ts";
+import type { Principal } from "../shared/domain/principal.ts";
+import { getHarnessPublicUrl } from "../shared/env.ts";
 import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
 import { logDebug, logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
+import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -45,16 +48,19 @@ import {
   rehydrateStoredMedia,
 } from "./channel-media.ts";
 import {
-  compactSessionContext,
   isCompactionSummaryMessage,
   summarizeConversation,
 } from "./compaction.ts";
 import {
   applySteering,
   DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  releaseIngressOwner,
+  renewIngressOwner,
   settleIngress,
   takeNextIngress,
   type AppliedIngress,
+  type AsyncResultSettlement,
+  type IngressSettlement,
 } from "./ingress.ts";
 import {
   modelIdentityFromModelConfig,
@@ -69,6 +75,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import type { SandboxRunPrincipal } from "./sandbox/types.ts";
 import { truncateText } from "./sandbox/utils.ts";
 import {
   listConfiguredSkillMetadata,
@@ -76,6 +83,7 @@ import {
   loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
+import { bashTargetLines } from "./tools/filesystem-utils.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
 // Convex caps one mutation's arguments at 16 MiB. Half of that leaves room for
@@ -85,6 +93,10 @@ const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 // events reach long before the byte cap does.
 const APPEND_EVENT_COUNT = 8_000;
 const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+// How old the last ownership proof may be before a periodic check reads Convex
+// again. Ownership moves only through this run's own hand-off or lease expiry,
+// and a successful fenced write proves it as well as a read does.
+export const OWNER_CHECK_INTERVAL_MS = 2_000;
 // Convex refuses a document over 1 MiB. One tool message shares this budget
 // across its results, which leaves room for the rest of the row.
 const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
@@ -101,6 +113,12 @@ export type ConversationIngressEvent =
   | ToolModelMessage
   | (SystemModelMessage & { persist?: boolean });
 
+/** What `Session.stepBoundary` reports to the model step about to start. */
+export interface StepBoundary {
+  renewal: "renewed" | "stopped" | "stale";
+  steering: AppliedIngress | null;
+}
+
 export interface TurnContextSnapshot {
   messages: ModelMessage[];
   system: SystemModelMessage[];
@@ -116,14 +134,10 @@ export interface TurnContextSnapshot {
 }
 
 export interface TurnContextTimings {
-  // createTurnContext up to where compaction starts, or to the end when no
-  // summary is written: load, project, system prompt, prune.
+  // The whole of createTurnContext: load, project, system prompt, prune.
   prepareStartedMs: number;
   prepareEndedMs: number;
   phases: ContextPreparePhases;
-  // Present only when compaction actually produced a summary this turn. Starts
-  // where prepare ends and covers the summary call, its write and the rebuild.
-  compaction?: { startedMs: number; endedMs: number };
 }
 
 // Each prepare load's own wall time. The loads overlap, so these do not add up
@@ -171,6 +185,8 @@ export interface StoredHarnessSession {
   harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
   sessionId: string;
   resumeState: unknown;
+  /** The machine's base reservation key, before the adapter version is appended. */
+  reservationKey?: string;
 }
 
 /**
@@ -267,6 +283,9 @@ export interface SessionOptions {
   trigger?: RunTrigger;
   // false keeps an ephemeral subagent's messages out of Convex.
   persist?: boolean;
+  // Who this run acts as and who asked. Set on every session that runs the
+  // agent loop; a context-only session (command, claim, failure) has none.
+  principal?: Principal;
 }
 
 /**
@@ -293,9 +312,17 @@ export class Session {
   readonly ownerGeneration: number | undefined;
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
+  readonly principal: Principal | undefined;
   private readonly agentConfig: AgentConfig;
+  private mintedRunToken: string | undefined;
   private readonly persist: boolean;
   private messageSequence = 0;
+  private lastSystemCursor: string | null = null;
+  private ownerHandedOff = false;
+  // performance.now() at the start of the latest call Convex fenced against
+  // this generation and accepted. Taken before the call, so the proof is never
+  // younger than the commit that gave it.
+  private ownerConfirmedAt = Number.NEGATIVE_INFINITY;
   private hasLoggedMissingMemoryFile = false;
   // One clock reading for the whole run: the system prompt is rebuilt before
   // every step, so a moving timestamp would break the provider's prompt cache.
@@ -328,18 +355,49 @@ export class Session {
     this.ownerGeneration = options.ownerGeneration;
     this.channelActions = options.channelActions;
     this.trigger = options.trigger;
+    this.principal = options.principal;
     this.persist = options.persist ?? true;
+  }
+
+  /** The identity a sandbox exec runs with. Its `brt_` bearer is minted on first use, so a run with no exec never signs one. */
+  sandboxPrincipal(): SandboxRunPrincipal | undefined {
+    if (!this.principal) return undefined;
+    this.mintedRunToken ??= sealRunToken(this.principal);
+    const baseUrl = getHarnessPublicUrl();
+
+    return {
+      accountId: this.principal.accountId,
+      agentId: this.principal.agentId,
+      runToken: this.mintedRunToken,
+      ...(baseUrl ? { baseUrl: baseUrl } : {}),
+    };
   }
 
   /** Rejects a side effect when this run no longer owns the conversation. */
   async assertCurrentOwner(): Promise<void> {
     if (this.ownerGeneration === undefined) return;
+    const startedAt = performance.now();
     const current = await runtime.query<boolean>("isCurrentIngressOwner", {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
     });
     if (!current) throw new Error("Stale conversation owner generation");
+    this.confirmOwner(startedAt);
+  }
+
+  /**
+   * `assertCurrentOwner` for checks on the OWNER_CHECK_INTERVAL_MS clock (stream
+   * chunks, tool starts): a fenced call inside the interval already answered.
+   */
+  async assertRecentOwner(): Promise<void> {
+    if (
+      !this.ownerHandedOff &&
+      performance.now() - this.ownerConfirmedAt < OWNER_CHECK_INTERVAL_MS
+    ) {
+      return;
+    }
+    await this.assertCurrentOwner();
   }
 
   async claim(): Promise<boolean> {
@@ -366,73 +424,101 @@ export class Session {
   }
 
   async releaseConversationLease(): Promise<void> {
-    if (this.ownerGeneration === undefined) return;
-    await runtime.mutate("releaseIngressOwner", {
+    if (this.ownerGeneration === undefined || this.ownerHandedOff) return;
+    await releaseIngressOwner({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
     });
+    this.ownerHandedOff = true;
   }
 
   /** Renews the current fenced owner before another model/tool boundary. */
   async renewConversationLease(): Promise<"renewed" | "stopped" | "stale"> {
     if (this.ownerGeneration === undefined) return "renewed";
+    const startedAt = performance.now();
+    const renewal = await renewIngressOwner({
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    });
+    if (renewal === "renewed") this.confirmOwner(startedAt);
 
-    return runtime.mutate("renewIngressOwner", {
+    return renewal;
+  }
+
+  /**
+   * The model step boundary as one fenced mutation: stores the step's new
+   * messages, reports a stop or a lost lease, renews the lease, and claims the
+   * steers waiting to join this turn. Rows that do not fit one mutation are
+   * appended first, in cursor order.
+   */
+  async stepBoundary(messages: ModelMessage[]): Promise<StepBoundary> {
+    const events = this.storedEvents(messages);
+    if (this.ownerGeneration === undefined) {
+      await this.appendStoredEvents(events);
+
+      return { renewal: "renewed", steering: null };
+    }
+    const batches = storedEventBatches(events);
+    const inline = batches.pop() ?? [];
+    for (const batch of batches) await this.appendConversationEvents(batch);
+    const startedAt = performance.now();
+    const boundary = await runtime.mutate<StepBoundary>("stepIngressBoundary", {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
       leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+      ...(inline.length > 0 ? { events: inline } : {}),
     });
+    if (boundary.renewal !== "stale") this.trackSystemCursor(events);
+    if (boundary.renewal === "renewed") this.confirmOwner(startedAt);
+
+    return boundary;
   }
 
   async appendIngressEvents(
     events: ConversationIngressEvent[],
   ): Promise<SystemModelMessage[]> {
-    const ephemeralSystem: SystemModelMessage[] = [];
-    const persistedMessages: ModelMessage[] = [];
-
-    for (const event of events) {
-      if (event.role === "system") {
-        const message = systemModelMessageSchema.parse(event);
-
-        if (event.persist === false) {
-          // Direct API system injections are one-turn instructions. They are
-          // returned to the caller and included in the current turn's system
-          // prompt, but never written to Convex.
-          ephemeralSystem.push(message);
-          continue;
-        }
-
-        persistedMessages.push(message);
-        continue;
-      }
-
-      persistedMessages.push(event);
-    }
-
-    await this.persistModelMessages(persistedMessages);
+    const { ephemeralSystem, persisted } = splitIngressEvents(events);
+    await this.persistModelMessages(persisted);
 
     return ephemeralSystem;
   }
 
   /** Applies all queued steer envelopes to this active event. */
-  async applySteeringIngress(): Promise<AppliedIngress | null> {
+  /** @param options.textOnly claim only the steers made of plain user text */
+  async applySteeringIngress(
+    options: { textOnly?: boolean } = {},
+  ): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
-
-    return applySteering({
+    const startedAt = performance.now();
+    const steering = await applySteering({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
+      ...(options.textOnly ? { textOnly: true } : {}),
     });
+    this.confirmOwner(startedAt);
+
+    return steering;
   }
 
-  /** Marks this event and every applied contributor terminal. */
+  /**
+   * Marks this event and every applied contributor terminal, with an async
+   * run's polling rows in the same mutation.
+   * @returns false when this session owns no envelope, so nothing was written
+   */
   async settleIngress(
     status: "completed" | "failed",
-    options: { result?: unknown; error?: string } = {},
-  ): Promise<void> {
-    if (this.ownerGeneration === undefined) return;
+    options: {
+      result?: unknown;
+      error?: string;
+      asyncResult?: AsyncResultSettlement;
+    } = {},
+  ): Promise<boolean> {
+    if (this.ownerGeneration === undefined) return false;
+    const startedAt = performance.now();
     await settleIngress({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
@@ -440,57 +526,55 @@ export class Session {
       status: status,
       ...options,
     });
+    this.confirmOwner(startedAt);
+
+    return true;
   }
 
-  /** Transfers to the next durable FIFO application, or atomically releases ownership. */
-  async takeNextIngress(): Promise<AppliedIngress | null> {
+  /**
+   * Transfers to the next durable FIFO application, or atomically releases
+   * ownership. With `settle`, this event is settled in the same mutation; if
+   * that mutation fails, the settle is written on its own before the error
+   * reaches the caller. Only when that write fails too is the outcome lost,
+   * and that is logged.
+   */
+  async takeNextIngress(
+    settle?: IngressSettlement,
+  ): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
-
-    return takeNextIngress({
+    const owner = {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
-    });
+    };
+    const next = await takeNextIngress(owner, settle).catch(
+      async (err: unknown): Promise<never> => {
+        if (settle) {
+          await settleIngress({ ...owner, ...settle }).catch(
+            (settleErr: unknown): number => {
+              logError("Turn outcome lost: settle after a failed takeNext", {
+                eventId: this.eventId,
+                error:
+                  settleErr instanceof Error
+                    ? settleErr.message
+                    : String(settleErr),
+              });
+
+              return 0;
+            },
+          );
+        }
+        throw err;
+      },
+    );
+    this.ownerHandedOff = true;
+
+    return next;
   }
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
-    if (!this.persist) return [];
-    const producer: MessageProducer = {
-      model: modelIdentityFromModelConfig(this.agentConfig),
-      retainsReasoning: retainsReasoningParts(this.agentConfig),
-    };
-    const events = messages.flatMap(
-      (message): { cursor: string; event: StoredConversationEvent }[] => {
-        const event = createStoredEventFromModelMessage(
-          message,
-          this.eventId,
-          producer,
-        );
-
-        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
-      },
-    );
-    if (events.length === 0) return [];
-
-    // A step fits one mutation, but a harness run hands over its whole history
-    // at once and that can pass what Convex accepts in a single call.
-    let batch: typeof events = [];
-    let batchBytes = 0;
-    for (const entry of events) {
-      const entryBytes = Buffer.byteLength(JSON.stringify(entry));
-      if (
-        batch.length > 0 &&
-        (batchBytes + entryBytes > APPEND_EVENT_BYTES ||
-          batch.length >= APPEND_EVENT_COUNT)
-      ) {
-        await this.appendConversationEvents(batch);
-        batch = [];
-        batchBytes = 0;
-      }
-      batch.push(entry);
-      batchBytes += entryBytes;
-    }
-    await this.appendConversationEvents(batch);
+    const events = this.storedEvents(messages);
+    await this.appendStoredEvents(events);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -514,11 +598,9 @@ export class Session {
   }
 
   /**
-   * Compacts the stored conversation now, regardless of the agent's compaction
-   * config or context size. Serves the /compact channel command; the caller
-   * holds the fenced clear lease, so no run or queued ingress can interleave
-   * and the whole history folds into the summary. Returns how many messages
-   * were summarized; 0 means there was nothing to compact.
+   * Folds the stored history into a summary under the owner lease. Serves
+   * /compact and the harness auto-compaction after a finished turn. Returns
+   * how many messages were summarized; 0 means there was nothing to compact.
    */
   async compactConversation(instructions: string): Promise<number> {
     const entries = await this.loadConversationEntries();
@@ -530,10 +612,12 @@ export class Session {
       activeEntries,
       modelIdentityFromModelConfig(this.agentConfig),
     );
-    if (hasPendingToolApprovalResponse(messages)) {
+    // Nothing said since the last summary leaves nothing to fold in.
+    if (messages.length === 0 || hasPendingToolApprovalResponse(messages)) {
       return 0;
     }
     const summary = await summarizeConversation({
+      accountId: this.accountId,
       conversationKey: this.conversationKey,
       priorSummaries: systemContextSnapshot.messages.filter(
         isCompactionSummaryMessage,
@@ -566,10 +650,19 @@ export class Session {
     };
   }
 
+  /**
+   * Builds the turn's context. `ingress` is the turn's own input: its write
+   * overlaps the history read, and the appended rows are merged into the
+   * history by cursor, so the result is the same whichever lands first.
+   */
   async createTurnContext(
-    ephemeralSystem: SystemModelMessage[] = [],
+    extraEphemeralSystem: SystemModelMessage[] = [],
+    ingress: ConversationIngressEvent[] = [],
   ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
+    const input = splitIngressEvents(ingress);
+    const ephemeralSystem = [...input.ephemeralSystem, ...extraEphemeralSystem];
+    const appended = this.storedEvents(input.persisted);
     const phases: ContextPreparePhases = {
       historyMs: 0,
       historyRows: 0,
@@ -582,7 +675,8 @@ export class Session {
     // Every load behind the turn starts at once; buildSystemPromptParts below
     // reads the memoized results.
     const [history] = await Promise.all([
-      this.loadTurnHistory(phases),
+      this.loadTurnHistory(phases, appended),
+      this.appendStoredEvents(appended),
       timePhase(phases, "runtimeMs", () => this.ensureResolvedRuntime()),
       timePhase(phases, "memoryMs", () => this.loadMemoryFiles()),
       timePhase(phases, "skillsMs", () => this.loadSkillMetadata()),
@@ -597,58 +691,6 @@ export class Session {
       systemContextSnapshot.messages,
       ephemeralSystem,
     );
-
-    const compactionStartedMs = Date.now();
-    const compactionSummary = await compactSessionContext({
-      conversationKey: this.conversationKey,
-      system: system,
-      // Compaction feeds these to a model, so envelope fields must not leak.
-      messages: stripEnvelopeFieldsFromMessages(messages),
-      agentConfig: this.agentConfig,
-    }).catch((error) => {
-      logError(
-        "Session context compaction failed; continuing without compaction",
-        {
-          conversationKey: this.conversationKey,
-          eventId: this.eventId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-
-      return null;
-    });
-
-    if (compactionSummary) {
-      const [summaryCursor] = await this.persistModelMessages([
-        compactionSummary,
-      ]);
-      const compactedSystemContextSnapshot = {
-        cursor: summaryCursor ?? systemContextSnapshot.cursor,
-        messages: [compactionSummary],
-      };
-      // Approval responses need their matching assistant request in model history.
-      // Keep that pending pair outside the compacted summary so the AI SDK can resume it.
-      messages = selectPostCompactionPendingMessages(messages);
-
-      return {
-        messages: pruneSessionMessages(messages, this.agentConfig),
-        system: await this.buildSystemPromptParts(
-          compactedSystemContextSnapshot.messages,
-          ephemeralSystem,
-        ),
-        ephemeralSystem: ephemeralSystem,
-        systemContextSnapshot: compactedSystemContextSnapshot,
-        timings: {
-          prepareStartedMs: prepareStartedMs,
-          prepareEndedMs: compactionStartedMs,
-          phases: phases,
-          compaction: {
-            startedMs: compactionStartedMs,
-            endedMs: Date.now(),
-          },
-        },
-      };
-    }
 
     const prunedMessageCount = messages.length;
     messages = pruneSessionMessages(messages, this.agentConfig);
@@ -675,7 +717,8 @@ export class Session {
   /**
    * Called from harness.ts prepareStep. Keep `systemContextSnapshot` updated across
    * model steps so newly persisted system rows become visible while prior
-   * system rows remain included exactly once.
+   * system rows remain included exactly once. Reads Convex only when this
+   * session wrote a system row the snapshot does not cover yet.
    */
   async loadRefreshedSystemPromptParts(options: {
     systemContextSnapshot: SystemContextSnapshot;
@@ -684,9 +727,14 @@ export class Session {
     systemContextSnapshot: SystemContextSnapshot;
     system: SystemModelMessage[];
   }> {
-    const entries = await this.loadConversationEntries({
-      afterCreatedAt: options.systemContextSnapshot.cursor,
-    });
+    const snapshotCursor = options.systemContextSnapshot.cursor;
+    const entries =
+      this.lastSystemCursor === null ||
+      (snapshotCursor !== null && this.lastSystemCursor <= snapshotCursor)
+        ? []
+        : await this.loadConversationEntries({
+            afterCreatedAt: snapshotCursor,
+          });
 
     const systemContextSnapshot: SystemContextSnapshot =
       entries.length === 0
@@ -737,6 +785,29 @@ export class Session {
     return loaded;
   }
 
+  /**
+   * Live state the agent would otherwise spend steps probing for. The harness
+   * sends it after the history and never stores it, so the system prompt and
+   * the history stay a cached prefix and only this block is new. Built from
+   * what the run already holds: no extra storage read.
+   */
+  /** `machine` is the live status of the machine the run works on, when it has one. */
+  environmentText(machine: string[] = []): string {
+    const workspaces = this.resolvedWorkspaces();
+    const sandboxes = this.sandboxes();
+    const canBash =
+      sandboxes.length > 0 || workspaces.some((workspace) => workspace.sandbox);
+
+    return formatEnvironmentPrompt({
+      now: this.startedAt,
+      channel: this.channelLabel(),
+      bashTargets: canBash
+        ? bashTargetLines({ workspaces: workspaces, sandboxes: sandboxes })
+        : [],
+      machine: machine,
+    });
+  }
+
   // Resolved config.sandboxes; the first is the default. Empty when none.
   sandboxes(): ResolvedAgentSandbox[] {
     return this.resolvedRuntime?.sandboxes ?? [];
@@ -758,12 +829,14 @@ export class Session {
     events: { cursor: string; event: StoredConversationEvent }[],
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
+      const startedAt = performance.now();
       await runtime.mutate("appendFencedConversationEvent", {
         conversationKey: this.conversationKey,
         ownerEventId: this.eventId,
         ownerGeneration: this.ownerGeneration,
         events: events,
       });
+      this.confirmOwner(startedAt);
 
       return;
     }
@@ -771,6 +844,37 @@ export class Session {
       conversationKey: this.conversationKey,
       events: events,
     });
+  }
+
+  /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
+  private async appendStoredEvents(
+    events: { cursor: string; event: StoredConversationEvent }[],
+  ): Promise<void> {
+    if (events.length === 0) return;
+    for (const batch of storedEventBatches(events)) {
+      await this.appendConversationEvents(batch);
+    }
+    this.trackSystemCursor(events);
+  }
+
+  /** Records a fenced call Convex accepted, by the time the call started. */
+  private confirmOwner(startedAt: number): void {
+    this.ownerConfirmedAt = Math.max(this.ownerConfirmedAt, startedAt);
+  }
+
+  /** Remembers the newest stored system row, so a step refresh knows to read it. */
+  private trackSystemCursor(
+    events: { cursor: string; event: StoredConversationEvent }[],
+  ): void {
+    const systemCursor = events.findLast(
+      (entry): boolean => entry.event.message.role === "system",
+    )?.cursor;
+    if (
+      systemCursor !== undefined &&
+      (this.lastSystemCursor === null || systemCursor > this.lastSystemCursor)
+    ) {
+      this.lastSystemCursor = systemCursor;
+    }
   }
 
   private async buildSystemPromptParts(
@@ -821,7 +925,7 @@ export class Session {
         ? [
             {
               role: "system",
-              content: formatSchedulerSystemPrompt(this.startedAt),
+              content: formatSchedulerSystemPrompt(),
             },
           ]
         : [];
@@ -856,6 +960,13 @@ export class Session {
       ...promptMessages,
       ...ephemeralSystem,
     ];
+  }
+
+  private channelLabel(): string {
+    if (this.trigger === "cron") return "none, this is a scheduled run";
+    if (this.delivery?.kind === "channel") return this.delivery.channelName;
+
+    return this.delivery?.kind === "nats" ? "live session" : "direct API";
   }
 
   private channelPartition(): ChannelPartition | undefined {
@@ -962,9 +1073,9 @@ export class Session {
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
     // Reads memory/MEMORY.md over the S3 API, not the sandbox mount, so a workspace
-    // with no sandbox still serves memory. A mount write takes ~1-2 min to reach S3
-    // Files, so this can be briefly stale; memory converges across turns. See
-    // docs/workspace/storage.md.
+    // with no sandbox still serves memory. A mount write reaches S3 only once
+    // Mountpoint uploads it on close, so this can be briefly stale; memory
+    // converges across turns. See docs/internals/storage.md.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),
     );
@@ -1045,7 +1156,7 @@ export class Session {
             this.accountId!,
             agentId,
           );
-          if (!agent || agent.status !== "active") {
+          if (!agent) {
             return null;
           }
 
@@ -1068,10 +1179,26 @@ export class Session {
   // same messages, and none of them should have to know how it got there.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
+    appended: { cursor: string; event: StoredConversationEvent }[] = [],
   ): Promise<TurnHistory> {
     const entries = await timePhase(phases, "historyMs", () =>
       this.loadConversationEntries(),
     );
+    // A context-only channel message is written without the lease, so it can
+    // land with a newer cursor before this run's own rows: merge by cursor.
+    const read = new Set(entries.map((entry): string => entry.createdAt));
+    const missing = appended.filter((row): boolean => !read.has(row.cursor));
+    if (missing.length > 0) {
+      entries.push(
+        ...missing.map((row): StoredConversationEntry => ({
+          createdAt: row.cursor,
+          event: row.event,
+        })),
+      );
+      entries.sort((left, right): number =>
+        left.createdAt < right.createdAt ? -1 : 1,
+      );
+    }
     phases.historyRows = entries.length;
     const messages = await timePhase(phases, "mediaMs", () =>
       rehydrateStoredMedia(
@@ -1091,6 +1218,29 @@ export class Session {
     this.messageSequence += 1;
 
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
+  }
+
+  /** The rows a persisting session writes for these messages, cursors minted here. */
+  private storedEvents(
+    messages: ModelMessage[],
+  ): { cursor: string; event: StoredConversationEvent }[] {
+    if (!this.persist) return [];
+    const producer: MessageProducer = {
+      model: modelIdentityFromModelConfig(this.agentConfig),
+      retainsReasoning: retainsReasoningParts(this.agentConfig),
+    };
+
+    return messages.flatMap(
+      (message): { cursor: string; event: StoredConversationEvent }[] => {
+        const event = createStoredEventFromModelMessage(
+          message,
+          this.eventId,
+          producer,
+        );
+
+        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
+      },
+    );
   }
 }
 
@@ -1157,6 +1307,7 @@ export async function ingestChannelAttachments(
   attachments: Attachment[] | undefined,
   context: {
     accountId: string | undefined;
+    agentId: string | undefined;
     agentConfig: AgentConfig;
     channelName: string;
     conversationKey: string;
@@ -1168,7 +1319,7 @@ export async function ingestChannelAttachments(
   }
   const runtimeConfig = await resolveAgentRuntime(
     context.agentConfig,
-    { accountId: context.accountId },
+    { accountId: context.accountId, agentId: context.agentId },
     {
       channelName: context.channelName,
       channelScopeKey: channelScopeKeyFromConversation(context.conversationKey),
@@ -1202,44 +1353,6 @@ export async function ingestChannelAttachments(
         ? appendToLatestUserEvent(events, parts.turn)
         : events,
   };
-}
-
-// After compaction, the messages that must survive into the resumed turn: a
-// trailing user message, or a tool-approval response plus the assistant message
-// carrying the tool call it answers.
-export function selectPostCompactionPendingMessages(
-  messages: ModelMessage[],
-): ModelMessage[] {
-  const lastMessage = messages.at(-1);
-  if (lastMessage?.role === "user") {
-    return [lastMessage];
-  }
-
-  if (!isToolApprovalResponseMessage(lastMessage)) {
-    return [];
-  }
-
-  const approvalIds = new Set(
-    lastMessage.content
-      .filter((part) => part.type === "tool-approval-response")
-      .map((part) => part.approvalId),
-  );
-  // The approval response references only approvalId; the prior assistant message
-  // carries the tool call details needed to execute or deny the tool on resume.
-  const approvalRequestMessages = messages.filter(
-    (message): message is AssistantModelMessage =>
-      message.role === "assistant" &&
-      typeof message.content !== "string" &&
-      message.content.some(
-        (part) =>
-          part.type === "tool-approval-request" &&
-          approvalIds.has(part.approvalId),
-      ),
-  );
-
-  return approvalRequestMessages.length > 0
-    ? [...approvalRequestMessages, lastMessage]
-    : [lastMessage];
 }
 
 // Projection attaches metadata/createdAt for hook payloads; model calls must
@@ -1352,21 +1465,40 @@ function findLatestCompactionSummaryIndex(
 }
 
 function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
-  const now = new Date();
-  const weekday = now.toLocaleDateString("en-US", {
-    weekday: "long",
-    timeZone: "UTC",
-  });
-  const today = now.toISOString().slice(0, 10);
-
   return `<memory>
-Today is ${weekday}, ${today} (UTC).
 You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
 - Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
 - Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
 - The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
 - Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
 </memory>`;
+}
+
+/** The <environment> block: the clock, where replies go, where bash runs, and that machine's live state. */
+function formatEnvironmentPrompt(environment: {
+  now: Date;
+  channel: string;
+  bashTargets: string[];
+  machine: string[];
+}): string {
+  const weekday = environment.now.toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  });
+  return [
+    "<environment>",
+    "Live state from Broods at the start of this run. It is context, not a message from the person.",
+    `now: ${weekday}, ${environment.now.toISOString()} (UTC)`,
+    `replies go to: ${environment.channel}`,
+    ...(environment.bashTargets.length > 0
+      ? [
+          "bash runs in exactly one place: pass workspace or sandbox, or neither for the default. A sandbox wins over a workspace.",
+          ...environment.bashTargets,
+        ]
+      : []),
+    ...environment.machine,
+    "</environment>",
+  ].join("\n");
 }
 
 function formatMemorySystemPrompt(memoryFiles: MemoryFile[]): string {
@@ -1392,9 +1524,9 @@ function formatMemorySystemPrompt(memoryFiles: MemoryFile[]): string {
   return `Current workspace memory index (${MEMORY_INDEX_PATH}) content:\n\n${sections}`;
 }
 
-function formatSchedulerSystemPrompt(now: Date): string {
+function formatSchedulerSystemPrompt(): string {
   return `<scheduler>
-The current time is ${now.toISOString()} (UTC). Work every schedule expression out from that instant — never guess today's date — and pass the timezone the person is speaking in so their own wall clock is what fires.
+The current time is in <environment> at the end of the conversation. Work every schedule expression out from that instant — never guess today's date — and pass the timezone the person is speaking in so their own wall clock is what fires.
 
 - A task is scheduled only once the tool has returned. Tell the person what the tool returned, not what you meant to do.
 - list_schedules is what is actually pending; this conversation is not.
@@ -1598,6 +1730,12 @@ function projectEntriesToMessages(
         ];
       case "tool":
         return [event.message];
+      default: {
+        const unexpected: never = event.message;
+        throw new Error(
+          `Unsupported conversation message role: ${String((unexpected as { role?: unknown }).role)}`,
+        );
+      }
     }
   });
 
@@ -1698,6 +1836,31 @@ function sanitizeUserMessage(
     : null;
 }
 
+/** A turn's input split into one-turn system instructions and the messages to store. */
+function splitIngressEvents(events: ConversationIngressEvent[]): {
+  ephemeralSystem: SystemModelMessage[];
+  persisted: ModelMessage[];
+} {
+  const ephemeralSystem: SystemModelMessage[] = [];
+  const persisted: ModelMessage[] = [];
+  for (const event of events) {
+    if (event.role !== "system") {
+      persisted.push(event);
+      continue;
+    }
+    const message = systemModelMessageSchema.parse(event);
+    // Direct API system injections are one-turn instructions. They join the
+    // current turn's system prompt but are never written to Convex.
+    if (event.persist === false) {
+      ephemeralSystem.push(message);
+    } else {
+      persisted.push(message);
+    }
+  }
+
+  return { ephemeralSystem: ephemeralSystem, persisted: persisted };
+}
+
 /**
  * A tool result as a stored row can hold it. Media follows the rule in
  * `sanitizeUserMessage`: bytes are dropped, a URL stays. Whatever is still over
@@ -1754,6 +1917,35 @@ function storableToolResultOutput(
         : "text",
     value: text.value,
   };
+}
+
+/**
+ * Splits stored rows, in cursor order, into the fewest appends Convex accepts.
+ * A step fits one, but a harness run hands over its whole history at once.
+ */
+function storedEventBatches(
+  events: { cursor: string; event: StoredConversationEvent }[],
+): { cursor: string; event: StoredConversationEvent }[][] {
+  const batches: { cursor: string; event: StoredConversationEvent }[][] = [];
+  let batch: typeof events = [];
+  let batchBytes = 0;
+  for (const entry of events) {
+    const entryBytes = Buffer.byteLength(JSON.stringify(entry));
+    if (
+      batch.length > 0 &&
+      (batchBytes + entryBytes > APPEND_EVENT_BYTES ||
+        batch.length >= APPEND_EVENT_COUNT)
+    ) {
+      batches.push(batch);
+      batch = [];
+      batchBytes = 0;
+    }
+    batch.push(entry);
+    batchBytes += entryBytes;
+  }
+  if (batch.length > 0) batches.push(batch);
+
+  return batches;
 }
 
 async function timePhase<T>(

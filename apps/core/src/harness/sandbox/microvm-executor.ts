@@ -27,15 +27,22 @@ import {
 } from "@aws-sdk/client-lambda-microvms";
 import { createHmac } from "node:crypto";
 import {
+  recordSandboxBurst,
   removeSandboxInstance,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
+import type {
+  SandboxExecRequest,
+  SandboxExecResponse,
+} from "../../shared/domain/sandbox-config.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getObservabilityContext } from "../../shared/otel.ts";
+import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -57,7 +64,11 @@ import {
   statusScript,
   stopScript,
 } from "./jobs.ts";
-import { type S3MountContext, resolveS3Mount } from "./s3-mount.ts";
+import {
+  type S3MountContext,
+  mountAttribution,
+  resolveS3Mount,
+} from "./s3-mount.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -68,17 +79,20 @@ import type {
   SandboxJobStatus,
   SandboxReleaseRequest,
   SandboxReservationRef,
+  SandboxRunPrincipal,
   SandboxRunRequest,
   SandboxRunResult,
-  SandboxRuntime,
 } from "./types.ts";
 import {
   configString,
+  EXEC_GRACE_MS,
+  execRunResult,
   mergeSandboxEnv,
+  parseExecResponse,
   SandboxCapacityError,
+  SandboxGoneError,
   sandboxReservationKey,
   shellQuote,
-  stripTrailingSlashes,
   truncateText,
 } from "./utils.ts";
 
@@ -100,9 +114,6 @@ const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // warm VM answers in well under this; anything slower is a restore the authoritative
 // path handles with the full budget, or a VM that is gone.
 const CACHED_WARMUP_BUDGET_MS = 1_200;
-// Past the guest's own timeout: it answers timed_out itself, the signal only
-// covers a proxy that never answers.
-const EXEC_GRACE_MS = 15_000;
 // The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",
@@ -148,6 +159,19 @@ const mountCredentialRefreshes = new Map<string, { expiresAt: number }>();
 // because an executor is constructed per request, and dropped again on terminate.
 const authTokens = new Map<string, { token: string; expiresAt: number }>();
 
+// Burst totals each MicroVM last reported, so an exec that did not grow them
+// costs no Convex write. Module scope and capped like the token cache.
+const burstReported = new Map<
+  string,
+  { vcpuSeconds: number; gbSeconds: number; expiresAt: number }
+>();
+// Growth below this is left for a later report; the totals only grow.
+const BURST_REPORT_MIN_GROWTH = 0.01;
+const BURST_REPORT_TTL_MS = 24 * 60 * 60 * 1000;
+// Each MicroVM's dashboard-row writes (upsert, burst, remove) in the order they
+// were queued, so a burst write never beats the row it bills or its removal.
+const mirrorWrites = new Map<string, Promise<void>>();
+
 // Reserved endpoints, keyed by reservation key. Same module-scope reasoning as the
 // token cache: an executor is constructed per request, so an instance field never hits.
 const reservedEndpoints = new Map<
@@ -161,40 +185,11 @@ const reservedEndpoints = new Map<
 export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
 
-// The JSON contract the lambda-sandbox image takes on /exec (snake_case).
-interface ExecPayload {
-  runtime: SandboxRuntime;
-  code: string;
-  namespace?: string;
-  workspace_root?: string;
-  timeout_ms: number;
-  args?: string[];
-  env: Record<string, string>;
-}
-
-// The JSON contract the lambda-sandbox image returns (snake_case), unchanged from
-// the Invoke era.
-interface SandboxResponse {
-  ok: boolean;
-  runtime?: string;
-  exit_code?: number | null;
-  timed_out: boolean;
-  duration_ms: number;
-  stdout: string;
-  stderr: string;
-  truncated?: boolean;
-  cpu_usec?: number;
-}
-
 export interface MicrovmHarnessReservation {
   readonly microvmId: string;
   readonly endpoint: string;
   // True only when this call created the VM, so the caller owns its teardown.
   readonly isFirstCreate: boolean;
-}
-
-interface AcquiredMicrovm extends MicrovmHarnessReservation {
-  readonly ephemeralMirror?: Promise<void>;
 }
 
 // A reservation whose VM cannot be reconnected because it reached a terminal state.
@@ -219,10 +214,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     this.#client = client;
   }
 
+  // A `shared` machine is kept when its first setup fails: another conversation
+  // may already hold it, and the unset onCreate marker makes the next acquire retry.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
     metadata?: SandboxRunMetadata;
+    shared?: boolean;
   }): Promise<MicrovmHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -243,7 +241,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
       return reservation;
     } catch (error) {
-      if (reservation.isFirstCreate) {
+      if (reservation.isFirstCreate && request.shared !== true) {
         await this.release(request).catch(() => {});
       }
       throw error;
@@ -266,7 +264,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
     );
     if (!microvmId) {
-      throw new Error("no reserved MicroVM for this Harness session");
+      throw new SandboxGoneError(
+        "no reserved MicroVM for this Harness session",
+      );
     }
     const reservation = await this.#reconnect(microvmId);
     await this.#runLifecycle(
@@ -279,6 +279,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       reservation.microvmId,
       this.#config.controlPlane?.accountId,
+      this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
     // row; recoverable on the next call, so it never holds up the session.
@@ -311,6 +312,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       env: this.#sandboxEnvVars(request.env),
     });
     request.abortSignal?.throwIfAborted();
+    // Cut output ends in the server's truncation marker, which harness callers
+    // would parse or decode as data.
+    if (response.truncated === true) {
+      throw new Error("MicroVM harness command output passed the exec cap");
+    }
 
     return {
       stdout: response.stdout,
@@ -342,10 +348,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         cached.endpoint,
       );
       const response = await this.#execReserved(cached, request, payload);
-      if (response) return sandboxResult(request, response, startedAt);
+      if (response) {
+        return execRunResult(request, response, PROVIDER, startedAt);
+      }
     }
-    const { microvmId, endpoint, ephemeralMirror, isFirstCreate } =
-      await this.#acquire(request);
+    const { microvmId, endpoint, isFirstCreate } = await this.#acquire(request);
 
     try {
       if (persistent) {
@@ -368,9 +375,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         );
       }
 
-      return sandboxResult(
+      return execRunResult(
         request,
         await this.#exec(microvmId, endpoint, payload),
+        PROVIDER,
         startedAt,
       );
     } finally {
@@ -378,9 +386,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       // fire the terminate and drop the VM's dashboard row without awaiting either.
       if (!persistent) {
         void this.#terminate(microvmId);
-        // Preserve upsert → remove ordering without putting either Convex write on
-        // the tool-call clock; otherwise a slow upsert can recreate a deleted row.
-        void ephemeralMirror?.then(() => this.#unmirror(microvmId));
+        // Queued after the upsert and burst writes, off the tool-call clock;
+        // otherwise a slow upsert can recreate a deleted row.
+        void queueMirrorWrite(microvmId, () => this.#unmirror(microvmId));
       }
     }
   }
@@ -519,26 +527,34 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
-  #optionOrEnv(option: string, env: string): string | undefined {
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+  // Image and version are platform choices: tenants cannot build MicroVM images,
+  // so a `snapshot` pin may only name another image in the same AWS account and
+  // region as the runtime default, and MICROVM_IMAGE_VERSION only versions that
+  // default. Anything else would boot a foreign image under the platform role.
+  #image(): { imageIdentifier: string; imageVersion?: string } {
+    const fallback = optionalEnv("MICROVM_IMAGE_IDENTIFIER");
+    const pinned = configString(this.#config.snapshot);
+    if (!pinned) {
+      if (!fallback) {
+        throw new Error(
+          "MicroVM sandbox requires MICROVM_IMAGE_IDENTIFIER in the harness runtime.",
+        );
+      }
+      const imageVersion = optionalEnv("MICROVM_IMAGE_VERSION");
 
-    return configString(options[option]) ?? optionalEnv(env);
-  }
-
-  #requireImageIdentifier(): string {
-    // `options.imageIdentifier` stays a back-compat alias for the `snapshot` pin.
-    const identifier =
-      configString(this.#config.snapshot) ??
-      this.#optionOrEnv("imageIdentifier", "MICROVM_IMAGE_IDENTIFIER");
-    if (!identifier) {
+      return {
+        imageIdentifier: fallback,
+        ...(imageVersion ? { imageVersion: imageVersion } : {}),
+      };
+    }
+    const scope = fallback ? microvmImageScope(fallback) : undefined;
+    if (!scope || microvmImageScope(pinned) !== scope) {
       throw new Error(
-        "MicroVM sandbox requires a config `snapshot` image ARN or MICROVM_IMAGE_IDENTIFIER in the harness runtime.",
+        "config.snapshot must name a platform MicroVM image in this region",
       );
     }
 
-    return identifier;
+    return { imageIdentifier: pinned };
   }
 
   #persistent(request: SandboxReservationRef): boolean {
@@ -618,25 +634,28 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { microvmId: cached.microvmId, endpoint: cached.endpoint };
   }
 
-  async #acquire(request: SandboxRunRequest): Promise<AcquiredMicrovm> {
+  async #acquire(
+    request: SandboxRunRequest,
+  ): Promise<MicrovmHarnessReservation> {
     if (!this.#persistent(request)) {
       const created = await this.#runMicrovm(request);
       // An ephemeral VM is still real, chargeable compute for the length of the call,
       // so it shows in the dashboard too, keyed by microvmId (it has no reservation)
       // and dropped again by run()'s teardown.
-      const ephemeralMirror = upsertSandboxInstance(
-        this.#config.controlPlane,
-        PROVIDER,
-        created.microvmId,
-        created.microvmId,
-        request.metadata,
-        { ephemeral: true, logStream: created.logStream },
+      void queueMirrorWrite(created.microvmId, () =>
+        upsertSandboxInstance(
+          this.#config.controlPlane,
+          PROVIDER,
+          created.microvmId,
+          created.microvmId,
+          request.metadata,
+          { ephemeral: true, logStream: created.logStream },
+        ),
       );
 
       return {
         microvmId: created.microvmId,
         endpoint: created.endpoint,
-        ephemeralMirror: ephemeralMirror,
         isFirstCreate: true,
       };
     }
@@ -652,6 +671,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           existing,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
         void upsertSandboxInstance(
           this.#config.controlPlane,
@@ -687,15 +707,18 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           created.microvmId,
           this.#config.controlPlane?.accountId,
+          this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
-        void upsertSandboxInstance(
-          this.#config.controlPlane,
-          PROVIDER,
-          key,
-          created.microvmId,
-          request.metadata,
-          { logStream: created.logStream },
+        void queueMirrorWrite(created.microvmId, () =>
+          upsertSandboxInstance(
+            this.#config.controlPlane,
+            PROVIDER,
+            key,
+            created.microvmId,
+            request.metadata,
+            { logStream: created.logStream },
+          ),
         );
 
         return { ...this.#cacheTarget(key, created), isFirstCreate: true };
@@ -791,8 +814,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #execReserved(
     target: { microvmId: string; endpoint: string },
     request: SandboxRunRequest,
-    payload: ExecPayload,
-  ): Promise<SandboxResponse | null> {
+    payload: SandboxExecRequest,
+  ): Promise<SandboxExecResponse | null> {
     // The reservation's own record has a 30-day TTL, so skipping its refresh costs
     // nothing, but the dashboard row carries lastUsedAt and the trace link, so it
     // still mirrors every call. Fire-and-forget, like the acquire path.
@@ -854,23 +877,17 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
     logStream: string,
   ): Promise<RunMicrovmRequest> {
-    const imageIdentifier = this.#requireImageIdentifier();
-    const imageVersion = this.#optionOrEnv(
-      "imageVersion",
-      "MICROVM_IMAGE_VERSION",
-    );
-    const executionRoleArn = this.#optionOrEnv(
-      "executionRoleArn",
-      "MICROVM_EXECUTION_ROLE_ARN",
-    );
-    const logGroup = this.#optionOrEnv("logGroup", "MICROVM_LOG_GROUP_NAME");
+    const image = this.#image();
+    // Role and log group are platform resources, so they come from the runtime
+    // env only. An account naming the build role would get its IMDS credentials.
+    const executionRoleArn = optionalEnv("MICROVM_EXECUTION_ROLE_ARN");
+    const logGroup = optionalEnv("MICROVM_LOG_GROUP_NAME");
     const persistent = this.#persistent(request);
     const lifecycle = resolveSandboxLifecycle(this.#config.lifecycle);
     const runHookPayload = await this.#runHookPayload(request);
 
     return {
-      imageIdentifier: imageIdentifier,
-      ...(imageVersion ? { imageVersion: imageVersion } : {}),
+      ...image,
       ...(executionRoleArn ? { executionRoleArn: executionRoleArn } : {}),
       ...(logGroup
         ? {
@@ -934,7 +951,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
   ): Promise<string | undefined> {
     if (!request.namespace) return undefined;
-    const mount = await resolveS3Mount(this.#s3Context(request.namespace));
+    const mount = await resolveS3Mount(
+      this.#s3Context(request.namespace, request),
+    );
     const workspaceRoot = (
       request.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT
     ).replace(/\/+$/, "");
@@ -955,12 +974,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  #s3Context(namespace: string): S3MountContext {
+  #s3Context(namespace: string, request: SandboxRunRequest): S3MountContext {
     return {
       storage: this.#config.storage,
       namespace: namespace,
       managedBucket: optionalEnv("FILESYSTEM_BUCKET_NAME"),
       region: optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
+      attribution: mountAttribution(this.#config, request),
     };
   }
 
@@ -1009,7 +1029,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { ...ingress, egressNetworkConnectors: [egress] };
   }
 
-  #execPayload(request: SandboxRunRequest): ExecPayload {
+  #execPayload(request: SandboxRunRequest): SandboxExecRequest {
     return {
       runtime: request.runtime ?? "bash",
       code: request.code,
@@ -1023,29 +1043,34 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       ...(request.args && request.args.length > 0
         ? { args: request.args }
         : {}),
-      env: this.#sandboxEnvVars(request.envVars),
+      env: this.#sandboxEnvVars(request.envVars, request.principal),
     };
   }
 
   #sandboxEnvVars(
     requestEnvVars?: Record<string, string>,
+    principal?: SandboxRunPrincipal,
   ): Record<string, string> {
-    return mergeSandboxEnv(this.#config.envVars, requestEnvVars);
+    return mergeSandboxEnv(this.#config.envVars, requestEnvVars, principal);
   }
 
   async #exec(
     microvmId: string,
     endpoint: string,
-    payload: ExecPayload,
+    payload: SandboxExecRequest,
     budgetMs = WARMUP_BUDGET_MS,
-  ): Promise<SandboxResponse> {
+  ): Promise<SandboxExecResponse> {
     const token = await this.#authToken(microvmId);
     const url = `https://${endpoint.replace(/^https?:\/\//, "")}/exec`;
     const deadline = Date.now() + budgetMs;
     let wait = WARMUP_RETRY_MIN_DELAY_MS;
     for (;;) {
       const warming = await this.#postExec(url, token, payload);
-      if (!warming.retry) return warming.response;
+      if (!warming.retry) {
+        this.#reportBurst(microvmId, warming.response.burst);
+
+        return warming.response;
+      }
       if (Date.now() >= deadline) {
         throw new MicrovmNotReadyError(
           `MicroVM ${microvmId} did not become ready within ${budgetMs}ms (last status ${warming.status})`,
@@ -1056,13 +1081,50 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
+  // Forward the guest's burst totals in the background once they grow past the
+  // last billed report. Convex bills only growth, so a repeat is harmless, and a
+  // report is cached only once it billed a row, so a failed write or one that
+  // beat the row is sent again on the next exec. Lower totals are a fresh VM.
+  #reportBurst(microvmId: string, burst: SandboxExecResponse["burst"]): void {
+    const accountId = this.#config.controlPlane?.accountId;
+    if (!burst || !accountId) return;
+    const totals = {
+      vcpuSeconds: burst.vcpu_seconds,
+      gbSeconds: burst.gb_seconds,
+    };
+    const last = burstReported.get(microvmId);
+    const since =
+      last &&
+      totals.vcpuSeconds >= last.vcpuSeconds &&
+      totals.gbSeconds >= last.gbSeconds
+        ? last
+        : { vcpuSeconds: 0, gbSeconds: 0 };
+    if (
+      totals.vcpuSeconds - since.vcpuSeconds < BURST_REPORT_MIN_GROWTH &&
+      totals.gbSeconds - since.gbSeconds < BURST_REPORT_MIN_GROWTH
+    ) {
+      return;
+    }
+    waitUntil(
+      queueMirrorWrite(microvmId, async () => {
+        if (!(await recordSandboxBurst(accountId, microvmId, totals))) return;
+        const now = Date.now();
+        evictToCap(burstReported, now);
+        burstReported.set(microvmId, {
+          ...totals,
+          expiresAt: now + BURST_REPORT_TTL_MS,
+        });
+      }),
+    );
+  }
+
   async #postExec(
     url: string,
     token: string,
-    payload: ExecPayload,
+    payload: SandboxExecRequest,
   ): Promise<
     | { retry: true; status: number | string }
-    | { retry: false; response: SandboxResponse }
+    | { retry: false; response: SandboxExecResponse }
   > {
     let res: Response;
     try {
@@ -1097,13 +1159,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         `MicroVM exec failed (${res.status}): ${text || res.statusText}`,
       );
     }
-    if (!text) throw new Error("MicroVM exec returned an empty response");
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error("MicroVM exec response must be an object");
-    }
 
-    return { retry: false, response: parsed as SandboxResponse };
+    return { retry: false, response: parseExecResponse(text, "MicroVM exec") };
   }
 
   async #authToken(
@@ -1263,7 +1320,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const refreshed = mountCredentialRefreshes.get(key);
     if (refreshed && refreshed.expiresAt > Date.now()) return;
     try {
-      const mount = await resolveS3Mount(this.#s3Context(request.namespace));
+      const mount = await resolveS3Mount(
+        this.#s3Context(request.namespace, request),
+      );
       // No credentials means no mount role, so there is nothing to rotate. Start
       // the clock anyway instead of re-resolving the mount on every single exec.
       if (!mount.credentials) {
@@ -1462,31 +1521,36 @@ function markMountCredentialsFresh(key: string): void {
 }
 
 // In-VM mount directory: one workspace per VM, so the base segment is enough.
+// `arn:aws:lambda:<region>:<account>:microvm-image`, or undefined for anything
+// that is not a MicroVM image ARN.
+function microvmImageScope(arn: string): string | undefined {
+  const parts = arn.split(":");
+  if (parts[0] !== "arn" || parts[2] !== "lambda") return undefined;
+  if (parts[5] !== "microvm-image" || parts.length < 7) return undefined;
+
+  return parts.slice(0, 6).join(":");
+}
+
 function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
 }
 
-function sandboxResult(
-  request: SandboxRunRequest,
-  response: SandboxResponse,
-  startedAt: number,
-): SandboxRunResult {
-  const stdout = truncateText(response.stdout, request.outputLimitBytes);
-  const stderr = truncateText(response.stderr, request.outputLimitBytes);
+// Run `write` after every earlier write queued for this MicroVM. A failed write
+// never blocks the ones behind it.
+function queueMirrorWrite(
+  microvmId: string,
+  write: () => Promise<unknown>,
+): Promise<void> {
+  const queued = (mirrorWrites.get(microvmId) ?? Promise.resolve())
+    .then(write)
+    .then(
+      () => {},
+      () => {},
+    );
+  mirrorWrites.set(microvmId, queued);
+  void queued.then(() => {
+    if (mirrorWrites.get(microvmId) === queued) mirrorWrites.delete(microvmId);
+  });
 
-  return {
-    ok: response.ok,
-    runtime: request.runtime ?? "bash",
-    exitCode: response.exit_code ?? null,
-    stdout: stdout.value,
-    stderr: stderr.value,
-    durationMs: response.duration_ms || Date.now() - startedAt,
-    timedOut: response.timed_out,
-    truncated:
-      response.truncated === true || stdout.truncated || stderr.truncated,
-    provider: PROVIDER,
-    ...(typeof response.cpu_usec === "number" && response.cpu_usec > 0
-      ? { cpuUsec: response.cpu_usec }
-      : {}),
-  };
+  return queued;
 }

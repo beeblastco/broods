@@ -10,7 +10,7 @@ import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { projectEndpointIds } from "./model/usageEndpoints";
-import { type UsageGrain } from "./usage";
+import { taskIdParts, type UsageGrain } from "./usage";
 
 const usageRange = v.union(
   v.literal("1h"),
@@ -71,6 +71,32 @@ const RANGE_CONFIG: Record<
   "30d": { lookbackMs: 30 * 24 * 60 * 60 * 1000, binSeconds: 24 * 60 * 60 },
   "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
 };
+
+// Bounds the drill-down: rows read across all endpoints (far under Convex's
+// per-query read limits), and tasks returned.
+const USAGE_TASK_SCAN_TOTAL = 2000;
+const USAGE_TASK_RETURN_LIMIT = 100;
+
+/** One finished task behind a usage bin, linked to its trace. */
+const usageTask = v.object({
+  /** Null for rows written without a trace suffix on `taskId`. */
+  traceId: v.union(v.string(), v.null()),
+  agentId: v.string(),
+  modelProvider: v.string(),
+  modelId: v.string(),
+  finishedAt: v.number(),
+  durationMs: v.number(),
+  status: v.union(v.literal("completed"), v.literal("failed")),
+  inputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningTokens: v.number(),
+  cachedInputTokens: v.number(),
+  cacheWriteTokens: v.number(),
+  totalTokens: v.number(),
+  stepCount: v.number(),
+  /** Start of the prompt, as the trace labels it; null on older rows. */
+  inputPreview: v.union(v.string(), v.null()),
+});
 
 /** One aggregated usage point: bin start, model identity, and the 11 metric counters. */
 type UsageBucketRow = {
@@ -169,11 +195,98 @@ export const fetchUsageStats = query({
 });
 
 /**
- * Rollup rows for one endpoint at one grain since `startMs`. At the "5m"
- * grain this also merges legacy rows that predate the `grain` field (they are
- * 5-minute buckets by convention until `migrations.backfillUsageRollupGrains`
- * stamps them). Exported for `fetchUsageStats` and its test; not a registered
- * Convex function.
+ * Finished tasks inside one usage chart bin, heaviest first, so the dashboard
+ * can show which traces a bin's tokens came from. `models` narrows to the
+ * dashboard's model filter through the index, before any row is read. Reads
+ * at most `USAGE_TASK_SCAN_TOTAL` rows across the project's endpoints; `truncated`
+ * says some tasks in the bin are not listed. `taskUsage` is pruned after 90
+ * days, so older bins return no tasks.
+ */
+export const fetchUsageTasks = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.optional(v.id("stages")),
+    startMs: v.number(),
+    endMs: v.number(),
+    /** `provider::model` keys to keep; omitted keeps every model. */
+    models: v.optional(v.array(v.string())),
+  },
+  returns: v.object({
+    tasks: v.array(usageTask),
+    truncated: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const endpointIds = await projectEndpointIds(
+      ctx,
+      authUser.id,
+      args.projectId,
+      args.stageId,
+    );
+    const models = args.models ? parseModelKeys(args.models) : undefined;
+    // One index range per endpoint, or per endpoint and model when filtered,
+    // so excluded models never use up the read budget. The budget is split
+    // across ranges to stay inside Convex's per-query read limits; one extra
+    // row tells a full range apart.
+    const scans = endpointIds.flatMap((endpointId) =>
+      (models ?? [undefined]).map((model) => ({
+        endpointId: endpointId,
+        model: model,
+      })),
+    );
+    const perScan = Math.max(
+      1,
+      Math.floor(USAGE_TASK_SCAN_TOTAL / Math.max(1, scans.length)),
+    );
+    const batches = await Promise.all(
+      scans.map((scan) =>
+        collectUsageTasks(
+          ctx,
+          scan.endpointId,
+          args.startMs,
+          args.endMs,
+          perScan + 1,
+          scan.model,
+        ),
+      ),
+    );
+    const rows = batches.flatMap((batch) => batch.slice(0, perScan));
+    const truncated =
+      rows.length > USAGE_TASK_RETURN_LIMIT ||
+      batches.some((batch) => batch.length > perScan);
+    const tasks = rows
+      .sort((a, b) => b.totalTokens - a.totalTokens)
+      .slice(0, USAGE_TASK_RETURN_LIMIT)
+      .map((row) => ({
+        traceId: taskIdParts(row.taskId).traceId ?? null,
+        agentId: row.agentId,
+        modelProvider: row.modelProvider,
+        modelId: row.modelId,
+        finishedAt: row.finishedAt,
+        durationMs: row.durationMs,
+        status: row.status,
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        reasoningTokens: row.reasoningTokens,
+        cachedInputTokens: row.cachedInputTokens,
+        cacheWriteTokens: row.cacheWriteTokens,
+        totalTokens: row.totalTokens,
+        stepCount: row.stepCount,
+        inputPreview: row.inputPreview ?? null,
+      }));
+
+    return { tasks: tasks, truncated: truncated };
+  },
+});
+
+/**
+ * Rollup rows for one endpoint at one grain since `startMs`. Exported for
+ * `fetchUsageStats` and its test; not a registered Convex function.
  */
 export async function collectUsageRollups(
   ctx: QueryCtx,
@@ -181,7 +294,7 @@ export async function collectUsageRollups(
   grain: UsageGrain,
   startMs: number,
 ): Promise<Doc<"usageRollups">[]> {
-  const rows = await ctx.db
+  return await ctx.db
     .query("usageRollups")
     .withIndex("by_endpointId_and_grain_and_bucketStart", (q) =>
       q
@@ -190,19 +303,63 @@ export async function collectUsageRollups(
         .gte("bucketStart", startMs),
     )
     .collect();
-  if (grain !== "5m") {
-    return rows;
+}
+
+/**
+ * Up to `limit` task usage rows for one endpoint, and one model when given,
+ * that finished in `[startMs, endMs)`, oldest first. Exported for
+ * `fetchUsageTasks` and its test; not a registered Convex function.
+ */
+export async function collectUsageTasks(
+  ctx: QueryCtx,
+  endpointId: string,
+  startMs: number,
+  endMs: number,
+  limit: number,
+  model?: Pick<Doc<"taskUsage">, "modelProvider" | "modelId">,
+): Promise<Doc<"taskUsage">[]> {
+  if (model) {
+    return await ctx.db
+      .query("taskUsage")
+      .withIndex(
+        "by_endpointId_and_modelProvider_and_modelId_and_finishedAt",
+        (q) =>
+          q
+            .eq("endpointId", endpointId)
+            .eq("modelProvider", model.modelProvider)
+            .eq("modelId", model.modelId)
+            .gte("finishedAt", startMs)
+            .lt("finishedAt", endMs),
+      )
+      .take(limit);
   }
 
-  // Pre-backfill legacy rows have no grain and live only under the old index.
-  const legacy = await ctx.db
-    .query("usageRollups")
-    .withIndex("by_endpointId_and_bucketStart", (q) =>
-      q.eq("endpointId", endpointId).gte("bucketStart", startMs),
+  return await ctx.db
+    .query("taskUsage")
+    .withIndex("by_endpointId_and_finishedAt", (q) =>
+      q
+        .eq("endpointId", endpointId)
+        .gte("finishedAt", startMs)
+        .lt("finishedAt", endMs),
     )
-    .collect();
+    .take(limit);
+}
 
-  return [...rows, ...legacy.filter((row) => row.grain === undefined)];
+/**
+ * The dashboard's `provider::model` filter keys as one index scan each:
+ * repeats collapse, so no range is read twice, and a key without the
+ * separator matches no model. Exported for `fetchUsageTasks` and its test.
+ */
+export function parseModelKeys(
+  keys: string[],
+): Array<{ modelProvider: string; modelId: string }> {
+  return [...new Set(keys)].flatMap((key) => {
+    const split = key.indexOf("::");
+
+    return split > 0
+      ? [{ modelProvider: key.slice(0, split), modelId: key.slice(split + 2) }]
+      : [];
+  });
 }
 
 /**

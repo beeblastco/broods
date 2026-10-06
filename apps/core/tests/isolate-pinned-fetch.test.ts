@@ -63,6 +63,15 @@ describe("guardedFetch", () => {
     expect(output.connections[0].host).toBe("93.184.216.34");
   });
 
+  it("drops credentials when a redirect leaves the origin, like fetch", async () => {
+    const output = runNodeScenario("redirect-credentials");
+
+    expect(output.result.bodyText).toBe("media");
+    expect(output.requests[1]).toContain("authorization: Basic abc");
+    expect(output.requests[2]).not.toContain("authorization");
+    expect(output.requests[2]).not.toContain("cookie");
+  });
+
   it("rejects response bodies over 5MB", async () => {
     const output = runNodeScenario("large-body");
 
@@ -162,6 +171,21 @@ function runNodeScenario(scenario: string): any {
           return { error: error instanceof Error ? error.message : String(error), connections, requests };
         }
         throw new Error("expected redirect denial");
+      }
+      if (scenario === "redirect-credentials") {
+        const result = await guardedFetch(
+          "http://public.test/media",
+          { headers: { authorization: "Basic abc", cookie: "session=1" } },
+          {
+            lookup: publicLookup("93.184.216.34"),
+            createConnection: scriptedConnection([
+              httpResponse(307, { location: "/media/2" }, ""),
+              httpResponse(307, { location: "http://cdn.test/object" }, ""),
+              httpResponse(200, { "content-type": "text/plain" }, "media"),
+            ]),
+          },
+        );
+        return { result, connections, requests };
       }
       if (scenario === "large-body") {
         try {

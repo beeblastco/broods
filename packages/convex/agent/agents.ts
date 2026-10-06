@@ -8,13 +8,12 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
-import {
-  encryptAgentConfigBlob,
-  substituteEnvPlaceholders,
-} from "../model/agentConfigCodec";
+import { assertSealedUnderCurrentKey } from "../model/accountKeys";
+import { deleteAgentConfig } from "../model/agentRuntimeSecrets";
 import { accountIdForProject } from "../model/auditEvents";
 import {
   backSyncCanvasFromAgentRow,
+  deleteAgentRow,
   mirrorAgentRowOntoConfig,
 } from "../model/agentSync";
 import { syncApiAgentCanvasWiring } from "../model/apiCanvasSync";
@@ -22,6 +21,7 @@ import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getProjectForRole } from "../model/ownership/project";
 import { agentsInProject, agentsInStage } from "../model/projectScope";
 import { agentsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const agentDoc = v.object({
   ...agentsFields,
@@ -57,6 +57,10 @@ export const create = internalMutation({
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
     }
+    await assertSealedUnderCurrentKey(ctx, args.accountId, [
+      args.encryptedConfig,
+      args.encryptedSourceConfig,
+    ]);
 
     // Serializable duplicate guard: racing creates conflict on this index
     // read, so the retried transaction sees the winner's row and rejects.
@@ -67,7 +71,10 @@ export const create = internalMutation({
       )
       .first();
     if (existing) {
-      throw new Error(`Agent name already exists: ${args.name}`);
+      throw new ClientError(
+        `Agent name already exists: ${args.name}`,
+        "conflict",
+      );
     }
 
     const now = Date.now();
@@ -213,6 +220,47 @@ export const listForeignAgentLinks = internalQuery({
   },
 });
 
+/**
+ * The agents of the account's production stages, which is who the bare webhook
+ * URL routes to. Same rule `webhookPath` issues it by: an active deployment on a
+ * `production` stage. An agent in any other stage is reached only through its
+ * own stage URL.
+ */
+export const listForProduction = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(agentDoc),
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
+    const deployments = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
+      .collect();
+    const stages = await Promise.all(
+      deployments.map((deployment): Promise<Doc<"stages"> | null> =>
+        ctx.db.get(deployment.stageId),
+      ),
+    );
+    const stageAgents = await Promise.all(
+      deployments
+        .filter(
+          (_deployment, index): boolean => stages[index]?.kind === "production",
+        )
+        .map((deployment): Promise<Doc<"agents">[]> =>
+          agentsInStage(
+            ctx,
+            { projectId: deployment.projectId, stageId: deployment.stageId },
+            args.accountId,
+          ),
+        ),
+    );
+    const agents = new Map<Id<"agents">, Doc<"agents">>();
+    for (const agent of stageAgents.flat()) agents.set(agent._id, agent);
+
+    return [...agents.values()];
+  },
+});
+
 // An endpointId belonging to another account resolves empty, so a guessed
 // stage URL cannot reach across accounts.
 export const listForEndpoint = internalQuery({
@@ -251,8 +299,12 @@ export const listForEndpoint = internalQuery({
  */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
-  returns: v.array(agentDoc),
-  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
+  // Names only: the full row carries the encrypted config blobs.
+  returns: v.array(v.object({ _id: v.id("agents"), name: v.string() })),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Pick<Doc<"agents">, "_id" | "name">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -267,7 +319,9 @@ export const listForProject = query({
     const accountId = await accountIdForProject(ctx, args.projectId);
     if (!accountId) return [];
 
-    return await agentsInProject(ctx, args.projectId, accountId);
+    const agents = await agentsInProject(ctx, args.projectId, accountId);
+
+    return agents.map((agent) => ({ _id: agent._id, name: agent.name }));
   },
 });
 
@@ -280,11 +334,11 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("agents", args.agentId);
     if (!normalized) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
     const agent = await ctx.db.get(normalized);
     if (!agent || agent.accountId !== args.accountId) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
 
     // Mirror cleanup onto the dashboard's canvas: drop any agentConfigs row
@@ -330,7 +384,7 @@ export const remove = internalMutation({
           });
         }
       }
-      await ctx.db.delete(linkedConfig._id);
+      await deleteAgentConfig(ctx, linkedConfig._id);
 
       // Recompute the API-managed wiring so workspace/sandbox/skill nodes
       // with no remaining API agent references disappear with their agent.
@@ -342,51 +396,8 @@ export const remove = internalMutation({
       }
     }
 
-    await ctx.db.delete(normalized);
+    await deleteAgentRow(ctx, agent);
     await refreshAccountChannelEndpoints(ctx, args.accountId);
-
-    return null;
-  },
-});
-
-/**
- * Test utility: encrypts a raw `AgentConfig` against the deployment's
- * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` and writes it onto the given agent.
- * Used by the CLI smoke-test to seed a working config without touching
- * the canvas / agentConfigs flow. Production sync should go through
- * `model/agentSync.pushEncryptedConfigToAgentRow` instead.
- */
-export const seedEncryptedConfigForTest = internalMutation({
-  args: {
-    agentId: v.string(),
-    config: v.any(),
-    variables: v.optional(
-      v.array(v.object({ key: v.string(), value: v.string() })),
-    ),
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET not set");
-    const normalized = ctx.db.normalizeId("agents", args.agentId);
-    if (!normalized) throw new Error("Unknown agentId");
-    const variables: Record<string, string> = {};
-    for (const entry of args.variables ?? [])
-      variables[entry.key] = entry.value;
-    const resolved = substituteEnvPlaceholders(
-      args.config as Record<string, unknown>,
-      variables,
-    );
-    const encrypted = await encryptAgentConfigBlob(resolved, secret);
-    await ctx.db.patch(normalized, {
-      encryptedConfig: encrypted.ciphertext,
-      encryptionIv: encrypted.iv,
-      encryptionTag: encrypted.tag,
-      updatedAt: Date.now(),
-    });
-    await mirrorAgentRowOntoConfig(ctx, normalized);
-    const seeded = await ctx.db.get(normalized);
-    if (seeded) await refreshAccountChannelEndpoints(ctx, seeded.accountId);
 
     return null;
   },
@@ -411,12 +422,16 @@ export const update = internalMutation({
     const { accountId, agentId, clearSourceConfig, ...patch } = args;
     const normalized = ctx.db.normalizeId("agents", agentId);
     if (!normalized) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
     const agent = await ctx.db.get(normalized);
     if (!agent || agent.accountId !== accountId) {
-      throw new Error("Agent does not belong to the supplied accountId");
+      throw new ClientError("Agent does not belong to the supplied accountId");
     }
+    await assertSealedUnderCurrentKey(ctx, accountId, [
+      patch.encryptedConfig,
+      patch.encryptedSourceConfig,
+    ]);
 
     if (patch.name !== undefined && patch.name !== agent.name) {
       const existing = await ctx.db
@@ -426,7 +441,10 @@ export const update = internalMutation({
         )
         .first();
       if (existing) {
-        throw new Error(`Agent name already exists: ${patch.name}`);
+        throw new ClientError(
+          `Agent name already exists: ${patch.name}`,
+          "conflict",
+        );
       }
     }
 

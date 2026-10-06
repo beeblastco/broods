@@ -159,6 +159,8 @@ if (slackRef) {
     process.env.SLACK_CONFIG_TOKEN ?? process.env.SLACK_APP_CONFIG_TOKEN;
   const configRefreshToken = process.env.SLACK_CONFIG_REFRESH_TOKEN;
   const appId = process.env.SLACK_APP_ID;
+  // A manifest update replaces the app's name, so it must be the one you want.
+  const slackAppName = process.env.SLACK_APP_NAME ?? "Broods demo";
 
   const botEvents = [
     "app_mention",
@@ -201,9 +203,9 @@ if (slackRef) {
 
     const manifest: Record<string, unknown> = {
       _metadata: { major_version: 1, minor_version: 1 },
-      display_information: { name: "Tracy" },
+      display_information: { name: slackAppName },
       features: {
-        bot_user: { display_name: "Tracy", always_online: true },
+        bot_user: { display_name: slackAppName, always_online: true },
         slash_commands: [
           {
             command: "/new",

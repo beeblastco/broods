@@ -4,7 +4,8 @@
  * event→records index, then runs the matching hooks at each fire-point and
  * merges their sanitized mutations. Per-event isolate execution + the
  * field-scoped mutation boundary live in hook-runner.ts; the fold into harness
- * state lives at the call sites (harness.ts / integrations.ts / subagents.ts).
+ * state lives at the call sites (harness.ts / handler.ts / integrations.ts /
+ * subagents.ts).
  */
 
 import type { JSONValue, ToolSet } from "ai";
@@ -13,6 +14,7 @@ import type {
   AgentCodeHookConfig,
   AgentConfig,
   AgentHookEventName,
+  HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -21,7 +23,9 @@ import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import { wrapToolExecute } from "./tool-execute.ts";
 
+/** One run's code hooks, asked at each fire-point. */
 export interface HookDispatcher {
+  /** Lets a call site skip building a payload when no hook listens for the event. */
   hasHooksFor(event: AgentHookEventName): boolean;
   /** Runs every hook registered for the event and returns the merged, field-scoped mutation. */
   runMutation(
@@ -30,6 +34,7 @@ export interface HookDispatcher {
   ): Promise<Record<string, unknown> | undefined>;
 }
 
+/** Returned when the agent has no active code hooks, so call sites never null-check. */
 const NO_HOOKS: HookDispatcher = {
   hasHooksFor: (): boolean => false,
   runMutation: async function (): Promise<Record<string, unknown> | undefined> {
@@ -75,12 +80,18 @@ export async function createAgentHookDispatcher(
     return NO_HOOKS;
   }
 
-  return createHookDispatcher(accountId, index);
+  return createHookDispatcher(accountId, index, hookVisibleConfig(agentConfig));
 }
 
+/**
+ * Runs the indexed hooks for each fire-point, one at a time, sharing one run
+ * state and handing each the allow-listed `config` as ctx.config. Called by
+ * `createAgentHookDispatcher`, and directly by the hook tests.
+ */
 export function createHookDispatcher(
   accountId: string,
   index: Map<AgentHookEventName, AccountHookRecord[]>,
+  config: HookAgentConfig,
 ): HookDispatcher {
   // ctx.state: a mutable scratchpad shared by every hook in this run. Seeded
   // empty, threaded into each hook, and replaced with what the hook left behind
@@ -109,6 +120,7 @@ export function createHookDispatcher(
             record: record,
             event: event,
             payload: payload,
+            config: config,
             state: runState,
           });
           runState = state;
@@ -171,6 +183,7 @@ export function wrapToolsWithHooks(
   }));
 }
 
+/** Maps each event to the active hook records that fire on it, in config order. */
 function buildEventIndex(
   refs: AgentCodeHookConfig[],
   records: AccountHookRecord[],
@@ -197,6 +210,25 @@ function buildEventIndex(
   return index;
 }
 
+/** Projects the agent config onto what a hook may read as ctx.config; see HookAgentConfig. */
+function hookVisibleConfig(agentConfig: AgentConfig): HookAgentConfig {
+  return {
+    model: {
+      provider: agentConfig.model?.provider,
+      modelId: agentConfig.model?.modelId,
+    },
+    harness: agentConfig.harness?.type,
+    maxTurn: agentConfig.agent?.maxTurn,
+    tools: Object.keys(agentConfig.tools ?? {}),
+    mcp: Object.keys(agentConfig.mcp ?? {}),
+    channels: Object.keys(agentConfig.channels ?? {}),
+    skills: agentConfig.skills?.allowed ?? [],
+    subagents: agentConfig.subagent?.allowed ?? [],
+    denyTools: agentConfig.denyTools ?? [],
+  };
+}
+
+/** Fetches the active account hook records an agent's config refers to, once per run. */
 async function loadAgentHooks(
   accountId: string,
   refs: AgentCodeHookConfig[],

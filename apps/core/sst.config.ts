@@ -16,7 +16,7 @@ const AWS_PROFILE = process.env.CI
 // sandbox Lambdas this used to gate are gone. The "lambda" provider is now an AWS Lambda
 // MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
 // The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
-// there); its teardown belongs to the Phase 4 infra cleanup. See docs/workspace/sandbox/lambda.md.
+// there); its teardown belongs to the Phase 4 infra cleanup. See apps/docs/docs/internals/sandboxes.md.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 // Convex credentials are required for every stage and back all persistence.
 // Runtime credentials live on the container (infra repo), not here.
@@ -412,7 +412,7 @@ export default $config({
     // Loki. The forwarder is a plain .mjs next to the hosted-MCP runner. It needs
     // the collector's client header line (a CI secret, kept encrypted in state
     // via $util.secret), so a deploy without it skips the bridge rather than
-    // shipping a function that fails every invocation. See docs/observability.md.
+    // shipping a function that fails every invocation. See apps/docs/docs/internals/observability.md.
     if (microvmLogGroup && OTEL_EXPORTER_OTLP_HEADERS) {
       const sandboxLogForwarder = new sst.aws.Function("SandboxLogForwarder", {
         handler: "../lambda/sandbox-log-forwarder.handler",
@@ -694,21 +694,34 @@ export default $config({
         })
       : undefined;
 
+    // IAM principal for the self-hosted container runtime (epic #85 phase 9a).
+    // Declared here because the sandbox mount role below trusts it by ARN; its
+    // policies follow further down, next to the permission sets they attach.
+    const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
+      name: resourceName("core-runtime", stage, region),
+    });
+
     // Scoped credentials for provider sandboxes that mount S3 with mount-s3
     // (daytona, workdir, and the lambda MicroVM via its /run hook). The harness assumes
     // this role per sandbox create and hands the short-lived, prefix-scoped session
     // credentials to the sandbox instead of its own runtime credentials, so sandbox
-    // code can only reach the workspace/skills buckets.
+    // code can only reach the workspace/skills buckets. Only core's runtime user may
+    // assume it, and every session it mints names who it serves
+    // (sts:SetSourceIdentity + sts:TagSession, see harness/sandbox/s3-mount.ts).
     const sandboxS3MountRole = new aws.iam.Role("SandboxS3MountRole", {
       name: resourceName("sandbox-s3mount", stage, region),
-      assumeRolePolicy: JSON.stringify({
+      assumeRolePolicy: $jsonStringify({
         Version: "2012-10-17",
         Statement: [
           {
-            Sid: "AllowHarnessAssumeRole",
+            Sid: "AllowCoreRuntimeAssumeRole",
             Effect: "Allow",
-            Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:root` },
-            Action: "sts:AssumeRole",
+            Principal: { AWS: coreRuntimeUser.arn },
+            Action: [
+              "sts:AssumeRole",
+              "sts:SetSourceIdentity",
+              "sts:TagSession",
+            ],
           },
         ],
       }),
@@ -754,7 +767,7 @@ export default $config({
     // rejected), so the repo is region-scoped: each deploy region gets its own. The arm64
     // image is pushed by the lambda-just-bash-rust CI; for a brand-new region that push must
     // land before the sandbox functions can be created (the first deploy creates the empty
-    // repo, then re-deploy once the image exists). See docs/workspace/sandbox/lambda.md.
+    // repo, then re-deploy once the image exists). See apps/docs/docs/internals/sandboxes.md.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
     const sandboxImageRepoExists = ecrRepositoryExists(
       sandboxImageRepoName,
@@ -805,11 +818,13 @@ export default $config({
 
     // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
     // process. No VPC gives internet egress; core invokes it via
-    // TOOL_RUNNER_FUNCTION_NAME. MCP_TENANT_ISOLATION=true adds PER_TENANT
-    // mode, which AWS has to enable for the account first. The mode is immutable
-    // after create, so each mode owns its logical id and physical name. It also
-    // rules out a function URL, provisioned concurrency and SnapStart.
-    const mcpTenantIsolation = process.env.MCP_TENANT_ISOLATION === "true";
+    // TOOL_RUNNER_FUNCTION_NAME. MCP_TENANT_ISOLATION=true creates it in
+    // PER_TENANT mode so warm environments never cross accounts. Off until AWS
+    // enables tenancy config for this account (CreateFunction rejects it today);
+    // tracked in #654. The mode is immutable after create,
+    // so each mode owns its logical id and physical name. It also rules out a
+    // function URL, provisioned concurrency and SnapStart.
+    const mcpTenantIsolation = parseBooleanEnv("MCP_TENANT_ISOLATION", false);
     const mcpRunnerFn = new sst.aws.Function(
       mcpTenantIsolation ? "McpRunner" : "ToolRunner",
       {
@@ -851,7 +866,7 @@ export default $config({
         resources: [mcpRunnerFn.arn],
       },
       {
-        actions: ["sts:AssumeRole"],
+        actions: ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"],
         resources: [sandboxS3MountRole.arn],
       },
       {
@@ -990,16 +1005,13 @@ export default $config({
         : []),
     ];
 
-    // IAM principal for the self-hosted container runtime (epic #85 phase 9a):
-    // one pod runs both handlers, so the user gets the union of the harness and
-    // account permission sets, generated from the same arrays so it cannot drift.
-    // The access key is minted out of band (`aws iam create-access-key`) and
+    // Policies of the container runtime user (CoreRuntimeUser above): one pod
+    // runs both handlers, so the user gets the union of the harness and account
+    // permission sets, generated from the same arrays so it cannot drift. The
+    // access key is minted out of band (`aws iam create-access-key`) and
     // delivered to the cluster as a k8s Secret, never in Pulumi state or git.
     // Two managed policies instead of one inline: IAM caps inline user policies
     // at 2048 chars total, which these documents exceed.
-    const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
-      name: resourceName("core-runtime", stage, region),
-    });
     const coreRuntimeHarnessPolicy = new aws.iam.Policy(
       "CoreRuntimeHarnessPolicy",
       {
@@ -1096,6 +1108,8 @@ export default $config({
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
       toolRunnerFunctionName: mcpRunnerFn.name,
+      // deploy.yaml deploys the Cloudflare MCP runtime Worker under this name.
+      cloudflareMcpWorkerName: resourceName("mcp", stage, region),
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,

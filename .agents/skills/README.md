@@ -9,7 +9,7 @@ To deploy one, copy the folder into a `broods/` project dir and register it with
 
 ## Credentials
 
-The `broods/` bundle authenticates the way a developer does: `broods login` in the browser, driven by its onboard script. The `maintain/` bundle authenticates with account roles, shipped in [#355](https://github.com/beeblastco/broods/pull/355). A role is a scoped credential you exchange for a short-lived session. `apps/docs/docs/roles.md` is the reference; the skills do not restate it.
+The `broods/` bundle authenticates the way a developer does: `broods login` in the browser, driven by its onboard script. The `maintain/` bundle authenticates with account roles, shipped in [#355](https://github.com/beeblastco/broods/pull/355). A role is a scoped credential you exchange for a short-lived session. The Roles section of `apps/docs/docs/guides/security.md` is the reference; the skills do not restate it.
 
 For the agent bundle, mint a role pinned to the agent's own stage and hand the agent either a session token or the runtime key plus the role id, through the env store.
 

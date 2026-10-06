@@ -1,5 +1,6 @@
 "use client";
 
+import { CopyButton } from "@/app/components/CopyButton";
 import { ChannelsSection } from "@/app/components/side-panel/ChannelsSection";
 import {
   ExpandBlock,
@@ -27,9 +28,11 @@ import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   MODEL_PROVIDERS,
+  providerApiKeyEnvName,
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import {
@@ -44,15 +47,8 @@ import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
-import {
-  Check,
-  Copy,
-  Eye,
-  EyeOff,
-  KeyRound,
-  RefreshCw,
-  Wifi,
-} from "lucide-react";
+import { Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState } from "react";
 
 /**
@@ -77,7 +73,6 @@ type OutputFormatConfig = {
 };
 
 export type AgentProvider = AccountModelProviderName;
-type RuntimeVariable = { key: string; value: string };
 
 const providerOptions: Array<{ value: AgentProvider; label: string }> =
   ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => ({
@@ -118,7 +113,6 @@ export function DetailsTab({
   onRotateKey,
   isSavingKey,
   selectedProvider,
-  runtimeVariables,
   onSaveModelSettings,
   onUpdateToolConfig,
   onUpdateChannelConfig,
@@ -139,7 +133,6 @@ export function DetailsTab({
   onRotateKey?: () => Promise<boolean>;
   isSavingKey?: boolean;
   selectedProvider: AgentProvider;
-  runtimeVariables: RuntimeVariable[];
   onSaveModelSettings?: (next: {
     provider: AgentProvider;
     modelId: string;
@@ -164,7 +157,6 @@ export function DetailsTab({
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
   // Reveal a freshly generated/rotated key the moment it arrives (render-time
   // sync, not an effect); hide again once the plaintext is cleared.
   const [syncedApiKey, setSyncedApiKey] = useState(deploymentApiKey);
@@ -253,13 +245,28 @@ export function DetailsTab({
   const displayOutputSchemaText = hasEditedOutputSchema
     ? outputSchemaText
     : schemaFromConfigText;
-  const hasOpenAiApiKeyVariable = runtimeVariables.some((entry) => {
-    const normalized = entry.key.trim().toUpperCase();
-
-    return normalized === "OPENAI_API_KEY" || normalized === "API_KEY";
-  });
-  const openAiVariableRequired =
-    editProvider === "openai" && !hasOpenAiApiKeyVariable;
+  // The provider key is a `${NAME}` ref to a stage variable (or, before one is
+  // written, the default name); warn until the stage has that variable.
+  const stageVariables = useQuery(
+    api.environmentVariables.list,
+    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  );
+  const apiKey = agentConfig
+    ? readAgentBranch<Record<string, { apiKey?: unknown } | undefined>>(
+        agentConfig as unknown as FlatAgentConfig,
+        "provider",
+      )[editProvider]?.apiKey
+    : undefined;
+  const keyVariable =
+    apiKey === undefined
+      ? (providerApiKeyEnvName(editProvider) ?? undefined)
+      : typeof apiKey === "string"
+        ? ACCOUNT_ENV_PLACEHOLDER_PATTERN.exec(apiKey)?.[1]
+        : undefined;
+  const keyVariableMissing =
+    keyVariable !== undefined &&
+    stageVariables !== undefined &&
+    !stageVariables.some((variable) => variable.name === keyVariable);
 
   function buildOutputFormatPayload(
     schema: Record<string, unknown>,
@@ -357,12 +364,6 @@ export function DetailsTab({
       setOutputSchemaError("Failed to read schema file.");
     };
     reader.readAsText(file);
-  }
-
-  function handleCopy(value: string, field: string): void {
-    navigator.clipboard.writeText(value);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
   }
 
   /** Auto-saves provider/model/base-URL settings; no-ops when required values are empty. */
@@ -474,10 +475,16 @@ export function DetailsTab({
                 }}
               />
             )}
-            {openAiVariableRequired && (
+            {keyVariableMissing && (
               <p className="text-xs text-destructive">
-                Add <code>OPENAI_API_KEY</code> in the Variables tab before
-                running the agent.
+                Set <code>{keyVariable}</code> in{" "}
+                <Link
+                  href={`/${projectId}/settings?tab=variables&stage=${stageId}`}
+                  className="cursor-pointer underline underline-offset-4"
+                >
+                  Environment variables
+                </Link>{" "}
+                before running the agent.
               </p>
             )}
           </div>
@@ -625,7 +632,7 @@ export function DetailsTab({
         {onUpdatePublicAccess && (
           <ToggleRow
             label="Public access"
-            description="Reachable over HTTP/SSE and WebSocket with the runtime API key"
+            description="Reachable over HTTP/SSE and WebSocket with the runtime key"
             checked={publicAccess}
             onCheckedChange={(next) => void onUpdatePublicAccess(next)}
           />
@@ -633,7 +640,7 @@ export function DetailsTab({
         <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
           <p className="text-2xs text-muted-foreground">
             {publicAccess
-              ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime API key. Select the agent per request with its Agent ID below."
+              ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime key. Select the agent per request with its Agent ID below."
               : "Secured by default. This agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
           </p>
         </div>
@@ -642,7 +649,7 @@ export function DetailsTab({
           <div className="flex flex-col gap-2 rounded-md border border-dashed border-border/70 bg-muted/40 p-3">
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
               <KeyRound className="size-3.5" />
-              No runtime API key yet
+              No runtime key yet
             </span>
             <p className="text-2xs text-muted-foreground">
               Generate the stage&apos;s key to reveal the endpoint URLs.{" "}
@@ -656,7 +663,7 @@ export function DetailsTab({
                 disabled={isSavingKey}
                 onClick={() => void onGenerateKey?.()}
               >
-                {isSavingKey ? "Generating…" : "Generate API key"}
+                {isSavingKey ? "Generating…" : "Generate runtime key"}
               </Button>
             )}
           </div>
@@ -680,19 +687,7 @@ export function DetailsTab({
                     <code className="flex-1 text-xs text-foreground break-all">
                       {endpointUrl}
                     </code>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted"
-                      className="shrink-0 cursor-pointer"
-                      onClick={() => handleCopy(endpointUrl, "url")}
-                    >
-                      {copiedField === "url" ? (
-                        <Check className="size-3" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </Button>
+                    <CopyButton value={endpointUrl} label="endpoint URL" />
                   </div>
                 </div>
 
@@ -705,19 +700,7 @@ export function DetailsTab({
                     <code className="flex-1 text-xs text-foreground break-all">
                       {websocketUrl}
                     </code>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted"
-                      className="shrink-0 cursor-pointer"
-                      onClick={() => handleCopy(websocketUrl, "websocket")}
-                    >
-                      {copiedField === "websocket" ? (
-                        <Check className="size-3" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </Button>
+                    <CopyButton value={websocketUrl} label="WebSocket URL" />
                   </div>
                 </div>
               </>
@@ -730,21 +713,10 @@ export function DetailsTab({
                   <code className="flex-1 text-xs text-foreground break-all">
                     {agentConfig.agentId}
                   </code>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    className="shrink-0 cursor-pointer"
-                    onClick={() =>
-                      handleCopy(agentConfig.agentId as string, "agentid")
-                    }
-                  >
-                    {copiedField === "agentid" ? (
-                      <Check className="size-3" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                  </Button>
+                  <CopyButton
+                    value={agentConfig.agentId as string}
+                    label="agent ID"
+                  />
                 </div>
                 <span className="text-2xs text-muted-foreground">
                   Pass this as <code>agentId</code> in the invoke payload.
@@ -754,7 +726,7 @@ export function DetailsTab({
 
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
-                <SectionHeader>API Key (stage-wide)</SectionHeader>
+                <SectionHeader>Runtime Key</SectionHeader>
                 {canWrite && (
                   <Button
                     variant="ghost"
@@ -782,7 +754,9 @@ export function DetailsTab({
                     tone="muted"
                     className="shrink-0 cursor-pointer"
                     onClick={() => setShowApiKey(!showApiKey)}
-                    aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                    aria-label={
+                      showApiKey ? "Hide runtime key" : "Show runtime key"
+                    }
                   >
                     {showApiKey ? (
                       <EyeOff className="size-3" />
@@ -790,19 +764,7 @@ export function DetailsTab({
                       <Eye className="size-3" />
                     )}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    className="shrink-0 cursor-pointer"
-                    onClick={() => handleCopy(deploymentApiKey, "apikey")}
-                  >
-                    {copiedField === "apikey" ? (
-                      <Check className="size-3" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                  </Button>
+                  <CopyButton value={deploymentApiKey} label="runtime key" />
                 </div>
               ) : (
                 <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
@@ -955,7 +917,7 @@ export function DetailsTab({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rotate the stage API key?</DialogTitle>
+            <DialogTitle>Rotate the runtime key?</DialogTitle>
             <DialogDescription>
               This key is stage-wide. Every agent, channel webhook, and SDK
               client authenticating with the current key stops working the

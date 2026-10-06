@@ -29,51 +29,79 @@ export const ACCOUNT_NAMESPACE_PREFIX = "acct:";
  * id contains it, and it is only read under a channel prefix.
  */
 export const CHANNEL_THREAD_SEPARATOR = "|";
+export const GCHAT_INTEGRATION_PREFIX = "gchat:";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
+export const LINEAR_INTEGRATION_PREFIX = "linear:";
 export const SLACK_INTEGRATION_PREFIX = "slack:";
 export const SLACK_COMMAND_INTEGRATION_PREFIX = "slack-command:";
+export const TEAMS_INTEGRATION_PREFIX = "teams:";
 export const TELEGRAM_INTEGRATION_PREFIX = "tg:";
+export const TWILIO_INTEGRATION_PREFIX = "twilio:";
 export const DISCORD_INTEGRATION_PREFIX = "discord:";
 export const PANCAKE_INTEGRATION_PREFIX = "pancake:";
 export const ZALO_INTEGRATION_PREFIX = "zalo:";
 export const MATRIX_INTEGRATION_PREFIX = "matrix:";
+export const INSTAGRAM_INTEGRATION_PREFIX = "instagram:";
+export const MESSENGER_INTEGRATION_PREFIX = "messenger:";
+export const WHATSAPP_INTEGRATION_PREFIX = "whatsapp:";
 
 const RESERVED_EVENT_ID_PREFIXES = [
   INTERNAL_EVENT_ID_PREFIX,
   ACCOUNT_NAMESPACE_PREFIX,
   DIRECT_API_EVENT_ID_PREFIX,
+  GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
+  LINEAR_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
   SLACK_COMMAND_INTEGRATION_PREFIX,
+  TEAMS_INTEGRATION_PREFIX,
   TELEGRAM_INTEGRATION_PREFIX,
+  TWILIO_INTEGRATION_PREFIX,
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   SUBAGENT_TASK_ID_PREFIX,
   ZALO_INTEGRATION_PREFIX,
   MATRIX_INTEGRATION_PREFIX,
+  INSTAGRAM_INTEGRATION_PREFIX,
+  MESSENGER_INTEGRATION_PREFIX,
+  WHATSAPP_INTEGRATION_PREFIX,
 ] as const;
 
 const RESERVED_CONVERSATION_PREFIXES = [
   INTERNAL_EVENT_ID_PREFIX,
   ACCOUNT_NAMESPACE_PREFIX,
   DIRECT_API_CONVERSATION_PREFIX,
+  GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
+  LINEAR_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
+  TEAMS_INTEGRATION_PREFIX,
   TELEGRAM_INTEGRATION_PREFIX,
+  TWILIO_INTEGRATION_PREFIX,
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
   MATRIX_INTEGRATION_PREFIX,
+  INSTAGRAM_INTEGRATION_PREFIX,
+  MESSENGER_INTEGRATION_PREFIX,
+  WHATSAPP_INTEGRATION_PREFIX,
 ] as const;
 
 const CHANNEL_CONVERSATION_PREFIXES = [
+  GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
+  LINEAR_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
+  TEAMS_INTEGRATION_PREFIX,
   TELEGRAM_INTEGRATION_PREFIX,
+  TWILIO_INTEGRATION_PREFIX,
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
   MATRIX_INTEGRATION_PREFIX,
+  INSTAGRAM_INTEGRATION_PREFIX,
+  MESSENGER_INTEGRATION_PREFIX,
+  WHATSAPP_INTEGRATION_PREFIX,
 ] as const;
 
 export interface AccountAgentScopedKey {
@@ -84,6 +112,11 @@ export interface AccountAgentScopedKey {
 
 export function normalizeFilesystemNamespace(conversationKey: string): string {
   return `${FILESYSTEM_NAMESPACE_PREFIX}${hashScopedValue("filesystem-namespace", conversationKey)}`;
+}
+
+/** The folder one agent owns inside an agent-isolated workspace namespace. */
+export function agentNamespaceFolder(agentId: string): string {
+  return `agent/${normalizeFilesystemNamespace(agentId)}`;
 }
 
 export function conversationLeaseKey(conversationKey: string): string {
@@ -122,6 +155,25 @@ export function channelScopeKeyFromConversation(
     const parts = unscopedKey.split(":");
 
     return parts.length >= 3 ? parts.slice(0, 2).join(":") : unscopedKey;
+  }
+  // A Google Chat thread is `spaces/X/threads/Y` (or `spaces/X/messages/Y`)
+  // inside its space `spaces/X`.
+  if (unscopedKey.startsWith(GCHAT_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split("/");
+
+    return parts.length >= 3 ? parts.slice(0, 2).join("/") : unscopedKey;
+  }
+  // A Teams channel thread is `<channel>;messageid=<root>`.
+  if (unscopedKey.startsWith(TEAMS_INTEGRATION_PREFIX)) {
+    const boundary = unscopedKey.indexOf(";");
+
+    return boundary === -1 ? unscopedKey : unscopedKey.slice(0, boundary);
+  }
+  // A Linear thread is `linear:{issueId}:c:{rootCommentId}` on its issue.
+  if (unscopedKey.startsWith(LINEAR_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split(":");
+
+    return parts.length >= 4 ? parts.slice(0, 2).join(":") : unscopedKey;
   }
   if (unscopedKey.startsWith(GITHUB_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");

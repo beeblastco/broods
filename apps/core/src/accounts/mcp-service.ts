@@ -9,6 +9,7 @@ import {
   callMcpToolResult,
   listMcpTools,
   mcpConnection,
+  type McpConnection,
 } from "../harness/mcp/client.ts";
 import type { McpRecord } from "../shared/domain/mcp.ts";
 import {
@@ -30,8 +31,14 @@ interface McpProbe {
   headers?: Record<string, string>;
   bundleStorageKey?: string;
   sha256?: string;
+  workersCompatible?: boolean;
 }
 
+/**
+ * Runs tools/list or tools/call against a saved server (dashboard MCP explorer)
+ * or an unsaved probe (save-time check). Called from the account handler's
+ * /v1/mcp-service/rpc route.
+ */
 export async function handleMcpServiceRpc(
   accountId: string,
   request: CoreRequest,
@@ -45,19 +52,22 @@ export async function handleMcpServiceRpc(
     return errorResponse(400, "method must be tools/list or tools/call");
   }
 
-  let record: McpRecord | null;
+  let connection: McpConnection;
   if (typeof body.serverId === "string") {
-    record = await getStorage().mcp.getById(accountId, body.serverId);
+    const record = await getStorage().mcp.getById(accountId, body.serverId);
     if (!record || record.status !== "active") {
       return errorResponse(404, "MCP server not found");
     }
+    connection = mcpConnection(record, undefined);
   } else {
     const probe = parseProbe(body.probe);
     if (typeof probe === "string") return errorResponse(400, probe);
-    record = probeRecord(accountId, probe);
+    connection = {
+      ...mcpConnection(probeRecord(accountId, probe), undefined),
+      uncached: true,
+    };
   }
 
-  const connection = mcpConnection(record, undefined);
   if (method === "tools/list") {
     const tools = await listMcpTools(connection);
 
@@ -79,9 +89,21 @@ export async function handleMcpServiceRpc(
   });
 }
 
+/**
+ * Validates the rpc body's probe object into an McpProbe, or returns the 400
+ * error message.
+ */
 function parseProbe(value: unknown): McpProbe | string {
   if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
-  const { name, transport, url, headers, bundleStorageKey, sha256 } = value;
+  const {
+    name,
+    transport,
+    url,
+    headers,
+    bundleStorageKey,
+    sha256,
+    workersCompatible,
+  } = value;
   if (typeof name !== "string" || !name) return "probe needs a name";
   if (headers !== undefined && !isStringRecord(headers)) {
     return "probe headers must be a string record";
@@ -99,12 +121,21 @@ function parseProbe(value: unknown): McpProbe | string {
     if (typeof bundleStorageKey !== "string" || typeof sha256 !== "string") {
       return "a hosted probe needs bundleStorageKey and sha256";
     }
+    if (
+      workersCompatible !== undefined &&
+      typeof workersCompatible !== "boolean"
+    ) {
+      return "probe workersCompatible must be a boolean";
+    }
 
     return {
       ...shared,
       transport: transport,
       bundleStorageKey: bundleStorageKey,
       sha256: sha256,
+      ...(workersCompatible !== undefined
+        ? { workersCompatible: workersCompatible }
+        : {}),
     };
   }
 
@@ -112,8 +143,8 @@ function parseProbe(value: unknown): McpProbe | string {
 }
 
 /**
- * A synthetic one-shot record for verification. The unique serverId/updatedAt
- * pair keeps probe results out of the per-row era and listing caches' way.
+ * A synthetic one-shot record for verification. Its connection is marked
+ * uncached, so a probe neither reads nor fills the MCP client caches.
  */
 function probeRecord(accountId: string, probe: McpProbe): McpRecord {
   const now = new Date().toISOString();
@@ -125,6 +156,9 @@ function probeRecord(accountId: string, probe: McpProbe): McpRecord {
     stageId: "probe",
     name: probe.name,
     transport: probe.transport,
+    ...(probe.workersCompatible !== undefined
+      ? { workersCompatible: probe.workersCompatible }
+      : {}),
     ...(probe.url !== undefined ? { url: probe.url } : {}),
     ...(probe.headers !== undefined ? { headers: probe.headers } : {}),
     ...(probe.bundleStorageKey !== undefined

@@ -10,7 +10,7 @@ const SECRET = "test-service-secret";
 function ticket(overrides: Partial<TerminalTicket> = {}): TerminalTicket {
   return {
     url: "ws://sandbox-node.example:8080/v1/sandboxes/sb_123/pty",
-    authorization: "Bearer sk_live_abc",
+    authorization: "Bearer bsk_live_abc",
     accountId: "acct_1",
     expiresAt: Date.now() + 60_000,
     ...overrides,
@@ -23,7 +23,7 @@ describe("terminal tickets", () => {
     const opened = openTerminalTicket(sealed, SECRET);
     expect(opened).toEqual(ticket({ expiresAt: opened?.expiresAt }));
     expect(opened?.url).toContain("/pty");
-    expect(sealed).not.toContain("sk_live_abc");
+    expect(sealed).not.toContain("bsk_live_abc");
   });
 
   test("round-trips a custom auth header (MicroVM shells use X-aws-proxy-auth)", () => {
@@ -74,5 +74,43 @@ describe("terminal tickets", () => {
     expect(openTerminalTicket("st1.not.a.ticket", SECRET)).toBeNull();
     expect(openTerminalTicket("", SECRET)).toBeNull();
     expect(openTerminalTicket(`${sealed}.extra`, SECRET)).toBeNull();
+  });
+
+  test("rejects truncated authentication tags", () => {
+    const sealed = sealTerminalTicket(ticket(), SECRET);
+    const [version, iv, tag, ciphertext, extra] = sealed.split(".");
+    if (!version || !iv || !tag || !ciphertext || extra !== undefined) {
+      throw new Error("Expected four nonempty terminal ticket segments");
+    }
+    const tagBytes = Buffer.from(tag, "base64url");
+    expect(tagBytes.length).toBe(16);
+    for (const length of [4, 8, 12, 13, 14, 15]) {
+      const truncated = tagBytes.subarray(0, length).toString("base64url");
+      expect(
+        openTerminalTicket(
+          [version, iv, truncated, ciphertext].join("."),
+          SECRET,
+        ),
+      ).toBeNull();
+    }
+  });
+
+  test("opens only the spelling it sealed", () => {
+    const sealed = sealTerminalTicket(ticket(), SECRET);
+    const [version, iv, tag, ciphertext] = sealed.split(".") as [
+      string,
+      string,
+      string,
+      string,
+    ];
+
+    // Each of these decodes to the same bytes under lenient base64url.
+    for (const respelled of [
+      [version, `${iv}=`, tag, ciphertext],
+      [version, `${iv.slice(0, 4)}!${iv.slice(4)}`, tag, ciphertext],
+      [version, iv, tag, `${ciphertext}==`],
+    ]) {
+      expect(openTerminalTicket(respelled.join("."), SECRET)).toBeNull();
+    }
   });
 });

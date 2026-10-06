@@ -1,5 +1,6 @@
 "use client";
 
+import { IconTooltip } from "@/app/components/IconTooltip";
 import type { StageDeployment } from "@/app/components/side-panel/DetailsTab";
 import {
   Collapsible,
@@ -19,7 +20,6 @@ import type { UIMessage } from "ai";
 import {
   ArrowUp,
   ChevronRight,
-  Loader2,
   RotateCcw,
   Terminal,
   Wrench,
@@ -57,7 +57,7 @@ export function TestTab({
     return (
       <div className="flex flex-1 items-center justify-center p-4">
         <p className="text-center text-xs text-muted-foreground">
-          No runtime API key for this stage yet. Generate one in Details to test
+          No runtime key for this stage yet. Generate one in Details to test
           this agent.
         </p>
       </div>
@@ -297,6 +297,7 @@ function ChatWindow({
       <form onSubmit={handleSubmit} className="shrink-0 p-3">
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
+            aria-label="Message"
             value={input}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
               setInput(e.target.value)
@@ -321,27 +322,27 @@ function ChatWindow({
           />
           <InputGroupAddon align="block-end" className="pt-0">
             <div className="flex w-full items-center justify-between">
-              <InputGroupButton
-                size="icon-xs"
-                variant="ghost"
-                onClick={resetChat}
-                title="New chat"
-              >
-                <RotateCcw className="size-3.5" />
-              </InputGroupButton>
-              <InputGroupButton
-                type="submit"
-                size="icon-xs"
-                variant="default"
-                disabled={!input.trim() || composerLocked}
-                className="rounded-sm"
-              >
-                {status === "streaming" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
+              <IconTooltip label="New chat">
+                <InputGroupButton
+                  size="icon-xs"
+                  variant="ghost"
+                  className="cursor-pointer"
+                  onClick={resetChat}
+                >
+                  <RotateCcw className="size-3.5" />
+                </InputGroupButton>
+              </IconTooltip>
+              <IconTooltip label="Send">
+                <InputGroupButton
+                  type="submit"
+                  size="icon-xs"
+                  variant="default"
+                  disabled={!input.trim() || composerLocked}
+                  className="cursor-pointer rounded-sm"
+                >
                   <ArrowUp className="size-3.5" />
-                )}
-              </InputGroupButton>
+                </InputGroupButton>
+              </IconTooltip>
             </div>
           </InputGroupAddon>
         </InputGroup>
@@ -585,9 +586,6 @@ function SubagentPanelBlock({
           {isStreaming ? "running..." : "done"}
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </span>
-        {isStreaming && (
-          <Loader2 className="size-3 animate-spin text-muted-foreground" />
-        )}
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div
@@ -703,9 +701,6 @@ function ToolInvocationBlock({
           {state === "output-denied" && "denied"}
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </span>
-        {isRunning && (
-          <Loader2 className="size-3 animate-spin text-muted-foreground" />
-        )}
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="ml-5 mt-1 flex flex-col gap-1.5">

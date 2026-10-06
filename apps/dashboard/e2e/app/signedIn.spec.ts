@@ -14,7 +14,10 @@ import {
 
 test.skip(!hasProbe(), MISSING_PROBE);
 
-test("the home route opens the caller's project", async ({ page }) => {
+// @rollout: the pull request run serves this build against the dev backend,
+// which may not have the Convex functions the home route calls until the
+// merge deploys them. e2e-dashboard.yaml runs it after the rollout.
+test("the home route opens the caller's project @rollout", async ({ page }) => {
   await page.goto("/");
   await page.waitForURL(new RegExp(`/${readProjectId()}(\\?|$)`));
   await expect(page.locator(CANVAS_READY)).toBeVisible();
@@ -28,9 +31,10 @@ test("a cold project load is one document, no server action, no logo fetch", asy
 
   await page.goto(`/${readProjectId()}`);
   await page.locator(CANVAS_READY).waitFor();
-  // The default stage lands in the URL and the header shows it selected.
-  await expect(page).toHaveURL(/[?&]stage=[a-z0-9]+/);
+  // The header shows the default stage selected, and the URL stays bare: a
+  // history write on load would discard a header click made meanwhile.
   await expect(page.getByRole("button", { name: "Development" })).toBeVisible();
+  expect(page.url()).not.toContain("stage=");
 
   const urls = (keep: (request: Request) => boolean): string[] =>
     requests.filter(keep).map((request) => request.url());
@@ -59,4 +63,27 @@ test("a cold project load is one document, no server action, no logo fetch", asy
     urls((request) => request.url().includes("/assets/logo/")),
     "the wordmark is inline",
   ).toEqual([]);
+});
+
+test("a segment that is no project id is the not-found page", async ({
+  page,
+}) => {
+  await page.goto("/not-a-project");
+  await expect(
+    page.getByRole("heading", { name: "Page not found" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Back to projects" }),
+  ).toBeVisible();
+});
+
+test("the API access panel shows the gateway it reaches as the base URL", async ({
+  page,
+}) => {
+  await page.goto("/settings/org?tab=api-access");
+  // A copy row named by the URL it shows, never the old "(not configured)".
+  await expect(
+    page.getByRole("button", { name: /^https?:\/\/\S+$/ }),
+  ).toBeVisible();
+  await expect(page.getByText("(not configured)")).toHaveCount(0);
 });

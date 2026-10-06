@@ -35,6 +35,7 @@ import {
   SandboxLogTail,
   type SandboxObservabilityScope,
 } from "./SandboxLogTail";
+import { toErrorMessage } from "@/app/lib/errors";
 
 /** Actor source as shown on an activity row; core calls itself "service". */
 const ACTOR_LABEL: Record<SandboxAuditEvent["actorSource"], string> = {
@@ -138,7 +139,7 @@ export function SandboxInstancePanel({
       setSnapName("");
       setSnapMessage("Snapshot captured.");
     } catch (err) {
-      setSnapMessage(err instanceof Error ? err.message : "Snapshot failed");
+      setSnapMessage(toErrorMessage(err));
     } finally {
       setSnapPending(false);
     }
@@ -177,7 +178,7 @@ export function SandboxInstancePanel({
         [
           {
             command: code,
-            error: err instanceof Error ? err.message : "Command failed",
+            error: toErrorMessage(err),
           },
           ...entries,
         ].slice(0, 20),
@@ -197,7 +198,7 @@ export function SandboxInstancePanel({
       }
       meta={
         <div className="mt-0.5 text-2xs text-muted-foreground">
-          {formatProvider(instance.provider)} sandbox instance
+          {formatProvider(instance.provider)} instance
         </div>
       }
       onClose={onClose}
@@ -235,7 +236,7 @@ export function SandboxInstancePanel({
                   {canWrite && (
                     <Button
                       size="sm"
-                      className="cursor-pointer disabled:cursor-not-allowed"
+                      className="cursor-pointer"
                       disabled={
                         !controllable || snapPending || !snapName.trim()
                       }
@@ -273,7 +274,7 @@ export function SandboxInstancePanel({
               <Button
                 variant="destructive"
                 size="sm"
-                className="mt-3 cursor-pointer disabled:cursor-not-allowed"
+                className="mt-3 cursor-pointer"
                 disabled={!controllable}
                 onClick={() => setConfirmOpen(true)}
               >
@@ -466,7 +467,7 @@ function CommandRunner({
           onChange={(event) => onCommandChange(event.target.value)}
           disabled={!runnable || pending}
           rows={4}
-          className="cursor-text font-mono text-xs disabled:cursor-not-allowed"
+          className="cursor-text font-mono text-xs"
         />
         <div className="mt-2 flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
@@ -479,7 +480,7 @@ function CommandRunner({
               size="sm"
               disabled={!runnable || pending || !command.trim()}
               onClick={onRun}
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
             >
               <Play className="mr-1 size-3.5" />
               Run

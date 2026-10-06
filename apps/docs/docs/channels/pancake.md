@@ -1,56 +1,74 @@
+---
+title: Pancake
+---
+
 # Pancake
 
-Pancake is an omni-channel customer service and inbox platform. The channel adapter handles Pancake messages (`INBOX`) and post/page comments (`COMMENT`).
+Pancake is a customer service inbox. The Pancake channel answers inbox messages, which Pancake calls `INBOX`, and post or page comments, which it calls `COMMENT`.
+
+## Setup
+
+1. In Pancake, create a page access token for your page and note the page id. Pick a random webhook secret.
+2. Store the values:
+
+   ```bash
+   broods env set PANCAKE_PAGE_ID
+   broods env set PANCAKE_PAGE_ACCESS_TOKEN
+   broods env set PANCAKE_WEBHOOK_SECRET
+   ```
+
+3. Define the connection:
+
+   ```ts title="broods/index.ts"
+   import { defineAgent, definePancakeConnection, env } from "broods";
+
+   export const pancake = definePancakeConnection({
+     pageId: env("PANCAKE_PAGE_ID"),
+     pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
+     webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
+     allowedChannelIds: ["*"],
+   });
+
+   export const myAgent = defineAgent({
+     name: "my-agent",
+     connections: [pancake],
+   });
+   ```
+
+   Customer conversations are not known in advance, so a Pancake connection usually sets `allowedChannelIds: ["*"]`. Use `definePancakeChannel` with a `conversationId` to give one conversation its own rules.
+
+4. Run `broods dev` or `broods deploy`. Register the printed webhook URL in Pancake with the secret as a query parameter:
+
+   ```text
+   https://gateway.broods.app/v1/webhooks/<accountId>/pancake?secret=<webhookSecret>
+   ```
+
+   Pancake does not sign webhooks, so the secret rides on the URL. A request without a matching `secret` gets `401`.
 
 ## Configuration
 
-Define a Pancake connection with `definePancakeConnection` and attach it to an agent:
+| Field               | Required | Description                                                       |
+| ------------------- | -------- | ----------------------------------------------------------------- |
+| `pageId`            | yes      | Pancake page id                                                   |
+| `pageAccessToken`   | yes      | page access token for API calls                                   |
+| `webhookSecret`     | yes      | random value checked on every webhook request                     |
+| `senderId`          | no       | Pancake staff user the replies appear to come from                |
+| `allowedChannelIds` | no       | extra conversation ids, or `["*"]` for every conversation         |
+| `allowedUserIds`    | no       | customer ids allowed to trigger the agent. Everyone when omitted  |
+| `trace`             | no       | `"enabled"` adds the dashboard trace link to replies              |
+| `partition`         | no       | workspace folder split. See [Workspaces](../guides/workspaces.md) |
 
-```ts title="broods/index.ts"
-import { defineAgent, definePancakeConnection, env } from "broods";
+Pancake has no chat commands. Slash text reaches the agent as ordinary input. Inbound photos and videos arrive as attachments. Pancake gets no reactions.
 
-export const pancake = definePancakeConnection({
-  pageId: env("PANCAKE_PAGE_ID"),
-  pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
-  webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
-  senderId: env("PANCAKE_SENDER_ID"),
-});
+## Human handoff
 
-export const myAgent = defineAgent({
-  name: "my-agent",
-  connections: [pancake],
-});
-```
-
-### Configuration fields
-
-- `pageId` (Required): The unique ID of the Pancake page.
-- `pageAccessToken` (Required): The access token generated within Pancake to authorize API calls.
-- `webhookSecret` (Required): A random value you generate. Pancake does not sign its webhooks, so the secret rides on the webhook URL instead and core checks every request against it.
-- `senderId` (Optional): The ID of the staff/user in Pancake who sends the replies. If set, the agent's replies appear as sent by this user.
-
-Register the webhook URL in Pancake with the secret as a query parameter. A request without a matching `secret` gets a `401`:
-
-```text
-https://<agent-service-url>/v1/webhooks/<accountId>/pancake?secret=<webhookSecret>
-```
-
----
-
-## Human handoff (skipping tagged conversations)
-
-The channel adapter stays generic: it does not decide which conversations to skip. Instead, every inbound message carries the conversation's Pancake tag IDs on `event.source.tagIds`, and you filter in a [`onMessageReceived` code hook](../hooks.md), so the policy is yours to own and change.
-
-When staff take over a conversation in Pancake, add a tag; the hook drops the message and the agent stays quiet:
+To let staff take over a conversation, tag it in Pancake and drop tagged messages in an `onMessageReceived` [code hook](../guides/hooks.md). Every inbound message carries the conversation's tag ids on `event.source.tagIds`.
 
 ```ts title="broods/index.ts"
 export const myAgent = defineAgent({
   name: "my-agent",
   connections: [pancake],
   hooks: {
-    // Drop inbound messages on conversations a human has taken over. `event`
-    // is discriminated on `channel`, so after narrowing `event.source` is the
-    // strongly-typed Pancake source (with `tagIds`).
     onMessageReceived: (ctx, event) => {
       if (event.channel !== "pancake") return undefined;
       const handoffTagIds = ["order-tag", "pending-tag"];
@@ -64,11 +82,8 @@ export const myAgent = defineAgent({
 });
 ```
 
-```mermaid
-flowchart TD
-    Webhook[Incoming Message Webhook] --> Hook{onMessageReceived hook?}
-    Hook -- No hook / no match --> ExecuteAgent[Run Agent Loop & Send Reply]
-    Hook -- Returns drop --> SkipAgent[Ignore Event - Staff Handle Manually]
-```
+Narrowing on `event.channel` gives `event.source` the Pancake type. Remove the tag in Pancake and the next customer message runs the agent again.
 
-Remove the tag in Pancake to return the conversation to auto mode; the next customer message runs the agent again. Hooks run in the hardened V8 isolate and must be self-contained (no imports or closure variables), so inline the tag IDs rather than reading them from a closure or env var.
+Hooks run in an isolated sandbox with no imports and no closure variables, so write the tag ids inline rather than reading them from a variable or env.
+
+See [Channels](index.md) for channel tools and shared behavior.

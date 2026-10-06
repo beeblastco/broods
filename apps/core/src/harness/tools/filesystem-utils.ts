@@ -35,6 +35,7 @@ import type {
 } from "../../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
+import { isMachineConnected } from "../sandbox/machine-executor.ts";
 import { SandboxCapacityError } from "../sandbox/utils.ts";
 import {
   resolveS3ReadTarget,
@@ -45,6 +46,7 @@ import type {
   SandboxExecutorConfig,
   SandboxJobCallback,
   SandboxJobHandle,
+  SandboxRunPrincipal,
   SandboxRunResult,
   SandboxRuntime,
 } from "../sandbox/types.ts";
@@ -102,11 +104,16 @@ export interface SandboxToolContext {
     eventId: string;
     conversationKey: string;
     delivery?: AsyncToolDelivery;
+    onDetachedResult?: (resultId: string) => void;
   };
   // Reports each sandbox exec's CPU so the harness can attribute usage per
   // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
+  // The run's identity for a blocking `bash` exec env. The file tools run the
+  // harness's own scripts and a background job outlives its run, so they get
+  // none. A function, so the run token is only minted once a command runs.
+  principal?: () => SandboxRunPrincipal | undefined;
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
@@ -252,19 +259,22 @@ export async function runSandbox(
   options?: {
     onSandboxCpu?: (sample: SandboxCpuSample) => void;
     metadata?: SandboxRunMetadata;
+    principal?: SandboxRunPrincipal;
   },
 ): Promise<SandboxRunResult> {
   let result: SandboxRunResult;
   try {
-    result = await runSandboxOn(config, namespace, code, options?.metadata);
+    result = await runSandboxOn(config, namespace, code, options);
   } catch (error) {
     // `options` (URL, key, template) and `snapshot` (workdir image name vs
     // MicroVM image ARN) are the primary provider's; the fallback runs on the
-    // platform's own defaults for that provider.
+    // platform's own defaults for that provider, so the platform pays for it
+    // even when the primary ran on the account's own credentials.
     const {
       fallbackProvider,
       options: _options,
       snapshot: _snapshot,
+      controlPlane,
       ...primary
     } = config;
     if (!fallbackProvider || !(error instanceof SandboxCapacityError)) {
@@ -276,10 +286,16 @@ export async function runSandbox(
       error: toErrorMessage(error),
     });
     result = await runSandboxOn(
-      { ...primary, provider: fallbackProvider },
+      {
+        ...primary,
+        provider: fallbackProvider,
+        ...(controlPlane
+          ? { controlPlane: { ...controlPlane, ownCredentials: undefined } }
+          : {}),
+      },
       namespace,
       code,
-      options?.metadata,
+      options,
     );
   }
   if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
@@ -424,6 +440,44 @@ export function machineSandboxes(
   return sandboxes.filter(
     (entry): boolean => entry.sandbox.provider === "machine",
   );
+}
+
+/**
+ * Where a bash call can run, one line each, for the agent's environment block.
+ * A machine says whether its daemon is connected, since a call to an offline one
+ * only fails.
+ */
+export function bashTargetLines(context: SandboxToolContext): string[] {
+  // A lone workspace or sandbox has no argument to name it: bash leaves the
+  // field out of its schema, so the line says to omit it instead.
+  const namesWorkspace = workspaceParamSchema(context.workspaces) !== undefined;
+  const namesSandbox = sandboxParamChoices(context).length > 0;
+  const workspaces = context.workspaces.map(
+    (workspace, index): string =>
+      `- ${namesWorkspace ? `workspace=${workspace.name}` : `workspace ${workspace.name}, omit workspace`}${index === 0 ? " (default)" : ""}${workspace.sandbox ? "" : " (read-only, no bash)"}`,
+  );
+  const sandboxes = selectableSandboxes(context).map((entry, index): string => {
+    const target = namesSandbox
+      ? `sandbox=${entry.name}`
+      : `sandbox ${entry.name}, omit sandbox`;
+    const isDefault =
+      context.workspaces.length === 0 && index === 0 ? " (default)" : "";
+
+    return `- ${target}${isDefault} (${entry.sandbox.provider}, no workspace mounted${machineState(entry)})`;
+  });
+
+  return [...workspaces, ...sandboxes];
+}
+
+/** The sandboxes bash's `sandbox` field offers; none when the default is the only one. */
+export function sandboxParamChoices(
+  context: SandboxToolContext,
+): ResolvedAgentSandbox[] {
+  const choices = selectableSandboxes(context);
+  const onlyTheDefault =
+    choices.length === 1 && context.workspaces.length === 0;
+
+  return onlyTheDefault ? [] : choices;
 }
 
 /** Every sandbox a bash call can name: the default while standalone, then the rest. */
@@ -603,7 +657,15 @@ export async function workspaceMediaBytes(
     : await readS3Bytes(target.bucket, key);
 }
 
+// Bash tool result text: stdout then stderr, with a trailing `[exit code N]`
+// (`[timed out, exit code N]` on a timeout) when the run failed so a silent
+// failure never reads as success.
 export function formatRunText(result: SandboxRunResult): string {
+  const output = `${result.stdout}${result.stderr}`;
+  const failed = !result.ok || (result.exitCode ?? 0) !== 0;
+  if (!failed) {
+    return output;
+  }
   if (!result.ok) {
     const error =
       `${result.stderr}${result.stdout}`.trim() || "sandbox command failed";
@@ -611,8 +673,14 @@ export function formatRunText(result: SandboxRunResult): string {
       throw new Error(error);
     }
   }
+  const code =
+    result.exitCode === null ? undefined : `exit code ${result.exitCode}`;
+  const status = result.timedOut
+    ? ["timed out", code].filter(Boolean).join(", ")
+    : (code ?? "command failed");
+  const separator = output === "" || output.endsWith("\n") ? "" : "\n";
 
-  return `${result.stdout}${result.stderr}`;
+  return `${output}${separator}[${status}]`;
 }
 
 export function runtimeDescription(
@@ -778,6 +846,14 @@ function isEphemeralPath(path: string): boolean {
   );
 }
 
+function machineState(entry: ResolvedAgentSandbox): string {
+  if (entry.sandbox.provider !== "machine") return "";
+
+  return isMachineConnected(entry.sandbox)
+    ? ", connected"
+    : `, offline: the person must run \`broods machine ${entry.name}\``;
+}
+
 function permissionModeFor(
   workspace: ResolvedWorkspace | undefined,
 ): SandboxPermissionMode {
@@ -788,7 +864,9 @@ async function runSandboxOn(
   config: SandboxExecutorConfig,
   namespace: string | undefined,
   code: string,
-  metadata: SandboxRunMetadata | undefined,
+  options:
+    | { metadata?: SandboxRunMetadata; principal?: SandboxRunPrincipal }
+    | undefined,
 ): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
@@ -808,7 +886,8 @@ async function runSandboxOn(
           workspaceRoot: workspaceRootFor(config),
         }
       : {}),
-    ...(metadata ? { metadata: metadata } : {}),
+    ...(options?.metadata ? { metadata: options.metadata } : {}),
+    ...(options?.principal ? { principal: options.principal } : {}),
     timeoutSeconds: boundedInteger(
       config.timeout,
       limits.defaultTimeoutSeconds,

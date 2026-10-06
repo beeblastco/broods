@@ -13,6 +13,7 @@ import {
   type StreamChunk,
 } from "chat";
 import { timingSafeStringEqual } from "./auth.ts";
+import { channelApiFetch, publicHostFetch } from "./http.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -22,7 +23,12 @@ import type {
   ChannelParseResult,
   ChannelQuestionPrompt,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import {
+  isAllowedId,
+  parseChannelWebhookBody,
+  parseQuestionButtonId,
+  questionButtonId,
+} from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -39,9 +45,8 @@ const TELEGRAM_MEDIA_GROUP_MAX = 10;
 const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
 // A quote is context for the turn, not the turn itself; Telegram allows 4096.
 const TELEGRAM_REPLY_QUOTE_MAX = 500;
-// callback_data on an ask_questions button: statusId, question, option.
-// 53 bytes at most, under Telegram's 64-byte cap.
-const QUESTION_CALLBACK_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
+// callback_data on a reply button: the reply itself, sent as the person's message.
+const REPLY_CALLBACK_PATTERN = /^r:(.{1,60})$/s;
 
 export interface TelegramChannelOptions {
   botUsername?: string;
@@ -71,6 +76,81 @@ export interface TelegramSource {
   fromUsername?: string;
 }
 
+/** One Bot API answer, as the SDK's error mapping reads it. */
+interface TelegramApiAnswer<TResult> {
+  description?: string;
+  error_code?: number;
+  ok: boolean;
+  parameters?: { retry_after?: number };
+  result?: TResult;
+}
+
+// A tenant `apiUrl` is their host, and the bot token rides every path to it,
+// so the SDK's two calls there go pinned to a checked public address with
+// redirects refused. Telegram itself keeps the SDK's own calls.
+class BroodsTelegramAdapter extends TelegramAdapter {
+  private get tenantApiUrl(): boolean {
+    return this.apiBaseUrl !== TELEGRAM_API_URL;
+  }
+
+  protected override async downloadFile(fileId: string): Promise<Buffer> {
+    if (!this.tenantApiUrl) return super.downloadFile(fileId);
+    const file = await this.telegramFetch<{ file_path?: string }>("getFile", {
+      file_id: fileId,
+    });
+    if (!file.file_path) {
+      throw new Error(`Telegram file ${fileId} has no path`);
+    }
+    const botToken = this.staticBotToken ?? (await this.resolveBotToken());
+    const response = await publicHostFetch(
+      `${this.apiBaseUrl}/file/bot${botToken}/${file.file_path}`,
+      { signal: AbortSignal.timeout(TELEGRAM_REQUEST_TIMEOUT_MS) },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download Telegram file ${fileId}: ${response.status}`,
+      );
+    }
+
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  protected override async telegramFetch<TResult>(
+    method: string,
+    payload?: Record<string, unknown> | FormData,
+    request?: { signal?: AbortSignal },
+  ): Promise<TResult> {
+    if (!this.tenantApiUrl) {
+      return super.telegramFetch(method, payload, request);
+    }
+    const botToken = this.staticBotToken ?? (await this.resolveBotToken());
+    const response = await publicHostFetch(
+      `${this.apiBaseUrl}/bot${botToken}/${method}`,
+      {
+        method: "POST",
+        ...(payload instanceof FormData
+          ? { body: payload }
+          : {
+              body: JSON.stringify(payload ?? {}),
+              headers: { "Content-Type": "application/json" },
+            }),
+        ...(request?.signal ? { signal: request.signal } : {}),
+      },
+    );
+    // A proxy error page is not JSON; its status still maps the error.
+    const data = (await response
+      .json()
+      .catch((): TelegramApiAnswer<TResult> => ({
+        ok: false,
+      }))) as TelegramApiAnswer<TResult>;
+    if (!response.ok || !data.ok || data.result === undefined) {
+      this.throwTelegramApiError(method, response.status, data);
+    }
+
+    return data.result;
+  }
+}
+
 export function createTelegramChannel(
   botToken: string,
   webhookSecret: string,
@@ -81,7 +161,7 @@ export function createTelegramChannel(
   options: TelegramChannelOptions = {},
 ): ChannelAdapter {
   const botUsername = normalizeBotUsername(options.botUsername);
-  const transport = new TelegramAdapter({
+  const transport = new BroodsTelegramAdapter({
     apiUrl: apiUrl,
     botToken: botToken,
     secretToken: webhookSecret,
@@ -103,9 +183,12 @@ export function createTelegramChannel(
         error: err instanceof Error ? err.message : String(err),
       });
     });
-    const match = QUESTION_CALLBACK_PATTERN.exec(callback.data ?? "");
+    const answer = parseQuestionButtonId(callback.data);
+    const content = answer
+      ? "[button answer]"
+      : REPLY_CALLBACK_PATTERN.exec(callback.data ?? "")?.[1];
     const message = callback.message;
-    if (!match || !message) {
+    if (content === undefined || !message) {
       return { kind: "ignore", reason: "unknown callback" };
     }
     if (
@@ -131,14 +214,10 @@ export function createTelegramChannel(
         eventId: `${TELEGRAM_INTEGRATION_PREFIX}${updateId}`,
         conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
         channelName: "telegram",
-        content: "[button answer]",
+        content: content,
         identity: envelope.identity,
         source: { ...envelope.source },
-        answer: {
-          statusId: match[1]!,
-          questionIndex: Number(match[2]),
-          optionIndex: Number(match[3]),
-        },
+        ...(answer ? { answer: answer } : {}),
       },
     };
   };
@@ -166,7 +245,14 @@ export function createTelegramChannel(
     },
 
     parse: function (req): ChannelParseResult {
-      const update: TelegramUpdate = JSON.parse(req.body);
+      const body = parseChannelWebhookBody<TelegramUpdate>(
+        "telegram",
+        req.body,
+      );
+      if (body.kind === "ignore") {
+        return body;
+      }
+      const update = body.payload;
       if (update.callback_query) {
         return parseQuestionClick(update.callback_query, update.update_id);
       }
@@ -259,6 +345,35 @@ export function createTelegramChannel(
               ? { message_thread_id: source.messageThreadId }
               : {}),
             reply_markup: { inline_keyboard: questionKeyboard(prompt) },
+          });
+        },
+        sendReplyButtons: async function (text, replies): Promise<void> {
+          // Long text goes out in chunks like sendText; the buttons ride on the last.
+          const chunks = splitTelegramRawText(text);
+          const last = chunks.pop() ?? text;
+          const thread =
+            source.messageThreadId !== undefined
+              ? { message_thread_id: source.messageThreadId }
+              : {};
+          for (const chunk of chunks) {
+            await callTelegramBotApi(apiUrl, botToken, "sendMessage", {
+              chat_id: source.chatId,
+              text: chunk,
+              ...thread,
+            });
+          }
+          await callTelegramBotApi(apiUrl, botToken, "sendMessage", {
+            chat_id: source.chatId,
+            text: last,
+            ...thread,
+            reply_markup: {
+              inline_keyboard: [
+                replies.map((label) => ({
+                  text: label,
+                  callback_data: `r:${label}`,
+                })),
+              ],
+            },
           });
         },
         sendSticker: async function (sticker): Promise<void> {
@@ -384,7 +499,11 @@ function questionKeyboard(
       question.options.map((option, optionIndex) => [
         {
           text: single ? option.label : `${question.header}: ${option.label}`,
-          callback_data: `q:${prompt.statusId}:${questionIndex}:${optionIndex}`,
+          callback_data: questionButtonId(
+            prompt.statusId,
+            questionIndex,
+            optionIndex,
+          ),
         },
       ]),
   );
@@ -582,7 +701,7 @@ async function callTelegramBotApi(
     controller.abort();
   }, TELEGRAM_REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await channelApiFetch(apiUrl)(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

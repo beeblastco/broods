@@ -8,22 +8,19 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage } from "./model/ownership/stage";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "./model/agentConfigCodec";
+import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import {
   assertEnvironmentVariableUnreferenced,
-  hashEnvironmentValue,
+  upsertEnvironmentVariable,
 } from "./model/environmentValues";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 import {
   accountIdForProject,
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "./model/auditEvents";
 
 // Plaintext reveal and every write are org admin operations; members read names only.
@@ -154,12 +151,15 @@ export const reveal = mutation({
       throw new Error("Variable not found.");
     }
 
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
-      encryptionSecret(),
+    const cipher = await accountCipher(
+      ctx,
+      await requireAccountIdForProject(ctx, projectId),
     );
-    const revealed = decrypted as { value?: unknown } | null;
-    const value = typeof revealed?.value === "string" ? revealed.value : "";
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      variable,
+    );
+    const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: projectId,
@@ -201,102 +201,26 @@ export const set = mutation({
     const trimmedName = name.trim();
     if (!trimmedName) throw new Error("Variable name is required.");
 
-    const existing = await ctx.db
-      .query("environmentVariables")
-      .withIndex("by_stageId_and_name", (q) =>
-        q.eq("stageId", stageId).eq("name", trimmedName),
-      )
-      .unique();
-
-    const now = Date.now();
-    const encrypted = await encryptAgentConfigBlob(
-      { value: value },
-      encryptionSecret(),
-    );
-    const valueDigest = await hashEnvironmentValue(value);
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        valueDigest: valueDigest,
-        updatedAt: now,
-      });
-
-      await refreshAgentConfigsForEnvironmentVariable(
-        ctx,
-        projectId,
-        stageId,
-        trimmedName,
-        value,
-      );
-      await refreshSandboxConfigsForEnvironmentVariable(
-        ctx,
-        projectId,
-        stageId,
-        trimmedName,
-        value,
-      );
+    const written = await upsertEnvironmentVariable(ctx, {
+      projectId: projectId,
+      stageId: stageId,
+      name: trimmedName,
+      value: value,
+    });
+    if (written.change !== "unchanged") {
       await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
         projectId: projectId,
         stageId: stageId,
-        variableId: existing._id,
-        action: "updated",
+        variableId: written.id,
+        action: written.change,
         name: trimmedName,
-        summary: "Environment variable updated",
+        summary: `Environment variable ${written.change}`,
       });
-
-      return existing._id;
     }
 
-    const variableId = await ctx.db.insert("environmentVariables", {
-      projectId: projectId,
-      stageId: stageId,
-      name: trimmedName,
-      ciphertext: encrypted.ciphertext,
-      iv: encrypted.iv,
-      tag: encrypted.tag,
-      valueDigest: valueDigest,
-      updatedAt: now,
-    });
-
-    await refreshAgentConfigsForEnvironmentVariable(
-      ctx,
-      projectId,
-      stageId,
-      trimmedName,
-      value,
-    );
-    await refreshSandboxConfigsForEnvironmentVariable(
-      ctx,
-      projectId,
-      stageId,
-      trimmedName,
-      value,
-    );
-    await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
-      projectId: projectId,
-      stageId: stageId,
-      variableId: variableId,
-      action: "created",
-      name: trimmedName,
-      summary: "Environment variable created",
-    });
-
-    return variableId;
+    return written.id;
   },
 });
-
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
-    );
-  }
-
-  return secret;
-}
 
 function maskEnvironmentVariable(variable: {
   _id: Id<"environmentVariables">;
@@ -328,7 +252,7 @@ function maskEnvironmentVariable(variable: {
 /** Record an environment-variable mutation without storing plaintext values. */
 async function recordEnvironmentVariableAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: {
     projectId: Id<"projects">;
     stageId: Id<"stages">;
@@ -341,7 +265,7 @@ async function recordEnvironmentVariableAudit(
   const accountId = await accountIdForProject(ctx, input.projectId);
   if (!accountId) return;
 
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: input.projectId,
     stageId: input.stageId,

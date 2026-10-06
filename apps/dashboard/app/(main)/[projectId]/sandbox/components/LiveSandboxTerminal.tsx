@@ -15,6 +15,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useAction } from "convex/react";
 import { Plug, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 type TerminalStatus = keyof typeof CONNECTION_TONE;
 
@@ -97,8 +98,11 @@ export function LiveSandboxTerminal({
         },
       };
 
+      // The ticket rides the subprotocol, not the query string, which lands
+      // in access logs.
       const socket = new WebSocket(
-        `${endpoint.websocketBaseUrl}${ticket.websocketPath}?token=${encodeURIComponent(ticket.token)}`,
+        `${endpoint.websocketBaseUrl}${ticket.websocketPath}`,
+        ["broods.v1", `broods.token.${ticket.token}`],
       );
       socket.binaryType = "arraybuffer";
       socketRef.current = socket;
@@ -134,9 +138,7 @@ export function LiveSandboxTerminal({
       });
     } catch (err) {
       setStatus("error");
-      setError(
-        err instanceof Error ? err.message : "Failed to open the terminal",
-      );
+      setError(toErrorMessage(err));
     }
   }
 
@@ -155,7 +157,7 @@ export function LiveSandboxTerminal({
             size="sm"
             disabled={disabled || status === "connecting"}
             onClick={handleConnect}
-            className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
+            className="shrink-0 cursor-pointer"
           >
             {connected ? (
               <RefreshCw className="mr-1 size-3.5" />

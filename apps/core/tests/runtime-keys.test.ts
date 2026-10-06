@@ -53,6 +53,46 @@ describe("channelScopeKeyFromConversation", () => {
     ).toBe("discord:guild-1:channel-1");
   });
 
+  it("collapses Google Chat and Teams threads to their space or channel", () => {
+    expect(
+      channelScopeKeyFromConversation("gchat:spaces/AAA/threads/BBB"),
+    ).toBe("gchat:spaces/AAA");
+    expect(
+      channelScopeKeyFromConversation("gchat:spaces/AAA/messages/CCC"),
+    ).toBe("gchat:spaces/AAA");
+    expect(channelScopeKeyFromConversation("gchat:spaces/AAA")).toBe(
+      "gchat:spaces/AAA",
+    );
+    expect(
+      channelScopeKeyFromConversation(
+        "acct:acct_1:agent:agent_1:teams:19:abc@thread.tacv2;messageid=123",
+      ),
+    ).toBe("teams:19:abc@thread.tacv2");
+    expect(channelScopeKeyFromConversation("teams:a:1chat")).toBe(
+      "teams:a:1chat",
+    );
+  });
+
+  it("collapses Linear root-comment threads to their issue", () => {
+    expect(channelScopeKeyFromConversation("linear:issue-1:c:comment-1")).toBe(
+      "linear:issue-1",
+    );
+    expect(
+      channelScopeKeyFromConversation(
+        "acct:acct_1:agent:agent_1:linear:issue-1:c:comment-2",
+      ),
+    ).toBe("linear:issue-1");
+    expect(channelScopeKeyFromConversation("linear:issue-1")).toBe(
+      "linear:issue-1",
+    );
+    expect(
+      channelScopeKeyFromConversation(
+        "linear:issue-1:c:comment-1",
+        "conversation",
+      ),
+    ).toBe("linear:issue-1:c:comment-1");
+  });
+
   it("falls back to the whole conversation key for direct/custom conversations", () => {
     expect(channelScopeKeyFromConversation("api:thread-1")).toBe(
       "api:thread-1",

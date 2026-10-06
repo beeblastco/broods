@@ -12,7 +12,6 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import type { ObservabilityHistoryStatus } from "@/app/hooks/useObservabilityStream";
-import { cn } from "@/app/lib/utils";
 import { RefreshCw, Search, X } from "lucide-react";
 import { useRef } from "react";
 
@@ -37,7 +36,6 @@ interface Props {
   onClear: () => void;
   onRefresh: () => void;
   refreshDisabled: boolean;
-  refreshSpinning: boolean;
   refreshTitle: string;
   isError: boolean;
 }
@@ -76,7 +74,6 @@ export function ObservabilityToolbar({
   onClear,
   onRefresh,
   refreshDisabled,
-  refreshSpinning,
   refreshTitle,
   isError,
 }: Props): React.JSX.Element {
@@ -86,7 +83,7 @@ export function ObservabilityToolbar({
   useShortcut("table.refresh", () => !refreshDisabled && onRefresh());
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 select-none">
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2 select-none">
       <div className="relative min-w-50 flex-1">
         <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -95,6 +92,7 @@ export function ObservabilityToolbar({
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder={searchPlaceholder}
+          aria-label="Search"
           className="h-8 pl-8 text-xs"
         />
       </div>
@@ -169,14 +167,9 @@ export function ObservabilityToolbar({
         aria-label="Refresh"
         title={refreshTitle}
         tone={isError ? "destructive" : "muted"}
-        className={cn(
-          "cursor-pointer",
-          refreshDisabled && "cursor-not-allowed",
-        )}
+        className="cursor-pointer"
       >
-        <RefreshCw
-          className={cn("size-3.5", refreshSpinning && "animate-spin")}
-        />
+        <RefreshCw className="size-3.5" />
       </Button>
     </div>
   );

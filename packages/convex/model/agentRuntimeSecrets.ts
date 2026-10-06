@@ -5,14 +5,32 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-  type EncryptedAgentConfig,
-} from "./agentConfigCodec";
+  accountCipher,
+  accountCipherForWrite,
+  requireAccountIdForProject,
+} from "./accountKeys";
+import { stableJson } from "./objects";
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
 
 export type RuntimeVariable = { key: string; value: string };
+
+/**
+ * Deletes an agent config with its runtime secrets. The secrets are keyed to
+ * the config, so every path that removes an `agentConfigs` row goes through
+ * here or they orphan, undecryptable, behind it.
+ */
+export async function deleteAgentConfig(
+  ctx: MutationCtx,
+  configId: Id<"agentConfigs">,
+): Promise<void> {
+  const secrets = await ctx.db
+    .query("agentRuntimeSecrets")
+    .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
+    .collect();
+  for (const secret of secrets) await ctx.db.delete(secret._id);
+  await ctx.db.delete(configId);
+}
 
 export async function loadAgentRuntimeSecrets(
   ctx: QueryCtx | MutationCtx,
@@ -26,13 +44,13 @@ export async function loadAgentRuntimeSecrets(
     return {};
   }
 
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: stored.ciphertext,
-      iv: stored.iv,
-      tag: stored.tag,
-    } satisfies EncryptedAgentConfig,
-    runtimeSecret(),
+  const cipher = await accountCipher(
+    ctx,
+    await accountIdForConfig(ctx, configId),
+  );
+  const decrypted = await cipher.decrypt(
+    "agentRuntimeSecrets:ciphertext",
+    stored,
   );
   if (!decrypted) {
     throw new Error("Failed to decrypt runtime variables");
@@ -72,7 +90,18 @@ export async function saveAgentRuntimeSecrets(
     return [];
   }
 
-  const encrypted = await encryptAgentConfigBlob(variables, runtimeSecret());
+  // A fresh IV would rewrite the row on every deploy even when nothing changed.
+  if (stored && stableJson(previous) === stableJson(variables)) {
+    return publicRuntimeVariables(next);
+  }
+  const cipher = await accountCipherForWrite(
+    ctx,
+    await accountIdForConfig(ctx, configId),
+  );
+  const encrypted = await cipher.encrypt(
+    "agentRuntimeSecrets:ciphertext",
+    variables,
+  );
   const now = Date.now();
   if (stored) {
     await ctx.db.patch(stored._id, {
@@ -101,13 +130,13 @@ function publicRuntimeVariables(entries: RuntimeVariable[]): RuntimeVariable[] {
   }));
 }
 
-function runtimeSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime variables",
-    );
-  }
+/** Runtime secrets hang off a config row, which reaches its account through the project. */
+async function accountIdForConfig(
+  ctx: QueryCtx | MutationCtx,
+  configId: Id<"agentConfigs">,
+): Promise<Id<"accounts">> {
+  const config = await ctx.db.get(configId);
+  if (!config) throw new Error("Agent config not found");
 
-  return secret;
+  return await requireAccountIdForProject(ctx, config.projectId);
 }

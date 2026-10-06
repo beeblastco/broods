@@ -9,6 +9,7 @@ import type { MutationCtx } from "../_generated/server";
 import { normalizeChannelRecordConfig } from "./channelRules";
 import { resourceName, type CliResource } from "./cliSync";
 import { isPlainObject } from "./objects";
+import { ClientError } from "./clientError";
 
 /**
  * Inverse of `resolveChannelRecordRefs`: ids back to resource names, and the
@@ -121,16 +122,8 @@ export async function syncChannelRecordResources(
     .collect();
 
   for (const resource of records) {
-    const name = resourceName(resource.name);
-    const input = resolveChannelRecordRefs(resource.config, options);
-    const platform = requireChannelRecordString(input.platform, "platform");
-    const externalId = requireChannelRecordString(
-      input.externalId,
-      "externalId",
-    );
-    // Same validation the CRUD route runs: a malformed manifest record must fail
-    // the deploy, not reach the webhook resolver at runtime.
-    const config = normalizeChannelRecordConfig(input.config);
+    const { name, platform, externalId, workspaceRef, config } =
+      normalizeChannelRecordResource(resource, options);
     await assertChannelRecordPlaceIsFree(ctx, {
       accountId: options.accountId,
       stageId: options.stageId,
@@ -146,8 +139,8 @@ export async function syncChannelRecordResources(
       stageId: options.stageId,
       platform: platform,
       externalId: externalId,
-      ...(typeof input.workspaceRef === "string"
-        ? { workspaceRef: input.workspaceRef }
+      ...(typeof workspaceRef === "string"
+        ? { workspaceRef: workspaceRef }
         : { workspaceRef: undefined }),
       name: name,
       description: resource.description,
@@ -172,6 +165,38 @@ export async function syncChannelRecordResources(
   return ids;
 }
 
+/**
+ * A manifest channel record with its names resolved to ids and its config
+ * checked, without reading the database. The sync stores it; the manifest
+ * pre-check runs it with placeholder ids.
+ */
+export function normalizeChannelRecordResource(
+  resource: CliResource,
+  ids: {
+    agentIds: Record<string, string>;
+    workspaceIds: Record<string, string>;
+    policyIds: Record<string, string>;
+  },
+): {
+  name: string;
+  platform: string;
+  externalId: string;
+  workspaceRef: unknown;
+  config: ReturnType<typeof normalizeChannelRecordConfig>;
+} {
+  const input = resolveChannelRecordRefs(resource.config, ids);
+
+  return {
+    name: resourceName(resource.name),
+    platform: requireChannelRecordString(input.platform, "platform"),
+    externalId: requireChannelRecordString(input.externalId, "externalId"),
+    workspaceRef: input.workspaceRef,
+    // Same validation the CRUD route runs: a malformed manifest record must
+    // fail the deploy, not reach the webhook resolver at runtime.
+    config: normalizeChannelRecordConfig(input.config),
+  };
+}
+
 async function assertChannelRecordPlaceIsFree(
   ctx: MutationCtx,
   options: {
@@ -188,25 +213,25 @@ async function assertChannelRecordPlaceIsFree(
       q
         .eq("accountId", options.accountId)
         .eq("platform", options.platform)
-        .eq("externalId", options.externalId),
+        .eq("externalId", options.externalId)
+        .eq("status", "active"),
     )
-    .collect();
+    .take(2);
   const conflict = rows.find(
-    (row) =>
-      row.status === "active" &&
-      !(row.stageId === options.stageId && row.name === options.name),
+    (row) => !(row.stageId === options.stageId && row.name === options.name),
   );
   if (!conflict) return;
 
-  throw new Error(
+  throw new ClientError(
     `channelRecord "${options.name}" claims ${options.platform}:${options.externalId}, ` +
       `which record "${conflict.name}" already owns. One place binds to one record.`,
+    "conflict",
   );
 }
 
 function requireChannelRecordString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`channelRecord ${field} must be a non-empty string`);
+    throw new ClientError(`channelRecord ${field} must be a non-empty string`);
   }
 
   return value;
@@ -227,7 +252,7 @@ function resolveChannelRecordRefs(
   config: unknown;
 } {
   if (!isPlainObject(raw)) {
-    throw new Error("channelRecord config must be an object");
+    throw new ClientError("channelRecord config must be an object");
   }
   const {
     platform,

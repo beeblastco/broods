@@ -1,14 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { readFileSync } from "node:fs";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+} from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
-import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
+import { loopbackTransport, TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
+import type {
+  LanguageModel,
+  ModelMessage,
+  SystemModelMessage,
+  TextStreamPart,
+  ToolSet,
+} from "ai";
 import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
-import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import {
   setStorageForTests,
   type Storage,
@@ -21,6 +35,9 @@ import type {
 
 // mock.module("ai") below patches the namespace binding, so hold the real one.
 const realStreamText = actualAi.streamText;
+// Copied before the mocks patch them; afterAll hands them back to later files.
+const realAi = { ...actualAi };
+const realOpenAI = { ...actualOpenAI };
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
@@ -82,6 +99,9 @@ let streamTextScenario:
   | "real-two-step" = "empty";
 // The model the last "real-two-step" run was given, so a test can read its calls.
 let twoStepModelInUse: MockLanguageModelV4 | undefined;
+// How long the "real-two-step" second model call and weather tool take.
+let twoStepAnswerDelayMs = 20;
+let weatherDelayMs = 0;
 
 const weatherTool = actualAi.tool({
   inputSchema: actualAi.jsonSchema<{ city: string }>({
@@ -89,10 +109,11 @@ const weatherTool = actualAi.tool({
     properties: { city: { type: "string" } },
     required: ["city"],
   }),
-  execute: async ({ city }): Promise<{ city: string; tempC: number }> => ({
-    city: city,
-    tempC: 31,
-  }),
+  execute: async ({ city }): Promise<{ city: string; tempC: number }> => {
+    await Bun.sleep(weatherDelayMs);
+
+    return { city: city, tempC: 31 };
+  },
 });
 
 const streamTextMock = mock(
@@ -136,7 +157,7 @@ const streamTextMock = mock(
         outputTokens: number;
         totalTokens: number;
       };
-      steps: Array<{ content: unknown[] }>;
+      steps: Array<{ content: unknown[]; usage?: { inputTokens?: number } }>;
       toolCalls: unknown[];
       rawFinishReason?: string;
       totalUsage?: {
@@ -248,7 +269,7 @@ const streamTextMock = mock(
             text: "   ",
             finishReason: "tool-calls",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({
@@ -298,7 +319,7 @@ const streamTextMock = mock(
             text: "listed the files",
             finishReason: "stop",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            steps: [{ content: [approvalPart] }],
+            steps: [{ content: [approvalPart], usage: { inputTokens: 10 } }],
             toolCalls: [],
           });
           controller.enqueue({ type: "text-delta", text: "listed the files" });
@@ -583,14 +604,19 @@ mock.module("@ai-sdk/gateway", () => ({
   createGateway: createGatewayMock,
 }));
 
-mock.module("vercel-minimax-ai-provider", () => ({
-  createMinimax: createMinimaxMock,
+mock.module("@ai-sdk/minimax", () => ({
+  createMiniMax: createMinimaxMock,
 }));
 
 mock.module("ai", () => ({
   ...actualAi,
   streamText: streamTextMock,
 }));
+
+afterAll(async () => {
+  await mock.module("ai", () => realAi);
+  await mock.module("@ai-sdk/openai", () => realOpenAI);
+});
 
 beforeEach(() => {
   setStorageForTests(usageStorage([]));
@@ -602,6 +628,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   setStorageForTests(null);
   streamTextScenario = "empty";
+  twoStepAnswerDelayMs = 20;
+  weatherDelayMs = 0;
   streamTextMock.mockClear();
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
@@ -625,15 +653,18 @@ describe("runAgentLoop", () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
     const appendIngressEvents = mock(async () => []);
-    const applySteeringIngress = mock(async () => ({
-      eventId: "owner",
-      events: [{ role: "user", content: "new direction" }],
-      delivery: { kind: "http" },
-      requestedMode: "steer",
-      appliedMode: "steer",
-      appliedToEventId: "owner",
-      contributingEventIds: ["steer-1"],
-      ownerGeneration: 3,
+    const stepBoundary = mock(async () => ({
+      renewal: "renewed",
+      steering: {
+        eventId: "owner",
+        events: [{ role: "user", content: "new direction" }],
+        delivery: { kind: "http" },
+        requestedMode: "steer",
+        appliedMode: "steer",
+        appliedToEventId: "owner",
+        contributingEventIds: ["steer-1"],
+        ownerGeneration: 3,
+      },
     }));
     const stream = await runAgentLoop(
       {
@@ -642,9 +673,9 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: applySteeringIngress,
+        stepBoundary: stepBoundary,
         appendIngressEvents: appendIngressEvents,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -696,9 +727,68 @@ describe("runAgentLoop", () => {
       role: "user",
       content: "new direction",
     });
-    expect(applySteeringIngress).toHaveBeenCalledTimes(1);
+    expect(stepBoundary).toHaveBeenCalledTimes(1);
     expect(appendIngressEvents).toHaveBeenCalledWith([
       { role: "user", content: "new direction" },
+    ]);
+    await stream.consumeStream();
+  });
+
+  it("adds subagent results and questions at the next step boundary", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const question = {
+      role: "user" as const,
+      content: [{ type: "text" as const, text: "Subagent question" }],
+    };
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "acct:test:agent:test:api:conversation",
+        eventId: "owner",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: () => [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async () => [],
+        stepBoundary: async () => ({ renewal: "renewed", steering: null }),
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "original" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+      {
+        onFinalText: async () => {},
+        onErrorText: async () => {},
+      },
+      {
+        subagentWatch: {
+          waitForSettled: async () => {},
+          markDelivered: () => {},
+          confirmDelivered: () => {},
+          answerQuestion: () => false,
+          takeParentMessages: async () => [question],
+        },
+      },
+    );
+
+    const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
+    const prepared = await prepareStep!({
+      responseMessages: [],
+      messages: [{ role: "user", content: "original" }],
+    });
+    expect(prepared.messages).toEqual([
+      { role: "user", content: "original" },
+      question,
     ]);
     await stream.consumeStream();
   });
@@ -706,17 +796,17 @@ describe("runAgentLoop", () => {
   it("stops before the next model call when the owner requests a boundary stop", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
-    const applySteeringIngress = mock(async () => null);
+    const appendIngressEvents = mock(async () => []);
     await runAgentLoop(
       {
         conversationKey: "acct:test:agent:test:api:conversation",
         eventId: "owner",
+        appendIngressEvents: appendIngressEvents,
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
-        persistModelMessages: async () => [],
-        renewConversationLease: async () => "stopped",
-        applySteeringIngress: applySteeringIngress,
+        environmentText: () => "<environment>",
+        stepBoundary: async () => ({ renewal: "stopped", steering: null }),
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -741,7 +831,7 @@ describe("runAgentLoop", () => {
         messages: [{ role: "user", content: "original" }],
       }),
     ).rejects.toThrow("Stopped by user at the model boundary");
-    expect(applySteeringIngress).not.toHaveBeenCalled();
+    expect(appendIngressEvents).not.toHaveBeenCalled();
   });
 
   it("stores every step of a tool turn", async () => {
@@ -764,9 +854,13 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: persistModelMessages,
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: async () => null,
+        stepBoundary: async (messages: ModelMessage[]) => {
+          await persistModelMessages(messages);
+
+          return { renewal: "renewed", steering: null };
+        },
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -820,6 +914,36 @@ describe("runAgentLoop", () => {
     );
   });
 
+  it("fails the run when the model sends nothing within the chunk timeout", async () => {
+    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
+    // Longer than the timeout; the mock stream ignores the abort a real
+    // provider fetch would honour, so the test still waits it out.
+    twoStepAnswerDelayMs = 1_200;
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(true);
+    expect(stream.failureText()).toBe(
+      "The model sent no output for 1s, so the run was stopped",
+    );
+    // The stalled second call was aborted, not left holding its socket.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+    expect(twoStepModelInUse?.doStreamCalls[1]?.abortSignal?.aborted).toBe(
+      true,
+    );
+  });
+
+  it("does not count a slow tool as a silent model", async () => {
+    process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
+    process.env.MODEL_CHUNK_TIMEOUT_MS = "300";
+    weatherDelayMs = 900;
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(false);
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+  });
+
   it("keeps the run alive when a reader that drains on its own leaves early", async () => {
     const { readAgentFullStream } = await import("../src/harness/harness.ts");
     const stream = await startTwoStepTurn();
@@ -832,6 +956,25 @@ describe("runAgentLoop", () => {
 
     expect(stream.didFail()).toBe(false);
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+  });
+
+  it("drops raw provider chunks so consumers only see stream parts", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const parts: TextStreamPart<ToolSet>[] = [
+      { type: "raw", rawValue: { type: "tool_progress" } },
+      { type: "text-delta", id: "t1", text: "hi" },
+      { type: "raw", rawValue: { type: "message_stop" } },
+      { type: "text-end", id: "t1" },
+    ];
+    const stream = {
+      stream: actualAi.simulateReadableStream({ chunks: parts }),
+      ensureFinalized: async (): Promise<void> => {},
+    };
+
+    const seen: unknown[] = [];
+    for await (const chunk of readAgentFullStream(stream)) seen.push(chunk);
+
+    expect(seen).toEqual([parts[1], parts[3]]);
   });
 
   it("keeps a finished run completed when the reader leaves during onEnd", async () => {
@@ -851,6 +994,24 @@ describe("runAgentLoop", () => {
     expect(stream.didFail()).toBe(false);
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({ status: "completed", stepCount: 2 });
+  });
+
+  it("closes the stream without waiting for the usage write", async () => {
+    const order: string[] = [];
+    const written = Promise.withResolvers<void>();
+    const store = usageStorage([]);
+    store.taskUsage.record = async function (): Promise<void> {
+      await Bun.sleep(30);
+      order.push("usage");
+      written.resolve();
+    };
+    setStorageForTests(store);
+    const stream = await startTwoStepTurn();
+    await stream.consumeStream();
+    order.push("closed");
+    await written.promise;
+
+    expect(order).toEqual(["closed", "usage"]);
   });
 
   it("meters the steps an aborted run finished", async () => {
@@ -890,6 +1051,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -957,6 +1119,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1011,6 +1174,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1045,7 +1209,7 @@ describe("runAgentLoop", () => {
         },
       },
       undefined,
-      { webhookTransport: hookTransport() },
+      { webhookTransport: loopbackTransport() },
     );
 
     await stream.consumeStream();
@@ -1086,6 +1250,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1138,6 +1303,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1184,6 +1350,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1208,7 +1375,7 @@ describe("runAgentLoop", () => {
 
     // Drain stream the way the channel streamer does (no consumeStream call).
     const reader = stream.stream.getReader();
-    while (true) {
+    for (;;) {
       const { done } = await reader.read();
       if (done) break;
     }
@@ -1247,6 +1414,7 @@ describe("runAgentLoop", () => {
             sandbox: { provider: "lambda", permissionMode: "ask" },
           },
         ],
+        environmentText: () => "<environment>",
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1353,6 +1521,7 @@ describe("runAgentLoop", () => {
             sandbox: { provider: "lambda", permissionMode: "bypass" },
           },
         ],
+        environmentText: () => "<environment>",
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async (): Promise<{
           systemContextSnapshot: SystemContextSnapshot;
@@ -1421,6 +1590,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1490,6 +1660,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1555,6 +1726,7 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentText: () => "<environment>",
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1642,6 +1814,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1698,6 +1871,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1762,6 +1936,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1824,6 +1999,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1945,6 +2121,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2014,6 +2191,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2058,6 +2236,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2109,6 +2288,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadSkillPrompt: loadSkillPrompt,
         loadRefreshedSystemPromptParts: async () => ({
@@ -2176,6 +2356,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2236,6 +2417,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2321,6 +2503,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2388,6 +2571,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2443,6 +2627,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2493,6 +2678,7 @@ describe("runAgentLoop", () => {
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [],
+        environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2543,6 +2729,7 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentText: () => "<environment>",
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -2590,6 +2777,7 @@ describe("runAgentLoop", () => {
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentText: () => "<environment>",
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -2603,11 +2791,13 @@ describe("runAgentLoop", () => {
       systemContextSnapshot: { cursor: null, messages: [] },
     } as never;
 
+    const bedrockApiKey = crypto.randomUUID();
+    const gatewayApiKey = crypto.randomUUID();
     const bedrockStream = await runAgentLoop(baseSession, turn, {
       provider: {
         bedrock: {
           region: "us-east-1",
-          apiKey: "bedrock-key",
+          apiKey: bedrockApiKey,
         },
       },
       model: {
@@ -2619,7 +2809,7 @@ describe("runAgentLoop", () => {
 
     expect(createBedrockMock).toHaveBeenCalledWith({
       region: "us-east-1",
-      apiKey: "bedrock-key",
+      apiKey: bedrockApiKey,
       fetch: expect.any(Function),
     });
     expect(bedrockModelMock).toHaveBeenCalledWith("amazon.nova-lite-v1:0");
@@ -2629,7 +2819,7 @@ describe("runAgentLoop", () => {
     const gatewayStream = await runAgentLoop(baseSession, turn, {
       provider: {
         vercel: {
-          apiKey: "gateway-key",
+          apiKey: gatewayApiKey,
         },
       },
       model: {
@@ -2645,7 +2835,7 @@ describe("runAgentLoop", () => {
     await gatewayStream.consumeStream();
 
     expect(createGatewayMock).toHaveBeenCalledWith({
-      apiKey: "gateway-key",
+      apiKey: gatewayApiKey,
       fetch: expect.any(Function),
     });
     expect(gatewayModelMock).toHaveBeenCalledWith("openai/gpt-5.4");
@@ -2657,6 +2847,128 @@ describe("runAgentLoop", () => {
         },
       },
     });
+  });
+});
+
+describe("auto-compaction after a turn", () => {
+  // Runs a turn on the real SDK loop with a session that records, in order,
+  // every final reply and auto-compaction the harness asks for.
+  async function runCompactingTurn(options: {
+    scenario: "real-two-step" | "approval-request";
+    autoCompaction: { enabled?: boolean; maxContextLength?: number };
+    compactConversation?: () => Promise<number>;
+  }): Promise<{ stream: AgentLoopStream; order: string[] }> {
+    installHarnessEnv();
+    streamTextScenario = options.scenario;
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const order: string[] = [];
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: (): ResolvedAgentSandbox[] =>
+          options.scenario === "approval-request"
+            ? [
+                {
+                  name: "agent-sandbox",
+                  sandbox: { provider: "lambda", permissionMode: "ask" },
+                },
+              ]
+            : [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async (): Promise<string[]> => [],
+        stepBoundary: async () => ({ renewal: "renewed", steering: null }),
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+        compactConversation: async (): Promise<number> => {
+          order.push("compact");
+
+          return (options.compactConversation ?? (async () => 4))();
+        },
+      } as never,
+      {
+        messages: [{ role: "user", content: "weather in Hanoi?" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+        session: { autoCompaction: options.autoCompaction },
+      },
+      {
+        onFinalText: async (): Promise<void> => {
+          order.push("final");
+        },
+        onErrorText: async (): Promise<void> => {
+          order.push("error");
+        },
+        onApprovalRequired: async (): Promise<void> => {
+          order.push("approval");
+        },
+      },
+    );
+    await stream.consumeStream();
+
+    return { stream: stream, order: order };
+  }
+
+  it("compacts once after the final reply, never between tool steps", async () => {
+    // Both steps read 10 input tokens; only the end of the turn may act on it.
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(order).toEqual(["final", "compact"]);
+  });
+
+  it("does not compact below the threshold or when turned off", async () => {
+    const below = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 11 },
+    });
+    const off = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { enabled: false, maxContextLength: 1 },
+    });
+    // The default threshold is 500000 tokens; this turn read 10.
+    const byDefault = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: {},
+    });
+
+    expect(below.order).toEqual(["final"]);
+    expect(off.order).toEqual(["final"]);
+    expect(byDefault.order).toEqual(["final"]);
+  });
+
+  it("does not compact a turn that stopped on a tool approval", async () => {
+    const { order } = await runCompactingTurn({
+      scenario: "approval-request",
+      autoCompaction: { maxContextLength: 1 },
+    });
+
+    expect(order).toEqual(["approval"]);
+  });
+
+  it("keeps the turn's outcome when the compaction fails", async () => {
+    const { stream, order } = await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+      compactConversation: () =>
+        Promise.reject(new Error("summary model down")),
+    });
+
+    expect(stream.didFail()).toBe(false);
+    expect(stream.failureText()).toBeNull();
+    expect(order).toEqual(["final", "compact"]);
   });
 });
 
@@ -2815,6 +3127,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
   return {
     accounts: null as never,
     agents: null as never,
+    budgets: null as never,
     agentDeployments: null as never,
     channelRecords: null as never,
     crons: null as never,
@@ -2824,12 +3137,14 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     accountHooks: null as never,
     machineConnections: null as never,
     mcp: null as never,
+    connections: null as never,
     roleSessions: null as never,
     taskUsage: {
       record: async function (input) {
         writes.push(input);
       },
     },
+    auditLedger: { append: async (): Promise<void> => {} },
   };
 }
 
@@ -2853,9 +3168,9 @@ async function startTwoStepTurn(
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
       sandboxes: () => [],
+      environmentText: () => "<environment>",
       persistModelMessages: persistModelMessages,
-      renewConversationLease: async () => "renewed",
-      applySteeringIngress: async () => null,
+      stepBoundary: async () => ({ renewal: "renewed", steering: null }),
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
@@ -2902,7 +3217,7 @@ function twoStepModel(): MockLanguageModelV4 {
   });
   const step1 = actualAi.simulateReadableStream<LanguageModelV4StreamPart>({
     // A reader that stops during step 0 must find the model still running.
-    initialDelayInMs: 20,
+    initialDelayInMs: twoStepAnswerDelayMs,
     chunks: [
       { type: "stream-start", warnings: [] },
       { type: "text-start", id: "t1" },
@@ -2996,28 +3311,6 @@ describe("tool.call span duration", () => {
   });
 });
 
-// The lifecycle webhook opens a pinned socket, so the test resolves the hook's
-// name to the loopback address its own TLS server listens on. Only loopback is
-// exempted; every other address still meets the real denylist.
-const HOOK_TLS_CERT = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-cert.pem", import.meta.url),
-  "utf8",
-);
-const HOOK_TLS_KEY = readFileSync(
-  new URL("./helpers/fixtures/attachment-tls-key.pem", import.meta.url),
-  "utf8",
-);
-
-function hookTransport(): PinnedFetchTransport {
-  return {
-    allowAddresses: ["127.0.0.1"],
-    ca: HOOK_TLS_CERT,
-    lookup: async (): Promise<{ address: string; family: number }[]> => [
-      { address: "127.0.0.1", family: 4 },
-    ],
-  };
-}
-
 interface HookDelivery {
   body: string;
   contentType: string | undefined;
@@ -3029,7 +3322,7 @@ async function startHookServer(
   delivered: HookDelivery[],
 ): Promise<{ port: number; server: Server }> {
   const server = createHttpsServer(
-    { cert: HOOK_TLS_CERT, key: HOOK_TLS_KEY },
+    { cert: TLS_CERT, key: TLS_KEY },
     (request, response) => {
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));

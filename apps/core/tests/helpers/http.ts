@@ -1,4 +1,10 @@
-import type { CoreRequest, RequestContext } from "../../src/shared/http.ts";
+import { dns } from "bun";
+import { spyOn } from "bun:test";
+import {
+  resetPublicHostsForTests,
+  type CoreRequest,
+  type RequestContext,
+} from "../../src/shared/http.ts";
 
 export function coreRequest(
   method: string,
@@ -48,4 +54,19 @@ export function testContext(): RequestContext {
 
 export async function responseJson(response: Response): Promise<any> {
   return await response.json();
+}
+
+/**
+ * Resolve every name `publicHostFetch` looks up to `address`, so a test can
+ * reach a tenant host with no DNS. The returned function undoes it.
+ */
+export function stubPublicDns(address = "93.184.216.34"): () => void {
+  const lookup = spyOn(dns, "lookup").mockResolvedValue([
+    { address: address, family: 4, ttl: 30 },
+  ]);
+
+  return (): void => {
+    lookup.mockRestore();
+    resetPublicHostsForTests();
+  };
 }

@@ -43,12 +43,15 @@ export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
   occupied: { code: 4423, reason: "Already connected from another daemon" },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
-  unauthorized: { code: 4401, reason: "Unauthorized; check BROODS_API_KEY" },
+  unauthorized: { code: 4401, reason: "Unauthorized; run broods login" },
   unknownSandbox: {
     code: 4404,
     reason: "No machine sandbox with that name in this account",
   },
 } as const;
+
+// Largest frame either side sends; the gateway relays up to this too.
+export const MACHINE_MAX_FRAME_BYTES = 4 * 1024 * 1024;
 
 export const MACHINE_WEBSOCKET_PATH = "/v1/machines/ws";
 

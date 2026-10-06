@@ -10,15 +10,10 @@ import {
   handleAgentMessage,
   parseGatewayMessage,
   stopActiveRun,
-  websocketMessageForNatsData,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
-import {
-  isConfigHttpPath,
-  isCoreHttpRoute,
-  matchAgentWebSocketPath,
-} from "../src/routes.ts";
-import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
+import { matchAgentWebSocketPath } from "../src/routes.ts";
+import { resolveSocketScope } from "../src/upstream.ts";
 import {
   cleanupObservabilitySocket,
   fetchTempoBackfill,
@@ -45,20 +40,16 @@ import {
 import {
   allowedOriginPatternsFromEnv,
   clientIp,
-  corsHeaders,
   gatewayLimitsFromEnv,
   isOriginAllowed,
   json,
   mapWithConcurrency,
-  normalizedCoreBaseUrls,
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
-  withCors,
   withRequestId,
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
-import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import {
   createSubagentTaskId,
   scopedDirectEventId,
@@ -141,30 +132,26 @@ test("sends question answers instead of events on an execute message", () => {
   ).toBeNull();
 });
 
-test("forwards typed NATS stream payloads directly", () => {
-  expect(
-    websocketMessageForNatsData({
-      type: "text-delta",
-      id: "text-1",
-      text: "hello",
-    }),
-  ).toEqual({
-    type: "text-delta",
-    id: "text-1",
-    text: "hello",
-  });
-  expect(websocketMessageForNatsData({ type: "waiting" })).toEqual({
-    type: "waiting",
-  });
-});
-
-test("forwards stream errors directly", () => {
-  expect(
-    websocketMessageForNatsData({ type: "error", error: "bad key" }),
-  ).toEqual({
-    type: "error",
-    error: "bad key",
-  });
+test("refuses an agent id that is not one NATS subject token", (): void => {
+  for (const agentId of ["*", ">", "agent.*", "other.agent", "agent one"]) {
+    expect(
+      parseGatewayMessage(
+        JSON.stringify({
+          type: "attach",
+          requestId: "attach-1",
+          agentId: agentId,
+          conversationKey: "conversation-1",
+          eventId: "event-1",
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseGatewayMessage(
+        JSON.stringify({ type: "execute", agentId: agentId, input: "hi" }),
+      ),
+    ).toBeNull();
+  }
 });
 
 test("reuses attach and stream contracts for subagent task identities", () => {
@@ -187,17 +174,6 @@ test("reuses attach and stream contracts for subagent task identities", () => {
     eventId: "subagent_task_123",
     runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   });
-  expect(
-    [
-      { type: "reasoning-delta", text: "thinking" },
-      { type: "text-delta", text: "answer" },
-      { type: "tool-call", toolName: "search" },
-    ].map(websocketMessageForNatsData),
-  ).toEqual([
-    { type: "reasoning-delta", text: "thinking" },
-    { type: "text-delta", text: "answer" },
-    { type: "tool-call", toolName: "search" },
-  ]);
 });
 
 test("attaches virtual and private child streams through durable parent deployment authorization", async () => {
@@ -208,7 +184,8 @@ test("attaches virtual and private child streams through durable parent deployme
     const socket = gatewaySocket(sent);
     const connection = replayThenLiveConnection(fixture);
     // Core authorizes the child status read (covered by core's status-access
-    // tests); the gateway only proceeds when the returned conversationKey matches.
+    // tests); the gateway only proceeds when the returned agentId and
+    // conversationKey match.
     globalThis.fetch = (async (input, init) => {
       if (
         new Headers(init?.headers).get("authorization") !== "Bearer runtime-key"
@@ -224,6 +201,7 @@ test("attaches virtual and private child streams through durable parent deployme
       return new Response(
         JSON.stringify({
           eventId: taskId,
+          agentId: fixture.childAgentId,
           conversationKey: fixture.publicConversationKey,
           status: "processing",
         }),
@@ -379,6 +357,63 @@ test("rejects an attach whose durable status conversation does not own the reque
   }
 });
 
+test("rejects an attach that names another agent than the run's own", async () => {
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let natsRequested = false;
+  const respond = async (): Promise<Response> =>
+    new Response(
+      JSON.stringify({
+        eventId: "victim-event",
+        agentId: "agent_own",
+        conversationKey: "shared-conversation",
+        status: "processing",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(respond, { preconnect: (): void => {} }),
+  );
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-wrong-agent",
+        agentId: "agent_other",
+        conversationKey: "shared-conversation",
+        eventId: "victim-event",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => {
+        natsRequested = true;
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "replay_unavailable",
+    );
+    expect(natsRequested).toBe(false);
+    expect(sent).toContainEqual({
+      type: "replay_unavailable",
+      requestId: "attach-wrong-agent",
+      eventId: "victim-event",
+      status: "processing",
+      statusUrl: "/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+  } finally {
+    stopActiveRun(socket);
+    fetchSpy.mockRestore();
+  }
+});
+
 test("keeps a zero-buffer processing attach open for future live frames", async () => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
@@ -425,6 +460,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
     new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: "processing",
       }),
@@ -537,6 +573,7 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
     new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: "completed",
       }),
@@ -632,6 +669,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
     new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: "completed",
       }),
@@ -682,7 +720,8 @@ test("closes a zero-frame attach after durable completion and emits one terminal
   let statusReads = 0;
   const connection = zeroBufferConnection(async () => ({
     [Symbol.asyncIterator]: async function* () {
-      while (!consumerClosed) {
+      for (;;) {
+        if (consumerClosed) break;
         await Bun.sleep(10);
       }
     },
@@ -696,6 +735,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
     return new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: statusReads === 1 ? "processing" : "completed",
       }),
@@ -769,7 +809,8 @@ test("does not duplicate a streamed error when durable failure arrives without d
         ),
         ack: () => {},
       };
-      while (!consumerClosed) {
+      for (;;) {
+        if (consumerClosed) break;
         await Bun.sleep(10);
       }
     },
@@ -783,6 +824,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
     return new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: statusReads === 1 ? "processing" : "failed",
         error: "child failed",
@@ -809,9 +851,10 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
+    // Status is only polled once the stream has been quiet for a while.
     await waitForCondition(
       () => consumerClosed,
-      700,
+      1600,
       () => "consumer close",
     );
     expect(
@@ -827,7 +870,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
   }
-});
+}, 10_000);
 
 test("closes a zero-frame queued execute consumer after durable completion", async () => {
   const originalFetch = globalThis.fetch;
@@ -836,7 +879,8 @@ test("closes a zero-frame queued execute consumer after durable completion", asy
   let consumerClosed = false;
   const connection = zeroBufferConnection(async () => ({
     [Symbol.asyncIterator]: async function* () {
-      while (!consumerClosed) {
+      for (;;) {
+        if (consumerClosed) break;
         await Bun.sleep(10);
       }
     },
@@ -916,6 +960,7 @@ test("falls back to durable attach status when NATS consumer creation fails", as
     return new Response(
       JSON.stringify({
         eventId: "child-task",
+        agentId: "agent_child",
         conversationKey: "child-conversation",
         status: statusReads === 1 ? "processing" : "completed",
       }),
@@ -1157,6 +1202,135 @@ test("rejects a second active agent run on the same websocket", () => {
   }
 });
 
+test("a cancelled run's cleanup leaves the next run on the socket alone", async (): Promise<void> => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const signals: AbortSignal[] = [];
+  globalThis.fetch = ((
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> =>
+    new Promise<Response>((_resolve, reject): void => {
+      signals.push(init!.signal!);
+      init?.signal?.addEventListener("abort", (): void =>
+        reject(new Error("aborted")),
+      );
+    })) as typeof fetch;
+  const execute = (eventId: string): void =>
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_1",
+        eventId: eventId,
+        input: "hi",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "10000" }),
+      async (): Promise<never> =>
+        zeroBufferConnection(async () => ({
+          [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+          close: async (): Promise<void> => {},
+        })) as never,
+    );
+
+  try {
+    execute("first");
+    await waitForCondition((): boolean => signals.length === 1);
+    handleAgentMessage(
+      socket,
+      JSON.stringify({ type: "cancel" }),
+      gatewayLimitsFromEnv({}),
+      idleNats,
+    );
+    execute("second");
+    await waitForCondition((): boolean => signals.length === 2);
+    // The first run's rejected fetch has settled and its cleanup has run.
+    await Bun.sleep(10);
+
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+    execute("third");
+    expect(sent).toContainEqual({
+      type: "error",
+      error: "A run is already active on this WebSocket",
+    });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a started turn streams from its own start and polls core in-cluster", async (): Promise<void> => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const polled: string[] = [];
+  let consumerOptions: { opt_start_seq?: number } | undefined;
+  const connection = zeroBufferConnection(
+    async () => ({
+      [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+      close: async (): Promise<void> => {},
+    }),
+    (options): void => {
+      consumerOptions = options;
+    },
+  );
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    if (init?.method === "POST") {
+      return Response.json(
+        {
+          eventId: "direct-task",
+          conversationKey: "direct-conversation",
+          status: "processing",
+          statusUrl:
+            "https://gateway.broods.app/v1/runs/run_5555555555555555555555555555eeee",
+          nats: {
+            accountId: "acct_test",
+            agentId: "agent_child",
+            conversationKey: "direct-conversation",
+          },
+        },
+        { status: 202 },
+      );
+    }
+    polled.push(String(input));
+
+    return Response.json({ eventId: "direct-task", status: "completed" });
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_child",
+        sessionId: "direct-conversation",
+        eventId: "direct-task",
+        input: "go",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "done",
+    );
+    // The snapshot was taken before the POST, whose last sequence is 20.
+    expect(consumerOptions?.opt_start_seq).toBe(21);
+    expect(polled[0]).toBe(
+      "https://core.example/v1/runs/run_5555555555555555555555555555eeee",
+    );
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("uses conservative gateway limit defaults", () => {
   expect(gatewayLimitsFromEnv({})).toEqual({
     maxConnections: 10_000,
@@ -1193,148 +1367,6 @@ test("caps gateway idle timeout at Bun's supported maximum", () => {
   ).toBe(255);
 });
 
-test("normalizes and de-duplicates unified gateway core upstreams", () => {
-  expect(
-    normalizedCoreBaseUrls([
-      "https://dev-core.example.com/",
-      "https://prod-core.example.com",
-      "https://dev-core.example.com",
-    ]),
-  ).toEqual(["https://dev-core.example.com", "https://prod-core.example.com"]);
-  expect(() => normalizedCoreBaseUrls(["", "  "])).toThrow("Gateway requires");
-});
-
-test("proxies runtime HTTP paths used by the SDK", () => {
-  expect(isCoreHttpRoute("/v1/runs")).toBe(true);
-  expect(isCoreHttpRoute("/v1/runs/run_1")).toBe(true);
-  expect(isCoreHttpRoute("/v1/accounts")).toBe(true);
-  // The one webhook shape reaches core, and so does a retired agent-scoped URL:
-  // core answers that with a 404 naming the right one, which it cannot do if
-  // the gateway swallows the path first.
-  expect(isCoreHttpRoute("/v1/webhooks/acct_1/slack")).toBe(true);
-  expect(isCoreHttpRoute("/v1/webhooks/acct_1/agent_1/slack")).toBe(true);
-  expect(isCoreHttpRoute("/v1/crons")).toBe(true);
-  expect(
-    isCoreHttpRoute("/v1/projects/demo/stages/development/agents/env_123"),
-  ).toBe(true);
-  expect(isCoreHttpRoute("/")).toBe(false);
-  expect(isCoreHttpRoute("/healthz")).toBe(false);
-});
-
-test("routes config-plane CRUD to Convex, not core", () => {
-  // Account metadata/rotation plus agents, skills, tools, hooks, workspace files, crons, workspaces, sandboxes, policies, and channels are Convex config-plane routes.
-  for (const method of ["GET", "POST", "PUT"]) {
-    expect(isConfigHttpPath("/v1/account/onboarding", method)).toBe(true);
-    expect(
-      isConfigHttpPath("/v1/account/projects/p/stages/e/manifest", method),
-    ).toBe(true);
-  }
-  expect(isConfigHttpPath("/v1/accountx", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/v1/account", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/account", "PATCH")).toBe(true);
-  expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts/acct_1", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts/acct_1", "PATCH")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts/acct_1/rotate-secret", "POST")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/agents", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents/agent_1", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents/agent_1", "PATCH")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents/agent_1", "DELETE")).toBe(true);
-  expect(
-    isConfigHttpPath("/v1/agents/agent_1/channels/slack/directory", "GET"),
-  ).toBe(true);
-  expect(
-    isConfigHttpPath("/v1/agents/agent_1/channels/slack/directory", "POST"),
-  ).toBe(false);
-  expect(isConfigHttpPath("/v1/env", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "PUT")).toBe(true);
-  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "DELETE")).toBe(true);
-  expect(isConfigHttpPath("/v1/skills")).toBe(true);
-  expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
-  // /v1/tools is retired (#331 phase 3); it no longer routes to the config plane.
-  expect(isConfigHttpPath("/v1/tools")).toBe(false);
-  expect(isConfigHttpPath("/v1/mcp")).toBe(true);
-  expect(isConfigHttpPath("/v1/mcp/k57mcpserver00000000000000000000")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/mcp/uploads", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/hooks")).toBe(true);
-  expect(isConfigHttpPath("/v1/hooks/k17zwc4z4q5ysxm74fgrhd13s88xxtv")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
-  expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
-  expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
-  expect(isConfigHttpPath("/v1/workspaces/ws_123/download-links", "POST")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/workspaces/ws_123/download-links", "GET")).toBe(
-    false,
-  );
-  // Redeeming a download link is unauthenticated and read-only.
-  expect(isConfigHttpPath("/v1/downloads/tok_abc", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/downloads/tok_abc", "HEAD")).toBe(true);
-  expect(isConfigHttpPath("/v1/downloads/tok_abc", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/v1/downloads", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/downloads/tok_abc/extra", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/sandboxes")).toBe(true);
-  expect(isConfigHttpPath("/v1/sandboxes/sbx_1")).toBe(true);
-  expect(isConfigHttpPath("/v1/policies")).toBe(true);
-  expect(isConfigHttpPath("/v1/policies/pol_1")).toBe(true);
-  expect(isConfigHttpPath("/v1/roles")).toBe(true);
-  expect(isConfigHttpPath("/v1/roles/fp_role_abc")).toBe(true);
-  expect(isConfigHttpPath("/v1/account/assume-role", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/channels")).toBe(true);
-  expect(isConfigHttpPath("/v1/channels/chan_1")).toBe(true);
-  expect(isConfigHttpPath("/v1/crons")).toBe(true);
-  expect(isConfigHttpPath("/v1/crons/cron_123")).toBe(true);
-  expect(isConfigHttpPath("/v1/crons/cron_123/runs")).toBe(true);
-  expect(isConfigHttpPath("/v1/cron-runs", "POST")).toBe(false);
-
-  // Exact depth only: scoped agent invocations and other resources stay core.
-  expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/accounts", "POST")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret", "GET")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1/agents", "GET")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret/extra", "POST")).toBe(
-    false,
-  );
-  // The whole /v1/account/ subtree is Convex's; core only owns the exact-path DELETE.
-  expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/account/auth/exchange", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/skills/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/hooks/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/crons/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);
-  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/terminal")).toBe(false);
-  expect(isConfigHttpPath("/v1/policies/agents/development/env_123")).toBe(
-    false,
-  );
-  expect(isConfigHttpPath("/v1/channels/agents/development/env_123")).toBe(
-    false,
-  );
-  expect(isConfigHttpPath("/v1/agents/agent_1", "POST")).toBe(false);
-  expect(isConfigHttpPath("/v1/env", "PUT")).toBe(false);
-  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/agents/agent_1/ws", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/agents/agent_1/async", "POST")).toBe(false);
-  expect(isConfigHttpPath("/v1/demo/agents/development/env_123", "POST")).toBe(
-    false,
-  );
-  expect(
-    isConfigHttpPath("/v1/demo/agents/development/env_123/async", "POST"),
-  ).toBe(false);
-  expect(
-    isConfigHttpPath("/v1/demo/agents/development/env_123/ws", "GET"),
-  ).toBe(false);
-});
-
 test("parses agent websocket paths so the upgrade can bind the key's endpoint scope", () => {
   expect(matchAgentWebSocketPath("/v1/agents/env_123/ws")).toEqual({
     endpointId: "env_123",
@@ -1366,15 +1398,13 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
   ).toBeNull();
 });
 
-test("routes a runtime key to the matching core upstream", async () => {
+test("resolves the scope a runtime key grants from core", async (): Promise<void> => {
   const calls: string[] = [];
-  const resolved = await resolveObservabilityScope(
+  const resolved = await resolveSocketScope(
     "runtime-key",
-    ["https://dev.example", "https://prod.example"],
-    async (input) => {
+    "https://core.example",
+    async (input): Promise<Response> => {
       calls.push(String(input));
-      if (new URL(String(input)).origin === "https://dev.example")
-        return new Response("unauthorized", { status: 401 });
 
       return Response.json({
         accountId: "account-1",
@@ -1385,82 +1415,41 @@ test("routes a runtime key to the matching core upstream", async () => {
     },
   );
 
-  expect(calls).toHaveLength(2);
+  expect(calls).toEqual([
+    "https://core.example/v1/internal/observability-scope",
+  ]);
   expect(resolved).toMatchObject({
-    coreBaseUrl: "https://prod.example",
+    kind: "resolved",
     scope: { stageSlug: "production" },
   });
 });
 
-test("proxyHttp strips hop-by-hop headers and preserves method query and body", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: Array<{ input: string; init?: RequestInit }> = [];
+test("a core that cannot answer is an outage, not a bad token", async (): Promise<void> => {
+  const resolve = (
+    answer: () => Promise<Response>,
+  ): ReturnType<typeof resolveSocketScope> =>
+    resolveSocketScope("runtime-key", "https://core.example", answer);
 
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ input: String(input), init: init });
-
-    return new Response("ok", { status: 200 });
-  }) as typeof fetch;
-
-  try {
-    const response = await proxyHttp(
-      new Request("https://gateway.example/v1/agents?debug=1", {
-        method: "POST",
-        headers: {
-          host: "gateway.example",
-          connection: "upgrade",
-          upgrade: "websocket",
-          "x-test": "yes",
-        },
-        body: "hello",
-      }),
-      ["https://core.example"],
-    );
-
-    expect(response.status).toBe(200);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.input).toBe("https://core.example/v1/agents?debug=1");
-    expect(calls[0]!.init?.method).toBe("POST");
-    expect(calls[0]!.init?.redirect).toBe("manual");
-    const headers = calls[0]!.init?.headers as Headers;
-    expect(headers.get("x-test")).toBe("yes");
-    expect(headers.has("host")).toBe(false);
-    expect(headers.has("connection")).toBe(false);
-    expect(headers.has("upgrade")).toBe(false);
-    expect(new TextDecoder().decode(calls[0]!.init?.body as ArrayBuffer)).toBe(
-      "hello",
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("proxyHttp falls through to the next upstream only on 401", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    calls.push(String(input));
-
-    return calls.length === 1
-      ? new Response("unauthorized", { status: 401 })
-      : new Response("ok", { status: 200 });
-  }) as typeof fetch;
-
-  try {
-    const response = await proxyHttp(
-      new Request("https://gateway.example/status/request-1"),
-      ["https://dev.example", "https://prod.example"],
-    );
-
-    expect(response.status).toBe(200);
-    expect(calls).toEqual([
-      "https://dev.example/status/request-1",
-      "https://prod.example/status/request-1",
-    ]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  expect(
+    await resolve(
+      async (): Promise<Response> => new Response("no", { status: 401 }),
+    ),
+  ).toEqual({ kind: "invalid" });
+  expect(
+    await resolve(
+      async (): Promise<Response> => new Response("no", { status: 403 }),
+    ),
+  ).toEqual({ kind: "invalid" });
+  expect(
+    await resolve(
+      async (): Promise<Response> => new Response("down", { status: 503 }),
+    ),
+  ).toEqual({ kind: "unavailable" });
+  expect(
+    await resolve(async (): Promise<Response> => {
+      throw new Error("timed out");
+    }),
+  ).toEqual({ kind: "unavailable" });
 });
 
 test("bounds observability backfill requests", () => {
@@ -1585,9 +1574,6 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
       sent.push(JSON.parse(value) as Record<string, unknown>),
     data: {
       kind: "observability",
-      project: "shop",
-      stage: "dev",
-      token: "runtime-key",
       scope: {
         accountId: "acct-1",
         projectSlug: "shop",
@@ -2613,6 +2599,42 @@ test("reconstructs full Tempo span trees with tenant attributes and errors", () 
   });
 });
 
+test("keeps a root's waiting and needs_input state from task.state", () => {
+  const rootSpan = (
+    spanId: string,
+    state: string,
+  ): Record<string, unknown> => ({
+    traceId: `trace-${spanId}`,
+    spanId: spanId,
+    name: "agent.task",
+    startTimeUnixNano: "1000000000",
+    endTimeUnixNano: "2000000000",
+    attributes: [{ key: "task.state", value: { stringValue: state } }],
+    status: { code: 1 },
+  });
+  const rows = tempoTraceRowsFromResponse({
+    batches: [
+      {
+        scopeSpans: [
+          {
+            spans: [
+              rootSpan("asked", "needs_input"),
+              rootSpan("delegated", "waiting"),
+              rootSpan("done", "completed"),
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(rows.map((row) => row.status)).toEqual([
+    "needs_input",
+    "waiting",
+    "ok",
+  ]);
+});
+
 test("normalizes base64 Tempo ids to hex so backfill keys match live spans", () => {
   // 16-byte trace id and 8-byte span id, hex then base64-encoded.
   const traceHex = "2e4a86cf02516e0768dff2a96ae9eb12";
@@ -2723,7 +2745,7 @@ test("maps with bounded concurrency, preserves order, and isolates failures", as
 test("opens a sealed terminal ticket with whichever stage secret verifies it", () => {
   const ticket = {
     url: "ws://sandbox-node.example:8080/v1/sandboxes/sb_1/pty",
-    authorization: "Bearer sk_live_key",
+    authorization: "Bearer bsk_live_key",
     accountId: "acct_1",
     expiresAt: Date.now() + 60_000,
   };
@@ -2927,52 +2949,6 @@ test("origin allow-list: defaults cover broods.app, wildcards, and non-browser c
   expect(isOriginAllowed("https://anything.example", ["*"])).toBe(true);
 });
 
-test("CORS: an allowed origin gets reflected headers, a disallowed or absent one gets none", () => {
-  const patterns = allowedOriginPatternsFromEnv({});
-
-  const allowed = corsHeaders("https://dashboard.dev.broods.app", patterns);
-  expect(allowed["Access-Control-Allow-Origin"]).toBe(
-    "https://dashboard.dev.broods.app",
-  );
-  expect(allowed["Access-Control-Allow-Methods"]).toContain("POST");
-  expect(allowed["Access-Control-Allow-Headers"]).toContain("authorization");
-  expect(allowed["Access-Control-Allow-Headers"]).not.toContain("x-account-id");
-  expect(
-    corsHeaders("https://dashboard.dev.broods.app", patterns, true)[
-      "Access-Control-Allow-Headers"
-    ],
-  ).toContain("x-account-id");
-  expect(allowed["Vary"]).toBe("Origin");
-  // No credentials: the dashboard sends a bearer token, not a cookie.
-  expect(allowed["Access-Control-Allow-Credentials"]).toBeUndefined();
-
-  expect(corsHeaders("https://evil.example.com", patterns)).toEqual({});
-  expect(corsHeaders(null, patterns)).toEqual({});
-});
-
-test("withCors stamps a proxied response for an allowed origin and leaves others untouched", () => {
-  const patterns = allowedOriginPatternsFromEnv({});
-
-  const stamped = withCors(
-    json({ ok: true }, { status: 200 }),
-    "https://dashboard.dev.broods.app",
-    patterns,
-  );
-  expect(stamped.headers.get("access-control-allow-origin")).toBe(
-    "https://dashboard.dev.broods.app",
-  );
-
-  const bare = withCors(
-    json({ ok: true }),
-    "https://evil.example.com",
-    patterns,
-  );
-  expect(bare.headers.get("access-control-allow-origin")).toBeNull();
-
-  const serverCaller = withCors(json({ ok: true }), null, patterns);
-  expect(serverCaller.headers.get("access-control-allow-origin")).toBeNull();
-});
-
 test("rate limiter: bounds a window, probes without counting, and resets", async () => {
   const limiter = new RateLimiter(3, 50);
   expect(limiter.allow("ip-1")).toBe(true);
@@ -2989,16 +2965,13 @@ test("rate limiter: bounds a window, probes without counting, and resets", async
   expect(limiter.allow("ip-1")).toBe(true);
 });
 
-test("websocket token prefers the Authorization header over the query param", () => {
+test("websocket token reads the Authorization header and never the query param", () => {
   const url = new URL("https://gateway.example.com/ws?token=from-query");
   const withHeader = new Request(url, {
     headers: { authorization: "Bearer from-header" },
   });
-  expect(websocketToken(withHeader, url)).toBe("from-header");
-  expect(websocketToken(new Request(url), url)).toBe("from-query");
-
-  const bare = new URL("https://gateway.example.com/ws");
-  expect(websocketToken(new Request(bare), bare)).toBe("");
+  expect(websocketToken(withHeader)).toBe("from-header");
+  expect(websocketToken(new Request(url))).toBe("");
 });
 
 test("client ip takes the rightmost forwarded hop, then the socket address", () => {
@@ -3023,17 +2996,6 @@ test("client ip takes the rightmost forwarded hop, then the socket address", () 
   expect(clientIp(new Request("https://gateway.example.com/"), undefined)).toBe(
     "unknown",
   );
-});
-
-test("proxyHttp returns 502 when every upstream is unreachable", async () => {
-  const response = await proxyHttp(
-    new Request("https://gateway.example.com/v1/agents"),
-    ["http://127.0.0.1:9", "http://127.0.0.1:1"],
-  );
-  expect(response.status).toBe(502);
-  expect(await response.json()).toMatchObject({
-    error: { message: "Upstream is unreachable" },
-  });
 });
 
 test("observability relay sheds droppable frames when the socket buffer is backed up", async () => {
@@ -3229,9 +3191,6 @@ function observabilitySocket(): {
       sent.push(JSON.parse(value) as Record<string, unknown>),
     data: {
       kind: "observability",
-      project: "shop",
-      stage: "dev",
-      token: "runtime-key",
       scope: TEST_SCOPE,
     },
   } as unknown as Bun.ServerWebSocket<ObservabilityGatewayData>;
@@ -3431,17 +3390,44 @@ function zeroBufferConnection(
   };
 }
 
-test("websocket token reads the broods.token subprotocol before the query param", () => {
+test("websocket token reads the broods.token subprotocol", () => {
   const url = new URL("https://gateway.example.com/ws?token=from-query");
   const request = new Request(url, {
     headers: { "sec-websocket-protocol": "broods.v1, broods.token.from-proto" },
   });
-  expect(websocketToken(request, url)).toBe("from-proto");
+  expect(websocketToken(request)).toBe("from-proto");
   // The handshake completes only when the offered subprotocol is echoed.
   expect(websocketUpgradeHeaders(request)).toEqual({
     "Sec-WebSocket-Protocol": "broods.v1",
   });
-  expect(websocketUpgradeHeaders(new Request(url))).toEqual({});
+  expect(websocketUpgradeHeaders(new Request(url))).toBeUndefined();
+});
+
+test("a client that offers no subprotocol still upgrades", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request, self): Response | undefined =>
+      self.upgrade(request, { headers: websocketUpgradeHeaders(request) })
+        ? undefined
+        : new Response("no upgrade", { status: 400 }),
+    websocket: {
+      message: (): void => {},
+      open: (socket): void => socket.close(1000, "ok"),
+    },
+  });
+  try {
+    const response = await fetch(`http://localhost:${server.port}/ws`, {
+      headers: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": btoa("the sample nonce"),
+      },
+    });
+    expect(response.status).toBe(101);
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("observability selectors keep a hostile stage slug inside the string", () => {
@@ -3455,40 +3441,6 @@ test("observability selectors keep a hostile stage slug inside the string", () =
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(
     '{account_id="acct-1",project="shop",stage="dev\\"} or {stage=~\\".+",service_name!="broods-sandbox"}',
   );
-});
-
-test("proxyHttp drops a client X-Account-Id unless told to forward it, and always marks the hop", async () => {
-  const originalFetch = globalThis.fetch;
-  const seen: Array<string | null> = [];
-  const marks: Array<string | null> = [];
-  globalThis.fetch = (async (_input, init) => {
-    seen.push(new Headers(init?.headers).get("x-account-id"));
-    marks.push(new Headers(init?.headers).get(VIA_GATEWAY_HEADER));
-
-    return new Response("ok", { status: 200 });
-  }) as typeof fetch;
-
-  try {
-    const request = () =>
-      new Request("https://gateway.example/v1/sandboxes/sb_1/terminate", {
-        method: "POST",
-        headers: {
-          "x-account-id": "acct_1",
-          authorization: "Bearer svc",
-          [VIA_GATEWAY_HEADER]: "client-value",
-        },
-        body: "{}",
-      });
-    await proxyHttp(request(), ["https://core.example"]);
-    await proxyHttp(request(), ["https://core.example"], {
-      forwardAccountId: true,
-    });
-
-    expect(seen).toEqual([null, "acct_1"]);
-    expect(marks).toEqual(["1", "1"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
 
 test("resolveRequestId reuses an inbound id only when it matches the issued shape", () => {

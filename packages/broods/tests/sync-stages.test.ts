@@ -111,8 +111,44 @@ test("listStages rejects a non-JSON 404 as a missing stages route", async () => 
   );
 
   await expect(client.listStages("demo-app")).rejects.toThrow(
-    /no \/v1\/account\/stages route yet/,
+    /older than your CLI .*no \/v1\/account\/stages route/,
   );
+});
+
+// Node's bare "fetch failed" hid which server was down and why.
+test("a network failure names the server and the cause", async () => {
+  const client = new BroodsSyncClient({
+    baseUrl: "https://convex.example.com",
+    token: "tok",
+    fetch: async () => {
+      throw new TypeError("fetch failed", {
+        cause: new Error("connect ECONNREFUSED 10.0.0.1:443"),
+      });
+    },
+  });
+
+  await expect(client.listStages("demo-app")).rejects.toThrow(
+    "Cannot reach https://convex.example.com: connect ECONNREFUSED 10.0.0.1:443",
+  );
+});
+
+// A sync can hold the connection for minutes; every other call gives up.
+test("requests time out, except the manifest write", async () => {
+  const signals: Array<AbortSignal | null | undefined> = [];
+  const { client } = clientWith((_url, init) => {
+    signals.push(init.signal);
+
+    return Response.json({ stages: [], manifest: {}, ids: {} });
+  });
+
+  await client.listStages("demo-app");
+  await client.putManifest(
+    { version: 1, project: "demo-app", stage: "development", resources: [] },
+    false,
+  );
+
+  expect(signals[0]).toBeInstanceOf(AbortSignal);
+  expect(signals[1]).toBeUndefined();
 });
 
 test("listStages surfaces a JSON 404 as a normal request failure", async () => {
@@ -129,5 +165,19 @@ test("listStages surfaces a JSON 404 as a normal request failure", async () => {
 
   await expect(client.listStages("demo-app")).rejects.toThrow(
     /Project demo-app was not found/,
+  );
+});
+
+// CLI tokens expire after 90 days, and the bare 401 did not say what to do.
+test("a 401 tells the user to log in again", async () => {
+  const { client } = clientWith(
+    () =>
+      new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
+        status: 401,
+      }),
+  );
+
+  await expect(client.listStages("demo-app")).rejects.toThrow(
+    "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
   );
 });
