@@ -6,7 +6,7 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import { type ConfigAuditActor } from "../../model/auditEvents";
+import { type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import {
   json,
@@ -21,7 +21,7 @@ export async function handleSkillRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   name?: string,
 ): Promise<Response> {
   if (!name) {

@@ -11,10 +11,7 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { sha256Hex } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
-import type {
-  ConfigAuditActor,
-  ConfigAuditResource,
-} from "../../model/auditEvents";
+import type { AuditActor, AuditResource } from "../../model/auditEvents";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
 import { VIA_GATEWAY_HEADER } from "../../model/serviceBridge";
 import {
@@ -41,7 +38,7 @@ export type ConfigAuth =
  * @param auth resolved config HTTP auth
  * @returns actor metadata for audit rows
  */
-export function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
+export function auditActorForAuth(auth: ConfigAuth): AuditActor {
   if (auth.kind === "admin") return { kind: "admin" };
   if (auth.kind === "deployment") return { kind: "deployKey" };
   if (auth.kind === "role") return { kind: "role", id: auth.role.roleId };
@@ -333,7 +330,7 @@ export async function unauthorizedResponse(
   req: Request,
 ): Promise<Response> {
   const result: { blocked: boolean; retryAfterMs?: number } =
-    await ctx.runMutation(internal.config.auditEvents.recordAuthFailure, {
+    await ctx.runMutation(internal.config.authFailures.recordAuthFailure, {
       key: await authFailureKey(req),
       now: Date.now(),
       windowMs: 5 * 60 * 1000,
@@ -363,15 +360,15 @@ export async function writeAudit(
     accountId: Id<"accounts">;
     projectId?: Id<"projects">;
     stageId?: Id<"stages">;
-    actor: ConfigAuditActor;
+    actor: AuditActor;
     action: string;
-    resource: ConfigAuditResource;
+    resource: AuditResource;
     summary: string;
     detailsJson?: string;
   },
 ): Promise<void> {
   try {
-    await ctx.runMutation(internal.config.auditEvents.record, {
+    await ctx.runMutation(internal.audit.ledger.record, {
       accountId: event.accountId,
       projectId: event.projectId,
       stageId: event.stageId,

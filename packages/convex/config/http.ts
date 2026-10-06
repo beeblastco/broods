@@ -15,11 +15,16 @@ import {
   rolePrincipal,
   type ApiResource,
 } from "../model/apiAuthorization";
-import type { ConfigAuditActor } from "../model/auditEvents";
+import type { AuditActor } from "../model/auditEvents";
 import { CLIENT_ERROR_STATUS, clientErrorData } from "../model/clientError";
 import { POLICY_STILL_REFERENCED } from "../model/policyReferences";
 import { resolveRequestId, withRequestId } from "../model/requestId";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
+import {
+  handleAuditRoute,
+  parseAuditRoute,
+  type AuditLeaf,
+} from "./routes/audit";
 import {
   handleAgentChannelDirectoryRoute,
   handleAgentConfigRoute,
@@ -61,6 +66,7 @@ type ConfigRoute =
   | { kind: "agents"; agentId?: string }
   | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
   | { kind: "env"; name?: string }
+  | { kind: "audit"; leaf: AuditLeaf }
   | { kind: "roles"; roleId?: string };
 
 type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
@@ -197,6 +203,8 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("agents", route.agentId);
     case "env":
       return apiResource("env", route.name);
+    case "audit":
+      return apiResource("audit", undefined);
   }
 }
 
@@ -204,7 +212,7 @@ async function dispatchResourceRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   route: ResourceRoute,
 ): Promise<Response> {
   switch (route.kind) {
@@ -303,6 +311,8 @@ async function dispatchResourceRoute(
         actor,
         route.name,
       );
+    case "audit":
+      return await handleAuditRoute(ctx, req, accountId, actor, route.leaf);
   }
 }
 
@@ -331,6 +341,9 @@ function parseAgentRoute(pathname: string): ConfigRoute | null {
 
 /** Match the flat collection-or-item routes with no nested subresources. */
 function parseCollectionRoute(pathname: string): ConfigRoute | null {
+  const audit = parseAuditRoute(pathname);
+  if (audit) return { kind: "audit", leaf: audit };
+
   const env = pathname.match(/^\/v1\/env(?:\/([^/]+))?$/);
   if (env)
     return {

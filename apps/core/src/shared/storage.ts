@@ -318,7 +318,30 @@ interface TaskUsageStore {
   record(input: TaskUsageInput): Promise<void>;
 }
 
+/**
+ * One row core appends to the account's hash-chained audit ledger off the
+ * happy path: an enforced policy denying a tool. A run's own `run.completed`
+ * row rides the usage write (`internal.usage.recordTaskUsage`) instead, so
+ * the per-turn path gains no Convex call. `details` must hold ids, names
+ * and counts only, never tool input or secrets.
+ */
+export interface AuditLedgerInput {
+  accountId: string;
+  agentId?: string;
+  traceId?: string;
+  action: "tool.denied";
+  resource: { kind: "tool"; name: string };
+  summary: string;
+  details?: Record<string, JSONValue | undefined>;
+}
+
+/** Appends to the audit ledger. Best-effort: a failed write is logged, never thrown. */
+interface AuditLedgerStore {
+  append(input: AuditLedgerInput): Promise<void>;
+}
+
 export interface Storage {
+  auditLedger: AuditLedgerStore;
   accounts: AccountStore;
   agents: AgentStore;
   budgets: BudgetStore;

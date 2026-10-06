@@ -1,5 +1,6 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
+import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { connections } from "./connections.ts";
 import { edgeHeaders } from "./edge-headers.ts";
@@ -30,4 +31,5 @@ export const verifyCases: readonly VerifyCase[] = [
   workToolWebhooks,
   webhookHandshake,
   connections,
+  auditLedger,
 ];
