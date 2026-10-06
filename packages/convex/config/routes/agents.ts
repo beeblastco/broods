@@ -17,10 +17,7 @@ import {
   normalizeUpdateAgentInput,
   type AgentConfig,
 } from "../../model/agentRules";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { toPublicAgentResponse } from "../../model/responses";
 import { fetchSlackChannelDirectory } from "../../model/slackDirectory";
@@ -119,7 +116,7 @@ export async function handleAgentConfigRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   agentId?: string,
 ): Promise<Response> {
   if (!agentId)
@@ -221,7 +218,7 @@ async function handleAgentCollectionRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   if (req.method === "GET") {
     const cipher = await accountCipherForAction(ctx, accountId, "read");
@@ -321,7 +318,7 @@ async function patchAgentConfigRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   agentId: string,
 ): Promise<Response> {
   const existing: Doc<"agents"> | null = await ctx.runQuery(

@@ -23,8 +23,8 @@ import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
 import { accountDoc } from "../account/accounts";
 import { RUNTIME_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
@@ -589,7 +589,7 @@ function generateDeploymentKey(): string {
 /** Record a dashboard deployment mutation without storing runtime keys. */
 async function recordDeploymentAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: {
     accountId: Id<"accounts">;
     projectId: Id<"projects">;
@@ -599,7 +599,7 @@ async function recordDeploymentAudit(
     summary: string;
   },
 ): Promise<void> {
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: input.accountId,
     projectId: input.projectId,
     stageId: input.stageId,

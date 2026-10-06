@@ -19,8 +19,8 @@ import {
   accountIdForProject,
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "./model/auditEvents";
 
 // Plaintext reveal and every write are org admin operations; members read names only.
@@ -252,7 +252,7 @@ function maskEnvironmentVariable(variable: {
 /** Record an environment-variable mutation without storing plaintext values. */
 async function recordEnvironmentVariableAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: {
     projectId: Id<"projects">;
     stageId: Id<"stages">;
@@ -265,7 +265,7 @@ async function recordEnvironmentVariableAudit(
   const accountId = await accountIdForProject(ctx, input.projectId);
   if (!accountId) return;
 
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: input.projectId,
     stageId: input.stageId,

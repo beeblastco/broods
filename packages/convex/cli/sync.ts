@@ -21,8 +21,8 @@ import { sha256Hex } from "../model/accountSecrets";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
   auditDetailsJson,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "../model/auditEvents";
 import {
   accountFromSecretHash,
@@ -327,11 +327,11 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       rotate: args.rotate === true,
     });
     if (args.auditSync) {
-      const actor: ConfigAuditActor = {
+      const actor: AuditActor = {
         kind: args.auditSync.actorKind,
         id: args.auditSync.actorId,
       };
-      await insertConfigAuditEvent(ctx.db, {
+      await appendAuditEvent(ctx.db, {
         accountId: account._id,
         projectId: projectDoc._id,
         stageId: stageDoc._id,

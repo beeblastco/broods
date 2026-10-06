@@ -203,6 +203,12 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
     );
+    expect(redactSensitiveText("BROODS_RUN_TOKEN=brt_aaaa.bbbb_-a next")).toBe(
+      "BROODS_RUN_TOKEN=[redacted] next",
+    );
+    expect(redactSensitiveText("curl sent brt_eyJhIjoxfQ.c2ln twice")).toBe(
+      "curl sent [redacted] twice",
+    );
   });
 
   it("redacts a runtime key under either prefix and leaves other sk_ identifiers", () => {

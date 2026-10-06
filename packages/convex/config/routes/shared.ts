@@ -12,10 +12,8 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import { cipherFromKeys } from "../../model/accountKeys";
 import { sha256Hex } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
-import type {
-  ConfigAuditActor,
-  ConfigAuditResource,
-} from "../../model/auditEvents";
+import type { AuditActor, AuditResource } from "../../model/auditEvents";
+import { RUN_TOKEN_PREFIX } from "../../model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
 import { VIA_GATEWAY_HEADER } from "../../model/serviceBridge";
 import {
@@ -65,7 +63,7 @@ export async function accountCipherForAction(
  * @param auth resolved config HTTP auth
  * @returns actor metadata for audit rows
  */
-export function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
+export function auditActorForAuth(auth: ConfigAuth): AuditActor {
   if (auth.kind === "admin") return { kind: "admin" };
   if (auth.kind === "deployment") return { kind: "deployKey" };
   if (auth.kind === "role") return { kind: "role", id: auth.role.roleId };
@@ -292,6 +290,17 @@ export async function requireSelfAccount(
 }
 
 /**
+ * The 401 a run token (`brt_`) gets on every config-plane and CLI route,
+ * on the prefix alone: it is a core credential for one agent run. Null for
+ * any other bearer.
+ */
+export function runTokenRefusal(req: Request): Response | null {
+  return bearerToken(req)?.startsWith(RUN_TOKEN_PREFIX)
+    ? jsonError(401, "run tokens cannot reach the config plane")
+    : null;
+}
+
+/**
  * Terminate reserved sandbox instances matching a predicate through core's
  * lifecycle route (which owns the decrypted provider credentials). Best-effort:
  * skips rows without a sandboxConfigId or already terminating, and swallows
@@ -349,7 +358,7 @@ export async function unauthorizedResponse(
   req: Request,
 ): Promise<Response> {
   const result: { blocked: boolean; retryAfterMs?: number } =
-    await ctx.runMutation(internal.config.auditEvents.recordAuthFailure, {
+    await ctx.runMutation(internal.config.authFailures.recordAuthFailure, {
       key: await authFailureKey(req),
       now: Date.now(),
       windowMs: 5 * 60 * 1000,
@@ -379,15 +388,15 @@ export async function writeAudit(
     accountId: Id<"accounts">;
     projectId?: Id<"projects">;
     stageId?: Id<"stages">;
-    actor: ConfigAuditActor;
+    actor: AuditActor;
     action: string;
-    resource: ConfigAuditResource;
+    resource: AuditResource;
     summary: string;
     detailsJson?: string;
   },
 ): Promise<void> {
   try {
-    await ctx.runMutation(internal.config.auditEvents.record, {
+    await ctx.runMutation(internal.audit.ledger.record, {
       accountId: event.accountId,
       projectId: event.projectId,
       stageId: event.stageId,

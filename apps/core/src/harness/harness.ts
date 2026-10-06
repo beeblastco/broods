@@ -46,6 +46,7 @@ import {
   AGENT_MAX_TURN_UNLIMITED,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
+import { principalChainLabel } from "../shared/domain/principal.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import { waitUntil } from "../shared/in-flight.ts";
@@ -497,8 +498,14 @@ export async function runAgentLoop(
   );
   // Reassigned once the tool set is known, so the live root span carries the
   // tools injected into the model alongside its system prompt and messages.
+  const principalChain =
+    session.principal && principalChainLabel(session.principal);
   let rootRunningAttributes: Record<string, string | number | boolean> = {
     "agent.environment": traceAttribute(environment),
+    ...(session.principal
+      ? { "principal.agentId": session.principal.agentId }
+      : {}),
+    ...(principalChain ? { "principal.chain": principalChain } : {}),
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
@@ -705,6 +712,7 @@ export async function runAgentLoop(
       stage: session.stageSlug,
       endpointId: session.endpointId,
       agentId: session.agentId,
+      principal: session.principal,
       conversationKey: session.conversationKey,
       delivery: session.policyDelivery?.kind ?? "direct",
       channel:
@@ -1071,6 +1079,7 @@ export async function runAgentLoop(
             accountId: session.accountId ?? "",
             endpointId: session.endpointId,
             agentId: session.agentId ?? "unknown",
+            principalChain: session.principal?.chain,
             conversationKey: session.conversationKey,
             // One row per model pass: a continuation pass shares the eventId.
             taskId: `${session.eventId}#${traceId}`,

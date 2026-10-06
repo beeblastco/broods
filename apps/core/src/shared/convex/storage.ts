@@ -41,6 +41,7 @@ import type {
 import { budgets } from "./budgets.ts";
 import { decryptAccountBlob } from "./account-keys.ts";
 import { getConvexClient } from "./client.ts";
+import { auditLedger } from "./audit-ledger.ts";
 import { taskUsage } from "./usage.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
@@ -851,6 +852,7 @@ const roleSessions: Storage["roleSessions"] = {
 };
 
 export const convexStorage: Storage = {
+  auditLedger: auditLedger,
   accounts: accounts,
   agents: agents,
   budgets: budgets,

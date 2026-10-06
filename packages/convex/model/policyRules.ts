@@ -29,6 +29,8 @@ export const API_POLICY_ACTIONS = [
   "account:write",
   "agents:read",
   "agents:write",
+  "audit:read",
+  "audit:write",
   "channels:read",
   "channels:write",
   "crons:read",

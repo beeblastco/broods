@@ -6,10 +6,7 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import type { AccountCipher, EncryptedBlob } from "../../model/envelope";
 import { toPublicSandboxConfigResponse } from "../../model/responses";
 import {
@@ -32,7 +29,7 @@ export async function handleSandboxConfigRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   sandboxId?: string,
 ): Promise<Response> {
   if (!sandboxId) {

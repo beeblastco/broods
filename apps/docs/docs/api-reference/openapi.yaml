@@ -65,6 +65,11 @@ tags:
       Scoped API roles (`fp_role_...`). A role carries a policy over the
       `<resource>:read`/`<resource>:write` API action namespace and is exchanged
       via assume-role for a short-lived `fp_sts_...` session token.
+  - name: Audit
+    description: >-
+      The account's hash-chained, append-only audit ledger: config mutations,
+      run lifecycle and enforced tool denials. Read it by `seq`, verify the
+      chain, and export it to one signed webhook sink.
 
 paths:
   # checkov:skip=CKV_OPENAPI_21:Request arrays are bounded by core's and the config plane's body caps. Lists page with limit or cursor; with neither they return the whole collection, by design.
@@ -220,12 +225,18 @@ paths:
                       type: invalid_request_error
                       code: budget_exhausted
         "403":
-          description: Agent has not opted into public access (secure by default), or a runtime key sent run overrides the agent does not allow
+          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, or the credential is a run token, which does not start runs yet
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token may only GET /v1/runs/{runId} for agent agent_...'s runs. Starting runs with a run token is not enabled yet."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
@@ -331,12 +342,18 @@ paths:
                     status: failed
                     error: Model provider returned 503
         "403":
-          description: Deployment-key caller polling an agent that has not opted into public access
+          description: Deployment-key caller polling an agent that has not opted into public access, or a run token reading a run of another agent
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                runTokenScope:
+                  value:
+                    error:
+                      message: "A run token may only GET /v1/runs/{runId} for agent agent_...'s runs. Starting runs with a run token is not enabled yet."
+                      type: permission_error
+                      code: run_token_scope
                 publicAccessDisabled:
                   value:
                     error:
@@ -912,6 +929,15 @@ paths:
                   type: string
                 description:
                   type: string
+                auditRetentionDays:
+                  type: [integer, "null"]
+                  minimum: 1
+                  maximum: 3650
+                  description: >-
+                    Days an audit ledger row is kept. With a sink, a row it has
+                    not exported yet stays past that. `null` returns to the
+                    default of 90. A role needs `audit:write` as well as
+                    `account:write` to set it.
             examples:
               updateDescription:
                 value:
@@ -2872,6 +2898,135 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /v1/audit:
+    get:
+      tags: [Audit]
+      summary: List audit events
+      description: >-
+        Ledger rows with `seq` greater than `since`, oldest first. Every row
+        carries the hash of the row before it, so a reader that keeps the last
+        `hash` it saw can verify each page as it arrives. `head` is the chain
+        tip at the time of the read. Account secret, or a role with
+        `audit:read`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: Return rows after this `seq`. Defaults to 0, the whole kept ledger.
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          required: false
+          description: Rows per page, 1 to 500. Defaults to 100.
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Audit page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400": { description: A malformed `since` or `limit` }
+  /v1/audit/verify:
+    get:
+      tags: [Audit]
+      summary: Verify the audit chain
+      description: >-
+        Recomputes every row's hash and link over `[fromSeq, toSeq]`, from the
+        oldest kept row by default, at most 1000 rows per call. `ok` covers
+        only `checkedFrom` to `checkedTo`; on a longer ledger call again with
+        `fromSeq` set to `checkedTo + 1`. A row missing at the start of the
+        range reports at its `seq`. Without `toSeq` the last row must also
+        match the chain head, so a dropped tail reports at the first missing
+        `seq`. Pruned rows below the oldest kept row are not an error: that
+        row's own hash still pins its `prevHash`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: fromSeq
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+        - name: toSeq
+          in: query
+          required: false
+          description: Must not be less than `fromSeq`.
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: >-
+            Verification result. `checkedFrom` and `checkedTo` are absent when
+            the range holds no rows, so nothing was recomputed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditVerification"
+        "400":
+          { description: A bound below 1, or `fromSeq` greater than `toSeq` }
+  /v1/audit/sink:
+    get:
+      tags: [Audit]
+      summary: Get the audit sink
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The account's sink
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditSink"
+        "404": { description: No sink configured }
+    put:
+      tags: [Audit]
+      summary: Set the audit sink
+      description: >-
+        One webhook per account. Every 10 minutes Broods POSTs the unexported
+        rows to `url` as JSON arrays of up to 200, at most 10 batches a tick,
+        each signed with `X-Broods-Signature: sha256=<hex>`, an HMAC-SHA256 of
+        the body under `secret`. A 2xx within 10 seconds advances
+        `exportedSeq`; anything else is kept in `lastError` and the batch is
+        retried next tick. `url` must be public
+        `https`. Setting the sink keeps the watermark. Account secret, or a
+        role with `audit:write`.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, secret]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                  maxLength: 256
+      responses:
+        "200":
+          description: Sink set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditSink"
+        "400": { description: Invalid url or secret }
+    delete:
+      tags: [Audit]
+      summary: Remove the audit sink
+      description: Exports stop. Rows already in the ledger stay until they pass the account's `auditRetentionDays`; with no sink there is no export watermark holding them longer.
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Whether a sink existed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+
   /v1/channels:
     post:
       tags: [Channels]
@@ -3351,6 +3506,11 @@ components:
         A stage session ticket (`fp_dts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
+        A run token (`brt_...`, handed to sandbox code as `BROODS_RUN_TOKEN`)
+        works only on `GET /v1/runs/{runId}` for its own agent's runs. Starting
+        a run with it is not enabled yet: `POST /v1/runs` and every other run
+        route answer 403 `run_token_scope`, and every config-plane route
+        answers 401. It expires shortly after the run's time budget.
     AdminAuth:
       type: http
       scheme: bearer
@@ -4051,7 +4211,9 @@ components:
                 | `invalid_auth` | 502 | Slack rejected the agent's stored bot token (channel directory). |
                 | `invalid_cursor` | 400 | `cursor` is not a page cursor this collection issued. |
                 | `invalid_limit` | 400 | `limit` is not an integer in the allowed page range. |
+                | `invalid_range` | 400 | `fromSeq` or `toSeq` is not a positive integer, or `fromSeq` is past `toSeq` (audit verify). |
                 | `invalid_request` | 400 | Default for a 400 and any unmapped 4xx: the request is malformed. |
+                | `invalid_since` | 400 | `since` is not a non-negative integer (audit ledger). |
                 | `job_result_not_found` | 404 | Unknown background job result, or its completion token does not match. |
                 | `job_result_settled` | 409 | The background job result was already completed. |
                 | `manifest_conflict` | 409 | The stage changed since the CLI read it. Re-read and retry the sync. |
@@ -4068,6 +4230,7 @@ components:
                 | `ratelimited` | 429 | Slack rate-limited the channel directory listing. Retry after `Retry-After`. |
                 | `run_not_found` | 404 | No run with this id in the account. |
                 | `run_overrides_disabled` | 403 | A runtime key sent `system` or `model` overrides and the agent does not set `allowRunOverrides`. |
+                | `run_token_scope` | 403 | A run token called something other than reading its own agent's runs. |
                 | `sandbox_instance_reserved` | 409 | The sandbox still has a reserved instance that could not be terminated. |
                 | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
                 | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
@@ -4099,6 +4262,9 @@ components:
         status:
           type: string
           enum: [active, disabled]
+        auditRetentionDays:
+          type: integer
+          description: Days an audit ledger row is kept. Absent means the default of 90.
         createdAt:
           type: string
           format: date-time
@@ -4503,6 +4669,8 @@ components:
                 account:write,
                 agents:read,
                 agents:write,
+                audit:read,
+                audit:write,
                 channels:read,
                 channels:write,
                 crons:read,
@@ -4752,6 +4920,163 @@ components:
         status:
           type: string
           enum: [active, deleted]
+
+    AuditEvent:
+      type: object
+      description: >-
+        One ledger row. `hash` is sha256 hex over the canonical JSON (keys
+        sorted recursively by UTF-16 code unit, no whitespace) of every
+        field but `hash`: `accountId`, `seq`, `prevHash`, `at`, `actor`,
+        `action`, `resource`, `summary`, `detailsJson`, `projectId`,
+        `stageId` and `traceId`. An optional field the row does not have is
+        left out of the JSON, never written as `null`.
+      required:
+        [accountId, seq, prevHash, hash, at, actor, action, resource, summary]
+      properties:
+        accountId:
+          type: string
+        seq:
+          type: integer
+          description: Per-account, starts at 1, gapless at append time.
+        prevHash:
+          type: string
+          description: Hash of the row before; empty on the first row.
+        hash:
+          type: string
+        at:
+          type: integer
+          description: Unix milliseconds.
+        actor:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum:
+                [
+                  dashboardUser,
+                  apiAccountSecret,
+                  admin,
+                  service,
+                  cli,
+                  deployKey,
+                  role,
+                  agent,
+                ]
+            id:
+              type: string
+            email:
+              type: string
+            name:
+              type: string
+            agentId:
+              type: string
+            chain:
+              type: array
+              description: >-
+                On an agent actor, the delegation chain behind the run, oldest
+                first: the person or key that asked, then each agent that
+                delegated. The actor's own `agentId` is not repeated in it.
+                Absent when the requester is not known; it is never guessed.
+              items:
+                oneOf:
+                  - type: object
+                    required: [kind, id]
+                    properties:
+                      kind: { type: string, enum: [user] }
+                      id: { type: string }
+                      name: { type: string }
+                      channel: { type: string }
+                  - type: object
+                    required: [kind, keyKind]
+                    properties:
+                      kind: { type: string, enum: [api] }
+                      keyKind:
+                        type: string
+                        enum: [account, deployment, cron]
+                  - type: object
+                    required: [kind, agentId]
+                    properties:
+                      kind: { type: string, enum: [agent] }
+                      agentId: { type: string }
+        action:
+          type: string
+          description: >-
+            Config rows use `created`, `updated`, `deleted` and the like against
+            `resource.kind`; runtime rows use `run.completed` and
+            `tool.denied`.
+        resource:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+            id:
+              type: string
+            name:
+              type: string
+        summary:
+          type: string
+        detailsJson:
+          type: string
+          description: Small non-secret JSON metadata, capped at 8 KB.
+        projectId:
+          type: string
+        stageId:
+          type: string
+        traceId:
+          type: string
+
+    AuditPage:
+      type: object
+      required: [events, nextSince, head]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        nextSince:
+          type: integer
+          description: Pass as `since` to read what follows this page.
+        head:
+          type: [object, "null"]
+          description: The chain tip, or null for an account with no rows yet.
+          properties:
+            seq:
+              type: integer
+            hash:
+              type: string
+
+    AuditVerification:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        brokenAtSeq:
+          type: integer
+          description: The first row whose hash or link does not match; absent when `ok`.
+        checkedFrom:
+          type: integer
+        checkedTo:
+          type: integer
+
+    AuditSink:
+      type: object
+      required: [kind, url, exportedSeq, updatedAt]
+      properties:
+        kind:
+          type: string
+          enum: [webhook]
+        url:
+          type: string
+        exportedSeq:
+          type: integer
+          description: Highest `seq` the receiver acknowledged with a 2xx.
+        lastError:
+          type: string
+        updatedAt:
+          type: string
 
     AgentPolicy:
       allOf:
