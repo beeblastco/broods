@@ -1,6 +1,7 @@
 /**
  * Provider-neutral sandbox executor helpers.
- * Keep small coercion, path, quoting, and output utilities here.
+ * Keep small coercion, path, quoting, and output utilities here, plus the
+ * per-sandbox queue that orders dashboard-row writes.
  */
 
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
@@ -68,6 +69,10 @@ export class SandboxCapacityError extends Error {}
  * would for a provider 404.
  */
 export class SandboxGoneError extends Error {}
+
+// Each sandbox's dashboard-row writes (upsert, burst, remove) in the order they
+// were queued, so a write never beats the row it bills or its removal.
+const mirrorWrites = new Map<string, Promise<void>>();
 
 // Past the exec server's own `timeout_ms`: it answers `timed_out` itself, so
 // the client deadline only covers a server that never answers.
@@ -184,6 +189,30 @@ export function mergeSandboxEnv(
     ...Object.fromEntries(overrides),
     ...(principal ? principalEnv(principal) : {}),
   };
+}
+
+/**
+ * Run `write` after every earlier write queued for this sandbox id. A failed
+ * write never blocks the ones behind it. Every dashboard-row write for a sandbox
+ * (upsert, burst, remove) goes through it, so a burst never beats the row it
+ * bills and a removal never lands before the upsert that created the row.
+ */
+export function queueMirrorWrite(
+  sandboxId: string,
+  write: () => Promise<unknown>,
+): Promise<void> {
+  const queued = (mirrorWrites.get(sandboxId) ?? Promise.resolve())
+    .then(write)
+    .then(
+      () => {},
+      () => {},
+    );
+  mirrorWrites.set(sandboxId, queued);
+  void queued.then(() => {
+    if (mirrorWrites.get(sandboxId) === queued) mirrorWrites.delete(sandboxId);
+  });
+
+  return queued;
 }
 
 export function requiredWorkspacePath(
