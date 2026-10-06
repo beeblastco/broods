@@ -286,10 +286,7 @@ export const exchangeLoginCode = internalMutation({
     if (!row || row.usedAt || row.expiresAt < now) {
       throw new Error("CLI login code is invalid or expired");
     }
-    if (
-      !row.codeChallenge ||
-      (await pkceChallenge(codeVerifier)) !== row.codeChallenge
-    ) {
+    if ((await pkceChallenge(codeVerifier)) !== row.codeChallenge) {
       throw new Error("CLI login code is invalid or expired");
     }
 

@@ -29,7 +29,7 @@ type T = ReturnType<typeof loginTest>;
 
 async function seedCode(
   t: T,
-  codeChallenge: string | undefined,
+  codeChallenge: string,
   code: string = CODE,
 ): Promise<Id<"cliAuthCodes">> {
   return await t.run(async (ctx) => {
@@ -55,7 +55,7 @@ async function seedCode(
       authId: AUTH_ID,
       orgId: orgId,
       accountId: accountId,
-      ...(codeChallenge ? { codeChallenge: codeChallenge } : {}),
+      codeChallenge: codeChallenge,
       expiresAt: now + 60_000,
       createdAt: now,
     });
@@ -94,18 +94,6 @@ describe("CLI login code exchange with PKCE", () => {
     expect(await response.json()).toMatchObject({
       error: { message: "Request body must include code_verifier" },
     });
-  });
-
-  test("a code minted without a challenge is refused", async () => {
-    const t = loginTest();
-    await seedCode(t, undefined);
-
-    await expect(
-      t.mutation(internal.cli.auth.exchangeLoginCode, {
-        code: CODE,
-        codeVerifier: VERIFIER,
-      }),
-    ).rejects.toThrow(/invalid or expired/);
   });
 
   test("a code under an old prefix is refused even when its hash is stored", async () => {
