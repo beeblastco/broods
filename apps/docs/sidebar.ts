@@ -31,6 +31,11 @@ const sidebars: SidebarsConfig = {
           label: "Cloudflare MCP runtime",
         },
         {
+          type: "doc",
+          id: "guides/cloudflare-browser",
+          label: "Cloudflare Browser Run",
+        },
+        {
           type: "category",
           label: "Sandboxes",
           link: { type: "doc", id: "guides/sandboxes/index" },
