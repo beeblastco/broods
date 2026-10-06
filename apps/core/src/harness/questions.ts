@@ -73,15 +73,16 @@ export function answersFromChoice(
 /**
  * A typed reply against the first question: an option number or label picks
  * that option, and anything else is the person's own answer. Every question
- * takes one, so a reply never slips past an open question as a new turn.
+ * takes one, so a reply never slips past an open question as a new turn. A
+ * reply with no text, such as a lone attachment, is not an answer.
  */
 export function answersFromText(
   pending: PendingQuestionInput,
   text: string,
 ): QuestionAnswerResult | undefined {
   const question = pending.questions[0];
-  if (!question) return undefined;
   const trimmed = text.trim();
+  if (!question || !trimmed) return undefined;
   const byNumber = /^\d+$/.test(trimmed)
     ? question.options[Number(trimmed) - 1]
     : undefined;

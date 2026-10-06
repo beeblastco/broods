@@ -199,6 +199,11 @@ describe("question answers", () => {
     });
   });
 
+  it("leaves the question open for a reply with no text", () => {
+    // An attachment-only message must still reach normal ingestion.
+    expect(answersFromText(PENDING, "  ")).toBeUndefined();
+  });
+
   it("says so when a typed reply only answers the first of several", () => {
     const result = answersFromText(
       { ...PENDING, questions: [QUESTION, { ...QUESTION, id: "second" }] },
