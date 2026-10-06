@@ -1,9 +1,8 @@
 /**
  * Prints Traefik config generated from the route table.
  *
- *   bun src/generate.ts kubernetes [--limits] [stage...]
- *     cluster resources for ../infra; --limits once PROXY protocol keeps the
- *     client address at the load balancer
+ *   bun src/generate.ts kubernetes [stage...]
+ *     cluster resources for ../infra, limited per client address
  *   bun src/generate.ts file <core> <config> <gateway> [origin...]
  *     file provider for self-hosting; origins are hostnames, `*.` for
  *     subdomains, replacing the broods.app defaults
@@ -46,16 +45,14 @@ const HEADER =
 
 const [mode, ...rest] = process.argv.slice(2);
 if (mode === "kubernetes") {
-  const limits = rest.includes("--limits");
   // A subset rolls a stage out first, as development was.
-  const names = rest.filter((arg) => arg !== "--limits");
-  const unknown = names.filter((name) => !STAGES.some((s) => s.name === name));
+  const unknown = rest.filter((name) => !STAGES.some((s) => s.name === name));
   if (unknown.length) throw new Error(`Unknown stage: ${unknown.join(", ")}`);
-  const stages = names.length
-    ? STAGES.filter((stage) => names.includes(stage.name))
+  const stages = rest.length
+    ? STAGES.filter((stage) => rest.includes(stage.name))
     : STAGES;
-  const documents = renderKubernetes(stages, NAMESPACE, limits).map(
-    (resource) => Bun.YAML.stringify(resource, null, 2),
+  const documents = renderKubernetes(stages, NAMESPACE).map((resource) =>
+    Bun.YAML.stringify(resource, null, 2),
   );
   process.stdout.write(`${HEADER}---\n${documents.join("\n---\n")}\n`);
 } else if (mode === "file" && rest[0] && rest[1] && rest[2]) {
@@ -68,6 +65,6 @@ if (mode === "kubernetes") {
   process.stdout.write(`${Bun.YAML.stringify(file, null, 2)}\n`);
 } else {
   throw new Error(
-    "Usage: generate.ts kubernetes [--limits] [stage...] | file <core-url> <config-url> <gateway-url> [origin...]",
+    "Usage: generate.ts kubernetes [stage...] | file <core-url> <config-url> <gateway-url> [origin...]",
   );
 }
