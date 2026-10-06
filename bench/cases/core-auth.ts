@@ -16,10 +16,10 @@ const ADMIN_SECRET = "fp_admin_9d2f41ba7c3e5089bd6a4e17c05b8f36";
 // The header shapes the extractor actually sees, including the malformed ones
 // it has to reject without allocating its way through them.
 const AUTHORIZATION_MIX: ReadonlyArray<string | undefined> = [
-  "Bearer fp_agent_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
+  "Bearer sk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
   "Bearer fp_sts_9z8y7x6w5v4u3t2s1r0q",
   "bearer fp_dts_aa11bb22cc33dd44ee55",
-  "  Bearer   fp_agent_padded_token_value_here  ",
+  "  Bearer   sk_padded_token_value_here  ",
   "Basic ZGV2OmRldnBhc3N3b3Jk",
   "Bearer",
   undefined,

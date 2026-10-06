@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CanvasEdge, CanvasNode } from "../canvas";
+import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
 import { rewriteIdsToNames, rewriteResourceRefs } from "../model/cliSync";
 import schema from "../schema";
 
@@ -138,5 +139,38 @@ describe("cli sync sandbox refs", () => {
         .filter((target) => sandboxNodeIds.includes(target))
         .sort(),
     ).toEqual([...sandboxNodeIds].sort());
+  });
+
+  // Core reads the stored blob verbatim and refuses a config with no provider.
+  test("stores a sandbox declared without a provider on the default one", async () => {
+    const tt = t();
+    await seedAccount(tt);
+
+    await tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
+      secretHash: SECRET_HASH,
+      manifest: {
+        version: 1 as const,
+        project: "sandbox-refs",
+        stage: "development",
+        resources: [
+          { kind: "sandbox", name: "bare-sandbox", config: { size: "xsmall" } },
+        ],
+      },
+    });
+
+    const stored = await tt.run(async (ctx) => {
+      const doc = await ctx.db.query("sandboxConfigs").first();
+
+      return await decryptAgentConfigBlob(
+        {
+          ciphertext: doc!.encryptedConfig!,
+          iv: doc!.encryptionIv!,
+          tag: doc!.encryptionTag!,
+        },
+        "test-config-secret",
+      );
+    });
+
+    expect(stored).toEqual({ provider: "lambda", size: "xsmall" });
   });
 });

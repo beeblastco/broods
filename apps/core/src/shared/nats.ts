@@ -298,7 +298,7 @@ export async function readObservabilityStream(options: {
 
 /**
  * Flush the shared observability connection so fire-and-forget log/span publishes
- * reach the server before the request returns or the process shuts down.
+ * reach the server before the process shuts down.
  * Best-effort; a flush failure never affects the run.
  */
 export async function flushObservabilityNats(): Promise<void> {

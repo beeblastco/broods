@@ -207,6 +207,7 @@ export function McpTab({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://mcp.example.com/mcp"
+              aria-label="Server URL"
               className="h-8 font-mono text-xs"
             />
           </div>
@@ -222,6 +223,7 @@ export function McpTab({
         <Textarea
           value={headersJson}
           onChange={(e) => setHeadersJson(e.target.value)}
+          aria-label="Headers"
           spellCheck={false}
           placeholder={'{\n  "Authorization": "Bearer ${MY_TOKEN}"\n}'}
           variant="code"

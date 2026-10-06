@@ -118,7 +118,7 @@ Install `@modelcontextprotocol/server` in your project. The CLI bundles the file
 
 - The factory must build a new server on every call. Calls from one model step run at the same time, and a shared instance breaks.
 - Bundles are capped at 50 MB. The calls from one model step to one server run as a batch, and the batch shares a 30 second deadline and 16 MB of output.
-- Hosted servers run isolated per account. The first call after an idle period is a cold start.
+- Hosted servers run outside the Broods core, one child process per bundle. Accounts can share a warm runner environment today, so keep secrets out of module-level state. The first call after an idle period is a cold start.
 - Module-level state, such as a memoized client, survives between calls of the same bundle.
 - Broods runs a server on [Cloudflare Dynamic Workers](cloudflare-mcp.md) when its bundle can run there, and on AWS Lambda otherwise. You do not pick.
 
@@ -144,7 +144,7 @@ Keep approval off for agents that only live in channels. Approval also breaks su
 
 `ask_questions` lets the agent ask one to three multiple-choice questions and keep working. It is on automatically for channel and WebSocket runs, which have somewhere to post the question and resume. Plain HTTP runs, cron runs and subagents do not get it.
 
-Each question has an `id`, a short `header`, the `question`, two to four `options`, and optionally `allowFreeText`. With `blocking: false`, the default, the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
+Each question has an `id`, a short `header`, the `question`, and two to four `options`. Every question also takes the person's own typed answer, so the agent never needs an "Other" option. With `blocking: false`, the default, the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
 
 | Where       | The question appears as                  | The user answers by                                                                            |
 | ----------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |

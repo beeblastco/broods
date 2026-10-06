@@ -14,13 +14,13 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
 import { slugifyName } from "../lib/slug";
-import { sha256Hex } from "../model/accountSecrets";
+import { ACCOUNT_KEY_PREFIX, sha256Hex } from "../model/accountSecrets";
 import {
   getActiveOrgForUser,
   getOrgMembership,
   orgRoleMeets,
-  requireOrgMember,
 } from "../model/ownership/org";
+import { ClientError } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { planValidator } from "../schema";
 
@@ -101,7 +101,7 @@ export const createLoginCode = mutation({
       codeChallenge !== undefined &&
       !PKCE_CHALLENGE_PATTERN.test(codeChallenge)
     ) {
-      throw new Error("codeChallenge must be a base64url S256 challenge");
+      throw new ClientError("codeChallenge must be a base64url S256 challenge");
     }
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
@@ -112,19 +112,27 @@ export const createLoginCode = mutation({
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
       .unique();
-    if (!user) throw new Error("User not found");
+    if (!user) throw new ClientError("User not found", "not_found");
 
+    // Plain Errors reach a production caller as "Server Error"; these
+    // sentences go back to the CLI as the reason its login failed.
     const org = await getActiveOrgForUser(ctx, user._id);
-    if (!org) throw new Error("No active org");
-    await requireOrgMember(ctx, org._id, user._id, "admin");
+    if (!org) throw new ClientError("No active organization", "not_found");
+    const membership = await getOrgMembership(ctx, org._id, user._id);
+    if (!membership || !orgRoleMeets(membership.role, "admin")) {
+      throw new ClientError(
+        `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
+        "unauthorized",
+      );
+    }
 
     const account = await ctx.db
       .query("accounts")
       .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
       .unique();
     if (!account || account.status !== "active") {
-      throw new Error(
-        "Provision your organization's API account first (Settings -> API Access).",
+      throw new ClientError(
+        `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
       );
     }
 
@@ -183,7 +191,7 @@ export const createOnboardingOrg = internalMutation({
       orgId: orgId,
       username: slug,
       description: `Broods org ${name}`,
-      secretHash: await sha256Hex(randomToken("fp_acct_")),
+      secretHash: await sha256Hex(randomToken(ACCOUNT_KEY_PREFIX)),
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -345,7 +353,7 @@ export const getOnboardingContext = internalMutation({
 });
 
 /**
- * Resolve a CLI token to the account secret hash used by existing sync code.
+ * Resolve a CLI token to the account key hash used by existing sync code.
  * Touches lastUsedAt at a coarse interval to avoid write contention.
  */
 export const resolveCliToken = internalMutation({

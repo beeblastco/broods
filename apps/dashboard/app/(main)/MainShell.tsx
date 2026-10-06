@@ -65,7 +65,7 @@ export function MainShell({
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
   const [syncRetry, setSyncRetry] = useState(0);
 
-  // Surface the one-time account secret produced by first-login auto-provision
+  // Surface the one-time account key produced by first-login auto-provision
   // in the onboarding dialog, even after the home route navigates away.
   useEffect(() => {
     const sync = (): void => setOnboardingSecret(readOnboardingSecret());

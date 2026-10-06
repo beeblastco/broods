@@ -13,11 +13,11 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Every response carries `X-Request-Id`. Every non-2xx body is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and the gateway and config-plane 429s also carry the IETF `RateLimit-*` fields.
+    Every core and config-plane response carries `X-Request-Id`. Every non-2xx body from core and the config plane is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and core and config-plane 429s also carry the IETF `RateLimit-*` fields. The edge may also limit requests per client address, and answers its own 429 as plain text with only `Retry-After`.
 
-    WebSocket endpoints are not expressible here. The gateway terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`fp_dts_...`, see `POST /v1/account/stage-session`), never the stage runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account secret, a role session or a stage session ticket, never the runtime key.
+    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`fp_dts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket, never the runtime key.
 
-    The config plane serves account metadata and secret rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`fp_role_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `fp_sts_...` session token. A session token authenticates like the account secret but is limited to the role's policy.
+    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`fp_role_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `fp_sts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
 
 servers:
@@ -33,7 +33,7 @@ tags:
   - name: Direct API
     description: Agent runtime for sync SSE, async jobs, status polling, and external tool completion.
   - name: Accounts
-    description: Account lifecycle, metadata, and secret rotation.
+    description: Account lifecycle, metadata, and account key rotation.
   - name: Agents
     description: Account-owned agent configuration.
   - name: Environment Variables
@@ -67,7 +67,7 @@ tags:
       via assume-role for a short-lived `fp_sts_...` session token.
 
 paths:
-  # checkov:skip=CKV_OPENAPI_21:Request arrays are bounded by the gateway body cap. Lists page with limit or cursor; with neither they return the whole collection, by design.
+  # checkov:skip=CKV_OPENAPI_21:Request arrays are bounded by core's and the config plane's body caps. Lists page with limit or cursor; with neither they return the whole collection, by design.
   /healthz:
     get:
       tags:
@@ -467,7 +467,7 @@ paths:
       tags:
         - Direct API
       summary: Complete sandbox job callback
-      description: Token-authenticated completion callback used by detached sandbox background jobs. Authenticated with the per-job `x-job-token` header minted at launch, not an account secret. Unknown ids and bad tokens both return 404.
+      description: Token-authenticated completion callback used by detached sandbox background jobs. Authenticated with the per-job `x-job-token` header minted at launch, not an account key. Unknown ids and bad tokens both return 404.
       parameters:
         - name: resultId
           in: path
@@ -658,7 +658,7 @@ paths:
       tags:
         - Accounts
       summary: Create account
-      description: Admin-only endpoint to create a new account. Store `secret` securely. It is not recoverable.
+      description: Admin-only endpoint to create a new account. `secret` is the account key. Store it securely. It is not recoverable.
       security:
         - AdminAuth: []
       requestBody:
@@ -703,7 +703,7 @@ paths:
                       accountId: acct_abc123
                       username: company-a
                       description: Company A account
-                    secret: fp_acct_xyz789...
+                    secret: ask_xyz789...
         "401":
           description: Missing or invalid bearer token
         "403":
@@ -844,7 +844,7 @@ paths:
     post:
       tags:
         - Accounts
-      summary: Rotate account secret (admin)
+      summary: Rotate account key (admin)
       security:
         - AdminAuth: []
       parameters:
@@ -855,7 +855,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Secret rotated
+          description: Account key rotated
           content:
             application/json:
               schema:
@@ -874,7 +874,7 @@ paths:
                       status: active
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
-                    secret: fp_acct_new...
+                    secret: ask_new...
 
   /v1/account:
     get:
@@ -956,12 +956,12 @@ paths:
     post:
       tags:
         - Accounts
-      summary: Rotate own secret
+      summary: Rotate own account key
       security:
         - BearerAuth: []
       responses:
         "200":
-          description: Secret rotated
+          description: Account key rotated
           content:
             application/json:
               schema:
@@ -980,7 +980,7 @@ paths:
                       status: active
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
-                    secret: fp_acct_new...
+                    secret: ask_new...
 
   /v1/account/connections:
     get:
@@ -990,7 +990,7 @@ paths:
       description: >-
         External accounts the account's agents act through, one of each type,
         signed in by `broods connect`.
-        Never returns tokens. Accepts the account secret or a CLI login token;
+        Never returns tokens. Accepts the account key or a CLI login token;
         role sessions and runtime keys are refused.
       security:
         - BearerAuth: []
@@ -1109,8 +1109,8 @@ paths:
       summary: Assume a role
       description: >-
         Exchange a role for a short-lived `fp_sts_...` session token. Accepted
-        callers are the account secret (`fp_acct_...`), a CLI login token
-        (`fp_cli_...`), and a stage runtime key (`fp_agent_...`). A runtime
+        callers are the account key (`ask_...`), a CLI login token
+        (`fp_cli_...`), and a runtime key (`sk_...`). A runtime
         key may only assume roles scoped to its own project/stage. Session
         tokens cannot chain into new sessions. Default TTL 3600 seconds,
         maximum 43200.
@@ -1160,7 +1160,7 @@ paths:
         session ticket (`fp_dts_...`) on one deployed project stage. `broods
         logs`, `broods stream`, `broods dev` live logs and `broods machine` use
         it for the observability and machine WebSockets, which refuse the
-        stage runtime key. Mint a new ticket before `expiresAt` to reconnect.
+        runtime key. Mint a new ticket before `expiresAt` to reconnect.
       security:
         - BearerAuth: []
       requestBody:
@@ -1499,9 +1499,9 @@ paths:
         - Direct API
       summary: Run an agent through its public endpoint
       description: |
-        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the stage runtime key rather than an account secret. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`fp_dts_...`) from a member of the stage's project may run any agent of the stage.
+        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the runtime key rather than an account key. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`fp_dts_...`) from a member of the stage's project may run any agent of the stage.
 
-        A runtime key is safe to embed, so it carries three limits an account secret does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
+        A runtime key is safe to embed, so it carries three limits an account key does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
 
         The path segment is the stage's deployment endpoint id, not an agent id, although this path item names it `{agentId}` because it shares the URL with `GET`, `PATCH` and `DELETE /v1/agents/{agentId}`. Prefer `/v1/runs` unless the caller only holds a runtime key.
       security:
@@ -1653,8 +1653,8 @@ paths:
                       {
                         type: string,
                         enum: [sandbox, lambda, e2b, daytona, vercel, machine],
-                        default: sandbox,
-                        description: "Compute backend. Defaults to sandbox (the workdir backend). On the hosted platform no per-sandbox options are needed; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
+                        default: lambda,
+                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
                       }
                     network:
                       type: object
@@ -2309,7 +2309,7 @@ paths:
         and lives as long as you ask for.
 
         Join `downloadPath` to the same base URL you called here. The service sits
-        behind the gateway, which strips Host, so it cannot know its public origin.
+        behind Traefik, which does not pass the client's Host, so it cannot know its public origin.
       security: [{ BearerAuth: [] }]
       parameters:
         - {
@@ -2785,8 +2785,8 @@ paths:
       description: >-
         Create a scoped API role. The policy uses the API action namespace
         (`agents:read`, `crons:write`, ...). Provide `projectId` and `stageId`
-        together; they bind which stage runtime keys may assume the role. Role
-        management accepts only the account secret, never a session token.
+        together; they bind which runtime keys may assume the role. Role
+        management accepts only the account key, never a session token.
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true
@@ -3336,7 +3336,7 @@ components:
       scheme: bearer
       description: >-
         Which credential a route takes depends on the route.
-        The account secret (`fp_acct_...`, from account creation or rotation)
+        The account key (`ask_...`, from account creation or rotation)
         works on every account route and on `/v1/runs`; the endpoint-addressed
         run URLs (`POST /v1/agents/{endpointId}` and its scoped form) take only
         a stage credential.
@@ -3344,7 +3344,7 @@ components:
         `POST /v1/account/assume-role`) works on the config-plane routes,
         limited to its role's policy; it gets 401 on `/v1/runs` and every run
         URL, and role management under `/v1/roles*` refuses it.
-        A stage runtime key (`fp_agent_...`) works only on `/v1/runs`,
+        A runtime key (`sk_...`) works only on `/v1/runs`,
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
         config-plane route answers it with 401.
@@ -3358,7 +3358,7 @@ components:
 
   headers:
     XRequestId:
-      description: Correlation id for this request. Generated at the gateway, or reused from an inbound `X-Request-Id` that matches `[A-Za-z0-9._-]{1,128}`. Quote it when reporting a problem.
+      description: Correlation id for this request. Generated by core or the config plane, or reused from an inbound `X-Request-Id` that matches `[A-Za-z0-9._-]{1,128}`. Quote it when reporting a problem.
       schema:
         type: string
     RetryAfter:
@@ -3905,8 +3905,6 @@ components:
                       type: string
                     description:
                       type: string
-              allowFreeText:
-                type: boolean
 
     QuestionAnswer:
       type: object
@@ -4032,7 +4030,57 @@ components:
               example: not_found_error
             code:
               type: string
-              description: Stable machine-readable reason. Branch on this.
+              description: |
+                Stable machine-readable reason. Branch on this. A code keeps its meaning across releases; new codes may be added, so handle an unknown one by its `type`. A response with no more specific code carries its status default.
+
+                | Code | Status | Meaning |
+                | --- | --- | --- |
+                | `account_not_found` | 404 | The account being deleted no longer exists. |
+                | `agent_name_exists` | 409 | An agent with this name already exists in the account. |
+                | `bad_gateway` | 502 | Default for a 502: an upstream answered with an error. |
+                | `budget_exhausted` | 402 | A monthly plan cap is used up. Upgrade or wait for next month. |
+                | `conflict` | 409 | Default for a 409: the request conflicts with current state. |
+                | `conversation_busy` | 409 | Another run holds this conversation. Retry when it finishes. |
+                | `conversation_not_found` | 404 | A `continue` request named a conversation key with no session behind it. |
+                | `forbidden` | 403 | Default for a 403: the credential may not do this. |
+                | `gateway_timeout` | 504 | Default for a 504: an upstream did not answer in time. |
+                | `gone` | 410 | Default for a 410: the resource existed but is no longer available. |
+                | `idempotency_conflict` | 409 | The idempotency key is already bound to a different payload. |
+                | `ingress_capacity` | 429 | The conversation's ingress queue is full. Retry after `Retry-After`. |
+                | `internal_error` | 500 | Default for a 500 and any unmapped 5xx. |
+                | `invalid_auth` | 502 | Slack rejected the agent's stored bot token (channel directory). |
+                | `invalid_cursor` | 400 | `cursor` is not a page cursor this collection issued. |
+                | `invalid_limit` | 400 | `limit` is not an integer in the allowed page range. |
+                | `invalid_request` | 400 | Default for a 400 and any unmapped 4xx: the request is malformed. |
+                | `job_result_not_found` | 404 | Unknown background job result, or its completion token does not match. |
+                | `job_result_settled` | 409 | The background job result was already completed. |
+                | `manifest_conflict` | 409 | The stage changed since the CLI read it. Re-read and retry the sync. |
+                | `method_not_allowed` | 405 | Default for a 405. `Allow` lists the methods the path takes. |
+                | `missing_scope` | 502 | The Slack app lacks a scope needed to list channels. |
+                | `not_configured` | 409 | The channel credential the request needs is not configured on the agent. |
+                | `not_found` | 404 | Default for a 404: the path or resource does not exist. |
+                | `payload_too_large` | 413 | Default for a 413: the body is over the size limit. |
+                | `plan_limit_exceeded` | 429 | Runs per minute are over the plan's limit. Retry after `Retry-After`. |
+                | `public_access_disabled` | 403 | The agent does not allow runtime-key access (`publicAccess` is off). |
+                | `question_already_answered` | 409 | An `ask_questions` question was already answered. |
+                | `question_not_found` | 404 | No open question with this `statusId` on the conversation. |
+                | `rate_limited` | 429 | Default for a 429. Retry after `Retry-After`. |
+                | `ratelimited` | 429 | Slack rate-limited the channel directory listing. Retry after `Retry-After`. |
+                | `run_not_found` | 404 | No run with this id in the account. |
+                | `run_overrides_disabled` | 403 | A runtime key sent `system` or `model` overrides and the agent does not set `allowRunOverrides`. |
+                | `sandbox_instance_reserved` | 409 | The sandbox still has a reserved instance that could not be terminated. |
+                | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
+                | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
+                | `slack_error` | 502 | Slack returned another error or did not answer in time (channel directory). |
+                | `status_access_denied` | 403 | The run status belongs to another deployment than this credential's. |
+                | `too_many_auth_failures` | 429 | Too many unauthorized attempts from this caller. Retry after `Retry-After`. |
+                | `unauthorized` | 401 | Missing, invalid or revoked credential. |
+                | `unknown_webhook_stage` | 404 | No stage of this account is deployed at the webhook URL's endpoint id. |
+                | `unknown_webhook_url` | 404 | The webhook path matches neither webhook URL shape. |
+                | `unprocessable_entity` | 422 | Default for a 422: the body parses but its values are invalid. |
+                | `unsupported_channel_type` | 400 | The channel type does not support this operation. |
+                | `unsupported_media_type` | 415 | Default for a 415: the `Content-Type` is not accepted. |
+                | `upload_quota_exceeded` | 429 | The hourly upload grant budget is spent. Retry after `Retry-After`. |
               example: not_found
             param:
               type: string
@@ -4306,10 +4354,10 @@ components:
             own mode, so attachment is only the list.
         publicAccess:
           type: boolean
-          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default, so the endpoint stays closed until you set it. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
+          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the runtime key). Off by default, so the endpoint stays closed until you set it. When false/unset, runtime-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         allowRunOverrides:
           type: boolean
-          description: "Let a runtime-key caller send `system` messages and `model` overrides on a run. Off by default: the runtime key is embeddable, so without this a request carrying either is refused with HTTP 403 (code run_overrides_disabled). Account secrets are unaffected."
+          description: "Let a runtime-key caller send `system` messages and `model` overrides on a run. Off by default: the runtime key is embeddable, so without this a request carrying either is refused with HTTP 403 (code run_overrides_disabled). Account keys are unaffected."
         sandboxes:
           type: array
           items: { type: string }
