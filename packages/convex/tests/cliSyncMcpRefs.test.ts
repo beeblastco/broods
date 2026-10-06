@@ -7,6 +7,8 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifestResource } from "../cli/types";
 import { accountCipher } from "../model/accountKeys";
+import { assertEnvRefsResolved, rewriteEnvRefs } from "../model/cliSync";
+import { normalizeMcpInput } from "../model/mcp";
 import {
   REDACTED_SECRET_VALUE,
   redactConfigSecrets,
@@ -282,8 +284,49 @@ describe("cli sync resolves an mcp server's secret headers per agent", () => {
   });
 });
 
+describe("mcp server env refs", () => {
+  test("refuses an unset ref on a server no agent connects", () => {
+    expect(() =>
+      assertEnvRefsResolved(
+        [
+          {
+            ...mcpResource,
+            config: { ...mcpResource.config, headers: TOKEN_HEADER },
+          },
+        ],
+        {},
+        STAGE,
+      ),
+    ).toThrow("SEARCH_TOKEN");
+  });
+
+  test("registers an oauth env() secret as its ${NAME} ref", async () => {
+    const config = rewriteEnvRefs(
+      {
+        url: "https://gmailmcp.googleapis.com/mcp/v1",
+        oauth: {
+          clientId: "1234.apps.googleusercontent.com",
+          clientSecret: { __beeblastEnv: true, name: "GMAIL_CLIENT_SECRET" },
+          refreshToken: { __beeblastEnv: true, name: "GMAIL_REFRESH_TOKEN" },
+        },
+      },
+      new Set(),
+    );
+
+    const input = await normalizeMcpInput(
+      { name: "gmail", ...config },
+      { requireConnection: true },
+    );
+
+    expect(input.oauth).toMatchObject({
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+    });
+  });
+});
+
 describe("public config projection", () => {
-  test("masks resolved credential headers and keeps refs", () => {
+  test("masks every resolved header value and keeps refs", () => {
     expect(
       redactConfigSecrets({
         mcp: {
@@ -294,6 +337,7 @@ describe("public config projection", () => {
               "X-Api-Key": "fc-1",
               "X-Other-Key": "Bearer ${OTHER_KEY}",
               "X-Passwd": "hunter2",
+              "X-Session": "tok-2",
             },
           },
         },
@@ -302,11 +346,13 @@ describe("public config projection", () => {
       mcp: {
         search: {
           headers: {
-            Accept: "application/json",
+            // A sync resolves a ref whatever the header is called.
+            Accept: REDACTED_SECRET_VALUE,
             Authorization: REDACTED_SECRET_VALUE,
             "X-Api-Key": REDACTED_SECRET_VALUE,
             "X-Other-Key": "Bearer ${OTHER_KEY}",
             "X-Passwd": REDACTED_SECRET_VALUE,
+            "X-Session": REDACTED_SECRET_VALUE,
           },
         },
       },

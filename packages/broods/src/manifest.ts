@@ -50,6 +50,10 @@ import {
 
 /** Reach every room the app can see, instead of only the declared channels. */
 const CHANNEL_REACH_WILDCARD = "*";
+const ENV_PLACEHOLDER_GLOBAL_PATTERN = new RegExp(
+  ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
+  "g",
+);
 
 export interface CompileOptions {
   cwd?: string;
@@ -275,8 +279,8 @@ function collectEnvRefNamesFromValue(
   placeholders: boolean,
 ): void {
   if (placeholders && typeof value === "string") {
-    const pattern = new RegExp(ACCOUNT_ENV_PLACEHOLDER_PATTERN.source, "g");
-    for (const match of value.matchAll(pattern)) names.add(match[1]!);
+    for (const match of value.matchAll(ENV_PLACEHOLDER_GLOBAL_PATTERN))
+      names.add(match[1]!);
 
     return;
   }
@@ -1662,6 +1666,8 @@ async function buildBundleModule(options: {
 }): Promise<string> {
   const build = await esbuild({
     stdin: options.stdin,
+    // esbuild names modules relative to this dir, so the hash ignores the cwd.
+    absWorkingDir: options.stdin.resolveDir,
     bundle: true,
     platform: "node",
     format: "esm",

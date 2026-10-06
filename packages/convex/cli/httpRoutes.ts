@@ -14,6 +14,7 @@ import {
   isExternalResourceKind,
   placeholderIds,
   resourceName,
+  rewriteEnvRefs,
   type ExternalResourceKind,
 } from "../model/cliSync";
 import { reservedBy } from "../model/cliSyncResources";
@@ -1039,7 +1040,11 @@ async function prepareExternalResources(
   for (const resource of manifest.resources.filter(
     (entry) => entry.kind === "mcp",
   )) {
-    const config = asRecord(resource.config, `mcp:${resource.name}`);
+    // env() refs (an oauth secret) register as `${NAME}`, never the value.
+    const config = rewriteEnvRefs(
+      asRecord(resource.config, `mcp:${resource.name}`),
+      new Set(),
+    );
     const input = await normalizeMcpInput(
       {
         name: resource.name,

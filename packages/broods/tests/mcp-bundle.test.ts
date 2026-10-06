@@ -27,21 +27,23 @@ test("compileProject bundles a servable hosted MCP server", async () => {
   expect(typeof bundle).toBe("string");
 });
 
-test("compileProject hashes the same hosted MCP server the same way twice", async () => {
+test("compileProject hashes a hosted MCP server the same from any cwd", async () => {
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}", { status: 200 }),`,
   );
 
   // A changing hash shows the server as changed on every diff and re-uploads it.
-  const sha = async (): Promise<unknown> =>
+  const compile = async (): Promise<{ bundle: string; sha256: string }> =>
     (
-      (
-        await compileProject({ cwd: cwd, command: "dev" })
-      ).manifest.resources.find((entry) => entry.kind === "mcp")?.config as
-        | { sha256?: unknown }
-        | undefined
-    )?.sha256;
-  expect(await sha()).toBe(await sha());
+      await compileProject({ cwd: cwd, command: "dev" })
+    ).manifest.resources.find((entry) => entry.kind === "mcp")?.config as {
+      bundle: string;
+      sha256: string;
+    };
+  const first = await compile();
+  expect((await compile()).sha256).toBe(first.sha256);
+  // esbuild names each module in a comment; relative to the cwd, the hash would follow it.
+  expect(first.bundle).toContain("// mcp-handler.mjs\n");
 });
 
 test("compileProject rejects a handler that is not fetch-style", async () => {

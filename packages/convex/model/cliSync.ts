@@ -69,9 +69,16 @@ export function assertEnvRefsResolved(
   const referenced = new Set<string>();
   for (const resource of resources) {
     rewriteEnvRefs(asObject(resource.config), referenced);
-    // MCP headers name their values as `${NAME}` strings, not env() refs.
+    // MCP headers and oauth name their values as `${NAME}` strings, not env() refs.
+    const config = asObject(resource.config);
     if (resource.kind === "agent") {
-      collectEnvPlaceholderNames(asObject(resource.config).mcp, referenced);
+      collectEnvPlaceholderNames(config.mcp, referenced);
+    }
+    if (resource.kind === "mcp") {
+      collectEnvPlaceholderNames(
+        { headers: config.headers, oauth: config.oauth },
+        referenced,
+      );
     }
   }
   const missing = [...referenced]
