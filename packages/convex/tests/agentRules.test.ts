@@ -438,7 +438,16 @@ describe("agent rules", () => {
             serperApiKey: "sk-serper",
             apiKey: "sk-live ${SUFFIX}",
             apiKeys: ["sk-one", "${KEY_TWO}"],
-            credentials: { clientId: "id-1", refreshToken: "${REFRESH}" },
+            credentials: { clientId: "id-1", refreshToken: "sk-refresh" },
+          },
+        },
+        model: {
+          output: {
+            schema: {
+              properties: {
+                credentials: { type: "object", required: ["username"] },
+              },
+            },
           },
         },
       }),
@@ -459,7 +468,16 @@ describe("agent rules", () => {
           serperApiKey: "********",
           apiKey: "********",
           apiKeys: "********",
-          credentials: { clientId: "********", refreshToken: "${REFRESH}" },
+          credentials: { clientId: "id-1", refreshToken: "********" },
+        },
+      },
+      model: {
+        output: {
+          schema: {
+            properties: {
+              credentials: { type: "object", required: ["username"] },
+            },
+          },
         },
       },
     });

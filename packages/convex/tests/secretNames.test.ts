@@ -55,6 +55,8 @@ describe("isSecretName", (): void => {
       "inputTokens",
       "inputTokenDetails",
       "maxOutputTokens",
+      "noCacheTokens",
+      "cacheReadTokens",
       "accessKeyId",
       "credentialAgentId",
       "oauth",

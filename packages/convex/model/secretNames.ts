@@ -61,10 +61,12 @@ const IDENTIFIER_KEY_QUALIFIERS = new Set([
 // Numbers that end in "tokens".
 const TOKEN_COUNT_NAMES = new Set([
   "cachedinputtokens",
+  "cachereadtokens",
   "cachewritetokens",
   "inputtokens",
   "maxoutputtokens",
   "maxtokens",
+  "nocachetokens",
   "outputtokens",
   "reasoningtokens",
   "texttokens",

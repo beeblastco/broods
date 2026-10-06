@@ -399,9 +399,11 @@ export function normalizeHeaders(
         `headers values must be single-line strings of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
-    // A bare `Key` header carries a credential, though a `key` field names a row.
+    // Header names ignore case, and a bare `Key` header carries a credential
+    // though a `key` field names a row.
+    const lowerName = name.toLowerCase();
     if (
-      (isSecretName(name) || /^keys?$/i.test(name)) &&
+      (isSecretName(lowerName) || /^keys?$/.test(lowerName)) &&
       !CREDENTIAL_HEADER_VALUE_PATTERN.test(headerValue) &&
       stored[name] !== headerValue
     ) {

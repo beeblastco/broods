@@ -326,6 +326,16 @@ describe("normalizeMcpInput", () => {
         { requireConnection: true },
       ),
     ).rejects.toThrow("headers values for Key must reference");
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          headers: { aUtHoRiZaTiOn: "Bearer sk-live-1234" },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("headers values for aUtHoRiZaTiOn must reference");
   });
 
   test("rejects an inline secret sitting beside a ref", async () => {

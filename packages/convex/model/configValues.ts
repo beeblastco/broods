@@ -76,35 +76,37 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
 
 // Inside a `headers` map any value but `${NAME}` refs, after an optional auth
 // scheme word, is masked: a sync resolves refs into the stored config whatever
-// the header is called. Under a secret name only refs show, and a list is
-// masked whole so sending it back keeps the stored one.
-function redactSecrets(value: unknown, scope?: "headers" | "secret"): unknown {
-  if (typeof value === "string") {
-    const refs =
-      scope === "headers"
-        ? CREDENTIAL_HEADER_VALUE_PATTERN
-        : ACCOUNT_ENV_REFS_ONLY_PATTERN;
-
-    return scope && !refs.test(value) ? REDACTED_SECRET_VALUE : value;
-  }
+// the header is called.
+function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
-    return scope === "secret"
-      ? REDACTED_SECRET_VALUE
-      : value.map((entry) => redactSecrets(entry, scope));
+    return value.map((entry): unknown => redactSecrets(entry));
   }
   if (!isPlainObject(value)) {
     return value;
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      redactSecrets(
-        entry,
-        key === "headers"
-          ? "headers"
-          : (scope ?? (isSecretName(key) ? "secret" : undefined)),
-      ),
-    ]),
+    Object.entries(value).map(([key, entry]): [string, unknown] => {
+      if (inHeaders) {
+        return [
+          key,
+          typeof entry === "string" &&
+          !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
+            ? REDACTED_SECRET_VALUE
+            : entry,
+        ];
+      }
+      if (!isSecretName(key)) {
+        return [key, redactSecrets(entry, key === "headers")];
+      }
+      // Under a secret name only refs show. A list is masked whole, so
+      // sending it back keeps the stored one.
+      const exposed = (Array.isArray(entry) ? entry : [entry]).some(
+        (item): boolean =>
+          typeof item === "string" && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(item),
+      );
+
+      return [key, exposed ? REDACTED_SECRET_VALUE : redactSecrets(entry)];
+    }),
   );
 }
