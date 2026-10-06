@@ -313,6 +313,39 @@ describe("hosted MCP metering", () => {
     }
   });
 
+  it("tries the Worker again after a load that only timed out", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("bundle failed to load: load timed out", { status: 504 }),
+    );
+    const lambda = mockLambda("lambda");
+
+    try {
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(await callWorkersRow()).toBe("lambda");
+      expect(bridge).toHaveBeenCalledTimes(2);
+    } finally {
+      bridge.mockRestore();
+      lambda.mockRestore();
+    }
+  });
+
+  it("keeps the Worker's reason when the Lambda fallback fails too", async (): Promise<void> => {
+    const bridge = mockBridge(
+      async (): Promise<Response> =>
+        new Response("bundle failed to load: sha256", { status: 422 }),
+    );
+    delete process.env.TOOL_RUNNER_FUNCTION_NAME;
+
+    try {
+      await expect(callWorkersRow()).rejects.toThrow(
+        /TOOL_RUNNER_FUNCTION_NAME.*Lambda fallback after: .*HTTP 422: bundle failed to load: sha256/,
+      );
+    } finally {
+      bridge.mockRestore();
+    }
+  });
+
   it("never retries on Lambda when the Worker connection broke after sending", async (): Promise<void> => {
     const bridge = mockBridge(async (): Promise<Response> => {
       throw Object.assign(new TypeError("socket closed"), {

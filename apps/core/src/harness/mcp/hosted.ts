@@ -245,6 +245,11 @@ export function setHostedMcpSendBatchForTests(
   unloadableOnWorker.clear();
 }
 
+// One tenant bundle: the Worker's loader id and the unloadable cache key.
+function bundleKey(record: McpRecord): string {
+  return `${record.accountId}:${record.sha256}`;
+}
+
 function defaultClient(): LambdaClient {
   // Bound every invoke: the SDK's default connection/request timeouts are 0
   // (off). requestTimeout sits above the Lambda's own 35s so the function's
@@ -560,42 +565,62 @@ async function sendBatch(
     requests: requests,
   };
   const bridgeUrl = workersUrl(record);
-  if (bridgeUrl) {
-    try {
-      return await runBatch(record, requests, (queue, onInvoked) =>
-        drainBridgeStream(bridgeUrl, payload, abortSignal, queue, onInvoked),
-      );
-    } catch (error) {
-      if (!(error instanceof WorkerNotRunError)) throw error;
-      if (error.status === WORKER_UNLOADABLE_STATUS) {
-        unloadableOnWorker.set(
-          `${record.accountId}:${record.sha256}`,
-          Date.now() + WORKER_UNLOADABLE_TTL_MS,
-        );
-      }
-      logWarn("hosted MCP batch fell back to Lambda", {
-        accountId: record.accountId,
-        server: record.name,
-        reason: error.message,
-      });
-    }
+  if (!bridgeUrl) {
+    return await runBatch(record, requests, (queue, onInvoked): Promise<void> =>
+      drainInvokeStream(
+        defaultClient(),
+        payload,
+        abortSignal,
+        queue,
+        onInvoked,
+      ),
+    );
   }
+  try {
+    return await runBatch(record, requests, (queue, onInvoked): Promise<void> =>
+      drainBridgeStream(bridgeUrl, payload, abortSignal, queue, onInvoked),
+    );
+  } catch (error) {
+    if (!(error instanceof WorkerNotRunError)) throw error;
+    if (error.status === WORKER_UNLOADABLE_STATUS) {
+      unloadableOnWorker.set(
+        bundleKey(record),
+        Date.now() + WORKER_UNLOADABLE_TTL_MS,
+      );
+    }
+    logWarn("hosted MCP batch fell back to Lambda", {
+      accountId: record.accountId,
+      server: record.name,
+      reason: error.message,
+    });
 
-  return await runBatch(record, requests, (queue, onInvoked) =>
-    drainInvokeStream(defaultClient(), payload, abortSignal, queue, onInvoked),
-  );
+    return await runBatch(record, requests, (queue, onInvoked): Promise<void> =>
+      drainInvokeStream(
+        defaultClient(),
+        payload,
+        abortSignal,
+        queue,
+        onInvoked,
+      ),
+    ).catch((lambdaError: unknown): never => {
+      throw new Error(
+        `${toErrorMessage(lambdaError)} (Lambda fallback after: ${error.message})`,
+        { cause: lambdaError },
+      );
+    });
+  }
 }
 
 // The Worker's URL when the bundle can run on Workers, this deployment runs
 // the Worker (URL and key both set), and the Worker has not lately failed to
 // load it; undefined sends the row to Lambda.
 function workersUrl(record: McpRecord): string | undefined {
-  if (
-    (unloadableOnWorker.get(`${record.accountId}:${record.sha256}`) ?? 0) >
-    Date.now()
-  ) {
+  const unloadableUntil = unloadableOnWorker.get(bundleKey(record));
+  if (unloadableUntil !== undefined && unloadableUntil > Date.now()) {
     return undefined;
   }
+  if (unloadableUntil !== undefined)
+    unloadableOnWorker.delete(bundleKey(record));
 
   return record.workersCompatible && optionalEnv("CLOUDFLARE_MCP_API_KEY")
     ? optionalEnv("CLOUDFLARE_MCP_URL")

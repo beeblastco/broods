@@ -25,7 +25,8 @@ const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 const TENANT_LIMITS = { cpuMs: 5_000, subRequests: 50 };
 /**
  * Same default-export contract as apps/lambda/child-runner.mjs, checked while
- * the modules evaluate. `Loaded` runs no tenant code; ensureLoaded calls it.
+ * the modules evaluate. ensureLoaded calls `Loaded`, which evaluates the
+ * modules but serves no request; Workers allow no I/O at module scope.
  */
 const ENTRY_MODULE = `import { WorkerEntrypoint } from "cloudflare:workers";
 import handler from "./tenant.js";
@@ -65,6 +66,9 @@ interface Env {
   /** Exact origin of the presigned tool-bundles S3 URLs core sends. */
   BUNDLE_ORIGIN: string;
 }
+
+/** A withDeadline that ran out: transient, unlike a bundle that cannot load. */
+class DeadlineError extends Error {}
 
 /** The entry module's `Loaded` entrypoint; ensureLoaded calls it. */
 interface LoadedEntrypoint extends Rpc.WorkerEntrypointBranded {
@@ -130,7 +134,8 @@ export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
  * its own Dynamic Worker, cached by account and content hash, with no
  * bindings, no Node compatibility and egress through TenantOutbound. The
  * bundle loads before the batch is answered: a bundle that cannot load is a
- * 422 with no tool run, which core reruns on Lambda. The response streams
+ * 422 (504 when loading only timed out) with no request served, which core
+ * reruns on Lambda. The response streams
  * the NDJSON frames the Lambda runner speaks, each as soon as its request
  * settles, then `end`.
  */
@@ -186,7 +191,7 @@ export default {
       await ensureLoaded(worker);
     } catch (error) {
       return new Response(boundedMessage("bundle failed to load", error), {
-        status: 422,
+        status: error instanceof DeadlineError ? 504 : 422,
       });
     }
     const { readable, writable } = new TransformStream<
@@ -406,7 +411,7 @@ async function withDeadline<T>(
     return await Promise.race([
       work,
       new Promise<never>((_, reject): void => {
-        timer = setTimeout((): void => reject(new Error(message)), ms);
+        timer = setTimeout((): void => reject(new DeadlineError(message)), ms);
       }),
     ]);
   } finally {

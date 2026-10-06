@@ -31,15 +31,6 @@ interface ProviderErrorPayload {
   response?: unknown;
 }
 
-/**
- * Normalize a thrown value to the message worth showing. `@ai-sdk/openai`
- * surfaces a Responses failure as `{ type, response: { error: { message } } }`
- * and a nested error chunk as `{ type, error: { message } }`, so `String()` on
- * either renders "[object Object]" and the reason is gone for good: it is never
- * logged anywhere else. `getErrorMessage` from `@ai-sdk/provider` stops at JSON
- * for both, so this falls back to JSON too and an unrecognised payload stays
- * legible.
- */
 /** True when a fetch failed at the socket, before reaching the provider. */
 export function isUnreachableError(err: unknown): boolean {
   return (
@@ -50,6 +41,15 @@ export function isUnreachableError(err: unknown): boolean {
   );
 }
 
+/**
+ * Normalize a thrown value to the message worth showing. `@ai-sdk/openai`
+ * surfaces a Responses failure as `{ type, response: { error: { message } } }`
+ * and a nested error chunk as `{ type, error: { message } }`, so `String()` on
+ * either renders "[object Object]" and the reason is gone for good: it is never
+ * logged anywhere else. `getErrorMessage` from `@ai-sdk/provider` stops at JSON
+ * for both, so this falls back to JSON too and an unrecognised payload stays
+ * legible.
+ */
 export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
