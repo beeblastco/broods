@@ -113,6 +113,17 @@ A new child folder starts empty. Files at the root are not copied in. A [channel
 
 `broods dev` checks the rules. A workspace with `partitioned: true` needs `partition` on every attached connection, and a connection with `partition` needs at least one partitioned workspace.
 
+### Per agent
+
+`partitioned: "agent"` splits the workspace by agent instead of by conversation. Every agent that attaches it gets its own folder under `agent/`, with its own sandbox, S3 prefix and mount credentials, so two agents on one workspace cannot read each other's files. It needs no `partition` on the connections, and every conversation of one agent shares that agent's folder.
+
+```ts
+export const scratch = defineWorkspace({
+  name: "scratch",
+  partitioned: "agent",
+});
+```
+
 ### When a child folder is deleted
 
 | Channel                                                                                                             | End of conversation       | Folder deleted |

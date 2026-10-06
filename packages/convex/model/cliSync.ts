@@ -10,10 +10,8 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { CliManifestResource } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
-import {
-  decryptAgentConfigBlob,
-  toNestedAgentConfig,
-} from "./agentConfigCodec";
+import { toNestedAgentConfig } from "./agentConfigCodec";
+import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
@@ -213,51 +211,46 @@ export async function claimManifestRevision(
 
 export async function decryptSandboxConfig(
   sandbox: Doc<"sandboxConfigs">,
-  secret: string | undefined,
+  cipher: AccountCipher,
 ): Promise<Record<string, unknown>> {
   if (
-    !secret ||
     !sandbox.encryptedConfig ||
     !sandbox.encryptionIv ||
     !sandbox.encryptionTag
   ) {
     return {};
   }
-  const decrypted = await decryptAgentConfigBlob(
-    {
-      ciphertext: sandbox.encryptedConfig,
-      iv: sandbox.encryptionIv,
-      tag: sandbox.encryptionTag,
-    },
-    secret,
-  );
+  const decrypted = await cipher.decrypt("sandboxConfigs:encryptedConfig", {
+    ciphertext: sandbox.encryptedConfig,
+    iv: sandbox.encryptionIv,
+    tag: sandbox.encryptionTag,
+  });
 
   return decrypted ?? {};
 }
 
 export async function decryptSandboxManifestConfig(
   sandbox: Doc<"sandboxConfigs">,
-  secret: string | undefined,
+  cipher: AccountCipher,
 ): Promise<Record<string, unknown>> {
   if (
-    secret &&
     sandbox.encryptedSourceConfig &&
     sandbox.sourceEncryptionIv &&
     sandbox.sourceEncryptionTag
   ) {
-    const decrypted = await decryptAgentConfigBlob(
+    const decrypted = await cipher.decrypt(
+      "sandboxConfigs:encryptedSourceConfig",
       {
         ciphertext: sandbox.encryptedSourceConfig,
         iv: sandbox.sourceEncryptionIv,
         tag: sandbox.sourceEncryptionTag,
       },
-      secret,
     );
 
     return decrypted ?? {};
   }
 
-  return await decryptSandboxConfig(sandbox, secret);
+  return await decryptSandboxConfig(sandbox, cipher);
 }
 
 export function displayStageName(name: string): string {

@@ -104,7 +104,7 @@ type RuntimeKeyMeta = Omit<RevealedKey, "apiKey">;
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The plaintext runtime key (sk_…) for the active stage. */
+  /** The plaintext runtime key (bsk_…) for the active stage. */
   apiKey: string;
   /** Whether the key was just minted (changes the title). */
   justCreated?: boolean;

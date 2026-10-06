@@ -1,7 +1,7 @@
 /**
  * Account role CRUD and assume-role session storage. Roles are scoped API
  * credentials: their policy is a PolicyDocument over the API action namespace,
- * and a role is exchanged for a short-lived fp_sts_ session via
+ * and a role is exchanged for a short-lived bsts_ session via
  * `POST /v1/account/assume-role`. Only session-token hashes are stored.
  */
 
@@ -202,7 +202,7 @@ export const removeInternal = internalMutation({
 });
 
 /**
- * Resolve an fp_sts_ token hash to its role principal. Null for unknown or
+ * Resolve a bsts_ token hash to its role principal. Null for unknown or
  * expired sessions and disabled or deleted roles; the caller loads the
  * account and checks its status.
  */

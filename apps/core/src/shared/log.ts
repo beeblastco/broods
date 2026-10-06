@@ -67,12 +67,11 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-// A runtime key is `sk_` plus exactly 43 base64url chars, so other `sk_`
-// identifiers stay readable. `fp_agent_` is the prefix keys minted
-// before the rename still carry.
-const RUNTIME_KEY_PATTERN =
-  /\b(?:sk_[A-Za-z0-9_-]{43}|fp_agent_[A-Za-z0-9_-]+)\b/g;
-const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
+// Every Broods credential: its b-prefix plus a long base64url body (signed
+// tickets add a dot), so short identifiers like `bsk_id` stay readable.
+// Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
+const BROODS_CREDENTIAL_PATTERN =
+  /\bb(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
 const WHITESPACE_PATTERN = /\s/g;
 
 const ENCODER = new TextEncoder();
@@ -200,6 +199,28 @@ export function redactSerialized(
   }
 }
 
+/**
+ * Scrubs every nested string of the run's secret values and Broods' own key
+ * formats, and nothing else: keys are left alone and the log patterns for
+ * `Basic`, `Bearer` and query strings do not run, unlike `redact`. For text
+ * and tool data that is read back, stream frames and stored tool rows: prose
+ * and a `nextPageToken` must reach the reader as they were.
+ */
+export function redactWithRunSecrets(
+  value: unknown,
+  secretValues: readonly string[] = runSecretValues(),
+): unknown {
+  return redactRunValue(value, matchableSecrets(secretValues));
+}
+
+/** The sensitive env values plus the secrets the observability context holds for this run. */
+export function runSecretValues(): string[] {
+  return [
+    ...sensitiveEnvValues(),
+    ...(getObservabilityContext()?.secretValues ?? []),
+  ];
+}
+
 /** Redact a free-form string using sensitive env values plus task-local secrets. */
 export function redactSensitiveText(
   value: string,
@@ -241,7 +262,7 @@ function emit(
   const ctx = getObservabilityContext();
   const ts = Date.now();
   const service = process.env.SERVICE_NAME ?? "broods-core";
-  const secretValues = [...sensitiveEnvValues(), ...(ctx?.secretValues ?? [])];
+  const secretValues = runSecretValues();
 
   const redactedMessage = redactString(message, secretValues);
   const redactedData = data
@@ -355,6 +376,26 @@ function redactString(value: string, secretValues: readonly string[]): string {
   return scrubSecrets(value, matchableSecrets(secretValues));
 }
 
+/** Recurses for `redactWithRunSecrets` over secrets already from `matchableSecrets`. */
+function redactRunValue(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return replaceSecretValues(value, secrets);
+  if (value === null || typeof value !== "object") return value;
+  // What JSON.stringify would write: a Date is its ISO string, not `{}`.
+  if ("toJSON" in value && typeof value.toJSON === "function") {
+    return redactRunValue(value.toJSON(), secrets);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactRunValue(item, secrets));
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      redactRunValue(item, secrets),
+    ]),
+  );
+}
+
 function redactValue(value: unknown, secrets: readonly string[]): unknown {
   if (typeof value === "string") return scrubSecrets(value, secrets);
   if (value === null || typeof value !== "object") return value;
@@ -369,17 +410,26 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
   return out;
 }
 
-/** Replaces each secret (already from `matchableSecrets`) and every known token shape. */
-function scrubSecrets(value: string, secrets: readonly string[]): string {
+/** Replaces each secret (already from `matchableSecrets`) and Broods' own key formats. */
+function replaceSecretValues(
+  value: string,
+  secrets: readonly string[],
+): string {
   let redacted = value;
   for (const secret of secrets) {
     redacted = redacted.split(secret).join("[redacted]");
   }
+  redacted = redacted.replace(BROODS_CREDENTIAL_PATTERN, "[redacted]");
+
+  return redacted;
+}
+
+/** A log string: each secret (already from `matchableSecrets`), then anything shaped like a credential. */
+function scrubSecrets(value: string, secrets: readonly string[]): string {
+  let redacted = replaceSecretValues(value, secrets);
   redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
   redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
   redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
-  redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
-  redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
 
   return redacted;
 }

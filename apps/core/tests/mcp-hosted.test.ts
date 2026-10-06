@@ -19,6 +19,7 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
+import { listMcpTools, setMcpForTests } from "../src/harness/mcp/client.ts";
 import {
   collectBatchFrames,
   hostedMcpFetch,
@@ -32,7 +33,7 @@ const URL = "http://mcp-hosted.internal/mcp";
 
 interface SentBatch {
   serverName: string;
-  accountId: string;
+  tenantId: string;
   requests: HostedMcpBatchRequest[];
 }
 
@@ -50,7 +51,7 @@ describe("hosted MCP fetch adapter", () => {
   it("serializes the request and rebuilds the child's response", async () => {
     const sent = stubBatches((request) => ok(`{"echo":${request.body}}`));
 
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
     const response = await fetchLike(URL, {
       method: "POST",
       headers: { "mcp-method": "tools/list" },
@@ -63,7 +64,7 @@ describe("hosted MCP fetch adapter", () => {
     expect(sent).toEqual([
       {
         serverName: "hosted",
-        accountId: "acct_test",
+        tenantId: "acct_test",
         requests: [
           {
             id: "1",
@@ -83,7 +84,7 @@ describe("hosted MCP fetch adapter", () => {
       throw new Error("invoke must not run for GET");
     });
 
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
     const response = await fetchLike(URL, {
       method: "GET",
       headers: { accept: "text/event-stream" },
@@ -98,7 +99,7 @@ describe("hosted MCP fetch adapter", () => {
       throw new Error("mcp host Lambda failed: boom");
     });
 
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
     const results = await Promise.allSettled([
       fetchLike(URL, { method: "POST", body: "{}" }),
       fetchLike(URL, { method: "POST", body: "{}" }),
@@ -132,20 +133,40 @@ describe("hosted MCP invoke", () => {
     );
 
     try {
-      const response = await hostedMcpFetch(hostedRecord())(URL, {
-        method: "POST",
-        body: "{}",
-      });
+      const response = await hostedMcpFetch({
+        record: hostedRecord(),
+        agentId: "agent_1",
+      })(URL, { method: "POST", body: "{}" });
       expect(response.status).toBe(200);
       const command = send.mock.calls[0]?.[0];
       expect(command).toBeInstanceOf(InvokeWithResponseStreamCommand);
       expect(command?.input).toMatchObject({
         FunctionName: "mcp-runner",
+        TenantId: "acct_test:agent_1",
+      });
+      // The payload carries the same tenant for the handler's warm-child key.
+      const payload =
+        command instanceof InvokeWithResponseStreamCommand &&
+        command.input.Payload instanceof Uint8Array
+          ? command.input.Payload
+          : new Uint8Array();
+      expect(JSON.parse(new TextDecoder().decode(payload))).toMatchObject({
+        tenantId: "acct_test:agent_1",
+      });
+      // A probe with no agent is the account's own tenant.
+      await hostedMcpFetch({ record: hostedRecord() })(URL, {
+        method: "POST",
+        body: "{}",
+      });
+      expect(send.mock.calls[1]?.[0]?.input).toMatchObject({
         TenantId: "acct_test",
       });
       delete process.env.MCP_TENANT_ISOLATION;
-      await hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" });
-      expect(send.mock.calls[1]?.[0]?.input).not.toHaveProperty("TenantId");
+      await hostedMcpFetch({ record: hostedRecord() })(URL, {
+        method: "POST",
+        body: "{}",
+      });
+      expect(send.mock.calls[2]?.[0]?.input).not.toHaveProperty("TenantId");
     } finally {
       delete process.env.MCP_TENANT_ISOLATION;
       send.mockRestore();
@@ -187,7 +208,10 @@ describe("hosted MCP metering", () => {
     );
 
     try {
-      await hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" });
+      await hostedMcpFetch({ record: hostedRecord() })(URL, {
+        method: "POST",
+        body: "{}",
+      });
       await Promise.resolve();
     } finally {
       send.mockRestore();
@@ -207,7 +231,10 @@ describe("hosted MCP metering", () => {
 
     try {
       await expect(
-        hostedMcpFetch(hostedRecord())(URL, { method: "POST", body: "{}" }),
+        hostedMcpFetch({ record: hostedRecord() })(URL, {
+          method: "POST",
+          body: "{}",
+        }),
       ).rejects.toThrow("TOOL_RUNNER_FUNCTION_NAME");
       await Promise.resolve();
       expect(send).not.toHaveBeenCalled();
@@ -298,19 +325,74 @@ describe("hosted MCP batch frame demux", () => {
   });
 });
 
+describe("hosted MCP tool listing", () => {
+  afterEach(() => {
+    setMcpForTests(null);
+  });
+
+  it("caches a hosted listing per agent, so one agent never reads another agent's child", async () => {
+    const sent = stubBatches((request) => {
+      const message: { id?: number; method: string } = JSON.parse(
+        request.body ?? "{}",
+      );
+      if (message.id === undefined)
+        return { status: 202, headers: {}, body: "" };
+      const result =
+        message.method === "server/discover"
+          ? { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } }
+          : { tools: [{ name: "query", inputSchema: { type: "object" } }] };
+
+      return ok(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            resultType: "complete",
+            ttlMs: 60_000,
+            cacheScope: "private",
+            ...result,
+          },
+        }),
+      );
+    });
+    const connection = { record: hostedRecord(), headers: {} };
+
+    await listMcpTools({ ...connection, agentId: "agent_1" });
+    await listMcpTools({ ...connection, agentId: "agent_1" });
+    const tools = await listMcpTools({ ...connection, agentId: "agent_2" });
+
+    expect(tools.map((tool) => tool.name)).toEqual(["query"]);
+    expect(
+      sent
+        .filter((batch) =>
+          batch.requests.some((r) => r.mcpRequest.body?.includes("tools/list")),
+        )
+        .map((batch) => batch.tenantId),
+    ).toEqual(["acct_test:agent_1", "acct_test:agent_2"]);
+  });
+});
+
 describe("hosted MCP micro-batching", () => {
-  it("folds the parallel calls of one step into one invoke, keyed by tenant bundle", async () => {
+  it("folds the parallel calls of one step into one invoke, keyed by account, agent and bundle", async () => {
     const sent = stubBatches((request) => ok(`{"n":${request.body}}`));
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({
+      record: hostedRecord(),
+      agentId: "agent_1",
+    });
     const otherTenant = hostedMcpFetch({
-      ...hostedRecord(),
-      accountId: "acct_other",
+      record: { ...hostedRecord(), accountId: "acct_other" },
+      agentId: "agent_1",
+    });
+    const otherAgent = hostedMcpFetch({
+      record: hostedRecord(),
+      agentId: "agent_2",
     });
 
     const responses = await Promise.all([
       fetchLike(URL, { method: "POST", body: "1" }),
       fetchLike(URL, { method: "POST", body: "2" }),
       otherTenant(URL, { method: "POST", body: "3" }),
+      otherAgent(URL, { method: "POST", body: "5" }),
       fetchLike(URL, { method: "POST", body: "4" }),
     ]);
 
@@ -318,23 +400,25 @@ describe("hosted MCP micro-batching", () => {
       { n: 1 },
       { n: 2 },
       { n: 3 },
+      { n: 5 },
       { n: 4 },
     ]);
     expect(
       sent.map((batch) => [
-        batch.accountId,
+        batch.tenantId,
         batch.requests.map((r) => r.mcpRequest.body),
       ]),
     ).toEqual([
-      ["acct_test", ["1", "2", "4"]],
-      ["acct_other", ["3"]],
+      ["acct_test:agent_1", ["1", "2", "4"]],
+      ["acct_other:agent_1", ["3"]],
+      ["acct_test:agent_2", ["5"]],
     ]);
   });
 
   it("splits at the cap and opens a new batch for a call after the window", async () => {
     process.env.MCP_BATCH_MAX = "2";
     const sent = stubBatches((request) => ok(request.body ?? ""));
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
 
     await Promise.all([
       fetchLike(URL, { method: "POST", body: "a" }),
@@ -352,7 +436,7 @@ describe("hosted MCP micro-batching", () => {
   it("runs size-one batches when the cap is 1", async () => {
     process.env.MCP_BATCH_MAX = "1";
     const sent = stubBatches((request) => ok(request.body ?? ""));
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
 
     await Promise.all([
       fetchLike(URL, { method: "POST", body: "a" }),
@@ -365,7 +449,7 @@ describe("hosted MCP micro-batching", () => {
   });
 
   it("fails only the call whose frame carried the error", async () => {
-    setHostedMcpSendBatchForTests(async (record, requests) => ({
+    setHostedMcpSendBatchForTests(async (_batch, requests) => ({
       outcomes: new Map(
         requests.map((r) => [
           r.id,
@@ -376,7 +460,7 @@ describe("hosted MCP micro-batching", () => {
       ),
       cpuUsec: 0,
     }));
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
 
     const [good, bad] = await Promise.allSettled([
       fetchLike(URL, { method: "POST", body: "good" }),
@@ -393,7 +477,7 @@ describe("hosted MCP micro-batching", () => {
       outcomes: new Map(),
       cpuUsec: undefined,
     }));
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
 
     expect(
       await rejectionOf(fetchLike(URL, { method: "POST", body: "{}" })),
@@ -401,12 +485,12 @@ describe("hosted MCP micro-batching", () => {
   });
 
   it("splits the batch's CPU evenly across its calls before they resolve", async () => {
-    setHostedMcpSendBatchForTests(async (record, requests) => ({
+    setHostedMcpSendBatchForTests(async (_batch, requests) => ({
       outcomes: new Map(requests.map((r) => [r.id, ok("")])),
       cpuUsec: 3_000,
     }));
     const seen: number[] = [];
-    const fetchLike = hostedMcpFetch(hostedRecord(), (cpuUsec) => {
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() }, (cpuUsec) => {
       seen.push(cpuUsec);
     });
 
@@ -438,7 +522,7 @@ describe("hosted MCP micro-batching", () => {
           );
         }),
     );
-    const fetchLike = hostedMcpFetch(hostedRecord());
+    const fetchLike = hostedMcpFetch({ record: hostedRecord() });
     const early = new AbortController();
     const late = new AbortController();
 
@@ -468,10 +552,10 @@ function stubBatches(
   answer: (request: HostedMcpBatchRequest["mcpRequest"]) => HostedMcpResponse,
 ): SentBatch[] {
   const sent: SentBatch[] = [];
-  setHostedMcpSendBatchForTests(async (record, requests) => {
+  setHostedMcpSendBatchForTests(async (batch, requests) => {
     sent.push({
-      serverName: record.name,
-      accountId: record.accountId,
+      serverName: batch.record.name,
+      tenantId: batch.tenantId,
       requests: requests,
     });
 

@@ -115,7 +115,7 @@ async function seed(
           projectSlug: "tracy",
           stageSlug: entry.kind,
           apiKeyHash: `hash-${index}`,
-          keyHint: "sk_…abcd",
+          keyHint: "bsk_…abcd",
           apiKeyCiphertext: "ct",
           apiKeyIv: "iv",
           apiKeyTag: "tag",

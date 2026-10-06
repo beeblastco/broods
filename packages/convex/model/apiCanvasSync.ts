@@ -21,7 +21,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
-import { decryptAgentConfigBlob } from "./agentConfigCodec";
+import { accountCipher, hasEncryptionSecret } from "./accountKeys";
 import { applyTidyLayout } from "./canvasLayout";
 import { loadMcpServersByNode } from "./mcp";
 import { isPlainObject, stableJson } from "./objects";
@@ -39,7 +39,6 @@ type ApiWiringSync = ExistingApiCanvas & {
   ctx: MutationCtx;
   projectId: Id<"projects">;
   stageId: Id<"stages">;
-  secret: string;
   configs: Doc<"agentConfigs">[];
   /** Lazily loaded skill names per owning account. */
   desiredEdges: Map<string, CanvasEdge>;
@@ -72,8 +71,7 @@ export async function syncApiAgentCanvasWiring(
   const { projectId, stageId } = options;
   // Without the shared secret no blob can be decrypted, so no wiring is known;
   // leave the canvas untouched rather than pruning edges we cannot recompute.
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
+  if (!hasEncryptionSecret()) {
     return;
   }
 
@@ -101,7 +99,6 @@ export async function syncApiAgentCanvasWiring(
     ctx: ctx,
     projectId: projectId,
     stageId: stageId,
-    secret: secret,
     configs: configs,
     desiredEdges: new Map(),
     desiredWiringNodeIds: new Set(),
@@ -366,14 +363,13 @@ async function wireAgentConfig(
   const agent = agentRowId ? await sync.ctx.db.get(agentRowId) : null;
   const nested =
     agent?.encryptedConfig && agent.encryptionIv && agent.encryptionTag
-      ? await decryptAgentConfigBlob(
-          {
-            ciphertext: agent.encryptedConfig,
-            iv: agent.encryptionIv,
-            tag: agent.encryptionTag,
-          },
-          sync.secret,
-        )
+      ? await (
+          await accountCipher(sync.ctx, agent.accountId)
+        ).decrypt("agents:encryptedConfig", {
+          ciphertext: agent.encryptedConfig,
+          iv: agent.encryptionIv,
+          tag: agent.encryptionTag,
+        })
       : null;
   if (!agent || !nested) {
     const agentNode = sync.existingByAgentConfigId.get(config._id);

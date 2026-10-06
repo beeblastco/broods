@@ -213,7 +213,7 @@ sequenceDiagram
 
 1. A client calls a config path such as `/v1/agents`, `/v1/crons`, `/v1/workspaces/:id/files` or `/v1/account`. Trailing slashes match the same route and are stripped before forwarding, so `/v1/agents/` and `/v1/agents` reach the same plane. The config rules in `apps/edge/src/routes.ts` are method-aware and decide; everything else under `/v1/` goes to core.
 2. Traefik sends it to the Convex site, the HTTP router in `packages/convex/http.ts`, with handlers in `config/http.ts` and `config/routes/*`.
-3. The config plane authenticates the bearer, checks role policy for a role session, runs the mutation, and writes a `configAuditEvents` row.
+3. The config plane authenticates the bearer, checks role policy for a role session, runs the mutation, and appends an `auditEvents` row to the account ledger.
 4. Sandbox lifecycle verbs (`/v1/sandboxes/:id/suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec`, `terminal`) and account creation and deletion are the exceptions. They reach core's account handler (`src/accounts/handler.ts`, `routesToAccountManage`). The dashboard reaches them through Convex actions that call core with the service token (`packages/convex/model/serviceBridge.ts`).
 
 ### CLI sync
@@ -242,18 +242,18 @@ sequenceDiagram
 
 ## Credentials
 
-| Credential           | Prefix    | Verified by                                                                                      | Scope                                                                   |
-| -------------------- | --------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| Runtime key          | `sk_`     | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
-| Stage session ticket | `fp_dts_` | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
-| Account key          | `ask_`    | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
-| Role session         | `fp_sts_` | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
-| CLI login            | `fp_cli_` | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
-| Project key          | `pdk_`    | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
-| Admin secret         | none      | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
-| Service token        | none      | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
-| Terminal ticket      | sealed    | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
-| Per-job token        | none      | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
+| Credential           | Prefix  | Verified by                                                                                      | Scope                                                                   |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Runtime key          | `bsk_`  | core, `agentDeployments` hash lookup in `src/shared/auth.ts`; the gateway checks WebSocket scope | One account, project, stage and endpoint set. Public agents only.       |
+| Stage session ticket | `bdts_` | core, `openStageSessionTicket` with `STAGE_TICKET_SECRET`; Convex signs it                       | Same as a runtime key for 15 minutes, without the embeddable-key limits |
+| Account key          | `bask_` | core (`accounts` by secret hash) and the Convex config plane                                     | The whole account                                                       |
+| Role session         | `bsts_` | core and the config plane, `roleSessions` hash lookup, then the role's policy per request        | What the role allows, up to 12 hours                                    |
+| CLI login            | `bcli_` | Convex `cli/http.ts`, re-checked against org membership                                          | Org owner or admin, CLI routes                                          |
+| Project key          | `bpdk_` | Convex `cli/http.ts`                                                                             | One project and stage, CLI sync routes                                  |
+| Admin secret         | none    | core, `ADMIN_ACCOUNT_SECRET`                                                                     | Account creation on self-hosted deployments                             |
+| Service token        | none    | core, `isServiceToken`, only with `X-Account-Id` and only when `x-broods-via-gateway` is absent  | Convex acting for one account, in-cluster only                          |
+| Terminal ticket      | sealed  | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
+| Per-job token        | none    | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
 
 Channel webhooks use each provider's own signature or secret, checked by the adapter. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
 
@@ -331,7 +331,7 @@ The doc id of `accounts` is the `accountId` every other table carries. Config ro
 | Runtime               | `runtimeConversationEvents`, `runtimeHarnessSessions`, `runtimeClaims`, `runtimeConversationCoordinators`, `runtimeIngressEnvelopes`, `runtimeIngressApplications`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`                             |
 | Sandboxes             | `sandboxReservations`, `sandboxInstances`, `sandboxSnapshots`, `sandboxAuditEvents`, `machineConnections`                                                                                                                                             |
 | Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                                           |
-| Audit and usage       | `configAuditEvents`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`                                                                                                                                                                            |
+| Audit and usage       | `auditEvents`, `auditChainHeads`, `auditSinks`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`                                                                                                                                                 |
 
 `packages/convex/schema.ts` is the source of truth. Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). `channelEndpoints` holds each connection's encrypted bot token so the forwarders' `listConnections` subscription reads one small table.
 

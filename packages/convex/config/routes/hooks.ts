@@ -8,10 +8,7 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { normalizeAccountHookUpload } from "../../model/accountHooks";
-import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { putHookBundle } from "../../model/bundles";
 import {
   json,
@@ -25,7 +22,7 @@ export async function handleHookRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   hookId?: string,
 ): Promise<Response> {
   if (!hookId)
@@ -75,7 +72,7 @@ async function handleHookCollectionRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   if (req.method === "GET") {
     return collectionPage("hooks", req, {
@@ -137,7 +134,7 @@ async function patchHookRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   hookId: string,
 ): Promise<Response> {
   const existing = await ctx.runQuery(internal.account.hooks.getById, {

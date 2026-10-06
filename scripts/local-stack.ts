@@ -34,6 +34,7 @@ import { join, resolve } from "node:path";
 import type { Doc } from "../packages/convex/_generated/dataModel.ts";
 
 import { renderFileConfig } from "../apps/edge/src/traefik.ts";
+import { createAccountSecret } from "../packages/convex/model/accountSecrets.ts";
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
@@ -467,7 +468,7 @@ function createManifestAccount(state: InstanceState, runId: string): string {
   );
   const org = orgs.find((entry): boolean => entry.slug === slug);
   if (!org) throw new Error("Verify org was not found in the local backend");
-  const secret = `fp_${randomBytes(32).toString("base64url")}`;
+  const secret = createAccountSecret();
   const secretHash = createHash("sha256").update(secret).digest("hex");
   runConvexCli(
     state,
@@ -887,6 +888,7 @@ function verifyContext(
     measure: measure,
     runId: runId,
     serviceSecret: state.secrets.serviceAuth,
+    stageTicketSecret: state.secrets.stageTicket,
   };
 }
 

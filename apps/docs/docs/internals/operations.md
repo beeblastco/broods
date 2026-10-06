@@ -82,7 +82,7 @@ Four secrets, one job each. None falls back to another. Core refuses to start wi
 | Secret                   | Job                                                       | Set on                   |
 | ------------------------ | --------------------------------------------------------- | ------------------------ |
 | `SERVICE_AUTH_SECRET`    | Service bearer (with `X-Account-Id`) and the cron trigger | core, Convex env         |
-| `STAGE_TICKET_SECRET`    | Signs and verifies `fp_dts_` stage session tickets        | Convex env (signs), core |
+| `STAGE_TICKET_SECRET`    | Signs and verifies `bdts_` stage session tickets          | Convex env (signs), core |
 | `TERMINAL_TICKET_SECRET` | Seals and opens sandbox terminal tickets                  | core (seals), gateway    |
 | `MEDIA_TICKET_SECRET`    | Seals and opens `/v1/media/{ticket}` links                | core                     |
 
@@ -90,7 +90,7 @@ Rotation:
 
 - `TERMINAL_TICKET_SECRET` and `MEDIA_TICKET_SECRET` take a comma-separated list. The first entry seals, every entry opens. Prepend the new value, roll the pods, then drop the old one. A media link never expires, so dropping a value is what revokes the links it sealed.
 - `SERVICE_AUTH_SECRET` and `STAGE_TICKET_SECRET` are single values. Change core and Convex together. Stage tickets live 15 minutes, so rotating `STAGE_TICKET_SECRET` logs out open dashboard log streams and `broods logs` sessions until they mint a new ticket.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is set on core and Convex and must never change without a re-encryption migration. Stored agent and sandbox configs are unreadable under a new value.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is set on core and Convex and takes a comma-separated list. The first entry wraps account keys, every entry unwraps. Rotating it takes the steps in the [rotation runbook](security.md#rotation-runbook): add the new value last on both, then move it first, run `account/keys:rewrapAllKeys`, and drop the old one. Dropping a value before the rewrap finishes makes the keys it wrapped, and every config under them, unreadable.
 - `ADMIN_ACCOUNT_SECRET` is set on core and Convex. Rotating it only affects admin account creation and the account admin routes.
 
 ## Service token rules
@@ -134,7 +134,7 @@ Matrix specifics:
 | Core exits at boot naming a secret                                 | One of `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `MEDIA_TICKET_SECRET`, `TERMINAL_TICKET_SECRET` is missing. Set it in the pod env                                             |
 | A new config-plane or core route answers `404`, or the wrong plane | The `broods-edge` IngressRoute in the infra repo predates the route. Regenerate it with `bun run --filter @broods/edge generate kubernetes` and land it                            |
 | Crons never fire, or sandbox deletes leave reservations behind     | Convex cannot reach core with the service token. Check `BROODS_ACCOUNT_MANAGE_URL` is core's in-cluster URL, not the gateway, and that `SERVICE_AUTH_SECRET` matches on both sides |
-| Every agent config fails to decrypt                                | `ACCOUNT_CONFIG_ENCRYPTION_SECRET` differs from the value that encrypted the data. Restore the old value                                                                           |
+| Every agent config fails to decrypt                                | No entry in `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is the value that wrapped the account keys. Put the old value back in the list                                                      |
 | `deny-all` or `restricted` `lambda` sandboxes fail to launch       | `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN` is unset on core. Set it from the `microvmEgressNetworkConnectorArn` output                                                                 |
 | Discord agent answers `/new` but ignores mentions                  | The discord-forwarder is not running, or has no plane for that deployment. Check `/readyz`                                                                                         |
 | Discord socket stops with close code 4014                          | Message Content Intent is off in the Discord developer portal. The forwarder logs it by name and does not retry. Nothing on the Broods side fixes it                               |
@@ -143,6 +143,23 @@ Matrix specifics:
 | Matrix agent cannot read encrypted rooms after a redeploy          | The crypto store was lost. Put `MATRIX_STORE_DIR` on a persistent volume, then log the account in again as a new device                                                            |
 | Image built but pods still run the old version                     | The rollout job failed or `INFRA_DISPATCH_TOKEN` is missing. Check the `rollout` job of the build workflow and the infra run it names                                              |
 | `broods logs` or the dashboard stream stops after about 15 minutes | The stage ticket expired and could not be renewed. The CLI mints a new one before each reconnect from its login, so re-run `broods login` if the login itself expired              |
+
+## Credential prefix cutover
+
+Every Broods credential now starts with `b` (`bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_`, `bsts_`, `bdts_`, `brole_`). Core and the config plane route a bearer by prefix and refuse any other one without a lookup, so the old `sk_`, `ask_`, `pdk_` and `fp_*` credentials get `401` the moment the release is live. There is no compatibility path. After the deploy reaches a stage, run the two migrations against it:
+
+```sh
+bunx convex run migrations:runtimeKeyPrefix
+bunx convex run migrations:roleIdPrefix
+```
+
+- `runtimeKeyPrefix` replaces each stored `sk_` or `fp_agent_` runtime key with a fresh `bsk_` key, the same way a rotation does. The random part is new on purpose, so an old key left in a log cannot rebuild the live one. A batch returns `{ migrated, skipped, isDone }` and reschedules itself until the table is done.
+- `roleIdPrefix` rewrites `fp_role_` to `brole_` in `accountRoles`. It leaves `roleSessions` alone: every session from before the release holds an `fp_sts_` token that is already refused, and it expires within 12 hours. A caller that assumed a role between the deploy and this migration assumes it again.
+- Both skip rows already on the new prefix, so a re-run is safe.
+
+Run `runtimeKeyPrefix` right after the deploy. A `broods dev` sync that reads the key just before the migration rotates it writes the old key to `.env.local`; the next `broods dev` or `broods stage use` writes the new one.
+
+Account keys, project keys and CLI logins cannot be migrated: their stored hash covers the old prefix and the plaintext is gone. Owners rotate the account key in the dashboard (an admin can use `POST /v1/accounts/{accountId}/rotate-secret`), create new project keys and run `broods login` again. Deployed apps update `BROODS_API_KEY` to the new `bsk_` key from the dashboard; `broods dev`, `broods deploy` and `broods stage use` rewrite `.env.local`. Role sessions, stage tickets and login codes are short-lived and just expire. The user-facing note is in [Security](../guides/security.md#credentials).
 
 ## Drift cleanup
 

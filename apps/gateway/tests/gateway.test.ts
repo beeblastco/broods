@@ -2745,7 +2745,7 @@ test("maps with bounded concurrency, preserves order, and isolates failures", as
 test("opens a sealed terminal ticket with whichever stage secret verifies it", () => {
   const ticket = {
     url: "ws://sandbox-node.example:8080/v1/sandboxes/sb_1/pty",
-    authorization: "Bearer sk_live_key",
+    authorization: "Bearer bsk_live_key",
     accountId: "acct_1",
     expiresAt: Date.now() + 60_000,
   };

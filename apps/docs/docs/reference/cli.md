@@ -148,7 +148,7 @@ Server:      https://gateway.broods.app
 User:        you@example.com
 Org:         my-team (my-team, owner, free plan)
 Account:     my-team (active)
-Runtime key: sk_…vK8s (matches this org and stage)
+Runtime key: bsk_…vK8s (matches this org and stage)
 ```
 
 It also checks the local `BROODS_API_KEY` against the key that org and stage serve and warns when they differ, which happens after switching organizations without resyncing. Before a project exists it prints `Project: none` and the folder name `dev` would suggest.

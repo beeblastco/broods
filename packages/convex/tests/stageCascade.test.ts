@@ -30,7 +30,7 @@ type StageScopedTable = Extract<
 const AUTH_ID = "auth_owner";
 
 // Every table `deleteStageContents` owns. Runtime and audit tables
-// (sandboxInstances, sandboxAuditEvents, configAuditEvents) are swept at the
+// (sandboxInstances, sandboxAuditEvents, auditEvents) are swept at the
 // account level instead and are deliberately absent.
 const STAGE_SCOPED_TABLES: StageScopedTable[] = [
   "agentConfigs",
