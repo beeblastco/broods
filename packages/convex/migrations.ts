@@ -6,7 +6,7 @@
  */
 
 import { internal } from "./_generated/api";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { decryptApiKey, runtimeKeyFields } from "./agent/deployments";
 import { reencryptBatch, reencryptWalkArgs } from "./model/accountKeys";
@@ -20,6 +20,7 @@ const PRUNE_TABLES = [
   "runtimeConversationCoordinators",
   "agentRuntimeSecrets",
   "cliAuthCodes",
+  "canvasLayouts",
 ] as const;
 
 /** What one batch of a prefix migration did, and whether its walk finished. */
@@ -33,7 +34,14 @@ type PrefixBatch = { migrated: number; skipped: number; isDone: boolean };
 
 type PruneTable = (typeof PRUNE_TABLES)[number];
 
-type PruneTotals = { cleared: number; deleted: number; isDone: boolean };
+type PruneBatchPage = { isDone: boolean; continueCursor: string };
+
+type PruneTotals = {
+  cleared: number;
+  deleted: number;
+  patched: number;
+  isDone: boolean;
+};
 
 /**
  * Move every legacy blob (AES-GCM under the global secret, no `v2:` prefix)
@@ -77,9 +85,10 @@ export const migrateToEnvelope = internalMutation({
  * self-reschedule; call it with no arguments. Clears a conversation target that
  * still holds a pre-#920 plaintext `agentConfig` (it already reads as no
  * session, and the next channel turn pins a fresh one), deletes runtime
- * secrets whose agent config is gone, and deletes used or expired CLI login
- * codes. Idempotent. Never logs or returns a field value.
- * @returns targets cleared and rows deleted so far, and whether the whole walk finished
+ * secrets whose agent config is gone, deletes used or expired CLI login codes,
+ * and strips the retired `animated` flag from stored canvas edges. Idempotent.
+ * Never logs or returns a field value.
+ * @returns targets cleared, rows deleted and layouts patched so far, and whether the whole walk finished
  */
 export const pruneStaleRows = internalMutation({
   args: {
@@ -87,61 +96,37 @@ export const pruneStaleRows = internalMutation({
     cursor: v.optional(v.union(v.string(), v.null())),
     cleared: v.optional(v.number()),
     deleted: v.optional(v.number()),
+    patched: v.optional(v.number()),
   },
   returns: v.object({
     cleared: v.number(),
     deleted: v.number(),
+    patched: v.number(),
     isDone: v.boolean(),
   }),
   handler: async (ctx, args): Promise<PruneTotals> => {
     const table: PruneTable = args.table ?? PRUNE_TABLES[0];
-    const page = { numItems: 100, cursor: args.cursor ?? null };
-    let cleared = args.cleared ?? 0;
-    let deleted = args.deleted ?? 0;
-    let result: { isDone: boolean; continueCursor: string };
-    if (table === "runtimeConversationCoordinators") {
-      const rows = await ctx.db.query(table).paginate(page);
-      for (const row of rows.page) {
-        if (row.channelTarget?.agentConfig === undefined) continue;
-        await ctx.db.patch(row._id, { channelTarget: undefined });
-        cleared += 1;
-      }
-      result = rows;
-    } else if (table === "agentRuntimeSecrets") {
-      const rows = await ctx.db.query(table).paginate(page);
-      for (const row of rows.page) {
-        if (await ctx.db.get(row.agentConfigId)) continue;
-        await ctx.db.delete(row._id);
-        deleted += 1;
-      }
-      result = rows;
-    } else {
-      const now = Date.now();
-      const rows = await ctx.db.query(table).paginate(page);
-      for (const row of rows.page) {
-        if (row.usedAt === undefined && row.expiresAt >= now) continue;
-        await ctx.db.delete(row._id);
-        deleted += 1;
-      }
-      result = rows;
-    }
-
+    const batch = await pruneBatch(ctx, table, args.cursor ?? null);
+    const totals = {
+      cleared: (args.cleared ?? 0) + batch.cleared,
+      deleted: (args.deleted ?? 0) + batch.deleted,
+      patched: (args.patched ?? 0) + batch.patched,
+    };
     const nextTable: PruneTable | undefined =
       PRUNE_TABLES[PRUNE_TABLES.indexOf(table) + 1];
-    const next = !result.isDone
-      ? { table: table, cursor: result.continueCursor }
+    const next = !batch.isDone
+      ? { table: table, cursor: batch.continueCursor }
       : nextTable
         ? { table: nextTable, cursor: null }
         : null;
     if (next) {
       await ctx.scheduler.runAfter(0, internal.migrations.pruneStaleRows, {
         ...next,
-        cleared: cleared,
-        deleted: deleted,
+        ...totals,
       });
     }
 
-    return { cleared: cleared, deleted: deleted, isDone: next === null };
+    return { ...totals, isDone: next === null };
   },
 });
 
@@ -316,3 +301,57 @@ export const workspaceIsolationLevels = internalMutation({
     return { patched: patched, isDone: page.isDone };
   },
 });
+
+/** One page of `pruneStaleRows` on one table: what it pruned, and where the table's walk stands. */
+async function pruneBatch(
+  ctx: MutationCtx,
+  table: PruneTable,
+  cursor: string | null,
+): Promise<Omit<PruneTotals, "isDone"> & PruneBatchPage> {
+  const page = { numItems: 100, cursor: cursor };
+  const counts = { cleared: 0, deleted: 0, patched: 0 };
+  let result: PruneBatchPage;
+  if (table === "runtimeConversationCoordinators") {
+    const rows = await ctx.db.query(table).paginate(page);
+    for (const row of rows.page) {
+      if (row.channelTarget?.agentConfig === undefined) continue;
+      await ctx.db.patch(row._id, { channelTarget: undefined });
+      counts.cleared += 1;
+    }
+    result = rows;
+  } else if (table === "agentRuntimeSecrets") {
+    const rows = await ctx.db.query(table).paginate(page);
+    for (const row of rows.page) {
+      if (await ctx.db.get(row.agentConfigId)) continue;
+      await ctx.db.delete(row._id);
+      counts.deleted += 1;
+    }
+    result = rows;
+  } else if (table === "cliAuthCodes") {
+    const now = Date.now();
+    const rows = await ctx.db.query(table).paginate(page);
+    for (const row of rows.page) {
+      if (row.usedAt === undefined && row.expiresAt >= now) continue;
+      await ctx.db.delete(row._id);
+      counts.deleted += 1;
+    }
+    result = rows;
+  } else {
+    const rows = await ctx.db.query(table).paginate(page);
+    for (const row of rows.page) {
+      const edges: Array<{ animated?: unknown }> = row.edges;
+      if (!edges.some((edge) => "animated" in edge)) continue;
+      await ctx.db.patch(row._id, {
+        edges: edges.map(({ animated: _animated, ...edge }) => edge),
+      });
+      counts.patched += 1;
+    }
+    result = rows;
+  }
+
+  return {
+    ...counts,
+    isDone: result.isDone,
+    continueCursor: result.continueCursor,
+  };
+}

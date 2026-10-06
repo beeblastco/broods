@@ -355,10 +355,11 @@ test("workspaceIsolationLevels stores a boolean isolation as the conversation le
   ]);
 });
 
-test("pruneStaleRows clears plaintext conversation targets and deletes orphaned secrets and dead login codes", async () => {
+test("pruneStaleRows clears plaintext conversation targets, deletes orphaned secrets and dead login codes, and strips animated edges", async () => {
   vi.useFakeTimers();
   const tt = convexTest(schema, modules);
   const target = { channelName: "slack", source: { channel: "C1" } };
+  const edge = { source: "a", target: "b" };
   const ids = await tt.run(async (ctx) => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {
@@ -440,6 +441,17 @@ test("pruneStaleRows clears plaintext conversation targets and deletes orphaned 
         usedAt: usedAt,
         createdAt: now,
       });
+    const layout = async (
+      edges: Array<Record<string, unknown>>,
+    ): Promise<Id<"canvasLayouts">> =>
+      await ctx.db.insert("canvasLayouts", {
+        authId: "auth_owner",
+        projectId: projectId,
+        stageId: stageId,
+        nodes: [],
+        edges: edges,
+        updatedAt: now,
+      });
     const deletedConfigId = await config("deleted");
     await ctx.db.delete(deletedConfigId);
 
@@ -457,6 +469,11 @@ test("pruneStaleRows clears plaintext conversation targets and deletes orphaned 
       expiredCode: await code("expired", now - 1),
       usedCode: await code("used", now + 60_000, now),
       liveCode: await code("live", now + 60_000),
+      animatedLayout: await layout([
+        { ...edge, id: "e1", animated: true },
+        { ...edge, id: "e2" },
+      ]),
+      plainLayout: await layout([{ ...edge, id: "e3" }]),
     };
   });
 
@@ -464,7 +481,7 @@ test("pruneStaleRows clears plaintext conversation targets and deletes orphaned 
   await tt.finishAllScheduledFunctions(vi.runAllTimers);
 
   // The first batch only reached the coordinators; the rest ran rescheduled.
-  expect(first).toEqual({ cleared: 1, deleted: 0, isDone: false });
+  expect(first).toEqual({ cleared: 1, deleted: 0, patched: 0, isDone: false });
   const after = await tt.run(async (ctx) => ({
     legacy: await ctx.db.get(ids.legacy),
     clean: (await ctx.db.get(ids.clean))?.channelTarget,
@@ -473,6 +490,8 @@ test("pruneStaleRows clears plaintext conversation targets and deletes orphaned 
     expiredCode: await ctx.db.get(ids.expiredCode),
     usedCode: await ctx.db.get(ids.usedCode),
     liveCode: (await ctx.db.get(ids.liveCode))?._id,
+    animatedLayout: (await ctx.db.get(ids.animatedLayout))?.edges,
+    plainLayout: await ctx.db.get(ids.plainLayout),
   }));
   expect(after.legacy).toMatchObject({ conversationKey: "legacy" });
   expect(after.legacy?.channelTarget).toBeUndefined();
@@ -484,25 +503,31 @@ test("pruneStaleRows clears plaintext conversation targets and deletes orphaned 
     usedCode: null,
     liveCode: ids.liveCode,
   });
+  expect(after.animatedLayout).toEqual([
+    { ...edge, id: "e1" },
+    { ...edge, id: "e2" },
+  ]);
+  expect(after.plainLayout?.edges).toEqual([{ ...edge, id: "e3" }]);
 
   // A second walk finds nothing left to prune.
   expect(
     await tt.mutation(internal.migrations.pruneStaleRows, {
-      table: "cliAuthCodes",
+      table: "canvasLayouts",
       cursor: null,
     }),
-  ).toEqual({ cleared: 0, deleted: 0, isDone: true });
+  ).toEqual({ cleared: 0, deleted: 0, patched: 0, isDone: true });
 });
 
 test("pruneStaleRows reports the walk's totals on its last batch", async () => {
   const tt = convexTest(schema, modules);
 
   const result = await tt.mutation(internal.migrations.pruneStaleRows, {
-    table: "cliAuthCodes",
+    table: "canvasLayouts",
     cursor: null,
     cleared: 2,
     deleted: 5,
+    patched: 1,
   });
 
-  expect(result).toEqual({ cleared: 2, deleted: 5, isDone: true });
+  expect(result).toEqual({ cleared: 2, deleted: 5, patched: 1, isDone: true });
 });
