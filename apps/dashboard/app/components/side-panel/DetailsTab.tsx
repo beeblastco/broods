@@ -792,7 +792,7 @@ export function DetailsTab({
             {onUpdateBrowser && (
               <ToggleRow
                 label="Web browsing"
-                description="Read pages and take screenshots. Needs a first sandbox on Managed VM with the Obscura image and internet."
+                description="Read pages and take screenshots. Needs a first sandbox on Lambda with the Obscura image and internet."
                 checked={browserEnabled}
                 onCheckedChange={(next) => void onUpdateBrowser(next)}
               />
