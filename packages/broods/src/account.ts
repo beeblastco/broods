@@ -30,7 +30,6 @@ import type {
   SandboxConfig,
   UpdateCronInput,
   WorkspaceConfig,
-  WorkspaceConfigInput,
 } from "./contracts.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
 import type {
@@ -826,7 +825,7 @@ export class BroodsAccountClient {
   async createWorkspace(input: {
     name: string;
     description?: string;
-    config?: WorkspaceConfigInput;
+    config?: WorkspaceConfig;
   }): Promise<AccountWorkspace> {
     const result = await this.request<AccountWorkspace>(
       "POST",
@@ -856,7 +855,7 @@ export class BroodsAccountClient {
     patch: {
       name?: string;
       description?: string | null;
-      config?: ConfigPatch<WorkspaceConfigInput>;
+      config?: ConfigPatch<WorkspaceConfig>;
     },
   ): Promise<AccountWorkspace | null> {
     return await this.request<AccountWorkspace>(

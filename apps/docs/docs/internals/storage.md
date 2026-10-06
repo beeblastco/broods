@@ -83,7 +83,6 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 - While visible, the panel lists S3 every 5 seconds, and again on focus, tab restore or Refresh. Overlapping lists dedup, and an older response cannot overwrite a newer optimistic change.
 - The panel cannot show an agent write before the mount has exported it to S3.
 - Dashboard uploads are capped at 512 KiB per file because the base64 payload crosses a Convex action. Agents can write larger files through the mount.
-- On first load, `migrateLegacy` copies files from the old canvas-node records into S3 and removes the records. Existing S3 paths win.
 
 `GET /v1/workspaces/:id/files?path=` returns a presigned URL, about 1.4 KB long and valid for 5 minutes. `POST /v1/workspaces/:id/download-links` mints a short token under `/v1/downloads/:token` that redirects to a fresh presigned URL, valid 24 hours by default and at most 30 days (`packages/convex/workspace/files.ts`). Tokens are stored in `workspaceDownloadTokens`, and deleting the workspace or account revokes them. Routes live in `packages/convex/config/routes/workspaceFiles.ts`.
 

@@ -896,13 +896,13 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
 >;
 /**
  * Code-first workspace config. Says `partitioned` where storage says
- * `isolation`. `true` or "conversation" permits a per-conversation split that
- * a channel's `partition` performs; "agent" splits the workspace per attached
+ * `isolation`. "conversation" permits a per-conversation split that a
+ * channel's `partition` performs; "agent" splits the workspace per attached
  * agent on its own, with no partition needed.
  */
 export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
-  /** How to split this workspace: per conversation (`true`) or per agent. */
-  partitioned?: boolean | WorkspaceIsolation;
+  /** How to split this workspace: per conversation or per agent. */
+  partitioned?: WorkspaceIsolation;
 };
 
 export type WorkspaceResource<Name extends string = string> =

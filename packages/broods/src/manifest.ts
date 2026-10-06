@@ -28,7 +28,6 @@ import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
-  workspaceIsolationInput,
 } from "../../convex/model/workspaceIsolation.ts";
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
@@ -492,11 +491,10 @@ function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
   const config = resource.config as unknown as Record<string, unknown>;
   if (
     config.partitioned !== undefined &&
-    typeof config.partitioned !== "boolean" &&
     !isWorkspaceIsolation(config.partitioned)
   ) {
     throw new Error(
-      `Workspace "${resource.name}" config.partitioned must be a boolean or one of: ${WORKSPACE_ISOLATION_LEVELS.join(", ")}`,
+      `Workspace "${resource.name}" config.partitioned must be one of: ${WORKSPACE_ISOLATION_LEVELS.join(", ")}`,
     );
   }
   if (config.isolation !== undefined) {
@@ -563,9 +561,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     // Only the per-conversation split needs a channel partition; "agent" splits
     // on its own.
     const partitionedWorkspaces = attachedWorkspaces.filter(
-      (workspace) =>
-        workspaceIsolationInput(workspace.config.partitioned) ===
-        "conversation",
+      (workspace) => workspace.config.partitioned === "conversation",
     );
     const partitionedChannels = channelDefinitions.filter(
       (channel) => channel.partition,
@@ -574,7 +570,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     if (partitionedChannels.length > 0 && partitionedWorkspaces.length === 0) {
       const channel = partitionedChannels[0]!;
       throw new Error(
-        `Agent "${resource.name}" connection "${channel.type}" defines partition, but no attached workspace has partitioned: true.`,
+        `Agent "${resource.name}" connection "${channel.type}" defines partition, but no attached workspace has partitioned: "conversation".`,
       );
     }
 
@@ -1075,11 +1071,11 @@ async function normalizeConfig(
 
   if (resource.kind === "workspace") {
     const config = { ...(resource.config as Record<string, unknown>) };
-    // Authoring says `partitioned`; storage reads `isolation` by level (the
-    // shape check above already refused anything else).
-    const isolation = workspaceIsolationInput(config.partitioned);
+    // Authoring says `partitioned`; storage says `isolation` (the shape check
+    // above already refused anything but a level).
+    const isolation = config.partitioned;
     delete config.partitioned;
-    if (isolation) config.isolation = isolation;
+    if (isolation !== undefined) config.isolation = isolation;
 
     return rewriteValues(config);
   }
