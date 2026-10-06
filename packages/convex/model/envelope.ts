@@ -105,6 +105,13 @@ export const ENVELOPE_COLUMNS = [
     iv: "iv",
     tag: "tag",
   },
+  {
+    table: "auditSinks",
+    scope: "auditSinks:encryptedSecret",
+    ciphertext: "encryptedSecret",
+    iv: "secretIv",
+    tag: "secretTag",
+  },
 ] as const;
 
 /** Every table with an encrypted column, in the order a full walk visits them. */

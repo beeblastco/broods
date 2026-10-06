@@ -2,8 +2,8 @@
  * Internal storage for connections: external accounts signed in by `broods
  * connect`. The config plane writes a fresh sign-in, core loads it per call
  * and saves each rotated refresh back, and a disconnect forgets it, then
- * revokes at the provider. Tokens are encrypted with the agent-config codec;
- * only metadata leaves through `list`.
+ * revokes at the provider. Tokens are sealed under the account's envelope
+ * key; only metadata leaves through `list`.
  */
 
 import { v, type Infer } from "convex/values";

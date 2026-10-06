@@ -775,7 +775,7 @@ export const accountEnvVarsFields = {
  * A connection: an external account (today the ChatGPT plan) signed in once
  * per account by `broods connect`, one of each type.
  * Core refreshes it in process and writes the rotated tokens back. Tokens are
- * encrypted with the agent-config codec and never leave through the API.
+ * sealed under the account's envelope key and never leave through the API.
  */
 export const connectionsFields = {
   accountId: v.id("accounts"),
@@ -899,7 +899,7 @@ export const auditChainHeadsFields = {
 
 /**
  * Where the ledger is exported to. One webhook per account; the signing secret
- * is stored with the agent-config codec and never read back.
+ * is sealed under the account's envelope key and never read back.
  */
 export const auditSinksFields = {
   accountId: v.id("accounts"),

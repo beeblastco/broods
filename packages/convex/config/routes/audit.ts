@@ -7,7 +7,6 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { encryptAgentConfigBlob } from "../../model/agentConfigCodec";
 import {
   AUDIT_LIST_LIMIT_MAX,
   auditDetailsJson,
@@ -18,7 +17,7 @@ import {
 } from "../../model/auditEvents";
 import { normalizeAuditSinkInput } from "../../model/auditSinks";
 import {
-  configEncryptionSecret,
+  accountCipherForAction,
   json,
   jsonError,
   methodNotAllowed,
@@ -58,10 +57,10 @@ export async function handleAuditRoute(
   }
   if (req.method === "PUT") {
     const input = normalizeAuditSinkInput(await parseJsonRequest(req));
-    const blob = await encryptAgentConfigBlob(
-      { secret: input.secret },
-      configEncryptionSecret(),
-    );
+    const cipher = await accountCipherForAction(ctx, accountId, "write");
+    const blob = await cipher.encrypt("auditSinks:encryptedSecret", {
+      secret: input.secret,
+    });
     const sink: Doc<"auditSinks"> = await ctx.runMutation(
       internal.audit.sinks.put,
       {
