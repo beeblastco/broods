@@ -1,9 +1,9 @@
 /**
  * The Convex side of envelope encryption: builds an `AccountCipher` from the
  * account's `accountKeys` rows, mints the first key on the first write, and
- * walks every encrypted table so a migration or a rotation can rewrite blobs
- * in bounded batches. The codec itself is `./envelope.ts`; the internal
- * functions that expose this live in `account/keys.ts` and `migrations.ts`.
+ * walks every encrypted table so a rotation can rewrite blobs in bounded
+ * batches. The codec itself is `./envelope.ts`; the internal functions that
+ * expose this live in `account/keys.ts`.
  * It must not import the generated api: the forwarders import a type through
  * `channel/connections.ts`, and the api would pull every module into them.
  */

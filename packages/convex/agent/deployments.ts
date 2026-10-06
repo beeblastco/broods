@@ -520,8 +520,8 @@ export async function ensureStageDeployment(
   };
 }
 
-/** Decrypt a deployment's stored runtime key. `migrations:runtimeKeyPrefix` uses it too. */
-export async function decryptApiKey(
+/** Decrypt a deployment's stored runtime key. */
+async function decryptApiKey(
   ctx: QueryCtx | MutationCtx,
   deployment: {
     accountId: Id<"accounts">;
@@ -546,10 +546,9 @@ export async function decryptApiKey(
 
 /**
  * The stored columns for a runtime key: its hash, masked hint and blob sealed
- * under the account's key. Minting and `migrations:runtimeKeyPrefix` both
- * write these.
+ * under the account's key. Minting writes these.
  */
-export async function runtimeKeyFields(
+async function runtimeKeyFields(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   rawApiKey: string,
