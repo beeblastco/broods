@@ -1299,6 +1299,39 @@ describe("createSandboxExecutor", () => {
     expect(posts).toBe(1);
   });
 
+  it("never resends a guest POST whose connection dropped mid-request", async () => {
+    storedSandboxExternalId = "microvm-1";
+    let posts = 0;
+    globalThis.fetch = stubFetch(async () => {
+      posts += 1;
+
+      throw Object.assign(new TypeError("socket closed"), {
+        code: "ECONNRESET",
+      });
+    });
+    const {
+      MicrovmSandboxExecutor,
+    } = require("../src/harness/sandbox/microvm-executor.ts");
+
+    const failure = await new MicrovmSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    })
+      .postReserved({
+        reservationKey: microvmNamespace(),
+        path: "/mcp",
+        body: {},
+        timeoutMs: 1_000,
+      })
+      .then(
+        (): string => "resolved",
+        (error: unknown): string => String(error),
+      );
+
+    expect(failure).toContain("socket closed");
+    expect(posts).toBe(1);
+  });
+
   it("surfaces an exec that outlived its deadline instead of posting it again", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";

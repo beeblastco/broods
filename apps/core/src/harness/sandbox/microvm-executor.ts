@@ -1292,7 +1292,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         },
       );
     } catch (err) {
-      if (err instanceof DOMException) throw err;
+      // A reset or drop can land after the guest took the request, so only a
+      // connection that never opened is safe to send again.
+      if (!(err instanceof Error && "code" in err)) throw err;
+      if (err.code !== "ConnectionRefused") throw err;
 
       return {
         retry: true,
