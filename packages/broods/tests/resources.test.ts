@@ -1504,6 +1504,12 @@ export const reader = defineAgent({
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find((entry) => entry.kind === "agent");
 
+  // `broods dev` pushes the agent's own ref too, or the sync refuses it.
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "READER_TEAM",
+    "SEARCH_TOKEN",
+    "TEAM_ID",
+  ]);
   // Core resolves a server's secret headers from the agent config only.
   expect((agent?.config as { mcp: unknown }).mcp).toEqual({
     search: {

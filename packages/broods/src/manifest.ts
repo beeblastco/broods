@@ -233,7 +233,8 @@ export async function compileProject(
 /**
  * Collects the distinct account/environment variable names referenced via
  * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
- * compiled manifest, plus the `${NAME}` refs in MCP server headers, sorted.
+ * compiled manifest, plus the `${NAME}` refs in MCP headers (a server's and an
+ * agent's own), sorted.
  * `dev` uses this to auto-sync exactly those vars from the local environment
  * to the cloud, never unrelated `.env.local` keys.
  */
@@ -242,10 +243,18 @@ export function collectEnvRefNames(manifest: CliManifest): string[] {
 
   for (const resource of manifest.resources) {
     collectEnvRefNamesFromValue(resource.config, names);
-    if (resource.kind !== "mcp") continue;
-    const headers = (resource.config as { headers?: Record<string, string> })
-      .headers;
-    for (const value of Object.values(headers ?? {})) {
+    const config = resource.config as {
+      headers?: Record<string, unknown>;
+      mcp?: Record<string, { headers?: Record<string, unknown> }>;
+    };
+    const headerMaps =
+      resource.kind === "mcp"
+        ? [config.headers]
+        : resource.kind === "agent"
+          ? Object.values(config.mcp ?? {}).map((entry) => entry.headers)
+          : [];
+    for (const value of headerMaps.flatMap((map) => Object.values(map ?? {}))) {
+      if (typeof value !== "string") continue;
       for (const match of value.matchAll(/\$\{([A-Z][A-Z0-9_]*)\}/g))
         names.add(match[1]!);
     }
