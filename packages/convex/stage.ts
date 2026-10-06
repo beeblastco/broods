@@ -13,6 +13,7 @@ import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
+import { deleteAgentConfig } from "./model/agentRuntimeSecrets";
 import { accountIdForProject } from "./model/auditEvents";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
@@ -278,7 +279,7 @@ export const remove = mutation({
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
  * deployments and linked broods `agents` rows with their crons), the canvas
- * layout, MCP servers, env vars, and deploy keys. A linked `agents` row goes
+ * layout, MCP servers, env vars, and project keys. A linked `agents` row goes
  * only when the project's account owns it.
  */
 export async function deleteStageContents(
@@ -306,19 +307,9 @@ export async function deleteStageContents(
   const unique = new Map(ownAgents.map((agent) => [agent._id, agent]));
   for (const agent of unique.values()) await deleteAgentRow(ctx, agent);
 
-  for (const config of configs) {
-    // Runtime secrets are keyed to the agent config, so they orphan unless
-    // deleted alongside it.
-    const runtimeSecrets = await ctx.db
-      .query("agentRuntimeSecrets")
-      .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-      .collect();
-    for (const secret of runtimeSecrets) await ctx.db.delete(secret._id);
+  for (const config of configs) await deleteAgentConfig(ctx, config._id);
 
-    await ctx.db.delete(config._id);
-  }
-
-  // The stage's runtime API key is scoped to (project, stage), not
+  // The stage's runtime key is scoped to (project, stage), not
   // to an agent config, so it must be deleted here or it would keep
   // authenticating requests against a deleted stage.
   const stageDeployments = await ctx.db

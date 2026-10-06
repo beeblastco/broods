@@ -1,5 +1,5 @@
 /**
- * Cross-route handoff for a freshly-provisioned one-time account secret. The
+ * Cross-route handoff for a freshly-provisioned one-time account key. The
  * publisher (home bootstrap or org switcher) keeps the plaintext in memory so
  * the onboarding dialog rendered in the persistent main layout can surface it
  * after client navigation. The secret never enters browser storage and is
@@ -12,7 +12,7 @@ let pendingSecret: string | null = null;
 /**
  * Publishes a one-time secret so the onboarding dialog can show it on the next
  * (or current) route, then notifies any mounted listener.
- * @param secret the plaintext fp_acct_ secret to surface once
+ * @param secret the plaintext bask_ account key to surface once
  */
 export function publishOnboardingSecret(secret: string): void {
   if (typeof window === "undefined") return;

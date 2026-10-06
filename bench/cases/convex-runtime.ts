@@ -110,11 +110,15 @@ export const convexRuntimeCases: readonly BenchCase[] = [
       for (let cursor = 1; cursor <= 4; cursor += 1) {
         await test.mutation(internal.runtime.appendConversationEvent, {
           conversationKey: conversationKey,
-          cursor: String(cursor).padStart(3, "0"),
-          event: {
-            role: cursor % 2 ? "user" : "assistant",
-            content: `turn ${cursor}`,
-          },
+          events: [
+            {
+              cursor: String(cursor).padStart(3, "0"),
+              event: {
+                role: cursor % 2 ? "user" : "assistant",
+                content: `turn ${cursor}`,
+              },
+            },
+          ],
         });
       }
 

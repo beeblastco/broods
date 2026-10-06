@@ -27,7 +27,7 @@ test("runExec runs bash on this machine with the frame's cwd and env", async () 
 });
 
 test("runExec keeps the CLI's BROODS_ credentials out of the agent's shell", async () => {
-  process.env.BROODS_API_KEY = "fp_agent_secret";
+  process.env.BROODS_API_KEY = "bsk_secret";
   try {
     const result = await runExec(
       exec({ code: 'echo "${BROODS_API_KEY:-unset} $HOME"' }),
@@ -35,7 +35,7 @@ test("runExec keeps the CLI's BROODS_ credentials out of the agent's shell", asy
     );
 
     expect(result.stdout).toContain("unset");
-    expect(result.stdout).not.toContain("fp_agent_secret");
+    expect(result.stdout).not.toContain("bsk_secret");
     expect(result.stdout).toContain(process.env.HOME ?? "");
   } finally {
     delete process.env.BROODS_API_KEY;

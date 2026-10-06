@@ -275,6 +275,72 @@ describe("an unchanged re-sync", () => {
   });
 });
 
+describe("cli sync holds a custom sandbox to the config API's rules", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const customSandbox = (network: string): CliManifestResource => ({
+    kind: "sandbox",
+    name: "own-server",
+    config: {
+      provider: "custom",
+      network: { mode: network },
+      options: {
+        endpoint: "https://sandbox.example.com",
+        headers: { authorization: { __beeblastEnv: true, name: ENV_NAME } },
+      },
+    },
+  });
+
+  // The rules read the placeholder form, where a credential header is a ref.
+  test("accepts a credential header written as env() and refuses a rule it breaks", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+
+    await syncResources(tt, [customSandbox("allow-all")]);
+
+    expect(
+      await tt.run(
+        async (ctx) => (await ctx.db.query("sandboxConfigs").collect()).length,
+      ),
+    ).toBe(1);
+    await expect(
+      syncResources(tt, [customSandbox("deny-all")]),
+    ).rejects.toThrow("custom cannot enforce egress restrictions");
+  });
+});
+
+describe("a stage env var name", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // A `${NAME}` ref only matches uppercase, so a lowercase name could never be read.
+  test("is uppercase only, like an account env var", async (): Promise<void> => {
+    const tt = t();
+    await seedAccount(tt);
+
+    await expect(
+      tt.mutation(internal.cli.sync.setEnvBySecretHash, {
+        secretHash: SECRET_HASH,
+        project: PROJECT,
+        stage: STAGE,
+        name: "api_key",
+        value: "sk-live-1",
+      }),
+    ).rejects.toThrow("env name must match /^[A-Z][A-Z0-9_]*$/");
+    expect(await storedEnvCount(tt)).toBe(0);
+  });
+});
+
 const syncedRows = (tt: T): Promise<unknown> =>
   tt.run(async (ctx) => ({
     projects: await ctx.db.query("projects").collect(),

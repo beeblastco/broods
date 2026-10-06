@@ -3,7 +3,7 @@
  *
  * Cron jobs are declared in broods/agents.ts and synced by `bun run dev`.
  * Their run history lives on the config plane, so this needs
- * BROODS_ACCOUNT_SECRET, not a stage runtime key.
+ * BROODS_ACCOUNT_SECRET, not a runtime key.
  */
 
 import { BroodsAccountClient } from "broods/account";

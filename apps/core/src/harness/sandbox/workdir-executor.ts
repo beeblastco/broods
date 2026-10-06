@@ -15,7 +15,10 @@ import {
   type Sandbox,
   SandboxError,
 } from "@mv37/workdir";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
+import {
+  removeSandboxInstance,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
@@ -51,6 +54,7 @@ import {
 import {
   type ResolvedS3Mount,
   type S3MountContext,
+  mountAttribution,
   mountRoleArn,
   resolveS3Mount,
   resolveS3MountIdentity,
@@ -74,6 +78,7 @@ import {
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
+  queueMirrorWrite,
   SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
@@ -197,6 +202,25 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         : undefined;
     void ephemeralMount?.catch((): void => {});
     const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
+    // A platform-paid ephemeral sandbox gets a row keyed by its id for the call;
+    // the teardown removes it, which meters the call. Own nodes are not billed and
+    // choose their own ids, so they get no row.
+    const controlPlane = this.#config.controlPlane;
+    const accountId =
+      persistent || controlPlane?.ownCredentials
+        ? undefined
+        : controlPlane?.accountId;
+    if (accountId)
+      void queueMirrorWrite(sandbox.id, () =>
+        upsertSandboxInstance(
+          controlPlane,
+          "sandbox",
+          sandbox.id,
+          sandbox.id,
+          request.metadata,
+          { ephemeral: true },
+        ),
+      );
 
     try {
       if (execMount)
@@ -219,7 +243,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         `timeout -k 5 ${request.timeoutSeconds} bash -c ${shellQuote(request.code)}`,
         {
           ...(cwd ? { cwd: cwd } : {}),
-          env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+          env: mergeSandboxEnv(
+            this.#config.envVars,
+            request.envVars,
+            request.principal,
+          ),
         },
       );
       const stdout = truncateText(
@@ -247,7 +275,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       // The delete leaves the tool clock but not the process: shutdown drains it, so
       // a rolling deploy cannot strand the VM at workdir, which has no TTL of its own.
       // The next call's create can now overlap this delete at the admission ceiling.
-      if (!persistent)
+      if (!persistent) {
         waitUntil(
           sandbox.delete().catch((error: unknown): void => {
             logWarn("workdir sandbox delete failed", {
@@ -256,6 +284,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
             });
           }),
         );
+        if (accountId)
+          waitUntil(
+            queueMirrorWrite(sandbox.id, () =>
+              removeSandboxInstance(accountId, sandbox.id, sandbox.id),
+            ),
+          );
+      }
     }
   }
 
@@ -492,7 +527,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 
   // Throws when the run carries no workspace namespace.
-  #s3Context(request: { namespace?: string }): S3MountContext {
+  #s3Context(
+    request: Pick<SandboxRunRequest, "namespace" | "metadata">,
+  ): S3MountContext {
     if (!request.namespace) {
       throw new Error(
         "workdir AWS S3 workspace mount requires a workspace namespace.",
@@ -511,6 +548,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         optionalEnv("AWS_REGION") ??
         optionalEnv("AWS_DEFAULT_REGION"),
       endpoint: configString(options.s3Endpoint),
+      attribution: mountAttribution(this.#config, request),
     };
   }
 
@@ -564,9 +602,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     // Declarative mount creds come from the guest secret env (named org secrets).
     if (mounts) startup.secrets = s3SecretNames(options);
 
-    // The first-class `snapshot` pin wins; `options.image` stays a back-compat alias.
-    const image =
-      configString(this.#config.snapshot) ?? configString(options.image);
+    const image = configString(this.#config.snapshot);
 
     return {
       ...(workdirResources(this.#config)
@@ -815,7 +851,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // when a remount is due.
   async #ensureS3Mount(
     sandbox: Sandbox,
-    request: { namespace?: string; workspaceRoot?: string },
+    request: Pick<
+      SandboxRunRequest,
+      "namespace" | "workspaceRoot" | "metadata"
+    >,
     isFirstCreate: boolean,
     minted?: Promise<ResolvedS3Mount>,
   ): Promise<void> {

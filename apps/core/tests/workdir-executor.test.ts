@@ -154,6 +154,13 @@ const deleteSandboxInstanceMock = mock(
   },
 );
 const upsertSandboxInstanceMock = mock(async () => {});
+const removeSandboxInstanceMock = mock(
+  async (
+    _accountId: string,
+    _reservationKey: string,
+    _externalId?: string,
+  ): Promise<void> => {},
+);
 // Epoch ms the stored reservation was claimed; drives the max-lifetime check.
 // Defaults to "just now" so the reserved-sandbox tests are not accidentally expired.
 let storedReservedAt = Date.now();
@@ -185,7 +192,8 @@ mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: upsertSandboxInstanceMock,
   setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
-  removeSandboxInstance: mock(async (): Promise<void> => {}),
+  recordSandboxBurst: mock(async (): Promise<boolean> => true),
+  removeSandboxInstance: removeSandboxInstanceMock,
 }));
 
 // Assume-role S3 mount path: stub STS so it returns fixed temporary credentials
@@ -281,6 +289,7 @@ beforeEach(() => {
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
   upsertSandboxInstanceMock.mockClear();
+  removeSandboxInstanceMock.mockClear();
   getSandboxReservationRecordMock.mockClear();
 });
 
@@ -367,6 +376,62 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
     // Ephemeral sandboxes are torn down after the call.
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
+  });
+
+  it("mirrors an ephemeral sandbox for the call and removes it only after the upsert lands", async (): Promise<void> => {
+    let settleUpsert = (): void => {};
+    upsertSandboxInstanceMock.mockImplementationOnce(
+      (): Promise<void> =>
+        new Promise((resolve): void => {
+          settleUpsert = resolve;
+        }),
+    );
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE },
+      controlPlane: { accountId: "acct_1", name: "box" },
+    });
+
+    await executor.run({
+      code: "echo hi",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    await tick();
+
+    expect(upsertSandboxInstanceMock.mock.calls[0]).toMatchObject([
+      { accountId: "acct_1" },
+      "sandbox",
+      "sbx_new",
+      "sbx_new",
+      undefined,
+      { ephemeral: true },
+    ]);
+    // A remove that beat the pending upsert would let it recreate the row.
+    expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+    settleUpsert();
+    await drainInFlight();
+    expect(removeSandboxInstanceMock.mock.calls).toEqual([
+      ["acct_1", "sbx_new", "sbx_new"],
+    ]);
+  });
+
+  it("writes no row for an ephemeral sandbox on the account's own workdir node", async (): Promise<void> => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE },
+      controlPlane: { accountId: "acct_1", name: "box", ownCredentials: true },
+    });
+
+    await executor.run({
+      code: "echo hi",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    await drainInFlight();
+
+    expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
+    expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
   });
 
   it("reports the wrapper's exit 124 and its follow-up kill as a timeout", async (): Promise<void> => {
@@ -546,11 +611,11 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
   });
 
-  it("launches from the config snapshot pin, preferring it over the options.image alias", async () => {
+  it("launches from the config snapshot pin", async () => {
     const executor = await newExecutor({
       provider: "sandbox",
       snapshot: "img_curated",
-      options: { workdirUrl: BASE, image: "img_legacy" },
+      options: { workdirUrl: BASE },
     });
     await executor.run({
       code: "echo ok",

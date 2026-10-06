@@ -32,7 +32,7 @@ export interface ApiResource {
   id?: string;
 }
 
-/** The role identity an fp_sts_ session acts as, as stored and resolved. */
+/** The role identity a bsts_ session acts as, as stored and resolved. */
 export interface RolePrincipal {
   accountId: string;
   roleId: string;

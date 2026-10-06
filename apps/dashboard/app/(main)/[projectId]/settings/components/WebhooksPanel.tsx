@@ -12,6 +12,7 @@ import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
+import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
 import { applyWebhookEnabledToggle } from "@/app/lib/webhooksOptimistic";
 import { api } from "@broods/convex/_generated/api";
@@ -191,16 +192,12 @@ export function WebhooksPanel({
                             index: webhook.index,
                             enabled: !webhook.enabled,
                           }).catch((error: unknown) =>
-                            setToggleError(
-                              error instanceof Error
-                                ? error.message
-                                : "Could not change this webhook.",
-                            ),
+                            setToggleError(toErrorMessage(error)),
                           );
                         }}
                         className={cn(
                           "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
-                          canWrite ? "cursor-pointer" : "cursor-default",
+                          canWrite ? "cursor-pointer" : "cursor-not-allowed",
                           webhook.enabled
                             ? "bg-success/15 text-success hover:bg-success/25"
                             : "bg-destructive/15 text-destructive hover:bg-destructive/25",
@@ -322,7 +319,7 @@ function AddWebhookForm({
       });
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add webhook");
+      setError(toErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -334,6 +331,7 @@ function AddWebhookForm({
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="https://your-service.example/hooks"
+        aria-label="Webhook URL"
         className="text-sm"
         autoFocus
       />
@@ -341,19 +339,21 @@ function AddWebhookForm({
         value={secret}
         onChange={(e) => setSecret(e.target.value)}
         placeholder="HMAC signing secret"
+        aria-label="Signing secret"
         className="text-sm"
       />
       <Input
         value={events}
         onChange={(e) => setEvents(e.target.value)}
         placeholder="Events, comma-separated (blank = all, e.g. agent.started, agent.finished)"
+        aria-label="Events"
         className="text-sm"
       />
       {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex items-center gap-2">
         <Button
           size="sm"
-          className="cursor-pointer disabled:cursor-not-allowed"
+          className="cursor-pointer"
           disabled={!url.trim() || !secret.trim() || busy}
           onClick={handleSave}
         >

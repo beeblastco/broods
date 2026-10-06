@@ -57,7 +57,7 @@ sequenceDiagram
   participant N as NATS OBSERVABILITY
   participant L as Loki
 
-  C->>G: WS upgrade, fp_dts_ ticket
+  C->>G: WS upgrade, bdts_ ticket
   G->>Core: /v1/internal/observability-scope
   Core-->>G: account, project, stage
   G->>G: refuse if the path's project or stage differ
@@ -72,7 +72,7 @@ sequenceDiagram
 
 Traces take the same path, with a Tempo search in place of the Loki query.
 
-- It refuses the stage runtime key. Clients connect with a fifteen-minute stage session ticket (`fp_dts_`), which the CLI mints from a login token at `POST /v1/account/stage-session` and refreshes before each reconnect.
+- It refuses the runtime key. Clients connect with a fifteen-minute stage session ticket (`bdts_`), which the CLI mints from a login token at `POST /v1/account/stage-session` and refreshes before each reconnect.
 - A `subscribe` with `backfill` always gets a closing `backfill` message, even when Loki or Tempo failed; that message then carries `error`, so a client can tell an empty stage from a failed query.
 - Logs come back in one message. The Loki query widens in steps. It tries the last hour with a 5 s budget, then a day with 10 s, then 30 days with 15 s, stopping at the first step that fills a page. A step that times out ends the backfill, since a wider window only costs more. 30 days is Loki's own range cap.
 - Traces come from a Tempo search over 7 days, Tempo's cap, with a 15 s budget. Each trace then needs its own lookup, with a 5 s budget and 6 at a time, so traces arrive newest first in chunks of 12 flagged `more: true`, and the closing message carries the failure count.
@@ -90,7 +90,7 @@ Every top-level run is its own trace, labelled by what started it. `task` is a r
 - A root that ends cleanly but leaves something open closes as `needs_input`, when it is blocked on the person (an open question or approval), or `waiting`, when work still has to settle (a subagent, an async tool, a background job). `task.waiting_on` says which one: `question`, `approval`, `subagent` or `tool`. OTel only has ok and error, so Tempo keeps the state in `task.state` and the gateway restores it on backfill.
 - The Tracing tab lists one row per request, not per trace. The runs one request started nest under its first run: the passes that share its `task.id`, the runs an answer or finished job resumed (`task.root_id`), and its subagents (`parent.trace_id`). A wait row sits between a run that closed on something open and the next run. The row's status is the request's: Running, Waiting, Needs input, Done or Failed. A Done request with a subagent still running reads Waiting, and failed tool calls show as a count even when the run recovered.
 - A failed `task` or `cron` root has a Continue button that posts `continue: true` for its agent and scoped conversation key.
-- Config mutations write to Convex `configAuditEvents`, which the dashboard Settings Audit Logs tab reads.
+- Config mutations and run lifecycle write to the Convex `auditEvents` ledger, read through `GET /v1/audit`; see [security](security.md#audit-ledger).
 
 ## Sandbox output
 
@@ -144,8 +144,8 @@ Prompts, full tool inputs and outputs, request and response bodies, and response
 
 ## Security
 
-- One redaction chokepoint. `log.ts` redacts by key name with `isSecretName` (`packages/convex/model/secretNames.ts`), the same rule config redaction and MCP header refs use, and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens.
-- Scoped STS mount credentials are never logged. The MicroVM forwarder applies the pattern half of redaction, covering `Bearer` and `Basic` values, query-string secrets, and `fp_agent_` and `fp_sts_` tokens. It cannot know a run's own secret values. A guest that echoes an injected secret prints it to the owning account's view and to operators. Treat sandbox stdout as untrusted.
+- One redaction chokepoint. `log.ts` redacts by key name with `isSecretName` (`packages/convex/model/secretNames.ts`), the same rule config redaction and MCP header refs use, and scrubs every string against sensitive env values and the run's known secret values before any sink sees it. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets and every `b`-prefixed Broods credential (`bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_`, `bsts_`, `bdts_`, `brt_`).
+- Scoped STS mount credentials are never logged. The MicroVM forwarder applies the pattern half of redaction, covering `Bearer` and `Basic` values, query-string secrets and every `b`-prefixed Broods credential (`bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_`, `bsts_`, `bdts_`, `brt_`). It cannot know a run's own secret values. A guest that echoes an injected secret prints it to the owning account's view and to operators. Treat sandbox stdout as untrusted.
 - A sandbox tail is scoped like every other observability socket. The gateway builds the Loki selector from the ticket's server-derived account, project and stage, and the client's `sandboxId` only narrows inside that. It must be the UUID shape core mints, or the wire rejects it before it reaches LogQL.
 
 ## Retention and follow-ups

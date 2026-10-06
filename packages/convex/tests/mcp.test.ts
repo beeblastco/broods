@@ -627,4 +627,51 @@ describe("hosted rows", () => {
     expect(listed[0]?.transport).toBe("hosted");
     expect(listed[0]?.url).toBeUndefined();
   });
+
+  test("runtime is auto or lambda, and only a hosted row picks one", async () => {
+    await expect(
+      normalizeMcpInput({ runtime: "workers" }, { requireConnection: false }),
+    ).rejects.toThrow('runtime must be "auto" or "lambda"');
+    expect(
+      (
+        await normalizeMcpInput(
+          { runtime: "lambda" },
+          { requireConnection: false },
+        )
+      ).runtime,
+    ).toBe("lambda");
+
+    const tt = t();
+    const scope = await seedScope(tt);
+    const httpId = await seedServer(tt, scope);
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: httpId,
+        runtime: "lambda",
+      }),
+    ).rejects.toThrow("runtime applies to hosted (bundle) servers, not http");
+
+    const hostedId = await tt.mutation(internal.account.mcp.create, {
+      accountId: scope.accountId,
+      projectId: scope.projectId,
+      stageId: scope.stageId,
+      name: "hosted",
+      transport: "hosted",
+      bundleStorageKey: "account-mcp/acct/bundles/x.mjs",
+      sha256: "a".repeat(64),
+      runtime: "lambda",
+    });
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: hostedId,
+      transport: "http",
+      url: SERVER_URL,
+    });
+    const row = await tt.query(internal.account.mcp.getById, {
+      accountId: scope.accountId,
+      serverId: hostedId,
+    });
+    expect(row?.runtime).toBeUndefined();
+  });
 });

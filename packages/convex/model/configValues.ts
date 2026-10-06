@@ -5,7 +5,10 @@
  * byte-identical. Pure module, safe for the default Convex runtime.
  */
 
-import { CREDENTIAL_HEADER_VALUE_PATTERN } from "./envRefs";
+import {
+  ACCOUNT_ENV_REFS_ONLY_PATTERN,
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+} from "./envRefs";
 import { isPlainObject } from "./objects";
 import { isSecretName } from "./secretNames";
 
@@ -29,8 +32,8 @@ export function mergeConfigObjects(
 }
 
 /**
- * Recursively replace secret-shaped string values with the redaction
- * placeholder for public API responses.
+ * Recursively replace secret values, found by name or inside a `headers`
+ * map, with the redaction placeholder for public API responses.
  * @param value the config value to project
  * @returns the value with secrets masked
  */
@@ -71,9 +74,23 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-function redactSecrets(value: unknown): unknown {
+// Inside a `headers` map any value but `${NAME}` refs, after an optional auth
+// scheme word, is masked: a sync resolves refs into the stored config whatever
+// the header is called. Under a secret name only refs show, and a list is
+// masked whole so sending it back keeps the stored one.
+function redactSecrets(value: unknown, scope?: "headers" | "secret"): unknown {
+  if (typeof value === "string") {
+    const refs =
+      scope === "headers"
+        ? CREDENTIAL_HEADER_VALUE_PATTERN
+        : ACCOUNT_ENV_REFS_ONLY_PATTERN;
+
+    return scope && !refs.test(value) ? REDACTED_SECRET_VALUE : value;
+  }
   if (Array.isArray(value)) {
-    return value.map(redactSecrets);
+    return scope === "secret"
+      ? REDACTED_SECRET_VALUE
+      : value.map((entry) => redactSecrets(entry, scope));
   }
   if (!isPlainObject(value)) {
     return value;
@@ -82,11 +99,12 @@ function redactSecrets(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
       key,
-      isSecretName(key) &&
-      typeof entry === "string" &&
-      !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
-        ? REDACTED_SECRET_VALUE
-        : redactSecrets(entry),
+      redactSecrets(
+        entry,
+        key === "headers"
+          ? "headers"
+          : (scope ?? (isSecretName(key) ? "secret" : undefined)),
+      ),
     ]),
   );
 }
