@@ -14,7 +14,10 @@ import {
   substituteEnvPlaceholders,
 } from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
-import { saveAgentRuntimeSecrets } from "./agentRuntimeSecrets";
+import {
+  deleteAgentConfig,
+  saveAgentRuntimeSecrets,
+} from "./agentRuntimeSecrets";
 import {
   deleteAgentRow,
   ensureAgentsRowForConfig,
@@ -82,7 +85,7 @@ export async function deleteAgentResource(
     );
   }
   if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
-  await ctx.db.delete(config._id);
+  await deleteAgentConfig(ctx, config._id);
 }
 
 /**
@@ -153,7 +156,7 @@ export async function pruneAgents(
   for (const config of existing) {
     if (config.managedBy !== "cli" || declared.has(config.name)) continue;
     if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
-    await ctx.db.delete(config._id);
+    await deleteAgentConfig(ctx, config._id);
   }
 }
 

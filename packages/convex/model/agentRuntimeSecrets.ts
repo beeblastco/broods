@@ -15,6 +15,23 @@ const MASKED_RUNTIME_VARIABLE_VALUE = "";
 
 export type RuntimeVariable = { key: string; value: string };
 
+/**
+ * Deletes an agent config with its runtime secrets. The secrets are keyed to
+ * the config, so every path that removes an `agentConfigs` row goes through
+ * here or they orphan, undecryptable, behind it.
+ */
+export async function deleteAgentConfig(
+  ctx: MutationCtx,
+  configId: Id<"agentConfigs">,
+): Promise<void> {
+  const secrets = await ctx.db
+    .query("agentRuntimeSecrets")
+    .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", configId))
+    .collect();
+  for (const secret of secrets) await ctx.db.delete(secret._id);
+  await ctx.db.delete(configId);
+}
+
 export async function loadAgentRuntimeSecrets(
   ctx: QueryCtx | MutationCtx,
   configId: Id<"agentConfigs">,
