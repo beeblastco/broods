@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 /**
  * The two credential prefix migrations: stored runtime keys are replaced by
- * fresh `bsk_` keys, and role ids move to `brole_` together with their live
- * sessions. Both are idempotent.
+ * fresh `bsk_` keys, and role ids move to `brole_` while their refused old
+ * sessions wait out their expiry. Both are idempotent.
  */
 
 import { convexTest, type TestConvex } from "convex-test";

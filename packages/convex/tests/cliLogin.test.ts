@@ -27,6 +27,7 @@ type T = ReturnType<typeof loginTest>;
 async function seedCode(
   t: T,
   codeChallenge: string | undefined,
+  code: string = CODE,
 ): Promise<Id<"cliAuthCodes">> {
   return await t.run(async (ctx) => {
     const now = Date.now();
@@ -47,7 +48,7 @@ async function seedCode(
     });
 
     return await ctx.db.insert("cliAuthCodes", {
-      codeHash: await sha256Hex(CODE),
+      codeHash: await sha256Hex(code),
       authId: AUTH_ID,
       orgId: orgId,
       accountId: accountId,
@@ -88,6 +89,16 @@ describe("CLI login code exchange with PKCE", () => {
       code: CODE,
     });
     expect(exchanged.token.startsWith("bcli_")).toBe(true);
+  });
+
+  test("a code under an old prefix is refused even when its hash is stored", async () => {
+    const t = loginTest();
+    const legacy = "fp_code_test-code";
+    await seedCode(t, undefined, legacy);
+
+    await expect(
+      t.mutation(internal.cli.auth.exchangeLoginCode, { code: legacy }),
+    ).rejects.toThrow(/invalid or expired/);
   });
 
   test("the challenge is the base64url S256 of the verifier", async () => {

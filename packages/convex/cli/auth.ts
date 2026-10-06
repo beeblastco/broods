@@ -276,6 +276,9 @@ export const exchangeLoginCode = internalMutation({
     }),
   }),
   handler: async (ctx, { code, codeVerifier }) => {
+    if (!code.startsWith(CLI_CODE_PREFIX)) {
+      throw new Error("CLI login code is invalid or expired");
+    }
     const codeHash = await sha256Hex(code);
     const row = await ctx.db
       .query("cliAuthCodes")
