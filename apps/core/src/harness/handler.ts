@@ -1576,6 +1576,7 @@ export async function handleChannelRequest(
     event.attachments,
     {
       accountId: event.accountId,
+      agentId: event.agentId,
       agentConfig: event.agentConfig ?? {},
       channelName: event.channelName,
       conversationKey: event.conversationKey,
@@ -2010,6 +2011,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     (
       await ingestChannelAttachments(event.events, event.attachments, {
         accountId: event.accountId,
+        agentId: event.agentId,
         agentConfig: event.agentConfig ?? {},
         channelName: event.channelName,
         conversationKey: event.conversationKey,

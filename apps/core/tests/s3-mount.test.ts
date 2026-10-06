@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { agentNamespaceFolder } from "../src/shared/runtime-keys.ts";
 
 let lastAssumeRoleInput: Record<string, unknown> | undefined;
 const assumeRoleSendMock = mock(async () => ({
@@ -20,6 +21,7 @@ mock.module("@aws-sdk/client-sts", () => ({
 }));
 
 const {
+  mountAttribution,
   mountRoleArn,
   resolveS3Mount,
   resolveS3MountIdentity,
@@ -181,6 +183,32 @@ describe("resolveS3MountIdentity", () => {
   });
 });
 
+describe("mountAttribution", () => {
+  it("names the agent only on that agent's own folder, and the account on a mount another agent can reuse", () => {
+    const config = { controlPlane: { accountId: "acct_1" } };
+    const metadata = { agentId: "agent_1" };
+    const own = `${NS}/${agentNamespaceFolder("agent_1")}`;
+
+    expect(
+      mountAttribution(config, { namespace: own, metadata: metadata }),
+    ).toEqual({ accountId: "acct_1", agentId: "agent_1" });
+    // A shared root or a conversation folder outlives one run's credentials,
+    // so the next agent on the same sandbox would carry this agent's name.
+    for (const namespace of [
+      NS,
+      `${NS}/support/fs-conversation`,
+      `${NS}/${agentNamespaceFolder("agent_2")}`,
+    ]) {
+      expect(
+        mountAttribution(config, { namespace: namespace, metadata: metadata }),
+      ).toEqual({ accountId: "acct_1", agentId: undefined });
+    }
+    expect(
+      mountAttribution({}, { namespace: own, metadata: metadata }),
+    ).toBeUndefined();
+  });
+});
+
 describe("mountRoleArn", () => {
   it("uses the workspace's own role for a bucket it names", () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
@@ -243,6 +271,59 @@ describe("resolveS3Mount", () => {
     expect(String(lastAssumeRoleInput?.Policy)).toContain(
       `managed-bucket/${NS}/`,
     );
+  });
+
+  it("names the agent on the platform session as SourceIdentity and tags, and on a developer role by session name only", async () => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+      attribution: { accountId: "acct_1", agentId: "agent_1" },
+    });
+    expect(lastAssumeRoleInput).toMatchObject({
+      RoleSessionName: "fp-sandbox-mount-agent_1",
+      SourceIdentity: "agent_1",
+      Tags: [
+        { Key: "broods:account", Value: "acct_1" },
+        { Key: "broods:agent", Value: "agent_1" },
+      ],
+    });
+
+    // No agent (an account-level mount) still attributes the account.
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+      attribution: { accountId: "acct_1" },
+    });
+    expect(lastAssumeRoleInput).toMatchObject({
+      RoleSessionName: "fp-sandbox-mount-acct-acct_1",
+      SourceIdentity: "acct-acct_1",
+      Tags: [{ Key: "broods:account", Value: "acct_1" }],
+    });
+
+    // A developer's trust policy only grants sts:AssumeRole, so the session
+    // name is the one attribution that must not break their mount.
+    await resolveS3Mount({
+      storage: BYO_STORAGE,
+      namespace: NS,
+      attribution: { accountId: "acct_1", agentId: "agent_1" },
+    });
+    expect(lastAssumeRoleInput?.RoleSessionName).toBe(
+      "fp-sandbox-mount-agent_1",
+    );
+    expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
+    expect(lastAssumeRoleInput).not.toHaveProperty("Tags");
+
+    // An unattributed mount keeps the plain session name.
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+    });
+    expect(lastAssumeRoleInput?.RoleSessionName).toBe("fp-sandbox-mount");
+    expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
   });
 
   it("assumes the developer's role with the ExternalId, scoped to their bucket/prefix", async () => {

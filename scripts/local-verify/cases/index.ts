@@ -16,6 +16,7 @@ import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { workToolWebhooks } from "./work-tool-webhooks.ts";
+import { workspaceIsolation } from "./workspace-isolation.ts";
 
 /** Every case `local-stack.ts verify` runs, in order. A new end-to-end feature adds one here. */
 export const verifyCases: readonly VerifyCase[] = [
@@ -36,4 +37,5 @@ export const verifyCases: readonly VerifyCase[] = [
   connections,
   auditLedger,
   runToken,
+  workspaceIsolation,
 ];
