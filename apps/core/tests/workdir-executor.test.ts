@@ -185,6 +185,7 @@ mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: upsertSandboxInstanceMock,
   setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
+  recordSandboxBurst: mock(async (): Promise<boolean> => true),
   removeSandboxInstance: mock(async (): Promise<void> => {}),
 }));
 
