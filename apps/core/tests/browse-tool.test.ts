@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
@@ -137,6 +137,7 @@ describe("browse tool", () => {
         },
       },
     );
+    rmSync(bin, { recursive: true, force: true });
 
     expect(run.stdout.toString().trim()).toBe("allow=unset");
   });

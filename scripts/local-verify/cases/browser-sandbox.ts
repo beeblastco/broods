@@ -76,6 +76,9 @@ async function browseKeepsPrivateNetworkGuard(
       OBSCURA_ALLOW_PRIVATE_NETWORK: "1",
       PATH: `${bin}:${process.env.PATH ?? ""}`,
     },
+  }).catch((error: unknown): never => {
+    rmSync(bin, { recursive: true, force: true });
+    throw error;
   });
   try {
     const { agentId } = await context.account.createAgent({
