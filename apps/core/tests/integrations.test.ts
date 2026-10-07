@@ -1258,7 +1258,7 @@ describe("direct API ingress", () => {
     });
   });
 
-  it("accepts a numeric idempotency key and rejects other non-strings", async () => {
+  it("rejects an idempotency key that is not a string", async () => {
     const handledEvents: DirectInboundEvent[] = [];
     const handlers = createHandlers({
       handleDirectRequest: async (event) => {
@@ -1292,10 +1292,9 @@ describe("direct API ingress", () => {
       handlers,
     );
 
-    expect(numeric.statusCode).toBe(202);
-    expect(handledEvents[0]?.idempotencyKey).toBe("42");
+    expect(numeric.statusCode).toBe(400);
     expect(object.statusCode).toBe(400);
-    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents).toHaveLength(0);
   });
 
   it("passes top-level system as ephemeral AI SDK system messages", async () => {

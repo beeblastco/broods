@@ -1372,6 +1372,10 @@ describe("conversation summary", () => {
         ),
       ).toBe(true);
       expect(summary?.content).toContain("summary of");
+      const merge = requests.find((request) =>
+        request.startsWith("Older part:"),
+      );
+      expect(merge).toContain("Newer part:");
     } finally {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
@@ -1388,7 +1392,7 @@ describe("conversation summary", () => {
         const content = options.messages[0]?.content ?? "";
         const wholeHistory =
           content.includes("Message 1") && content.includes("Message 2");
-        if (wholeHistory || content.startsWith("half")) {
+        if (wholeHistory || content.startsWith("Older part:")) {
           throw new APICallError({
             message: "prompt is too long: 210000 tokens > 200000 maximum",
             url: "https://provider.test/v1",
