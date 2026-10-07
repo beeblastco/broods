@@ -1302,7 +1302,10 @@ describe("connected MCP servers", () => {
   it("shows the model only images it can read, within one result's budget", async () => {
     // A PNG header padded to just over 6 MB once decoded.
     const huge = `${pngHeader(10, 10)}${"A".repeat(8 * 1024 * 1024)}`;
-    const image = (data: string, mimeType = "image/png") => ({
+    const image = (
+      data: string,
+      mimeType = "image/png",
+    ): { type: "image"; data: string; mimeType: string } => ({
       type: "image" as const,
       data: data,
       mimeType: mimeType,
@@ -1661,12 +1664,13 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
   };
 }
 
-// A JPEG's start of image, then the frame header that names its size, as base64.
+// A JPEG's start of image, then, after one 0xFF fill byte, the frame header
+// that names its size, as base64.
 function jpegHeader(width: number, height: number): string {
-  const frame = Buffer.alloc(19);
-  frame.set([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08]);
-  frame.writeUInt16BE(height, 7);
-  frame.writeUInt16BE(width, 9);
+  const frame = Buffer.alloc(20);
+  frame.set([0xff, 0xd8, 0xff, 0xff, 0xc0, 0x00, 0x11, 0x08]);
+  frame.writeUInt16BE(height, 8);
+  frame.writeUInt16BE(width, 10);
 
   return frame.toString("base64");
 }

@@ -285,86 +285,6 @@ function base64Bytes(data: string): number | undefined {
   return (data.length / 4) * 3 - padding;
 }
 
-/**
- * An image's pixel size, read from the header its type defines, or undefined
- * when that header is not all there: a signature alone is not an image.
- */
-function imageSize(
-  bytes: Buffer,
-  mediaType: string,
-): { width: number; height: number } | undefined {
-  if (mediaType === "image/png") {
-    return bytes.length >= 24 && bytes.toString("latin1", 12, 16) === "IHDR"
-      ? { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
-      : undefined;
-  }
-  if (mediaType === "image/gif") {
-    return bytes.length >= 10
-      ? { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) }
-      : undefined;
-  }
-  if (mediaType === "image/webp") {
-    return webpSize(bytes);
-  }
-
-  return jpegSize(bytes);
-}
-
-/** A JPEG's size from its first start-of-frame segment. */
-function jpegSize(
-  bytes: Buffer,
-): { width: number; height: number } | undefined {
-  let offset = 2;
-  while (offset + 9 <= bytes.length && bytes[offset] === 0xff) {
-    const marker = bytes.readUInt8(offset + 1);
-    // SOF0 to SOF15, except DHT (C4), JPG (C8) and DAC (CC).
-    if (
-      marker >= 0xc0 &&
-      marker <= 0xcf &&
-      marker !== 0xc4 &&
-      marker !== 0xc8 &&
-      marker !== 0xcc
-    ) {
-      return {
-        width: bytes.readUInt16BE(offset + 7),
-        height: bytes.readUInt16BE(offset + 5),
-      };
-    }
-    offset += 2 + bytes.readUInt16BE(offset + 2);
-  }
-
-  return undefined;
-}
-
-/** A WebP's size from its VP8, VP8L or VP8X chunk. */
-function webpSize(
-  bytes: Buffer,
-): { width: number; height: number } | undefined {
-  if (bytes.length < 30) return undefined;
-  switch (bytes.toString("latin1", 12, 16)) {
-    case "VP8 ":
-      return {
-        width: bytes.readUInt16LE(26) & 0x3fff,
-        height: bytes.readUInt16LE(28) & 0x3fff,
-      };
-    case "VP8L": {
-      const bits = bytes.readUInt32LE(21);
-
-      return {
-        width: (bits & 0x3fff) + 1,
-        height: ((bits >> 14) & 0x3fff) + 1,
-      };
-    }
-    case "VP8X":
-      return {
-        width: bytes.readUIntLE(24, 3) + 1,
-        height: bytes.readUIntLE(27, 3) + 1,
-      };
-    default:
-      return undefined;
-  }
-}
-
 function formatJSONValue(value: JSONValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
@@ -390,6 +310,32 @@ function hasValidProviderOptions(value: Record<string, unknown>): boolean {
   return (
     value.providerOptions === undefined || isJSONValue(value.providerOptions)
   );
+}
+
+/**
+ * An image's pixel size, read from the header its type defines, or undefined
+ * when that header is not all there: a signature alone is not an image. Only
+ * the header is read, so a body cut short past it still passes.
+ */
+function imageSize(
+  bytes: Buffer,
+  mediaType: string,
+): { width: number; height: number } | undefined {
+  if (mediaType === "image/png") {
+    return bytes.length >= 24 && bytes.toString("latin1", 12, 16) === "IHDR"
+      ? { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+      : undefined;
+  }
+  if (mediaType === "image/gif") {
+    return bytes.length >= 10
+      ? { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) }
+      : undefined;
+  }
+  if (mediaType === "image/webp") {
+    return webpSize(bytes);
+  }
+
+  return jpegSize(bytes);
 }
 
 function isFileData(value: unknown): boolean {
@@ -534,6 +480,37 @@ function isToolResultOutput(value: unknown): value is ToolResultOutput {
   }
 }
 
+/** A JPEG's size from its first start-of-frame segment. */
+function jpegSize(
+  bytes: Buffer,
+): { width: number; height: number } | undefined {
+  let offset = 2;
+  while (offset + 9 <= bytes.length && bytes[offset] === 0xff) {
+    const marker = bytes.readUInt8(offset + 1);
+    // A marker may be preceded by any number of 0xFF fill bytes.
+    if (marker === 0xff) {
+      offset += 1;
+      continue;
+    }
+    // SOF0 to SOF15, except DHT (C4), JPG (C8) and DAC (CC).
+    if (
+      marker >= 0xc0 &&
+      marker <= 0xcf &&
+      marker !== 0xc4 &&
+      marker !== 0xc8 &&
+      marker !== 0xcc
+    ) {
+      return {
+        width: bytes.readUInt16BE(offset + 7),
+        height: bytes.readUInt16BE(offset + 5),
+      };
+    }
+    offset += 2 + bytes.readUInt16BE(offset + 2);
+  }
+
+  return undefined;
+}
+
 export function parseToolResultOutput(
   value: unknown,
 ): ToolResultOutput | undefined {
@@ -642,5 +619,34 @@ function urlToolContentPartToUserPart(
     };
   } catch {
     return textPart(JSON.stringify(part), part.providerOptions);
+  }
+}
+
+/** A WebP's size from its VP8, VP8L or VP8X chunk. */
+function webpSize(
+  bytes: Buffer,
+): { width: number; height: number } | undefined {
+  if (bytes.length < 30) return undefined;
+  switch (bytes.toString("latin1", 12, 16)) {
+    case "VP8 ":
+      return {
+        width: bytes.readUInt16LE(26) & 0x3fff,
+        height: bytes.readUInt16LE(28) & 0x3fff,
+      };
+    case "VP8L": {
+      const bits = bytes.readUInt32LE(21);
+
+      return {
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >> 14) & 0x3fff) + 1,
+      };
+    }
+    case "VP8X":
+      return {
+        width: bytes.readUIntLE(24, 3) + 1,
+        height: bytes.readUIntLE(27, 3) + 1,
+      };
+    default:
+      return undefined;
   }
 }
