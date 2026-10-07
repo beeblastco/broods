@@ -288,6 +288,23 @@ it("tears down a live reservation when the row take is refused", async () => {
   ]);
 });
 
+// A workdir executor refuses to construct with no node to reach.
+it("hands the reservation back when the executor cannot be built", async () => {
+  const workdirUrl = process.env.WORKDIR_URL;
+  delete process.env.WORKDIR_URL;
+  reservedProvider = "sandbox";
+  accountConfigs = [];
+  const released = await releaseExpiredSandboxes("acct-1", [
+    { provider: "sandbox", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+  if (workdirUrl !== undefined) process.env.WORKDIR_URL = workdirUrl;
+
+  expect(released).toEqual([]);
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["sandbox", "key-a", "sbx-a", "acct-1"],
+  ]);
+});
+
 it("still drops the rows when the reservation lookup fails", async () => {
   lookupError = new Error("convex unavailable");
   const released = await releaseReservedSandboxes("acct-1", ["key-live"]);

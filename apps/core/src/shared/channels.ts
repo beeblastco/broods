@@ -109,7 +109,6 @@ export interface ChannelQuestion {
   header: string;
   question: string;
   options: ChannelQuestionOption[];
-  allowFreeText?: boolean;
 }
 
 /** A button click on a posted question, by position. */

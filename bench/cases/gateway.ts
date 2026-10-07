@@ -1,34 +1,15 @@
 /**
- * Gateway per-request work. Every public request to Broods lands on these
- * three: classify the path, match the WebSocket shapes, charge the rate limit.
- * They run before any upstream call, so their cost is pure added latency.
+ * Gateway per-upgrade work: match the WebSocket shapes and charge the
+ * failed-login limit. They run before the token check reaches core, so their
+ * cost is pure added latency. Traefik routes everything else.
  */
 
 import { RateLimiter } from "../../apps/gateway/src/rate-limiter.ts";
 import {
-  isConfigHttpPath,
   matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
 } from "../../apps/gateway/src/routes.ts";
 import type { BenchCase } from "../runner.ts";
-
-// A request mix that exercises both halves of the split: config-plane hits that
-// short-circuit early, config-plane hits that fall through to the regex tail,
-// and runtime paths that must walk the whole function to return false.
-const REQUEST_MIX: ReadonlyArray<{ pathname: string; method: string }> = [
-  { pathname: "/v1/account", method: "GET" },
-  { pathname: "/v1/agents", method: "POST" },
-  { pathname: "/v1/agents/agt_7f3c9d21/", method: "PATCH" },
-  { pathname: "/v1/env/OPENAI_API_KEY", method: "PUT" },
-  { pathname: "/v1/skills/skill_deploy", method: "GET" },
-  { pathname: "/v1/crons/cron_nightly/runs", method: "GET" },
-  { pathname: "/v1/workspaces/ws_main/files", method: "GET" },
-  { pathname: "/v1/agents/agt_7f3c9d21/invoke", method: "POST" },
-  { pathname: "/v1/agents/agt_7f3c9d21/messages", method: "POST" },
-  { pathname: "/v1/runs/run_2a91", method: "GET" },
-  { pathname: "/health", method: "GET" },
-  { pathname: "/v1/media/med_8812", method: "GET" },
-];
 
 const WEBSOCKET_MIX: readonly string[] = [
   "/v1/agents/agt_7f3c9d21/ws",
@@ -45,15 +26,6 @@ const RATE_LIMIT_KEYS: readonly string[] = Array.from(
 );
 
 export const gatewayCases: readonly BenchCase[] = [
-  {
-    name: "gateway/route-classify",
-    iterations: 50_000,
-    run: (): unknown => {
-      const request = REQUEST_MIX[routeCursor++ % REQUEST_MIX.length]!;
-
-      return isConfigHttpPath(request.pathname, request.method);
-    },
-  },
   {
     name: "gateway/websocket-path-match",
     iterations: 50_000,
@@ -86,5 +58,4 @@ export const gatewayCases: readonly BenchCase[] = [
 
 let limitCursor = 0;
 let limiter = new RateLimiter(Number.MAX_SAFE_INTEGER, 60 * 60 * 1000);
-let routeCursor = 0;
 let socketCursor = 0;

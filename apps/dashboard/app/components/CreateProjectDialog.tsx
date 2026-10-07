@@ -49,7 +49,7 @@ export function CreateProjectDialog({
   const router = useRouter();
   const [name, setName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -76,7 +76,7 @@ export function CreateProjectDialog({
   function handleOpenChange(next: boolean): void {
     if (!next) {
       setName("");
-      setCreateError(null);
+      setError(null);
     }
     onOpenChange(next);
   }
@@ -84,7 +84,7 @@ export function CreateProjectDialog({
   async function handleCreate(): Promise<void> {
     if (!name.trim()) return;
     setIsCreating(true);
-    setCreateError(null);
+    setError(null);
     try {
       const id = await createProject({
         name: name.trim(),
@@ -92,8 +92,8 @@ export function CreateProjectDialog({
       });
       handleOpenChange(false);
       router.push(`/${id}`);
-    } catch (error) {
-      setCreateError(toErrorMessage(error));
+    } catch (err) {
+      setError(toErrorMessage(err));
     } finally {
       setIsCreating(false);
     }
@@ -120,9 +120,7 @@ export function CreateProjectDialog({
               onChange={(e) => setName(e.target.value)}
               autoFocus
             />
-            {createError && (
-              <p className="text-xs text-destructive">{createError}</p>
-            )}
+            {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </div>
           <DialogFooter>
             <Button
@@ -135,7 +133,7 @@ export function CreateProjectDialog({
             </Button>
             <Button
               type="submit"
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={!name.trim() || isCreating}
             >
               {isCreating ? "Creating..." : "Create"}

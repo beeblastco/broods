@@ -63,6 +63,7 @@ import type {
 } from "../shared/domain/agent-config.ts";
 import { logInfo } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
+import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
 
 // Providers that answer on OpenAI's Responses API, where a replayed assistant
 // message is a reference to the item the provider still holds rather than the
@@ -75,6 +76,9 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 // Model retries when the agent sets none. The AI SDK's 2 retry for about 6s,
 // shorter than a tokens-per-minute window, so one 429 failed the whole run.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
+
+// Cloudflare AI Gateway's base URL.
+const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
 
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
 const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
@@ -118,6 +122,16 @@ const STALE_STORED_ITEM_PATTERN =
 // provider out. The settings each one accepts are read off it, never restated.
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 
+// Workers AI REST credentials, plus the AI Gateway that carries every request
+// once it is named.
+type CloudflareProviderSettings = Extract<
+  Parameters<typeof createWorkersAI>[0],
+  { accountId: string }
+> & {
+  gatewayId?: string;
+  headers?: Record<string, string>;
+};
+
 interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
   // a model instance, which is what middleware can wrap.
@@ -149,7 +163,7 @@ export type ModelOutputSpec =
 // factory. Built per call so each is read off its live binding, keeping it
 // mockable.
 export function modelProviderFactories(): Record<
-  AccountModelProviderName,
+  Exclude<AccountModelProviderName, "chatgpt">,
   ModelProviderFactory
 > {
   return {
@@ -159,7 +173,7 @@ export function modelProviderFactories(): Record<
     baseten: createBaseten,
     bedrock: createAmazonBedrock,
     cerebras: createCerebras,
-    cloudflare: createWorkersAI,
+    cloudflare: createCloudflare,
     cohere: createCohere,
     custom: createOpenAICompatible,
     deepinfra: createDeepInfra,
@@ -189,11 +203,19 @@ export function modelProviderFactories(): Record<
   };
 }
 
+/**
+ * The agent's model, ready to wrap. `accountId` is only read by `chatgpt`,
+ * whose credential is the account's `chatgpt` connection, not a config setting.
+ */
 export function resolveConfiguredModel(
   agentConfig: AgentConfig,
+  accountId?: string,
 ): ResolvedModelProvider {
   const providerName = requireModelProvider(agentConfig);
   const modelId = requireModelId(agentConfig);
+  if (providerName === "chatgpt") {
+    return resolveChatGPTModel(modelId, accountId);
+  }
   const providerConfig = requireProviderSettings(agentConfig, providerName);
   if (providerName === "custom") {
     return resolveOpenAICompatibleModel(providerName, providerConfig, modelId);
@@ -272,7 +294,8 @@ export function modelSettingsFromModelConfig(
 
 /**
  * Prompt-cache defaults for a conversation run: Anthropic gets an ephemeral
- * cacheControl (caching there is opt-in per request), OpenAI a promptCacheKey
+ * cacheControl (caching there is opt-in per request), OpenAI (and ChatGPT,
+ * where a cached prefix spends less of the plan) a promptCacheKey
  * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
  * A call without a conversation, like compaction, gets neither: a one-shot
  * request pays the cache write and never reads it back. Explicit account
@@ -300,7 +323,7 @@ export function providerOptionsFromModelConfig(
       },
     };
   }
-  if (!STORED_ITEM_PROVIDERS.has(providerName)) {
+  if (!STORED_ITEM_PROVIDERS.has(providerName) && providerName !== "chatgpt") {
     return configured;
   }
 
@@ -610,6 +633,30 @@ function withoutStaleStoredItems(
   return withoutStoredItemState(params);
 }
 
+/**
+ * OpenAI on the account's ChatGPT plan. The API key is a placeholder the fetch
+ * replaces with the connection's access token on every request; the endpoint is
+ * OpenAI's own, so no tenant setting reaches it.
+ */
+function resolveChatGPTModel(
+  modelId: string,
+  accountId: string | undefined,
+): ResolvedModelProvider {
+  const provider = createOpenAI({
+    apiKey: "chatgpt-connection",
+    fetch: chatgptFetch(accountId, withModelFetch({}).fetch),
+  });
+
+  return {
+    providerName: "chatgpt",
+    provider: provider,
+    model: wrapLanguageModel({
+      model: provider(modelId),
+      middleware: [dropUnsupportedMediaMiddleware, chatgptMiddleware],
+    }),
+  };
+}
+
 function resolveOpenAICompatibleModel(
   providerName: "custom",
   providerConfig: AgentProviderSettings,
@@ -642,6 +689,53 @@ function resolveOpenAICompatibleModel(
       ],
     }),
   };
+}
+
+/**
+ * The `cloudflare` provider: Workers AI over REST, through AI Gateway once
+ * `gatewayId` is set (`apiKey` rides `cf-aig-authorization`). Workers AI
+ * models (`@cf/`, `@hf/`) keep the Workers AI provider; other ids use the
+ * gateway's OpenAI-compatible endpoint, where `headers.Authorization` carries an
+ * upstream key.
+ */
+function createCloudflare({
+  gatewayId,
+  headers,
+  ...settings
+}: CloudflareProviderSettings): ModelProviderInstance {
+  const gateway = gatewayId?.trim();
+  if (!gateway) {
+    const workersAI = createWorkersAI(settings);
+
+    return (modelId: string): Exclude<LanguageModel, string> =>
+      workersAI(workersAIModelId(modelId));
+  }
+  const gatewayAuth = { "cf-aig-authorization": `Bearer ${settings.apiKey}` };
+  const workersAI = createWorkersAI({
+    ...settings,
+    gateway: { ...settings.gateway, id: gateway },
+  });
+  const path = [settings.accountId, gateway].map(encodeURIComponent).join("/");
+  const compatible = createOpenAICompatible({
+    name: "cloudflare",
+    baseURL: `${CLOUDFLARE_GATEWAY_BASE_URL}/${path}/compat`,
+    headers: { ...headers, ...gatewayAuth },
+    fetch: settings.fetch,
+    includeUsage: true,
+  });
+
+  return (modelId: string): Exclude<LanguageModel, string> => {
+    const workersModel = workersAIModelId(modelId);
+
+    return workersModel.startsWith("@")
+      ? workersAI(workersModel, { extraHeaders: gatewayAuth })
+      : compatible(modelId);
+  };
+}
+
+// The gateway names Workers AI models `workers-ai/@cf/...`; Workers AI itself takes `@cf/...`.
+function workersAIModelId(modelId: string): string {
+  return modelId.replace(/^workers-ai\//, "");
 }
 
 /**

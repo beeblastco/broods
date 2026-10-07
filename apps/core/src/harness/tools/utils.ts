@@ -4,9 +4,10 @@
  */
 
 import type { JSONValue } from "@ai-sdk/provider";
-import type { ToolResultOutput } from "@ai-sdk/provider-utils";
+import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
 import type { JSONSchema7, UserContent, UserModelMessage } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
+import { MAX_IMAGE_BYTES } from "../../shared/media-types.ts";
 import {
   parseAccountAgentScopedKey,
   scopedDirectEventId,
@@ -29,6 +30,25 @@ export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
 };
 
 export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
+
+// Images one tool result may show the model; together they share MAX_IMAGE_BYTES.
+const MAX_RESULT_IMAGES = 8;
+// The longest side a model provider takes for an inline image.
+const MAX_IMAGE_SIDE = 8000;
+// What every model provider reads inline.
+const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** One part of a `content` tool result. */
+export type ToolContentPart = Extract<
+  ToolResultOutput,
+  { type: "content" }
+>["value"][number];
 
 export interface SubagentToolContext {
   accountId: string;
@@ -203,6 +223,68 @@ export const toolError = (value: string): never => {
 /** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
 
+/**
+ * A tool result's content parts with every image the model cannot read, or past
+ * the result's budget (MAX_RESULT_IMAGES images sharing MAX_IMAGE_BYTES), swapped
+ * for a text note. A bad image would fail the next model call, and big ones stay
+ * in the conversation for every later turn. browse and MCP results go through it.
+ */
+export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
+  let images = 0;
+  let bytes = 0;
+
+  return parts.map((part): ToolContentPart => {
+    if (part.type !== "image-data") return part;
+    const note = (problem: string): ToolContentPart => ({
+      type: "text",
+      text: `[An image (${part.mediaType}, ${part.data.length} base64 characters) was not shown to you: ${problem}.]`,
+    });
+    const size = base64Bytes(part.data);
+    // The bytes name the type; a label alone is often wrong.
+    const mediaType =
+      size === undefined
+        ? undefined
+        : detectMediaType({ data: part.data, topLevelType: "image" });
+    if (
+      size === undefined ||
+      mediaType === undefined ||
+      !MODEL_IMAGE_TYPES.has(mediaType)
+    ) {
+      return note("it is not a PNG, JPEG, GIF or WebP image");
+    }
+    if (bytes + size > MAX_IMAGE_BYTES) {
+      return note(
+        `it would take the result over the ${MAX_IMAGE_BYTES / 1024 / 1024} MB of images one result may carry`,
+      );
+    }
+    if (images >= MAX_RESULT_IMAGES) {
+      return note(`the result carries more than ${MAX_RESULT_IMAGES} images`);
+    }
+    const pixels = imageSize(Buffer.from(part.data, "base64"), mediaType);
+    if (!pixels) return note("it is not a PNG, JPEG, GIF or WebP image");
+    if (
+      Math.max(pixels.width, pixels.height) > MAX_IMAGE_SIDE ||
+      Math.min(pixels.width, pixels.height) < 1
+    ) {
+      return note(
+        `it is ${pixels.width}x${pixels.height} pixels; a side must be 1 to ${MAX_IMAGE_SIDE}`,
+      );
+    }
+    images += 1;
+    bytes += size;
+
+    return { ...part, mediaType: mediaType };
+  });
+}
+
+/** Decoded size of a base64 string, or undefined when it is not valid base64. */
+function base64Bytes(data: string): number | undefined {
+  if (data.length % 4 !== 0 || !BASE64_PATTERN.test(data)) return undefined;
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+
+  return (data.length / 4) * 3 - padding;
+}
+
 function formatJSONValue(value: JSONValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
@@ -228,6 +310,32 @@ function hasValidProviderOptions(value: Record<string, unknown>): boolean {
   return (
     value.providerOptions === undefined || isJSONValue(value.providerOptions)
   );
+}
+
+/**
+ * An image's pixel size, read from the header its type defines, or undefined
+ * when that header is not all there: a signature alone is not an image. Only
+ * the header is read, so a body cut short past it still passes.
+ */
+function imageSize(
+  bytes: Buffer,
+  mediaType: string,
+): { width: number; height: number } | undefined {
+  if (mediaType === "image/png") {
+    return bytes.length >= 24 && bytes.toString("latin1", 12, 16) === "IHDR"
+      ? { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+      : undefined;
+  }
+  if (mediaType === "image/gif") {
+    return bytes.length >= 10
+      ? { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) }
+      : undefined;
+  }
+  if (mediaType === "image/webp") {
+    return webpSize(bytes);
+  }
+
+  return jpegSize(bytes);
 }
 
 function isFileData(value: unknown): boolean {
@@ -372,7 +480,40 @@ function isToolResultOutput(value: unknown): value is ToolResultOutput {
   }
 }
 
-function parseToolResultOutput(value: unknown): ToolResultOutput | undefined {
+/** A JPEG's size from its first start-of-frame segment. */
+function jpegSize(
+  bytes: Buffer,
+): { width: number; height: number } | undefined {
+  let offset = 2;
+  while (offset + 9 <= bytes.length && bytes[offset] === 0xff) {
+    const marker = bytes.readUInt8(offset + 1);
+    // A marker may be preceded by any number of 0xFF fill bytes.
+    if (marker === 0xff) {
+      offset += 1;
+      continue;
+    }
+    // SOF0 to SOF15, except DHT (C4), JPG (C8) and DAC (CC).
+    if (
+      marker >= 0xc0 &&
+      marker <= 0xcf &&
+      marker !== 0xc4 &&
+      marker !== 0xc8 &&
+      marker !== 0xcc
+    ) {
+      return {
+        width: bytes.readUInt16BE(offset + 7),
+        height: bytes.readUInt16BE(offset + 5),
+      };
+    }
+    offset += 2 + bytes.readUInt16BE(offset + 2);
+  }
+
+  return undefined;
+}
+
+export function parseToolResultOutput(
+  value: unknown,
+): ToolResultOutput | undefined {
   return isToolResultOutput(value) ? value : undefined;
 }
 
@@ -478,5 +619,34 @@ function urlToolContentPartToUserPart(
     };
   } catch {
     return textPart(JSON.stringify(part), part.providerOptions);
+  }
+}
+
+/** A WebP's size from its VP8, VP8L or VP8X chunk. */
+function webpSize(
+  bytes: Buffer,
+): { width: number; height: number } | undefined {
+  if (bytes.length < 30) return undefined;
+  switch (bytes.toString("latin1", 12, 16)) {
+    case "VP8 ":
+      return {
+        width: bytes.readUInt16LE(26) & 0x3fff,
+        height: bytes.readUInt16LE(28) & 0x3fff,
+      };
+    case "VP8L": {
+      const bits = bytes.readUInt32LE(21);
+
+      return {
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >> 14) & 0x3fff) + 1,
+      };
+    }
+    case "VP8X":
+      return {
+        width: bytes.readUIntLE(24, 3) + 1,
+        height: bytes.readUIntLE(27, 3) + 1,
+      };
+    default:
+      return undefined;
   }
 }

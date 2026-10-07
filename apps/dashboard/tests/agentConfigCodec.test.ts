@@ -150,11 +150,10 @@ describe("model reasoning codec", () => {
     expect(readModelReasoning(model)).toEqual({ budgetTokens: 8192 });
   });
 
-  test("strips legacy top-level aliases and preserves unrelated provider options", () => {
+  test("preserves unrelated provider options", () => {
     const model = applyModelReasoning(
       {
         temperature: 0.3,
-        thinkingEffort: "high",
         providerOptions: {
           openai: { reasoningEffort: "low", reasoningSummary: "auto" },
         },
@@ -170,7 +169,6 @@ describe("model reasoning codec", () => {
         anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } },
       },
     });
-    expect(model).not.toHaveProperty("thinkingEffort");
   });
 
   test("deep-merges reasoning providerOptions with sibling options from the flat column", () => {

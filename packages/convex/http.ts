@@ -56,7 +56,7 @@ http.route({
 });
 
 // Bare `/v1/account/projects` only: the `/v1/account/projects/` prefix routes
-// below carry a project name and belong to the deploy-key handler.
+// below carry a project name and belong to the project-key handler.
 http.route({
   path: "/v1/account/projects",
   method: "GET",
@@ -105,11 +105,36 @@ http.route({
   handler: cliHttp,
 });
 
-// Public config-plane surface: account metadata/rotation,
+// Public config-plane surface: account metadata/rotation, connections,
 // agents, skills, mcp, hooks, workspace files, crons, workspaces, sandbox configs,
 // and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });
 http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
+http.route({
+  path: "/v1/account/connections",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "PUT",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "DELETE",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/account/connections/",
+  method: "POST",
+  handler: configHttp,
+});
 http.route({
   path: "/v1/account/rotate-secret",
   method: "POST",
@@ -267,6 +292,11 @@ http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
+// The audit ledger: list, verify, and the one webhook sink per account.
+http.route({ path: "/v1/audit", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "PUT", handler: configHttp });
+http.route({ pathPrefix: "/v1/audit/", method: "DELETE", handler: configHttp });
 
 export default http;
 

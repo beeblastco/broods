@@ -19,6 +19,7 @@ import {
 import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
 import DashboardLoading from "./loading";
+import { toErrorMessage } from "@/app/lib/errors";
 
 export default function DashboardPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
@@ -105,7 +106,7 @@ export default function DashboardPage(): React.JSX.Element {
     } catch (err) {
       setKeyError({
         stageId: activeStageId,
-        msg: err instanceof Error ? err.message : "Failed to generate key",
+        msg: toErrorMessage(err),
       });
     } finally {
       setGeneratingKey(false);

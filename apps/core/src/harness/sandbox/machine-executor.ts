@@ -106,7 +106,11 @@ export class MachineSandboxExecutor implements SandboxExecutor {
       id: crypto.randomUUID(),
       code: request.code,
       cwd: configString(this.#config.options?.cwd),
-      env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+      env: mergeSandboxEnv(
+        this.#config.envVars,
+        request.envVars,
+        request.principal,
+      ),
       timeoutSeconds: request.timeoutSeconds,
       outputLimitBytes: request.outputLimitBytes,
     };

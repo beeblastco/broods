@@ -2,19 +2,37 @@
  * Workspace config: account-scoped, reusable workspace definitions referenced by
  * agents via `config.workspaces[].workspaceId`. A workspace is the persistent
  * S3-backed filesystem mounted into a sandbox; agents referencing the same
- * workspaceId share the same files. Holds no secrets, so it is stored in
+ * workspaceId share the same files unless `isolation` splits them. Holds no
+ * secrets, so it is stored in
  * plaintext (unlike sandbox config). Validation and the public projection live
  * in packages/convex/model/workspaceRules.ts.
  */
 
-import type { WorkspaceConfig } from "@broods/convex/model/workspaceRules";
+import type {
+  WorkspaceConfig,
+  WorkspaceStorageConfig as StoredWorkspaceStorageConfig,
+} from "@broods/convex/model/workspaceRules";
 
+export type { WorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 export type {
   WorkspaceConfig,
   WorkspaceStorageAuth,
-  WorkspaceStorageConfig,
   WorkspaceStorageProvider,
 } from "@broods/convex/model/workspaceRules";
+
+/**
+ * Workspace storage as core carries it. An R2 bucket also carries its row's
+ * identity, which a mount sends to Convex to mint scoped credentials; it is
+ * stamped on load (shared/convex/storage.ts), never stored or accepted.
+ */
+export type WorkspaceStorageConfig = StoredWorkspaceStorageConfig & {
+  owner?: { accountId: string; workspaceId: string };
+};
+
+/** A loaded workspace config, whose storage may carry the R2 owner. */
+export type WorkspaceRuntimeConfig = Omit<WorkspaceConfig, "storage"> & {
+  storage: WorkspaceStorageConfig;
+};
 
 // The workspace harness is a set of named features, each with its own options
 // and each defaulting to on. There is deliberately no top-level enabled flag:
@@ -32,7 +50,7 @@ export interface WorkspaceConfigRecord {
   workspaceId: string;
   name: string;
   description?: string;
-  config: WorkspaceConfig;
+  config: WorkspaceRuntimeConfig;
   createdAt: string;
   updatedAt: string;
 }

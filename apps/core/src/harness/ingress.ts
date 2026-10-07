@@ -8,7 +8,12 @@
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { queuedCommand } from "../shared/commands.ts";
-import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import {
+  applyRunOverrides,
+  toRuntimeAgentConfig,
+  type AgentConfig,
+  type RunOverrides,
+} from "../shared/domain/agent-config.ts";
 import {
   channelRuntimeAgentConfig,
   resolveChannelAgentId,
@@ -91,9 +96,30 @@ export interface ChannelTargetRefs {
  * Where a channel session replies, as Convex keeps it. Never the config: that
  * holds decrypted secrets, so core rebuilds it with `loadChannelSessionConfig`.
  */
-export interface ConversationDispatchTarget extends ChannelTargetRefs {
-  channelName: string;
+export interface ConversationDispatchTarget extends IngressChannelRef {
   source: Record<string, unknown>;
+}
+
+/** The channel and rows a channel session's config is narrowed by. */
+export interface IngressChannelRef extends ChannelTargetRefs {
+  channelName: string;
+}
+
+/**
+ * What an envelope keeps to rebuild its run config when it is dispatched,
+ * instead of the resolved config with its decrypted secrets: the request's
+ * own model override, and for a channel session the channel and rows its
+ * config is narrowed by. `{}` is the agent's own config as it is now.
+ */
+export interface IngressConfigRef {
+  model?: RunOverrides["model"];
+  channel?: IngressChannelRef;
+}
+
+/** A run's resolved config beside the ref its envelope stores to rebuild it. */
+export interface IngressRunConfig {
+  agentConfig: AgentConfig;
+  configRef: IngressConfigRef;
 }
 
 export interface SessionMessageInput {
@@ -107,11 +133,14 @@ export interface SessionMessageResult {
 }
 
 export interface PreparedSessionMessage {
-  candidate: Omit<IngressCandidate, "agentConfig" | "delivery" | "events"> & {
-    agentConfig: AgentConfig;
+  candidate: Omit<IngressCandidate, "configRef" | "delivery" | "events"> & {
+    configRef: IngressConfigRef;
     delivery: Extract<IngressDelivery, { kind: "channel" }>;
     events: UserModelMessage[];
   };
+  // The target session's config, for the owner run; the candidate only
+  // carries the ref to rebuild it.
+  agentConfig: AgentConfig;
   publicEventId: string;
   publicConversationKey: string;
 }
@@ -171,7 +200,9 @@ export interface IngressCandidate {
   delivery: IngressDelivery;
   // Per-request execution context persisted with the envelope so a queued
   // request runs under its own config/overrides, never a previous owner's.
-  agentConfig?: AgentConfig;
+  // Absent only on a subagent's envelopes, which run on the config their
+  // dispatch scope holds; any other envelope without one is failed.
+  configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
   // Set on a turn a channel delivered: pins this conversation's channel target
   // so a later cron or inter-session message can reach it.
@@ -187,7 +218,7 @@ export interface AppliedIngress {
   appliedToEventId: string;
   contributingEventIds: string[];
   ownerGeneration: number;
-  agentConfig?: AgentConfig;
+  configRef?: IngressConfigRef;
   ephemeralSystem?: SystemModelMessage[];
 }
 
@@ -244,8 +275,8 @@ export async function acceptIngress(
     : input;
   const serializedPayload = JSON.stringify({
     events: candidate.events,
-    ...(candidate.agentConfig !== undefined
-      ? { agentConfig: candidate.agentConfig }
+    ...(candidate.configRef !== undefined
+      ? { configRef: candidate.configRef }
       : {}),
     ...(candidate.ephemeralSystem !== undefined
       ? { ephemeralSystem: candidate.ephemeralSystem }
@@ -261,7 +292,7 @@ export async function acceptIngress(
       activeOwnerOnly: candidate.activeOwnerOnly,
       expectedOwnerTaskId: candidate.expectedOwnerTaskId,
       ownerTaskId: candidate.ownerTaskId,
-      agentConfig: candidate.agentConfig,
+      configRef: candidate.configRef,
       ephemeralSystem: candidate.ephemeralSystem,
     }),
   );
@@ -384,8 +415,8 @@ export async function interruptLiveOwners(error: string): Promise<number> {
 export async function loadChannelSessionConfig(options: {
   accountId: string;
   agentId: string;
-  target: ConversationDispatchTarget;
-}): Promise<AgentConfig> {
+  target: IngressChannelRef;
+}): Promise<IngressRunConfig> {
   const { accountId, target } = options;
   const storage = getStorage();
   const [agent, credentialHolder, record] = await Promise.all([
@@ -413,13 +444,66 @@ export async function loadChannelSessionConfig(options: {
     throw new Error("Channel session is no longer bound to this agent");
   }
 
-  return channelRuntimeAgentConfig(
-    {
-      agent: agent,
-      ...(activeRecord ? { record: activeRecord } : {}),
+  return {
+    agentConfig: channelRuntimeAgentConfig(
+      {
+        agent: agent,
+        ...(activeRecord ? { record: activeRecord } : {}),
+      },
+      target.channelName,
+      (credentialHolder ?? agent).config,
+    ),
+    configRef: {
+      channel: {
+        channelName: target.channelName,
+        ...(target.credentialAgentId
+          ? { credentialAgentId: target.credentialAgentId }
+          : {}),
+        ...(target.channelRecordId
+          ? { channelRecordId: target.channelRecordId }
+          : {}),
+      },
     },
-    target.channelName,
-    (credentialHolder ?? agent).config,
+  };
+}
+
+/**
+ * The config a dispatched envelope runs on, rebuilt from the live rows its
+ * ref names: the channel session's narrowed config, or the agent's own with
+ * the request's model override. A subagent's envelope has no ref and runs on
+ * `subagentConfig`. Throws for any other envelope without a ref, a deleted
+ * agent or an unbound channel session; the caller fails the envelope with it.
+ */
+export async function loadAppliedIngressConfig(options: {
+  accountId: string;
+  agentId: string;
+  configRef: IngressConfigRef | undefined;
+  subagentConfig?: AgentConfig;
+}): Promise<AgentConfig> {
+  const { accountId, agentId, configRef } = options;
+  if (!configRef) {
+    if (options.subagentConfig) {
+      return options.subagentConfig;
+    }
+    throw new Error("Queued turn was admitted before config refs; retry");
+  }
+  if (configRef.channel) {
+    const loaded = await loadChannelSessionConfig({
+      accountId: accountId,
+      agentId: agentId,
+      target: configRef.channel,
+    });
+
+    return loaded.agentConfig;
+  }
+  const agent = await getStorage().agents.getById(accountId, agentId);
+  if (!agent) {
+    throw new Error(`Agent not found: ${agentId}`);
+  }
+
+  return applyRunOverrides(
+    toRuntimeAgentConfig(agent.config),
+    configRef.model ? { model: configRef.model } : undefined,
   );
 }
 
@@ -470,7 +554,7 @@ export async function prepareSessionMessage(options: {
     options.agentId,
   );
 
-  const agentConfig = await loadChannelSessionConfig({
+  const { agentConfig, configRef } = await loadChannelSessionConfig({
     accountId: options.accountId,
     agentId: options.agentId,
     target: target,
@@ -480,7 +564,7 @@ export async function prepareSessionMessage(options: {
     candidate: {
       accountId: options.accountId,
       agentId: options.agentId,
-      agentConfig: agentConfig,
+      configRef: configRef,
       eventId: eventId,
       runId: createRunId(),
       conversationKey: conversationKey,
@@ -502,6 +586,7 @@ export async function prepareSessionMessage(options: {
         source: target.source,
       },
     },
+    agentConfig: agentConfig,
     publicEventId: publicEventId,
     publicConversationKey: publicConversationKey,
   };

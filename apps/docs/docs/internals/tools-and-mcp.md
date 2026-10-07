@@ -6,7 +6,7 @@ This page covers how core builds an agent's tool set for a run, how async tools 
 
 `harness.ts` resolves the model, then calls `createTools()` in `src/harness/tools/index.ts`. The tool set is assembled in this order:
 
-1. Sandbox tools from the agent's `sandboxes` and `workspaces`. `bash` when there is any sandbox or sandbox-backed workspace. `computer` for every machine sandbox. `read` and `glob` for every workspace, through the mount when it has a sandbox and through S3 or a read-only mount when it does not. `write`, `edit` and `grep` only when a workspace has a sandbox. `memory_save` when a sandbox-backed workspace keeps the memory harness on.
+1. Sandbox tools from the agent's `sandboxes` and `workspaces`. `bash` when there is any sandbox or sandbox-backed workspace. `computer` for every machine sandbox. `browse` when `config.browser.enabled`, after `assertBrowseSandbox` checks that the first sandbox is lambda with `image: "obscura"` and `allow-all`, or a machine; it runs `obscura fetch` there with `OBSCURA_ALLOW_PRIVATE_NETWORK` unset, so an inherited value cannot turn off Obscura's private-address guard, and reads screenshots back from the workspace with `workspaceMediaBytes` (`tools/browse.tool.ts`). `read` and `glob` for every workspace, through the mount when it has a sandbox and through S3 or a read-only mount when it does not. `write`, `edit` and `grep` only when a workspace has a sandbox. `memory_save` when a sandbox-backed workspace keeps the memory harness on.
 2. Channel tools (`send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update`) on channel turns, each gated on the adapter's capabilities, and `send-message` when the agent has channels and the request can dispatch to another session. See [channels](channels.md).
 3. `run_subagent` when `config.subagent.enabled` and the request has a dispatcher, plus `get_subagent_status`, `update_subagent` and `stop_subagent` in persistent mode. A persistent subagent run also gets `ask_parent`, whatever its own `subagent` config says.
 4. `load_skill` when `config.skills.enabled` and `allowed` has paths.
@@ -67,13 +67,14 @@ Approval requests on a sync direct API run stream as SSE and persist in the conv
 
 ## MCP servers
 
-Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session.
+Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session. `callMcpTool` returns `structuredContent` or the text of the content blocks, except when a block is an image: then the whole result goes back as AI SDK content parts with `image-data`, so the model sees the picture. Stored history drops the image data and keeps the text. A hosted server's listing is cached per agent, because it comes from that agent's own child.
 
 - The `url` host is resolved before connecting. Private, loopback, link-local and metadata addresses are refused, and so are redirects. The OAuth `tokenUrl` gets the same check.
 - Credential-bearing headers must reference an account env var (`Bearer ${NAME}`). Inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
 - OAuth rows mint access tokens with the refresh-token grant, cache them per config, re-mint before expiry, and send `Authorization: Bearer` themselves.
 - `subscriptions/listen` is not supported. Tool lists refresh when `ttlMs` expires. MRTR `input_required` results surface as tool errors.
-- A `sandbox` row routes calls over the machine socket to the `broods machine --mcp` daemon on the user's computer.
+- A `sandbox` row routes calls over the machine socket to the `broods machine --mcp` daemon on the user's computer. When the named sandbox is a persistent `lambda` one, `src/harness/mcp/sandbox.ts` instead reserves its MicroVM and POSTs each JSON-RPC request with the row's `command` to the image's `/mcp` on port 8080, which spawns the stdio server once and keeps it for the VM's lifetime. It reserves on the key `bash` uses (the workspace namespace when a workspace mounts the agent's first sandbox) and reuses this pod's cached endpoint for up to 3 minutes. Before each request it polls the guest's `GET /healthz` until the VM serves, then sends the request once: it is resent only when the connection never opened, because a 502 or 503 after that may be a lost answer to a tool that already ran. The body carries the sandbox's env vars without the `BROODS_*` run identity, and the image restarts the server when they change. A call gets the sandbox's `timeout`, or 120 s capped by the operator's maximum. The guest's answer is refused past 16 MB. Its listings use the remote listing cache, keyed on the row's `updatedAt` and a digest of the sandbox's image, snapshot, `onCreate`, `onResume` and env vars, so every conversation shares them and a sandbox edit refetches. `sandboxMcpTarget` resolves the row for agent runs and for the dashboard explorer alike; the explorer runs as no agent, so it reserves a VM of its own on the row's sandbox (or the sandbox's pinned one).
+- An image in a tool result reaches the model only when its bytes are base64 that sniffs as PNG, JPEG, GIF or WebP, with a whole header naming at most 8000 pixels a side, and only while the result stays within 8 images and 6 MB together (`withImageLimits` in `tools/utils.ts`). Any other image becomes a text note saying why. `browse` applies the same limit and refuses a screenshot over 6 MB, or one S3 gives no size for, before reading it.
 
 ### Hosted servers
 
@@ -83,12 +84,14 @@ The handler factory must build a fresh server on every call. The stateless trans
 
 The tool-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the bundle. `src/harness/mcp/hosted.ts` is the core side:
 
-- Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS`, default 10 ms, and sends every call for the same account and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX`, default 8. Setting it to `1` disables batching. The child runs them concurrently and answers each on its own frame.
+- Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS`, default 10 ms, and sends every call for the same account, agent and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX`, default 8. Setting it to `1` disables batching. The child runs them concurrently and answers each on its own frame.
 - A batch shares one 30 s deadline and one 16 MB output cap. `RUN_TIMEOUT_MS` in `apps/lambda/handler.mjs` sets the deadline, with a 2 s grace for the child to abort itself. Its CPU is split evenly across its calls.
-- Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A child serves at most `MCP_CHILD_MAX_CALLS` invokes, default 64, each one batch, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
+- Warm reuse. Repeat invokes for the same account, agent and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A different agent of the same account gets its own child. A child serves at most `MCP_CHILD_MAX_CALLS` invokes, default 64, each one batch, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
 - Metering. Each call's span carries `tool.compute.type: "mcp-sandbox"` and `tool.compute.cpu_usec`, billed into the account's tool-sandbox CPU usage.
-- With `MCP_TENANT_ISOLATION=true`, every invoke carries the account id as its Lambda tenant id. See [security](security.md).
+- With `MCP_TENANT_ISOLATION=true`, every invoke carries `accountId:agentId` as its Lambda tenant id. See [security](security.md).
 - The bundle reaches the runner as a pre-signed URL valid for 120 s, so the function holds no S3 access.
+
+The S3 bundle writer marks a row `workersCompatible` when its bundle is at most 10 MB and passes the Workers scan (`isWorkersSafeBundle`). When core has `CLOUDFLARE_MCP_URL` and the owner left `runtime` on `auto`, such a row sends the same batch payload to the Dynamic Workers runtime in `apps/cloudflare-mcp` instead, over HTTPS with the `CLOUDFLARE_MCP_API_KEY` bearer, and reads the same NDJSON frames back. The Worker loads each bundle into its own isolate, keyed by `tenantId` and sha256 like the Lambda's warm child, after checking the bytes against the row's hash. It reads them from its own R2 bucket (`BUNDLES`, keyed by sha256) and only on a miss downloads them from S3, keeping a copy that expires after 30 days. The isolate gets no bindings, no Node compatibility flag and an egress gateway that refuses the runtime itself and the bundle store. The Worker loads the bundle before it answers, and tags its own refusal (a 422 when the bundle cannot load, a 504 when loading timed out) with `x-broods-nothing-ran`. That tag, or a request that never connected, means no tool ran: core then runs the same batch on Lambda and logs `hosted MCP batch fell back to Lambda`. Any other error status, from the Worker or from Cloudflare, fails the call, because it cannot prove nothing ran. A bundle the Worker cannot load (a 422) goes straight to Lambda for the next 10 minutes. A timeout, abort or broken stream after the Worker answered is never retried. It reports no CPU, so these calls carry no `tool.compute.cpu_usec`; usage is still metered per batch on wall time, at the Lambda rate. See [Cloudflare MCP runtime](../guides/cloudflare-mcp.md).
 
 Two parallel calls from one model step, end to end:
 
@@ -102,10 +105,10 @@ sequenceDiagram
 
   M->>H: call A
   M->>H: call B
-  Note over H: enqueueCall parks both under accountId:sha256<br/>until MCP_BATCH_WINDOW_MS or MCP_BATCH_MAX
+  Note over H: enqueueCall parks both under accountId:agentId:sha256<br/>until MCP_BATCH_WINDOW_MS or MCP_BATCH_MAX
   H->>H: flushBatch, presign bundleUrl for 120 s
   H->>L: InvokeWithResponseStream, mode mcp, requests A and B
-  alt warm child matches accountId and sha256
+  alt warm child matches accountId, agentId and sha256
     L->>C: reuse the warm child
   else no match
     L->>S3: fetch bundleUrl while spawning

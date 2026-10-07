@@ -8,11 +8,6 @@
     "noiseCeilingPct": 15
   },
   "cases": {
-    "gateway/route-classify": {
-      "nsPerOp": 272.1,
-      "ceilingNs": 1250,
-      "gate": "blocking"
-    },
     "gateway/websocket-path-match": {
       "nsPerOp": 196.3,
       "ceilingNs": 700,

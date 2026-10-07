@@ -125,7 +125,7 @@ export interface BroodsClientOptions {
   baseUrl?: string;
   /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
   host?: string;
-  /** API key used as the Bearer token for direct runtime calls. */
+  /** Runtime key used as the Bearer token for direct runtime calls. */
   apiKey?: string;
   fetch?: typeof fetch;
 }

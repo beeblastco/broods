@@ -35,7 +35,7 @@ cd apps/core && bun run serve          # fill apps/core/.env first — see its .
 
 # 2. In the demo's .env.local, point the SDK at it:
 #    BROODS_BASE_URL=http://localhost:3000
-#    BROODS_API_KEY=fp_agent_...        # a runtime key for the demo account
+#    BROODS_API_KEY=bsk_...              # a runtime key for the demo account
 
 # 3. Run the demo from its own folder.
 cd packages/demos/basic-stream && bun run start
@@ -71,7 +71,7 @@ Sandbox examples (one `defineSandbox` per provider/mode):
 - `sandbox-lambda`: stateless, bash-only `lambda` (AWS Lambda MicroVM).
 - `sandbox-multiple`: two `lambda` sandboxes in `sandboxes`. The first is the default, the second is deny-all, picked per bash call.
 - `sandbox-workspace-lambda`: persistent workspace-backed `lambda` MicroVM.
-- `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-workspace-override`: provider-specific sandbox configs.
+- `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-cloudflare`, `sandbox-workspace-override`: provider-specific sandbox configs.
 
 Workspace examples:
 

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
+import { defineSandbox, env } from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
 // Resolve the SDK entrypoint relative to this test file so generated fixtures
@@ -50,6 +51,15 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
+});
+
+test("compileProject says how to scaffold a missing broods/ folder", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "broods-no-project-"));
+  tempDirs.push(cwd);
+
+  await expect(compileProject({ cwd: cwd, command: "deploy" })).rejects.toThrow(
+    `No broods/ folder in ${cwd}. Run \`broods dev\` to scaffold one.`,
+  );
 });
 
 test("compileProject accepts object-shaped resource definitions", async () => {
@@ -462,6 +472,24 @@ export const curated = defineSandbox({
       }),
     }),
   );
+});
+
+// The validator takes a credential header only as an env ref, so the type has to.
+test("defineSandbox takes env() as a custom server's credential header", () => {
+  const fleet = defineSandbox({
+    name: "fleet",
+    provider: "custom",
+    network: { mode: "allow-all" },
+    options: {
+      endpoint: "https://sandbox.example.com",
+      headers: { authorization: env("SANDBOX_AUTH"), "x-team": "ops" },
+    },
+  });
+
+  expect(fleet.config.options?.headers).toEqual({
+    authorization: { __beeblastEnv: true, name: "SANDBOX_AUTH" },
+    "x-team": "ops",
+  });
 });
 
 test("compileProject rejects provider-native workspace storage before upload", async () => {
@@ -926,7 +954,7 @@ export const github = defineGitHubConnection({
 
 export const repo = defineWorkspace({
   name: "repo",
-  storage: { provider: "s3" }, partitioned: true,
+  storage: { provider: "s3" }, partitioned: "conversation",
 });
 
 export const support = defineAgent({
@@ -970,22 +998,63 @@ export const support = defineAgent({
   ]);
 });
 
-test("compileProject rejects a non-boolean partitioned flag", async () => {
-  const cwd = await fixtureProject(
-    "",
-    `
+test.each(['"channel"', "true"])(
+  "compileProject rejects partitioned: %s",
+  async (mode) => {
+    const cwd = await fixtureProject(
+      "",
+      `
 import { defineWorkspace } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
   name: "repo",
-  storage: { provider: "s3" }, partitioned: "channel",
+  storage: { provider: "s3" }, partitioned: ${mode},
 });
+`,
+    );
+
+    const refused = await compileProject({ cwd: cwd, command: "dev" }).then(
+      () => "",
+      (error: unknown) => String(error),
+    );
+
+    expect(refused).toContain(
+      'Workspace "repo" config.partitioned must be one of: conversation, agent',
+    );
+  },
+);
+
+test('compileProject stores partitioned: "agent" as agent isolation and needs no channel partition', async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
+
+export const slack = defineSlackConnection({
+  allowedChannelIds: ["*"],
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
+});
+export const scratch = defineWorkspace({ name: "scratch", storage: { provider: "s3" }, partitioned: "agent" });
+export const shared = defineWorkspace({ name: "shared", storage: { provider: "s3" }, partitioned: "conversation" });
+export const support = defineAgent({ name: "support", connections: [slack], workspaces: [scratch] });
 `,
   );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Workspace "repo" config.partitioned must be a boolean; string modes are not supported.',
-  );
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const configOf = (name: string): unknown =>
+    manifest.resources.find(
+      (resource) => resource.kind === "workspace" && resource.name === name,
+    )?.config;
+
+  expect(configOf("scratch")).toEqual({
+    storage: { provider: "s3" },
+    isolation: "agent",
+  });
+  expect(configOf("shared")).toEqual({
+    storage: { provider: "s3" },
+    isolation: "conversation",
+  });
 });
 
 test("compileProject auto-generates the channel id for a partitioned connection", async () => {
@@ -1000,7 +1069,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1131,7 +1200,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1153,7 +1222,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 export const escape = defineSlackChannel({
   name: "escape",
@@ -1181,7 +1250,7 @@ export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
 `,
   );
@@ -1209,7 +1278,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   );
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" connection "slack" defines partition, but no attached workspace has partitioned: true.',
+    'Agent "support" connection "slack" defines partition, but no attached workspace has partitioned: "conversation".',
   );
 });
 
@@ -1231,7 +1300,7 @@ export const github = defineGitHubConnection({
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack, github], workspaces: [repo] });
 `,
   );
@@ -1262,7 +1331,7 @@ export const github = defineGitHubConnection({
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
-export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: "conversation" });
 export const support = defineAgent({ name: "support", connections: [slack, github], workspaces: [repo] });
 `,
   );
@@ -1397,6 +1466,141 @@ export const billing = defineAgent({
   expect(collectEnvRefNames(manifest)).toEqual([
     "OPENAI_API_KEY",
     "STRIPE_API_KEY",
+  ]);
+});
+
+test("collectEnvRefNames includes ${NAME} refs in MCP server headers", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineMcp } from "${RESOURCES_MODULE}";
+
+export const search = defineMcp({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: "Bearer \${SEARCH_TOKEN}" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  // `broods dev` pushes these from .env.local, or the run fails on the ref.
+  expect(collectEnvRefNames(manifest)).toEqual(["SEARCH_TOKEN"]);
+});
+
+test("collectEnvRefNames includes ${NAME} refs in R2 workspace keys", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const files = defineWorkspace({
+  name: "r2-files",
+  storage: {
+    provider: "s3",
+    bucket: "agent-files",
+    prefix: "broods/",
+    endpoint: "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+    auth: {
+      type: "r2",
+      accessKeyId: "\${R2_ACCESS_KEY_ID}",
+      secretAccessKey: "\${R2_SECRET_ACCESS_KEY}",
+    },
+  },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+  ]);
+});
+
+test("compileProject copies a server's headers into each agent that connects it", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineMcp } from "${RESOURCES_MODULE}";
+
+export const search = defineMcp({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: "Bearer \${SEARCH_TOKEN}", "X-Team": "\${TEAM_ID}" },
+});
+
+export const reader = defineAgent({
+  name: "reader",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  mcp: { search: { enabled: true, headers: { "x-team": "\${READER_TEAM}" } } },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+
+  // `broods dev` pushes the agent's own ref too, or the sync refuses it.
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "READER_TEAM",
+    "SEARCH_TOKEN",
+    "TEAM_ID",
+  ]);
+  // Core resolves a server's secret headers from the agent config only.
+  expect((agent?.config as { mcp: unknown }).mcp).toEqual({
+    search: {
+      enabled: true,
+      // Header names compare case-insensitively; the agent's spelling wins.
+      headers: {
+        Authorization: "Bearer ${SEARCH_TOKEN}",
+        "x-team": "${READER_TEAM}",
+      },
+    },
+  });
+});
+
+test("compileProject copies a server's oauth, not its token endpoint", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineMcp, env } from "${RESOURCES_MODULE}";
+
+export const gmail = defineMcp({
+  name: "gmail",
+  url: "https://gmailmcp.googleapis.com/mcp/v1",
+  oauth: {
+    clientId: "1234.apps.googleusercontent.com",
+    clientSecret: env("GMAIL_CLIENT_SECRET"),
+    refreshToken: env("GMAIL_REFRESH_TOKEN"),
+    tokenUrl: "https://oauth2.googleapis.com/token",
+  },
+});
+
+export const assistant = defineAgent({
+  name: "assistant",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  mcp: { gmail: { enabled: true } },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+  const oauth = (
+    agent?.config as { mcp: { gmail: { oauth: Record<string, unknown> } } }
+  ).mcp.gmail.oauth;
+
+  expect(Object.keys(oauth).sort()).toEqual([
+    "clientId",
+    "clientSecret",
+    "refreshToken",
+  ]);
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "GMAIL_CLIENT_SECRET",
+    "GMAIL_REFRESH_TOKEN",
   ]);
 });
 
@@ -2256,7 +2460,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
       // Pin baseUrl too: without it the field falls back to ~/.broods/config.json
       // stored auth, which exists on logged-in dev machines but not in CI.
       "BROODS_BASE_URL=https://gateway.dev.broods.app",
-      "BROODS_TOKEN=fp_cli_test",
+      "BROODS_TOKEN=bcli_test",
       "BROODS_PROJECT=sandbox-stateless",
       "BROODS_STAGE=development",
       "",
@@ -2268,7 +2472,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   expect(config).toEqual({
     dashboardUrl: "https://dashboard.dev.broods.app",
     baseUrl: "https://gateway.dev.broods.app",
-    token: "fp_cli_test",
+    token: "bcli_test",
     project: "sandbox-stateless",
     stage: "development",
   });
