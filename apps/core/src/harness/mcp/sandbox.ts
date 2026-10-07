@@ -12,11 +12,14 @@ import {
   isJSONRPCErrorResponse,
   isJSONRPCResultResponse,
 } from "@modelcontextprotocol/client";
-import { assertSandboxBudget } from "../plan-limits.ts";
-import { MicrovmSandboxExecutor } from "../sandbox/microvm-executor.ts";
-import type { SandboxExecutorConfig } from "../sandbox/types.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
+import { createSandboxExecutor } from "../sandbox/index.ts";
+import type {
+  SandboxExecutor,
+  SandboxExecutorConfig,
+} from "../sandbox/types.ts";
+import { sandboxTimeoutSeconds } from "../tools/filesystem-utils.ts";
 
-const DEFAULT_TIMEOUT_SECONDS = 120;
 // The image may spend up to this long starting a server and running its
 // handshake before the tool's own timeout begins.
 const SERVER_START_MS = 30_000;
@@ -29,26 +32,27 @@ export interface SandboxMcpTarget {
 }
 
 /** The executor call the relay makes; tests pass a fake. */
-export type SandboxMcpExecutor = Pick<MicrovmSandboxExecutor, "postReserved">;
+export type SandboxMcpExecutor = Pick<SandboxExecutor, "postReserved">;
 
 /**
  * Send one JSON-RPC request to a server on a lambda sandbox and return its
  * result. mcp/client.ts calls it for `tools/list` and `tools/call` when the
- * connection carries a lambda sandbox. Like bash, each request first checks
- * the account's sandbox budget.
+ * connection carries a lambda sandbox. The executor checks the account's
+ * sandbox budget first, as it does for bash.
  */
 export async function sandboxMcpRequest(
   target: SandboxMcpTarget,
   serverName: string,
   message: { method: string; params: Record<string, unknown> },
   abortSignal?: AbortSignal,
-  executor: SandboxMcpExecutor = new MicrovmSandboxExecutor(target.config),
+  executor: SandboxMcpExecutor = createSandboxExecutor(target.config),
 ): Promise<unknown> {
-  const accountId = target.config.controlPlane?.accountId;
-  if (accountId && !target.config.controlPlane?.ownCredentials) {
-    await assertSandboxBudget(accountId);
+  if (!executor.postReserved) {
+    throw new Error(
+      `MCP server ${serverName} needs a lambda sandbox; ${target.config.provider} has no MCP host`,
+    );
   }
-  const timeoutMs = (target.config.timeout ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const timeoutMs = sandboxTimeoutSeconds(target.config) * 1000;
   const reply = await executor
     .postReserved({
       reservationKey: target.reservationKey,
@@ -69,7 +73,7 @@ export async function sandboxMcpRequest(
     })
     .catch((error: unknown) => {
       throw new Error(
-        `MCP server ${serverName} on its sandbox failed: ${error instanceof Error ? error.message : String(error)}`,
+        `MCP server ${serverName} on its sandbox failed: ${toErrorMessage(error)}`,
       );
     });
   if (isJSONRPCErrorResponse(reply)) {

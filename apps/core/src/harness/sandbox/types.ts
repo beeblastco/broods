@@ -263,6 +263,19 @@ export interface SandboxInstanceInfo {
   errorMessage?: string;
 }
 
+/** One JSON POST to a route the sandbox image serves, such as `/exec` or `/mcp`. */
+export interface SandboxGuestPost {
+  path: string;
+  body: unknown;
+  timeoutMs: number;
+  abortSignal?: AbortSignal;
+}
+
+/** A guest POST to the VM a reservation key holds. */
+export interface SandboxReservedPost extends SandboxGuestPost {
+  reservationKey: string;
+}
+
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
   // Best-effort: create/resume the reserved sandbox and wait until its pod is
@@ -296,6 +309,8 @@ export interface SandboxExecutor {
   // Persistent-only background capabilities. Implemented by sandbox/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;
+  // A guest route on the reserved VM, beside /exec. lambda only: the MCP relay.
+  postReserved?(request: SandboxReservedPost): Promise<unknown>;
   jobStatus?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
   jobLogs?(request: SandboxJobRequest): Promise<SandboxJobLogs>;
   stopJob?(request: SandboxJobRequest): Promise<SandboxJobStatus>;

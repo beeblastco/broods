@@ -1524,7 +1524,7 @@ describe("createSandboxExecutor", () => {
     }) as unknown as typeof fetch;
 
     await expect(executor.run(request)).rejects.toThrow(
-      "MicroVM exec failed (504)",
+      "MicroVM /exec failed (504)",
     );
     expect(
       posted.filter((body): boolean => body.includes("sleep 900")),
