@@ -118,6 +118,7 @@ export function DetailsTab({
   onUpdateChannelConfig,
   onUpdateModelReasoning,
   onUpdatePublicAccess,
+  onUpdateBrowser,
   onUpdatePolicyConfig,
 }: {
   agentConfig: Doc<"agentConfigs"> | null | undefined;
@@ -151,6 +152,7 @@ export function DetailsTab({
     effort?: string;
   }) => Promise<void>;
   onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
+  onUpdateBrowser?: (enabled: boolean) => Promise<void>;
   onUpdatePolicyConfig?: (policies: string[] | null) => Promise<void>;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
@@ -224,6 +226,10 @@ export function DetailsTab({
   const publicAccess =
     (agentConfig?.extraConfig as Record<string, unknown> | undefined)
       ?.publicAccess === true;
+  // The `browse` tool switch, `config.browser.enabled` in extraConfig.
+  const browserEnabled =
+    readAgentBranch<{ enabled?: boolean }>(agentConfig, "browser").enabled ===
+    true;
   const policyOptions = useQuery(
     api.agent.policies.listForStage,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -782,6 +788,15 @@ export function DetailsTab({
           <Separator />
           <div className="flex flex-col gap-3">
             <SectionHeader>Provider Tools</SectionHeader>
+
+            {onUpdateBrowser && (
+              <ToggleRow
+                label="Web browsing"
+                description="Read pages and take screenshots. Needs a first sandbox on Lambda with the Obscura image and internet."
+                checked={browserEnabled}
+                onCheckedChange={(next) => void onUpdateBrowser(next)}
+              />
+            )}
 
             {/* Google Search */}
             <ToggleRow

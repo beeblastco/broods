@@ -68,6 +68,37 @@ describe("createTools", () => {
     expect(Object.keys(tools)).toContain("computer");
   });
 
+  it("registers browse only with config.browser on an Obscura sandbox", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const sandboxes = [
+      {
+        name: "web",
+        sandbox: {
+          provider: "lambda" as const,
+          image: "obscura" as const,
+          network: { mode: "allow-all" as const },
+        },
+      },
+    ];
+    const context = { ...createToolContext(), sandboxes: sandboxes };
+
+    expect(
+      Object.keys(await createTools(context, { browser: { enabled: true } })),
+    ).toContain("browse");
+    expect(Object.keys(await createTools(context, {}))).not.toContain("browse");
+    const refused = await createTools(
+      {
+        ...createToolContext(),
+        sandboxes: [{ name: "base", sandbox: { provider: "lambda" } }],
+      },
+      { browser: { enabled: true } },
+    ).then(
+      (): string => "registered",
+      (error: unknown): string => String(error),
+    );
+    expect(refused).toContain('image: "obscura"');
+  });
+
   it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const sendImages = mock(async function (): Promise<void> {});

@@ -10,13 +10,15 @@ import {
 describe("agent config runtime", () => {
   // toRuntimeAgentConfig rebuilds from an explicit whitelist; a branch missing
   // there silently never reaches the harness.
-  it("keeps mcp in the runtime projection", () => {
+  it("keeps mcp and browser in the runtime projection", () => {
     const serverId = "k57mcpserver00000000000000000000";
     const runtime = toRuntimeAgentConfig({
       model: { provider: "vertex", modelId: "gemini-3.7-flash" },
       mcp: { [serverId]: { enabled: true } },
+      browser: { enabled: true },
     });
     expect(runtime.mcp).toEqual({ [serverId]: { enabled: true } });
+    expect(runtime.browser).toEqual({ enabled: true });
   });
 
   it("refuses a stored config that still carries the removed sandbox key", () => {

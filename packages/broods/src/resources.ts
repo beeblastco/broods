@@ -854,7 +854,7 @@ export type ProviderConfigInput = Partial<
 export type AgentDefinitionConfig = EnvRefString<
   Pick<
     AgentConfig,
-    "agent" | "model" | "scheduler" | "session" | "tools" | "mcp"
+    "agent" | "model" | "scheduler" | "browser" | "session" | "tools" | "mcp"
   >
 > & { provider?: ProviderConfigInput } & {
   harness?: HarnessDefinition;

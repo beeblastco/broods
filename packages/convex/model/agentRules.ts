@@ -58,6 +58,8 @@ export type AgentConfig = Record<string, unknown> & {
     [key: string]: unknown;
   };
   scheduler?: { enabled?: boolean; [key: string]: unknown };
+  // Registers the `browse` tool, which runs Obscura on the first sandbox.
+  browser?: { enabled?: boolean; [key: string]: unknown };
   policies?: string[];
   publicAccess?: boolean;
   allowRunOverrides?: boolean;
@@ -127,6 +129,7 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "ask_parent",
   "async_status",
   "bash",
+  "browse",
   "cancel_schedule",
   "edit",
   "get_subagent_status",
@@ -223,7 +226,8 @@ export function normalizeAgentConfig(
   assertOptionalStringArray(config.denyTools, "config.denyTools");
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
-  normalizeSchedulerConfig(config.scheduler);
+  normalizeEnabledSwitch(config.scheduler, "config.scheduler");
+  normalizeEnabledSwitch(config.browser, "config.browser");
   if (config.policy !== undefined) {
     throw new ClientError(
       "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
@@ -1012,12 +1016,14 @@ function normalizeSubagentConfig(value: unknown): void {
   ]);
 }
 
-function normalizeSchedulerConfig(value: unknown): void {
+// A feature switch such as `config.scheduler` or `config.browser`: an object
+// whose only checked field is `enabled`.
+function normalizeEnabledSwitch(value: unknown, label: string): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new ClientError("config.scheduler must be an object");
+    throw new ClientError(`${label} must be an object`);
   const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
+  assertOptionalBoolean(config.enabled, `${label}.enabled`);
 }
 
 /**

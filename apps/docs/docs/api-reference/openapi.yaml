@@ -4529,6 +4529,11 @@ components:
           $ref: "#/components/schemas/SubagentConfig"
         scheduler:
           $ref: "#/components/schemas/SchedulerConfig"
+        browser:
+          type: object
+          properties:
+            enabled: { type: boolean }
+          description: 'Registers the `browse` tool, which opens public web pages with Obscura on the first sandbox. That sandbox must be lambda with image "obscura" and network.mode allow-all, or a machine with obscura installed; otherwise the run fails.'
         policies:
           type: array
           items: { type: string }

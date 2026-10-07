@@ -47,6 +47,7 @@ import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
+import browseTool, { assertBrowseSandbox } from "./browse.tool.ts";
 import computerTool from "./computer.tool.ts";
 import {
   sendFilesTool,
@@ -141,9 +142,11 @@ export async function createTools(
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const sandboxes = context.sandboxes ?? [];
   const defaultSandbox = sandboxes[0]?.sandbox;
+  // bash and browse: every sandbox the agent reaches, metered per exec.
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
     sandboxes: sandboxes,
+    ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
     principal: (): SandboxRunPrincipal | undefined =>
       context.session?.sandboxPrincipal(),
   };
@@ -197,15 +200,14 @@ export async function createTools(
   // bash: the agent's own sandbox, or any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured
   // default; if that default is read-only, the tool returns a clear error instead
-  // of silently selecting the first writable workspace. Background jobs and CPU
-  // metering are bash's alone.
+  // of silently selecting the first writable workspace. Background jobs are
+  // bash's alone.
   if (sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
       bashTool({
         ...sandboxContext,
         ...(backgroundContext ? { background: backgroundContext } : {}),
-        ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }),
     );
   }
@@ -214,6 +216,12 @@ export async function createTools(
   const machines = machineSandboxes(sandboxes);
   if (machines.length > 0) {
     Object.assign(sandboxTools, computerTool(machines));
+  }
+  // browse: opt-in, on the agent's first sandbox. A sandbox without Obscura fails
+  // the run here rather than handing the model a tool that cannot work.
+  if (agentConfig.browser?.enabled === true) {
+    assertBrowseSandbox(defaultSandbox);
+    Object.assign(sandboxTools, browseTool(sandboxContext));
   }
   // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {
