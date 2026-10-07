@@ -271,10 +271,15 @@ export interface SandboxGuestPost {
   abortSignal?: AbortSignal;
 }
 
-/** A guest POST to the VM a reservation key holds. */
-export interface SandboxReservedPost extends SandboxGuestPost {
-  reservationKey: string;
-}
+/** Which reserved VM a call reaches: bash's workspace namespace, or its reservation key. */
+export type SandboxReservedTarget = Pick<
+  SandboxRunRequest,
+  "namespace" | "reservationKey" | "workspaceRoot"
+>;
+
+/** A guest POST to the reserved VM bash reaches on the same target. */
+export interface SandboxReservedPost
+  extends SandboxGuestPost, SandboxReservedTarget {}
 
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;

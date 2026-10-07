@@ -11,7 +11,7 @@ import {
 
 const TARGET: SandboxMcpTarget = {
   config: { provider: "lambda", persistent: true, timeout: 30 },
-  reservationKey: "agent-vm",
+  reservation: { reservationKey: "agent-vm" },
   command: ["obscura", "mcp"],
 };
 const LIST = { method: "tools/list", params: {} };

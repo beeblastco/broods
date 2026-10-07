@@ -1359,6 +1359,33 @@ describe("createSandboxExecutor", () => {
     expect(posted.at(-1)).toContain("microvm-1");
   });
 
+  it("mounts the workspace when a guest POST is the first to reach the VM", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = null;
+    const {
+      MicrovmSandboxExecutor,
+    } = require("../src/harness/sandbox/microvm-executor.ts");
+
+    await new MicrovmSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    }).postReserved({
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      path: "/mcp",
+      body: {},
+      timeoutMs: 1_000,
+    });
+
+    // The VM bash reaches next must already carry the workspace mount, or bash
+    // writes to local disk for the VM's whole life.
+    const payload = JSON.parse(String(microvmRunInput().runHookPayload));
+    expect(payload.workspace).toMatchObject({
+      namespace: ns,
+      root: "/mnt/workspaces",
+    });
+  });
+
   it("posts a guest route on the reserved VM, then through its cached endpoint", async () => {
     storedSandboxExternalId = "microvm-1";
     const posts: Array<{ url: string; init?: RequestInit }> = [];

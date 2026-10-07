@@ -345,10 +345,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   // One JSON POST to a route the sandbox image serves beside /exec, for the MCP
-  // relay's /mcp. Like run(), it tries this pod's cached endpoint first and
-  // reserves only when that VM is gone. The reservation is shared: bash and other
-  // conversations use the same VM, so a failed first setup must not release it.
+  // relay's /mcp. Like run(), it tries this pod's cached endpoint first, and
+  // otherwise reaches the VM the way bash does on the same target: the workspace
+  // mount and the lifecycle in bash's directory. The VM is shared with bash and
+  // other conversations, so a failed setup never releases it.
   async postReserved(request: SandboxReservedPost): Promise<unknown> {
+    if (!this.#persistent(request)) {
+      throw new Error(
+        "a guest route needs a persistent lambda (MicroVM) sandbox reservation",
+      );
+    }
     // The image reports the VM's burst totals in a header on guest routes.
     const post = (target: {
       microvmId: string;
@@ -369,17 +375,23 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         );
       } catch (error) {
         if (!(error instanceof MicrovmNotReadyError)) throw error;
-        reservedEndpoints.delete(request.reservationKey);
+        reservedEndpoints.delete(sandboxReservationKey(request) ?? "");
       }
     }
-    const reserved = await this.acquireHarnessReservation({
+    const reach: SandboxRunRequest = {
+      ...this.#harnessRequest(sandboxReservationKey(request) ?? ""),
       reservationKey: request.reservationKey,
-      abortSignal: request.abortSignal,
-      shared: true,
-    });
+      namespace: request.namespace,
+      workspaceRoot: request.workspaceRoot,
+    };
+    const acquired = await this.#acquire(reach);
+    const workDir = this.#workDir(this.#workspaceKey(reach));
+    await this.#prepareWorkspaceMount(reach, acquired, workDir);
+    await this.#runLifecycle(acquired.microvmId, acquired.endpoint, workDir);
+    request.abortSignal?.throwIfAborted();
 
-    return this.#whileWarming(reserved.microvmId, WARMUP_BUDGET_MS, () =>
-      post(reserved),
+    return this.#whileWarming(acquired.microvmId, WARMUP_BUDGET_MS, () =>
+      post(acquired),
     );
   }
 

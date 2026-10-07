@@ -18,6 +18,7 @@ import { createSandboxExecutor } from "../sandbox/index.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
+  SandboxReservedTarget,
 } from "../sandbox/types.ts";
 import { sandboxTimeoutSeconds } from "../tools/filesystem-utils.ts";
 
@@ -28,7 +29,7 @@ const SERVER_START_MS = 30_000;
 /** Which VM serves the row and what it runs: bash's sandbox and reservation. */
 export interface SandboxMcpTarget {
   config: SandboxExecutorConfig;
-  reservationKey: string;
+  reservation: SandboxReservedTarget;
   command: string[];
 }
 
@@ -56,7 +57,7 @@ export async function sandboxMcpRequest(
   const timeoutMs = sandboxTimeoutSeconds(target.config) * 1000;
   const reply = await executor
     .postReserved({
-      reservationKey: target.reservationKey,
+      ...target.reservation,
       path: "/mcp",
       body: {
         server: serverName,
