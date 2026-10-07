@@ -70,7 +70,11 @@ export function assertStep(
  */
 export async function connectMachine(
   context: VerifyContext,
-  options: { computer: boolean; name: string },
+  options: {
+    computer: boolean;
+    name: string;
+    envVars?: Record<string, string>;
+  },
 ): Promise<MachineConnection> {
   const { sandboxId } = await context.account.createSandbox({
     name: options.name,
@@ -78,6 +82,7 @@ export async function connectMachine(
       provider: "machine",
       permissionMode: "bypass",
       network: { mode: "allow-all" },
+      ...(options.envVars ? { envVars: options.envVars } : {}),
     },
   });
   let output = "";

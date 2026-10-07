@@ -402,9 +402,6 @@ function updatePatch(
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
     ...transportClears(args.transport),
-    // A patch that sets a machine connection states the whole of it, so a
-    // command it leaves out is cleared rather than kept.
-    ...(args.transport === "machine" ? { command: args.command } : {}),
     ...(args.sha256 !== undefined &&
     args.sha256 !== doc.sha256 &&
     args.sourceCode === undefined

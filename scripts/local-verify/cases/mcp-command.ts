@@ -51,6 +51,25 @@ export async function mcpCommand(context: VerifyContext): Promise<void> {
     JSON.stringify(row),
   );
 
+  const serverId = synced.ids.mcp.obscura ?? "";
+  const patched = await context.account.updateMcp(serverId, { sandbox: "web" });
+  assertStep(
+    "a PATCH that names only the sandbox keeps the command",
+    JSON.stringify(patched?.command) === JSON.stringify(["obscura", "mcp"]),
+    JSON.stringify(patched),
+  );
+
+  await sync.putManifest(
+    manifest({ transport: "machine", sandbox: "web" }),
+    true,
+  );
+  const dropped = await context.account.getMcp(serverId);
+  assertStep(
+    "a sync whose definition drops the command clears it",
+    dropped?.command === undefined,
+    JSON.stringify(dropped),
+  );
+
   const refused = await sync
     .putManifest(
       manifest({

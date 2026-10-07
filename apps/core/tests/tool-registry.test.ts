@@ -1274,7 +1274,7 @@ describe("connected MCP servers", () => {
             { type: "text" as const, text: "Viewport of example.com" },
             {
               type: "image" as const,
-              data: "iVBORw0KGgo=",
+              data: pngHeader(1, 1),
               mimeType: "image/png",
             },
           ],
@@ -1293,10 +1293,61 @@ describe("connected MCP servers", () => {
       type: "content",
       value: [
         { type: "text", text: "Viewport of example.com" },
-        { type: "image-data", data: "iVBORw0KGgo=", mediaType: "image/png" },
+        { type: "image-data", data: pngHeader(1, 1), mediaType: "image/png" },
         { type: "text", text: '{"width":1280}' },
       ],
     });
+  });
+
+  it("shows the model only images it can read, within one result's budget", async () => {
+    // A PNG header padded to just over 6 MB once decoded.
+    const huge = `${pngHeader(10, 10)}${"A".repeat(8 * 1024 * 1024)}`;
+    const image = (
+      data: string,
+      mimeType = "image/png",
+    ): { type: "image"; data: string; mimeType: string } => ({
+      type: "image" as const,
+      data: data,
+      mimeType: mimeType,
+    });
+    setMcpForTests({
+      callTool: async function () {
+        return {
+          content: [
+            image(jpegHeader(2, 3)),
+            image("not base64!"),
+            image(btoa("<svg/>"), "image/svg+xml"),
+            // A PNG signature with no header behind it cannot be decoded.
+            image("iVBORw0KGgo="),
+            image(pngHeader(9000, 10)),
+            image(huge),
+            ...Array.from({ length: 8 }, () => image(pngHeader(1, 1))),
+          ],
+        };
+      },
+    });
+
+    const result = (await callMcpTool(
+      mcpConnection(mcpRecord(), undefined),
+      "screenshot",
+      {},
+    )) as { type: "content"; value: Array<Record<string, string>> };
+
+    // The bytes name the type: a JPEG labelled PNG goes through as a JPEG.
+    expect(result.value[0]).toEqual({
+      type: "image-data",
+      data: jpegHeader(2, 3),
+      mediaType: "image/jpeg",
+    });
+    expect(result.value[1]!.text).toContain("not a PNG, JPEG, GIF or WebP");
+    expect(result.value[2]!.text).toContain("not a PNG, JPEG, GIF or WebP");
+    expect(result.value[3]!.text).toContain("not a PNG, JPEG, GIF or WebP");
+    expect(result.value[4]!.text).toContain("9000x10 pixels");
+    expect(result.value[5]!.text).toContain("over the 6 MB");
+    expect(
+      result.value.filter((part) => part.type === "image-data"),
+    ).toHaveLength(8);
+    expect(result.value.at(-1)!.text).toContain("more than 8 images");
   });
 
   it("filters by the row's allowedTools and skips disabled rows", async () => {
@@ -1611,6 +1662,28 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     taskUsage: {} as never,
     auditLedger: { append: async (): Promise<void> => {} },
   };
+}
+
+// A JPEG's start of image, then, after one 0xFF fill byte, the frame header
+// that names its size, as base64.
+function jpegHeader(width: number, height: number): string {
+  const frame = Buffer.alloc(20);
+  frame.set([0xff, 0xd8, 0xff, 0xff, 0xc0, 0x00, 0x11, 0x08]);
+  frame.writeUInt16BE(height, 8);
+  frame.writeUInt16BE(width, 10);
+
+  return frame.toString("base64");
+}
+
+// A PNG's signature and IHDR chunk, as base64.
+function pngHeader(width: number, height: number): string {
+  const header = Buffer.alloc(33);
+  header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+  header.write("IHDR", 12, "latin1");
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+
+  return header.toString("base64");
 }
 
 function mcpRecord(overrides: Partial<McpRecord> = {}): McpRecord {

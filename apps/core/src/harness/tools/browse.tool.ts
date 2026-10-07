@@ -10,6 +10,8 @@
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
+import { toErrorMessage } from "../../shared/errors.ts";
+import { MAX_IMAGE_BYTES } from "../../shared/media-types.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { shellQuote } from "../sandbox/utils.ts";
 import {
@@ -21,7 +23,7 @@ import {
   workspaceMediaBytes,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import { toolError } from "./utils.ts";
+import { toolError, withImageLimits } from "./utils.ts";
 
 const MODES = ["markdown", "text", "links", "eval", "screenshot"] as const;
 // Workspace-relative, so the agent can send the file on with send-images.
@@ -117,15 +119,21 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
         if (mode !== "screenshot" || !workspace) {
           return { type: "text", value: result.stdout.trim() || "(empty)" };
         }
-        const image = await workspaceMediaBytes(workspace, path);
+        const saved = `Screenshot of ${url}, saved to ${path} in workspace ${workspace.name}`;
+        // Read only a screenshot the model may be shown; a larger one stays a file.
+        const image = await workspaceMediaBytes(
+          workspace,
+          path,
+          MAX_IMAGE_BYTES,
+        ).catch((error: unknown): string => toErrorMessage(error));
+        if (typeof image === "string") {
+          return { type: "text", value: `${saved}. Not shown: ${image}` };
+        }
 
         return {
           type: "content",
-          value: [
-            {
-              type: "text",
-              text: `Screenshot of ${url}, saved to ${path} in workspace ${workspace.name}`,
-            },
+          value: withImageLimits([
+            { type: "text", text: saved },
             {
               type: "image-data",
               data: Buffer.from(
@@ -135,7 +143,7 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
               ).toString("base64"),
               mediaType: "image/png",
             },
-          ],
+          ]),
         };
       },
     }),
@@ -154,7 +162,9 @@ export function obscuraCommand(
 ): string {
   const exec = sandboxTimeoutSeconds(sandbox);
   const timeout = Math.max(Math.ceil(exec / 2), exec - TIMEOUT_MARGIN_SECONDS);
-  const fetch = `obscura fetch ${shellQuote(call.url)} --quiet --timeout ${timeout}`;
+  // An inherited OBSCURA_ALLOW_PRIVATE_NETWORK would turn off Obscura's own
+  // private-address guard, which is what keeps browse on the public internet.
+  const fetch = `env -u OBSCURA_ALLOW_PRIVATE_NETWORK obscura fetch ${shellQuote(call.url)} --quiet --timeout ${timeout}`;
   switch (call.mode) {
     case "eval":
       return `${fetch} --eval ${shellQuote(call.script ?? "")}`;

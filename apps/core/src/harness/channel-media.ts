@@ -41,6 +41,7 @@ import {
 } from "../shared/media-ticket.ts";
 import {
   MAX_ATTACHMENT_BYTES,
+  MAX_IMAGE_BYTES,
   unreadableMediaNote,
 } from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
@@ -72,10 +73,6 @@ export const MEDIA_REFERENCE_SCHEME = "broods-media:";
 // again for every turn that replays it. Small on purpose: core's pod has a
 // gigabyte for everything, and the cache is a courtesy, not the storage.
 const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
-
-// Pictures are the one kind a model reads inline on nearly every provider, and
-// a 25 MB one costs far more in tokens than it carries in meaning.
-const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
 // A bound on one message, not on the conversation. Every attachment past it is
 // still named for the agent; only the bytes are left with the provider.

@@ -571,12 +571,28 @@ describe("normalizeMcpInput", () => {
       sandbox: "web",
       command: ["obscura", "mcp"],
     });
-    // Restating the sandbox without a command clears it, as a sync that drops it does.
+    // A PATCH that only moves the server to another sandbox keeps its command.
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      ...(await normalizeMcpInput(
+        { sandbox: "web-2" },
+        { requireConnection: false },
+      )),
+    });
+    const moved = await tt.query(internal.account.mcp.getById, {
+      accountId: scope.accountId,
+      serverId: serverId,
+    });
+    expect(moved?.sandbox).toBe("web-2");
+    expect(moved?.command).toEqual(["obscura", "mcp"]);
+    // A sync whose definition dropped the command names it to clear.
     await tt.mutation(internal.account.mcp.update, {
       accountId: scope.accountId,
       serverId: serverId,
       transport: "machine",
       sandbox: "web",
+      clear: ["command"],
     });
     const cleared = await tt.query(internal.account.mcp.getById, {
       accountId: scope.accountId,
