@@ -89,6 +89,7 @@ import {
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
+  queueMirrorWrite,
   SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
@@ -168,10 +169,6 @@ const burstReported = new Map<
 // Growth below this is left for a later report; the totals only grow.
 const BURST_REPORT_MIN_GROWTH = 0.01;
 const BURST_REPORT_TTL_MS = 24 * 60 * 60 * 1000;
-// Each MicroVM's dashboard-row writes (upsert, burst, remove) in the order they
-// were queued, so a burst write never beats the row it bills or its removal.
-const mirrorWrites = new Map<string, Promise<void>>();
-
 // Reserved endpoints, keyed by reservation key. Same module-scope reasoning as the
 // token cache: an executor is constructed per request, so an instance field never hits.
 const reservedEndpoints = new Map<
@@ -387,8 +384,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       if (!persistent) {
         void this.#terminate(microvmId);
         // Queued after the upsert and burst writes, off the tool-call clock;
-        // otherwise a slow upsert can recreate a deleted row.
-        void queueMirrorWrite(microvmId, () => this.#unmirror(microvmId));
+        // otherwise a slow upsert can recreate a deleted row. Shutdown drains it.
+        waitUntil(queueMirrorWrite(microvmId, () => this.#unmirror(microvmId)));
       }
     }
   }
@@ -1581,24 +1578,4 @@ function microvmImageName(arn: string): string {
 
 function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
-}
-
-// Run `write` after every earlier write queued for this MicroVM. A failed write
-// never blocks the ones behind it.
-function queueMirrorWrite(
-  microvmId: string,
-  write: () => Promise<unknown>,
-): Promise<void> {
-  const queued = (mirrorWrites.get(microvmId) ?? Promise.resolve())
-    .then(write)
-    .then(
-      () => {},
-      () => {},
-    );
-  mirrorWrites.set(microvmId, queued);
-  void queued.then(() => {
-    if (mirrorWrites.get(microvmId) === queued) mirrorWrites.delete(microvmId);
-  });
-
-  return queued;
 }

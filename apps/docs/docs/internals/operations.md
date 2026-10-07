@@ -144,23 +144,6 @@ Matrix specifics:
 | Image built but pods still run the old version                     | The rollout job failed or `INFRA_DISPATCH_TOKEN` is missing. Check the `rollout` job of the build workflow and the infra run it names                                              |
 | `broods logs` or the dashboard stream stops after about 15 minutes | The stage ticket expired and could not be renewed. The CLI mints a new one before each reconnect from its login, so re-run `broods login` if the login itself expired              |
 
-## Credential prefix cutover
-
-Every Broods credential now starts with `b` (`bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_`, `bsts_`, `bdts_`, `brole_`). Core and the config plane route a bearer by prefix and refuse any other one without a lookup, so the old `sk_`, `ask_`, `pdk_` and `fp_*` credentials get `401` the moment the release is live. There is no compatibility path. After the deploy reaches a stage, run the two migrations against it:
-
-```sh
-bunx convex run migrations:runtimeKeyPrefix
-bunx convex run migrations:roleIdPrefix
-```
-
-- `runtimeKeyPrefix` replaces each stored `sk_` or `fp_agent_` runtime key with a fresh `bsk_` key, the same way a rotation does. The random part is new on purpose, so an old key left in a log cannot rebuild the live one. A batch returns `{ migrated, skipped, isDone }` and reschedules itself until the table is done.
-- `roleIdPrefix` rewrites `fp_role_` to `brole_` in `accountRoles`. It leaves `roleSessions` alone: every session from before the release holds an `fp_sts_` token that is already refused, and it expires within 12 hours. A caller that assumed a role between the deploy and this migration assumes it again.
-- Both skip rows already on the new prefix, so a re-run is safe.
-
-Run `runtimeKeyPrefix` right after the deploy. A `broods dev` sync that reads the key just before the migration rotates it writes the old key to `.env.local`; the next `broods dev` or `broods stage use` writes the new one.
-
-Account keys, project keys and CLI logins cannot be migrated: their stored hash covers the old prefix and the plaintext is gone. Owners rotate the account key in the dashboard (an admin can use `POST /v1/accounts/{accountId}/rotate-secret`), create new project keys and run `broods login` again. Deployed apps update `BROODS_API_KEY` to the new `bsk_` key from the dashboard; `broods dev`, `broods deploy` and `broods stage use` rewrite `.env.local`. Role sessions, stage tickets and login codes are short-lived and just expire. The user-facing note is in [Security](../guides/security.md#credentials).
-
 ## Drift cleanup
 
 See [CI/CD](ci-cd.md#drift-cleanup).

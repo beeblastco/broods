@@ -18,27 +18,3 @@ export function isWorkspaceIsolation(
 ): value is WorkspaceIsolation {
   return WORKSPACE_ISOLATION_LEVELS.some((level) => level === value);
 }
-
-/**
- * The isolation level a stored config holds; anything else is a shared root.
- * Every reader (core resolution, cleanup, the dashboard) goes through here.
- */
-export function workspaceIsolation(
-  value: unknown,
-): WorkspaceIsolation | undefined {
-  // until migrations:workspaceIsolationLevels has run: a row written before
-  // the levels existed still holds `true`. Then this stops folding it.
-  return workspaceIsolationInput(value);
-}
-
-/**
- * The isolation level an API or SDK input asks for. `true` is the first
- * spelling of "conversation" and stays accepted; it is stored as its level.
- */
-export function workspaceIsolationInput(
-  value: unknown,
-): WorkspaceIsolation | undefined {
-  if (value === true) return "conversation";
-
-  return isWorkspaceIsolation(value) ? value : undefined;
-}

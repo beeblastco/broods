@@ -1,9 +1,9 @@
 /**
  * The Convex side of envelope encryption: builds an `AccountCipher` from the
  * account's `accountKeys` rows, mints the first key on the first write, and
- * walks every encrypted table so a migration or a rotation can rewrite blobs
- * in bounded batches. The codec itself is `./envelope.ts`; the internal
- * functions that expose this live in `account/keys.ts` and `migrations.ts`.
+ * walks every encrypted table so a rotation can rewrite blobs in bounded
+ * batches. The codec itself is `./envelope.ts`; the internal functions that
+ * expose this live in `account/keys.ts`.
  * It must not import the generated api: the forwarders import a type through
  * `channel/connections.ts`, and the api would pull every module into them.
  */
@@ -113,14 +113,12 @@ export async function assertSealedUnderCurrentKey(
   }
 }
 
-/** A keyring over `keys` under this deployment's secrets, legacy blobs included. */
+/** A keyring over `keys` under this deployment's secrets. */
 export function cipherFromKeys(
   accountId: Id<"accounts">,
   keys: WrappedAccountKey[],
 ): AccountCipher {
-  return new AccountCipher(accountId, encryptionSecrets(), keys, {
-    rawSecret: process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-  });
+  return new AccountCipher(accountId, encryptionSecrets(), keys);
 }
 
 /**
@@ -199,7 +197,7 @@ export async function mintKey(
 /**
  * One batch of a walk over every encrypted table: each row whose blob is not
  * under its account's current key is decrypted and written back under it, so
- * the same walk serves the legacy migration and a key rotation. With
+ * a key rotation moves every row under the new key. With
  * `accountId` only that account's rows are rewritten; the table is still paged
  * in full since two of them have no account index. A blob that does not
  * decrypt throws, so a bad secret stops the walk instead of skipping rows.

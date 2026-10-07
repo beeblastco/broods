@@ -2,8 +2,9 @@
  * Shared validation for MCP server registrations (#331). One normalizer
  * serves every write path (CLI sync, direct API, dashboard). A `url` makes an "http" row
  * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
- * a "hosted" row served by the mcp-runner Lambda, hashed here so sha256
- * always travels with the bundle. Auth header values may carry ${NAME}
+ * a "hosted" row, hashed here so sha256 always travels with the bundle; the
+ * S3 bundle writer (aws/bundles.ts) marks whether Cloudflare Dynamic Workers
+ * can run it. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one
  * instead of an inline secret. `oauth` follows the same rule: clientSecret
@@ -13,7 +14,10 @@
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
-import { ACCOUNT_ENV_REFS_ONLY_PATTERN } from "./envRefs";
+import {
+  ACCOUNT_ENV_REFS_ONLY_PATTERN,
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+} from "./envRefs";
 import { ClientError } from "./clientError";
 
 const MAX_ALLOWED_TOOLS = 256;
@@ -23,7 +27,7 @@ const MAX_ALLOWED_TOOLS = 256;
  * packages/broods/src/manifest.ts (the published CLI cannot import this
  * package). Change both or the CLI accepts what the config plane rejects.
  */
-const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
+export const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
 /** Ceiling for a hosted MCP server bundle by either upload path (#190). */
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 
@@ -36,17 +40,17 @@ const MAX_URL_LENGTH = 2048;
 /** RFC 9110 field-name token characters. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
+/** Optional row fields a declarative sync clears when its manifest drops them. */
+export const MCP_CLEARABLE_FIELDS = [
+  "allowedTools",
+  "description",
+  "headers",
+  "oauth",
+] as const;
+
 /** Header names whose values carry credentials and so must use a ${NAME} ref. */
 export const SENSITIVE_HEADER_NAME_PATTERN =
   /auth|token|secret|key|cookie|password|credential/i;
-
-/**
- * A credential header value with no inline secret: `${NAME}` refs only, after
- * an optional auth scheme word (`Bearer ${TOKEN}`). Anchored, so a literal
- * beside a ref (`Bearer sk-live ${X}`) is refused. Members see only these.
- */
-export const CREDENTIAL_HEADER_VALUE_PATTERN =
-  /^(?:[A-Za-z]+ )?(?:\$\{[A-Z][A-Z0-9_]*\})+$/;
 
 /**
  * Server names become the `server__tool` namespace prefix inside provider
@@ -62,6 +66,9 @@ const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export type McpPlacement = { sandbox: string | null; transport: McpTransport };
 
 export type McpTransport = "http" | "hosted" | "machine";
+
+/** Where a hosted server may run: "auto" picks Workers when the bundle can run there. */
+export type McpRuntime = "auto" | "lambda";
 
 /**
  * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
@@ -93,6 +100,8 @@ export interface McpInput {
    */
   bundleStorageId?: string;
   sha256?: string;
+  /** Hosted-only: "lambda" keeps the server off Cloudflare Workers. */
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
   allowedTools?: string[];
@@ -101,7 +110,8 @@ export interface McpInput {
 
 /**
  * Invariants on the row a create or update produces, whichever side brings
- * each field: a machine row names its sandbox, and oauth needs an external row
+ * each field: a machine row names its sandbox, only a hosted row picks a
+ * runtime, and oauth needs an external row
  * with an https url (the minted bearer rides every request) and no
  * Authorization header (core mints it itself).
  */
@@ -109,6 +119,7 @@ export function assertMcpRow(row: {
   transport: McpTransport;
   url?: string;
   sandbox?: string;
+  runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
 }): void {
@@ -121,6 +132,11 @@ export function assertMcpRow(row: {
   // normalizer's own check never sees it.
   if (row.transport === "machine" && row.headers !== undefined) {
     throw new ClientError("headers do not apply to a machine server");
+  }
+  if (row.runtime !== undefined && row.transport !== "hosted") {
+    throw new ClientError(
+      `runtime applies to hosted (bundle) servers, not ${row.transport}`,
+    );
   }
   if (row.oauth === undefined) return;
   if (row.transport !== "http") {
@@ -321,6 +337,9 @@ function normalizeConnection(
     }
     input.sandbox = record.sandbox;
   }
+  if (record.runtime !== undefined) {
+    input.runtime = normalizeRuntime(record.runtime);
+  }
   const connections = [
     input.url,
     input.bundle,
@@ -464,6 +483,14 @@ function normalizeOauth(
     refreshToken: field("refreshToken", true),
     ...(tokenUrl !== undefined ? { tokenUrl: tokenUrl } : {}),
   };
+}
+
+function normalizeRuntime(value: unknown): McpRuntime {
+  if (value !== "auto" && value !== "lambda") {
+    throw new ClientError('runtime must be "auto" or "lambda"');
+  }
+
+  return value;
 }
 
 function normalizeUrl(value: unknown): string {

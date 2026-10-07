@@ -7,7 +7,7 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
-import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
+import { isWorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
   ToggleRow,
@@ -303,7 +303,9 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
-  const isolation = workspaceIsolation(config.isolation);
+  const isolation = isWorkspaceIsolation(config.isolation)
+    ? config.isolation
+    : undefined;
   const storage: Record<string, unknown> = isPlainObject(config.storage)
     ? config.storage
     : { provider: "s3" };

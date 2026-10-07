@@ -36,9 +36,8 @@ const REASONING_PROVIDER_KEYS: Record<string, string[]> = {
 /**
  * Rewrite the reasoning portion of a `model` branch for `provider`, returning a
  * new model object. Strips every provider's known reasoning keys first (so
- * toggling off or switching providers leaves no residue) plus the removed
- * top-level aliases (`thinking`, `thinkingEffort`, …) the core rejects, then
- * writes the active provider's reasoning under `model.providerOptions`.
+ * toggling off or switching providers leaves no residue), then writes the
+ * active provider's reasoning under `model.providerOptions`.
  */
 export function applyModelReasoning(
   model: Record<string, unknown>,
@@ -46,17 +45,6 @@ export function applyModelReasoning(
   next: { budgetTokens?: number; effort?: string },
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...model };
-  for (const alias of [
-    "thinking",
-    "thinkingConfig",
-    "thinkingEffort",
-    "reasoningEffort",
-    "reasoningSummary",
-    "effort",
-  ]) {
-    delete result[alias];
-  }
-
   const providerOptions: Record<string, unknown> = isPlainObject(
     result.providerOptions,
   )

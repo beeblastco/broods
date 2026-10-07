@@ -115,7 +115,7 @@ export const sandbox = defineSandbox({
 export const workspace = defineWorkspace({
   name: "workspace",
   storage: { provider: "s3" },
-  partitioned: true,
+  partitioned: "conversation",
 });
 
 export const agent = defineAgent({
