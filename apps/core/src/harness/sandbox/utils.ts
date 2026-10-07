@@ -203,8 +203,10 @@ export function mergeSandboxEnv(
 
 /**
  * Meter one ephemeral sandbox call on platform credentials: mirror a row keyed by
- * the sandbox id now, and return the teardown that removes it, which bills the
- * time in between. The account's own credentials, or no account, get no row.
+ * the sandbox id now, and return the call that removes it, which bills the time
+ * in between. Call it only once the provider confirms the sandbox is gone, so a
+ * failed teardown keeps billing until the stale-row sweep. The account's own
+ * credentials, or no account, get no row.
  */
 export function meterEphemeralSandbox(
   controlPlane: SandboxControlPlane | undefined,

@@ -117,8 +117,8 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       };
     } finally {
       if (!persistent) {
-        endMeter?.();
         await sandbox.delete();
+        endMeter?.();
       }
     }
   }

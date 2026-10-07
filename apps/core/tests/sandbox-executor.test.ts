@@ -766,6 +766,34 @@ describe("createSandboxExecutor", () => {
     });
   }
 
+  it("keeps billing an ephemeral sandbox whose teardown failed", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    process.env.VERCEL_TOKEN = "platform-token";
+    process.env.VERCEL_TEAM_ID = "team_1";
+    process.env.VERCEL_PROJECT_ID = "prj_1";
+    vercelStopMock.mockImplementationOnce(async () => {
+      throw new Error("stop failed");
+    });
+
+    await createSandboxExecutor({
+      provider: "vercel",
+      controlPlane: {
+        accountId: "account-1",
+        name: "ephemeral",
+        specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+      },
+    }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+    await Bun.sleep(0);
+
+    expect(upsertSandboxInstanceMock).toHaveBeenCalledTimes(1);
+    expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+    delete process.env.VERCEL_TOKEN;
+    delete process.env.VERCEL_TEAM_ID;
+    delete process.env.VERCEL_PROJECT_ID;
+  });
+
   it("uses a flat MicroVM local namespace while mounting the hierarchical storage prefix", async () => {
     const {
       createSandboxExecutor,
@@ -3417,6 +3445,26 @@ describe("conditional release", () => {
       expect(deleteSandboxInstanceMock.mock.calls[1]?.[3]).toBe("sbx-current");
     });
   }
+
+  it("lambda release keeps the row of a VM whose terminate failed", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    microvmSendMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("Rate exceeded"), {
+        name: "ThrottlingException",
+      });
+    });
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    await expect(
+      executor.release({ namespace: NS, expectedExternalId: "sbx-old" }),
+    ).rejects.toThrow("failed to terminate MicroVM sbx-old");
+    expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("workspaceNamespacePrefix", () => {
