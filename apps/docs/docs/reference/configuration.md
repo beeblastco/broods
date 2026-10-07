@@ -303,7 +303,8 @@ An MCP server whose tools the agent sees as `<name>__<tool>`. Give exactly one o
 | `name`         | 1 to 32 lowercase letters, digits or hyphens, starting with a letter                                         |
 | `url`          | External server over stateless HTTP. Public host, no redirects                                               |
 | `handler`      | Hosted server built with `createMcpHandler` from `@modelcontextprotocol/server`, bundled by the CLI          |
-| `sandbox`      | A `machine` sandbox whose daemon runs the stdio server of the same name                                      |
+| `sandbox`      | A `machine` sandbox whose daemon runs the stdio server of the same name, or a persistent `lambda` sandbox    |
+| `command`      | Argv of the stdio server, such as `["obscura", "mcp"]`. Required on a `lambda` sandbox                       |
 | `headers`      | Request headers. Credentials must be `"Bearer ${NAME}"` refs                                                 |
 | `oauth`        | `{ clientId, clientSecret, refreshToken, tokenUrl? }` for expiring tokens. No Authorization header alongside |
 | `allowedTools` | Tools to register. Omit for all                                                                              |

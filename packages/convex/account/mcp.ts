@@ -40,6 +40,7 @@ export const create = internalMutation({
     runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
+    command: mcpFields.command,
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
@@ -82,6 +83,7 @@ export const create = internalMutation({
       transport: transport,
       url: args.url,
       sandbox: args.sandbox,
+      command: args.command,
       runtime: args.runtime,
       headers: args.headers,
       oauth: args.oauth,
@@ -100,6 +102,7 @@ export const create = internalMutation({
       runtime: args.runtime,
       url: args.url,
       sandbox: args.sandbox,
+      command: args.command,
       bundleStorageKey: args.bundleStorageKey,
       sha256: args.sha256,
       headers: args.headers,
@@ -254,6 +257,7 @@ export const update = internalMutation({
     runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
+    command: mcpFields.command,
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
@@ -322,7 +326,12 @@ function transportClears(
   transport: McpTransport | undefined,
 ): Partial<Doc<"mcp">> {
   if (transport === "hosted") {
-    return { url: undefined, oauth: undefined, sandbox: undefined };
+    return {
+      url: undefined,
+      oauth: undefined,
+      sandbox: undefined,
+      command: undefined,
+    };
   }
   const hosted = {
     workersCompatible: undefined,
@@ -331,7 +340,9 @@ function transportClears(
     sha256: undefined,
     sourceCode: undefined,
   };
-  if (transport === "http") return { ...hosted, sandbox: undefined };
+  if (transport === "http") {
+    return { ...hosted, sandbox: undefined, command: undefined };
+  }
   if (transport === "machine") {
     return { ...hosted, url: undefined, oauth: undefined, headers: undefined };
   }
@@ -355,6 +366,7 @@ function updatePatch(
     runtime?: McpRuntime;
     url?: string;
     sandbox?: string;
+    command?: string[];
     bundleStorageKey?: string;
     sha256?: string;
     headers?: Record<string, string>;
@@ -377,6 +389,7 @@ function updatePatch(
     ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
+    ...(args.command !== undefined ? { command: args.command } : {}),
     ...(args.bundleStorageKey !== undefined
       ? { bundleStorageKey: args.bundleStorageKey }
       : {}),
@@ -389,6 +402,9 @@ function updatePatch(
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
     ...transportClears(args.transport),
+    // A patch that sets a machine connection states the whole of it, so a
+    // command it leaves out is cleared rather than kept.
+    ...(args.transport === "machine" ? { command: args.command } : {}),
     ...(args.sha256 !== undefined &&
     args.sha256 !== doc.sha256 &&
     args.sourceCode === undefined

@@ -14,6 +14,7 @@ import {
   callMcpTool,
   mcpConnection,
   setMcpForTests,
+  type McpConnection,
 } from "../src/harness/mcp/client.ts";
 import type { CronRecord } from "../src/shared/domain/cron.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
@@ -1392,6 +1393,55 @@ describe("connected MCP servers", () => {
       mcp: { [serverId]: {} },
     });
     expect(Object.keys(tools)).toEqual(["search__browser_navigate"]);
+  });
+
+  it("runs a machine row on a lambda sandbox in its VM and needs a command", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const web = {
+      provider: "lambda" as const,
+      persistent: true,
+      options: { reservationKey: "acct_test:web" },
+    };
+    const context = {
+      ...createToolContext(),
+      sandboxes: [{ name: "web", sandbox: web }],
+    };
+    const machineRow = {
+      name: "obscura",
+      transport: "machine" as const,
+      url: undefined,
+      sandbox: "web",
+    };
+    let listed: McpConnection | undefined;
+    setMcpForTests({
+      listTools: async function (connection: McpConnection) {
+        listed = connection;
+
+        return [{ name: "navigate", inputSchema: { type: "object" as const } }];
+      },
+    });
+
+    setStorageForTests(
+      storageWithMcp(mcpRecord({ ...machineRow, command: ["obscura", "mcp"] })),
+    );
+    const tools = await createTools(context, { mcp: { [serverId]: {} } });
+    expect(Object.keys(tools)).toContain("obscura__navigate");
+    expect(listed?.sandbox).toEqual({
+      config: web,
+      reservationKey: "acct_test:web",
+      command: ["obscura", "mcp"],
+    });
+
+    setStorageForTests(storageWithMcp(mcpRecord(machineRow)));
+    const refused = await createTools(context, {
+      mcp: { [serverId]: {} },
+    }).then(
+      (): string => "registered",
+      (error: unknown): string => String(error),
+    );
+    expect(refused).toContain(
+      `config.mcp.${serverId} runs on lambda sandbox "web" and needs command`,
+    );
   });
 
   it("skips a server whose listing fails instead of killing the run", async () => {
