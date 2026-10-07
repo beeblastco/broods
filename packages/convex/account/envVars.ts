@@ -17,6 +17,8 @@ import {
 } from "../_generated/server";
 import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import { substituteAccountEnvPlaceholders } from "../model/agentConfigCodec";
+import { ClientError } from "../model/clientError";
+import { workspacesReferencingEnvVar } from "../model/environmentValues";
 
 /** List write-only account variable metadata; ciphertext never leaves storage. */
 export const list = internalQuery({
@@ -115,7 +117,11 @@ export const set = internalMutation({
   },
 });
 
-/** Delete an account variable and re-resolve source-backed agents, preserving missing placeholders literally. */
+/**
+ * Delete an account variable and re-resolve source-backed agents, preserving
+ * missing placeholders literally. Refused while an API-made R2 workspace still
+ * mints its credentials from it.
+ */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string() },
   returns: v.boolean(),
@@ -127,6 +133,20 @@ export const remove = internalMutation({
       )
       .unique();
     if (!existing) return false;
+    const workspaces = await workspacesReferencingEnvVar(
+      ctx,
+      args.accountId,
+      undefined,
+      args.name,
+    );
+    // No names in the refusal: a role may write env vars without reading workspaces.
+    if (workspaces.length > 0) {
+      throw new ClientError(
+        `${args.name} is still referenced by an R2 workspace's keys. ` +
+          "Point the workspace at another variable before deleting this one.",
+        "conflict",
+      );
+    }
 
     await ctx.db.delete(existing._id);
     await refreshSourceBackedAgents(ctx, args.accountId);
@@ -135,15 +155,29 @@ export const remove = internalMutation({
   },
 });
 
-/** Decrypt every account variable into the map used for write-time substitution. */
-async function loadValuesForAccount(
+/** Decrypt the account variables, all of them or only `names`, into the map used for write-time substitution. */
+export async function loadValuesForAccount(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
+  names?: string[],
 ): Promise<Record<string, string>> {
-  const rows = await ctx.db
-    .query("accountEnvVars")
-    .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
-    .collect();
+  const rows = names
+    ? (
+        await Promise.all(
+          names.map((name) =>
+            ctx.db
+              .query("accountEnvVars")
+              .withIndex("by_accountId_and_name", (q) =>
+                q.eq("accountId", accountId).eq("name", name),
+              )
+              .unique(),
+          ),
+        )
+      ).filter((row) => row !== null)
+    : await ctx.db
+        .query("accountEnvVars")
+        .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+        .collect();
   const cipher = await accountCipher(ctx, accountId);
   const values: Record<string, string> = {};
   for (const row of rows) {

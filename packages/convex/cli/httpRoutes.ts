@@ -1075,8 +1075,7 @@ async function syncMcpResources(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-      // A synced machine row runs exactly the command its definition states.
-      ...(input.transport === "machine" ? { command: input.command } : {}),
+      ...(input.command !== undefined ? { command: input.command } : {}),
       ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }

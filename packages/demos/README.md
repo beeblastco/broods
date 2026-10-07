@@ -71,7 +71,7 @@ Sandbox examples (one `defineSandbox` per provider/mode):
 - `sandbox-lambda`: stateless, bash-only `lambda` (AWS Lambda MicroVM).
 - `sandbox-multiple`: two `lambda` sandboxes in `sandboxes`. The first is the default, the second is deny-all, picked per bash call.
 - `sandbox-workspace-lambda`: persistent workspace-backed `lambda` MicroVM.
-- `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-workspace-override`: provider-specific sandbox configs.
+- `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-cloudflare`, `sandbox-workspace-override`: provider-specific sandbox configs.
 
 Workspace examples:
 

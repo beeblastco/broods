@@ -22,8 +22,8 @@ import type {
   SandboxConfigRecord,
 } from "./domain/sandbox-config.ts";
 import type {
-  WorkspaceConfig,
   WorkspaceIsolation,
+  WorkspaceRuntimeConfig,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
 import {
@@ -59,7 +59,7 @@ export interface ResolvedWorkspace {
   workspaceId: string;
   namespace: string;
   description?: string;
-  config: WorkspaceConfig;
+  config: WorkspaceRuntimeConfig;
   sandbox?: WorkspaceSandboxConfig;
   // Read-only read runner. Set when the workspace has no effective sandbox, the ref
   // did not opt out with `sandbox: null`, and the workspace uses the managed bucket.
@@ -388,6 +388,7 @@ export function runsOnOwnCredentials(config: SandboxConfig): boolean {
     case "machine":
     case "custom":
       return true;
+    case "cloudflare":
     case "lambda":
       return false;
   }
@@ -424,9 +425,17 @@ function assertSandboxReachesWorkspace(
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
 ): void {
-  if (sandbox && STATELESS_SANDBOX_PROVIDERS.has(sandbox.provider)) {
+  // The file tools need an S3 mount. A machine, a custom server and a
+  // Cloudflare Container have none, so they would act on their own disk. A
+  // fallback runs the same workspace, so it is held to the same rule.
+  const unmountable = [sandbox?.provider, sandbox?.fallbackProvider].find(
+    (provider): boolean =>
+      provider === "cloudflare" ||
+      (provider !== undefined && STATELESS_SANDBOX_PROVIDERS.has(provider)),
+  );
+  if (unmountable) {
     throw new Error(
-      `Workspace "${workspaceName}" cannot run on a ${sandbox.provider} sandbox; give it its own sandbox or set sandbox: null`,
+      `Workspace "${workspaceName}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,
     );
   }
   if (

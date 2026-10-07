@@ -11,7 +11,7 @@ import {
 
 const TARGET: SandboxMcpTarget = {
   config: { provider: "lambda", persistent: true, timeout: 30 },
-  reservationKey: "agent-vm",
+  reservation: { reservationKey: "agent-vm" },
   command: ["obscura", "mcp"],
 };
 const LIST = { method: "tools/list", params: {} };
@@ -40,6 +40,7 @@ test("posts the JSON-RPC request with the server's command and timeouts", async 
       body: {
         server: "obscura",
         command: ["obscura", "mcp"],
+        env: {},
         message: {
           jsonrpc: "2.0",
           id: expect.any(String),
@@ -90,6 +91,90 @@ test("names the server when the VM cannot be reached", async () => {
       sandboxMcpRequest(TARGET, "obscura", LIST, undefined, executor),
     ),
   ).toContain("MCP server obscura on its sandbox failed: MicroVM /mcp failed");
+});
+
+test("gives a tool call 120 s on a sandbox with no timeout of its own", async () => {
+  const requests: unknown[] = [];
+  const executor: SandboxMcpExecutor = {
+    postReserved: async function (request): Promise<unknown> {
+      requests.push(request);
+
+      return { jsonrpc: "2.0", id: "1", result: {} };
+    },
+  };
+
+  await sandboxMcpRequest(
+    { ...TARGET, config: { provider: "lambda", persistent: true } },
+    "obscura",
+    LIST,
+    undefined,
+    executor,
+  );
+
+  expect(requests[0]).toMatchObject({ body: { timeout_ms: 120_000 } });
+});
+
+test("holds the 120 s default under the operator's sandbox timeout ceiling", async () => {
+  const requests: unknown[] = [];
+  const executor = answering(requests, { jsonrpc: "2.0", id: "1", result: {} });
+  process.env.WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS = "60";
+  try {
+    await sandboxMcpRequest(
+      { ...TARGET, config: { provider: "lambda", persistent: true } },
+      "obscura",
+      LIST,
+      undefined,
+      executor,
+    );
+  } finally {
+    delete process.env.WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS;
+  }
+
+  expect(requests[0]).toMatchObject({ body: { timeout_ms: 60_000 } });
+});
+
+test("starts the server with the sandbox's env vars, never the run identity", async () => {
+  const requests: unknown[] = [];
+  const executor = answering(requests, { jsonrpc: "2.0", id: "1", result: {} });
+
+  await sandboxMcpRequest(
+    {
+      ...TARGET,
+      config: {
+        ...TARGET.config,
+        envVars: {
+          API_KEY: "key-1",
+          UNSET: undefined,
+          BROODS_RUN_TOKEN: "spoofed",
+        },
+      },
+    },
+    "obscura",
+    LIST,
+    undefined,
+    executor,
+  );
+
+  expect(requests[0]).toMatchObject({ body: { env: { API_KEY: "key-1" } } });
+  expect(
+    Object.keys((requests[0] as { body: { env: object } }).body.env),
+  ).toEqual(["API_KEY"]);
+});
+
+test("refuses a sandbox whose executor has no MCP host", async () => {
+  expect(
+    await failure(
+      sandboxMcpRequest(
+        { ...TARGET, config: { provider: "sandbox", persistent: true } },
+        "obscura",
+        LIST,
+        undefined,
+        {},
+      ),
+    ),
+  ).toContain(
+    "MCP server obscura needs a lambda sandbox; sandbox has no MCP host",
+  );
 });
 
 // An executor whose every POST answers `reply`, recording each request.

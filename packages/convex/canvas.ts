@@ -17,7 +17,10 @@ import { hasReservation } from "./model/cliSyncResources";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
-import { normalizeWorkspaceConfig } from "./model/workspaceRules";
+import {
+  normalizeWorkspaceConfig,
+  workspaceEnvRefFields,
+} from "./model/workspaceRules";
 
 export const canvasEdgeValidator = v.object({
   id: v.string(),
@@ -555,6 +558,7 @@ async function materializeWorkspaceNode(
         name: name,
         description: description,
         config: config,
+        ...workspaceEnvRefFields(config),
         managedBy: "dashboard",
         updatedAt: now,
       });
@@ -575,6 +579,7 @@ async function materializeWorkspaceNode(
     name: name,
     description: description,
     config: config,
+    ...workspaceEnvRefFields(config),
     managedBy: "dashboard",
     createdAt: now,
     updatedAt: now,

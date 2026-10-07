@@ -11,6 +11,10 @@ import {
   mcpConnection,
   type McpConnection,
 } from "../harness/mcp/client.ts";
+import {
+  sandboxMcpTarget,
+  type SandboxMcpTarget,
+} from "../harness/mcp/sandbox.ts";
 import type { McpRecord } from "../shared/domain/mcp.ts";
 import {
   errorResponse,
@@ -20,8 +24,11 @@ import {
 } from "../shared/http.ts";
 import { isPlainObject, isStringRecord } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
+import { resolveAgentRuntime } from "../shared/workspaces.ts";
 
 const RPC_TIMEOUT_MS = 30_000;
+// The agent id the explorer reserves a lambda sandbox's VM under.
+const MCP_EXPLORER_AGENT_ID = "mcp-explorer";
 
 /** An unsaved row to verify: the minimal record fields a connection needs. */
 interface McpProbe {
@@ -58,7 +65,10 @@ export async function handleMcpServiceRpc(
     if (!record || record.status !== "active") {
       return errorResponse(404, "MCP server not found");
     }
-    connection = mcpConnection(record, undefined);
+    connection = {
+      ...mcpConnection(record, undefined),
+      sandbox: await explorerSandboxTarget(accountId, record),
+    };
   } else {
     const probe = parseProbe(body.probe);
     if (typeof probe === "string") return errorResponse(400, probe);
@@ -87,6 +97,31 @@ export async function handleMcpServiceRpc(
     result: result,
     durationMs: Date.now() - started,
   });
+}
+
+/**
+ * Where the explorer reaches a row on a lambda sandbox of the row's stage,
+ * resolved the way an agent run resolves it. The explorer runs as no agent, so
+ * it reserves a VM of its own on that sandbox (or the sandbox's pinned one).
+ * Undefined for any other row.
+ */
+async function explorerSandboxTarget(
+  accountId: string,
+  record: McpRecord,
+): Promise<SandboxMcpTarget | undefined> {
+  if (record.transport !== "machine") return undefined;
+  const sandboxes = await getStorage().sandboxConfigs.list(accountId);
+  const host = sandboxes.find(
+    (sandbox) =>
+      sandbox.name === record.sandbox && sandbox.stageId === record.stageId,
+  );
+  if (host?.config.provider !== "lambda") return undefined;
+  const runtime = await resolveAgentRuntime(
+    { sandboxes: [host.sandboxId] },
+    { accountId: accountId, agentId: MCP_EXPLORER_AGENT_ID },
+  );
+
+  return sandboxMcpTarget(record, runtime);
 }
 
 /**

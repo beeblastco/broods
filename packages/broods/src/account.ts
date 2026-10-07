@@ -1066,7 +1066,7 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox (`sandbox`/`lambda` providers). Throws on 404/403/409. */
+  /** Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox (`sandbox`/`lambda`/`cloudflare` providers). Throws on 404/403/409. */
   async openSandboxTerminal(
     sandboxId: string,
     reservationKey: string,

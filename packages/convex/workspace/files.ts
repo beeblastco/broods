@@ -76,6 +76,11 @@ export const workspaceStorageValidator = v.object({
     v.union(
       v.object({ type: v.literal("managed") }),
       v.object({
+        type: v.literal("r2"),
+        accessKeyId: v.string(),
+        secretAccessKey: v.string(),
+      }),
+      v.object({
         type: v.literal("assumeRole"),
         roleArn: v.string(),
         externalId: v.optional(v.string()),

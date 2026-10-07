@@ -1489,6 +1489,37 @@ export const search = defineMcp({
   expect(collectEnvRefNames(manifest)).toEqual(["SEARCH_TOKEN"]);
 });
 
+test("collectEnvRefNames includes ${NAME} refs in R2 workspace keys", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const files = defineWorkspace({
+  name: "r2-files",
+  storage: {
+    provider: "s3",
+    bucket: "agent-files",
+    prefix: "broods/",
+    endpoint: "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+    auth: {
+      type: "r2",
+      accessKeyId: "\${R2_ACCESS_KEY_ID}",
+      secretAccessKey: "\${R2_SECRET_ACCESS_KEY}",
+    },
+  },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+  ]);
+});
+
 test("compileProject copies a server's headers into each agent that connects it", async () => {
   const cwd = await fixtureProject(
     "",

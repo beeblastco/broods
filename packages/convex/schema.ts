@@ -743,6 +743,13 @@ export const workspaceConfigsFields = {
   name: v.string(),
   description: v.optional(v.string()),
   config: v.any(),
+  /**
+   * The env vars an R2 workspace's keys reference, copied from `config` on
+   * every write (`workspaceEnvRefFields`) so an env var delete finds the
+   * workspaces using it by index.
+   */
+  r2AccessKeyEnv: v.optional(v.string()),
+  r2SecretAccessKeyEnv: v.optional(v.string()),
   /** Ownership marker; see `agentConfigsFields.managedBy`. */
   managedBy: v.optional(
     v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
@@ -1521,7 +1528,17 @@ export default defineSchema({
     .index("by_stageId_and_name", ["stageId", "name"]),
   workspaceConfigs: defineTable(workspaceConfigsFields)
     .index("by_accountId_and_name", ["accountId", "name"])
-    .index("by_stageId_and_name", ["stageId", "name"]),
+    .index("by_stageId_and_name", ["stageId", "name"])
+    .index("by_accountId_r2AccessKeyEnv_and_stageId", [
+      "accountId",
+      "r2AccessKeyEnv",
+      "stageId",
+    ])
+    .index("by_accountId_r2SecretAccessKeyEnv_and_stageId", [
+      "accountId",
+      "r2SecretAccessKeyEnv",
+      "stageId",
+    ]),
   sandboxInstances: defineTable(sandboxInstancesFields)
     .index("by_accountId_projectId_and_stageId", [
       "accountId",

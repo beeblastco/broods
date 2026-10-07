@@ -11,6 +11,7 @@ import {
   mcpOauthTokenCacheKey,
   type ResolvedMcpOauth,
 } from "../src/harness/mcp/oauth.ts";
+import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 
 const TOKEN_URL = "https://oauth.test/token";
@@ -282,6 +283,43 @@ describe("mcp cache keys", () => {
     expect(
       cacheKeyFor(mcpConnection(record, { "x-upstream": "hdr-secret-abc123" })),
     ).toBe(key);
+  });
+
+  it("keys a lambda row's listing on what its sandbox boots and runs it with", () => {
+    const record = oauthRecord({
+      oauth: undefined,
+      transport: "machine",
+      url: undefined,
+      sandbox: "web",
+      command: ["obscura", "mcp"],
+    });
+    const onSandbox = (
+      config: Partial<SandboxExecutorConfig>,
+      reservationKey = "agent-a",
+    ): string =>
+      cacheKeyFor({
+        ...mcpConnection(record, undefined),
+        sandbox: {
+          config: {
+            provider: "lambda",
+            persistent: true,
+            image: "obscura",
+            ...config,
+          },
+          reservation: { reservationKey: reservationKey },
+          command: ["obscura", "mcp"],
+        },
+      });
+    const key = onSandbox({});
+
+    // Another conversation's VM on the same sandbox shares the listing.
+    expect(onSandbox({}, "agent-b")).toBe(key);
+    expect(onSandbox({ image: undefined, snapshot: "arn:img/v2" })).not.toBe(
+      key,
+    );
+    expect(onSandbox({ onCreate: ["pip install other-server"] })).not.toBe(key);
+    expect(onSandbox({ envVars: { API_KEY: "key-2" } })).not.toBe(key);
+    expect(onSandbox({ envVars: { API_KEY: "key-2" } })).not.toContain("key-2");
   });
 
   it("keeps the client secret and refresh token out of the token cache key", () => {

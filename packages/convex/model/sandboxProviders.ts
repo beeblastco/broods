@@ -10,6 +10,7 @@ export const SANDBOX_PROVIDERS = [
   "e2b",
   "daytona",
   "vercel",
+  "cloudflare",
   "machine",
   "custom",
 ] as const;
