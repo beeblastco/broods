@@ -267,12 +267,26 @@ export async function listS3Prefix(
   return objects;
 }
 
+/**
+ * An object's bytes. With `maxBytes`, a larger object, or one whose size the
+ * store does not say, is refused before any is read.
+ */
 export async function readS3Bytes(
   bucket: string,
   key: string,
   access?: S3Access,
+  maxBytes?: number,
 ): Promise<Uint8Array> {
-  const body = await readS3Body(bucket, key, access);
+  const { body, contentLength } = await readS3Body(bucket, key, access);
+  if (
+    maxBytes !== undefined &&
+    (contentLength === undefined || contentLength > maxBytes)
+  ) {
+    await body.transformToWebStream().cancel();
+    throw new Error(
+      `S3 object ${key} is ${contentLength ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
+    );
+  }
 
   return body.transformToByteArray();
 }
@@ -282,7 +296,7 @@ export async function readS3Text(
   key: string,
   access?: S3Access,
 ): Promise<string> {
-  const body = await readS3Body(bucket, key, access);
+  const { body } = await readS3Body(bucket, key, access);
 
   return body.transformToString();
 }
@@ -432,7 +446,10 @@ async function readS3Body(
   bucket: string,
   key: string,
   access?: S3Access,
-): Promise<NonNullable<GetObjectCommandOutput["Body"]>> {
+): Promise<{
+  body: NonNullable<GetObjectCommandOutput["Body"]>;
+  contentLength: number | undefined;
+}> {
   const result = await awsClient(access).send(
     new GetObjectCommand({
       Bucket: bucket,
@@ -444,5 +461,5 @@ async function readS3Body(
     throw new Error(`S3 object has no body: ${key}`);
   }
 
-  return result.Body;
+  return { body: result.Body, contentLength: result.ContentLength };
 }

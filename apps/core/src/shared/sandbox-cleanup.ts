@@ -5,20 +5,20 @@
  * no longer be what any config says.
  */
 
-import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
-import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
+import {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+} from "@broods/convex/model/sandboxRules";
+import { providerExecutor } from "../harness/sandbox/index.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
   getSandboxReleaseTarget,
 } from "../harness/sandbox/instance-store.ts";
-import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import type {
   ReservedSandbox,
   SandboxReleaseTarget,
 } from "../harness/sandbox/types.ts";
-import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
-import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
@@ -30,13 +30,11 @@ import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { runsOnOwnCredentials } from "./workspaces.ts";
 
-const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
-  "daytona",
-  "e2b",
-  "lambda",
-  "sandbox",
-  "vercel",
-];
+// Every provider that reserves a machine Broods may have to tear down.
+const RELEASABLE_PROVIDERS: readonly SandboxProvider[] =
+  SANDBOX_PROVIDERS.filter(
+    (provider): boolean => !STATELESS_SANDBOX_PROVIDERS.has(provider),
+  );
 
 /**
  * Release the reservations the sweeper found expired. The row goes first, as a
@@ -131,29 +129,6 @@ export async function releaseReservedSandboxes(
   return released;
 }
 
-/** The executor that releases through `config`'s provider and credentials. */
-function executorFor(
-  config: SandboxConfig,
-):
-  | DaytonaSandboxExecutor
-  | E2BSandboxExecutor
-  | MicrovmSandboxExecutor
-  | VercelSandboxExecutor
-  | WorkdirSandboxExecutor {
-  switch (config.provider) {
-    case "daytona":
-      return new DaytonaSandboxExecutor(config);
-    case "e2b":
-      return new E2BSandboxExecutor(config);
-    case "lambda":
-      return new MicrovmSandboxExecutor(config);
-    case "sandbox":
-      return new WorkdirSandboxExecutor(config);
-    default:
-      return new VercelSandboxExecutor(config);
-  }
-}
-
 /**
  * The configs to release through, limited to the account that owns the machine:
  * a release reads a 404 as "already gone", so credentials for another account
@@ -223,7 +198,10 @@ async function releaseOnProvider(
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {
     try {
-      await executorFor(config).release({
+      // The candidates come from a reserving provider, so every executor releases.
+      const executor = providerExecutor(config);
+      if (!executor.release) continue;
+      await executor.release({
         namespace: namespace,
         expectedExternalId: target.externalId,
       });

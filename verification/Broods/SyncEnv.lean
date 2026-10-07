@@ -3,8 +3,8 @@
 
 Model of `pushLocalEnvVars` (`packages/broods/src/cli/index.ts`), which runs
 before the manifest PUT, and `assertEnvRefsResolved`
-(`packages/convex/model/cliSync.ts`), which rejects the PUT when an `env()` ref
-has no stage value. The stage stores a value's digest; the CLI compares digests.
+(`packages/convex/model/cliSync.ts`), which rejects the PUT when an `env()` ref,
+or a `${NAME}` ref in an MCP header, has no stage value. The stage stores a value's digest; the CLI compares digests.
 -/
 
 namespace Broods.SyncEnv

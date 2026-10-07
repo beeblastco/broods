@@ -1,4 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
+import { agentNamespaceFolder } from "../src/shared/runtime-keys.ts";
 
 let lastAssumeRoleInput: Record<string, unknown> | undefined;
 const assumeRoleSendMock = mock(async () => ({
@@ -19,7 +28,9 @@ mock.module("@aws-sdk/client-sts", () => ({
   },
 }));
 
+const { getStorage } = await import("../src/shared/storage.ts");
 const {
+  mountAttribution,
   mountRoleArn,
   resolveS3Mount,
   resolveS3MountIdentity,
@@ -181,6 +192,32 @@ describe("resolveS3MountIdentity", () => {
   });
 });
 
+describe("mountAttribution", () => {
+  it("names the agent only on that agent's own folder, and the account on a mount another agent can reuse", () => {
+    const config = { controlPlane: { accountId: "acct_1" } };
+    const metadata = { agentId: "agent_1" };
+    const own = `${NS}/${agentNamespaceFolder("agent_1")}`;
+
+    expect(
+      mountAttribution(config, { namespace: own, metadata: metadata }),
+    ).toEqual({ accountId: "acct_1", agentId: "agent_1" });
+    // A shared root or a conversation folder outlives one run's credentials,
+    // so the next agent on the same sandbox would carry this agent's name.
+    for (const namespace of [
+      NS,
+      `${NS}/support/fs-conversation`,
+      `${NS}/${agentNamespaceFolder("agent_2")}`,
+    ]) {
+      expect(
+        mountAttribution(config, { namespace: namespace, metadata: metadata }),
+      ).toEqual({ accountId: "acct_1", agentId: undefined });
+    }
+    expect(
+      mountAttribution({}, { namespace: own, metadata: metadata }),
+    ).toBeUndefined();
+  });
+});
+
 describe("mountRoleArn", () => {
   it("uses the workspace's own role for a bucket it names", () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
@@ -191,7 +228,7 @@ describe("mountRoleArn", () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
     const storage = { provider: "s3" as const, bucket: "acme", prefix: "a/" };
     const expected =
-      '"assumeRole" is required when config.storage.bucket is set';
+      '"assumeRole" or "r2" is required when config.storage.bucket is set';
     expect(() => mountRoleArn(storage)).toThrow(expected);
     expect(() =>
       mountRoleArn({ ...storage, auth: { type: "managed" } }),
@@ -243,6 +280,59 @@ describe("resolveS3Mount", () => {
     expect(String(lastAssumeRoleInput?.Policy)).toContain(
       `managed-bucket/${NS}/`,
     );
+  });
+
+  it("names the agent on the platform session as SourceIdentity and tags, and on a developer role by session name only", async () => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+      attribution: { accountId: "acct_1", agentId: "agent_1" },
+    });
+    expect(lastAssumeRoleInput).toMatchObject({
+      RoleSessionName: "fp-sandbox-mount-agent_1",
+      SourceIdentity: "agent_1",
+      Tags: [
+        { Key: "broods:account", Value: "acct_1" },
+        { Key: "broods:agent", Value: "agent_1" },
+      ],
+    });
+
+    // No agent (an account-level mount) still attributes the account.
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+      attribution: { accountId: "acct_1" },
+    });
+    expect(lastAssumeRoleInput).toMatchObject({
+      RoleSessionName: "fp-sandbox-mount-acct-acct_1",
+      SourceIdentity: "acct-acct_1",
+      Tags: [{ Key: "broods:account", Value: "acct_1" }],
+    });
+
+    // A developer's trust policy only grants sts:AssumeRole, so the session
+    // name is the one attribution that must not break their mount.
+    await resolveS3Mount({
+      storage: BYO_STORAGE,
+      namespace: NS,
+      attribution: { accountId: "acct_1", agentId: "agent_1" },
+    });
+    expect(lastAssumeRoleInput?.RoleSessionName).toBe(
+      "fp-sandbox-mount-agent_1",
+    );
+    expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
+    expect(lastAssumeRoleInput).not.toHaveProperty("Tags");
+
+    // An unattributed mount keeps the plain session name.
+    await resolveS3Mount({
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+    });
+    expect(lastAssumeRoleInput?.RoleSessionName).toBe("fp-sandbox-mount");
+    expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
   });
 
   it("assumes the developer's role with the ExternalId, scoped to their bucket/prefix", async () => {
@@ -378,5 +468,107 @@ describe("resolveS3ReadTarget", () => {
     await resolveS3ReadTarget({ storage: byoStorage, namespace: NS });
 
     expect(assumeRoleSendMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("R2 storage", () => {
+  const R2_STORAGE = {
+    provider: "s3" as const,
+    bucket: "agent-files",
+    prefix: "broods/",
+    endpoint:
+      "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+    auth: {
+      type: "r2" as const,
+      accessKeyId: "${R2_ACCESS_KEY_ID}",
+      secretAccessKey: "${R2_SECRET_ACCESS_KEY}",
+    },
+    owner: { accountId: "acct_1", workspaceId: "ws_1" },
+  };
+  const mints: string[][] = [];
+  let mint: { mockRestore(): void } | undefined;
+
+  beforeEach(() => {
+    mints.length = 0;
+    mint = spyOn(
+      getStorage().workspaceConfigs,
+      "mintR2Credentials",
+    ).mockImplementation(async (accountId, workspaceId, prefix) => {
+      mints.push([accountId, workspaceId, prefix]);
+
+      return {
+        accessKeyId: "parent-id",
+        secretAccessKey: "derived-secret",
+        sessionToken: "session",
+        expiration: new Date(Date.now() + 3600_000).toISOString(),
+      };
+    });
+  });
+
+  afterEach(() => {
+    mint?.mockRestore();
+  });
+
+  it("mounts on credentials the config plane minted for the run's own folder", async () => {
+    const mount = await resolveS3Mount({
+      storage: R2_STORAGE,
+      namespace: `${NS}/conversation/abc`,
+      region: "us-east-1",
+    });
+
+    expect(mints).toEqual([["acct_1", "ws_1", "broods/conversation/abc/"]]);
+    expect(mount).toMatchObject({
+      bucket: "agent-files",
+      prefix: "broods/conversation/abc/",
+      region: "auto",
+      endpoint: R2_STORAGE.endpoint,
+      credentials: {
+        AWS_ACCESS_KEY_ID: "parent-id",
+        AWS_SECRET_ACCESS_KEY: "derived-secret",
+        AWS_SESSION_TOKEN: "session",
+      },
+    });
+    expect(mountRoleArn(R2_STORAGE)).toBeUndefined();
+    expect(() =>
+      resolveS3MountIdentity({
+        storage: { ...R2_STORAGE, region: "eu-west-1" },
+        namespace: NS,
+      }),
+    ).toThrow('config.storage.region must be "auto" or omitted for R2');
+    expect(assumeRoleSendMock).not.toHaveBeenCalled();
+  });
+
+  it("never shares a cached read target between two workspaces on one bucket", async () => {
+    await resolveS3ReadTarget({ storage: R2_STORAGE, namespace: NS });
+    await resolveS3ReadTarget({ storage: R2_STORAGE, namespace: NS });
+    await resolveS3ReadTarget({
+      storage: {
+        ...R2_STORAGE,
+        owner: { accountId: "acct_2", workspaceId: "ws_2" },
+      },
+      namespace: NS,
+    });
+
+    expect(mints.map((mint) => mint[0])).toEqual(["acct_1", "acct_2"]);
+  });
+
+  it("remints a cached R2 read target after a minute, so a revoked token stops being used", async () => {
+    const storage = {
+      ...R2_STORAGE,
+      owner: { accountId: "acct_3", workspaceId: "ws_3" },
+    };
+    const now = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await resolveS3ReadTarget({ storage: storage, namespace: NS });
+      clock.mockReturnValue(now + 30_000);
+      await resolveS3ReadTarget({ storage: storage, namespace: NS });
+      clock.mockReturnValue(now + 61_000);
+      await resolveS3ReadTarget({ storage: storage, namespace: NS });
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(mints.map((mint) => mint[0])).toEqual(["acct_3", "acct_3"]);
   });
 });

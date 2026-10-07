@@ -26,7 +26,7 @@ Stay ephemeral unless the agent needs state between calls. Ephemeral runs hold r
 
 Reserve a machine for iterative coding sessions, long-running work, background jobs, or when you want the live terminal in the dashboard. Avoid it for one-shot tasks.
 
-On `lambda`, a reserved MicroVM counts against your account's allocated memory quota while it runs and while it is suspended. A handful of persistent agents can exhaust the quota, and every new launch then fails with `ServiceQuotaExceededException` and the message "maximum allocated memory limit". Terminate reservations you are done with from the dashboard, under Sandbox, Instances. That frees the quota at once instead of waiting for the idle window.
+On `lambda`, a reserved MicroVM counts against your account's allocated memory quota while it runs and while it is suspended. A handful of persistent agents can exhaust the quota, and every new launch then fails with `ServiceQuotaExceededException` and the message "maximum allocated memory limit". Terminate reservations you are done with from the dashboard, under Sandbox, Instances. That frees the quota at once instead of waiting for the idle window. If no reservation is running and launches still fail, the quota itself is too low: check "Max allocated ARM_64 MicroVM memory" for your region in AWS Service Quotas, which can start at 0 on a new account, and request an increase.
 
 ## Which machine you get
 
@@ -89,7 +89,7 @@ The model does not have to poll, though it can. `async_status` is added automati
 - `logs` and `stop` exist only where the provider exposes live job control. E2B launches jobs natively and offers `status` only.
 - `sandbox`, `daytona` and `vercel` run at most 10 background jobs at once.
 - A job killed because its machine was recreated reports `failed`, never "running forever".
-- No account secret enters the sandbox. The job reports back with a short-lived token of its own.
+- No account key enters the sandbox. The job reports back with a short-lived token of its own.
 - Discord delivers a late reply with the bot token, so the bot needs the Send Messages permission in that channel.
 
 ## Terminals

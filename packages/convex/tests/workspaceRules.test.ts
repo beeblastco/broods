@@ -17,10 +17,24 @@ import {
   normalizeWorkspaceConfig,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
+import { upsertEnvironmentVariable } from "../model/environmentValues";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
+const R2_ENDPOINT =
+  "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com";
+const R2_BUCKET = {
+  provider: "s3" as const,
+  bucket: "agent-files",
+  prefix: "broods/",
+  endpoint: R2_ENDPOINT,
+  auth: {
+    type: "r2" as const,
+    accessKeyId: "${R2_ACCESS_KEY_ID}",
+    secretAccessKey: "${R2_SECRET_ACCESS_KEY}",
+  },
+};
 const OWN_BUCKET = {
   provider: "s3" as const,
   bucket: "acme",
@@ -108,22 +122,24 @@ describe("workspace config", () => {
     ).toThrow("config.harness.memory.enabled must be a boolean");
   });
 
-  it("accepts boolean workspace isolation and rejects old string modes", () => {
+  it("stores the isolation level and refuses booleans and unknown modes", () => {
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
-        isolation: true,
+        isolation: "agent",
       }),
-    ).toEqual({ storage: { provider: "s3" }, isolation: true });
+    ).toEqual({ storage: { provider: "s3" }, isolation: "agent" });
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
-        isolation: false,
+        isolation: "conversation",
       }),
-    ).toEqual({ storage: { provider: "s3" } });
-    expect(() => normalizeWorkspaceConfig({ isolation: "channel" })).toThrow(
-      "config.isolation must be a boolean",
-    );
+    ).toEqual({ storage: { provider: "s3" }, isolation: "conversation" });
+    for (const isolation of [true, false, "channel"]) {
+      expect(() => normalizeWorkspaceConfig({ isolation: isolation })).toThrow(
+        "config.isolation must be one of: conversation, agent",
+      );
+    }
   });
 
   it("parses a bring-your-own bucket with assume-role auth", () => {
@@ -303,12 +319,16 @@ describe("workspace storage access", () => {
       normalizeWorkspaceConfig({
         storage: { provider: "s3", bucket: "acme", prefix: "agents" },
       }),
-    ).toThrow('"assumeRole" is required when config.storage.bucket is set');
+    ).toThrow(
+      '"assumeRole" or "r2" is required when config.storage.bucket is set',
+    );
     expect(() =>
       normalizeWorkspaceConfig({
         storage: { ...OWN_BUCKET, auth: { type: "managed" } },
       }),
-    ).toThrow('"assumeRole" is required when config.storage.bucket is set');
+    ).toThrow(
+      '"assumeRole" or "r2" is required when config.storage.bucket is set',
+    );
   });
 
   it("refuses a platform bucket, whatever its case", () => {
@@ -381,7 +401,7 @@ describe("workspace storage access", () => {
         storage: { provider: "s3", bucket: "acme", prefix: "agents/" },
       }),
     ).rejects.toThrow(
-      '"assumeRole" is required when config.storage.bucket is set',
+      '"assumeRole" or "r2" is required when config.storage.bucket is set',
     );
   });
 
@@ -450,5 +470,256 @@ describe("workspace storage access", () => {
     ).toThrow(
       "config.options.s3Endpoint must not point to a private or internal address",
     );
+  });
+});
+
+describe("R2 workspace storage", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("accepts an R2 bucket whose keys are env refs on the account R2 endpoint", () => {
+    expect(normalizeWorkspaceConfig({ storage: R2_BUCKET }).storage).toEqual(
+      R2_BUCKET,
+    );
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: {
+          ...R2_BUCKET,
+          auth: { ...R2_BUCKET.auth, secretAccessKey: "plain-secret" },
+        },
+      }),
+    ).toThrow("must each be one ${NAME} env reference");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...R2_BUCKET, endpoint: "https://s3.example.com" },
+      }),
+    ).toThrow("your account R2 endpoint");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { provider: "s3", auth: R2_BUCKET.auth },
+      }),
+    ).toThrow("R2 has no managed bucket");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...R2_BUCKET, region: "eu-west-1" },
+      }),
+    ).toThrow('config.storage.region must be "auto" or omitted for R2');
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...R2_BUCKET, bucket: "${R2_BUCKET}" },
+      }),
+    ).toThrow("config.storage.bucket cannot be an env reference");
+  });
+
+  it("mints scoped credentials only for the owner's own prefix", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    const { accountId, otherAccountId } = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("orgs", {
+        name: "Beeblast",
+        slug: "beeblast",
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: now,
+      });
+      const account = {
+        orgId: orgId,
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const accountId = await ctx.db.insert("accounts", {
+        ...account,
+        username: "beeblast",
+        secretHash: "hash",
+      });
+      const otherAccountId = await ctx.db.insert("accounts", {
+        ...account,
+        username: "other",
+        secretHash: "other-hash",
+      });
+
+      return { accountId: accountId, otherAccountId: otherAccountId };
+    });
+    const workspaceId = await t.mutation(internal.workspace.configs.create, {
+      accountId: accountId,
+      name: "r2",
+      config: { storage: R2_BUCKET },
+    });
+    for (const [name, value] of [
+      ["R2_ACCESS_KEY_ID", "parent-key-id"],
+      ["R2_SECRET_ACCESS_KEY", "parent-secret"],
+    ]) {
+      await t.mutation(internal.account.envVars.set, {
+        accountId: accountId,
+        name: name!,
+        value: value!,
+      });
+    }
+
+    const credentials = await t.mutation(
+      internal.workspace.configs.r2Credentials,
+      {
+        accountId: accountId,
+        workspaceId: workspaceId,
+        prefix: "broods/conversation/abc/",
+      },
+    );
+
+    expect(credentials.accessKeyId).toBe("parent-key-id");
+    const jwt = atob(credentials.sessionToken).replace(/^jwt\//, "");
+    const [header, payload, signature] = jwt.split(".");
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode("parent-secret"),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const decode = (part: string): Uint8Array<ArrayBuffer> =>
+      Uint8Array.from(
+        atob(part.replace(/-/g, "+").replace(/_/g, "/")),
+        (char) => char.charCodeAt(0),
+      );
+    expect(
+      await crypto.subtle.verify(
+        "HMAC",
+        key,
+        decode(signature!),
+        new TextEncoder().encode(`${header}.${payload}`),
+      ),
+    ).toBe(true);
+    expect(
+      JSON.parse(new TextDecoder().decode(decode(payload!))),
+    ).toMatchObject({
+      bucket: "agent-files",
+      scope: "object-read-write",
+      paths: { prefixPaths: ["broods/conversation/abc/"] },
+      sub: "0123456789abcdef0123456789abcdef",
+      iss: "parent-key-id",
+      aud: new URL(R2_ENDPOINT).host,
+    });
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(jwt),
+    );
+    expect(credentials.secretAccessKey).toBe(
+      Buffer.from(digest).toString("hex"),
+    );
+
+    await expect(
+      t.mutation(internal.workspace.configs.r2Credentials, {
+        accountId: accountId,
+        workspaceId: workspaceId,
+        prefix: "other/",
+      }),
+    ).rejects.toThrow("outside the workspace prefix");
+    await expect(
+      t.mutation(internal.workspace.configs.r2Credentials, {
+        accountId: otherAccountId,
+        workspaceId: workspaceId,
+        prefix: "broods/",
+      }),
+    ).rejects.toThrow("Workspace not found");
+    await expect(
+      t.mutation(internal.account.envVars.remove, {
+        accountId: accountId,
+        name: "R2_SECRET_ACCESS_KEY",
+      }),
+    ).rejects.toThrow("still referenced by an R2 workspace's keys");
+    await t.mutation(internal.workspace.configs.update, {
+      accountId: accountId,
+      workspaceId: workspaceId,
+      config: { storage: { provider: "s3" } },
+    });
+    expect(
+      await t.mutation(internal.account.envVars.remove, {
+        accountId: accountId,
+        name: "R2_SECRET_ACCESS_KEY",
+      }),
+    ).toBe(true);
+  });
+
+  it("mints a CLI-synced workspace's credentials from its stage env vars", async (): Promise<void> => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    const { accountId, projectId, stageId, workspaceId } = await t.run(
+      async (ctx) => {
+        const orgId = await ctx.db.insert("orgs", {
+          name: "Beeblast",
+          slug: "beeblast",
+          ownerAuthId: "auth_owner",
+          plan: "free",
+          createdAt: now,
+        });
+        const accountId = await ctx.db.insert("accounts", {
+          orgId: orgId,
+          status: "active",
+          username: "beeblast",
+          secretHash: "hash",
+          createdAt: now,
+          updatedAt: now,
+        });
+        const projectId = await ctx.db.insert("projects", {
+          authId: "auth_owner",
+          orgId: orgId,
+          name: "app",
+          slug: "app",
+          updatedAt: now,
+        });
+        const stageId = await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectId,
+          name: "Development",
+          kind: "development",
+          isDefault: true,
+          updatedAt: now,
+        });
+        await upsertEnvironmentVariable(ctx, {
+          projectId: projectId,
+          stageId: stageId,
+          name: "R2_ACCESS_KEY_ID",
+          value: "stage-key-id",
+        });
+        const workspaceId = await ctx.db.insert("workspaceConfigs", {
+          accountId: accountId,
+          projectId: projectId,
+          stageId: stageId,
+          name: "r2",
+          config: { storage: R2_BUCKET },
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        return {
+          accountId: accountId,
+          projectId: projectId,
+          stageId: stageId,
+          workspaceId: workspaceId,
+        };
+      },
+    );
+    const mint = (): Promise<{ accessKeyId: string }> =>
+      t.mutation(internal.workspace.configs.r2Credentials, {
+        accountId: accountId,
+        workspaceId: workspaceId,
+        prefix: "broods/",
+      });
+
+    await expect(mint()).rejects.toThrow(
+      "${R2_SECRET_ACCESS_KEY} has no value; set it with broods env set",
+    );
+    await t.run(async (ctx) => {
+      await upsertEnvironmentVariable(ctx, {
+        projectId: projectId,
+        stageId: stageId,
+        name: "R2_SECRET_ACCESS_KEY",
+        value: "stage-secret",
+      });
+    });
+    expect((await mint()).accessKeyId).toBe("stage-key-id");
   });
 });

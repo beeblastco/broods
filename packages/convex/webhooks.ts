@@ -19,8 +19,8 @@ import {
   accountIdForProject,
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
@@ -243,7 +243,7 @@ function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
 
 async function recordWebhookAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   agentConfigId: Id<"agentConfigs">,
   action: string,
   summary: string,
@@ -254,7 +254,7 @@ async function recordWebhookAudit(
   const accountId = await accountIdForProject(ctx, config.projectId);
   if (!accountId) return;
 
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: config.projectId,
     stageId: config.stageId,

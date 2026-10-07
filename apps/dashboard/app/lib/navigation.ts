@@ -11,6 +11,7 @@ import {
   FolderOpen,
   LayoutDashboard,
   Network,
+  Plug,
   Settings,
   UserRound,
   type LucideIcon,
@@ -42,7 +43,7 @@ export const DASHBOARD_TABS = [
   { id: "tracing", label: "Tracing" },
   { id: "usage", label: "Usage" },
   { id: "billing", label: "Billing & Plan" },
-  { id: "api-key", label: "API key" },
+  { id: "api-key", label: "Runtime key" },
 ] as const;
 
 export const SANDBOX_TABS = [
@@ -118,6 +119,13 @@ export const ACCOUNT_NAV_ITEMS: readonly NavItem[] = [
     keywords: ["projects"],
     label: "Projects",
     segment: "/projects",
+    tabs: [],
+  },
+  {
+    icon: Plug,
+    keywords: ["connections", "chatgpt", "oauth"],
+    label: "Connections",
+    segment: "/settings/connections",
     tabs: [],
   },
   {

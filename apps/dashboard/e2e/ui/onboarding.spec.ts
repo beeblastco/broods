@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// The last onboarding step holds a long one-line command. It used to widen
-// the card past its own border and push the footer with it.
+// The last onboarding step holds the install commands. A long line used to
+// widen the card past its own border and push the footer with it; the block
+// must scroll inside its edges instead.
 test("the onboarding card keeps its command block inside its edges", async ({
   page,
 }) => {
@@ -27,9 +28,11 @@ test("the onboarding card keeps its command block inside its edges", async ({
   expect(doneBox.x + doneBox.width).toBeLessThanOrEqual(
     dialogBox.x + dialogBox.width,
   );
-  // The command itself scrolls inside its block instead of clipping.
-  const scrolls = await command.evaluate(
-    (element) => element.scrollWidth > element.clientWidth,
+  // Whatever overflows scrolls inside the block instead of clipping.
+  const clips = await command.evaluate(
+    (element) =>
+      element.scrollWidth > element.clientWidth &&
+      getComputedStyle(element).overflowX !== "auto",
   );
-  expect(scrolls).toBe(true);
+  expect(clips).toBe(false);
 });

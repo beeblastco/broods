@@ -1,10 +1,14 @@
 /**
- * Sandbox provider selection.
- * Keep executor construction here; provider implementations live beside it.
+ * Sandbox provider registry and executor construction. A provider is one
+ * executor file beside this one plus one entry in `EXECUTORS` below; the
+ * config plane's `SANDBOX_PROVIDERS` is what names it, and the record's key
+ * type fails the build when the two drift.
  */
 
+import { CloudflareSandboxExecutor } from "./cloudflare-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
+import { HttpSandboxExecutor } from "./http-executor.ts";
 import { MachineSandboxExecutor } from "./machine-executor.ts";
 import { assertSandboxBudget } from "../plan-limits.ts";
 import { MicrovmSandboxExecutor } from "./microvm-executor.ts";
@@ -18,14 +22,24 @@ import type {
 import { VercelSandboxExecutor } from "./vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "./workdir-executor.ts";
 
-export const SANDBOX_PROVIDERS = [
-  "sandbox",
-  "lambda",
-  "e2b",
-  "daytona",
-  "vercel",
-  "machine",
-] as const satisfies readonly SandboxProvider[];
+// The explicit imports are what pull each executor into the compiled binary,
+// like the tool registry in tools/index.ts. "lambda" is the AWS Lambda MicroVM
+// backend (the old 4-stage invoke model is gone).
+type SandboxExecutorFactory = (
+  config: SandboxExecutorConfig,
+) => SandboxExecutor;
+
+const EXECUTORS: Record<SandboxProvider, SandboxExecutorFactory> = {
+  cloudflare: (config): SandboxExecutor =>
+    new CloudflareSandboxExecutor(config),
+  custom: (config): SandboxExecutor => new HttpSandboxExecutor(config),
+  daytona: (config): SandboxExecutor => new DaytonaSandboxExecutor(config),
+  e2b: (config): SandboxExecutor => new E2BSandboxExecutor(config),
+  lambda: (config): SandboxExecutor => new MicrovmSandboxExecutor(config),
+  machine: (config): SandboxExecutor => new MachineSandboxExecutor(config),
+  sandbox: (config): SandboxExecutor => new WorkdirSandboxExecutor(config),
+  vercel: (config): SandboxExecutor => new VercelSandboxExecutor(config),
+};
 
 /**
  * The executor for a sandbox config. When the config names its account and
@@ -62,6 +76,14 @@ export function createSandboxExecutor(
       return resume(request);
     };
   }
+  const postReserved = executor.postReserved?.bind(executor);
+  if (postReserved) {
+    executor.postReserved = async (request): Promise<unknown> => {
+      await assertSandboxBudget(accountId);
+
+      return postReserved(request);
+    };
+  }
   const prewarm = executor.prewarm?.bind(executor);
   if (prewarm) {
     executor.prewarm = async (request): Promise<void> => {
@@ -74,29 +96,17 @@ export function createSandboxExecutor(
   return executor;
 }
 
-function providerExecutor(config: SandboxExecutorConfig): SandboxExecutor {
-  // provider is required and always resolved by normalizeSandboxConfig; never
-  // silently default here so a misconfigured config fails loudly.
-  const { provider } = config;
-  if (provider === "sandbox") {
-    return new WorkdirSandboxExecutor(config);
-  }
-  if (provider === "lambda") {
-    // "lambda" is the AWS Lambda MicroVM backend (the old 4-stage invoke model is gone).
-    return new MicrovmSandboxExecutor(config);
-  }
-  if (provider === "e2b") {
-    return new E2BSandboxExecutor(config);
-  }
-  if (provider === "daytona") {
-    return new DaytonaSandboxExecutor(config);
-  }
-  if (provider === "vercel") {
-    return new VercelSandboxExecutor(config);
-  }
-  if (provider === "machine") {
-    return new MachineSandboxExecutor(config);
+/**
+ * The bare executor for a config's provider, with no budget check: what
+ * cleanup releases through. A stored config may still name a provider this
+ * build does not know, so it fails loudly rather than defaulting.
+ */
+export function providerExecutor(
+  config: SandboxExecutorConfig,
+): SandboxExecutor {
+  if (!Object.hasOwn(EXECUTORS, config.provider)) {
+    throw new Error(`sandbox provider ${config.provider} is not supported`);
   }
 
-  throw new Error(`sandbox provider ${provider} is not supported`);
+  return EXECUTORS[config.provider](config);
 }

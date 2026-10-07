@@ -2,6 +2,10 @@
 
 import { RuntimeKeyView } from "@/app/(main)/[projectId]/dashboard/components/RuntimeKeyDialog";
 import {
+  ConnectionsView,
+  type Connection,
+} from "@/app/(main)/settings/connections/components/ConnectionsPanel";
+import {
   CANVAS_EDGE_TYPES,
   CANVAS_NODE_TYPES,
   CONNECTION_RADIUS,
@@ -284,6 +288,19 @@ const CONVEX_SERVER_ERROR = new Error(
 
 const subscribeNever = (): (() => void) => () => {};
 
+/** The account's ChatGPT plan, signed in; the gallery also renders none. */
+const CONNECTION_FIXTURES: Connection[] = [
+  {
+    type: "chatgpt",
+    clientId: "oaiapp_fixture",
+    hostId: "urn:uuid:fixture",
+    email: "owner@example.com",
+    scopes: ["openid", "chatgpt.tokens.use.direct"],
+    expiresAt: 0,
+    updatedAt: 0,
+  },
+];
+
 export function UiGallery(): React.JSX.Element {
   const [level, setLevel] = useState("INFO");
   const [search, setSearch] = useState("");
@@ -301,6 +318,26 @@ export function UiGallery(): React.JSX.Element {
     () => false,
   );
   const dashboardTab = useSearchParams().get("tab");
+
+  if (dashboardTab === "connections") {
+    return (
+      <main
+        data-hydrated={hydrated ? "true" : undefined}
+        className="mx-auto grid w-full max-w-2xl gap-10 px-6 pt-6 pb-12"
+      >
+        <ConnectionsView
+          connections={CONNECTION_FIXTURES}
+          canWrite={true}
+          onDisconnect={() => {}}
+        />
+        <ConnectionsView
+          connections={[]}
+          canWrite={true}
+          onDisconnect={() => {}}
+        />
+      </main>
+    );
+  }
 
   if (dashboardTab === "credential-copy") {
     return (
@@ -348,7 +385,6 @@ export function UiGallery(): React.JSX.Element {
           onClear={() => {}}
           onRefresh={() => {}}
           refreshDisabled={false}
-          refreshSpinning={false}
           refreshTitle="Refresh"
           isError={false}
         />

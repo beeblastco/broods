@@ -6,8 +6,8 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import { ACCOUNT_ENV_VAR_NAME_PATTERN } from "../../model/agentConfigCodec";
-import { type ConfigAuditActor } from "../../model/auditEvents";
+import { assertEnvVarName } from "../../model/agentConfigCodec";
+import { type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { collectionPage, json, methodNotAllowed, writeAudit } from "./shared";
 import { ClientError } from "../../model/clientError";
@@ -16,7 +16,7 @@ export async function handleAccountEnvVarRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   name?: string,
 ): Promise<Response> {
   if (!name) {
@@ -35,7 +35,7 @@ export async function handleAccountEnvVarRoute(
         }),
     });
   }
-  validateAccountEnvVarName(name);
+  assertEnvVarName(name);
   if (req.method === "PUT") {
     const body = await req.json();
     if (
@@ -83,12 +83,4 @@ export async function handleAccountEnvVarRoute(
   }
 
   return methodNotAllowed(["PUT", "DELETE"]);
-}
-
-function validateAccountEnvVarName(name: string): void {
-  if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
-    throw new ClientError(
-      "env name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters",
-    );
-  }
 }

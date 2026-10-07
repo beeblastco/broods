@@ -8,7 +8,12 @@
 
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
-import type { McpOauth, McpRecord, McpTransport } from "../domain/mcp.ts";
+import type {
+  McpOauth,
+  McpRecord,
+  McpRuntime,
+  McpTransport,
+} from "../domain/mcp.ts";
 import {
   createAccountId,
   createAccountSecret,
@@ -16,10 +21,7 @@ import {
   normalizeCreateAccountInput,
   type AccountRecord,
 } from "../domain/accounts.ts";
-import {
-  decodeStoredAgentConfig,
-  decodeStoredConfigObject,
-} from "../domain/agent-config.ts";
+import type { AgentConfig } from "../domain/agent-config.ts";
 import type { PolicyRecord } from "../domain/policy.ts";
 import type { AgentRecord } from "../domain/agents.ts";
 import type {
@@ -36,9 +38,15 @@ import type {
   WorkspaceConfigRecord,
 } from "../domain/workspace-config.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
-import type { AgentDeploymentScope, Storage } from "../storage.ts";
+import type {
+  AgentDeploymentScope,
+  Storage,
+  StoredConnection,
+} from "../storage.ts";
 import { budgets } from "./budgets.ts";
+import { decryptAccountBlob } from "./account-keys.ts";
 import { getConvexClient } from "./client.ts";
+import { auditLedger } from "./audit-ledger.ts";
 import { taskUsage } from "./usage.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
@@ -89,17 +97,17 @@ interface ConvexAgentDoc {
   updatedAt: number;
 }
 
-function agentFromConvex(doc: ConvexAgentDoc | null): AgentRecord | null {
+async function agentFromConvex(
+  doc: ConvexAgentDoc | null,
+): Promise<AgentRecord | null> {
   if (!doc) return null;
   const config =
     doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
-      ? decodeStoredAgentConfig({
-          encrypted: true as const,
-          algorithm: "aes-256-gcm",
+      ? ((await decryptAccountBlob(doc.accountId, "agents:encryptedConfig", {
           ciphertext: doc.encryptedConfig,
           iv: doc.encryptionIv,
           tag: doc.encryptionTag,
-        })
+        })) as AgentConfig)
       : {};
 
   return {
@@ -228,7 +236,7 @@ const agents: Storage["agents"] = {
       agentId: agentId,
     });
 
-    return agentFromConvex(doc as ConvexAgentDoc | null);
+    return await agentFromConvex(doc as ConvexAgentDoc | null);
   },
   listForEndpoint: async function (accountId, endpointId) {
     const docs = (await getConvexClient().query(
@@ -239,7 +247,9 @@ const agents: Storage["agents"] = {
       },
     )) as ConvexAgentDoc[];
 
-    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
+    return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
+      (record) => record !== null,
+    );
   },
   listForProduction: async function (accountId) {
     const docs = (await getConvexClient().query(
@@ -247,7 +257,9 @@ const agents: Storage["agents"] = {
       { accountId: accountId },
     )) as ConvexAgentDoc[];
 
-    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
+    return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
+      (record) => record !== null,
+    );
   },
   removeAllForAccount: async function (accountId) {
     const docs = (await getConvexClient().query(internal.agent.agents.list, {
@@ -271,9 +283,10 @@ const agentDeployments: Storage["agentDeployments"] = {
       {
         apiKeyHash: apiKeyHash,
       },
-    )) as AgentDeploymentScope | null;
+    )) as (AgentDeploymentScope & { account: ConvexAccountDoc }) | null;
+    const account = accountFromConvex(doc?.account ?? null);
 
-    return doc;
+    return doc && account ? { ...doc, account: account } : null;
   },
   touchLastUsed: async function (apiKeyHash, usedAt) {
     await getConvexClient().mutation(internal.agent.deployments.touchLastUsed, {
@@ -396,19 +409,21 @@ interface ConvexSandboxConfigDoc {
   updatedAt: number;
 }
 
-function sandboxConfigFromConvex(
+async function sandboxConfigFromConvex(
   doc: ConvexSandboxConfigDoc | null,
-): SandboxConfigRecord | null {
+): Promise<SandboxConfigRecord | null> {
   if (!doc) return null;
   const config =
     doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
-      ? (decodeStoredConfigObject({
-          encrypted: true as const,
-          algorithm: "aes-256-gcm",
-          ciphertext: doc.encryptedConfig,
-          iv: doc.encryptionIv,
-          tag: doc.encryptionTag,
-        }) as unknown as SandboxConfig)
+      ? ((await decryptAccountBlob(
+          doc.accountId,
+          "sandboxConfigs:encryptedConfig",
+          {
+            ciphertext: doc.encryptedConfig,
+            iv: doc.encryptionIv,
+            tag: doc.encryptionTag,
+          },
+        )) as unknown as SandboxConfig)
       : ({
           provider: "sandbox",
           permissionMode: "ask",
@@ -442,13 +457,24 @@ function workspaceConfigFromConvex(
   doc: ConvexWorkspaceConfigDoc | null,
 ): WorkspaceConfigRecord | null {
   if (!doc) return null;
+  const config = doc.config ?? { storage: { provider: "s3" } };
 
   return {
     accountId: doc.accountId,
     workspaceId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
-    config: doc.config ?? { storage: { provider: "s3" } },
+    // An R2 mount mints its credentials per workspace, so it carries the row's identity.
+    config:
+      config.storage?.auth?.type === "r2"
+        ? {
+            ...config,
+            storage: {
+              ...config.storage,
+              owner: { accountId: doc.accountId, workspaceId: doc._id },
+            },
+          }
+        : config,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };
@@ -549,14 +575,16 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
       },
     );
 
-    return sandboxConfigFromConvex(doc as ConvexSandboxConfigDoc | null);
+    return await sandboxConfigFromConvex(doc as ConvexSandboxConfigDoc | null);
   },
   list: async function (accountId) {
     const docs = (await getConvexClient().query(internal.sandbox.configs.list, {
       accountId: accountId,
     })) as ConvexSandboxConfigDoc[];
 
-    return docs.map((d) => sandboxConfigFromConvex(d)!).filter(Boolean);
+    return (
+      await Promise.all(docs.map((doc) => sandboxConfigFromConvex(doc)))
+    ).filter((record) => record !== null);
   },
   removeAllForAccount: async function (accountId) {
     const docs = (await getConvexClient().query(internal.sandbox.configs.list, {
@@ -595,6 +623,12 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
 
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
   },
+  mintR2Credentials: async function (accountId, workspaceId, prefix) {
+    return await getConvexClient().mutation(
+      internal.workspace.configs.r2Credentials,
+      { accountId: accountId, workspaceId: workspaceId, prefix: prefix },
+    );
+  },
   removeAllForAccount: async function (accountId) {
     const docs = (await getConvexClient().query(
       internal.workspace.configs.list,
@@ -621,8 +655,11 @@ interface ConvexMcpDoc {
   name: string;
   description?: string;
   transport: McpTransport;
+  workersCompatible?: boolean;
+  runtime?: McpRuntime;
   url?: string;
   sandbox?: string;
+  command?: string[];
   bundleStorageKey?: string;
   sha256?: string;
   headers?: Record<string, string>;
@@ -646,8 +683,13 @@ function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
     name: doc.name,
     ...(doc.description !== undefined ? { description: doc.description } : {}),
     transport: doc.transport,
+    ...(doc.workersCompatible !== undefined
+      ? { workersCompatible: doc.workersCompatible }
+      : {}),
+    ...(doc.runtime !== undefined ? { runtime: doc.runtime } : {}),
     ...(doc.url !== undefined ? { url: doc.url } : {}),
     ...(doc.sandbox !== undefined ? { sandbox: doc.sandbox } : {}),
+    ...(doc.command !== undefined ? { command: doc.command } : {}),
     ...(doc.bundleStorageKey !== undefined
       ? { bundleStorageKey: doc.bundleStorageKey }
       : {}),
@@ -808,6 +850,26 @@ const machineConnections: Storage["machineConnections"] = {
   },
 };
 
+const connections: Storage["connections"] = {
+  load: async function (accountId, type) {
+    return (await getConvexClient().query(internal.account.connections.load, {
+      accountId: accountId,
+      type: type,
+    })) as StoredConnection | null;
+  },
+  saveRefreshed: async function (accountId, type, loaded, refreshed) {
+    return (await getConvexClient().mutation(
+      internal.account.connections.saveRefreshed,
+      {
+        accountId: accountId,
+        type: type,
+        loadedUpdatedAt: loaded.updatedAt,
+        ...refreshed,
+      },
+    )) as boolean;
+  },
+};
+
 const roleSessions: Storage["roleSessions"] = {
   resolveByTokenHash: async function (tokenHash) {
     return (await getConvexClient().query(
@@ -820,6 +882,7 @@ const roleSessions: Storage["roleSessions"] = {
 };
 
 export const convexStorage: Storage = {
+  auditLedger: auditLedger,
   accounts: accounts,
   agents: agents,
   budgets: budgets,
@@ -832,6 +895,7 @@ export const convexStorage: Storage = {
   accountHooks: accountHooks,
   machineConnections: machineConnections,
   mcp: mcp,
+  connections: connections,
   roleSessions: roleSessions,
   taskUsage: taskUsage,
 };

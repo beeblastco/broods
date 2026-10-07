@@ -59,13 +59,11 @@ describe("runtime persistence", () => {
     const conversationKey = conversationKeyFor(accountId);
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
-      cursor: "002",
-      event: { message: "two" },
+      events: [{ cursor: "002", event: { message: "two" } }],
     });
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
-      cursor: "001",
-      event: { message: "one" },
+      events: [{ cursor: "001", event: { message: "one" } }],
     });
     expect(
       await t.query(internal.runtime.listConversationEvents, {
@@ -79,16 +77,6 @@ describe("runtime persistence", () => {
       isDone: true,
       continueCursor: null,
     });
-  });
-
-  test("refuses an append that carries no event", async () => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    await expect(
-      t.mutation(internal.runtime.appendConversationEvent, {
-        conversationKey: conversationKeyFor(accountId),
-      }),
-    ).rejects.toThrow("No conversation events given");
   });
 
   test("pages across the conversation boundary without dropping later events", async () => {
@@ -650,8 +638,7 @@ describe("runtime persistence", () => {
     });
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
-      cursor: "001",
-      event: { role: "user", content: "existing" },
+      events: [{ cursor: "001", event: { role: "user", content: "existing" } }],
     });
     await t.mutation(internal.runtime.createAsyncAgentResult, {
       eventId: `acct:${accountId}:async-agent`,
@@ -707,8 +694,9 @@ describe("runtime persistence", () => {
       () =>
         t.mutation(internal.runtime.appendConversationEvent, {
           conversationKey: conversationKey,
-          cursor: "002",
-          event: { role: "assistant", content: "late" },
+          events: [
+            { cursor: "002", event: { role: "assistant", content: "late" } },
+          ],
         }),
       () =>
         t.mutation(internal.runtime.clearConversation, {
@@ -790,8 +778,9 @@ describe("runtime persistence", () => {
     await expect(
       t.mutation(internal.runtime.appendConversationEvent, {
         conversationKey: conversationKey,
-        cursor: "003",
-        event: { role: "assistant", content: "orphan" },
+        events: [
+          { cursor: "003", event: { role: "assistant", content: "orphan" } },
+        ],
       }),
     ).rejects.toThrow(`Account is not active: ${accountId}`);
   });

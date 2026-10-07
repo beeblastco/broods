@@ -1,11 +1,17 @@
 import { dns } from "bun";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { listMcpTools, mcpConnection } from "../src/harness/mcp/client.ts";
+import {
+  cacheKeyFor,
+  listMcpTools,
+  mcpConnection,
+} from "../src/harness/mcp/client.ts";
 import {
   clearMcpOauthTokens,
   mcpAccessToken,
+  mcpOauthTokenCacheKey,
   type ResolvedMcpOauth,
 } from "../src/harness/mcp/oauth.ts";
+import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 
 const TOKEN_URL = "https://oauth.test/token";
@@ -251,6 +257,81 @@ describe("mcpConnection oauth overlay", () => {
 
     expect(connection.oauth).toBeUndefined();
     expect(connection.headers).toEqual({ "X-Extra": "1" });
+  });
+});
+
+describe("mcp cache keys", () => {
+  it("keeps header and oauth values out of the listing cache key, and apart per credential", () => {
+    const record = oauthRecord({ oauth: undefined });
+    const connection = mcpConnection(record, {
+      "x-upstream": "hdr-secret-abc123",
+    });
+    const rotated = mcpConnection(record, {
+      "x-upstream": "hdr-secret-def456",
+    });
+    const withOauth = mcpConnection(record, undefined, resolvedOauth());
+
+    const key = cacheKeyFor(connection);
+    expect(key).toContain(`${record.serverId}:${record.updatedAt}:`);
+    expect(key).not.toContain("hdr-secret-abc123");
+    expect(key).not.toContain("x-upstream");
+    expect(cacheKeyFor(withOauth)).not.toContain("secret-1");
+    expect(cacheKeyFor(withOauth)).not.toContain("refresh-1");
+    // Same uniqueness as before: a rotated header or added oauth is a miss.
+    expect(cacheKeyFor(rotated)).not.toBe(key);
+    expect(cacheKeyFor(withOauth)).not.toBe(key);
+    expect(
+      cacheKeyFor(mcpConnection(record, { "x-upstream": "hdr-secret-abc123" })),
+    ).toBe(key);
+  });
+
+  it("keys a lambda row's listing on what its sandbox boots and runs it with", () => {
+    const record = oauthRecord({
+      oauth: undefined,
+      transport: "machine",
+      url: undefined,
+      sandbox: "web",
+      command: ["obscura", "mcp"],
+    });
+    const onSandbox = (
+      config: Partial<SandboxExecutorConfig>,
+      reservationKey = "agent-a",
+    ): string =>
+      cacheKeyFor({
+        ...mcpConnection(record, undefined),
+        sandbox: {
+          config: {
+            provider: "lambda",
+            persistent: true,
+            image: "obscura",
+            ...config,
+          },
+          reservation: { reservationKey: reservationKey },
+          command: ["obscura", "mcp"],
+        },
+      });
+    const key = onSandbox({});
+
+    // Another conversation's VM on the same sandbox shares the listing.
+    expect(onSandbox({}, "agent-b")).toBe(key);
+    expect(onSandbox({ image: undefined, snapshot: "arn:img/v2" })).not.toBe(
+      key,
+    );
+    expect(onSandbox({ onCreate: ["pip install other-server"] })).not.toBe(key);
+    expect(onSandbox({ envVars: { API_KEY: "key-2" } })).not.toBe(key);
+    expect(onSandbox({ envVars: { API_KEY: "key-2" } })).not.toContain("key-2");
+  });
+
+  it("keeps the client secret and refresh token out of the token cache key", () => {
+    const key = mcpOauthTokenCacheKey(resolvedOauth());
+
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(key).not.toContain("secret-1");
+    expect(key).not.toContain("refresh-1");
+    expect(
+      mcpOauthTokenCacheKey(resolvedOauth({ refreshToken: "refresh-2" })),
+    ).not.toBe(key);
+    expect(mcpOauthTokenCacheKey(resolvedOauth())).toBe(key);
   });
 });
 

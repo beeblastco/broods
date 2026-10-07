@@ -3,11 +3,15 @@
  *
  * Agents reference standalone, account-scoped sandbox / workspace records by id.
  * This module resolves those references into concrete runtime configs and derives
- * each workspace's filesystem namespace. The namespace is scoped by
- * `accountId:workspaceId`, NOT agent or conversation, so agents that share a
- * workspaceId read and write the SAME files.
+ * each workspace's filesystem namespace. The base namespace is scoped by
+ * `accountId:workspaceId`, so agents that share a workspaceId read and write the
+ * SAME files unless the record sets `isolation`: "conversation" adds a folder per
+ * channel partition, "agent" a folder per agent. The full namespace is what a
+ * sandbox reserves on and what the mount's STS session is scoped to, so an
+ * isolated folder is its own VM and its own S3 prefix.
  */
 
+import { STATELESS_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxRules";
 import type {
   ChannelPartition,
   AgentConfig,
@@ -18,10 +22,14 @@ import type {
   SandboxConfigRecord,
 } from "./domain/sandbox-config.ts";
 import type {
-  WorkspaceConfig,
+  WorkspaceIsolation,
+  WorkspaceRuntimeConfig,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
-import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
+import {
+  agentNamespaceFolder,
+  normalizeFilesystemNamespace,
+} from "./runtime-keys.ts";
 import { resolveSandboxLifecycle } from "./sandbox.ts";
 import {
   resolveSandboxSpecs,
@@ -51,7 +59,7 @@ export interface ResolvedWorkspace {
   workspaceId: string;
   namespace: string;
   description?: string;
-  config: WorkspaceConfig;
+  config: WorkspaceRuntimeConfig;
   sandbox?: WorkspaceSandboxConfig;
   // Read-only read runner. Set when the workspace has no effective sandbox, the ref
   // did not opt out with `sandbox: null`, and the workspace uses the managed bucket.
@@ -75,6 +83,7 @@ export interface ResolvedAgentRuntime {
 }
 
 export interface WorkspaceIsolationScope {
+  agentId?: string;
   channelName?: string;
   channelScopeKey?: string;
   conversationKey?: string;
@@ -135,13 +144,26 @@ export function agentSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
 }
 
+/**
+ * The namespace one run mounts: the base for a shared workspace, a folder per
+ * agent under `agent/` for "agent" isolation, or the channel partition's folder
+ * for "conversation" isolation. Cleanup derives the same string to find what a
+ * run left behind.
+ */
 export function isolatedWorkspaceNamespace(
   baseNamespace: string,
-  isolation: boolean | undefined,
+  isolation: WorkspaceIsolation | undefined,
   scope: WorkspaceIsolationScope = {},
 ): string {
-  if (isolation !== true) {
+  if (isolation === undefined) {
     return baseNamespace;
+  }
+  if (isolation === "agent") {
+    if (!scope.agentId) {
+      throw new Error('Workspace isolation "agent" requires an agent identity');
+    }
+
+    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
   }
 
   const partition = scope.partition;
@@ -302,7 +324,7 @@ export async function resolveAgentRuntime(
         namespace: isolatedWorkspaceNamespace(
           workspaceNamespace(accountId, ref.workspaceId),
           record.config.isolation,
-          isolationScope,
+          { ...isolationScope, agentId: identity.agentId },
         ),
         ...(record.description ? { description: record.description } : {}),
         config: record.config,
@@ -349,7 +371,7 @@ export function resolveWorkspaceRefs(
  * platform must not meter it or hold it to the plan's budget. Mirrors where
  * each executor takes its credentials: the config's own key wins over the
  * platform env. A MicroVM always runs on the platform's AWS account; a machine
- * is the user's computer.
+ * is the user's computer and a custom server is the account's own compute.
  */
 export function runsOnOwnCredentials(config: SandboxConfig): boolean {
   const options = config.options ?? {};
@@ -364,7 +386,9 @@ export function runsOnOwnCredentials(config: SandboxConfig): boolean {
     case "sandbox":
       return has("workdirUrl");
     case "machine":
+    case "custom":
       return true;
+    case "cloudflare":
     case "lambda":
       return false;
   }
@@ -392,17 +416,26 @@ export function workspaceNamespacesForAccount(
   );
 }
 
-// The file tools need the workspace's S3 mount. A machine has none (they would act
-// on the daemon's own disk), and a MicroVM network other than allow-all only routes
-// to the managed bucket, so it can never mount a bucket the workspace names itself.
+// The file tools need the workspace's S3 mount. A stateless provider has none (a
+// machine's would act on the daemon's own disk, a custom server is never handed
+// mount credentials), and a MicroVM network other than allow-all only routes to
+// the managed bucket, so it can never mount a bucket the workspace names itself.
 function assertSandboxReachesWorkspace(
   workspaceName: string,
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
 ): void {
-  if (sandbox?.provider === "machine") {
+  // The file tools need an S3 mount. A machine, a custom server and a
+  // Cloudflare Container have none, so they would act on their own disk. A
+  // fallback runs the same workspace, so it is held to the same rule.
+  const unmountable = [sandbox?.provider, sandbox?.fallbackProvider].find(
+    (provider): boolean =>
+      provider === "cloudflare" ||
+      (provider !== undefined && STATELESS_SANDBOX_PROVIDERS.has(provider)),
+  );
+  if (unmountable) {
     throw new Error(
-      `Workspace "${workspaceName}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
+      `Workspace "${workspaceName}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,
     );
   }
   if (

@@ -12,10 +12,8 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "./agentConfigCodec";
+import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
+import type { AccountCipher } from "./envelope";
 import { agentsInStage } from "./projectScope";
 
 /** What a forwarder needs to connect as one channel: its token, and for Matrix the homeserver. */
@@ -41,16 +39,13 @@ interface DesiredEndpoint {
 
 export async function channelEndpointBotToken(
   row: Doc<"channelEndpoints">,
-  secret: string,
+  cipher: AccountCipher,
 ): Promise<string | null> {
-  const decrypted = (await decryptAgentConfigBlob(
-    {
-      ciphertext: row.tokenCiphertext,
-      iv: row.tokenIv,
-      tag: row.tokenTag,
-    },
-    secret,
-  )) as { botToken?: unknown } | null;
+  const decrypted = await cipher.decrypt("channelEndpoints:tokenCiphertext", {
+    ciphertext: row.tokenCiphertext,
+    iv: row.tokenIv,
+    tag: row.tokenTag,
+  });
   const botToken = decrypted?.botToken;
 
   return typeof botToken === "string" && botToken ? botToken : null;
@@ -68,10 +63,10 @@ export async function refreshAccountChannelEndpoints(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
 ): Promise<void> {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) return;
+  if (!hasEncryptionSecret()) return;
 
-  const desired = await desiredEndpoints(ctx, accountId, secret);
+  const cipher = await accountCipherForWrite(ctx, accountId);
+  const desired = await desiredEndpoints(ctx, accountId, cipher);
   const existing = await ctx.db
     .query("channelEndpoints")
     .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
@@ -85,10 +80,9 @@ export async function refreshAccountChannelEndpoints(
     const current = existingByKey.get(endpointKey(entry));
     existingByKey.delete(endpointKey(entry));
     if (current?.digest === digest) continue;
-    const encrypted = await encryptAgentConfigBlob(
-      { botToken: entry.botToken },
-      secret,
-    );
+    const encrypted = await cipher.encrypt("channelEndpoints:tokenCiphertext", {
+      botToken: entry.botToken,
+    });
     const fields = {
       accountId: accountId,
       agentId: entry.agentId,
@@ -141,21 +135,18 @@ export function webhookPath(
 /** Every channel with a bot token in one agent's decrypted config, keyed by channel. */
 async function agentChannelCredentials(
   agent: Doc<"agents">,
-  secret: string,
+  cipher: AccountCipher,
 ): Promise<Map<string, ChannelCredentials>> {
   const credentials = new Map<string, ChannelCredentials>();
   if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
     return credentials;
   }
 
-  const config = (await decryptAgentConfigBlob(
-    {
-      ciphertext: agent.encryptedConfig,
-      iv: agent.encryptionIv,
-      tag: agent.encryptionTag,
-    },
-    secret,
-  )) as ChannelsConfigView | null;
+  const config = (await cipher.decrypt("agents:encryptedConfig", {
+    ciphertext: agent.encryptedConfig,
+    iv: agent.encryptionIv,
+    tag: agent.encryptionTag,
+  })) as ChannelsConfigView | null;
   for (const [platform, channel] of Object.entries(config?.channels ?? {})) {
     const botToken = channel?.botToken;
     if (typeof botToken !== "string" || !botToken) continue;
@@ -172,7 +163,7 @@ async function agentChannelCredentials(
 async function desiredEndpoints(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
-  secret: string,
+  cipher: AccountCipher,
 ): Promise<Map<string, DesiredEndpoint>> {
   const deployments = await ctx.db
     .query("agentDeployments")
@@ -191,7 +182,7 @@ async function desiredEndpoints(
       accountId,
     );
     for (const agent of agents) {
-      const credentials = await agentChannelCredentials(agent, secret);
+      const credentials = await agentChannelCredentials(agent, cipher);
       for (const [platform, { apiUrl, botToken }] of credentials) {
         const entry: DesiredEndpoint = {
           agentId: agent._id,

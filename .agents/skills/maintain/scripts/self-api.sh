@@ -4,7 +4,7 @@
 # env:
 #   BROODS_BASE_URL          gateway url (default https://gateway.broods.app)
 #   BROODS_SESSION_TOKEN     role session minted by the operator; used as is
-#   BROODS_API_KEY           stage runtime key, exchanged with BROODS_ROLE_ID
+#   BROODS_API_KEY           runtime key, exchanged with BROODS_ROLE_ID
 #   BROODS_ROLE_ID           role to assume, pinned to this deployment's stage
 #   BROODS_ROLE_TTL_SECONDS  session lifetime to request (default 3600, max 43200)
 # Exchanged sessions are cached in a private file for their lifetime, so a run

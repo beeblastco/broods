@@ -12,6 +12,7 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   projectId: Id<"projects">;
@@ -111,7 +112,7 @@ export function PoliciesPanel({
       }
       setEditing(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save policy.");
+      setError(toErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -127,9 +128,7 @@ export function PoliciesPanel({
       if (editing && editing !== "new" && editing._id === deletingPolicy._id)
         setEditing(null);
     } catch (err) {
-      setDeleteError(
-        err instanceof Error ? err.message : "Failed to delete policy.",
-      );
+      setDeleteError(toErrorMessage(err));
     } finally {
       setIsDeleting(false);
     }
@@ -231,17 +230,20 @@ export function PoliciesPanel({
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Policy name"
+              aria-label="Policy name"
               className="text-sm"
             />
             <Input
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="Description"
+              aria-label="Policy description"
               className="text-sm"
             />
             <Textarea
               value={documentText}
               onChange={(event) => setDocumentText(event.target.value)}
+              aria-label="Policy document"
               className="min-h-64 font-mono text-xs"
             />
             {error && <p className="text-xs text-destructive">{error}</p>}

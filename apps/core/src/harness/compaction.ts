@@ -28,6 +28,7 @@ const COMPACTION_MESSAGE_SEPARATOR = "\n\n";
 const MODEL_CATALOG: readonly ModelDefinition[] = models;
 
 export interface SummarizeConversationInput {
+  accountId?: string;
   conversationKey: string;
   priorSummaries: SystemModelMessage[];
   messages: ModelMessage[];
@@ -82,7 +83,10 @@ export async function summarizeConversation(
     return null;
   }
 
-  const configuredModel = resolveConfiguredModel(input.agentConfig);
+  const configuredModel = resolveConfiguredModel(
+    input.agentConfig,
+    input.accountId,
+  );
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const startedAt = Date.now();
   // One character per token is deliberately conservative, so the request fits

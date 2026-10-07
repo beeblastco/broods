@@ -15,7 +15,8 @@ flowchart LR
   Dev -->|push| DevDeploys["deploy-convex, deploy,<br/>build-* + rollout"]
   Dev -->|"Promote dev to main"| Main["main branch"]
   Main --> Convex["deploy-convex.yaml"]
-  Convex --> Parallel["deploy, build-core, build-gateway,<br/>build-dashboard, deploy-docs, publish-npm"]
+  Convex --> Parallel["deploy, build-core, build-gateway,<br/>build-dashboard, deploy-docs"]
+  Parallel --> Npm["publish-npm.yaml"]
 ```
 
 ## Workflows
@@ -44,7 +45,7 @@ flowchart LR
 
 `lean-verification`, `validate`, `app-surfaces` and the other required checks on `dev` report on every pull request, so `ci.yaml` has no path filter on `pull_request`. A filtered workflow would never report and a docs-only pull request would wait forever.
 
-Promote dispatches `deploy-convex.yaml` first and waits for it, then `deploy.yaml`, `build-core.yaml`, `build-gateway.yaml`, `build-dashboard.yaml`, `build-discord-forwarder.yaml`, `build-matrix-forwarder.yaml`, `deploy-docs.yaml` and `publish-npm.yaml` in parallel. Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it and promote is what rolls it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked. That serves prod traffic too.
+Promote dispatches `deploy-convex.yaml` first and waits for it, then `deploy.yaml`, `build-core.yaml`, `build-gateway.yaml`, `build-dashboard.yaml`, `build-discord-forwarder.yaml`, `build-matrix-forwarder.yaml` and `deploy-docs.yaml` in parallel, and `publish-npm.yaml` only after every one of them succeeded, so a published SDK never runs ahead of the backend it talks to. Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it and promote is what rolls it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked. That serves prod traffic too.
 
 ## Lean verification
 
@@ -88,7 +89,7 @@ sequenceDiagram
   R->>I: gh run watch until done
 ```
 
-Gateway, dashboard, docs, npm and both forwarders are dispatched in the same parallel step. Only core and the dashboard gate their rollout on prerequisites.
+Gateway, dashboard, docs and both forwarders are dispatched in the same parallel step. Only core and the dashboard gate their rollout on prerequisites. npm is dispatched after that step completes.
 
 ## Deploy stages
 
@@ -101,27 +102,30 @@ Gateway, dashboard, docs, npm and both forwarders are dispatched in the same par
 
 Production deploys only to `eu-west-1`. `production_targets()` in `deploy.yaml` lists it alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM prerequisites in `ap-southeast-1`.
 
+`deploy.yaml` also deploys the [Cloudflare MCP runtime](../guides/cloudflare-mcp.md) per target with wrangler, right after that target's SST deploy, named by its `cloudflareMcpWorkerName` output and pointed at its tool-bundles bucket. It ships code only and skips production. The infra repo holds the Worker's key and writes it to both the Worker's `MCP_API_KEY` and core's `CLOUDFLARE_MCP_API_KEY`, so rotating it is one secret and one infra deploy.
+
 `deploy.yaml` also handles the regional sandbox image. When a target's `SANDBOX_IMAGE_READY_*` variable is `true` and the region's ECR repo has no `latest-arm64` image, it runs one deploy without sandbox functions to create the repo, copies the image from `SANDBOX_IMAGE_SOURCE_REGION` with `crane`, then deploys again.
 
 ## Secrets and variables
 
 Environment-scoped values resolve from `development` or `production` by branch.
 
-| Name                                                                                                  | Kind              | Used by                                                                                  |
-| ----------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
-| `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL`                               | variable          | `ci`, `deploy`, `drift-cleanup`; docs uses the role only                                 |
-| `DEV_AWS_REGION`                                                                                      | variable          | `ci`, `deploy`                                                                           |
-| `CONVEX_URL`, `CONVEX_DEPLOY_KEY`                                                                     | secret, per env   | `deploy`, `drift-cleanup`, `deploy-convex`                                               |
-| `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY`                                              | secret, per env   | `deploy-convex`, instead of a deploy key                                                 |
-| `OTEL_EXPORTER_OTLP_HEADERS`                                                                          | secret            | `deploy`, `drift-cleanup`. Unset skips the sandbox log forwarder                         |
-| `SANDBOX_IMAGE_READY_DEV`, `SANDBOX_IMAGE_READY_PRODUCTION[_<REGION>]`, `SANDBOX_IMAGE_SOURCE_REGION` | variable          | `deploy`                                                                                 |
-| `INFRA_DISPATCH_TOKEN`                                                                                | secret            | every build workflow. Fine-grained PAT on `beeblastco/infra` with Actions read and write |
-| `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, `NEXT_PUBLIC_BROODS_BASE_URL`            | variable, per env | `build-dashboard`, `ci`                                                                  |
-| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`                                        | secret            | `ci` dashboard build and browser tests                                                   |
-| `DASHBOARD_E2E_EMAIL`, `DASHBOARD_E2E_PASSWORD`, `DASHBOARD_E2E_PROJECT_ID`                           | secret, variable  | `ci`, `e2e-dashboard`                                                                    |
-| `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                       | variable, secret  | `opa-policy-check`                                                                       |
-| `DOCS_S3_BUCKET`, `DOCS_DOMAIN`, `DOCS_AWS_REGION`                                                    | variable          | `deploy-docs`                                                                            |
-| `ACCOUNT_*`                                                                                           | secret, variable  | `deploy` still exports these, but no step in it or `sst.config.ts` reads them            |
+| Name                                                                                                  | Kind                      | Used by                                                                                  |
+| ----------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------- |
+| `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL`                               | variable                  | `ci`, `deploy`, `drift-cleanup`; docs uses the role only                                 |
+| `DEV_AWS_REGION`                                                                                      | variable                  | `ci`, `deploy`                                                                           |
+| `CONVEX_URL`, `CONVEX_DEPLOY_KEY`                                                                     | secret, per env           | `deploy`, `drift-cleanup`, `deploy-convex`                                               |
+| `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY`                                              | secret, per env           | `deploy-convex`, instead of a deploy key                                                 |
+| `OTEL_EXPORTER_OTLP_HEADERS`                                                                          | secret                    | `deploy`, `drift-cleanup`. Unset skips the sandbox log forwarder                         |
+| `SANDBOX_IMAGE_READY_DEV`, `SANDBOX_IMAGE_READY_PRODUCTION[_<REGION>]`, `SANDBOX_IMAGE_SOURCE_REGION` | variable                  | `deploy`                                                                                 |
+| `INFRA_DISPATCH_TOKEN`                                                                                | secret                    | every build workflow. Fine-grained PAT on `beeblastco/infra` with Actions read and write |
+| `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, `NEXT_PUBLIC_BROODS_BASE_URL`            | variable, per env         | `build-dashboard`, `ci`                                                                  |
+| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`                                        | secret                    | `ci` dashboard build and browser tests                                                   |
+| `DASHBOARD_E2E_EMAIL`, `DASHBOARD_E2E_PASSWORD`, `DASHBOARD_E2E_PROJECT_ID`                           | secret, variable          | `ci`, `e2e-dashboard`                                                                    |
+| `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                       | variable, secret          | `opa-policy-check`                                                                       |
+| `DOCS_S3_BUCKET`, `DOCS_DOMAIN`, `DOCS_AWS_REGION`                                                    | variable                  | `deploy-docs`                                                                            |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`                                                       | secret, variable, per env | `deploy`, the Cloudflare MCP runtime code. Unset skips it, so hosted MCP stays on Lambda |
+| `ACCOUNT_*`                                                                                           | secret, variable          | `deploy` still exports these, but no step in it or `sst.config.ts` reads them            |
 
 Runtime secrets for the containers are not GitHub secrets. They live in k8s secrets referenced by the infra repo's release files, and in the Convex deployment env. See [self-hosting](self-hosting.md).
 
