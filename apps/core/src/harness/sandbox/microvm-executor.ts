@@ -173,7 +173,7 @@ const BURST_REPORT_TTL_MS = 24 * 60 * 60 * 1000;
 // token cache: an executor is constructed per request, so an instance field never hits.
 const reservedEndpoints = new Map<
   string,
-  { microvmId: string; endpoint: string; expiresAt: number }
+  { microvmId: string; endpoint: string; image: string; expiresAt: number }
 >();
 
 // The proxy authenticates shell WebSocket upgrades with this header; the value
@@ -189,10 +189,11 @@ export interface MicrovmHarnessReservation {
   readonly isFirstCreate: boolean;
 }
 
-// A reservation whose VM cannot be reconnected because it reached a terminal state.
-// GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
-// separates "recreate it" from a transient control-plane failure.
-class MicrovmGoneError extends Error {}
+// A reservation whose VM cannot be reconnected because it reached a terminal state
+// or booted another image. GetMicrovm still answers for a TERMINATED VM, so this is
+// the only signal that separates "recreate it" from a transient control-plane
+// failure. A SandboxGoneError, so a resumed Harness session starts a fresh one.
+class MicrovmGoneError extends SandboxGoneError {}
 
 // The proxy never accepted the request inside the warm-up budget, so the exec
 // definitely did not run. That is the only failure safe to retry against another VM.
@@ -528,8 +529,22 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // so a `snapshot` pin may only name another image in the same AWS account and
   // region as the runtime default, and MICROVM_IMAGE_VERSION only versions that
   // default. Anything else would boot a foreign image under the platform role.
+  // An `image` variant is the default's sibling `<name>-<variant>`, which the
+  // sandbox image workflow publishes next to it.
   #image(): { imageIdentifier: string; imageVersion?: string } {
     const fallback = optionalEnv("MICROVM_IMAGE_IDENTIFIER");
+    if (this.#config.image) {
+      const variant = fallback
+        ? microvmImageVariant(fallback, this.#config.image)
+        : undefined;
+      if (!variant) {
+        throw new Error(
+          "config.image needs MICROVM_IMAGE_IDENTIFIER to be a MicroVM image ARN in the harness runtime.",
+        );
+      }
+
+      return { imageIdentifier: variant };
+    }
     const pinned = configString(this.#config.snapshot);
     if (!pinned) {
       if (!fallback) {
@@ -627,6 +642,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     const cached = key ? reservedEndpoints.get(key) : undefined;
     if (!cached || cached.expiresAt <= Date.now()) return null;
+    // A changed image goes through #acquire, whose reconnect replaces the VM.
+    if (cached.image !== microvmImageName(this.#image().imageIdentifier)) {
+      return null;
+    }
 
     return { microvmId: cached.microvmId, endpoint: cached.endpoint };
   }
@@ -758,6 +777,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const entry = { microvmId: target.microvmId, endpoint: target.endpoint };
     reservedEndpoints.set(key, {
       ...entry,
+      image: microvmImageName(this.#image().imageIdentifier),
       expiresAt: now + RESERVED_ENDPOINT_TTL_MS,
     });
 
@@ -775,6 +795,20 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     let info = await this.#client.send(
       new GetMicrovmCommand({ microvmIdentifier: microvmId }),
     );
+    // A sandbox whose image changed must not keep reaching the VM the old image
+    // booted: stop it, before any resume, and the caller creates one from the new
+    // image. GetMicrovm always reports the image, so a missing one is a mismatch.
+    if (
+      !isTerminalMicrovmState(info.state) &&
+      (!info.imageArn ||
+        microvmImageName(info.imageArn) !==
+          microvmImageName(this.#image().imageIdentifier))
+    ) {
+      await this.#terminate(microvmId);
+      throw new MicrovmGoneError(
+        `MicroVM ${microvmId} runs ${info.imageArn ?? "an unknown image"}, not the sandbox's image`,
+      );
+    }
     if (info.state === "SUSPENDED" || info.state === "SUSPENDING") {
       await this.#client.send(
         new ResumeMicrovmCommand({ microvmIdentifier: microvmId }),
@@ -1518,6 +1552,11 @@ function markMountCredentialsFresh(key: string): void {
 }
 
 // In-VM mount directory: one workspace per VM, so the base segment is enough.
+// An image ARN without any version qualifier, so two versions compare equal.
+function microvmImageName(arn: string): string {
+  return arn.split(":").slice(0, 7).join(":");
+}
+
 // `arn:aws:lambda:<region>:<account>:microvm-image`, or undefined for anything
 // that is not a MicroVM image ARN.
 function microvmImageScope(arn: string): string | undefined {
@@ -1526,6 +1565,16 @@ function microvmImageScope(arn: string): string | undefined {
   if (parts[5] !== "microvm-image" || parts.length < 7) return undefined;
 
   return parts.slice(0, 6).join(":");
+}
+
+// `arn:aws:lambda:<region>:<account>:microvm-image:<name>[:...]` → the same ARN
+// for `<name>-<variant>`, dropping any version qualifier of the default.
+function microvmImageVariant(arn: string, variant: string): string | undefined {
+  const scope = microvmImageScope(arn);
+  const name = arn.split(":")[6];
+  if (!scope || !name) return undefined;
+
+  return `${scope}:${name}-${variant}`;
 }
 
 function microvmLocalNamespace(namespace: string): string {

@@ -236,6 +236,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |
 | `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                   |
+| `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. Not with `snapshot` or `fallbackProvider`                        |
 | `snapshot`             | provider   | Image or snapshot to boot from. On `lambda`, a platform MicroVM image ARN                                                      |
 | `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                             |
 | `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                    |

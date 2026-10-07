@@ -1,3 +1,4 @@
+import type { RunMicrovmRequest } from "@aws-sdk/client-lambda-microvms";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type {
   SandboxExecutorConfig,
@@ -158,35 +159,43 @@ let microvmExecPayload = {
   truncated: false,
 };
 let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
-const microvmSendMock = mock(async (command: { _type?: string }) => {
-  switch (command?._type) {
-    case "RunMicrovm":
-      return {
-        microvmId: "microvm-1",
-        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
-        state: "PENDING",
-      };
-    case "CreateMicrovmAuthToken":
-      return { authToken: { "X-aws-proxy-auth": "proxy-token" } };
-    case "CreateMicrovmShellAuthToken":
-      return { authToken: { "X-aws-proxy-auth": "shell-jwe-token" } };
-    case "GetMicrovm":
-      if (microvmGetResponses.length > 0) {
-        const next = microvmGetResponses.shift();
-        if (next instanceof Error) throw next;
+// The image the mocked VM booted, which GetMicrovm reports like the real API.
+let microvmBootedImage = "";
+const microvmSendMock = mock(
+  async (command: { _type?: string; input?: unknown }) => {
+    switch (command?._type) {
+      case "RunMicrovm":
+        microvmBootedImage =
+          (command.input as RunMicrovmRequest).imageIdentifier ?? "";
 
-        return next;
-      }
+        return {
+          microvmId: "microvm-1",
+          endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+          state: "PENDING",
+        };
+      case "CreateMicrovmAuthToken":
+        return { authToken: { "X-aws-proxy-auth": "proxy-token" } };
+      case "CreateMicrovmShellAuthToken":
+        return { authToken: { "X-aws-proxy-auth": "shell-jwe-token" } };
+      case "GetMicrovm":
+        if (microvmGetResponses.length > 0) {
+          const next = microvmGetResponses.shift();
+          if (next instanceof Error) throw next;
 
-      return {
-        microvmId: "microvm-1",
-        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
-        state: "RUNNING",
-      };
-    default:
-      return {};
-  }
-});
+          return { imageArn: microvmBootedImage, ...next };
+        }
+
+        return {
+          imageArn: microvmBootedImage,
+          microvmId: "microvm-1",
+          endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+          state: "RUNNING",
+        };
+      default:
+        return {};
+    }
+  },
+);
 const originalFetch = globalThis.fetch;
 let microvmMountLive = true;
 // Checks that must report "not mounted" before the mount comes up, mirroring a VM
@@ -372,6 +381,7 @@ beforeEach(() => {
   microvmSendMock.mockClear();
   microvmFetchMock.mockClear();
   microvmGetResponses = [];
+  microvmBootedImage = process.env.MICROVM_IMAGE_IDENTIFIER ?? "";
   microvmMountLive = true;
   microvmMountPendingChecks = 0;
   microvmExecPayload = {
@@ -703,6 +713,29 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("boots an image variant as the default image's sibling at its latest version", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    process.env.MICROVM_IMAGE_VERSION = "3";
+    try {
+      await createSandboxExecutor({ provider: "lambda", image: "obscura" }).run(
+        {
+          code: "echo ok",
+          timeoutSeconds: 30,
+          outputLimitBytes: 4096,
+        },
+      );
+    } finally {
+      delete process.env.MICROVM_IMAGE_VERSION;
+    }
+
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
+    expect(microvmRunInput()).not.toHaveProperty("imageVersion");
+  });
+
   it("refuses a snapshot pin outside the platform image account and ignores image options", async () => {
     const {
       createSandboxExecutor,
@@ -899,6 +932,108 @@ describe("createSandboxExecutor", () => {
     expect(types).toContain("GetMicrovm");
     expect(types).not.toContain("RunMicrovm");
     expect(types).not.toContain("TerminateMicrovm");
+  });
+
+  it("replaces a reserved MicroVM that booted another image", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+        imageArn:
+          "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox:4",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    }).run({
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).toContain("TerminateMicrovm");
+    expect(types).toContain("RunMicrovm");
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
+  });
+
+  it("fails a Harness resume on another image as gone, so a fresh session starts", async () => {
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+        imageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const { isSandboxGoneError } = require("../src/harness/sandbox/utils.ts");
+
+    const error = await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    })
+      .resumeHarnessReservation({ reservationKey: "acct:agent:harness" })
+      .catch((caught: unknown): unknown => caught);
+
+    expect(isSandboxGoneError(error)).toBe(true);
+  });
+
+  it("skips a cached endpoint once the sandbox image changes", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const request = {
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
+      request,
+    );
+    const lookups = getSandboxExternalIdMock.mock.calls.length;
+    await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    }).run(request);
+
+    // The cached VM booted the default image, so the run goes back to the
+    // reservation, where reconnect stops it before launching the new image.
+    expect(getSandboxExternalIdMock.mock.calls.length).toBe(lookups + 1);
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types.lastIndexOf("TerminateMicrovm")).toBeLessThan(
+      types.lastIndexOf("RunMicrovm"),
+    );
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
   });
 
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {

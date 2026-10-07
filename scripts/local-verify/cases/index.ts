@@ -12,6 +12,7 @@ import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
+import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
@@ -30,6 +31,7 @@ export const verifyCases: readonly VerifyCase[] = [
   autoCompaction,
   machineSandbox,
   ownBucketSandbox,
+  sandboxImage,
   customSandbox,
   trailingSlash,
   edgeHeaders,
