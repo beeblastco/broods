@@ -587,7 +587,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     async (
       key: "publicAccess" | "browser",
       value: boolean | { enabled: true } | undefined,
-    ) => {
+    ): Promise<void> => {
       if (!agentConfigId || !agentConfig) return;
 
       const currentExtra =

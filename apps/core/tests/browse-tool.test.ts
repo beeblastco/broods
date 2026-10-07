@@ -82,4 +82,21 @@ describe("browse tool", () => {
       "mkdir -p .broods/browse && obscura fetch 'https://example.com/a b' --quiet --timeout 25 --screenshot '.broods/browse/x.png'",
     );
   });
+
+  it.each([
+    [5, 3],
+    [8, 4],
+    [10, 5],
+    [11, 6],
+  ])(
+    "leaves Obscura room to report its own timeout under a %is exec timeout",
+    (exec, obscura) => {
+      expect(
+        obscuraCommand(
+          { ...OBSCURA_SANDBOX, timeout: exec },
+          { url: "https://example.com", path: "x.png", mode: "text" },
+        ),
+      ).toContain(`--timeout ${obscura} `);
+    },
+  );
 });
