@@ -11,6 +11,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `apps/gateway` (`@broods/gateway`) is the WebSocket server behind Traefik. terminates the agent / observability / terminal / machine WebSockets.
 - `apps/discord-forwarder` (`@broods/discord-forwarder`) runs the Discord Gateway sockets. Discord only POSTs interactions to a webhook; regular messages arrive over a socket, so without this a Discord agent answers `/new` and ignores every mention. one socket per bot token, one deployment, single replica.
 - `apps/matrix-forwarder` (`@broods/matrix-forwarder`) runs the Matrix `/sync` long-polls and holds each account's E2EE keys. Matrix has no webhooks, so it POSTs decrypted room messages to the channel webhook, and core sends room events (replies, reactions, typing) back through it because only it can encrypt them. one long-poll per access token, crypto store on a persistent volume, single replica.
+- `apps/cloudflare-sandbox` (`@broods/cloudflare-sandbox`) is the bridge Worker behind the `cloudflare` sandbox provider. the Container API only answers inside a Durable Object, so core calls this Worker over bearer-authenticated HTTP and each sandbox id is one Durable Object owning one Container.
 - `apps/dashboard` (`@broods/dashboard`) is the Next.js UI. drives core through Convex.
 - `packages/convex` (`@broods/convex`) is the shared Convex backend for both dashboard and core + config plane.
 - `apps/docs` (`@broods/docs`) is the Docusaurus docs. core, public API, whole architecture.
@@ -18,7 +19,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
 - `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
 
-they are one product, not thirteen islands. Traefik (`apps/edge`) is the door, the gateway own the sockets, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
+they are one product, not fourteen islands. Traefik (`apps/edge`) is the door, the gateway own the sockets, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
 
 outside repo, sibling of checkout:
 

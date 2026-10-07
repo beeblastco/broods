@@ -3,11 +3,13 @@ import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
+import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { manifestSync } from "./manifest-sync.ts";
+import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
@@ -35,7 +37,9 @@ export const verifyCases: readonly VerifyCase[] = [
   ownBucketSandbox,
   sandboxImage,
   browserSandbox,
+  mcpCommand,
   customSandbox,
+  cloudflareSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,

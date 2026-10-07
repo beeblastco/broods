@@ -1,0 +1,21 @@
+{
+  "name": "@broods/cloudflare-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "wrangler": "^4.145.0"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

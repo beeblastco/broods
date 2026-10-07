@@ -1692,6 +1692,7 @@ paths:
                             e2b,
                             daytona,
                             vercel,
+                            cloudflare,
                             machine,
                             custom,
                           ],
@@ -1741,7 +1742,8 @@ paths:
                     fallbackProvider:
                       {
                         type: string,
-                        enum: [sandbox, lambda, e2b, daytona, vercel],
+                        enum:
+                          [sandbox, lambda, e2b, daytona, vercel, cloudflare],
                         description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine or custom. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:
@@ -2035,8 +2037,9 @@ paths:
       summary: Mint a live terminal ticket
       description: >
         Mints a short-lived sealed ticket for an interactive PTY session on a persistent
-        sandbox reservation (self-hosted workdir `sandbox` and AWS MicroVM `lambda`
-        providers). A suspended instance is resumed first. The opaque `token` is passed
+        sandbox reservation (self-hosted workdir `sandbox`, AWS MicroVM `lambda` and
+        `cloudflare` providers). A suspended instance is resumed first; a stopped
+        Cloudflare Container answers 409 until a command starts it again. The opaque `token` is passed
         to the public gateway's terminal WebSocket at `websocketPath` as the
         `broods.token.<token>` subprotocol, which bridges the browser to the sandbox's
         in-guest TTY; the provider credential never reaches the client. A ticket opens
@@ -2081,7 +2084,7 @@ paths:
         "404": { description: No reserved instance for this reservation key }
         "409":
           {
-            description: "Provider does not support a live terminal, or the MicroVM was launched without shell ingress",
+            description: "Provider does not support a live terminal, the MicroVM was launched without shell ingress, or the Cloudflare Container is not running",
           }
 
   /v1/workspaces:

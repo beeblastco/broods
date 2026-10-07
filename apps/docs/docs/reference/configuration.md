@@ -232,7 +232,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 
 | Field                  | Default    | Description                                                                                                                    |
 | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`, `custom`                                                           |
+| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `cloudflare`, `machine`, `custom`                                             |
 | `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                      |
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |

@@ -52,6 +52,11 @@ const sidebars: SidebarsConfig = {
             },
             {
               type: "doc",
+              id: "guides/sandboxes/cloudflare",
+              label: "Cloudflare Containers",
+            },
+            {
+              type: "doc",
               id: "guides/sandboxes/machine",
               label: "Your computer",
             },

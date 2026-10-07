@@ -21,6 +21,7 @@ import {
   StreamableHTTPClientTransport,
   type CallToolResult,
   type DiscoverResult,
+  type ListToolsResult,
   type Tool,
 } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
@@ -212,10 +213,7 @@ export async function listMcpTools(
 
     return tools;
   }
-  const fetchListing = async (): Promise<{
-    tools: Tool[];
-    ttlMs?: unknown;
-  }> => {
+  const fetchListing = async (): Promise<ListToolsResult> => {
     if (!connection.sandbox) {
       return await withClient(
         connection,
@@ -444,31 +442,6 @@ async function connectClient(
   return client;
 }
 
-/** The agent id, and its chain when known (base64url JSON, ids and kinds only), so a server can authorize per agent. */
-function principalHeaders(principal: Principal): Record<string, string> {
-  const chain = delegatedChain(principal);
-
-  return {
-    [MCP_AGENT_ID_HEADER]: principal.agentId,
-    ...(chain
-      ? {
-          [MCP_PRINCIPAL_HEADER]: Buffer.from(
-            JSON.stringify(chainWithoutNames(chain)),
-          ).toString("base64url"),
-        }
-      : {}),
-  };
-}
-
-/** Drop oldest entries so a long-lived core process stays bounded. */
-function pruneCache(cache: Map<string, unknown>): void {
-  while (cache.size >= MAX_CACHE_ENTRIES) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
-  }
-}
-
 /**
  * A result's content as model content parts: images as image data, the rest as
  * text, and any structuredContent as one more JSON text part.
@@ -494,6 +467,31 @@ function imageContentOutput(
         : []),
     ],
   };
+}
+
+/** The agent id, and its chain when known (base64url JSON, ids and kinds only), so a server can authorize per agent. */
+function principalHeaders(principal: Principal): Record<string, string> {
+  const chain = delegatedChain(principal);
+
+  return {
+    [MCP_AGENT_ID_HEADER]: principal.agentId,
+    ...(chain
+      ? {
+          [MCP_PRINCIPAL_HEADER]: Buffer.from(
+            JSON.stringify(chainWithoutNames(chain)),
+          ).toString("base64url"),
+        }
+      : {}),
+  };
+}
+
+/** Drop oldest entries so a long-lived core process stays bounded. */
+function pruneCache(cache: Map<string, unknown>): void {
+  while (cache.size >= MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }
 
 /**

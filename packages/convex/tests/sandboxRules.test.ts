@@ -323,6 +323,38 @@ describe("sandbox config defaults & validation", () => {
     ).toEqual({ mode: "allow-all" });
   });
 
+  it("cloudflare takes on/off networking and only the platform options", () => {
+    expect(
+      normalizeSandboxConfig({ provider: "cloudflare", persistent: true }),
+    ).toMatchObject({ provider: "cloudflare", network: { mode: "deny-all" } });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "cloudflare",
+        network: { mode: "restricted", allowDomains: ["pypi.org"] },
+      }),
+    ).toThrow("deny-all or allow-all");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "cloudflare",
+        options: { baseURL: "https://bridge.example.com" },
+      }),
+    ).toThrow("config.options.baseURL is not supported");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "cloudflare",
+        persistent: true,
+        onCreate: ["npm install"],
+      }),
+    ).toThrow("config.onCreate is not supported by the cloudflare provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "cloudflare",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 7 * 60 * 60 },
+      }),
+    ).toThrow("must be at most 21600 on the cloudflare provider");
+  });
+
   it("machine sandbox takes only allow-all network, envVars and options.cwd", () => {
     expect(
       normalizeSandboxConfig({

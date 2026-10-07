@@ -11,7 +11,7 @@ import {
 
 const TARGET: SandboxMcpTarget = {
   config: { provider: "lambda", persistent: true, timeout: 30 },
-  reservationKey: "agent-vm",
+  reservation: { reservationKey: "agent-vm" },
   command: ["obscura", "mcp"],
 };
 const LIST = { method: "tools/list", params: {} };
@@ -90,6 +90,43 @@ test("names the server when the VM cannot be reached", async () => {
       sandboxMcpRequest(TARGET, "obscura", LIST, undefined, executor),
     ),
   ).toContain("MCP server obscura on its sandbox failed: MicroVM /mcp failed");
+});
+
+test("gives a tool call 120 s on a sandbox with no timeout of its own", async () => {
+  const requests: unknown[] = [];
+  const executor: SandboxMcpExecutor = {
+    postReserved: async function (request): Promise<unknown> {
+      requests.push(request);
+
+      return { jsonrpc: "2.0", id: "1", result: {} };
+    },
+  };
+
+  await sandboxMcpRequest(
+    { ...TARGET, config: { provider: "lambda", persistent: true } },
+    "obscura",
+    LIST,
+    undefined,
+    executor,
+  );
+
+  expect(requests[0]).toMatchObject({ body: { timeout_ms: 120_000 } });
+});
+
+test("refuses a sandbox whose executor has no MCP host", async () => {
+  expect(
+    await failure(
+      sandboxMcpRequest(
+        { ...TARGET, config: { provider: "sandbox", persistent: true } },
+        "obscura",
+        LIST,
+        undefined,
+        {},
+      ),
+    ),
+  ).toContain(
+    "MCP server obscura needs a lambda sandbox; sandbox has no MCP host",
+  );
 });
 
 // An executor whose every POST answers `reply`, recording each request.

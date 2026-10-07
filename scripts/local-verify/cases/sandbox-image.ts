@@ -1,3 +1,4 @@
+import type { AccountSandbox } from "../../../packages/broods/src/account.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
 /**
@@ -7,15 +8,17 @@ import { assertStep, type VerifyContext } from "../harness.ts";
  */
 export async function sandboxImage(context: VerifyContext): Promise<void> {
   const key = `sandbox-image-${context.runId}`;
-  const stored = await context.measure("create obscura sandbox", () =>
-    context.account.createSandbox({
-      name: key,
-      config: {
-        provider: "lambda",
-        image: "obscura",
-        network: { mode: "allow-all" },
-      },
-    }),
+  const stored = await context.measure(
+    "create obscura sandbox",
+    (): Promise<AccountSandbox> =>
+      context.account.createSandbox({
+        name: key,
+        config: {
+          provider: "lambda",
+          image: "obscura",
+          network: { mode: "allow-all" },
+        },
+      }),
   );
   assertStep(
     "a lambda sandbox keeps image: obscura",
