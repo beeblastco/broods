@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import {
@@ -65,7 +68,7 @@ describe("browse tool", () => {
     };
 
     expect(obscuraCommand(OBSCURA_SANDBOX, { ...call, mode: "markdown" })).toBe(
-      "obscura fetch 'https://example.com/a b' --quiet --timeout 55 --dump markdown",
+      "env -u OBSCURA_ALLOW_PRIVATE_NETWORK obscura fetch 'https://example.com/a b' --quiet --timeout 55 --dump markdown",
     );
     expect(
       obscuraCommand(OBSCURA_SANDBOX, {
@@ -74,12 +77,12 @@ describe("browse tool", () => {
         script: "document.title",
       }),
     ).toBe(
-      "obscura fetch 'https://example.com/a b' --quiet --timeout 55 --eval 'document.title'",
+      "env -u OBSCURA_ALLOW_PRIVATE_NETWORK obscura fetch 'https://example.com/a b' --quiet --timeout 55 --eval 'document.title'",
     );
     expect(
       obscuraCommand({ provider: "machine" }, { ...call, mode: "screenshot" }),
     ).toBe(
-      "mkdir -p .broods/browse && obscura fetch 'https://example.com/a b' --quiet --timeout 25 --screenshot '.broods/browse/x.png'",
+      "mkdir -p .broods/browse && env -u OBSCURA_ALLOW_PRIVATE_NETWORK obscura fetch 'https://example.com/a b' --quiet --timeout 25 --screenshot '.broods/browse/x.png'",
     );
   });
 
@@ -99,4 +102,32 @@ describe("browse tool", () => {
       ).toContain(`--timeout ${obscura} `);
     },
   );
+
+  it("runs Obscura without an inherited OBSCURA_ALLOW_PRIVATE_NETWORK", () => {
+    const bin = mkdtempSync(join(tmpdir(), "obscura-"));
+    writeFileSync(
+      join(bin, "obscura"),
+      '#!/bin/sh\necho "allow=${OBSCURA_ALLOW_PRIVATE_NETWORK:-unset}"\n',
+    );
+    chmodSync(join(bin, "obscura"), 0o755);
+    const run = Bun.spawnSync(
+      [
+        "bash",
+        "-c",
+        obscuraCommand(OBSCURA_SANDBOX, {
+          url: "http://10.0.0.1/",
+          path: "x.png",
+          mode: "text",
+        }),
+      ],
+      {
+        env: {
+          PATH: `${bin}:${process.env.PATH}`,
+          OBSCURA_ALLOW_PRIVATE_NETWORK: "1",
+        },
+      },
+    );
+
+    expect(run.stdout.toString().trim()).toBe("allow=unset");
+  });
 });

@@ -154,7 +154,9 @@ export function obscuraCommand(
 ): string {
   const exec = sandboxTimeoutSeconds(sandbox);
   const timeout = Math.max(Math.ceil(exec / 2), exec - TIMEOUT_MARGIN_SECONDS);
-  const fetch = `obscura fetch ${shellQuote(call.url)} --quiet --timeout ${timeout}`;
+  // An inherited OBSCURA_ALLOW_PRIVATE_NETWORK would turn off Obscura's own
+  // private-address guard, which is what keeps browse on the public internet.
+  const fetch = `env -u OBSCURA_ALLOW_PRIVATE_NETWORK obscura fetch ${shellQuote(call.url)} --quiet --timeout ${timeout}`;
   switch (call.mode) {
     case "eval":
       return `${fetch} --eval ${shellQuote(call.script ?? "")}`;
