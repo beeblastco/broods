@@ -8,8 +8,8 @@
  * computer runs the MCP client for its stdio server, and core relays the
  * listing and each call over the machine socket; on a lambda sandbox the VM
  * runs it and core relays each request over HTTP (sandbox.ts). The version
- * probe and tool listings are cached in-process per server row (keyed by row version, resolved headers
- * and oauth config, so an edit is a cache miss), honoring the ttlMs the spec
+ * probe and tool listings are cached in-process per server row (keyed by row version, resolved headers,
+ * oauth config and a lambda row's sandbox, so an edit is a cache miss), honoring the ttlMs the spec
  * puts on cacheable results. A row with oauth mints a bearer token (oauth.ts)
  * at connect time.
  */
@@ -42,6 +42,7 @@ import {
   runMachineMcpCall,
   runMachineMcpList,
 } from "../sandbox/machine-executor.ts";
+import { mergeSandboxEnv } from "../sandbox/utils.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
@@ -339,25 +340,36 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 }
 
 /**
- * One cache identity per server row version, sandbox image, resolved header
- * set and oauth config, so a row edit or a credential change is a miss
- * instead of stale data for a TTL. The credentials ride the key only as a
+ * One cache identity per server row version, resolved header set, oauth
+ * config and, for a lambda row, what its sandbox boots (image or snapshot),
+ * installs and starts the server with, so a row, credential or sandbox edit is
+ * a miss instead of stale data for a TTL. These ride the key only as a
  * process-keyed digest: a Map key lives process-wide for up to an hour and
- * must not hold them in clear. A hosted row adds the agent: its answers come
- * from that agent's own child. A lambda row's listing does not depend on
+ * must not hold secrets in clear. A hosted row adds the agent: its answers
+ * come from that agent's own child. A lambda row's listing does not depend on
  * which VM answered, so every conversation shares it.
  */
 export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
-  const credentials = cacheDigest(
-    JSON.stringify([headers, connection.oauth ?? null]),
+  const sandbox = connection.sandbox?.config;
+  const server = sandbox
+    ? [
+        sandbox.image ?? null,
+        sandbox.snapshot ?? null,
+        sandbox.onCreate ?? null,
+        sandbox.onResume ?? null,
+        mergeSandboxEnv(sandbox.envVars, undefined),
+      ]
+    : null;
+  const identity = cacheDigest(
+    JSON.stringify([headers, connection.oauth ?? null, server]),
   );
   const agent =
     connection.record.transport === "hosted" ? (connection.agentId ?? "") : "";
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${connection.sandbox?.config.image ?? ""}:${credentials}:${agent}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${identity}:${agent}`;
 }
 
 /** The chain as a remote server sees it: ids and kinds, never a display name. The ledger and the OPA input keep the name. */
