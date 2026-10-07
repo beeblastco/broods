@@ -28,7 +28,7 @@ import { isPlainObject } from "../../shared/object.ts";
 import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
   type SandboxRunMetadata,
-  workdirSizeResources,
+  workdirResources,
 } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -973,33 +973,6 @@ function workdirClient(config: SandboxExecutorConfig): Client {
   const { baseUrl, apiKey } = workdirConnection(config);
 
   return new Client(baseUrl, apiKey);
-}
-
-function workdirResources(
-  config: SandboxExecutorConfig,
-): CreateOptions["resources"] | undefined {
-  const options = isPlainObject(config.options) ? config.options : {};
-  // A pinned size seeds the dimensions (vcpu clamped to workdir's allowed set);
-  // explicit cpu/memoryMb/diskGb options still win over the size defaults.
-  const sized = config.size ? workdirSizeResources(config.size) : undefined;
-  const cpu = numberOption(options.cpu) ?? sized?.cpu;
-  const memoryMb =
-    numberOption(options.memoryMb) ?? config.memoryLimit ?? sized?.memoryMb;
-  const diskGb = numberOption(options.diskGb) ?? sized?.diskGb;
-  if (cpu === undefined && memoryMb === undefined && diskGb === undefined)
-    return undefined;
-
-  return {
-    ...(cpu !== undefined ? { cpu: cpu } : {}),
-    ...(memoryMb !== undefined ? { memoryMb: memoryMb } : {}),
-    ...(diskGb !== undefined ? { diskGb: diskGb } : {}),
-  };
-}
-
-function numberOption(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
 }
 
 // Map the harness network policy onto workdir's create-time egress modes

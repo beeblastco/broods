@@ -26,6 +26,26 @@ describe("resolveSandboxSpecs", () => {
     });
     expect(resolveSandboxSpecs({})).toEqual(SANDBOX_SIZES.xsmall);
   });
+
+  it("bills a workdir sandbox the resources its VM is created with", () => {
+    // Explicit options win over the size, and the size's vcpu clamps like the VM's.
+    expect(
+      resolveSandboxSpecs({
+        provider: "sandbox",
+        size: "large",
+        options: { cpu: 1 },
+        memoryLimit: 3000,
+      }),
+    ).toEqual({ vcpu: 1, memoryMb: 3000, storageGb: 32 });
+    expect(resolveSandboxSpecs({ provider: "sandbox", size: "tiny" })).toEqual({
+      vcpu: 0.5,
+      memoryMb: 512,
+      storageGb: 8,
+    });
+    expect(resolveSandboxSpecs({ provider: "sandbox" })).toEqual(
+      SANDBOX_SIZES.xsmall,
+    );
+  });
 });
 
 describe("workdirSizeResources", () => {

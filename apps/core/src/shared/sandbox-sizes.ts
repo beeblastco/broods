@@ -14,6 +14,7 @@
 import type {
   SandboxNetworkMode,
   SandboxPermissionMode,
+  SandboxProvider,
 } from "./domain/sandbox-config.ts";
 
 export type SandboxSize = "tiny" | "xsmall" | "small" | "medium" | "large";
@@ -91,21 +92,33 @@ const DEFAULT_SIZE: SandboxSize = "xsmall";
 const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
 
 /**
- * Resolve the specs to mirror for a sandbox config. A pinned `size` wins; otherwise
- * the explicit workdir resource options (`cpu`/`memoryMb`/`diskGb`) and
- * `memoryLimit` fill in, defaulting each missing dimension from the `xsmall` row.
- * @param input the size + raw provider options + memory limit from the config.
+ * Resolve the specs to mirror (and bill) for a sandbox config. A workdir (`sandbox`)
+ * config bills exactly the resources its VM is created with (see workdirResources).
+ * Elsewhere a pinned `size` wins; otherwise the explicit resource options
+ * (`cpu`/`memoryMb`/`diskGb`) and `memoryLimit` fill in. Each missing dimension
+ * defaults from the `xsmall` row.
+ * @param input the provider, size, raw provider options and memory limit from the config.
  * @returns the canonical specs.
  */
 export function resolveSandboxSpecs(input: {
+  provider?: SandboxProvider;
   size?: SandboxSize;
   options?: Record<string, unknown>;
   memoryLimit?: number;
 }): SandboxSpecs {
+  const base = SANDBOX_SIZES[DEFAULT_SIZE];
+  if (input.provider === "sandbox") {
+    const resources = workdirResources(input);
+
+    return {
+      vcpu: resources?.cpu ?? base.vcpu,
+      memoryMb: resources?.memoryMb ?? base.memoryMb,
+      storageGb: resources?.diskGb ?? base.storageGb,
+    };
+  }
   if (input.size) {
     return SANDBOX_SIZES[input.size];
   }
-  const base = SANDBOX_SIZES[DEFAULT_SIZE];
   const options = input.options ?? {};
 
   return {
@@ -113,6 +126,34 @@ export function resolveSandboxSpecs(input: {
     memoryMb:
       numberOrUndefined(options.memoryMb) ?? input.memoryLimit ?? base.memoryMb,
     storageGb: numberOrUndefined(options.diskGb) ?? base.storageGb,
+  };
+}
+
+/**
+ * Workdir create-time resources for a config, used by the workdir executor to size
+ * the VM and by resolveSandboxSpecs to bill it. A pinned size seeds the dimensions
+ * (vcpu clamped to workdir's allowed set); explicit cpu/memoryMb/diskGb options and
+ * `memoryLimit` still win over the size defaults.
+ * @returns the cpu/memoryMb/diskGb to request, or undefined when none is set.
+ */
+export function workdirResources(input: {
+  size?: SandboxSize;
+  options?: Record<string, unknown>;
+  memoryLimit?: number;
+}): { cpu?: number; memoryMb?: number; diskGb?: number } | undefined {
+  const options = input.options ?? {};
+  const sized = input.size ? workdirSizeResources(input.size) : undefined;
+  const cpu = numberOrUndefined(options.cpu) ?? sized?.cpu;
+  const memoryMb =
+    numberOrUndefined(options.memoryMb) ?? input.memoryLimit ?? sized?.memoryMb;
+  const diskGb = numberOrUndefined(options.diskGb) ?? sized?.diskGb;
+  if (cpu === undefined && memoryMb === undefined && diskGb === undefined)
+    return undefined;
+
+  return {
+    ...(cpu !== undefined ? { cpu: cpu } : {}),
+    ...(memoryMb !== undefined ? { memoryMb: memoryMb } : {}),
+    ...(diskGb !== undefined ? { diskGb: diskGb } : {}),
   };
 }
 

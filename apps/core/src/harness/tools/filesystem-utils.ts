@@ -27,7 +27,10 @@ import {
   MEDIA_PATH_PREFIX,
   sealMediaTicket,
 } from "../../shared/media-ticket.ts";
-import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
+import {
+  resolveSandboxSpecs,
+  type SandboxRunMetadata,
+} from "../../shared/sandbox-sizes.ts";
 import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import type {
   ResolvedAgentSandbox,
@@ -281,7 +284,8 @@ export async function runSandbox(
     // `options` (URL, key, template) and `snapshot` (workdir image name vs
     // MicroVM image ARN) are the primary provider's; the fallback runs on the
     // platform's own defaults for that provider, so the platform pays for it
-    // even when the primary ran on the account's own credentials.
+    // even when the primary ran on the account's own credentials, and bills the
+    // specs the fallback provider creates without those options.
     const {
       fallbackProvider,
       options: _options,
@@ -302,7 +306,17 @@ export async function runSandbox(
         ...primary,
         provider: fallbackProvider,
         ...(controlPlane
-          ? { controlPlane: { ...controlPlane, ownCredentials: undefined } }
+          ? {
+              controlPlane: {
+                ...controlPlane,
+                ownCredentials: undefined,
+                specs: resolveSandboxSpecs({
+                  provider: fallbackProvider,
+                  size: primary.size,
+                  memoryLimit: primary.memoryLimit,
+                }),
+              },
+            }
           : {}),
       },
       namespace,

@@ -501,6 +501,7 @@ function sandboxControlPlane(
     sandboxConfigId: record.sandboxId,
     name: record.name,
     specs: resolveSandboxSpecs({
+      provider: record.config.provider,
       size: record.config.size,
       options: record.config.options,
       memoryLimit: record.config.memoryLimit,
