@@ -395,17 +395,21 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         this.#ready(target, readyBy, request.abortSignal),
       );
 
-      return this.#whileWarming(target.microvmId, budgetMs, () =>
-        this.#post(
-          target,
-          request,
-          GUEST_ROUTE_RETRY,
-          (text, headers): unknown => {
-            this.#reportBurst(target.microvmId, burstHeader(headers));
+      // The send shares the probe's budget: what the probe left, at least one try.
+      return this.#whileWarming(
+        target.microvmId,
+        Math.max(0, readyBy - Date.now()),
+        () =>
+          this.#post(
+            target,
+            request,
+            GUEST_ROUTE_RETRY,
+            (text, headers): unknown => {
+              this.#reportBurst(target.microvmId, burstHeader(headers));
 
-            return JSON.parse(text);
-          },
-        ),
+              return JSON.parse(text);
+            },
+          ),
       );
     };
     const reach: SandboxRunRequest = {
