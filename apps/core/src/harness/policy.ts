@@ -11,6 +11,7 @@ import {
   type PolicyClient,
 } from "@ai-sdk/policy-opa";
 import { AGENT_POLICY_ACTIONS } from "@broods/convex/model/policyRules";
+import { isSecretName } from "@broods/convex/model/secretNames";
 import type {
   ToolApprovalConfiguration,
   ToolApprovalStatus,
@@ -58,8 +59,6 @@ const POLICY_INPUT_MAX_ARRAY = 20;
 const POLICY_INPUT_MAX_STRING = 500;
 const POLICY_INPUT_PREVIEW_MAX = 160;
 const POLICY_REDACTED_VALUE = "[redacted]";
-const SENSITIVE_INPUT_KEY =
-  /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
 
 // A policy only ever refuses, so a reference that resolves to nothing must not
 // read as "no policy": it refuses everything until the reference is fixed.
@@ -652,7 +651,7 @@ function sanitizePolicyValue(value: unknown, depth: number): unknown {
     for (const [key, entry] of Object.entries(
       value as Record<string, unknown>,
     )) {
-      output[key] = SENSITIVE_INPUT_KEY.test(key)
+      output[key] = isSecretName(key)
         ? POLICY_REDACTED_VALUE
         : sanitizePolicyValue(entry, depth + 1);
     }
