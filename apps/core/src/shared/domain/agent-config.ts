@@ -222,6 +222,8 @@ export interface AgentProviderSettings {
   base_url?: string;
   /** OpenAI-compatible endpoint (`custom`). AI-SDK form; the dashboard writes both. */
   baseURL?: string;
+  /** Cloudflare AI Gateway id (`cloudflare`). Set, requests go through the gateway. */
+  gatewayId?: string;
   headers?: Record<string, string>;
   /** Endpoint label; becomes the provider id and the pi harness env prefix. */
   name?: string;

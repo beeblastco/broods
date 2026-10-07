@@ -5,8 +5,10 @@
  * byte-identical. Pure module, safe for the default Convex runtime.
  */
 
-import { ACCOUNT_ENV_REFS_ONLY_PATTERN } from "./envRefs";
-import { CREDENTIAL_HEADER_VALUE_PATTERN } from "./mcp";
+import {
+  ACCOUNT_ENV_REFS_ONLY_PATTERN,
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+} from "./envRefs";
 import { isPlainObject } from "./objects";
 
 export const REDACTED_SECRET_VALUE = "********";
@@ -110,7 +112,6 @@ function isSecretConfigKey(key: string): boolean {
     normalized.includes("access_key") ||
     normalized.includes("password") ||
     normalized.includes("passwd") ||
-    normalized === "apikey" ||
-    normalized === "api_key"
+    /api[-_]?key$/.test(normalized)
   );
 }

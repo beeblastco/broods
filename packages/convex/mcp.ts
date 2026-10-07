@@ -19,13 +19,12 @@ import { authKit } from "./auth";
 import { mcpDoc } from "./account/mcp";
 import { mcpFields } from "./schema";
 import { storeMcpBundle, type StoredMcpBundle } from "./model/bundles";
-import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./model/envRefs";
-import { REDACTED_SECRET_VALUE } from "./model/configValues";
 import {
+  ACCOUNT_ENV_PLACEHOLDER_PATTERN,
   CREDENTIAL_HEADER_VALUE_PATTERN,
-  normalizeMcpInput,
-  type McpInput,
-} from "./model/mcp";
+} from "./model/envRefs";
+import { REDACTED_SECRET_VALUE } from "./model/configValues";
+import { normalizeMcpInput, type McpInput } from "./model/mcp";
 import { stripUndefined } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
