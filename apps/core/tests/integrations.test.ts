@@ -1293,6 +1293,7 @@ describe("direct API ingress", () => {
     );
 
     expect(numeric.statusCode).toBe(400);
+    expect(numeric.body).toContain("idempotencyKey must be a string");
     expect(object.statusCode).toBe(400);
     expect(handledEvents).toHaveLength(0);
   });

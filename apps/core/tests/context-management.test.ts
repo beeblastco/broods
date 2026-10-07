@@ -1334,7 +1334,12 @@ describe("conversation summary", () => {
           });
         }
 
-        return { text: `summary of ${content.length} characters` };
+        const covers = [
+          content.includes("oldest-") ? "[oldest]" : "",
+          content.includes("newest-context") ? "[newest]" : "",
+        ].join("");
+
+        return { text: `summary of ${content.length} characters ${covers}` };
       },
     );
 
@@ -1372,10 +1377,13 @@ describe("conversation summary", () => {
         ),
       ).toBe(true);
       expect(summary?.content).toContain("summary of");
+      // The older half's summary is labelled older, the newer half's newer.
       const merge = requests.find((request) =>
         request.startsWith("Older part:"),
       );
-      expect(merge).toContain("Newer part:");
+      expect(merge).toMatch(
+        /^Older part:\n[^\n]*\[oldest\][\s\S]*Newer part:\n[^\n]*\[newest\]/,
+      );
     } finally {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
