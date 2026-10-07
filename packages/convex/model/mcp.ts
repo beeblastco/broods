@@ -46,6 +46,7 @@ const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 /** Optional row fields a declarative sync clears when its manifest drops them. */
 export const MCP_CLEARABLE_FIELDS = [
   "allowedTools",
+  "command",
   "description",
   "headers",
   "oauth",
