@@ -12,6 +12,7 @@ describe("sandboxDisplayConfig", () => {
       permissionMode: "bypass",
       persistent: true,
       provider: "lambda",
+      snapshot: "snap-1",
     });
 
     expect(display).toEqual({
@@ -20,6 +21,7 @@ describe("sandboxDisplayConfig", () => {
       permissionMode: "bypass",
       persistent: true,
       provider: "lambda",
+      snapshot: "snap-1",
     });
   });
 
@@ -29,7 +31,6 @@ describe("sandboxDisplayConfig", () => {
       envVars: { GH_TOKEN: "ghp_secret" },
       options: { apiKey: "sk-secret" },
       onCreate: ["gh auth setup-git"],
-      snapshot: "snap-1",
       timeout: 60,
     });
 

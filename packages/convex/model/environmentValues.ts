@@ -10,6 +10,7 @@ import {
   accountCipherForWrite,
   requireAccountIdForProject,
 } from "./accountKeys";
+import { assertEnvVarName } from "./agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./sandboxConfigSync";
 import { ClientError } from "./clientError";
@@ -34,6 +35,7 @@ export async function upsertEnvironmentVariable(
     value: string;
   },
 ): Promise<EnvironmentVariableWrite> {
+  assertEnvVarName(args.name);
   const existing = await ctx.db
     .query("environmentVariables")
     .withIndex("by_stageId_and_name", (q) =>

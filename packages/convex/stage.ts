@@ -13,6 +13,7 @@ import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
+import { deleteAgentConfig } from "./model/agentRuntimeSecrets";
 import { accountIdForProject } from "./model/auditEvents";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
@@ -306,17 +307,7 @@ export async function deleteStageContents(
   const unique = new Map(ownAgents.map((agent) => [agent._id, agent]));
   for (const agent of unique.values()) await deleteAgentRow(ctx, agent);
 
-  for (const config of configs) {
-    // Runtime secrets are keyed to the agent config, so they orphan unless
-    // deleted alongside it.
-    const runtimeSecrets = await ctx.db
-      .query("agentRuntimeSecrets")
-      .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-      .collect();
-    for (const secret of runtimeSecrets) await ctx.db.delete(secret._id);
-
-    await ctx.db.delete(config._id);
-  }
+  for (const config of configs) await deleteAgentConfig(ctx, config._id);
 
   // The stage's runtime key is scoped to (project, stage), not
   // to an agent config, so it must be deleted here or it would keep

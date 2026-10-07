@@ -126,11 +126,6 @@ The dashboard Snapshots view shows which image each running instance booted from
 
 On `lambda`, `image` picks a platform image with a browser by name. It cannot be combined with `snapshot` or `fallbackProvider`.
 
-| `image`   | Adds                                                                                                      | Use it for                                                       |
-| --------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `obscura` | [Obscura](https://github.com/h4ckf0r0day/obscura), about 77 MB: page to markdown, text, links, screenshot | Reading the web. Markdown is 3 to 17x smaller than a page's HTML |
-| `browser` | Headless Chromium as `chromium`, about 770 MB                                                             | Screenshots that must match Chrome, heavy JavaScript apps        |
-
 ```ts
 export const web = defineSandbox({
   name: "web",
@@ -139,6 +134,11 @@ export const web = defineSandbox({
   network: { mode: "allow-all" },
 });
 ```
+
+| `image`   | Adds                                                                                                      | Use it for                                                       |
+| --------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `obscura` | [Obscura](https://github.com/h4ckf0r0day/obscura), about 77 MB: page to markdown, text, links, screenshot | Reading the web. Markdown is 3 to 17x smaller than a page's HTML |
+| `browser` | Headless Chromium as `chromium`, about 770 MB                                                             | Screenshots that must match Chrome, heavy JavaScript apps        |
 
 The agent then runs `obscura fetch https://example.com --dump markdown --quiet` through `bash`. Obscura refuses private and link-local addresses unless passed `--allow-private-network`.
 

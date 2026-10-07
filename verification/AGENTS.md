@@ -7,7 +7,7 @@ Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun worksp
 - `Broods/AsyncResults.lean`: the async result row, settled with its envelope in one `runtimeIngress.settle`, plus `runtimeAsyncToolResults`. proves envelope and result row agree at every throw point, including a callback throw the harness swallows, a recorded outcome survives later throws, a failed write never loses what the run produced, a tool row settles once.
 - `Broods/Cron.lean`: `packages/convex/agent/crons.ts` run rows. proves the first settle wins and a drained run settles as a no-op.
 - `Broods/Sync.lean`: `broods dev` / `deploy` manifest sync with server rename matching. proves the next diff after a sync is deletes only, empty after prune; outright for skill/hook/mcp, given `normalize` round-trips for the rest.
-- `Broods/SyncExternal.lean`, `SyncCron.lean`, `SyncEnv.lean`, `SyncConcurrency.lean`: stage-scoped external prune by recorded row that waits for the manifest sync, cron keys, legacy-name renames and orphans, env push, and exclusive manifest PUT claims (overlapping writes are refused with or without a revision; stale cleanup cannot release a newer claim).
+- `Broods/SyncExternal.lean`, `SyncCron.lean`, `SyncEnv.lean`, `SyncConcurrency.lean`: stage-scoped external prune by recorded row that waits for the manifest sync, cron keys and orphans, env push, and exclusive manifest PUT claims (overlapping writes are refused with or without a revision; stale cleanup cannot release a newer claim).
 
 ## Rules
 

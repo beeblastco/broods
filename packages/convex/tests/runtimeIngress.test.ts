@@ -109,78 +109,6 @@ describe("runtime ingress", () => {
     ).toEqual(channelTarget);
   });
 
-  test("never keeps the resolved config an older core still sends", async (): Promise<void> => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
-    const source = { chatId: "chat-1" };
-    await t.mutation(internal.runtimeIngress.accept, {
-      ...admission({
-        accountId: accountId,
-        conversationKey: conversationKey,
-        eventId: "old-core",
-        mode: "followup",
-      }),
-      channelTarget: {
-        agentConfig: { channels: { telegram: { botToken: "secret" } } },
-        channelName: "telegram",
-        source: source,
-      },
-      delivery: { kind: "channel", channel: "telegram", source: source },
-    });
-
-    const stored = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query("runtimeConversationCoordinators")
-          .withIndex("by_conversationKey", (q) =>
-            q.eq("conversationKey", conversationKey),
-          )
-          .unique(),
-    );
-    expect(stored?.channelTarget).toEqual({
-      channelName: "telegram",
-      source: source,
-    });
-  });
-
-  test("reads a legacy channel target as no session", async (): Promise<void> => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
-    await t.mutation(internal.runtimeIngress.accept, {
-      ...admission({
-        accountId: accountId,
-        conversationKey: conversationKey,
-        eventId: "legacy",
-        mode: "followup",
-      }),
-    });
-    await t.run(async (ctx): Promise<void> => {
-      const coordinator = await ctx.db
-        .query("runtimeConversationCoordinators")
-        .withIndex("by_conversationKey", (q) =>
-          q.eq("conversationKey", conversationKey),
-        )
-        .unique();
-      await ctx.db.patch(coordinator!._id, {
-        channelTarget: {
-          agentConfig: { channels: { telegram: { botToken: "secret" } } },
-          channelName: "telegram",
-          source: { chatId: "chat-1" },
-        },
-      });
-    });
-
-    expect(
-      await t.query(internal.runtimeIngress.getConversationTarget, {
-        accountId: accountId,
-        agentId: "test-agent",
-        conversationKey: conversationKey,
-      }),
-    ).toBeNull();
-  });
-
   test("returns only narrowed public deployment ingress provenance from delivery", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -1333,8 +1261,7 @@ describe("runtime ingress", () => {
         conversationKey: conversationKey,
         ownerEventId: "first",
         ownerGeneration: first.ownerGeneration!,
-        cursor: "001",
-        event: { role: "user", content: "stale" },
+        events: [{ cursor: "001", event: { role: "user", content: "stale" } }],
       }),
     ).rejects.toThrow("Stale conversation owner generation");
   });
@@ -1364,11 +1291,9 @@ describe("runtime ingress", () => {
         { cursor: "003", event: { role: "tool", content: "result" } },
       ],
     });
-    // Core from before the batch cutover still sends one cursor + event.
     await t.mutation(internal.runtimeIngress.appendConversationEvent, {
       ...fence,
-      cursor: "001",
-      event: { role: "user", content: "hello" },
+      events: [{ cursor: "001", event: { role: "user", content: "hello" } }],
     });
     await expect(
       t.mutation(internal.runtimeIngress.appendConversationEvent, {
@@ -1799,34 +1724,6 @@ describe("runtime ingress", () => {
       configRef: { model: { temperature: 0.9 } },
       ephemeralSystem: [{ role: "system", content: "one-turn override" }],
     });
-    expect(next).not.toHaveProperty("agentConfig");
-  });
-
-  test("drops the resolved config an older core pod still sends", async () => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
-    await t.mutation(internal.runtimeIngress.accept, {
-      ...admission({
-        accountId: accountId,
-        conversationKey: conversationKey,
-        eventId: "old-core",
-        mode: "followup",
-      }),
-      agentConfig: { provider: { apiKey: "sk-live" } },
-    });
-
-    const stored = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query("runtimeIngressEnvelopes")
-          .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-            q.eq("conversationKey", conversationKey),
-          )
-          .unique(),
-    );
-    expect(stored).not.toHaveProperty("agentConfig");
-    expect(stored).not.toHaveProperty("configRef");
   });
 
   test("settles the owner and more than one drain batch of steering contributors", async () => {

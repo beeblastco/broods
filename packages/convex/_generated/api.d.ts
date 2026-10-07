@@ -66,7 +66,6 @@ import type * as http from "../http.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as logs from "../logs.js";
 import type * as mcp from "../mcp.js";
-import type * as migrations from "../migrations.js";
 import type * as model_accountHooks from "../model/accountHooks.js";
 import type * as model_accountKeys from "../model/accountKeys.js";
 import type * as model_accountSecrets from "../model/accountSecrets.js";
@@ -225,7 +224,6 @@ declare const fullApi: ApiFromModules<{
   "lib/slug": typeof lib_slug;
   logs: typeof logs;
   mcp: typeof mcp;
-  migrations: typeof migrations;
   "model/accountHooks": typeof model_accountHooks;
   "model/accountKeys": typeof model_accountKeys;
   "model/accountSecrets": typeof model_accountSecrets;

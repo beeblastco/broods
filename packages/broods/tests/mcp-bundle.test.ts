@@ -22,9 +22,30 @@ test("compileProject bundles a servable hosted MCP server", async () => {
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const server = manifest.resources.find((entry) => entry.kind === "mcp");
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
   const bundle = (server?.config as { bundle?: unknown } | undefined)?.bundle;
   expect(typeof bundle).toBe("string");
+});
+
+test("compileProject hashes a hosted MCP server the same from any cwd", async () => {
+  const cwd = await mcpFixture(
+    `handler: (request) => new Response("{}", { status: 200 }),`,
+  );
+
+  // A changing hash shows the server as changed on every diff and re-uploads it.
+  const compile = async (): Promise<{ bundle: string; sha256: string }> =>
+    (
+      await compileProject({ cwd: cwd, command: "dev" })
+    ).manifest.resources.find((entry) => entry.kind === "mcp")?.config as {
+      bundle: string;
+      sha256: string;
+    };
+  const first = await compile();
+  expect((await compile()).sha256).toBe(first.sha256);
+  // esbuild names each module in a comment; relative to the cwd, the hash would follow it.
+  expect(first.bundle).toContain("// mcp-handler.mjs\n");
 });
 
 test("compileProject rejects a handler that is not fetch-style", async () => {
@@ -65,6 +86,19 @@ test("compileProject rejects a server with neither url nor handler", async () =>
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "needs url (external), handler (hosted) or sandbox (on a machine)",
   );
+});
+
+test("a server that needs Node builtins ships the Node build", async (): Promise<void> => {
+  const nodeOnly = await mcpFixture(
+    `handler: () => new Response(String(execSync("true"))),`,
+    `import { execSync } from "node:child_process";\n`,
+  );
+
+  const { manifest } = await compileProject({ cwd: nodeOnly, command: "dev" });
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
+  expect(String(server?.config.bundle)).toContain("node:child_process");
 });
 
 async function mcpFixture(handlerLine: string, prelude = ""): Promise<string> {

@@ -30,7 +30,10 @@ import {
 } from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
-import { saveAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
+import {
+  deleteAgentConfig,
+  saveAgentRuntimeSecrets,
+} from "../model/agentRuntimeSecrets";
 import { redactConfigSecrets } from "../model/configValues";
 import { loadEnvironmentVariableValues } from "../model/environmentValues";
 import {
@@ -270,7 +273,7 @@ export const remove = mutation({
         ...(foreignAgent ? { foreignAgentRowSkipped: true } : {}),
       },
     });
-    await ctx.db.delete(configId);
+    await deleteAgentConfig(ctx, configId);
 
     return configId;
   },

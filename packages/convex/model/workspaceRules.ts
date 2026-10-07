@@ -15,7 +15,6 @@ import { ClientError } from "./clientError";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   type WorkspaceIsolation,
-  workspaceIsolationInput,
 } from "./workspaceIsolation";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
@@ -61,14 +60,8 @@ export interface WorkspaceStorageConfig {
   auth?: WorkspaceStorageAuth;
 }
 
-/** What the API accepts: the boolean spelling of isolation is stored as its level. */
-export type WorkspaceConfigInput = Omit<WorkspaceConfig, "isolation"> & {
-  isolation?: WorkspaceIsolation | boolean;
-};
-
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
-  // Stored as the level; read it with workspaceIsolation().
   isolation?: WorkspaceIsolation;
   // Named harness features, each with its own options (no top-level enabled):
   // workspace = the <workspace> prompt, memory = structured memory.
@@ -107,8 +100,11 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   const config = value;
   const storage = normalizeWorkspaceStorage(config.storage);
-  const isolation = normalizeWorkspaceIsolation(config.isolation);
-
+  assertOptionalEnum(
+    config.isolation,
+    "config.isolation",
+    WORKSPACE_ISOLATION_LEVELS,
+  );
   let harness:
     | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
     | undefined;
@@ -134,7 +130,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   return {
     storage: storage,
-    ...(isolation ? { isolation: isolation } : {}),
+    ...(config.isolation ? { isolation: config.isolation } : {}),
     ...(harness ? { harness: harness } : {}),
   };
 }
@@ -314,7 +310,7 @@ function assertOptionalEnum<T extends string>(
   value: unknown,
   name: string,
   allowed: readonly T[],
-): void {
+): asserts value is T | undefined {
   if (
     value !== undefined &&
     (typeof value !== "string" || !allowed.includes(value as T))
@@ -352,18 +348,6 @@ function normalizeHarnessFeature(
 
   // Features default to on: `enabled: true` normalizes away to the omitted form.
   return value.enabled === false ? { enabled: false } : undefined;
-}
-
-// Accepts the two levels plus the boolean form; `true` is stored as its level.
-function normalizeWorkspaceIsolation(
-  value: unknown,
-): WorkspaceIsolation | undefined {
-  if (value === undefined || value === false) return undefined;
-  if (value !== true) {
-    assertOptionalEnum(value, "config.isolation", WORKSPACE_ISOLATION_LEVELS);
-  }
-
-  return workspaceIsolationInput(value);
 }
 
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {

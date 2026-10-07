@@ -6,6 +6,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifestResource } from "../cli/types";
+import { accountCipher } from "../model/accountKeys";
+import { assertEnvRefsResolved, rewriteEnvRefs } from "../model/cliSync";
+import { normalizeMcpInput } from "../model/mcp";
+import {
+  REDACTED_SECRET_VALUE,
+  redactConfigSecrets,
+} from "../model/configValues";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -14,6 +21,7 @@ const PROJECT = "mcp-connect";
 const STAGE = "development";
 const SECRET_HASH = "hash-mcp-refs";
 const SERVER_NAME = "search";
+const TOKEN_HEADER = { Authorization: "Bearer ${SEARCH_TOKEN}" };
 
 const mcpResource = {
   kind: "mcp" as const,
@@ -66,6 +74,7 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
 async function seedMcpServer(
   tt: T,
   accountId: Id<"accounts">,
+  headers?: Record<string, string>,
 ): Promise<Id<"mcp">> {
   const scope = await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
     secretHash: SECRET_HASH,
@@ -78,6 +87,7 @@ async function seedMcpServer(
     stageId: scope.stageId,
     name: SERVER_NAME,
     url: mcpResource.config.url,
+    ...(headers ? { headers: headers } : {}),
   });
   await tt.mutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
     secretHash: SECRET_HASH,
@@ -130,6 +140,27 @@ const syncMcpServers = (
       resources: [mcpResource, agentResource(mcp)],
     },
   });
+
+/** The `config.mcp` core decrypts for a run, with every `${NAME}` resolved. */
+function runtimeMcpServers(
+  tt: T,
+  accountId: Id<"accounts">,
+): Promise<Record<string, { headers?: Record<string, string> }>> {
+  return tt.run(async (ctx) => {
+    const agent = await ctx.db.query("agents").first();
+    const config = await (
+      await accountCipher(ctx, accountId)
+    ).decrypt("agents:encryptedConfig", {
+      ciphertext: agent!.encryptedConfig!,
+      iv: agent!.encryptionIv!,
+      tag: agent!.encryptionTag!,
+    });
+
+    return (
+      config as { mcp: Record<string, { headers?: Record<string, string> }> }
+    ).mcp;
+  });
+}
 
 describe("cli sync rewrites config.mcp names to mcp row ids", () => {
   // Agent config is written encrypted; the sync throws without a secret.
@@ -202,5 +233,153 @@ describe("cli sync rewrites config.mcp names to mcp row ids", () => {
     // so without this link a CLI-defined server is invisible on the canvas.
     expect(mcpNode).toBeDefined();
     expect(server!.nodeId).toBe(mcpNode!.id);
+  });
+});
+
+describe("cli sync resolves an mcp server's secret headers per agent", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // The CLI copies a server's headers into each agent that connects it.
+  test("bakes a ${NAME} header into the runtime config only", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const serverId = await seedMcpServer(tt, accountId, TOKEN_HEADER);
+    await tt.mutation(internal.cli.sync.setEnvBySecretHash, {
+      secretHash: SECRET_HASH,
+      project: PROJECT,
+      stage: STAGE,
+      name: "SEARCH_TOKEN",
+      value: "tok-1",
+    });
+
+    await syncMcpServers(tt, {
+      [SERVER_NAME]: { enabled: true, headers: TOKEN_HEADER },
+    });
+
+    // Core refuses a run whose header still carries the ref.
+    expect((await runtimeMcpServers(tt, accountId))[serverId]).toEqual({
+      enabled: true,
+      headers: { Authorization: "Bearer tok-1" },
+    });
+    expect(await storedMcpServers(tt)).toEqual({
+      [serverId]: { enabled: true, headers: TOKEN_HEADER },
+    });
+  });
+
+  test("refuses the sync when a header names an unset variable", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await seedMcpServer(tt, accountId, TOKEN_HEADER);
+
+    await expect(
+      syncMcpServers(tt, {
+        [SERVER_NAME]: { enabled: true, headers: TOKEN_HEADER },
+      }),
+    ).rejects.toThrow("SEARCH_TOKEN");
+  });
+});
+
+describe("mcp server env refs", () => {
+  test("refuses an unset ref on a server no agent connects", () => {
+    expect(() =>
+      assertEnvRefsResolved(
+        [
+          {
+            ...mcpResource,
+            config: { ...mcpResource.config, headers: TOKEN_HEADER },
+          },
+        ],
+        {},
+        STAGE,
+      ),
+    ).toThrow("SEARCH_TOKEN");
+  });
+
+  test("registers an oauth env() secret as its ${NAME} ref", async () => {
+    const config = rewriteEnvRefs(
+      {
+        url: "https://gmailmcp.googleapis.com/mcp/v1",
+        oauth: {
+          clientId: "1234.apps.googleusercontent.com",
+          clientSecret: { __beeblastEnv: true, name: "GMAIL_CLIENT_SECRET" },
+          refreshToken: { __beeblastEnv: true, name: "GMAIL_REFRESH_TOKEN" },
+        },
+      },
+      new Set(),
+    );
+
+    const input = await normalizeMcpInput(
+      { name: "gmail", ...config },
+      { requireConnection: true },
+    );
+
+    expect(input.oauth).toMatchObject({
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+    });
+  });
+});
+
+describe("public config projection", () => {
+  test("masks every resolved header value and keeps refs", () => {
+    expect(
+      redactConfigSecrets({
+        mcp: {
+          search: {
+            headers: {
+              Accept: "application/json",
+              Authorization: "Bearer tok-1",
+              "X-Api-Key": "fc-1",
+              "X-Other-Key": "Bearer ${OTHER_KEY}",
+              "X-Passwd": "hunter2",
+              "X-Session": "tok-2",
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      mcp: {
+        search: {
+          headers: {
+            // A sync resolves a ref whatever the header is called.
+            Accept: REDACTED_SECRET_VALUE,
+            Authorization: REDACTED_SECRET_VALUE,
+            "X-Api-Key": REDACTED_SECRET_VALUE,
+            "X-Other-Key": "Bearer ${OTHER_KEY}",
+            "X-Passwd": REDACTED_SECRET_VALUE,
+            "X-Session": REDACTED_SECRET_VALUE,
+          },
+        },
+      },
+    });
+  });
+});
+
+describe("internal mcp update", () => {
+  test("clears the optional fields a declarative sync dropped", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const serverId = await seedMcpServer(tt, accountId, TOKEN_HEADER);
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: accountId,
+      serverId: serverId,
+      allowedTools: ["query"],
+    });
+
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: accountId,
+      serverId: serverId,
+      clear: ["allowedTools", "headers"],
+    });
+
+    // A stale allowedTools would silently hide every renamed tool.
+    const row = await tt.run(async (ctx) => await ctx.db.get(serverId));
+    expect(row!.allowedTools).toBeUndefined();
+    expect(row!.headers).toBeUndefined();
   });
 });

@@ -10,7 +10,13 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
+import {
+  assertMcpRow,
+  MCP_CLEARABLE_FIELDS,
+  type McpOauth,
+  type McpRuntime,
+  type McpTransport,
+} from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
@@ -30,6 +36,8 @@ export const create = internalMutation({
     name: v.string(),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    workersCompatible: mcpFields.workersCompatible,
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     command: mcpFields.command,
@@ -76,6 +84,7 @@ export const create = internalMutation({
       url: args.url,
       sandbox: args.sandbox,
       command: args.command,
+      runtime: args.runtime,
       headers: args.headers,
       oauth: args.oauth,
     });
@@ -89,6 +98,8 @@ export const create = internalMutation({
       name: args.name,
       description: args.description,
       transport: transport,
+      workersCompatible: args.workersCompatible,
+      runtime: args.runtime,
       url: args.url,
       sandbox: args.sandbox,
       command: args.command,
@@ -242,6 +253,8 @@ export const update = internalMutation({
     name: v.optional(v.string()),
     description: v.optional(v.string()),
     transport: v.optional(mcpFields.transport),
+    workersCompatible: mcpFields.workersCompatible,
+    runtime: mcpFields.runtime,
     url: v.optional(v.string()),
     sandbox: v.optional(v.string()),
     command: mcpFields.command,
@@ -252,6 +265,12 @@ export const update = internalMutation({
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
     sourceCode: v.optional(v.string()),
+    // A declarative sync names the optional fields its manifest left out.
+    clear: v.optional(
+      v.array(
+        v.union(...MCP_CLEARABLE_FIELDS.map((field) => v.literal(field))),
+      ),
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -272,7 +291,12 @@ export const update = internalMutation({
     }
     // The normalizer only sees one body; the row the patch produces is
     // what has to hold.
-    const patch = updatePatch(args, doc);
+    const patch = {
+      ...Object.fromEntries(
+        (args.clear ?? []).map((field) => [field, undefined]),
+      ),
+      ...updatePatch(args, doc),
+    };
     assertMcpRow({ ...doc, ...patch });
 
     await ctx.db.patch(normalized, patch);
@@ -297,6 +321,35 @@ async function requireNameFree(
   }
 }
 
+/** The other transports' connection fields, cleared when a row switches to `transport`. */
+function transportClears(
+  transport: McpTransport | undefined,
+): Partial<Doc<"mcp">> {
+  if (transport === "hosted") {
+    return {
+      url: undefined,
+      oauth: undefined,
+      sandbox: undefined,
+      command: undefined,
+    };
+  }
+  const hosted = {
+    workersCompatible: undefined,
+    runtime: undefined,
+    bundleStorageKey: undefined,
+    sha256: undefined,
+    sourceCode: undefined,
+  };
+  if (transport === "http") {
+    return { ...hosted, sandbox: undefined, command: undefined };
+  }
+  if (transport === "machine") {
+    return { ...hosted, url: undefined, oauth: undefined, headers: undefined };
+  }
+
+  return {};
+}
+
 /**
  * The fields an update writes. Provided args win; a transport switch clears
  * the other side's connection fields so a hosted row never carries a stale
@@ -309,6 +362,8 @@ function updatePatch(
     name?: string;
     description?: string;
     transport?: McpTransport;
+    workersCompatible?: boolean;
+    runtime?: McpRuntime;
     url?: string;
     sandbox?: string;
     command?: string[];
@@ -328,6 +383,10 @@ function updatePatch(
       ? { description: args.description }
       : {}),
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
+    ...(args.workersCompatible !== undefined
+      ? { workersCompatible: args.workersCompatible }
+      : {}),
+    ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
     ...(args.command !== undefined ? { command: args.command } : {}),
@@ -342,36 +401,10 @@ function updatePatch(
       : {}),
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
-    ...(args.transport === "hosted"
-      ? {
-          url: undefined,
-          oauth: undefined,
-          sandbox: undefined,
-          command: undefined,
-        }
-      : {}),
-    ...(args.transport === "http"
-      ? {
-          bundleStorageKey: undefined,
-          sha256: undefined,
-          sourceCode: undefined,
-          sandbox: undefined,
-          command: undefined,
-        }
-      : {}),
-    ...(args.transport === "machine"
-      ? {
-          url: undefined,
-          oauth: undefined,
-          headers: undefined,
-          bundleStorageKey: undefined,
-          sha256: undefined,
-          sourceCode: undefined,
-          // A patch that sets the sandbox states the whole connection, so a
-          // command it leaves out is cleared rather than kept.
-          command: args.command,
-        }
-      : {}),
+    ...transportClears(args.transport),
+    // A patch that sets a machine connection states the whole of it, so a
+    // command it leaves out is cleared rather than kept.
+    ...(args.transport === "machine" ? { command: args.command } : {}),
     ...(args.sha256 !== undefined &&
     args.sha256 !== doc.sha256 &&
     args.sourceCode === undefined

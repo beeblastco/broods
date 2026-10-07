@@ -216,7 +216,7 @@ export const cliAuthCodesFields = {
   orgId: v.id("orgs"),
   accountId: v.id("accounts"),
   /** PKCE S256 challenge the CLI sent; the exchange must present its verifier. */
-  codeChallenge: v.optional(v.string()),
+  codeChallenge: v.string(),
   expiresAt: v.number(),
   usedAt: v.optional(v.number()),
   createdAt: v.number(),
@@ -262,20 +262,25 @@ export const mcpFields = {
   description: v.optional(v.string()),
   /**
    * "http" connects to an external url; "hosted" runs an uploaded bundle on
-   * the Lambda host; "machine" is a stdio server on the sandbox named in
-   * `sandbox`: a machine sandbox's daemon, or a lambda sandbox's MicroVM.
+   * Cloudflare Workers or the Lambda host (see `runtime`); "machine" is a stdio
+   * server on the sandbox named in `sandbox`: a machine sandbox's daemon, or a
+   * lambda sandbox's MicroVM.
    */
   transport: v.union(
     v.literal("http"),
     v.literal("hosted"),
     v.literal("machine"),
   ),
-  /** Required for "http"; absent on "hosted" rows (the Lambda is the endpoint). */
+  /** Required for "http"; absent on "hosted" rows (the platform hosts them). */
   url: v.optional(v.string()),
   /** Machine-only: name of the sandbox (machine or lambda) that serves it. */
   sandbox: v.optional(v.string()),
   /** Machine-only: argv of the stdio server, required on a lambda sandbox. */
   command: v.optional(v.array(v.string())),
+  /** Hosted-only: Cloudflare Dynamic Workers can run the bundle; set by aws/bundles.ts putMcpBundle. */
+  workersCompatible: v.optional(v.boolean()),
+  /** Hosted-only, the owner's pick: "lambda" never runs on Workers; absent means "auto". */
+  runtime: v.optional(v.union(v.literal("auto"), v.literal("lambda"))),
   /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),
@@ -1056,14 +1061,12 @@ export const runtimeConversationCoordinatorsFields = {
   agentId: v.string(),
   conversationKey: v.string(),
   // Where a channel session replies, and the rows core rebuilds its config
-  // from on re-entry. `agentConfig` is legacy: never written any more, and a
-  // row still holding it reads as no session. Purge it, then remove it.
+  // from on re-entry.
   channelTarget: v.optional(
     v.object({
       channelName: v.string(),
       source: v.record(v.string(), v.any()),
       ...channelTargetRefsFields,
-      agentConfig: v.optional(v.any()),
     }),
   ),
   nextSequence: v.number(),
@@ -1112,9 +1115,6 @@ export const runtimeIngressEnvelopesFields = {
   // config and one-turn system, never the previous owner's. The config itself
   // is rebuilt from the ref at dispatch; it never sits here with its secrets.
   configRef: v.optional(ingressConfigRefValidator),
-  // Written by a core pod from before this rollout, never read. Cleared on
-  // every terminal patch; remove once no live envelope predates the rollout.
-  agentConfig: v.optional(v.any()),
   ephemeralSystem: v.optional(v.array(v.any())),
   appliedMode: v.optional(ingressModeValidator),
   appliedToEventId: v.optional(v.string()),

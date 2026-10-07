@@ -8,7 +8,12 @@
 
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
-import type { McpOauth, McpRecord, McpTransport } from "../domain/mcp.ts";
+import type {
+  McpOauth,
+  McpRecord,
+  McpRuntime,
+  McpTransport,
+} from "../domain/mcp.ts";
 import {
   createAccountId,
   createAccountSecret,
@@ -633,6 +638,8 @@ interface ConvexMcpDoc {
   name: string;
   description?: string;
   transport: McpTransport;
+  workersCompatible?: boolean;
+  runtime?: McpRuntime;
   url?: string;
   sandbox?: string;
   command?: string[];
@@ -659,6 +666,10 @@ function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
     name: doc.name,
     ...(doc.description !== undefined ? { description: doc.description } : {}),
     transport: doc.transport,
+    ...(doc.workersCompatible !== undefined
+      ? { workersCompatible: doc.workersCompatible }
+      : {}),
+    ...(doc.runtime !== undefined ? { runtime: doc.runtime } : {}),
     ...(doc.url !== undefined ? { url: doc.url } : {}),
     ...(doc.sandbox !== undefined ? { sandbox: doc.sandbox } : {}),
     ...(doc.command !== undefined ? { command: doc.command } : {}),
