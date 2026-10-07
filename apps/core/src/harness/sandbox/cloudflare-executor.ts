@@ -61,6 +61,8 @@ const CLOUDFLARE_INSTANCES: Record<SandboxSize, string> = {
 };
 // Headroom over the command timeout for the bridge to start the Container.
 const BRIDGE_OVERHEAD_MS = 60_000;
+// How long an ephemeral Container outlives its command if its DELETE fails.
+const EPHEMERAL_IDLE_GRACE_SECONDS = 60;
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
   "127.0.0.1",
   "[::1]",
@@ -137,6 +139,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
           ...(request.args ?? []),
         ],
         request,
+        reserved !== undefined,
       );
       if (reserved && key) this.#mirror(key, reserved, request.metadata);
 
@@ -181,10 +184,12 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     if (this.#config.persistent !== true || !key) return;
     const id = await this.#reserve(key);
     if (!id) return;
-    await this.#exec(id, ["true"], {
-      timeoutSeconds: 30,
-      outputLimitBytes: 1024,
-    });
+    await this.#exec(
+      id,
+      ["true"],
+      { timeoutSeconds: 30, outputLimitBytes: 1024 },
+      true,
+    );
     this.#mirror(key, id, undefined);
   }
 
@@ -197,6 +202,9 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
       (await getSandboxExternalId("cloudflare", key));
     if (!id) return;
     await this.#bridge(`/v1/sandboxes/${id}`, "DELETE");
+    // A run's mirror upsert may still be queued; wait for it, so the row the
+    // caller removes next is not written back after the Container is gone.
+    await queueMirrorWrite(id, async (): Promise<void> => {});
     await deleteSandboxInstance(
       "cloudflare",
       key,
@@ -232,6 +240,8 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
   }
 
   // Runs one argv in the sandbox's Container, clamped to the bridge's limits.
+  // A reserved Container idles for the configured window; an ephemeral one only
+  // a minute past its command, so one whose DELETE failed still stops soon.
   async #exec(
     id: string,
     argv: string[],
@@ -239,6 +249,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
       SandboxRunRequest,
       "envVars" | "outputLimitBytes" | "principal" | "timeoutSeconds"
     >,
+    reserved: boolean,
   ): Promise<SandboxExecResponse> {
     const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
     const response = await this.#bridge(
@@ -253,8 +264,9 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         ),
         timeoutMs: timeoutMs,
         outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
-        idleTimeoutSeconds: resolveSandboxLifecycle(this.#config.lifecycle)
-          .idleTimeoutSeconds,
+        idleTimeoutSeconds: reserved
+          ? resolveSandboxLifecycle(this.#config.lifecycle).idleTimeoutSeconds
+          : Math.ceil(timeoutMs / 1000) + EPHEMERAL_IDLE_GRACE_SECONDS,
         enableInternet: this.#config.network?.mode === "allow-all",
         instance: CLOUDFLARE_INSTANCES[this.#config.size ?? "xsmall"],
       },

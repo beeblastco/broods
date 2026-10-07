@@ -22,13 +22,13 @@ export const helper = defineAgent({
 });
 ```
 
-| Field                          | Behavior                                                                                             |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `persistent`                   | `true` keeps one Container per agent while it is warm. `false` uses a new one per call               |
-| `lifecycle.idleTimeoutSeconds` | How long a warm Container waits for the next command before it sleeps. Default 15 minutes            |
-| `network.mode`                 | `allow-all` turns internet on. `deny-all` turns it off. `restricted` is rejected                     |
-| `size`                         | Picks the nearest Cloudflare instance type, from `standard-1` for `tiny` to `standard-4` for `large` |
-| `options`                      | Only `workspaceRoot` and `reservationKey`                                                            |
+| Field                          | Behavior                                                                                                                            |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `persistent`                   | `true` keeps one Container per agent while it is warm. `false` uses a new one per call                                              |
+| `lifecycle.idleTimeoutSeconds` | How long a warm Container waits for the next command before it sleeps. Default 15 minutes, at most 6 hours                          |
+| `network.mode`                 | `allow-all` turns internet on. `deny-all` turns it off. `restricted` is rejected. Changing it, or `size`, replaces a warm Container |
+| `size`                         | Picks the nearest Cloudflare instance type, from `standard-1` for `tiny` to `standard-4` for `large`                                |
+| `options`                      | Only `workspaceRoot` and `reservationKey`                                                                                           |
 
 ## Gotchas
 

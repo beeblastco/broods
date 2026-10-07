@@ -346,6 +346,13 @@ describe("sandbox config defaults & validation", () => {
         onCreate: ["npm install"],
       }),
     ).toThrow("config.onCreate is not supported by the cloudflare provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "cloudflare",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 7 * 60 * 60 },
+      }),
+    ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
   it("machine sandbox takes only allow-all network, envVars and options.cwd", () => {

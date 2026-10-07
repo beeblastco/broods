@@ -155,6 +155,7 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
   expect(exec?.body).toMatchObject({
     env: { ACCOUNT_VAR: "a", CALL_VAR: "b", BROODS_AGENT_ID: "agent" },
     timeoutMs: 10_000,
+    idleTimeoutSeconds: 70,
     enableInternet: false,
     instance: "standard-3",
   });

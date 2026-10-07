@@ -9,7 +9,11 @@
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import type { SandboxExecResponse } from "../../core/src/shared/domain/sandbox-config.ts";
-import { MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS } from "./limits.ts";
+import {
+  MAX_IDLE_TIMEOUT_SECONDS,
+  MAX_OUTPUT_BYTES,
+  MAX_TIMEOUT_MS,
+} from "./limits.ts";
 
 const SANDBOX_PATH =
   /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec|\/terminal)?$/;
@@ -18,13 +22,15 @@ const TERMINAL_SIZE = { cols: 120, rows: 32 };
 const KILL_GRACE_SECONDS = 5;
 // The abort fires only past the KILL, for an exec that never settles.
 const BACKSTOP_GRACE_MS = (KILL_GRACE_SECONDS + 5) * 1000;
+// Storage key for the internet and size the running Container started with.
+const LAUNCH_KEY = "launch";
 
 const execRequest = z.object({
   argv: z.array(z.string()).min(1),
   env: z.record(z.string(), z.string()),
   timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS),
   outputLimitBytes: z.number().int().positive().max(MAX_OUTPUT_BYTES),
-  idleTimeoutSeconds: z.number().int().positive(),
+  idleTimeoutSeconds: z.number().int().positive().max(MAX_IDLE_TIMEOUT_SECONDS),
   enableInternet: z.boolean(),
   instance: z.enum([
     "lite",
@@ -106,9 +112,12 @@ export class Sandbox extends DurableObject<Env> {
         readCapped(process.stderr, request.outputLimitBytes, backstop.signal),
       ]);
       const finished = await process.exitCode.catch((): null => null);
-      // 124 is the TERM `timeout` sends, 137 the KILL its `-k` follows with.
+      // 124 is the TERM `timeout` sends, 137 the KILL its `-k` follows with;
+      // before the deadline they are the command's own exit or an OOM kill.
+      const pastDeadline = Date.now() - startedAt >= request.timeoutMs;
       const timedOut =
-        backstop.signal.aborted || finished === 124 || finished === 137;
+        backstop.signal.aborted ||
+        (pastDeadline && (finished === 124 || finished === 137));
       const exitCode = timedOut ? null : finished;
 
       return {
@@ -199,17 +208,29 @@ export class Sandbox extends DurableObject<Env> {
   // waits for it, per the Container API. `running` can read false until then,
   // so `#booting` holds the shared start until an exec gets through. Concurrent
   // first calls share one start, and a failed setup destroys the half-started
-  // Container.
+  // Container. Internet and size are fixed at `start()`, so a running Container
+  // started under another policy (stored, since the Durable Object can restart)
+  // is replaced rather than reused.
   #ensureRunning(container: Container, request: ExecRequest): Promise<void> {
-    if (this.#starting === null || (!this.#booting && !container.running)) {
+    const launch = `${request.enableInternet ? "internet" : "offline"}:${request.instance}`;
+    const relaunch =
+      container.running &&
+      this.ctx.storage.kv.get<string>(LAUNCH_KEY) !== launch;
+    if (
+      this.#starting === null ||
+      relaunch ||
+      (!this.#booting && !container.running)
+    ) {
       this.#booting = true;
       this.#starting = (async (): Promise<void> => {
+        if (relaunch) await container.destroy();
         if (!container.running) {
           container.start({
             image: requiredImage(container),
             enableInternet: request.enableInternet,
             instance: request.instance,
           });
+          this.ctx.storage.kv.put(LAUNCH_KEY, launch);
         }
         try {
           await container.setInactivityTimeout(

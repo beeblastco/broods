@@ -191,7 +191,9 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 - The exec answer is the shared exec contract, so `parseExecResponse` and `execRunResult` turn it into a run result like the MicroVM and `custom` ones. Output is capped per stream in the Durable Object, so a chatty command cannot grow its memory.
 - `deploy.yaml` does not deploy the bridge. A deployment that offers the provider deploys it with `wrangler deploy` (Docker builds the image) and sets the key on both sides.
 - `lifecycle.idleTimeoutSeconds` becomes `setInactivityTimeout`, applied once per Durable Object instance. A Container that sleeps loses its disk, so `getInstanceInfo` reports it gone rather than suspended, and the next exec starts a fresh one.
-- `network.mode: "allow-all"` starts the Container with `enableInternet: true`; anything else starts it without internet. `restricted` is rejected.
+- `network.mode: "allow-all"` starts the Container with `enableInternet: true`; anything else starts it without internet. `restricted` is rejected. Internet and instance type are fixed at `start()`, so the Durable Object stores what the running Container started with and replaces it when a run asks for another.
+- `setInactivityTimeout` refuses more than six hours, so the config plane caps cloudflare's `idleTimeoutSeconds` there. An ephemeral Container idles only a minute past its command, so one whose `DELETE` failed stops soon.
+- 124 and 137 count as a timeout only once the deadline passed; earlier they are the command's own exit or an OOM kill.
 - `size` maps to the nearest named instance type, `standard-1` to `standard-4`. Custom types need a whole vCPU.
 - There are no background jobs, snapshots or suspend. Harness adapters refuse the provider.
 

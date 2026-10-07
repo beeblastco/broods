@@ -54,6 +54,8 @@ export const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+// Cloudflare refuses a Container inactivity timeout over six hours.
+export const CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60;
 // The only options core reads for a platform-run provider (lambda, cloudflare):
 // the executor's workspaceRoot and the reservation pin every provider shares.
 // Images, roles and the cloudflare bridge are platform resources core takes from
@@ -674,6 +676,12 @@ function normalizePersistentFields(
     if (lifecycle?.maxLifetimeSeconds !== undefined)
       throw new ClientError(
         "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
+      );
+    if (
+      (lifecycle?.idleTimeoutSeconds ?? 0) > CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS
+    )
+      throw new ClientError(
+        `config.lifecycle.idleTimeoutSeconds must be at most ${CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS} on the cloudflare provider`,
       );
   }
   if (provider === "e2b" && (onCreate || onResume)) {
