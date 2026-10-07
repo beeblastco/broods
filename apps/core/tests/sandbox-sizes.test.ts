@@ -46,6 +46,18 @@ describe("resolveSandboxSpecs", () => {
       SANDBOX_SIZES.xsmall,
     );
   });
+
+  it("ignores zero or negative resource options instead of billing nothing", () => {
+    expect(
+      resolveSandboxSpecs({
+        provider: "e2b",
+        options: { cpu: 0, memoryMb: -1, diskGb: 0 },
+      }),
+    ).toEqual(SANDBOX_SIZES.xsmall);
+    expect(
+      resolveSandboxSpecs({ provider: "sandbox", options: { cpu: 0 } }),
+    ).toEqual(SANDBOX_SIZES.xsmall);
+  });
 });
 
 describe("workdirSizeResources", () => {

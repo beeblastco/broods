@@ -1,11 +1,21 @@
 /**
  * Provider-neutral sandbox executor helpers.
  * Keep small coercion, path, quoting, and output utilities here, plus the
- * per-sandbox queue that orders dashboard-row writes.
+ * per-sandbox queue that orders dashboard-row writes and the ephemeral meter
+ * built on it.
  */
 
+import {
+  removeSandboxInstance,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import type {
+  SandboxControlPlane,
+  SandboxRunMetadata,
+} from "../../shared/sandbox-sizes.ts";
 import type {
   SandboxProvider,
   SandboxRunPrincipal,
@@ -189,6 +199,40 @@ export function mergeSandboxEnv(
     ...Object.fromEntries(overrides),
     ...(principal ? principalEnv(principal) : {}),
   };
+}
+
+/**
+ * Meter one ephemeral sandbox call on platform credentials: mirror a row keyed by
+ * the sandbox id now, and return the teardown that removes it, which bills the
+ * time in between. The account's own credentials, or no account, get no row.
+ */
+export function meterEphemeralSandbox(
+  controlPlane: SandboxControlPlane | undefined,
+  provider: SandboxProvider,
+  sandboxId: string,
+  metadata: SandboxRunMetadata | undefined,
+): () => void {
+  const accountId = controlPlane?.ownCredentials
+    ? undefined
+    : controlPlane?.accountId;
+  if (!accountId) return (): void => {};
+  void queueMirrorWrite(sandboxId, (): Promise<void> =>
+    upsertSandboxInstance(
+      controlPlane,
+      provider,
+      sandboxId,
+      sandboxId,
+      metadata,
+      { ephemeral: true },
+    ),
+  );
+
+  return (): void =>
+    waitUntil(
+      queueMirrorWrite(sandboxId, (): Promise<void> =>
+        removeSandboxInstance(accountId, sandboxId, sandboxId),
+      ),
+    );
 }
 
 /**

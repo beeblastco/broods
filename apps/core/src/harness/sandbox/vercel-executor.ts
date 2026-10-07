@@ -10,12 +10,8 @@ import type {
   NetworkPolicy,
   Sandbox as VercelSandbox,
 } from "@vercel/sandbox";
-import {
-  removeSandboxInstance,
-  upsertSandboxInstance,
-} from "../../shared/convex/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
-import { waitUntil } from "../../shared/in-flight.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -51,7 +47,7 @@ import {
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
-  queueMirrorWrite,
+  meterEphemeralSandbox,
   sandboxNamePrefix,
   sandboxReservationKey,
   shellQuote,
@@ -79,24 +75,14 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
-    // A platform-paid ephemeral sandbox gets a row keyed by its id for the call;
-    // the teardown removes it, which meters the call. Own credentials are not billed.
-    const controlPlane = this.#config.controlPlane;
-    const accountId =
-      persistent || controlPlane?.ownCredentials
-        ? undefined
-        : controlPlane?.accountId;
-    if (accountId)
-      void queueMirrorWrite(sandbox.name, () =>
-        upsertSandboxInstance(
-          controlPlane,
+    const endMeter = persistent
+      ? undefined
+      : meterEphemeralSandbox(
+          this.#config.controlPlane,
           "vercel",
           sandbox.name,
-          sandbox.name,
           request.metadata,
-          { ephemeral: true },
-        ),
-      );
+        );
     const cwd = persistent
       ? this.#workDir(sandboxReservationKey(request)!)
       : workspacePath(request);
@@ -123,12 +109,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       return this.#adaptResult(result, request, startedAt);
     } finally {
       if (!persistent) {
-        if (accountId)
-          waitUntil(
-            queueMirrorWrite(sandbox.name, () =>
-              removeSandboxInstance(accountId, sandbox.name, sandbox.name),
-            ),
-          );
+        endMeter?.();
         await sandbox.stop().catch(() => {});
       }
     }

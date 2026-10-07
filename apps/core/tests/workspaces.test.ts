@@ -7,6 +7,7 @@ import {
   isolatedWorkspaceNamespace,
   pinnedSandboxReservationKey,
   resolveAgentRuntime,
+  runsOnOwnCredentials,
   workspaceNamespace,
 } from "../src/shared/workspaces.ts";
 import { setStorageForTests } from "../src/shared/storage.ts";
@@ -150,6 +151,21 @@ describe("agentSandboxReservationKey", () => {
     expect(key).not.toBe(agentSandboxReservationKey("acct_1", "ag_1", "sb_2"));
     // Nothing else in the system may collide with a workspace's reservation key.
     expect(key).not.toBe(workspaceNamespace("acct_1", "sb_1"));
+  });
+});
+
+describe("runsOnOwnCredentials", () => {
+  it("treats a blank credential as the platform's, as the executors do", () => {
+    // The executors trim a blank key away and run on platform keys, so it is billed.
+    expect(
+      runsOnOwnCredentials({ provider: "e2b", options: { apiKey: " " } }),
+    ).toBe(false);
+    expect(
+      runsOnOwnCredentials({ provider: "vercel", options: { token: "\t" } }),
+    ).toBe(false);
+    expect(
+      runsOnOwnCredentials({ provider: "daytona", options: { apiKey: "key" } }),
+    ).toBe(true);
   });
 });
 

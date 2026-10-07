@@ -7,12 +7,8 @@
 
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
-import {
-  removeSandboxInstance,
-  upsertSandboxInstance,
-} from "../../shared/convex/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
-import { waitUntil } from "../../shared/in-flight.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import {
@@ -34,7 +30,7 @@ import {
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
-  queueMirrorWrite,
+  meterEphemeralSandbox,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -51,24 +47,14 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
-    // A platform-paid ephemeral sandbox gets a row keyed by its id for the call;
-    // the teardown removes it, which meters the call. Own credentials are not billed.
-    const controlPlane = this.#config.controlPlane;
-    const accountId =
-      persistent || controlPlane?.ownCredentials
-        ? undefined
-        : controlPlane?.accountId;
-    if (accountId)
-      void queueMirrorWrite(sandbox.sandboxId, () =>
-        upsertSandboxInstance(
-          controlPlane,
+    const endMeter = persistent
+      ? undefined
+      : meterEphemeralSandbox(
+          this.#config.controlPlane,
           "e2b",
           sandbox.sandboxId,
-          sandbox.sandboxId,
           request.metadata,
-          { ephemeral: true },
-        ),
-      );
+        );
 
     try {
       const result = await sandbox.commands.run(request.code, {
@@ -100,16 +86,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       };
     } finally {
       if (!persistent) {
-        if (accountId)
-          waitUntil(
-            queueMirrorWrite(sandbox.sandboxId, () =>
-              removeSandboxInstance(
-                accountId,
-                sandbox.sandboxId,
-                sandbox.sandboxId,
-              ),
-            ),
-          );
+        endMeter?.();
         await sandbox.kill();
       }
     }
