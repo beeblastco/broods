@@ -270,7 +270,7 @@ function ChatWindow({
 
   function send(): void {
     if (!input.trim() || composerLocked) return;
-    sendMessage(input);
+    void sendMessage(input);
     setInput("");
   }
 
@@ -318,7 +318,7 @@ function ChatWindow({
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 if (input.trim() && !composerLocked) {
-                  sendMessage(input);
+                  void sendMessage(input);
                   setInput("");
                 }
               }
@@ -703,7 +703,7 @@ function ToolInvocationBlock({
 }: {
   toolName: string;
   input: unknown;
-  output: unknown | undefined;
+  output: unknown;
   state: string;
   isError: boolean;
 }): React.JSX.Element {

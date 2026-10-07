@@ -461,7 +461,9 @@ async function handleRequest(
     },
     {
       directApiEnabled: ENABLE_DIRECT_API,
-      ...(context?.waitUntil ? { waitUntil: context.waitUntil } : {}),
+      ...(context?.waitUntil
+        ? { waitUntil: context.waitUntil.bind(context) }
+        : {}),
     },
   );
 }
@@ -3023,10 +3025,10 @@ async function runAgentLoopUntilSubagentsIdle(
     agentConfig: agentConfig,
     ...(hooks ? { hooks: hooks } : {}),
     ...(reply.onQuestionsPending
-      ? { onQuestionsPending: reply.onQuestionsPending }
+      ? { onQuestionsPending: reply.onQuestionsPending.bind(reply) }
       : {}),
     consumeStream:
-      reply.streamMessage ??
+      reply.streamMessage?.bind(reply) ??
       (async (stream) => {
         await stream.consumeStream();
       }),
@@ -3215,7 +3217,8 @@ async function runParentContinuationLoop(options: {
       options.subagentCoordinator,
       options.asyncToolCoordinator,
       {
-        onHeartbeat: options.onHeartbeat,
+        onHeartbeat: (pendingCount: number): void | Promise<void> =>
+          options.onHeartbeat?.(pendingCount),
       },
     );
     if (injected === 0) {

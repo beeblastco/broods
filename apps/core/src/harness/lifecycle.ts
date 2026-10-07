@@ -97,21 +97,31 @@ export function createAgentLifecycleEmitter(
 }
 
 /**
- * Turns any value into plain JSON for a lifecycle or hook payload, falling back
- * to its string form when it does not serialize.
+ * Turns any value into plain JSON for a lifecycle or hook payload. A bigint,
+ * function or symbol becomes a short label, a value JSON drops becomes
+ * `undefined`, and one that throws while serializing becomes a placeholder.
  */
 export function toLifecycleValue(value: unknown): JSONValue | undefined {
   if (value === undefined) {
     return undefined;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "function") {
+    return `[function ${value.name || "anonymous"}]`;
+  }
+  if (typeof value === "symbol") {
+    return value.description ?? "symbol";
   }
 
   try {
     const serialized = JSON.stringify(value);
 
     return serialized === undefined
-      ? String(value)
+      ? undefined
       : (JSON.parse(serialized) as JSONValue);
   } catch {
-    return String(value);
+    return "[unserializable value]";
   }
 }

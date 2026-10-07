@@ -64,7 +64,7 @@ export function toErrorMessage(error: unknown): string {
   try {
     return JSON.stringify(error);
   } catch {
-    return String(error);
+    return "Unserializable error";
   }
 }
 

@@ -2,10 +2,10 @@
  * Example: stream a deployed endpoint and steer its active WebSocket run.
  */
 
-import { WebsocketClient } from "broods";
+import { WebSocketClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new WebsocketClient();
+const client = new WebSocketClient();
 const sessionId = `websocket-steer-${crypto.randomUUID()}`;
 let subscription!: ReturnType<typeof client.subscribe>;
 let steerSent = false;
@@ -37,11 +37,15 @@ await new Promise<void>((resolve, reject) => {
       onMessage: function (message): void {
         switch (message.type) {
           case "ack":
-            console.log(`\naccepted ${message.eventId}: ${message.status}`);
+            console.log("\naccepted", message.eventId, message.status);
             break;
           case "status":
             console.log(
-              `\n${message.eventId}: ${message.status} via ${message.appliedMode ?? "pending"}`,
+              "\nstatus",
+              message.eventId,
+              message.status,
+              "via",
+              message.appliedMode ?? "pending",
             );
             break;
           case "text-delta":

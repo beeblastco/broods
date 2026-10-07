@@ -2779,9 +2779,8 @@ async function agentGet(
           ? webhook.events.join(", ")
           : "all events";
       const state = webhook.enabled === false ? "disabled" : "enabled";
-      console.log(
-        `    [${index}] ${state} → ${webhook.url ?? "none"} (${events})`,
-      );
+      const url = typeof webhook.url === "string" ? webhook.url : "none";
+      console.log(`    [${index}] ${state} → ${url} (${events})`);
     });
   }
 }
@@ -3160,12 +3159,12 @@ function assertNoPreRenameConfig(command: string, args: string[]): void {
  */
 async function mcp(): Promise<void> {
   const runtime = loadBroodsRuntimeConfig();
+  const auth = readStoredAuth();
   // A stored login adds the org, project and stage tools; those routes live
   // behind the CLI router, which rejects an account key or role session.
-  const [{ createBroodsMcpServer }, { serveStdio }, auth] = await Promise.all([
+  const [{ createBroodsMcpServer }, { serveStdio }] = await Promise.all([
     import("../mcp.ts"),
     import("@modelcontextprotocol/server/stdio"),
-    readStoredAuth(),
   ]);
   const cli = auth
     ? new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })

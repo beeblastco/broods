@@ -667,8 +667,12 @@ function sanitizePolicyValue(value: unknown, depth: number): unknown {
 
     return output;
   }
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "function")
+    return `[function ${value.name || "anonymous"}]`;
+  if (typeof value === "symbol") return value.description ?? "symbol";
 
-  return String(value);
+  return undefined;
 }
 
 function toolContextForPolicy(
