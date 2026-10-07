@@ -6,9 +6,13 @@
  */
 
 import { Daytona, type Sandbox } from "@daytona/sdk";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
+import {
+  removeSandboxInstance,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
@@ -55,6 +59,7 @@ import {
   isNoRunnersError,
   isSandboxGoneError,
   mergeSandboxEnv,
+  queueMirrorWrite,
   SandboxCapacityError,
   sandboxReservationKey,
   shellQuote,
@@ -73,6 +78,24 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
+    // A platform-paid ephemeral sandbox gets a row keyed by its id for the call;
+    // the teardown removes it, which meters the call. Own credentials are not billed.
+    const controlPlane = this.#config.controlPlane;
+    const accountId =
+      persistent || controlPlane?.ownCredentials
+        ? undefined
+        : controlPlane?.accountId;
+    if (accountId)
+      void queueMirrorWrite(sandbox.id, () =>
+        upsertSandboxInstance(
+          controlPlane,
+          "daytona",
+          sandbox.id,
+          sandbox.id,
+          request.metadata,
+          { ephemeral: true },
+        ),
+      );
 
     try {
       await mountAwsS3Buckets(sandbox, request, this.#config);
@@ -107,7 +130,15 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         provider: "daytona",
       };
     } finally {
-      if (!persistent) await sandbox.delete();
+      if (!persistent) {
+        if (accountId)
+          waitUntil(
+            queueMirrorWrite(sandbox.id, () =>
+              removeSandboxInstance(accountId, sandbox.id, sandbox.id),
+            ),
+          );
+        await sandbox.delete();
+      }
     }
   }
 

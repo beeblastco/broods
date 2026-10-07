@@ -63,6 +63,7 @@ const daytonaExecuteCommandMock = mock(
 const daytonaDeleteMock = mock(async (_id?: string) => {});
 let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
+  id: "daytona-sandbox",
   process: {
     executeCommand: daytonaExecuteCommandMock,
   },
@@ -698,6 +699,62 @@ describe("createSandboxExecutor", () => {
       "microvm-1",
     );
   });
+
+  for (const [provider, sandboxId] of [
+    ["daytona", "daytona-sandbox"],
+    ["e2b", "e2b-sandbox"],
+    ["vercel", "ephemeral"],
+  ] as const) {
+    it(`meters an ephemeral ${provider} sandbox on platform keys with a row for the call`, async () => {
+      const {
+        createSandboxExecutor,
+      } = require("../src/harness/sandbox/index.ts");
+      const controlPlane = {
+        accountId: "account-1",
+        name: "ephemeral",
+        specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+      };
+      // Platform keys come from the harness env, not the config options.
+      process.env.VERCEL_TOKEN = "platform-token";
+      process.env.VERCEL_TEAM_ID = "team_1";
+      process.env.VERCEL_PROJECT_ID = "prj_1";
+
+      await createSandboxExecutor({
+        provider: provider,
+        controlPlane: controlPlane,
+      }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+      await Bun.sleep(0);
+
+      expect(upsertSandboxInstanceMock.mock.calls as unknown[]).toEqual([
+        [
+          controlPlane,
+          provider,
+          sandboxId,
+          sandboxId,
+          undefined,
+          { ephemeral: true },
+        ],
+      ]);
+      expect(removeSandboxInstanceMock.mock.calls as unknown[]).toEqual([
+        ["account-1", sandboxId, sandboxId],
+      ]);
+
+      // The account's own key pays for it, so it gets no row.
+      upsertSandboxInstanceMock.mockClear();
+      removeSandboxInstanceMock.mockClear();
+      await createSandboxExecutor({
+        provider: provider,
+        controlPlane: { ...controlPlane, ownCredentials: true },
+      }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+      await Bun.sleep(0);
+
+      expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
+      expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+      delete process.env.VERCEL_TOKEN;
+      delete process.env.VERCEL_TEAM_ID;
+      delete process.env.VERCEL_PROJECT_ID;
+    });
+  }
 
   it("uses a flat MicroVM local namespace while mounting the hierarchical storage prefix", async () => {
     const {
@@ -3122,6 +3179,41 @@ describe("MicroVM capacity refusal", () => {
     expect(microvmRunInput().imageIdentifier).toBe(
       process.env.MICROVM_IMAGE_IDENTIFIER,
     );
+  });
+
+  it("meters a capacity fallback on the platform with the specs it creates", async () => {
+    const { runSandbox } =
+      await import("../src/harness/tools/filesystem-utils.ts");
+    const { SANDBOX_SIZES } = await import("../src/shared/sandbox-sizes.ts");
+    daytonaCreateMock.mockImplementationOnce(async () => {
+      throw new Error("No available runners");
+    });
+
+    await runSandbox(
+      {
+        provider: "daytona",
+        fallbackProvider: "lambda",
+        size: "large",
+        options: { apiKey: "daytona-key", cpu: 1 },
+        controlPlane: {
+          accountId: "acct_1",
+          name: "own-daytona",
+          specs: { vcpu: 1, memoryMb: 8192, storageGb: 32 },
+          ownCredentials: true,
+        },
+      },
+      undefined,
+      "echo ok",
+    );
+
+    const [controlPlane, provider] = upsertSandboxInstanceMock.mock
+      .calls[0] as unknown[];
+    expect(provider).toBe("lambda");
+    expect(controlPlane).toMatchObject({
+      accountId: "acct_1",
+      ownCredentials: undefined,
+      specs: SANDBOX_SIZES.large,
+    });
   });
 
   it("holds the fallback to the budget when the primary ran on the account's own key", async () => {
