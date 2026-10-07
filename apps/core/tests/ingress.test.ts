@@ -301,7 +301,7 @@ describe("step boundary", (): void => {
       steering: null,
     });
     expect(calls[0]).not.toHaveProperty("events");
-    await expect(session.assertRecentOwner()).rejects.toThrow(
+    expect(session.assertRecentOwner()).rejects.toThrow(
       "Stale conversation owner generation",
     );
     expect(reads).toHaveBeenCalledTimes(1);
@@ -1351,7 +1351,7 @@ describe("applied ingress config", (): void => {
       agents: { getById: async (): Promise<null> => null },
     } as never);
 
-    await expect(
+    expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1372,7 +1372,7 @@ describe("applied ingress config", (): void => {
       model: { provider: "openai", modelId: "gpt-5" },
     };
 
-    await expect(
+    expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1383,7 +1383,7 @@ describe("applied ingress config", (): void => {
   });
 
   it("fails any other ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
-    await expect(
+    expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",

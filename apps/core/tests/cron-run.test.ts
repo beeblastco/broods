@@ -375,7 +375,7 @@ describe("queued envelope without a config ref", () => {
       return null;
     } as never;
 
-    await expect(
+    expect(
       dispatchAppliedIngress(
         {
           accountId: "acct_1",

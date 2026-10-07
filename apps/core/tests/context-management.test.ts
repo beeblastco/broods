@@ -958,8 +958,8 @@ describe("context prepare", () => {
     "keeps the turn's input once when the history read lands %s its write",
     async (_when: string, readSeesWrite: boolean): Promise<void> => {
       const { runtime } = await import("../src/shared/convex/runtime.ts");
-      const originalQuery = runtime.query;
-      const originalMutate = runtime.mutate;
+      const originalQuery = runtime.query.bind(runtime);
+      const originalMutate = runtime.mutate.bind(runtime);
       const written: StoredConversationEventPage["page"] = [];
       const wrote = Promise.withResolvers<void>();
       runtime.mutate = (async (
@@ -1012,8 +1012,8 @@ describe("context prepare", () => {
 
   it("keeps cursor order when a newer context row lands before the turn's input", async (): Promise<void> => {
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const originalQuery = runtime.query;
-    const originalMutate = runtime.mutate;
+    const originalQuery = runtime.query.bind(runtime);
+    const originalMutate = runtime.mutate.bind(runtime);
     // A context-only channel message, written without the lease after the
     // input's cursor was minted but before the input's write landed.
     const newer: StoredConversationEventPage["page"][number] = {

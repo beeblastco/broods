@@ -8,7 +8,7 @@ import {
   spyOn,
 } from "bun:test";
 import * as planLimits from "../src/harness/plan-limits.ts";
-import { requestBodyText } from "./helpers/http.ts";
+import { requestBodyText, requestUrl } from "./helpers/http.ts";
 import type {
   SandboxExecutorConfig,
   SandboxRunRequest,
@@ -455,7 +455,9 @@ function guestFetch(
   ) => Promise<Response>,
 ): typeof fetch {
   return stubFetch(async (url, init) =>
-    String(url).endsWith("/healthz") ? new Response("ok") : respond(url, init),
+    requestUrl(url).endsWith("/healthz")
+      ? new Response("ok")
+      : respond(url, init),
   );
 }
 
@@ -1552,8 +1554,10 @@ describe("createSandboxExecutor", () => {
     const posted: string[] = [];
     let probes = 0;
     globalThis.fetch = stubFetch(async (url, init) => {
-      posted.push(`${init?.method ?? "GET"} ${new URL(String(url)).pathname}`);
-      if (String(url).endsWith("/healthz")) {
+      posted.push(
+        `${init?.method ?? "GET"} ${new URL(requestUrl(url)).pathname}`,
+      );
+      if (requestUrl(url).endsWith("/healthz")) {
         probes += 1;
 
         return probes < 3

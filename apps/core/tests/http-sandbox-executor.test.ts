@@ -120,7 +120,7 @@ describe("HttpSandboxExecutor", () => {
         graceMs: 50,
       });
 
-      await expect(executor.run(run({ timeoutSeconds: 0.1 }))).rejects.toThrow(
+      expect(executor.run(run({ timeoutSeconds: 0.1 }))).rejects.toThrow(
         /timed out/,
       );
     });
@@ -130,7 +130,7 @@ describe("HttpSandboxExecutor", () => {
     await withExecServer(OK_RESPONSE, async (endpoint) => {
       const executor = new HttpSandboxExecutor(config(endpoint), seams());
 
-      await expect(executor.run(run({ code: "fail" }))).rejects.toThrow(
+      expect(executor.run(run({ code: "fail" }))).rejects.toThrow(
         "custom sandbox exec failed (401): bad token",
       );
     });
@@ -155,7 +155,7 @@ describe("HttpSandboxExecutor", () => {
     await withExecServer([], async (endpoint) => {
       const executor = new HttpSandboxExecutor(config(endpoint), seams());
 
-      await expect(executor.run(run())).rejects.toThrow(
+      expect(executor.run(run())).rejects.toThrow(
         "custom sandbox exec response must be a JSON object",
       );
     });
@@ -167,7 +167,7 @@ describe("HttpSandboxExecutor", () => {
       await withExecServer(answer, async (endpoint) => {
         const executor = new HttpSandboxExecutor(config(endpoint), seams());
 
-        await expect(executor.run(run())).rejects.toThrow(
+        expect(executor.run(run())).rejects.toThrow(
           "custom sandbox exec response is not a sandbox exec response",
         );
       });
@@ -183,7 +183,7 @@ describe("HttpSandboxExecutor", () => {
       },
     });
 
-    await expect(executor.run(run())).rejects.toThrow(
+    expect(executor.run(run())).rejects.toThrow(
       /blocked private or metadata address/,
     );
   });
@@ -200,7 +200,7 @@ describe("HttpSandboxExecutor", () => {
           seams(),
         );
 
-        await expect(executor.run(run())).rejects.toThrow(
+        expect(executor.run(run())).rejects.toThrow(
           "still carries a ${NAME} ref",
         );
       }
@@ -211,7 +211,7 @@ describe("HttpSandboxExecutor", () => {
   it("refuses a literal private endpoint before resolving anything", async () => {
     const executor = new HttpSandboxExecutor(config("https://10.0.0.8"));
 
-    await expect(executor.run(run())).rejects.toThrow(
+    expect(executor.run(run())).rejects.toThrow(
       "custom sandbox endpoint must not point to a private or internal address",
     );
   });

@@ -425,7 +425,7 @@ describe("resolveAgentRuntime", () => {
       one.workspaces[0]?.namespace,
     );
     expect(two.workspaces[0]?.namespace).not.toBe(one.workspaces[0]?.namespace);
-    await expect(
+    expect(
       resolveAgentRuntime(agentConfig, { accountId: "acct_1" }),
     ).rejects.toThrow('Workspace isolation "agent" requires an agent identity');
   });
@@ -441,7 +441,7 @@ describe("resolveAgentRuntime", () => {
     } as never);
 
     // The download is refused; resolving the workspace before it needs the agent.
-    await expect(
+    expect(
       ingestChannelAttachments(
         [],
         [
@@ -596,7 +596,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    await expect(
+    expect(
       resolveAgentRuntime(
         {
           sandboxes: ["sb_box"],
