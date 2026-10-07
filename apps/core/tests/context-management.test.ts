@@ -1,3 +1,4 @@
+import { APICallError } from "@ai-sdk/provider";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
 import type {
@@ -13,9 +14,11 @@ const googleModelMock = mock((modelId: string) => ({
   modelId: modelId,
 }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
-const generateTextMock = mock(async (_options: unknown) => ({
-  text: "Earlier context summary.",
-}));
+const generateTextMock = mock(
+  async (_options: { messages: Array<{ content: string }> }) => ({
+    text: "Earlier context summary.",
+  }),
+);
 const readS3TextMock = mock(
   async (_bucket: string, _key: string): Promise<string> => {
     const error = new Error("not found") as Error & {
@@ -1070,11 +1073,11 @@ describe("context prepare", () => {
 });
 
 describe("auto-compaction threshold", () => {
-  it("is on by default and uses a conservative window for unknown models", async () => {
+  it("is on by default at 500k input tokens", async (): Promise<void> => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
-    expect(shouldAutoCompact({}, 102_399)).toBe(false);
-    expect(shouldAutoCompact({}, 102_400)).toBe(true);
+    expect(shouldAutoCompact({}, 499_999)).toBe(false);
+    expect(shouldAutoCompact({}, 500_000)).toBe(true);
     expect(shouldAutoCompact({ session: {} }, 2_000_000)).toBe(true);
   });
 
@@ -1088,39 +1091,7 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(low, 1_000)).toBe(true);
   });
 
-  it("caps the configured threshold below a known model's context window", async () => {
-    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
-    const config = {
-      model: { provider: "openai" as const, modelId: "gpt-4-turbo" },
-      session: { autoCompaction: { maxContextLength: 500_000 } },
-    };
-
-    expect(shouldAutoCompact(config, 102_399)).toBe(false);
-    expect(shouldAutoCompact(config, 102_400)).toBe(true);
-  });
-
-  it("prefers the configured provider's window over a smaller one", async () => {
-    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
-    // xai serves grok-4.3 with a 1M window; another catalog provider lists 20k.
-    const config = {
-      model: { provider: "xai" as const, modelId: "grok-4.3" },
-    };
-
-    expect(shouldAutoCompact(config, 499_999)).toBe(false);
-    expect(shouldAutoCompact(config, 500_000)).toBe(true);
-  });
-
-  it("uses the upstream window a gateway model id names", async (): Promise<void> => {
-    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
-    const config = {
-      model: { provider: "cloudflare" as const, modelId: "xai/grok-4.3" },
-    };
-
-    expect(shouldAutoCompact(config, 499_999)).toBe(false);
-    expect(shouldAutoCompact(config, 500_000)).toBe(true);
-  });
-
-  it("compacts a turn refused for context length unless turned off", async () => {
+  it("compacts a turn refused for context length unless turned off", async (): Promise<void> => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
     expect(shouldAutoCompact({}, undefined, true)).toBe(true);
@@ -1346,71 +1317,142 @@ describe("conversation summary", () => {
     expect(options?.messages[0]?.content).toContain("new assistant content");
   });
 
-  it("drops the oldest whole messages to fit the model's context window", async () => {
+  it("summarizes every message when the model refuses the whole history", async (): Promise<void> => {
     const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
+    const requests: string[] = [];
+    generateTextMock.mockImplementation(
+      async (options: { messages: Array<{ content: string }> }) => {
+        const content = options.messages[0]?.content ?? "";
+        requests.push(content);
+        if (content.length > 25_000) {
+          throw new APICallError({
+            message: "This model's maximum context length is 8192 tokens.",
+            url: "https://provider.test/v1",
+            requestBodyValues: {},
+            statusCode: 400,
+          });
+        }
 
-    await summarizeConversation({
-      conversationKey: "conversation",
-      priorSummaries: [
-        {
-          role: "system",
-          content:
-            "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
-        },
-      ],
-      messages: [
-        { role: "user", content: `oldest-${"x".repeat(20_000)}` },
-        { role: "assistant", content: `middle-${"y".repeat(10_000)}` },
-        { role: "user", content: "newest-context" },
-      ],
-      agentConfig: {
-        provider: { google: { apiKey: "google-key" } },
-        model: { provider: "google", modelId: "gpt-3.5-turbo" },
+        return { text: `summary of ${content.length} characters` };
       },
-      instructions: "keep the deploy decisions",
-    });
-
-    const options = generateTextMock.mock.calls[0]?.[0] as
-      | { messages: Array<{ content: string }> }
-      | undefined;
-    const content = options?.messages[0]?.content ?? "";
-    expect(content.length).toBeLessThanOrEqual(13_108);
-    expect(content).toContain("Earlier summary.");
-    expect(content).not.toContain("oldest-");
-    expect(content).toContain(
-      `Message 3 (assistant):\nmiddle-${"y".repeat(10_000)}`,
     );
-    expect(content).toContain("Message 4 (user):\nnewest-context");
-    expect(content).toEndWith("keep the deploy decisions");
+
+    try {
+      const summary = await summarizeConversation({
+        conversationKey: "conversation",
+        priorSummaries: [
+          {
+            role: "system",
+            content:
+              "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
+          },
+        ],
+        messages: [
+          { role: "user", content: `oldest-${"x".repeat(20_000)}` },
+          { role: "assistant", content: `middle-${"y".repeat(10_000)}` },
+          { role: "user", content: "newest-context" },
+        ],
+        agentConfig: compactingAgentConfig,
+        instructions: "keep the deploy decisions",
+      });
+
+      // Every message reached a summary call: nothing was dropped to fit.
+      for (const marker of [
+        "Earlier summary.",
+        "oldest-",
+        "middle-",
+        "newest-context",
+      ]) {
+        expect(requests.some((request) => request.includes(marker))).toBe(true);
+      }
+      expect(
+        requests.every((request) =>
+          request.endsWith("keep the deploy decisions"),
+        ),
+      ).toBe(true);
+      expect(summary?.content).toContain("summary of");
+    } finally {
+      generateTextMock.mockReset();
+      generateTextMock.mockImplementation(async () => ({
+        text: "Earlier context summary.",
+      }));
+    }
   });
 
-  it("cuts an oversized prior summary before the newest message", async (): Promise<void> => {
+  it("fails the compaction when the two half summaries still do not fit", async (): Promise<void> => {
     const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
+    generateTextMock.mockImplementation(
+      async (options: { messages: Array<{ content: string }> }) => {
+        const content = options.messages[0]?.content ?? "";
+        const wholeHistory =
+          content.includes("Message 1") && content.includes("Message 2");
+        if (wholeHistory || content.startsWith("half")) {
+          throw new APICallError({
+            message: "prompt is too long: 210000 tokens > 200000 maximum",
+            url: "https://provider.test/v1",
+            requestBodyValues: {},
+            statusCode: 400,
+          });
+        }
 
-    await summarizeConversation({
-      conversationKey: "conversation",
-      priorSummaries: [
-        {
-          role: "system",
-          content: `<session-compaction-summary>\n${"s".repeat(14_000)}`,
-        },
-      ],
-      messages: [{ role: "user", content: "newest-context" }],
-      agentConfig: {
-        provider: { google: { apiKey: "google-key" } },
-        model: { provider: "google", modelId: "gpt-3.5-turbo" },
+        return { text: "half" };
       },
+    );
+
+    try {
+      expect(
+        summarizeConversation({
+          conversationKey: "conversation",
+          priorSummaries: [],
+          messages: [
+            { role: "user", content: "first" },
+            { role: "assistant", content: "second" },
+          ],
+          agentConfig: compactingAgentConfig,
+        }),
+      ).rejects.toThrow("prompt is too long");
+    } finally {
+      generateTextMock.mockReset();
+      generateTextMock.mockImplementation(async () => ({
+        text: "Earlier context summary.",
+      }));
+    }
+  });
+
+  it("surfaces a passing rate limit instead of splitting the history", async (): Promise<void> => {
+    const { summarizeConversation } =
+      await import("../src/harness/compaction.ts");
+    generateTextMock.mockImplementation(async () => {
+      throw new APICallError({
+        message:
+          "Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Used 29000. Please try again in 2s.",
+        url: "https://provider.test/v1",
+        requestBodyValues: {},
+        statusCode: 429,
+      });
     });
 
-    const options = generateTextMock.mock.calls[0]?.[0] as
-      | { messages: Array<{ content: string }> }
-      | undefined;
-    const content = options?.messages[0]?.content ?? "";
-    expect(content.length).toBeLessThanOrEqual(13_108);
-    expect(content).toStartWith("Message 1 (system):");
-    expect(content).toEndWith("Message 2 (user):\nnewest-context");
+    try {
+      expect(
+        summarizeConversation({
+          conversationKey: "conversation",
+          priorSummaries: [],
+          messages: [
+            { role: "user", content: "first" },
+            { role: "assistant", content: "second" },
+          ],
+          agentConfig: compactingAgentConfig,
+        }),
+      ).rejects.toThrow("Rate limit reached");
+      expect(generateTextMock).toHaveBeenCalledTimes(1);
+    } finally {
+      generateTextMock.mockReset();
+      generateTextMock.mockImplementation(async () => ({
+        text: "Earlier context summary.",
+      }));
+    }
   });
 
   it("strips reasoning before building the summary request", async () => {

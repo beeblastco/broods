@@ -5,9 +5,9 @@ import type { Attachment, StreamOptions } from "chat";
 import { z } from "zod";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
+import { isContextLengthError } from "./errors.ts";
 import { logWarn, redactSensitiveText } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
-import { isContextLengthError } from "./model-errors.ts";
 import { getObservabilityContext } from "./otel.ts";
 
 /** Reach every room or sender, instead of only the listed ids. */

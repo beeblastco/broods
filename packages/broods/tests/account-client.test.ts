@@ -4,6 +4,7 @@ import {
   BroodsAccountClient,
   envPlaceholder,
 } from "../src/account.ts";
+import { requestUrl } from "./fixtures/request-url.ts";
 
 type Call = {
   url: string;
@@ -34,11 +35,6 @@ function mockClient(responses: Array<{ status: number; body: unknown }>): {
   });
 
   return { client: client, calls: calls };
-}
-
-/** Extracts a URL string from a fetch input without default object stringification. */
-function requestUrl(input: RequestInfo | URL): string {
-  return input instanceof Request ? input.url : input.toString();
 }
 
 test("sends bearer auth and strips the trailing slash from baseUrl", async () => {

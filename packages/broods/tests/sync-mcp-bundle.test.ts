@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import type { CliManifest } from "../src/contracts.ts";
 import { BroodsSyncClient } from "../src/sync.ts";
+import { requestUrl } from "./fixtures/request-url.ts";
 
 interface SentRequest {
   url: string;
@@ -36,7 +37,7 @@ function recordingClient(): { client: BroodsSyncClient; sent: SentRequest[] } {
     baseUrl: "https://convex.example.com",
     token: "tok",
     fetch: async (input, init) => {
-      const url = input instanceof Request ? input.url : input.toString();
+      const url = requestUrl(input);
       sent.push({
         url: url,
         method: (init?.method ?? "GET").toUpperCase(),

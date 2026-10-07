@@ -532,28 +532,8 @@ export class BroodsClient {
     targetUrl: string,
     init: RequestInit,
   ): Promise<Response> {
-    const headers: Record<string, string> =
-      init.headers instanceof Headers || Array.isArray(init.headers)
-        ? Object.fromEntries(new Headers(init.headers).entries())
-        : Object.fromEntries(
-            Object.entries(init.headers ?? {}).map(([name, value]) => [
-              name,
-              typeof value === "string" ? value : value.join(", "),
-            ]),
-          );
-    if (
-      !Object.keys(headers).some(
-        (name) => name.toLowerCase() === "content-type",
-      )
-    ) {
-      headers["Content-Type"] = "application/json";
-    }
-
     try {
-      return await this.fetchImpl(targetUrl, {
-        ...init,
-        headers: headers,
-      });
+      return await this.fetchImpl(targetUrl, init);
     } catch (error) {
       throw new Error(
         `Cannot access the broods core service at ${targetUrl}. ` +

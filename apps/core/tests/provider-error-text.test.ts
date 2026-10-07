@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { toErrorMessage } from "../src/shared/errors.ts";
+import { isContextLengthError, toErrorMessage } from "../src/shared/errors.ts";
 
 describe("toErrorMessage", () => {
   it("takes the message straight off an Error", () => {
@@ -64,5 +64,40 @@ describe("toErrorMessage", () => {
     expect(toErrorMessage("plain string")).toBe("plain string");
     expect(toErrorMessage(undefined)).toBe("undefined");
     expect(toErrorMessage(null)).toBe("null");
+  });
+});
+
+describe("isContextLengthError", () => {
+  it("spots each provider's context-window refusal", (): void => {
+    expect(
+      isContextLengthError(
+        "This model's maximum context length is 128000 tokens.",
+      ),
+    ).toBe(true);
+    expect(
+      isContextLengthError(
+        "prompt is too long: 210000 tokens > 200000 maximum",
+      ),
+    ).toBe(true);
+    expect(
+      isContextLengthError(
+        "The input token count exceeds the maximum number of tokens allowed",
+      ),
+    ).toBe(true);
+  });
+
+  it("counts a request over the per-minute quota, not a passing rate limit", (): void => {
+    // One request bigger than the quota never succeeds until history shrinks;
+    // a quota already used up clears on its own and must not compact.
+    expect(
+      isContextLengthError(
+        "Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested 31000.",
+      ),
+    ).toBe(true);
+    expect(
+      isContextLengthError(
+        "Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Used 29000, Requested 2000. Please try again in 2s.",
+      ),
+    ).toBe(false);
   });
 });

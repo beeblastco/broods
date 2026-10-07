@@ -18,7 +18,7 @@ afterEach(() => {
   }
 });
 
-test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL", async () => {
+test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL", () => {
   delete process.env.BROODS_DASHBOARD_URL;
   process.env.BROODS_TOKEN = "tok";
   process.env.BROODS_BASE_URL = "https://convex.example.com/";
@@ -32,7 +32,7 @@ test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL"
   expect(auth?.dashboardUrl).toBeUndefined();
 });
 
-test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from env", async () => {
+test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from env", () => {
   delete process.env.BROODS_BASE_URL;
   process.env.BROODS_TOKEN = "env-only-token-sentinel";
   process.env.BROODS_DASHBOARD_URL = "https://dashboard.example.com";

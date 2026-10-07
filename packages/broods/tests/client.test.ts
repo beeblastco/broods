@@ -7,6 +7,7 @@ import {
   BroodsClient,
   IngressAcceptedError,
 } from "../src/client.ts";
+import { requestUrl } from "./fixtures/request-url.ts";
 
 afterEach(() => {
   delete process.env.BROODS_DASHBOARD_URL;
@@ -461,8 +462,3 @@ test("client polls async status by run id", async () => {
     "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   ]);
 });
-
-/** Extracts a URL string from a fetch input without default object stringification. */
-function requestUrl(input: RequestInfo | URL): string {
-  return input instanceof Request ? input.url : input.toString();
-}
