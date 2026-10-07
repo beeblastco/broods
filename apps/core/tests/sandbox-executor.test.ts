@@ -1556,14 +1556,19 @@ describe("createSandboxExecutor", () => {
         },
       });
 
-      await expect(
-        executor.postReserved({
+      const failure = await executor
+        .postReserved({
           reservationKey: microvmNamespace(),
           path: "/mcp",
           body: {},
           timeoutMs: 1_000,
-        }),
-      ).rejects.toThrow("sandbox budget exhausted");
+        })
+        .then(
+          (): string => "resolved",
+          (error: unknown): string => String(error),
+        );
+
+      expect(failure).toContain("sandbox budget exhausted");
       expect(budget).toHaveBeenCalledWith("acct_budget");
       expect(posts).toBe(0);
     } finally {
