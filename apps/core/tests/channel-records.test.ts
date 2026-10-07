@@ -15,7 +15,7 @@ import {
   type ChannelRecord,
 } from "../src/shared/domain/channel-record.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
-import { coreRequest, requestBodyText } from "./helpers/http.ts";
+import { coreRequest, requestBodyText, requestUrl } from "./helpers/http.ts";
 
 // The invoke gate reads assigned policy documents; without a stub the routing
 // tests would reach the real Convex client. Scoped to this file, because bun shares the
@@ -814,7 +814,7 @@ async function route(options: {
   const originalFetch = globalThis.fetch;
   type FetchInput = Parameters<typeof fetch>[0];
   globalThis.fetch = (async (input: FetchInput, init?: RequestInit) => {
-    const url = String(input instanceof Request ? input.url : input);
+    const url = requestUrl(input);
     if (new URL(url).hostname === "slack.com") {
       const body = init?.body;
       // chat.postMessage is form-encoded, so an omitted thread_ts is an absent
