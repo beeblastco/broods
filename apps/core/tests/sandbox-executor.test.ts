@@ -15,6 +15,10 @@ import type {
   SandboxExecutorConfig,
   SandboxRunRequest,
 } from "../src/harness/sandbox/types.ts";
+import type {
+  removeSandboxInstance,
+  upsertSandboxInstance,
+} from "../src/shared/convex/sandbox-instances.ts";
 
 const e2bDisconnectMock = mock(async () => {});
 const e2bRunMock = mock(
@@ -140,7 +144,11 @@ const deleteSandboxInstanceMock = mock(
 );
 let resolveSandboxInstanceUpsert: (() => void) | undefined;
 let waitForSandboxInstanceUpsert = false;
-const removeSandboxInstanceMock = mock(async () => {});
+const removeSandboxInstanceMock = mock(
+  async (
+    ..._args: Parameters<typeof removeSandboxInstance>
+  ): Promise<void> => {},
+);
 const recordSandboxBurstMock = mock(
   async (
     _accountId: string,
@@ -148,12 +156,14 @@ const recordSandboxBurstMock = mock(
     _totals: { vcpuSeconds: number; gbSeconds: number },
   ) => true,
 );
-const upsertSandboxInstanceMock = mock(async () => {
-  if (!waitForSandboxInstanceUpsert) return;
-  await new Promise<void>((resolve) => {
-    resolveSandboxInstanceUpsert = resolve;
-  });
-});
+const upsertSandboxInstanceMock = mock(
+  async (..._args: Parameters<typeof upsertSandboxInstance>): Promise<void> => {
+    if (!waitForSandboxInstanceUpsert) return;
+    await new Promise<void>((resolve) => {
+      resolveSandboxInstanceUpsert = resolve;
+    });
+  },
+);
 const stsSendMock = mock(async (_command: unknown) => ({
   Credentials: {
     AccessKeyId: "scoped-access-key",
@@ -685,7 +695,7 @@ describe("createSandboxExecutor", () => {
     expect(result.ok).toBe(true);
     expect(upsertSandboxInstanceMock).toHaveBeenCalledTimes(1);
     // The mirror row remembers the stream so the dashboard can tail it.
-    expect((upsertSandboxInstanceMock.mock.calls[0] as unknown[])[5]).toEqual({
+    expect(upsertSandboxInstanceMock.mock.calls[0]?.[5]).toEqual({
       ephemeral: true,
       logStream: expect.stringMatching(logStreamPattern("account-1", "-", "-")),
     });
@@ -725,7 +735,7 @@ describe("createSandboxExecutor", () => {
       }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
       await Bun.sleep(0);
 
-      expect(upsertSandboxInstanceMock.mock.calls as unknown[]).toEqual([
+      expect(upsertSandboxInstanceMock.mock.calls).toEqual([
         [
           controlPlane,
           provider,
@@ -735,7 +745,7 @@ describe("createSandboxExecutor", () => {
           { ephemeral: true },
         ],
       ]);
-      expect(removeSandboxInstanceMock.mock.calls as unknown[]).toEqual([
+      expect(removeSandboxInstanceMock.mock.calls).toEqual([
         ["account-1", sandboxId, sandboxId],
       ]);
 
@@ -3206,8 +3216,8 @@ describe("MicroVM capacity refusal", () => {
       "echo ok",
     );
 
-    const [controlPlane, provider] = upsertSandboxInstanceMock.mock
-      .calls[0] as unknown[];
+    const [controlPlane, provider] =
+      upsertSandboxInstanceMock.mock.calls[0] ?? [];
     expect(provider).toBe("lambda");
     expect(controlPlane).toMatchObject({
       accountId: "acct_1",

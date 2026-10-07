@@ -122,10 +122,10 @@ export function resolveSandboxSpecs(input: {
   const options = input.options ?? {};
 
   return {
-    vcpu: numberOrUndefined(options.cpu) ?? base.vcpu,
+    vcpu: positiveNumber(options.cpu) ?? base.vcpu,
     memoryMb:
-      numberOrUndefined(options.memoryMb) ?? input.memoryLimit ?? base.memoryMb,
-    storageGb: numberOrUndefined(options.diskGb) ?? base.storageGb,
+      positiveNumber(options.memoryMb) ?? input.memoryLimit ?? base.memoryMb,
+    storageGb: positiveNumber(options.diskGb) ?? base.storageGb,
   };
 }
 
@@ -143,10 +143,10 @@ export function workdirResources(input: {
 }): { cpu?: number; memoryMb?: number; diskGb?: number } | undefined {
   const options = input.options ?? {};
   const sized = input.size ? workdirSizeResources(input.size) : undefined;
-  const cpu = numberOrUndefined(options.cpu) ?? sized?.cpu;
+  const cpu = positiveNumber(options.cpu) ?? sized?.cpu;
   const memoryMb =
-    numberOrUndefined(options.memoryMb) ?? input.memoryLimit ?? sized?.memoryMb;
-  const diskGb = numberOrUndefined(options.diskGb) ?? sized?.diskGb;
+    positiveNumber(options.memoryMb) ?? input.memoryLimit ?? sized?.memoryMb;
+  const diskGb = positiveNumber(options.diskGb) ?? sized?.diskGb;
   if (cpu === undefined && memoryMb === undefined && diskGb === undefined)
     return undefined;
 
@@ -176,8 +176,10 @@ export function workdirSizeResources(size: SandboxSize): {
   return { cpu: cpu, memoryMb: specs.memoryMb, diskGb: specs.storageGb };
 }
 
-function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
+// Zero or negative reads as unset, so a bad option can neither bill nothing nor
+// ask a provider for no resources.
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
     : undefined;
 }

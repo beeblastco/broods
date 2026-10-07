@@ -11,10 +11,7 @@ import {
   MAX_OUTPUT_BYTES,
   MAX_TIMEOUT_MS,
 } from "../../../../cloudflare-sandbox/src/limits.ts";
-import {
-  removeSandboxInstance,
-  upsertSandboxInstance,
-} from "../../shared/convex/sandbox-instances.ts";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
@@ -40,6 +37,7 @@ import type {
 import {
   execRunResult,
   mergeSandboxEnv,
+  meterEphemeralSandbox,
   parseExecResponse,
   queueMirrorWrite,
   requiredWorkspacePath,
@@ -112,20 +110,9 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         ? await this.#reserve(key)
         : undefined;
     const id = reserved ?? `fp-e-${crypto.randomUUID()}`;
-    // An ephemeral Container gets a row keyed by its id for the call; the
-    // teardown removes it, which meters the call, like the MicroVM and workdir.
-    const ephemeralAccountId = reserved ? undefined : controlPlane?.accountId;
-    if (ephemeralAccountId)
-      void queueMirrorWrite(id, (): Promise<void> =>
-        upsertSandboxInstance(
-          controlPlane,
-          "cloudflare",
-          id,
-          id,
-          request.metadata,
-          { ephemeral: true },
-        ),
-      );
+    const endMeter = reserved
+      ? undefined
+      : meterEphemeralSandbox(controlPlane, "cloudflare", id, request.metadata);
     try {
       const response = await this.#exec(
         id,
@@ -155,12 +142,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
               }),
           ),
         );
-        if (ephemeralAccountId)
-          waitUntil(
-            queueMirrorWrite(id, (): Promise<void> =>
-              removeSandboxInstance(ephemeralAccountId, id, id),
-            ),
-          );
+        endMeter?.();
       }
     }
   }

@@ -375,8 +375,12 @@ export function resolveWorkspaceRefs(
  */
 export function runsOnOwnCredentials(config: SandboxConfig): boolean {
   const options = config.options ?? {};
-  const has = (key: string): boolean =>
-    typeof options[key] === "string" && options[key] !== "";
+  // Blank matches the executors' trimming, which falls back to platform keys.
+  const has = (key: string): boolean => {
+    const value = options[key];
+
+    return typeof value === "string" && value.trim() !== "";
+  };
   switch (config.provider) {
     case "daytona":
     case "e2b":
