@@ -54,11 +54,10 @@ export function shouldAutoCompact(
   if (lastInputTokens === undefined) return false;
   const configuredMax =
     config?.maxContextLength ?? DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH;
-  const modelMax = Math.floor(
-    modelContextLength(agentConfig) * AUTO_COMPACTION_CONTEXT_FRACTION,
-  );
 
-  return lastInputTokens >= Math.min(configuredMax, modelMax);
+  return (
+    lastInputTokens >= Math.min(configuredMax, modelInputBudget(agentConfig))
+  );
 }
 
 export function isCompactionSummaryMessage(
@@ -94,9 +93,7 @@ export async function summarizeConversation(
   const request = formatCompactionRequest(
     input.priorSummaries,
     messages,
-    Math.floor(
-      modelContextLength(input.agentConfig) * AUTO_COMPACTION_CONTEXT_FRACTION,
-    ),
+    modelInputBudget(input.agentConfig),
     input.instructions,
   );
   const result = await generateText({
@@ -151,15 +148,16 @@ function formatCompactionRequest(
   const suffix = trimmed
     ? `${COMPACTION_MESSAGE_SEPARATOR}The user requested this compaction with instructions. Follow them when choosing what to preserve and emphasize:\n${trimmed}`
     : "";
+  const budget = Math.max(0, limit - suffix.length);
   const blocks = formatMessagesForCompaction([...priorSummaries, ...messages]);
   const summaryBlocks = blocks.slice(0, priorSummaries.length);
   const messageBlocks = blocks.slice(priorSummaries.length);
-  let length = blocks.join(COMPACTION_MESSAGE_SEPARATOR).length + suffix.length;
-  while (length > limit && messageBlocks.length > 1) {
-    const dropped = messageBlocks.shift() ?? "";
-    length -= dropped.length + COMPACTION_MESSAGE_SEPARATOR.length;
+  let length = blocks.join(COMPACTION_MESSAGE_SEPARATOR).length;
+  while (length > budget && messageBlocks.length > 1) {
+    length -=
+      (messageBlocks.shift()?.length ?? 0) +
+      COMPACTION_MESSAGE_SEPARATOR.length;
   }
-  const budget = Math.max(0, limit - suffix.length);
   const history = messageBlocks.join(COMPACTION_MESSAGE_SEPARATOR);
   const summaries = summaryBlocks
     .join(COMPACTION_MESSAGE_SEPARATOR)
@@ -183,10 +181,6 @@ function formatMessagesForCompaction(messages: ModelMessage[]): string[] {
   });
 }
 
-function stringifyMessageContent(content: ModelMessage["content"]): string {
-  return typeof content === "string" ? content : JSON.stringify(content);
-}
-
 // Resolves provider-routed IDs against the shared model catalog. The window of
 // the configured provider, or of the upstream a gateway id like `xai/grok-4`
 // names, wins; otherwise the smallest window among the matching provider IDs,
@@ -194,23 +188,21 @@ function stringifyMessageContent(content: ModelMessage["content"]): string {
 function modelContextLength(agentConfig: AgentConfig): number {
   const modelId = agentConfig.model?.modelId;
   if (!modelId) return DEFAULT_MODEL_CONTEXT_LENGTH;
-  const identifiers = [modelId, modelId.split("/").at(-1) ?? modelId];
+  const parts = modelId.split("/");
+  const routedProvider = parts.length > 1 ? parts[0] : undefined;
+  const identifiers = [modelId, parts[parts.length - 1]];
   const model = MODEL_CATALOG.find(
     (candidate): boolean =>
       identifiers.includes(candidate.id) ||
-      ("aliases" in candidate &&
-        candidate.aliases?.some((alias): boolean =>
-          identifiers.includes(alias),
-        )) ||
+      candidate.aliases?.some((alias): boolean =>
+        identifiers.includes(alias),
+      ) ||
       candidate.providers.some((provider): boolean =>
         identifiers.includes(provider.externalId),
       ),
   );
   if (!model) return DEFAULT_MODEL_CONTEXT_LENGTH;
-  const routedProvider = modelId.includes("/")
-    ? modelId.split("/")[0]
-    : undefined;
-  const configuredProvider = model.providers.filter(
+  const configuredProviders = model.providers.filter(
     (provider): boolean =>
       provider.providerId === agentConfig.model?.provider ||
       provider.providerId === routedProvider,
@@ -218,18 +210,29 @@ function modelContextLength(agentConfig: AgentConfig): number {
   const exactMappings = model.providers.filter((provider): boolean =>
     identifiers.includes(provider.externalId),
   );
-  const contextLengths = (
-    [configuredProvider, exactMappings].find(
-      (candidates): boolean => candidates.length > 0,
-    ) ?? model.providers
-  )
-    .map((provider): number | undefined => provider.contextSize)
-    .filter(
-      (contextLength): contextLength is number =>
-        contextLength !== undefined && contextLength > 0,
-    );
+  const pool =
+    configuredProviders.length > 0
+      ? configuredProviders
+      : exactMappings.length > 0
+        ? exactMappings
+        : model.providers;
+  const contextLengths = pool.flatMap((provider): number[] =>
+    provider.contextSize ? [provider.contextSize] : [],
+  );
 
   return contextLengths.length > 0
     ? Math.min(...contextLengths)
     : DEFAULT_MODEL_CONTEXT_LENGTH;
+}
+
+// 80% of the configured model's window: the auto-compaction threshold and the
+// character limit of the summary request.
+function modelInputBudget(agentConfig: AgentConfig): number {
+  return Math.floor(
+    modelContextLength(agentConfig) * AUTO_COMPACTION_CONTEXT_FRACTION,
+  );
+}
+
+function stringifyMessageContent(content: ModelMessage["content"]): string {
+  return typeof content === "string" ? content : JSON.stringify(content);
 }

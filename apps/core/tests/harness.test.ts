@@ -2994,7 +2994,7 @@ describe("auto-compaction after a turn", () => {
     expect(order).toEqual(["approval"]);
   });
 
-  it("compacts after the provider refuses a turn for context length", async () => {
+  it("compacts after the provider refuses a turn for context length", async (): Promise<void> => {
     const refused = await runCompactingTurn({
       scenario: "context-overflow",
       autoCompaction: {},

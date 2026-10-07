@@ -16,6 +16,11 @@ const UNREACHABLE_ERROR_CODES = new Set([
   "FailedToOpenSocket",
 ]);
 
+// A provider error saying the conversation no longer fits what the model takes
+// per request, whether the context window or a per-minute token cap.
+const CONTEXT_LIMIT_PATTERN =
+  /request too large|context (length|window)|prompt is too long|input is too long|exceeds the maximum number of tokens/i;
+
 /**
  * The part of a provider failure payload worth reading. `@ai-sdk/provider`
  * types a stream error part as `error: unknown`, and `@ai-sdk/openai` keeps its
@@ -29,6 +34,11 @@ interface ProviderErrorPayload {
   error?: unknown;
   message?: unknown;
   response?: unknown;
+}
+
+/** True when a provider refused a request as too large for the model to take. */
+export function isContextLengthError(message: string): boolean {
+  return CONTEXT_LIMIT_PATTERN.test(message);
 }
 
 /** True when a fetch failed at the socket, before reaching the provider. */

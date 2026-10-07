@@ -13,9 +13,11 @@ const googleModelMock = mock((modelId: string) => ({
   modelId: modelId,
 }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
-const generateTextMock = mock(async (_options: unknown) => ({
-  text: "Earlier context summary.",
-}));
+const generateTextMock = mock(
+  async (_options: { messages: Array<{ content: string }> }) => ({
+    text: "Earlier context summary.",
+  }),
+);
 const readS3TextMock = mock(
   async (_bucket: string, _key: string): Promise<string> => {
     const error = new Error("not found") as Error & {
@@ -1070,7 +1072,7 @@ describe("context prepare", () => {
 });
 
 describe("auto-compaction threshold", () => {
-  it("is on by default and uses a conservative window for unknown models", async () => {
+  it("is on by default and uses a conservative window for unknown models", async (): Promise<void> => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
     expect(shouldAutoCompact({}, 102_399)).toBe(false);
@@ -1088,7 +1090,7 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(low, 1_000)).toBe(true);
   });
 
-  it("caps the configured threshold below a known model's context window", async () => {
+  it("caps the configured threshold below a known model's context window", async (): Promise<void> => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
     const config = {
       model: { provider: "openai" as const, modelId: "gpt-4-turbo" },
@@ -1099,7 +1101,7 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(config, 102_400)).toBe(true);
   });
 
-  it("prefers the configured provider's window over a smaller one", async () => {
+  it("prefers the configured provider's window over a smaller one", async (): Promise<void> => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
     // xai serves grok-4.3 with a 1M window; another catalog provider lists 20k.
     const config = {
@@ -1120,7 +1122,7 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(config, 500_000)).toBe(true);
   });
 
-  it("compacts a turn refused for context length unless turned off", async () => {
+  it("compacts a turn refused for context length unless turned off", async (): Promise<void> => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
     expect(shouldAutoCompact({}, undefined, true)).toBe(true);
@@ -1346,7 +1348,7 @@ describe("conversation summary", () => {
     expect(options?.messages[0]?.content).toContain("new assistant content");
   });
 
-  it("drops the oldest whole messages to fit the model's context window", async () => {
+  it("drops the oldest whole messages to fit the model's context window", async (): Promise<void> => {
     const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
 
@@ -1371,9 +1373,7 @@ describe("conversation summary", () => {
       instructions: "keep the deploy decisions",
     });
 
-    const options = generateTextMock.mock.calls[0]?.[0] as
-      | { messages: Array<{ content: string }> }
-      | undefined;
+    const options = generateTextMock.mock.calls[0]?.[0];
     const content = options?.messages[0]?.content ?? "";
     expect(content.length).toBeLessThanOrEqual(13_108);
     expect(content).toContain("Earlier summary.");
@@ -1404,9 +1404,7 @@ describe("conversation summary", () => {
       },
     });
 
-    const options = generateTextMock.mock.calls[0]?.[0] as
-      | { messages: Array<{ content: string }> }
-      | undefined;
+    const options = generateTextMock.mock.calls[0]?.[0];
     const content = options?.messages[0]?.content ?? "";
     expect(content.length).toBeLessThanOrEqual(13_108);
     expect(content).toStartWith("Message 1 (system):");

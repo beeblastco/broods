@@ -2,6 +2,9 @@ import type { CreateAgentResult } from "../../../packages/broods/src/account.ts"
 import type { AgentRunResult } from "../../../packages/broods/src/client.ts";
 import { MODEL_KEY_HINT, assertStep, type VerifyContext } from "../harness.ts";
 
+// What `/compact` replies when it found history to fold.
+const COMPACTED_REPLY = /^Context compacted\. \d+ message\(s\) summarized\.$/;
+
 /**
  * Auto-compaction folds the history once a turn has finished. A `/compact`
  * after that turn then finds nothing new on an agent whose threshold the turn
@@ -74,14 +77,12 @@ export async function autoCompaction(context: VerifyContext): Promise<void> {
   );
   assertStep(
     "a turn with auto-compaction off kept its history",
-    /^Context compacted\. \d+ message\(s\) summarized\.$/.test(kept),
+    COMPACTED_REPLY.test(kept),
     kept,
   );
   assertStep(
     "a short turn stays below the model-aware default threshold",
-    /^Context compacted\. \d+ message\(s\) summarized\.$/.test(
-      defaultThreshold,
-    ),
+    COMPACTED_REPLY.test(defaultThreshold),
     defaultThreshold,
   );
 }

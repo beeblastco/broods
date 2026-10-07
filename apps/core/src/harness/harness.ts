@@ -48,9 +48,8 @@ import {
 } from "../shared/domain/agent-config.ts";
 import { principalChainLabel } from "../shared/domain/principal.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
-import { toErrorMessage } from "../shared/errors.ts";
+import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
 import { waitUntil } from "../shared/in-flight.ts";
-import { isContextLengthError } from "../shared/model-errors.ts";
 import {
   collectSecretValues,
   logError,
