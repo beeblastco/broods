@@ -1256,6 +1256,7 @@ describe("createSandboxExecutor", () => {
   describe("lambda snapshots", () => {
     const SOURCE_VERSION = {
       baseImageArn: "arn:aws:lambda:us-east-1:aws:microvm-image:al2023",
+      baseImageVersion: "1.0",
       buildRoleArn: "arn:aws:iam::123456789012:role/microvm-build",
       codeArtifact: { uri: "s3://artifacts/microvm-images/sandbox/abc.zip" },
       hooks: { port: 9000 },
@@ -1361,6 +1362,7 @@ describe("createSandboxExecutor", () => {
         expect(create?.input).toMatchObject({
           name: `broods-snapshot-${id}`,
           baseImageArn: SOURCE_VERSION.baseImageArn,
+          baseImageVersion: "1",
           buildRoleArn: SOURCE_VERSION.buildRoleArn,
           hooks: SOURCE_VERSION.hooks,
           additionalOsCapabilities: ["ALL"],
