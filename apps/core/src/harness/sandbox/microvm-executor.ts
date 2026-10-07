@@ -698,7 +698,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           name: `${SNAPSHOT_IMAGE_PREFIX}${snapshotId}`,
           description: `Broods snapshot of ${microvmId} on ${vm.imageArn}`,
           baseImageArn: source.baseImageArn,
-          baseImageVersion: source.baseImageVersion,
+          // Versions read back as "1.0", but create takes only the major number.
+          baseImageVersion: source.baseImageVersion?.split(".")[0],
           buildRoleArn: source.buildRoleArn,
           codeArtifact: { uri: `s3://${artifact.bucket}/${artifactKey}` },
           hooks: source.hooks,
