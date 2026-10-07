@@ -322,19 +322,25 @@ export function workspaceStorageOwnAuth(
 }
 
 /**
- * The env var names a stored workspace's R2 keys reference, empty for any other
- * storage. Reads the stored shape only, so a row a later access rule refuses
- * never blocks an unrelated env var delete.
+ * The env var names an R2 workspace's keys reference, stored beside its config
+ * on every write so an env var delete finds it by index. Both are undefined for
+ * any other storage, which clears them on a patch.
  */
-export function workspaceEnvRefNames(
-  config: WorkspaceConfig | undefined,
-): string[] {
+export function workspaceEnvRefFields(config: WorkspaceConfig | undefined): {
+  r2AccessKeyEnv: string | undefined;
+  r2SecretAccessKeyEnv: string | undefined;
+} {
   const auth = config?.storage?.auth;
-  if (auth?.type !== "r2") return [];
+  if (auth?.type !== "r2") {
+    return { r2AccessKeyEnv: undefined, r2SecretAccessKeyEnv: undefined };
+  }
 
-  return [auth.accessKeyId, auth.secretAccessKey].flatMap(
-    (ref) => ACCOUNT_ENV_REF_PATTERN.exec(ref)?.[1] ?? [],
-  );
+  return {
+    r2AccessKeyEnv: ACCOUNT_ENV_REF_PATTERN.exec(auth.accessKeyId)?.[1],
+    r2SecretAccessKeyEnv: ACCOUNT_ENV_REF_PATTERN.exec(
+      auth.secretAccessKey,
+    )?.[1],
+  };
 }
 
 /**

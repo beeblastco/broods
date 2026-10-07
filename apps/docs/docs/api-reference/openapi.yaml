@@ -1323,7 +1323,7 @@ paths:
                   deleted:
                     type: boolean
         "409":
-          description: An R2 workspace's `accessKeyId` or `secretAccessKey` still references the variable. `error.message` names the workspaces.
+          description: An R2 workspace's `accessKeyId` or `secretAccessKey` still references the variable.
           content:
             application/json:
               schema:

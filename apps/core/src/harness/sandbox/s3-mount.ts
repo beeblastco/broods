@@ -42,6 +42,9 @@ import type { SandboxRunRequest } from "./types.ts";
 // close to expiry: longer than the 300s presign a read target can back, plus
 // room for clock skew.
 const READ_TARGET_REFRESH_MARGIN_MS = 10 * 60 * 1000;
+// R2 temporary credentials die the moment their parent token is revoked, so a
+// rotated token reaches harness reads within this long, not near expiry.
+const R2_READ_TARGET_REUSE_MS = 60 * 1000;
 const MOUNT_SESSION_NAME = "fp-sandbox-mount";
 // STS caps RoleSessionName and SourceIdentity at 64 characters; the session
 // name is `${MOUNT_SESSION_NAME}-${identity}`, so the identity gets the rest.
@@ -49,7 +52,10 @@ const SESSION_IDENTITY_MAX_LENGTH = 64 - MOUNT_SESSION_NAME.length - 1;
 // Bring-your-own read targets keyed by everything the session is scoped to.
 // The pending promise is cached, so parallel first reads of one workspace share
 // a single STS (or R2 mint) round trip and, through s3.ts, a single S3 client.
-const readTargetCache = new Map<string, Promise<S3ReadTarget>>();
+const readTargetCache = new Map<
+  string,
+  { target: Promise<S3ReadTarget>; staleAt: number }
+>();
 
 export interface ResolvedS3Mount extends S3MountIdentity {
   // Present when the harness resolved credentials (assume-role / R2 / platform role).
@@ -294,7 +300,7 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
 // Resolve a harness read target. The managed bucket is read directly on the
 // harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
 // gets short-lived, prefix-scoped creds (its role, or minted R2 creds), reused
-// until they near expiry.
+// until they near expiry, or for a minute on R2.
 export async function resolveS3ReadTarget(
   ctx: S3MountContext,
 ): Promise<S3ReadTarget> {
@@ -310,12 +316,22 @@ export async function resolveS3ReadTarget(
     identity.region,
     identity.endpoint,
   ]);
-  const cached = await readTargetCache.get(cacheKey)?.catch(() => undefined);
+  const entry = readTargetCache.get(cacheKey);
+  const cached =
+    entry && entry.staleAt > Date.now()
+      ? await entry.target.catch(() => undefined)
+      : undefined;
   if (cached && !nearsExpiry(cached)) {
     return cached;
   }
   const pending = readTargetFromMount(ctx);
-  readTargetCache.set(cacheKey, pending);
+  readTargetCache.set(cacheKey, {
+    target: pending,
+    staleAt:
+      ctx.storage.auth?.type === "r2"
+        ? Date.now() + R2_READ_TARGET_REUSE_MS
+        : Number.POSITIVE_INFINITY,
+  });
   pending.catch(() => readTargetCache.delete(cacheKey));
 
   return pending;

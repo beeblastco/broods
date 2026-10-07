@@ -205,6 +205,31 @@ describe("cli sync rejects env() refs with no stored value", () => {
     });
     await expect(removeEnv(tt)).rejects.toThrow('workspace "r2-files"');
   });
+
+  test("refuses an R2 workspace whose ${NAME} keys have no value", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    const ref = `\${${ENV_NAME}}`;
+
+    await expect(
+      syncResources(tt, [
+        {
+          kind: "workspace",
+          name: "r2-files",
+          config: {
+            storage: {
+              provider: "s3",
+              bucket: "agent-files",
+              prefix: "broods/",
+              endpoint:
+                "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+              auth: { type: "r2", accessKeyId: ref, secretAccessKey: ref },
+            },
+          },
+        },
+      ]),
+    ).rejects.toThrow(ENV_NAME);
+  });
 });
 
 describe("removing an env var a synced resource still reads", () => {

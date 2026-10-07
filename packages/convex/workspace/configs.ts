@@ -20,6 +20,7 @@ import {
 import {
   normalizeWorkspaceConfig,
   normalizeWorkspacePrefix,
+  workspaceEnvRefFields,
   workspaceStorageOwnAuth,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
@@ -167,6 +168,7 @@ export const create = internalMutation({
       name: args.name,
       description: args.description,
       config: args.config,
+      ...workspaceEnvRefFields(args.config),
       createdAt: now,
       updatedAt: now,
     });
@@ -202,7 +204,10 @@ export const update = internalMutation({
       ...(patch.description !== undefined && {
         description: patch.description,
       }),
-      ...(patch.config !== undefined && { config: patch.config }),
+      ...(patch.config !== undefined && {
+        config: patch.config,
+        ...workspaceEnvRefFields(patch.config),
+      }),
       updatedAt: Date.now(),
     });
 

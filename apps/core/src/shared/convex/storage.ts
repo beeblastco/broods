@@ -33,8 +33,10 @@ import type {
   SandboxConfig,
   SandboxConfigRecord,
 } from "../domain/sandbox-config.ts";
-import type { WorkspaceConfigRecord } from "../domain/workspace-config.ts";
-import type { WorkspaceConfig as StoredWorkspaceConfig } from "@broods/convex/model/workspaceRules";
+import type {
+  WorkspaceConfig,
+  WorkspaceConfigRecord,
+} from "../domain/workspace-config.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type {
   AgentDeploymentScope,
@@ -446,7 +448,7 @@ interface ConvexWorkspaceConfigDoc {
   accountId: string;
   name: string;
   description?: string;
-  config: StoredWorkspaceConfig;
+  config: WorkspaceConfig;
   createdAt: number;
   updatedAt: number;
 }

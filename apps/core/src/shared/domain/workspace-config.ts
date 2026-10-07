@@ -9,12 +9,13 @@
  */
 
 import type {
-  WorkspaceConfig as StoredWorkspaceConfig,
+  WorkspaceConfig,
   WorkspaceStorageConfig as StoredWorkspaceStorageConfig,
 } from "@broods/convex/model/workspaceRules";
 
 export type { WorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 export type {
+  WorkspaceConfig,
   WorkspaceStorageAuth,
   WorkspaceStorageProvider,
 } from "@broods/convex/model/workspaceRules";
@@ -28,7 +29,8 @@ export type WorkspaceStorageConfig = StoredWorkspaceStorageConfig & {
   owner?: { accountId: string; workspaceId: string };
 };
 
-export type WorkspaceConfig = Omit<StoredWorkspaceConfig, "storage"> & {
+/** A loaded workspace config, whose storage may carry the R2 owner. */
+export type WorkspaceRuntimeConfig = Omit<WorkspaceConfig, "storage"> & {
   storage: WorkspaceStorageConfig;
 };
 
@@ -48,7 +50,7 @@ export interface WorkspaceConfigRecord {
   workspaceId: string;
   name: string;
   description?: string;
-  config: WorkspaceConfig;
+  config: WorkspaceRuntimeConfig;
   createdAt: string;
   updatedAt: string;
 }

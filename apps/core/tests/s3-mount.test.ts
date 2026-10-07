@@ -551,4 +551,24 @@ describe("R2 storage", () => {
 
     expect(mints.map((mint) => mint[0])).toEqual(["acct_1", "acct_2"]);
   });
+
+  it("remints a cached R2 read target after a minute, so a revoked token stops being used", async () => {
+    const storage = {
+      ...R2_STORAGE,
+      owner: { accountId: "acct_3", workspaceId: "ws_3" },
+    };
+    const now = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await resolveS3ReadTarget({ storage: storage, namespace: NS });
+      clock.mockReturnValue(now + 30_000);
+      await resolveS3ReadTarget({ storage: storage, namespace: NS });
+      clock.mockReturnValue(now + 61_000);
+      await resolveS3ReadTarget({ storage: storage, namespace: NS });
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(mints.map((mint) => mint[0])).toEqual(["acct_3", "acct_3"]);
+  });
 });

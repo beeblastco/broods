@@ -516,46 +516,38 @@ describe("R2 workspace storage", () => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
     const t = convexTest(schema, modules);
     const now = Date.now();
-    const { accountId, otherAccountId, workspaceId } = await t.run(
-      async (ctx) => {
-        const orgId = await ctx.db.insert("orgs", {
-          name: "Beeblast",
-          slug: "beeblast",
-          ownerAuthId: "auth_owner",
-          plan: "free",
-          createdAt: now,
-        });
-        const account = {
-          orgId: orgId,
-          status: "active" as const,
-          createdAt: now,
-          updatedAt: now,
-        };
-        const accountId = await ctx.db.insert("accounts", {
-          ...account,
-          username: "beeblast",
-          secretHash: "hash",
-        });
-        const otherAccountId = await ctx.db.insert("accounts", {
-          ...account,
-          username: "other",
-          secretHash: "other-hash",
-        });
-        const workspaceId = await ctx.db.insert("workspaceConfigs", {
-          accountId: accountId,
-          name: "r2",
-          config: { storage: R2_BUCKET },
-          createdAt: now,
-          updatedAt: now,
-        });
+    const { accountId, otherAccountId } = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("orgs", {
+        name: "Beeblast",
+        slug: "beeblast",
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: now,
+      });
+      const account = {
+        orgId: orgId,
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const accountId = await ctx.db.insert("accounts", {
+        ...account,
+        username: "beeblast",
+        secretHash: "hash",
+      });
+      const otherAccountId = await ctx.db.insert("accounts", {
+        ...account,
+        username: "other",
+        secretHash: "other-hash",
+      });
 
-        return {
-          accountId: accountId,
-          otherAccountId: otherAccountId,
-          workspaceId: workspaceId,
-        };
-      },
-    );
+      return { accountId: accountId, otherAccountId: otherAccountId };
+    });
+    const workspaceId = await t.mutation(internal.workspace.configs.create, {
+      accountId: accountId,
+      name: "r2",
+      config: { storage: R2_BUCKET },
+    });
     for (const [name, value] of [
       ["R2_ACCESS_KEY_ID", "parent-key-id"],
       ["R2_SECRET_ACCESS_KEY", "parent-secret"],
@@ -636,7 +628,18 @@ describe("R2 workspace storage", () => {
         accountId: accountId,
         name: "R2_SECRET_ACCESS_KEY",
       }),
-    ).rejects.toThrow('still referenced by workspace "r2"');
+    ).rejects.toThrow("still referenced by an R2 workspace's keys");
+    await t.mutation(internal.workspace.configs.update, {
+      accountId: accountId,
+      workspaceId: workspaceId,
+      config: { storage: { provider: "s3" } },
+    });
+    expect(
+      await t.mutation(internal.account.envVars.remove, {
+        accountId: accountId,
+        name: "R2_SECRET_ACCESS_KEY",
+      }),
+    ).toBe(true);
   });
 
   it("mints a CLI-synced workspace's credentials from its stage env vars", async (): Promise<void> => {

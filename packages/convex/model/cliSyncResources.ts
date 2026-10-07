@@ -52,7 +52,10 @@ import {
   DEFAULT_SANDBOX_PROVIDER,
   normalizeSandboxConfig,
 } from "./sandboxRules";
-import { normalizeWorkspaceConfig } from "./workspaceRules";
+import {
+  normalizeWorkspaceConfig,
+  workspaceEnvRefFields,
+} from "./workspaceRules";
 import { ClientError } from "./clientError";
 
 /** What a reserved instance belongs to: its sandbox config, or the workspace namespace keying it. */
@@ -767,6 +770,7 @@ export async function syncWorkspaceResources(
         name: name,
         description: resource.description,
         config: config,
+        ...workspaceEnvRefFields(config),
         managedBy: "cli",
         updatedAt: Date.now(),
       });
@@ -785,6 +789,7 @@ export async function syncWorkspaceResources(
         name: name,
         description: resource.description,
         config: config,
+        ...workspaceEnvRefFields(config),
         managedBy: "cli",
         createdAt: now,
         updatedAt: now,
