@@ -5708,7 +5708,7 @@ components:
           type: array
           items:
             type: string
-          description: As on create.
+          description: As on create. A PATCH that leaves it out keeps the stored command.
         bundle:
           type: string
           description: As on create. Replaces the hosted module.
