@@ -923,7 +923,7 @@ export type WorkspaceStorageDefinition = Omit<
 > & {
   auth?:
     | Exclude<WorkspaceStorageAuthConfig, { type: "r2" }>
-    | (Omit<WorkspaceR2Auth, "accessKeyId" | "secretAccessKey" | "owner"> & {
+    | (Omit<WorkspaceR2Auth, "accessKeyId" | "secretAccessKey"> & {
         accessKeyId: string | EnvRef;
         secretAccessKey: string | EnvRef;
       });
