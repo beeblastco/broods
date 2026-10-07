@@ -44,10 +44,11 @@ export async function mcpCommand(context: VerifyContext): Promise<void> {
         true,
       ),
   );
+  const row = await context.account.getMcp(synced.ids.mcp.obscura ?? "");
   assertStep(
     "an MCP server on a sandbox keeps its command",
-    Object.keys(synced.ids.mcp).includes("obscura"),
-    JSON.stringify(synced.ids),
+    JSON.stringify(row?.command) === JSON.stringify(["obscura", "mcp"]),
+    JSON.stringify(row),
   );
 
   const refused = await sync

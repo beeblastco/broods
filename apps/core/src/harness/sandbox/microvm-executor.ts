@@ -380,6 +380,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         cached.endpoint,
       );
       try {
+        // The lifecycle's onResume runs for a cached MCP call as for cached bash.
+        await this.#runLifecycle(
+          cached.microvmId,
+          cached.endpoint,
+          this.#workDir(this.#workspaceKey(reach)),
+          CACHED_WARMUP_BUDGET_MS,
+        );
+
         return await this.#whileWarming(
           cached.microvmId,
           CACHED_WARMUP_BUDGET_MS,
