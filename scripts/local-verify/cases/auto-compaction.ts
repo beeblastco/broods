@@ -81,7 +81,7 @@ export async function autoCompaction(context: VerifyContext): Promise<void> {
     kept,
   );
   assertStep(
-    "a short turn stays below the model-aware default threshold",
+    "a short turn stays below the default threshold",
     COMPACTED_REPLY.test(defaultThreshold),
     defaultThreshold,
   );
