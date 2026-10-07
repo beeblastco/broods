@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { BroodsSyncClient } from "../src/sync.ts";
+import { requestUrl } from "./fixtures/request-url.ts";
 
 function clientWith(handler: (url: string, init: RequestInit) => Response): {
   client: BroodsSyncClient;
@@ -18,11 +19,6 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
   });
 
   return { client: client, calls: calls };
-}
-
-/** Extracts a URL string from a fetch input without default object stringification. */
-function requestUrl(input: RequestInfo | URL): string {
-  return input instanceof Request ? input.url : input.toString();
 }
 
 test("listEnv GETs the env collection and returns variable names", async () => {

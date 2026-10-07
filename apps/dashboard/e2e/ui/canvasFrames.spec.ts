@@ -278,7 +278,7 @@ test("mount, inherited and runs-on edges end on the two resources they join, wit
       ),
     );
     expect(
-      [...boxAt].sort((a, b) => a - b),
+      [...boxAt].sort((a, b): number => a - b),
       `${id} ends`,
     ).toEqual([0, 1]);
   }
