@@ -508,8 +508,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // S3 workspace mount strategy:
   //  - `none`:        not a workspace run (no namespace) and mounting not forced.
   //  - `exec`:        a role is configured (bring-your-own assumeRole, or the
-  //                   platform SANDBOX_MOUNT_ROLE_ARN) -> mount via exec with the
-  //                   short-lived credentials (#ensureS3Mount). Preferred,
+  //                   platform SANDBOX_MOUNT_ROLE_ARN) or the bucket is R2 ->
+  //                   mount via exec with the short-lived credentials
+  //                   (#ensureS3Mount). Preferred,
   //                   since workdir's org-global secret store can't safely hold
   //                   per-namespace scoped creds, but a per-call exec env can.
   //  - `declarative`: no role -> declare a boot mount that reads static keys from
@@ -523,7 +524,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (!request.namespace && this.#options().mountAwsS3Buckets !== true)
       return "none";
 
-    return mountRoleArn(this.#config.storage) ? "exec" : "declarative";
+    return this.#config.storage?.auth?.type === "r2" ||
+      mountRoleArn(this.#config.storage)
+      ? "exec"
+      : "declarative";
   }
 
   // Throws when the run carries no workspace namespace.

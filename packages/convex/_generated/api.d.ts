@@ -116,6 +116,7 @@ import type * as model_policyRules from "../model/policyRules.js";
 import type * as model_pricing from "../model/pricing.js";
 import type * as model_principal from "../model/principal.js";
 import type * as model_projectScope from "../model/projectScope.js";
+import type * as model_r2Credentials from "../model/r2Credentials.js";
 import type * as model_requestId from "../model/requestId.js";
 import type * as model_responses from "../model/responses.js";
 import type * as model_roleRules from "../model/roleRules.js";
@@ -275,6 +276,7 @@ declare const fullApi: ApiFromModules<{
   "model/pricing": typeof model_pricing;
   "model/principal": typeof model_principal;
   "model/projectScope": typeof model_projectScope;
+  "model/r2Credentials": typeof model_r2Credentials;
   "model/requestId": typeof model_requestId;
   "model/responses": typeof model_responses;
   "model/roleRules": typeof model_roleRules;

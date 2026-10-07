@@ -437,26 +437,34 @@ export function WorkspaceResourceDetailsTab({
               placeholder="teams/support"
               onCommit={(prefix) => setStorage({ prefix: prefix || undefined })}
             />
-            <SelectField
-              label="Auth"
-              value={auth.type === "assumeRole" ? "assumeRole" : "managed"}
-              onValueChange={(type) =>
-                setStorage({
-                  auth:
-                    type === "assumeRole"
-                      ? {
-                          ...auth,
-                          type: "assumeRole",
-                          roleArn: auth.roleArn ?? "",
-                        }
-                      : { type: "managed" },
-                })
-              }
-              options={[
-                { value: "managed", label: "Managed" },
-                { value: "assumeRole", label: "Assume role" },
-              ]}
-            />
+            {auth.type === "r2" ? (
+              // No R2 editor yet: show it, and never let the select rewrite it.
+              <p className="text-2xs text-muted-foreground">
+                Auth: Cloudflare R2 keys {String(auth.accessKeyId)} and{" "}
+                {String(auth.secretAccessKey)}. Edit them in code or the API.
+              </p>
+            ) : (
+              <SelectField
+                label="Auth"
+                value={auth.type === "assumeRole" ? "assumeRole" : "managed"}
+                onValueChange={(type) =>
+                  setStorage({
+                    auth:
+                      type === "assumeRole"
+                        ? {
+                            ...auth,
+                            type: "assumeRole",
+                            roleArn: auth.roleArn ?? "",
+                          }
+                        : { type: "managed" },
+                  })
+                }
+                options={[
+                  { value: "managed", label: "Managed" },
+                  { value: "assumeRole", label: "Assume role" },
+                ]}
+              />
+            )}
             {auth.type === "assumeRole" && (
               <ExpandBlock>
                 <TextField

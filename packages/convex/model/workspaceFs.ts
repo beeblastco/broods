@@ -7,6 +7,8 @@
  * `"use node"` actions.
  */
 
+import { internal } from "../_generated/api";
+import type { ActionCtx } from "../_generated/server";
 import { assumeScopedS3Credentials, type S3Access } from "./aws";
 import {
   copyS3Object,
@@ -21,6 +23,7 @@ import {
 import {
   MAX_WORKSPACE_FILE_BYTES,
   normalizeFilePath,
+  normalizeWorkspacePrefix,
   workspaceNamespace,
   workspaceStorageOwnAuth,
   type WorkspaceStorageConfig,
@@ -46,6 +49,8 @@ export interface WorkspaceFsRef {
   accountId: string;
   workspaceId: string;
   storage?: WorkspaceStorageConfig;
+  /** An R2 workspace's minted credentials; see {@link withR2Credentials}. */
+  r2Credentials?: S3Access["credentials"];
 }
 
 /**
@@ -267,6 +272,34 @@ export async function uploadWorkspaceFile(
 }
 
 /**
+ * Attach an R2 workspace's scoped credentials; any other ref passes through.
+ * Every action calls it before an op, since only a ctx can mint them.
+ */
+export async function withR2Credentials<Ref extends WorkspaceFsRef>(
+  ctx: ActionCtx,
+  ref: Ref,
+): Promise<Ref> {
+  if (ref.storage?.auth?.type !== "r2") return ref;
+  const credentials = await ctx.runMutation(
+    internal.workspace.configs.r2Credentials,
+    {
+      accountId: ref.accountId,
+      workspaceId: ref.workspaceId,
+      prefix: normalizeWorkspacePrefix(ref.storage.prefix),
+    },
+  );
+
+  return {
+    ...ref,
+    r2Credentials: {
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+      sessionToken: credentials.sessionToken,
+    },
+  };
+}
+
+/**
  * Presign a short-lived download URL for one workspace file.
  * @param ref the workspace to read
  * @param rawPath the file path
@@ -284,12 +317,6 @@ export async function workspaceFileDownloadUrl(
     throw new ClientError("Workspace file not found");
 
   return await getS3ObjectUrl(target.bucket, key, {}, target.access);
-}
-
-function normalizePrefix(prefix: string | undefined): string {
-  const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
-
-  return trimmed.length > 0 ? `${trimmed}/` : "";
 }
 
 /**
@@ -311,20 +338,25 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   }
   const auth = workspaceStorageOwnAuth(storage);
   if (!auth) throw new Error("Workspace storage has no credentials of its own");
-  const prefix = normalizePrefix(storage.prefix);
-  const credentials = await assumeScopedS3Credentials({
-    roleArn: auth.roleArn,
-    bucket: storage.bucket,
-    prefix: prefix,
-    ...(auth.externalId ? { externalId: auth.externalId } : {}),
-  });
+  const prefix = normalizeWorkspacePrefix(storage.prefix);
+  const credentials =
+    auth.type === "r2"
+      ? ref.r2Credentials
+      : await assumeScopedS3Credentials({
+          roleArn: auth.roleArn,
+          bucket: storage.bucket,
+          prefix: prefix,
+          ...(auth.externalId ? { externalId: auth.externalId } : {}),
+        });
+  if (!credentials) throw new Error("R2 workspace credentials were not minted");
+  const region = auth.type === "r2" ? "auto" : storage.region;
 
   return {
     bucket: storage.bucket,
     prefix: prefix,
     access: {
       credentials: credentials,
-      ...(storage.region ? { region: storage.region } : {}),
+      ...(region ? { region: region } : {}),
       ...(storage.endpoint ? { endpoint: storage.endpoint } : {}),
     },
   };

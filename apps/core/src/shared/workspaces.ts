@@ -22,8 +22,8 @@ import type {
   SandboxConfigRecord,
 } from "./domain/sandbox-config.ts";
 import type {
-  WorkspaceConfig,
   WorkspaceIsolation,
+  WorkspaceRuntimeConfig,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
 import {
@@ -59,7 +59,7 @@ export interface ResolvedWorkspace {
   workspaceId: string;
   namespace: string;
   description?: string;
-  config: WorkspaceConfig;
+  config: WorkspaceRuntimeConfig;
   sandbox?: WorkspaceSandboxConfig;
   // Read-only read runner. Set when the workspace has no effective sandbox, the ref
   // did not opt out with `sandbox: null`, and the workspace uses the managed bucket.

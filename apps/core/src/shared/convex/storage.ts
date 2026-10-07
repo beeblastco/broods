@@ -457,13 +457,24 @@ function workspaceConfigFromConvex(
   doc: ConvexWorkspaceConfigDoc | null,
 ): WorkspaceConfigRecord | null {
   if (!doc) return null;
+  const config = doc.config ?? { storage: { provider: "s3" } };
 
   return {
     accountId: doc.accountId,
     workspaceId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
-    config: doc.config ?? { storage: { provider: "s3" } },
+    // An R2 mount mints its credentials per workspace, so it carries the row's identity.
+    config:
+      config.storage?.auth?.type === "r2"
+        ? {
+            ...config,
+            storage: {
+              ...config.storage,
+              owner: { accountId: doc.accountId, workspaceId: doc._id },
+            },
+          }
+        : config,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };
@@ -611,6 +622,12 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
     )) as ConvexWorkspaceConfigDoc[];
 
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
+  },
+  mintR2Credentials: async function (accountId, workspaceId, prefix) {
+    return await getConvexClient().mutation(
+      internal.workspace.configs.r2Credentials,
+      { accountId: accountId, workspaceId: workspaceId, prefix: prefix },
+    );
   },
   removeAllForAccount: async function (accountId) {
     const docs = (await getConvexClient().query(

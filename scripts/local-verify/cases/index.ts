@@ -15,6 +15,7 @@ import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
+import { r2Workspace } from "./r2-workspace.ts";
 import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
@@ -44,6 +45,7 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   manifestSync,
   mcpHeaderEnv,
+  r2Workspace,
   workToolWebhooks,
   webhookHandshake,
   connections,
