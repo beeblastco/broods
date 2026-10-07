@@ -63,6 +63,7 @@ import {
   getSharedNatsConn,
   tracesSubject,
 } from "../shared/nats.ts";
+import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
@@ -136,7 +137,11 @@ import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
-import type { AskParent, SubagentWatch } from "./tools/utils.ts";
+import {
+  parseToolResultOutput,
+  type AskParent,
+  type SubagentWatch,
+} from "./tools/utils.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 /** Default step cap when the agent config sets no `agent.maxTurn`. */
@@ -513,7 +518,9 @@ export async function runAgentLoop(
     "agent.message_count": turnContext.messages.length,
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
-    "model.input": traceAttribute(turnContext.messages),
+    "model.input": traceAttribute(
+      messagesWithoutMediaBytes(turnContext.messages),
+    ),
     ...systemTraceAttributes(turnContext.system, traceAttribute),
     ...(rootEventId(session.eventId) !== session.eventId
       ? { "task.root_id": rootEventId(session.eventId) }
@@ -1320,7 +1327,7 @@ export async function runAgentLoop(
       const attributes = {
         "agent.step_number": stepNumber,
         "step.state": "running",
-        "model.input": traceAttribute(messages),
+        "model.input": traceAttribute(messagesWithoutMediaBytes(messages)),
         ...systemTraceAttributes(turnContext.system, traceAttribute),
       };
       const tracked = startTrackedSpan(
@@ -1450,7 +1457,9 @@ export async function runAgentLoop(
         "tool.state": toolSucceeded ? "completed" : "failed",
         "tool.input": traceAttribute(toolCall.input),
         ...computeAttributes,
-        ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
+        ...(toolSucceeded
+          ? { "tool.output": traceAttribute(outputWithoutMediaBytes(output)) }
+          : {}),
       });
       if (toolSucceeded) {
         tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
@@ -1482,7 +1491,9 @@ export async function runAgentLoop(
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
           ...computeAttributes,
-          ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
+          ...(toolSucceeded
+            ? { "tool.output": traceAttribute(outputWithoutMediaBytes(output)) }
+            : {}),
           ...(stepNumber !== undefined
             ? { "agent.step_number": stepNumber }
             : {}),
@@ -1721,7 +1732,12 @@ export async function runAgentLoop(
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),
           "model.tool_calls": traceAttribute(toolCalls),
-          "model.tool_results": traceAttribute(toolResults),
+          "model.tool_results": traceAttribute(
+            toolResults.map((result) => ({
+              ...result,
+              output: outputWithoutMediaBytes(result.output),
+            })),
+          ),
         };
         tracked.otelSpan.setAttributes(attributes);
         tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
@@ -2969,4 +2985,46 @@ function serializeError(error: unknown): Record<string, unknown> {
   }
 
   return details;
+}
+
+// Trace attributes keep a media part's type and size, not its base64: a
+// screenshot would fill the attribute with truncated noise. These cover the
+// tool results in a step's messages and a tool's own output.
+function messagesWithoutMediaBytes(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((message): ModelMessage =>
+    message.role === "tool"
+      ? {
+          ...message,
+          content: message.content.map((part) =>
+            part.type === "tool-result"
+              ? { ...part, output: toolOutputWithoutMediaBytes(part.output) }
+              : part,
+          ),
+        }
+      : message,
+  );
+}
+
+function outputWithoutMediaBytes(output: unknown): unknown {
+  const parsed = parseToolResultOutput(output);
+
+  return parsed ? toolOutputWithoutMediaBytes(parsed) : output;
+}
+
+function toolOutputWithoutMediaBytes(
+  output: ToolResultOutput,
+): ToolResultOutput {
+  if (output.type !== "content") return output;
+
+  return {
+    ...output,
+    value: output.value.map((part) =>
+      part.type === "image-data" || part.type === "file-data"
+        ? {
+            ...part,
+            data: `[${part.mediaType} base64, ${Math.round((part.data.length * 3) / 4 / 1024)} KB]`,
+          }
+        : part,
+    ),
+  };
 }

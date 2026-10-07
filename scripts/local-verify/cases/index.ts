@@ -2,6 +2,7 @@ import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
+import { browserSandbox } from "./browser-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
@@ -13,6 +14,7 @@ import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { r2Workspace } from "./r2-workspace.ts";
+import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
@@ -31,6 +33,8 @@ export const verifyCases: readonly VerifyCase[] = [
   autoCompaction,
   machineSandbox,
   ownBucketSandbox,
+  sandboxImage,
+  browserSandbox,
   customSandbox,
   trailingSlash,
   edgeHeaders,

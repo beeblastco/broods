@@ -7,7 +7,7 @@ An agent gets tools from four places:
 | Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `computerUse` |
 | MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                         |
 | Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`             |
-| Broods features       | the matching agent setting       | `load_skill`, `run_subagent`, `schedule`, `ask_questions`   |
+| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`          |
 
 This page covers the first two, approvals, and the built-in tools. Sandbox tools are in [Sandboxes](sandboxes/index.md).
 
@@ -36,7 +36,7 @@ A tool that your code would execute, such as the Tavily AI SDK package, cannot g
 
 ## MCP servers
 
-Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`.
+Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at. Other non-text blocks are named in the text.
 
 ### Connect a server
 
@@ -126,6 +126,36 @@ For a worked hosted server, see [Cloudflare Browser Run](cloudflare-browser.md).
 
 A server in your `.mcp.json`, such as a Blender or filesystem server, can run on your machine and serve cloud agents. Name the machine sandbox instead of a URL. See [Machine](sandboxes/machine.md).
 
+### Run a server in a sandbox
+
+A stdio server installed in a sandbox image can run inside a persistent `lambda` sandbox. Name the sandbox and give the server's `command`:
+
+```ts
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  persistent: true,
+  network: { mode: "allow-all" },
+});
+export const obscura = defineMcp({
+  name: "obscura",
+  sandbox: web,
+  command: ["obscura", "mcp"],
+});
+export const researcher = defineAgent({
+  name: "researcher",
+  sandboxes: [web],
+  mcp: { obscura: { enabled: true } },
+});
+```
+
+- The sandbox must be `persistent: true` and listed in the agent's `sandboxes`.
+- The server starts on the first call and keeps running for as long as the reserved sandbox lives, so its state, such as a browser session, carries over between calls and runs.
+- `command` is required on a `lambda` sandbox. A machine sandbox ignores it and uses its own `.mcp.json`.
+- The tool listing is kept until the server's definition changes, so a run does not start the sandbox just to list tools. The first call starts it.
+- The server shares the VM that `bash` uses on that sandbox, including its workspace.
+
 ## Approvals
 
 `needsApproval: true` on a provider tool or an MCP entry pauses the run before the tool executes. Sandbox tools follow the sandbox `permissionMode` instead.
@@ -152,6 +182,46 @@ Each question has an `id`, a short `header`, the `question`, and two to four `op
 | Any client  | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
 | WebSocket   | a `question-request` frame               | an `execute` frame carrying `answers`                                                          |
 
+## Web browsing
+
+`browse` opens a public web page in [Obscura](https://github.com/h4ckf0r0day/obscura), a headless browser on the agent's first sandbox, and returns it to the model. Turn it on with `browser` and give the agent a sandbox with the Obscura image and internet access:
+
+```ts title="broods/index.ts"
+import { defineAgent, defineSandbox, defineWorkspace } from "broods";
+
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  network: { mode: "allow-all" },
+});
+
+export const workspace = defineWorkspace({
+  name: "workspace",
+  storage: { provider: "s3" },
+});
+
+export const researcher = defineAgent({
+  name: "researcher",
+  sandboxes: [web], // the first sandbox runs browse
+  workspaces: [workspace], // screenshots are saved here
+  browser: { enabled: true },
+});
+```
+
+| `mode`               | Returns                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `markdown` (default) | The rendered page as markdown, usually 3 to 17x smaller than its HTML                   |
+| `text`               | Plain text                                                                              |
+| `links`              | Every link on the page, one per line                                                    |
+| `eval`               | The result of a JavaScript expression run in the page, passed as `script`               |
+| `screenshot`         | An image of the viewport, saved under `.broods/browse/` so `send-images` can send it on |
+
+- The first sandbox must be `lambda` with `image: "obscura"` and `network.mode: "allow-all"`, or a [machine](sandboxes/machine.md) with `obscura` installed. Anything else fails the run with a message saying what to change.
+- `screenshot` needs a workspace on that sandbox. The image reaches the model on the turn it was taken. Later turns keep the file path.
+- Private and internal addresses are refused. Layout can differ from Chrome on JavaScript-heavy pages. For pixel-exact screenshots, run Chromium through `bash` on a sandbox with `image: "browser"`.
+- Reading needs no approval. `eval` runs the model's own JavaScript in the page, so it asks like `bash` unless the sandbox uses `permissionMode: "bypass"`.
+
 ## Background tools
 
 `async_status` appears on its own when the agent can start background work, through a workspace on a persistent sandbox or a tool marked `async: true`. The model uses it to check, tail or stop that work. See [Persistent sandboxes](sandboxes/persistent.md).
@@ -160,6 +230,7 @@ Each question has an `id`, a short `header`, the `question`, and two to four `op
 
 | Tool                                                                      | Enabled by                          | Guide                                         |
 | ------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
+| `browse`                                                                  | `browser`                           | [Web browsing](#web-browsing)                 |
 | `load_skill`                                                              | `skills`                            | [Skills](skills.md)                           |
 | `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent`                          | [Subagents](subagents.md)                     |
 | `ask_parent`                                                              | the run being a persistent subagent | [Subagents](subagents.md)                     |

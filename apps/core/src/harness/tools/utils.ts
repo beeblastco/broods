@@ -372,7 +372,9 @@ function isToolResultOutput(value: unknown): value is ToolResultOutput {
   }
 }
 
-function parseToolResultOutput(value: unknown): ToolResultOutput | undefined {
+export function parseToolResultOutput(
+  value: unknown,
+): ToolResultOutput | undefined {
   return isToolResultOutput(value) ? value : undefined;
 }
 

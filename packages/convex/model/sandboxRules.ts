@@ -25,6 +25,10 @@ export {
 /** The provider a config without one runs on: AWS MicroVM, until `sandbox` has hosts everywhere. */
 export const DEFAULT_SANDBOX_PROVIDER: SandboxProvider = "lambda";
 
+// Platform MicroVM image variants a lambda sandbox can boot by name instead of ARN.
+// Core resolves each to `<default image name>-<variant>` in the default's account.
+export const SANDBOX_IMAGES = ["browser", "obscura"] as const;
+
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
 export const SANDBOX_PERMISSION_MODES = ["edit", "ask", "bypass"] as const;
 
@@ -66,6 +70,8 @@ export type NetworkMode = (typeof SANDBOX_NETWORK_MODES)[number];
 
 export type SandboxSize = (typeof SANDBOX_SIZE_NAMES)[number];
 
+export type SandboxImage = (typeof SANDBOX_IMAGES)[number];
+
 /**
  * Idle and maximum lifetime controls for a persistent sandbox.
  */
@@ -89,6 +95,9 @@ export interface SandboxConfig {
   // Never set with `persistent`: a reserved sandbox belongs to one provider.
   fallbackProvider?: SandboxProvider;
   size?: SandboxSize;
+  // A platform image variant by name (lambda only): "browser" has Chromium,
+  // "obscura" has the Obscura headless browser. Exclusive with `snapshot`.
+  image?: SandboxImage;
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -188,6 +197,12 @@ export function normalizeSandboxConfig(
   assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
   assertOptionalBoolean(config.persistent, "config.persistent");
   const snapshot = optionalString(config.snapshot, "config.snapshot");
+  const image = assertOptionalEnum(
+    config.image,
+    "config.image",
+    SANDBOX_IMAGES,
+  );
+  assertImage(image, provider, fallbackProvider, snapshot);
 
   if (fallbackProvider === provider) {
     throw new ClientError(
@@ -224,6 +239,7 @@ export function normalizeSandboxConfig(
     provider,
     fallbackProvider,
     network,
+    image,
     snapshot,
     persistentFields,
   );
@@ -348,6 +364,30 @@ function assertEnvVarsAndOptions(
   }
 }
 
+// An image variant is a platform MicroVM image, so only lambda boots it, and a
+// capacity fallback onto another provider would silently run without it.
+function assertImage(
+  image: SandboxImage | undefined,
+  provider: SandboxProvider,
+  fallbackProvider: SandboxProvider | undefined,
+  snapshot: string | undefined,
+): void {
+  if (image === undefined) return;
+  if (provider !== "lambda") {
+    throw new ClientError("config.image applies to the lambda provider only");
+  }
+  if (snapshot !== undefined) {
+    throw new ClientError(
+      "config.image and config.snapshot cannot both be set",
+    );
+  }
+  if (fallbackProvider !== undefined) {
+    throw new ClientError(
+      "config.image cannot be set with config.fallbackProvider: the fallback provider has no platform image variants",
+    );
+  }
+}
+
 function assertNetworkEnforceable(
   provider: SandboxProvider,
   network: SandboxNetworkConfig,
@@ -463,6 +503,7 @@ function buildNormalizedConfig(
   provider: SandboxProvider,
   fallbackProvider: SandboxProvider | undefined,
   network: SandboxNetworkConfig,
+  image: SandboxImage | undefined,
   snapshot: string | undefined,
   persistentFields: Pick<SandboxConfig, "lifecycle" | "onCreate" | "onResume">,
 ): SandboxConfig {
@@ -473,6 +514,7 @@ function buildNormalizedConfig(
     permissionMode:
       (config.permissionMode as PermissionMode | undefined) ?? "ask",
     ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
+    ...(image ? { image: image } : {}),
     ...(snapshot ? { snapshot: snapshot } : {}),
     ...(config.persistent !== undefined
       ? { persistent: config.persistent as boolean }

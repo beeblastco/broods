@@ -150,6 +150,15 @@ export function compatibilityApprovalStatus(
       : undefined;
   }
 
+  // Reading a page is free. `eval` runs the model's own JavaScript in it, which
+  // can send requests, so it asks like bash on the sandbox browse runs on.
+  if (toolName === "browse") {
+    return record.mode === "eval" &&
+      options.sandboxes?.[0]?.sandbox.permissionMode !== "bypass"
+      ? "user-approval"
+      : undefined;
+  }
+
   // memory_save writes workspace files (memory/*.md + the index), so it follows
   // the same approval path as write/edit.
   if (

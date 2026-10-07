@@ -6,7 +6,7 @@ This page covers how core builds an agent's tool set for a run, how async tools 
 
 `harness.ts` resolves the model, then calls `createTools()` in `src/harness/tools/index.ts`. The tool set is assembled in this order:
 
-1. Sandbox tools from the agent's `sandboxes` and `workspaces`. `bash` when there is any sandbox or sandbox-backed workspace. `computer` for every machine sandbox. `read` and `glob` for every workspace, through the mount when it has a sandbox and through S3 or a read-only mount when it does not. `write`, `edit` and `grep` only when a workspace has a sandbox. `memory_save` when a sandbox-backed workspace keeps the memory harness on.
+1. Sandbox tools from the agent's `sandboxes` and `workspaces`. `bash` when there is any sandbox or sandbox-backed workspace. `computer` for every machine sandbox. `browse` when `config.browser.enabled`, after `assertBrowseSandbox` checks that the first sandbox is lambda with `image: "obscura"` and `allow-all`, or a machine; it runs `obscura fetch` there and reads screenshots back from the workspace with `workspaceMediaBytes` (`tools/browse.tool.ts`). `read` and `glob` for every workspace, through the mount when it has a sandbox and through S3 or a read-only mount when it does not. `write`, `edit` and `grep` only when a workspace has a sandbox. `memory_save` when a sandbox-backed workspace keeps the memory harness on.
 2. Channel tools (`send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update`) on channel turns, each gated on the adapter's capabilities, and `send-message` when the agent has channels and the request can dispatch to another session. See [channels](channels.md).
 3. `run_subagent` when `config.subagent.enabled` and the request has a dispatcher, plus `get_subagent_status`, `update_subagent` and `stop_subagent` in persistent mode. A persistent subagent run also gets `ask_parent`, whatever its own `subagent` config says.
 4. `load_skill` when `config.skills.enabled` and `allowed` has paths.
@@ -67,13 +67,13 @@ Approval requests on a sync direct API run stream as SSE and persist in the conv
 
 ## MCP servers
 
-Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session. A hosted server's listing is cached per agent, because it comes from that agent's own child.
+Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session. `callMcpTool` returns `structuredContent` or the text of the content blocks, except when a block is an image: then the whole result goes back as AI SDK content parts with `image-data`, so the model sees the picture. Stored history drops the image data and keeps the text. A hosted server's listing is cached per agent, because it comes from that agent's own child.
 
 - The `url` host is resolved before connecting. Private, loopback, link-local and metadata addresses are refused, and so are redirects. The OAuth `tokenUrl` gets the same check.
 - Credential-bearing headers must reference an account env var (`Bearer ${NAME}`). Inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
 - OAuth rows mint access tokens with the refresh-token grant, cache them per config, re-mint before expiry, and send `Authorization: Bearer` themselves.
 - `subscriptions/listen` is not supported. Tool lists refresh when `ttlMs` expires. MRTR `input_required` results surface as tool errors.
-- A `sandbox` row routes calls over the machine socket to the `broods machine --mcp` daemon on the user's computer.
+- A `sandbox` row routes calls over the machine socket to the `broods machine --mcp` daemon on the user's computer. When the named sandbox is a persistent `lambda` one, `src/harness/mcp/sandbox.ts` instead reserves its MicroVM and POSTs each JSON-RPC request with the row's `command` to the image's `/mcp` on port 8080, which spawns the stdio server once and keeps it for the VM's lifetime. It reserves on the key `bash` uses (the workspace namespace when a workspace mounts the agent's first sandbox), reuses the endpoint and token for 60 s after the last call, and never resends a request. Its listings use the remote listing cache, keyed on the row's `updatedAt` and the reservation.
 
 ### Hosted servers
 

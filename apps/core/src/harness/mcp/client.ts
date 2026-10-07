@@ -6,8 +6,9 @@
  * row runs the same transport with every request routed through the Lambda
  * host (hosted.ts). A "machine" row never dials: the daemon on the user's
  * computer runs the MCP client for its stdio server, and core relays the
- * listing and each call over the machine socket. The version probe and tool listings
- * are cached in-process per server row (keyed by row version, resolved headers
+ * listing and each call over the machine socket; on a lambda sandbox the VM
+ * runs it and core relays each request over HTTP (sandbox.ts). The version
+ * probe and tool listings are cached in-process per server row (keyed by row version, resolved headers
  * and oauth config, so an edit is a cache miss), honoring the ttlMs the spec
  * puts on cacheable results. A row with oauth mints a bearer token (oauth.ts)
  * at connect time.
@@ -16,11 +17,13 @@
 import {
   Client,
   isCallToolResult,
+  isSpecType,
   StreamableHTTPClientTransport,
   type CallToolResult,
   type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
+import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { cacheDigest } from "../../shared/cache-digest.ts";
 import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
@@ -46,6 +49,7 @@ import {
   mcpAccessToken,
   type ResolvedMcpOauth,
 } from "./oauth.ts";
+import { sandboxMcpRequest, type SandboxMcpTarget } from "./sandbox.ts";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
@@ -78,6 +82,8 @@ export interface McpConnection {
   oauth?: ResolvedMcpOauth;
   /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
   uncached?: boolean;
+  /** Set when a "machine" row names a lambda sandbox: its VM runs the server, not a daemon. */
+  sandbox?: SandboxMcpTarget;
 }
 
 /** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
@@ -124,6 +130,12 @@ export async function callMcpTool(
     );
   }
 
+  // An image is something the model can look at, so a result carrying one goes
+  // through as content parts instead of being flattened to text.
+  if (result.content.some((block): boolean => block.type === "image")) {
+    return imageContentOutput(result.content, result.structuredContent);
+  }
+
   return result.structuredContent ?? renderContent(result.content);
 }
 
@@ -141,9 +153,19 @@ export async function callMcpToolResult(
     return await testOverrides.callTool(connection, toolName, args);
   }
   if (connection.record.transport === "machine") {
-    // The daemon's own SDK client produced this, but it crossed a socket and
-    // the frame parser only checks the envelope, so the payload is checked here.
-    const relayed = await runMachineMcpCall(connection.record, toolName, args);
+    // The daemon's or VM's own SDK client produced this, but it crossed a
+    // socket and the relay only checks the envelope, so the payload is checked here.
+    const relayed = connection.sandbox
+      ? await sandboxMcpRequest(
+          connection.sandbox,
+          connection.record.name,
+          {
+            method: "tools/call",
+            params: { name: toolName, arguments: args },
+          },
+          options.abortSignal,
+        )
+      : await runMachineMcpCall(connection.record, toolName, args);
     if (!isCallToolResult(relayed)) {
       throw new Error(
         `MCP tool ${connection.record.name}.${toolName} answered with a result this SDK does not accept`,
@@ -177,18 +199,45 @@ export async function listMcpTools(
   if (testOverrides?.listTools) {
     return await testOverrides.listTools(connection);
   }
-  // Uncached: the daemon answers from the live server process.
-  if (connection.record.transport === "machine") {
-    return (await runMachineMcpList(connection.record)) as Tool[];
-  }
-  if (connection.uncached) {
-    const result = await withClient(
-      connection,
-      (client) => client.listTools(),
-      onCpuUsec,
-    );
+  // Uncached: the daemon answers from the live server process. A lambda
+  // sandbox row is cached like a remote one, so a run does not wake its VM
+  // just to learn a listing that changes only with the row.
+  if (connection.record.transport === "machine" && !connection.sandbox) {
+    const tools = await runMachineMcpList(connection.record);
+    if (!tools.every((tool) => isSpecType.Tool(tool))) {
+      throw new Error(
+        `MCP server ${connection.record.name} listed a tool this SDK does not accept`,
+      );
+    }
 
-    return result.tools;
+    return tools;
+  }
+  const fetchListing = async (): Promise<{
+    tools: Tool[];
+    ttlMs?: unknown;
+  }> => {
+    if (!connection.sandbox) {
+      return await withClient(
+        connection,
+        (client) => client.listTools(),
+        onCpuUsec,
+      );
+    }
+    const listing = await sandboxMcpRequest(
+      connection.sandbox,
+      connection.record.name,
+      { method: "tools/list", params: {} },
+    );
+    if (!isSpecType.ListToolsResult(listing)) {
+      throw new Error(
+        `MCP server ${connection.record.name} answered tools/list with a result this SDK does not accept`,
+      );
+    }
+
+    return listing;
+  };
+  if (connection.uncached) {
+    return (await fetchListing()).tools;
   }
   const key = cacheKeyFor(connection);
   const cached = toolListCache.get(key);
@@ -196,11 +245,7 @@ export async function listMcpTools(
     if (cached.expiresAt > Date.now()) return await cached.tools;
     toolListCache.delete(key);
   }
-  const pending = withClient(
-    connection,
-    (client) => client.listTools(),
-    onCpuUsec,
-  ).then((result) => {
+  const pending = fetchListing().then((result) => {
     const entry = toolListCache.get(key);
     if (entry) {
       entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);
@@ -296,12 +341,13 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 }
 
 /**
- * One cache identity per server row version, resolved header set and oauth
- * config, so a row edit or a credential change is a miss instead of stale
- * data for a TTL. The credentials ride the key only as a process-keyed
- * digest: a Map key lives process-wide for up to an hour and must not hold
- * them in clear. A hosted row adds the agent: its answers come from that
- * agent's own child, so one agent never reads what another agent's child said.
+ * One cache identity per server row version, sandbox image, resolved header
+ * set and oauth config, so a row edit or a credential change is a miss
+ * instead of stale data for a TTL. The credentials ride the key only as a
+ * process-keyed digest: a Map key lives process-wide for up to an hour and
+ * must not hold them in clear. A hosted row adds the agent: its answers come
+ * from that agent's own child. A lambda row's listing does not depend on
+ * which VM answered, so every conversation shares it.
  */
 export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
@@ -313,7 +359,7 @@ export function cacheKeyFor(connection: McpConnection): string {
   const agent =
     connection.record.transport === "hosted" ? (connection.agentId ?? "") : "";
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${credentials}:${agent}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${connection.sandbox?.config.image ?? ""}:${credentials}:${agent}`;
 }
 
 /** The chain as a remote server sees it: ids and kinds, never a display name. The ledger and the OPA input keep the name. */
@@ -421,6 +467,33 @@ function pruneCache(cache: Map<string, unknown>): void {
     if (oldest === undefined) break;
     cache.delete(oldest);
   }
+}
+
+/**
+ * A result's content as model content parts: images as image data, the rest as
+ * text, and any structuredContent as one more JSON text part.
+ */
+function imageContentOutput(
+  content: CallToolResult["content"],
+  structured: CallToolResult["structuredContent"],
+): ToolResultOutput {
+  return {
+    type: "content",
+    value: [
+      ...content.map((block) =>
+        block.type === "image"
+          ? {
+              type: "image-data" as const,
+              data: block.data,
+              mediaType: block.mimeType,
+            }
+          : { type: "text" as const, text: renderContent([block]) },
+      ),
+      ...(structured
+        ? [{ type: "text" as const, text: JSON.stringify(structured) }]
+        : []),
+    ],
+  };
 }
 
 /**

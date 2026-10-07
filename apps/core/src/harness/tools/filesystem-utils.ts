@@ -125,15 +125,29 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-/** Whether bash reaches the default sandbox by name: it exists and no workspace mounts it. */
-export function hasStandaloneSandbox(context: SandboxToolContext): boolean {
-  if (!context.sandboxes?.[0]) {
-    return false;
-  }
+/** The exec timeout a run on `config` gets: its own, within the provider's limits. */
+export function sandboxTimeoutSeconds(config: SandboxExecutorConfig): number {
+  const limits = workspaceSandboxLimits(config.provider);
 
-  return !context.workspaces.some((workspace): boolean =>
+  return boundedInteger(
+    config.timeout,
+    limits.defaultTimeoutSeconds,
+    limits.maxTimeoutSeconds,
+  );
+}
+
+/** The workspace mounted in the agent's own (first) sandbox, if any. bash, browse and lambda MCP rows run there. */
+export function agentOwnWorkspace(
+  context: SandboxToolContext,
+): ResolvedWorkspace | undefined {
+  return context.workspaces.find((workspace): boolean =>
     isAgentOwnSandbox(workspace, context),
   );
+}
+
+/** Whether bash reaches the default sandbox by name: it exists and no workspace mounts it. */
+export function hasStandaloneSandbox(context: SandboxToolContext): boolean {
+  return Boolean(context.sandboxes?.[0]) && !agentOwnWorkspace(context);
 }
 
 /**
@@ -185,9 +199,7 @@ export function resolveAgentSandbox(
   }
   const mountedBy =
     context.sandboxes?.[0]?.name === requested
-      ? context.workspaces.find((workspace): boolean =>
-          isAgentOwnSandbox(workspace, context),
-        )
+      ? agentOwnWorkspace(context)
       : undefined;
   if (mountedBy) {
     throw new Error(
@@ -337,11 +349,7 @@ export async function runSandboxBackground(
     ...(options.callback ? { callback: options.callback } : {}),
     ...(options.metadata ? { metadata: options.metadata } : {}),
     workspaceRoot: workspaceRootFor(config),
-    timeoutSeconds: boundedInteger(
-      config.timeout,
-      limits.defaultTimeoutSeconds,
-      limits.maxTimeoutSeconds,
-    ),
+    timeoutSeconds: sandboxTimeoutSeconds(config),
     outputLimitBytes: boundedInteger(
       config.outputLimitBytes,
       limits.defaultOutputLimitBytes,
@@ -888,11 +896,7 @@ async function runSandboxOn(
       : {}),
     ...(options?.metadata ? { metadata: options.metadata } : {}),
     ...(options?.principal ? { principal: options.principal } : {}),
-    timeoutSeconds: boundedInteger(
-      config.timeout,
-      limits.defaultTimeoutSeconds,
-      limits.maxTimeoutSeconds,
-    ),
+    timeoutSeconds: sandboxTimeoutSeconds(config),
     outputLimitBytes: boundedInteger(
       config.outputLimitBytes,
       limits.defaultOutputLimitBytes,
@@ -908,8 +912,9 @@ function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
 }
 
 // The reservation key a namespace-less run reconnects on, normally derived per
-// agent by resolveAgentRuntime rather than written by the author.
-function statelessReservationKeyFor(
+// agent by resolveAgentRuntime rather than written by the author. Lambda-hosted
+// MCP rows (tools/index.ts) reserve on it too, so they share bash's VM.
+export function statelessReservationKeyFor(
   config: SandboxExecutorConfig,
 ): string | undefined {
   const options = isPlainObject(config.options) ? config.options : {};

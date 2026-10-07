@@ -1716,6 +1716,12 @@ paths:
                         enum: [tiny, xsmall, small, medium, large],
                         description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (MicroVM bakes size into the image; daytona/e2b/vercel size themselves). Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
                       }
+                    image:
+                      {
+                        type: string,
+                        enum: [browser, obscura],
+                        description: "Platform MicroVM image variant to boot instead of the default (lambda only). `obscura` adds the Obscura headless browser (markdown/text/link dumps, screenshots, CDP and MCP servers); `browser` adds headless Chromium for pixel-exact rendering. Cannot be set with `snapshot` or `fallbackProvider`.",
+                      }
                     snapshot:
                       {
                         type: string,
@@ -4551,6 +4557,11 @@ components:
           $ref: "#/components/schemas/SubagentConfig"
         scheduler:
           $ref: "#/components/schemas/SchedulerConfig"
+        browser:
+          type: object
+          properties:
+            enabled: { type: boolean }
+          description: 'Registers the `browse` tool, which opens public web pages with Obscura on the first sandbox. That sandbox must be lambda with image "obscura" and network.mode allow-all, or a machine with obscura installed; otherwise the run fails.'
         policies:
           type: array
           items: { type: string }
@@ -5580,9 +5591,23 @@ components:
         sandbox:
           type: string
           description: >-
-            Name of a `machine` sandbox (`transport: machine`). Its daemon,
-            started with `broods machine <sandbox> --mcp <file>`, runs the
-            stdio server with the same name. headers and oauth do not apply.
+            Name of the sandbox that runs the stdio server (`transport:
+            machine`). On a `machine` sandbox its daemon, started with `broods
+            machine <sandbox> --mcp <file>`, runs the server with the same
+            name. On a persistent `lambda` sandbox the VM runs `command`.
+            headers and oauth do not apply.
+        command:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: string
+            minLength: 1
+            maxLength: 4096
+          description: >-
+            Argv of the stdio server, only with `sandbox`; required when the
+            sandbox is a `lambda` one, e.g. `["obscura", "mcp"]`. A machine
+            sandbox's daemon ignores it.
         bundle:
           type: string
           description: >-
@@ -5670,6 +5695,11 @@ components:
         sandbox:
           type: string
           description: As on create.
+        command:
+          type: array
+          items:
+            type: string
+          description: As on create.
         bundle:
           type: string
           description: As on create. Replaces the hosted module.
@@ -5718,7 +5748,12 @@ components:
           type: string
         sandbox:
           type: string
-          description: Machine-only; name of the machine sandbox whose daemon serves it.
+          description: Machine-only; name of the sandbox (machine or lambda) that serves it.
+        command:
+          type: array
+          items:
+            type: string
+          description: Machine-only; argv of the stdio server a lambda sandbox runs.
         sha256:
           type: string
           description: Hosted-only; sha256 of the uploaded server bundle.

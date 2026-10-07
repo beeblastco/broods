@@ -10,7 +10,12 @@ import {
   type Storage,
 } from "../src/shared/storage.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
-import { setMcpForTests } from "../src/harness/mcp/client.ts";
+import {
+  callMcpTool,
+  mcpConnection,
+  setMcpForTests,
+  type McpConnection,
+} from "../src/harness/mcp/client.ts";
 import type { CronRecord } from "../src/shared/domain/cron.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
@@ -66,6 +71,37 @@ describe("createTools", () => {
     );
 
     expect(Object.keys(tools)).toContain("computer");
+  });
+
+  it("registers browse only with config.browser on an Obscura sandbox", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const sandboxes = [
+      {
+        name: "web",
+        sandbox: {
+          provider: "lambda" as const,
+          image: "obscura" as const,
+          network: { mode: "allow-all" as const },
+        },
+      },
+    ];
+    const context = { ...createToolContext(), sandboxes: sandboxes };
+
+    expect(
+      Object.keys(await createTools(context, { browser: { enabled: true } })),
+    ).toContain("browse");
+    expect(Object.keys(await createTools(context, {}))).not.toContain("browse");
+    const refused = await createTools(
+      {
+        ...createToolContext(),
+        sandboxes: [{ name: "base", sandbox: { provider: "lambda" } }],
+      },
+      { browser: { enabled: true } },
+    ).then(
+      (): string => "registered",
+      (error: unknown): string => String(error),
+    );
+    expect(refused).toContain('image: "obscura"');
   });
 
   it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {
@@ -1230,6 +1266,39 @@ describe("connected MCP servers", () => {
     expect(result).toEqual({ hits: 3 });
   });
 
+  it("hands an image result to the model as image data, not as text", async () => {
+    setMcpForTests({
+      callTool: async function () {
+        return {
+          content: [
+            { type: "text" as const, text: "Viewport of example.com" },
+            {
+              type: "image" as const,
+              data: "iVBORw0KGgo=",
+              mimeType: "image/png",
+            },
+          ],
+          structuredContent: { width: 1280 },
+        };
+      },
+    });
+
+    const result = await callMcpTool(
+      mcpConnection(mcpRecord(), undefined),
+      "screenshot",
+      {},
+    );
+
+    expect(result).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "Viewport of example.com" },
+        { type: "image-data", data: "iVBORw0KGgo=", mediaType: "image/png" },
+        { type: "text", text: '{"width":1280}' },
+      ],
+    });
+  });
+
   it("filters by the row's allowedTools and skips disabled rows", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setMcpForTests({
@@ -1324,6 +1393,55 @@ describe("connected MCP servers", () => {
       mcp: { [serverId]: {} },
     });
     expect(Object.keys(tools)).toEqual(["search__browser_navigate"]);
+  });
+
+  it("runs a machine row on a lambda sandbox in its VM and needs a command", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const web = {
+      provider: "lambda" as const,
+      persistent: true,
+      options: { reservationKey: "acct_test:web" },
+    };
+    const context = {
+      ...createToolContext(),
+      sandboxes: [{ name: "web", sandbox: web }],
+    };
+    const machineRow = {
+      name: "obscura",
+      transport: "machine" as const,
+      url: undefined,
+      sandbox: "web",
+    };
+    let listed: McpConnection | undefined;
+    setMcpForTests({
+      listTools: async function (connection: McpConnection) {
+        listed = connection;
+
+        return [{ name: "navigate", inputSchema: { type: "object" as const } }];
+      },
+    });
+
+    setStorageForTests(
+      storageWithMcp(mcpRecord({ ...machineRow, command: ["obscura", "mcp"] })),
+    );
+    const tools = await createTools(context, { mcp: { [serverId]: {} } });
+    expect(Object.keys(tools)).toContain("obscura__navigate");
+    expect(listed?.sandbox).toEqual({
+      config: web,
+      reservationKey: "acct_test:web",
+      command: ["obscura", "mcp"],
+    });
+
+    setStorageForTests(storageWithMcp(mcpRecord(machineRow)));
+    const refused = await createTools(context, {
+      mcp: { [serverId]: {} },
+    }).then(
+      (): string => "registered",
+      (error: unknown): string => String(error),
+    );
+    expect(refused).toContain(
+      `config.mcp.${serverId} runs on lambda sandbox "web" and needs command`,
+    );
   });
 
   it("skips a server whose listing fails instead of killing the run", async () => {

@@ -43,10 +43,12 @@ import {
   type McpConnection,
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
+import type { SandboxMcpTarget } from "../mcp/sandbox.ts";
 import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
+import browseTool, { assertBrowseSandbox } from "./browse.tool.ts";
 import computerTool from "./computer.tool.ts";
 import {
   sendFilesTool,
@@ -59,10 +61,12 @@ import {
 } from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
+  agentOwnWorkspace,
   hasStandaloneSandbox,
   machineSandboxes,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  statelessReservationKeyFor,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
@@ -141,9 +145,11 @@ export async function createTools(
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const sandboxes = context.sandboxes ?? [];
   const defaultSandbox = sandboxes[0]?.sandbox;
+  // bash and browse: every sandbox the agent reaches, metered per exec.
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
     sandboxes: sandboxes,
+    ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
     principal: (): SandboxRunPrincipal | undefined =>
       context.session?.sandboxPrincipal(),
   };
@@ -197,15 +203,14 @@ export async function createTools(
   // bash: the agent's own sandbox, or any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured
   // default; if that default is read-only, the tool returns a clear error instead
-  // of silently selecting the first writable workspace. Background jobs and CPU
-  // metering are bash's alone.
+  // of silently selecting the first writable workspace. Background jobs are
+  // bash's alone.
   if (sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
       bashTool({
         ...sandboxContext,
         ...(backgroundContext ? { background: backgroundContext } : {}),
-        ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }),
     );
   }
@@ -214,6 +219,12 @@ export async function createTools(
   const machines = machineSandboxes(sandboxes);
   if (machines.length > 0) {
     Object.assign(sandboxTools, computerTool(machines));
+  }
+  // browse: opt-in, on the agent's first sandbox. A sandbox without Obscura fails
+  // the run here rather than handing the model a tool that cannot work.
+  if (agentConfig.browser?.enabled === true) {
+    assertBrowseSandbox(defaultSandbox);
+    Object.assign(sandboxTools, browseTool(sandboxContext));
   }
   // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {
@@ -461,6 +472,42 @@ function isToolEnabled(
 }
 
 /**
+ * Where a lambda-hosted MCP row runs: the VM bash reaches on the same sandbox,
+ * which is the workspace's when one mounts the agent's first sandbox. A missing
+ * command or a non-persistent sandbox is a config error, not a quiet skip.
+ */
+function sandboxMcpTarget(
+  serverId: string,
+  command: string[] | undefined,
+  host: ResolvedAgentSandbox,
+  context: Omit<ToolContext, "config">,
+): SandboxMcpTarget {
+  if (!command) {
+    throw new Error(
+      `config.mcp.${serverId} runs on lambda sandbox "${host.name}" and needs command`,
+    );
+  }
+  const workspace =
+    host === context.sandboxes?.[0]
+      ? agentOwnWorkspace({
+          workspaces: context.workspaces ?? [],
+          sandboxes: context.sandboxes,
+        })
+      : undefined;
+  const config = workspace?.sandbox ?? host.sandbox;
+  const reservationKey = workspace
+    ? workspace.namespace
+    : statelessReservationKeyFor(host.sandbox);
+  if (config.persistent !== true || !reservationKey) {
+    throw new Error(
+      `config.mcp.${serverId} runs on lambda sandbox "${host.name}", which must be persistent`,
+    );
+  }
+
+  return { config: config, reservationKey: reservationKey, command: command };
+}
+
+/**
  * Register every enabled connected MCP server's tools (#331). Listings come
  * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
  * the discovery round-trip.
@@ -499,6 +546,22 @@ async function registerMcpTools(
           serverConfig.oauth,
           context.session?.principal,
         );
+        // A machine row on a lambda sandbox runs in that VM; on a machine
+        // sandbox the daemon serves it from its own --mcp file.
+        const host = context.sandboxes?.find(
+          (entry) => entry.name === record.sandbox,
+        );
+        if (
+          record.transport === "machine" &&
+          host?.sandbox.provider === "lambda"
+        ) {
+          connection.sandbox = sandboxMcpTarget(
+            serverId,
+            record.command,
+            host,
+            context,
+          );
+        }
         // An unreachable server degrades to zero tools for this run instead
         // of killing every agent run that references it; config errors above
         // (unknown id, unresolved header) still throw.

@@ -53,27 +53,28 @@ Names are uppercase letters, digits and underscores. A sync fails, and writes no
 
 The agent's model, instructions, tools, and what it can reach. See [Agents](../guides/agents.md).
 
-| Field               | Description                                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `name`              | Unique per stage. Required                                                                             |
-| `description`       | Shown to parent agents choosing a subagent                                                             |
-| `provider`          | Credentials per model provider. See [providers](#model-providers)                                      |
-| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId` |
-| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                          |
-| `harness`           | A `defineHarness()` value to replace the built-in loop                                                 |
-| `tools`             | Provider-executed tools, keyed by the provider's tool name                                             |
-| `mcp`               | MCP servers to enable, keyed by server name                                                            |
-| `connections`       | Channel connections the agent answers on                                                               |
-| `sandboxes`         | Sandboxes it can use. The first is the default                                                         |
-| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                              |
-| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                        |
-| `skills`            | `enabled`, `allowed` skill resources                                                                   |
-| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                   |
-| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
-| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
-| `policies`          | Policies that gate the agent. Each carries its own mode                                                |
-| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                     |
-| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                           |
+| Field               | Description                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `name`              | Unique per stage. Required                                                                               |
+| `description`       | Shown to parent agents choosing a subagent                                                               |
+| `provider`          | Credentials per model provider. See [providers](#model-providers)                                        |
+| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`   |
+| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                            |
+| `harness`           | A `defineHarness()` value to replace the built-in loop                                                   |
+| `tools`             | Provider-executed tools, keyed by the provider's tool name                                               |
+| `mcp`               | MCP servers to enable, keyed by server name                                                              |
+| `connections`       | Channel connections the agent answers on                                                                 |
+| `sandboxes`         | Sandboxes it can use. The first is the default                                                           |
+| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                |
+| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                          |
+| `skills`            | `enabled`, `allowed` skill resources                                                                     |
+| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                     |
+| `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox needs `image: "obscura"` and `allow-all` |
+| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                           |
+| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                  |
+| `policies`          | Policies that gate the agent. Each carries its own mode                                                  |
+| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                       |
+| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                             |
 
 ```ts
 import { defineAgent, env } from "broods";
@@ -236,6 +237,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |
 | `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                   |
+| `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. Not with `snapshot` or `fallbackProvider`                        |
 | `snapshot`             | provider   | Image or snapshot to boot from. On `lambda`, a platform MicroVM image ARN                                                      |
 | `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                             |
 | `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                    |
@@ -301,7 +303,8 @@ An MCP server whose tools the agent sees as `<name>__<tool>`. Give exactly one o
 | `name`         | 1 to 32 lowercase letters, digits or hyphens, starting with a letter                                         |
 | `url`          | External server over stateless HTTP. Public host, no redirects                                               |
 | `handler`      | Hosted server built with `createMcpHandler` from `@modelcontextprotocol/server`, bundled by the CLI          |
-| `sandbox`      | A `machine` sandbox whose daemon runs the stdio server of the same name                                      |
+| `sandbox`      | A `machine` sandbox whose daemon runs the stdio server of the same name, or a persistent `lambda` sandbox    |
+| `command`      | Argv of the stdio server, such as `["obscura", "mcp"]`. Required on a `lambda` sandbox                       |
 | `headers`      | Request headers. Credentials must be `"Bearer ${NAME}"` refs                                                 |
 | `oauth`        | `{ clientId, clientSecret, refreshToken, tokenUrl? }` for expiring tokens. No Authorization header alongside |
 | `allowedTools` | Tools to register. Omit for all                                                                              |

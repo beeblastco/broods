@@ -11,6 +11,7 @@
  */
 
 import type { Readable } from "node:stream";
+import type { SandboxImage } from "@broods/convex/model/sandboxRules";
 import type {
   SandboxNetworkMode,
   SandboxProvider,
@@ -52,6 +53,8 @@ export interface SandboxExecutorConfig {
   // Predefined compute size; drives workdir create-time resources (see
   // _shared/sandbox-sizes). Advisory on providers that size natively.
   size?: SandboxSize;
+  // Platform MicroVM image variant by name (lambda only, never with `snapshot`).
+  image?: SandboxImage;
   // Prebuilt image/snapshot to launch from (workdir image id/name, MicroVM image
   // ARN). Consumed by the self-hosted backends; unset boots the provider default.
   snapshot?: string;

@@ -22,6 +22,8 @@ import { ClientError } from "./clientError";
 import { isSecretName } from "./secretNames";
 
 const MAX_ALLOWED_TOOLS = 256;
+const MAX_COMMAND_ARGS = 32;
+const MAX_COMMAND_ARG_LENGTH = 4096;
 /**
  * An inline `bundle` rides the JSON body, which Convex caps at ~20 MB; bigger
  * goes through file storage as `bundleStorageId` (#190). Both values mirror
@@ -86,8 +88,10 @@ export interface McpInput {
   description?: string;
   transport?: McpTransport;
   url?: string;
-  /** Machine-only: the machine sandbox (by name) whose daemon serves it. */
+  /** Machine-only: the sandbox (by name) that serves it. */
   sandbox?: string;
+  /** Machine-only: argv of the stdio server; a lambda sandbox needs it. */
+  command?: string[];
   /** Hosted-only: bundled server module source; sha256 derived from it. */
   bundle?: string;
   /**
@@ -107,15 +111,16 @@ export interface McpInput {
 
 /**
  * Invariants on the row a create or update produces, whichever side brings
- * each field: a machine row names its sandbox, only a hosted row picks a
- * runtime, and oauth needs an external row
- * with an https url (the minted bearer rides every request) and no
- * Authorization header (core mints it itself).
+ * each field: a machine row names its sandbox, only it carries a command,
+ * only a hosted row picks a runtime, and oauth needs an external row with an
+ * https url (the minted bearer rides every request) and no Authorization
+ * header (core mints it itself).
  */
 export function assertMcpRow(row: {
   transport: McpTransport;
   url?: string;
   sandbox?: string;
+  command?: string[];
   runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
@@ -124,6 +129,9 @@ export function assertMcpRow(row: {
     throw new ClientError(
       "a machine MCP server needs the sandbox that serves it",
     );
+  }
+  if (row.transport !== "machine" && row.command !== undefined) {
+    throw new ClientError("command applies to a server on a sandbox");
   }
   // A patch that carries headers alone leaves `transport` unset, so the body
   // normalizer's own check never sees it.
@@ -298,9 +306,31 @@ function normalizeBundle(value: unknown): string {
   return value;
 }
 
+/** A stdio server's argv: non-empty strings, bounded in count and length. */
+function normalizeCommand(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_COMMAND_ARGS ||
+    !value.every(
+      (arg): arg is string =>
+        typeof arg === "string" &&
+        arg.length > 0 &&
+        arg.length <= MAX_COMMAND_ARG_LENGTH,
+    )
+  ) {
+    throw new ClientError(
+      `command must be 1-${MAX_COMMAND_ARGS} non-empty strings of at most ${MAX_COMMAND_ARG_LENGTH} characters, like ["obscura", "mcp"]`,
+    );
+  }
+
+  return value;
+}
+
 /**
  * A `url` makes an "http" row; a `bundle` or `bundleStorageId` a "hosted"
- * one. Exactly one connection may be given.
+ * one; a `sandbox` a "machine" one, which alone may carry a `command`.
+ * Exactly one connection may be given.
  */
 function normalizeConnection(
   record: Record<string, unknown>,
@@ -330,7 +360,9 @@ function normalizeConnection(
   }
   if (record.sandbox !== undefined) {
     if (typeof record.sandbox !== "string" || record.sandbox.length === 0) {
-      throw new ClientError("sandbox must be the name of a machine sandbox");
+      throw new ClientError(
+        "sandbox must be the name of the sandbox that serves it",
+      );
     }
     input.sandbox = record.sandbox;
   }
@@ -353,6 +385,11 @@ function normalizeConnection(
     input.transport = "hosted";
   }
   if (input.sandbox !== undefined) input.transport = "machine";
+  // Only a sandbox row may carry one; assertMcpRow checks the row every write
+  // produces, including a patch that sets command alone.
+  if (record.command !== undefined && record.command !== null) {
+    input.command = normalizeCommand(record.command);
+  }
 }
 
 function normalizeDescription(value: unknown): string {

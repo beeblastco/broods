@@ -135,6 +135,7 @@ async function handleMcpCollectionRoute(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
+      ...(input.command !== undefined ? { command: input.command } : {}),
       ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }
@@ -198,6 +199,7 @@ async function patchMcpRoute(
     ...(input.transport !== undefined ? { transport: input.transport } : {}),
     ...(input.url !== undefined ? { url: input.url } : {}),
     ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
+    ...(input.command !== undefined ? { command: input.command } : {}),
     ...storedBundle,
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
     ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
@@ -283,6 +285,7 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
     transport: record.transport,
     ...(record.url !== undefined ? { url: record.url } : {}),
     ...(record.sandbox !== undefined ? { sandbox: record.sandbox } : {}),
+    ...(record.command !== undefined ? { command: record.command } : {}),
     ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
     ...(record.transport === "hosted"
       ? { runtime: record.runtime ?? "auto" }

@@ -262,8 +262,9 @@ export const mcpFields = {
   description: v.optional(v.string()),
   /**
    * "http" connects to an external url; "hosted" runs an uploaded bundle on
-   * Cloudflare Workers or the Lambda host (see `runtime`); "machine" is a stdio server on the user's own computer,
-   * reached through the daemon of the machine sandbox named in `sandbox`.
+   * Cloudflare Workers or the Lambda host (see `runtime`); "machine" is a stdio
+   * server on the sandbox named in `sandbox`: a machine sandbox's daemon, or a
+   * lambda sandbox's MicroVM.
    */
   transport: v.union(
     v.literal("http"),
@@ -272,8 +273,10 @@ export const mcpFields = {
   ),
   /** Required for "http"; absent on "hosted" rows (the platform hosts them). */
   url: v.optional(v.string()),
-  /** Machine-only: name of the machine sandbox whose daemon serves it. */
+  /** Machine-only: name of the sandbox (machine or lambda) that serves it. */
   sandbox: v.optional(v.string()),
+  /** Machine-only: argv of the stdio server, required on a lambda sandbox. */
+  command: v.optional(v.array(v.string())),
   /** Hosted-only: Cloudflare Dynamic Workers can run the bundle; set by aws/bundles.ts putMcpBundle. */
   workersCompatible: v.optional(v.boolean()),
   /** Hosted-only, the owner's pick: "lambda" never runs on Workers; absent means "auto". */
