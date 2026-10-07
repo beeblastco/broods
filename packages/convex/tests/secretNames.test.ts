@@ -59,6 +59,7 @@ describe("isSecretName", (): void => {
       "maxOutputTokens",
       "noCacheTokens",
       "cacheReadTokens",
+      "cacheCreationInputTokens",
       "accessKeyId",
       "credentialAgentId",
       "oauth",
