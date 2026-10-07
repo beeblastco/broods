@@ -264,14 +264,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       // The next call's create can now overlap this delete at the admission ceiling.
       if (!persistent) {
         waitUntil(
-          sandbox.delete().catch((error: unknown): void => {
-            logWarn("workdir sandbox delete failed", {
-              sandboxId: sandbox.id,
-              error: toErrorMessage(error),
-            });
-          }),
+          sandbox.delete().then(
+            (): void => endMeter?.(),
+            (error: unknown): void => {
+              logWarn("workdir sandbox delete failed", {
+                sandboxId: sandbox.id,
+                error: toErrorMessage(error),
+              });
+            },
+          ),
         );
-        endMeter?.();
       }
     }
   }

@@ -109,8 +109,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       return this.#adaptResult(result, request, startedAt);
     } finally {
       if (!persistent) {
-        endMeter?.();
-        await sandbox.stop().catch(() => {});
+        await sandbox.stop().then(
+          (): void => endMeter?.(),
+          (): void => {},
+        );
       }
     }
   }

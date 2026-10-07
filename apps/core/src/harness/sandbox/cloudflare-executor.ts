@@ -134,7 +134,8 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     } finally {
       if (!reserved) {
         waitUntil(
-          this.#bridge(`/v1/sandboxes/${id}`, "DELETE").catch(
+          this.#bridge(`/v1/sandboxes/${id}`, "DELETE").then(
+            (): void => endMeter?.(),
             (error: unknown): void =>
               logWarn("cloudflare sandbox destroy failed", {
                 id: id,
@@ -142,7 +143,6 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
               }),
           ),
         );
-        endMeter?.();
       }
     }
   }

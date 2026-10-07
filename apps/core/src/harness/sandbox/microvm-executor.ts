@@ -522,13 +522,19 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         startedAt,
       );
     } finally {
-      // The result is already in hand, so teardown must not be on the caller's clock:
-      // fire the terminate and drop the VM's dashboard row without awaiting either.
+      // The result is already in hand, so teardown must not be on the caller's clock.
+      // The row, which bills the VM, goes only once the VM is gone; a failed
+      // terminate keeps billing it until the stale-row sweep. The removal is queued
+      // after the upsert and burst writes, so a slow upsert cannot recreate it.
       if (!persistent) {
-        void this.#terminate(microvmId);
-        // Queued after the upsert and burst writes, off the tool-call clock;
-        // otherwise a slow upsert can recreate a deleted row. Shutdown drains it.
-        waitUntil(queueMirrorWrite(microvmId, () => this.#unmirror(microvmId)));
+        waitUntil(
+          this.#terminate(microvmId).then(
+            (gone: boolean): Promise<void> | undefined =>
+              gone
+                ? queueMirrorWrite(microvmId, () => this.#unmirror(microvmId))
+                : undefined,
+          ),
+        );
       }
     }
   }
@@ -1764,14 +1770,19 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  async #terminate(microvmId: string): Promise<void> {
+  /** Terminates the VM; resolves whether it is gone, never rejects. */
+  async #terminate(microvmId: string): Promise<boolean> {
     // Tokens are cached per (VM, port), so drop every port's entry for this VM.
     for (const key of authTokens.keys()) {
       if (key.startsWith(`${microvmId}:`)) authTokens.delete(key);
     }
-    await this.#client
+
+    return this.#client
       .send(new TerminateMicrovmCommand({ microvmIdentifier: microvmId }))
-      .catch(() => {});
+      .then(
+        (): boolean => true,
+        (error: unknown): boolean => isMicrovmGone(error),
+      );
   }
 
   // Drop an ephemeral VM's dashboard row; its reservation key is the microvmId.
