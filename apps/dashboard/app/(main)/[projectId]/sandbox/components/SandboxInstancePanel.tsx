@@ -106,21 +106,15 @@ export function SandboxInstancePanel({
   const controllable =
     Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
   const commandRunnable = controllable && instance.status !== "terminating";
-  // The self-hosted workdir `sandbox` provider exposes an in-guest PTY WebSocket,
-  // AWS MicroVM (`lambda`) exposes its native shell endpoint and the `cloudflare`
-  // bridge opens a PTY in its Container; the other third-party providers keep the
-  // bounded command runner. A stopped Cloudflare Container refuses the PTY until a
-  // command starts it again, so it keeps the runner beside the terminal.
+  // The self-hosted workdir `sandbox` provider exposes an in-guest PTY WebSocket
+  // and AWS MicroVM (`lambda`) exposes its native shell endpoint; the third-party
+  // providers keep the bounded command runner.
   const supportsLiveTerminal =
-    instance.provider === "sandbox" ||
-    instance.provider === "lambda" ||
-    instance.provider === "cloudflare";
+    instance.provider === "sandbox" || instance.provider === "lambda";
   // Only the workdir `sandbox` provider has a runtime snapshot-to-image API, so
   // the capture action is hidden elsewhere. The others still keep state across
   // idle through suspend/resume.
   const supportsSnapshot = instance.provider === "sandbox";
-  const liveTerminal =
-    supportsLiveTerminal && controllable && Boolean(instance.sandboxConfigId);
   // Only a provider with its own guest log stream can be tailed, and only a
   // deployment-scoped run has lines the gateway can find.
   const logSandboxId = instance.logStream
@@ -315,14 +309,13 @@ export function SandboxInstancePanel({
         )}
 
         <TabsContent value="terminal" className="mt-4">
-          {liveTerminal && instance.sandboxConfigId && (
+          {supportsLiveTerminal && controllable && instance.sandboxConfigId ? (
             <LiveSandboxTerminal
               sandboxId={instance.sandboxConfigId}
               reservationKey={instance.reservationKey}
               disabled={!commandRunnable}
             />
-          )}
-          {(!liveTerminal || instance.provider === "cloudflare") && (
+          ) : (
             <CommandRunner
               command={command}
               entries={terminalEntries}

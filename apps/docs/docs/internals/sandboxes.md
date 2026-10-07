@@ -183,7 +183,7 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 | `POST /v1/sandboxes/:id/exec`    | Starts the Container if needed, runs one argv, answers a `SandboxExecResponse` |
 | `GET /v1/sandboxes/:id`          | `{ running }`                                                                  |
 | `DELETE /v1/sandboxes/:id`       | Destroys the Container                                                         |
-| `GET /v1/sandboxes/:id/terminal` | PTY WebSocket, raw bytes both ways, for the dashboard terminal ticket          |
+| `GET /v1/sandboxes/:id/terminal` | PTY WebSocket, raw bytes both ways, for a `terminal` ticket                    |
 
 - A Durable Object exists once named, so a persistent reservation is only the claim: the executor claims `sandboxNamePrefix(key)` plus a random suffix, and a run that loses the race uses the winner's id.
 - Ephemeral runs use a fresh `fp-e-<uuid>` id and `DELETE` it afterwards. A platform-paid one gets an ephemeral `sandboxInstances` row for the call, removed at teardown, which meters it like the MicroVM and workdir ones.
@@ -307,7 +307,7 @@ The row exists before the launch, so a fast job's callback never arrives first. 
 
 ## Terminal
 
-Workdir and MicroVM instances get a real in-guest TTY in the dashboard. Other providers answer the terminal route as unsupported, and the dashboard keeps the bounded `exec` runner for them, at 30 s and 64 KiB per command.
+Workdir and MicroVM instances get a real in-guest TTY in the dashboard. A running Cloudflare Container answers the terminal route through its bridge, but the dashboard does not open it yet. Other providers answer the terminal route as unsupported, and the dashboard keeps the bounded `exec` runner for them, at 30 s and 64 KiB per command.
 
 ```mermaid
 sequenceDiagram

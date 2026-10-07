@@ -6,6 +6,7 @@
  * persistence means the same warm machine across calls, not durable files.
  */
 
+import { z } from "zod";
 import {
   MAX_OUTPUT_BYTES,
   MAX_TIMEOUT_MS,
@@ -60,6 +61,8 @@ const CLOUDFLARE_INSTANCES: Record<SandboxSize, string> = {
 };
 // Headroom over the command timeout for the bridge to start the Container.
 const BRIDGE_OVERHEAD_MS = 60_000;
+
+const statusResult = z.object({ running: z.boolean() });
 
 /** The platform bridge from core's env; the terminal ticket and every executor call use it. */
 export function cloudflareConnection(): { baseURL: string; apiKey: string } {
@@ -156,7 +159,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     const id = key ? await getSandboxExternalId("cloudflare", key) : null;
     if (!id) return null;
     const response = await this.#bridge(`/v1/sandboxes/${id}`, "GET");
-    const { running } = (await response.json()) as { running: boolean };
+    const { running } = statusResult.parse(await response.json());
 
     // A stopped Container has lost its disk, so there is nothing to resume.
     return running ? { externalId: id, state: "running" } : null;

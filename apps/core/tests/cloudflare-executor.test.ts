@@ -12,6 +12,17 @@ interface BridgeCall {
   body: Record<string, unknown> | null;
 }
 
+// A successful bridge exec answer, in the shared exec contract's shape.
+const EXEC_OK = {
+  ok: true,
+  exit_code: 0,
+  timed_out: false,
+  duration_ms: 5,
+  stdout: "ok\n",
+  stderr: "",
+  truncated: false,
+};
+
 const calls: BridgeCall[] = [];
 const mirrored: string[] = [];
 const restores: (() => void)[] = [];
@@ -25,30 +36,25 @@ beforeEach((): void => {
   claimWins = true;
   calls.length = 0;
   mirrored.length = 0;
-  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+  const bridge = async (
     input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> => {
     const headers = new Headers(init?.headers);
     calls.push({
       method: init?.method ?? "GET",
-      url: String(input),
+      url: urlOf(input),
       authorization: headers.get("Authorization"),
       body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
     });
-    if (String(input).endsWith("/exec"))
-      return Response.json({
-        ok: true,
-        exit_code: 0,
-        timed_out: false,
-        duration_ms: 5,
-        stdout: "ok\n",
-        stderr: "",
-        truncated: false,
-      });
 
-    return new Response(null, { status: 204 });
-  }) as typeof fetch);
+    return urlOf(input).endsWith("/exec")
+      ? Response.json(EXEC_OK)
+      : new Response(null, { status: 204 });
+  };
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(bridge, { preconnect: (): void => {} }),
+  );
   const getSpy = spyOn(
     instanceStore,
     "getSandboxExternalId",
@@ -195,20 +201,15 @@ it("runs a persistent config without an account as ephemeral", async (): Promise
 
 it("keeps the result when the ephemeral destroy fails", async (): Promise<void> => {
   const executor = new CloudflareSandboxExecutor(config);
-  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+  const failingDelete = async (
     input: string | URL | Request,
   ): Promise<Response> =>
-    String(input).endsWith("/exec")
-      ? Response.json({
-          ok: true,
-          exit_code: 0,
-          timed_out: false,
-          duration_ms: 5,
-          stdout: "ok\n",
-          stderr: "",
-          truncated: false,
-        })
-      : new Response("boom", { status: 500 })) as typeof fetch);
+    urlOf(input).endsWith("/exec")
+      ? Response.json(EXEC_OK)
+      : new Response("boom", { status: 500 });
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(failingDelete, { preconnect: (): void => {} }),
+  );
   restores.unshift((): void => fetchSpy.mockRestore());
 
   const result = await executor.run({
@@ -219,3 +220,9 @@ it("keeps the result when the ephemeral destroy fails", async (): Promise<void> 
 
   expect(result.ok).toBe(true);
 });
+
+function urlOf(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+
+  return input instanceof URL ? input.href : input.url;
+}
