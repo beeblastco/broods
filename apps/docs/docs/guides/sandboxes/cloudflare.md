@@ -38,4 +38,4 @@ export const helper = defineAgent({
 - Background jobs, suspend, resume and Create snapshot are not available.
 - `config.harness` agents cannot run on this provider. Use `sandbox` or `lambda`.
 - The live terminal opens only on a running Container. Run a command first to wake it.
-- Broods runs the Cloudflare account. A self-hosted deployment deploys its own bridge Worker, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).
+- The provider needs the bridge Worker on a Cloudflare account with Workers Paid (Containers). A deployment without it refuses every run with an error naming `CLOUDFLARE_SANDBOX_URL`. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).

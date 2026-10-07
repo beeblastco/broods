@@ -178,15 +178,17 @@ Credentials fall back to deployment env when a config omits them. Daytona reads 
 
 The Container API only answers inside a Durable Object, so `cloudflare-executor.ts` talks to the bridge Worker in `apps/cloudflare-sandbox` over HTTPS with `Authorization: Bearer $CLOUDFLARE_SANDBOX_API_KEY`. The Worker compares a SHA-256 of the header against its `SANDBOX_API_KEY` secret with `timingSafeEqual`. Each sandbox id is one `Sandbox` Durable Object owning one Container booted from the Worker's `Dockerfile`.
 
-| Route                            | Does                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------- |
-| `POST /v1/sandboxes/:id/exec`    | Starts the Container if needed, runs one argv, returns capped stdout and stderr |
-| `GET /v1/sandboxes/:id`          | `{ running }`                                                                   |
-| `DELETE /v1/sandboxes/:id`       | Destroys the Container                                                          |
-| `GET /v1/sandboxes/:id/terminal` | PTY WebSocket, raw bytes both ways, for the dashboard terminal ticket           |
+| Route                            | Does                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `POST /v1/sandboxes/:id/exec`    | Starts the Container if needed, runs one argv, answers a `SandboxExecResponse` |
+| `GET /v1/sandboxes/:id`          | `{ running }`                                                                  |
+| `DELETE /v1/sandboxes/:id`       | Destroys the Container                                                         |
+| `GET /v1/sandboxes/:id/terminal` | PTY WebSocket, raw bytes both ways, for the dashboard terminal ticket          |
 
 - A Durable Object exists once named, so a persistent reservation is only the claim: the executor claims `sandboxNamePrefix(key)` plus a random suffix, and a run that loses the race uses the winner's id.
-- Ephemeral runs use a fresh `fp-e-<uuid>` id and `DELETE` it afterwards.
+- Ephemeral runs use a fresh `fp-e-<uuid>` id and `DELETE` it afterwards. A platform-paid one gets an ephemeral `sandboxInstances` row for the call, removed at teardown, which meters it like the MicroVM and workdir ones.
+- The exec answer is the shared exec contract, so `parseExecResponse` and `execRunResult` turn it into a run result like the MicroVM and `custom` ones. Output is capped per stream in the Durable Object, so a chatty command cannot grow its memory.
+- `deploy.yaml` does not deploy the bridge. A deployment that offers the provider deploys it with `wrangler deploy` (Docker builds the image) and sets the key on both sides.
 - `lifecycle.idleTimeoutSeconds` becomes `setInactivityTimeout`, applied once per Durable Object instance. A Container that sleeps loses its disk, so `getInstanceInfo` reports it gone rather than suspended, and the next exec starts a fresh one.
 - `network.mode: "allow-all"` starts the Container with `enableInternet: true`; anything else starts it without internet. `restricted` is rejected.
 - `size` maps to the nearest named instance type, `standard-1` to `standard-4`. Custom types need a whole vCPU.

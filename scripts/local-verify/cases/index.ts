@@ -3,6 +3,7 @@ import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
+import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
@@ -35,6 +36,7 @@ export const verifyCases: readonly VerifyCase[] = [
   sandboxImage,
   browserSandbox,
   customSandbox,
+  cloudflareSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,

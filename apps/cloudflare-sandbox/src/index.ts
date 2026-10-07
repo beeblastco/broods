@@ -37,13 +37,19 @@ interface Env {
   SANDBOX_API_KEY: string;
 }
 
-/** One finished command, its output capped at the request's limit per stream. */
+/**
+ * One finished command, its output capped at the request's limit per stream.
+ * The shape of core's `SandboxExecResponse` (the sandbox exec contract), so
+ * core reads it with the parser every exec server goes through.
+ */
 export interface ExecResult {
-  exitCode: number | null;
+  ok: boolean;
+  exit_code: number | null;
+  timed_out: boolean;
+  duration_ms: number;
   stdout: string;
   stderr: string;
   truncated: boolean;
-  timedOut: boolean;
 }
 
 /** One sandbox: the Container it starts and the commands core runs in it. */
@@ -52,6 +58,7 @@ export class Sandbox extends DurableObject<Env> {
 
   /** Starts the Container on first use, then runs one command to completion. */
   async exec(request: ExecRequest): Promise<ExecResult> {
+    const startedAt = Date.now();
     const container = this.#container();
     await this.#ensureRunning(container, request);
     const signal = AbortSignal.timeout(request.timeoutMs);
@@ -65,14 +72,17 @@ export class Sandbox extends DurableObject<Env> {
       readCapped(process.stdout, request.outputLimitBytes, signal),
       readCapped(process.stderr, request.outputLimitBytes, signal),
     ]);
-    const exitCode = await process.exitCode.catch((): null => null);
+    const finished = await process.exitCode.catch((): null => null);
+    const exitCode = signal.aborted ? null : finished;
 
     return {
-      exitCode: signal.aborted ? null : exitCode,
+      ok: exitCode === 0,
+      exit_code: exitCode,
+      timed_out: signal.aborted,
+      duration_ms: Date.now() - startedAt,
       stdout: stdout.text,
       stderr: stderr.text,
       truncated: stdout.truncated || stderr.truncated,
-      timedOut: signal.aborted,
     };
   }
 

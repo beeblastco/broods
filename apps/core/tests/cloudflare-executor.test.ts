@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
+import { drainInFlight } from "../src/shared/in-flight.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import { CloudflareSandboxExecutor } from "../src/harness/sandbox/cloudflare-executor.ts";
@@ -12,6 +13,7 @@ interface BridgeCall {
 }
 
 const calls: BridgeCall[] = [];
+const mirrored: string[] = [];
 const restores: (() => void)[] = [];
 let stored: string | null = null;
 let claimWins = true;
@@ -22,6 +24,7 @@ beforeEach((): void => {
   stored = null;
   claimWins = true;
   calls.length = 0;
+  mirrored.length = 0;
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -35,11 +38,13 @@ beforeEach((): void => {
     });
     if (String(input).endsWith("/exec"))
       return Response.json({
-        exitCode: 0,
+        ok: true,
+        exit_code: 0,
+        timed_out: false,
+        duration_ms: 5,
         stdout: "ok\n",
         stderr: "",
         truncated: false,
-        timedOut: false,
       });
 
     return new Response(null, { status: 204 });
@@ -66,13 +71,24 @@ beforeEach((): void => {
   const upsertSpy = spyOn(
     sandboxInstances,
     "upsertSandboxInstance",
-  ).mockImplementation(async (): Promise<void> => {});
+  ).mockImplementation(
+    async (_plane, _provider, key, _id, _meta, options): Promise<void> => {
+      mirrored.push(`upsert ${key} ${options?.ephemeral === true}`);
+    },
+  );
+  const removeSpy = spyOn(
+    sandboxInstances,
+    "removeSandboxInstance",
+  ).mockImplementation(async (_account, key): Promise<void> => {
+    mirrored.push(`remove ${key}`);
+  });
   restores.push(
     (): void => fetchSpy.mockRestore(),
     (): void => getSpy.mockRestore(),
     (): void => claimSpy.mockRestore(),
     (): void => saveSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),
+    (): void => removeSpy.mockRestore(),
   );
 });
 
@@ -94,14 +110,16 @@ const config: SandboxExecutorConfig = {
   },
 };
 
-it("runs an ephemeral command on the bridge and destroys its container", async (): Promise<void> => {
+it("runs an ephemeral command on the bridge, meters it and destroys its container", async (): Promise<void> => {
   const result = await new CloudflareSandboxExecutor(config).run({
     code: "echo ok",
     timeoutSeconds: 10,
     outputLimitBytes: 1024,
     envVars: { PATH: "/evil", CALL_VAR: "b" },
     args: ["one"],
+    principal: { accountId: "acct", agentId: "agent", runToken: "tok" },
   });
+  await drainInFlight();
 
   expect(result).toMatchObject({
     ok: true,
@@ -114,7 +132,7 @@ it("runs an ephemeral command on the bridge and destroys its container", async (
   );
   expect(exec?.authorization).toBe("Bearer bridge-key");
   expect(exec?.body).toMatchObject({
-    env: { ACCOUNT_VAR: "a", CALL_VAR: "b" },
+    env: { ACCOUNT_VAR: "a", CALL_VAR: "b", BROODS_AGENT_ID: "agent" },
     timeoutMs: 10_000,
     enableInternet: false,
     instance: "standard-3",
@@ -124,6 +142,8 @@ it("runs an ephemeral command on the bridge and destroys its container", async (
   expect(argv.slice(-3)).toEqual(["/workspace", "echo ok", "one"]);
   expect(destroy?.method).toBe("DELETE");
   expect(destroy?.url).toBe(exec?.url.replace(/\/exec$/, ""));
+  const id = exec?.url.split("/").at(-2);
+  expect(mirrored).toEqual([`upsert ${id} true`, `remove ${id}`]);
 });
 
 it("reserves one persistent container and keeps it across runs", async (): Promise<void> => {
@@ -180,11 +200,13 @@ it("keeps the result when the ephemeral destroy fails", async (): Promise<void> 
   ): Promise<Response> =>
     String(input).endsWith("/exec")
       ? Response.json({
-          exitCode: 0,
+          ok: true,
+          exit_code: 0,
+          timed_out: false,
+          duration_ms: 5,
           stdout: "ok\n",
           stderr: "",
           truncated: false,
-          timedOut: false,
         })
       : new Response("boom", { status: 500 })) as typeof fetch);
   restores.unshift((): void => fetchSpy.mockRestore());

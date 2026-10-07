@@ -6,14 +6,18 @@
  * persistence means the same warm machine across calls, not durable files.
  */
 
-import { z } from "zod";
 import {
   MAX_OUTPUT_BYTES,
   MAX_TIMEOUT_MS,
 } from "../../../../cloudflare-sandbox/src/limits.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
+import {
+  removeSandboxInstance,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
+import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSize } from "../../shared/sandbox-sizes.ts";
@@ -33,7 +37,10 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import {
+  execRunResult,
   mergeSandboxEnv,
+  parseExecResponse,
+  queueMirrorWrite,
   requiredWorkspacePath,
   sandboxNamePrefix,
   sandboxReservationKey,
@@ -53,15 +60,6 @@ const CLOUDFLARE_INSTANCES: Record<SandboxSize, string> = {
 };
 // Headroom over the command timeout for the bridge to start the Container.
 const BRIDGE_OVERHEAD_MS = 60_000;
-
-const execResult = z.object({
-  exitCode: z.number().int().nullable(),
-  stdout: z.string(),
-  stderr: z.string(),
-  truncated: z.boolean(),
-  timedOut: z.boolean(),
-});
-const statusResult = z.object({ running: z.boolean() });
 
 /** The platform bridge from core's env; the terminal ticket and every executor call use it. */
 export function cloudflareConnection(): { baseURL: string; apiKey: string } {
@@ -90,17 +88,32 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     const key = sandboxReservationKey(request);
+    const controlPlane = this.#config.controlPlane;
     // Without an account the reservation write is skipped, so the run degrades
     // to ephemeral instead of failing, as `claimSandboxInstance` documents.
     const persistent =
       this.#config.persistent === true &&
       key !== undefined &&
-      this.#config.controlPlane?.accountId !== undefined;
+      controlPlane?.accountId !== undefined;
     const id = persistent
       ? await this.#reserve(key, request.metadata)
       : `fp-e-${crypto.randomUUID()}`;
+    // An ephemeral Container gets a row keyed by its id for the call; the
+    // teardown removes it, which meters the call, like the MicroVM and workdir.
+    const ephemeralAccountId = persistent ? undefined : controlPlane?.accountId;
+    if (ephemeralAccountId)
+      void queueMirrorWrite(id, () =>
+        upsertSandboxInstance(
+          controlPlane,
+          "cloudflare",
+          id,
+          id,
+          request.metadata,
+          { ephemeral: true },
+        ),
+      );
     try {
-      const result = await this.#exec(
+      const response = await this.#exec(
         id,
         [
           "bash",
@@ -114,26 +127,25 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         request,
       );
 
-      return {
-        ok: result.exitCode === 0 && !result.timedOut,
-        runtime: request.runtime ?? "bash",
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        durationMs: Date.now() - startedAt,
-        timedOut: result.timedOut,
-        truncated: result.truncated,
-        provider: "cloudflare",
-      };
+      return execRunResult(request, response, "cloudflare", startedAt);
     } finally {
-      if (!persistent)
-        await this.#bridge(`/v1/sandboxes/${id}`, "DELETE").catch(
-          (error: unknown): void =>
-            logWarn("cloudflare sandbox destroy failed", {
-              id: id,
-              error: toErrorMessage(error),
-            }),
+      if (!persistent) {
+        waitUntil(
+          this.#bridge(`/v1/sandboxes/${id}`, "DELETE").catch(
+            (error: unknown): void =>
+              logWarn("cloudflare sandbox destroy failed", {
+                id: id,
+                error: toErrorMessage(error),
+              }),
+          ),
         );
+        if (ephemeralAccountId)
+          waitUntil(
+            queueMirrorWrite(id, () =>
+              removeSandboxInstance(ephemeralAccountId, id, id),
+            ),
+          );
+      }
     }
   }
 
@@ -144,7 +156,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     const id = key ? await getSandboxExternalId("cloudflare", key) : null;
     if (!id) return null;
     const response = await this.#bridge(`/v1/sandboxes/${id}`, "GET");
-    const { running } = statusResult.parse(await response.json());
+    const { running } = (await response.json()) as { running: boolean };
 
     // A stopped Container has lost its disk, so there is nothing to resume.
     return running ? { externalId: id, state: "running" } : null;
@@ -211,16 +223,20 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     argv: string[],
     request: Pick<
       SandboxRunRequest,
-      "envVars" | "outputLimitBytes" | "timeoutSeconds"
+      "envVars" | "outputLimitBytes" | "principal" | "timeoutSeconds"
     >,
-  ): Promise<z.infer<typeof execResult>> {
+  ): Promise<SandboxExecResponse> {
     const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
     const response = await this.#bridge(
       `/v1/sandboxes/${id}/exec`,
       "POST",
       {
         argv: argv,
-        env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+        env: mergeSandboxEnv(
+          this.#config.envVars,
+          request.envVars,
+          request.principal,
+        ),
         timeoutMs: timeoutMs,
         outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
         idleTimeoutSeconds: resolveSandboxLifecycle(this.#config.lifecycle)
@@ -231,7 +247,10 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
       timeoutMs + BRIDGE_OVERHEAD_MS,
     );
 
-    return execResult.parse(await response.json());
+    return parseExecResponse(
+      await response.text(),
+      "cloudflare sandbox bridge",
+    );
   }
 
   // A Durable Object exists as soon as it is named, so reserving is only the
