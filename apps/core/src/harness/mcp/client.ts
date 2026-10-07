@@ -21,6 +21,7 @@ import {
   StreamableHTTPClientTransport,
   type CallToolResult,
   type DiscoverResult,
+  type ListToolsResult,
   type Tool,
 } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
@@ -212,10 +213,7 @@ export async function listMcpTools(
 
     return tools;
   }
-  const fetchListing = async (): Promise<{
-    tools: Tool[];
-    ttlMs?: unknown;
-  }> => {
+  const fetchListing = async (): Promise<ListToolsResult> => {
     if (!connection.sandbox) {
       return await withClient(
         connection,

@@ -471,47 +471,6 @@ function isToolEnabled(
   return config !== undefined && config.enabled !== false;
 }
 
-/**
- * Where a lambda-hosted MCP row runs: the VM bash reaches on the same sandbox,
- * which is the workspace's when one mounts the agent's first sandbox. A missing
- * command or a non-persistent sandbox is a config error, not a quiet skip.
- */
-function sandboxMcpTarget(
-  serverId: string,
-  command: string[] | undefined,
-  host: ResolvedAgentSandbox,
-  context: Omit<ToolContext, "config">,
-): SandboxMcpTarget {
-  if (!command) {
-    throw new Error(
-      `config.mcp.${serverId} runs on lambda sandbox "${host.name}" and needs command`,
-    );
-  }
-  const workspace =
-    host === context.sandboxes?.[0]
-      ? agentOwnWorkspace({
-          workspaces: context.workspaces ?? [],
-          sandboxes: context.sandboxes,
-        })
-      : undefined;
-  const config = workspace?.sandbox ?? host.sandbox;
-  const reservationKey = workspace
-    ? workspace.namespace
-    : statelessReservationKeyFor(host.sandbox);
-  if (config.persistent !== true || !reservationKey) {
-    throw new Error(
-      `config.mcp.${serverId} runs on lambda sandbox "${host.name}", which must be persistent`,
-    );
-  }
-
-  return { config: config, reservationKey: reservationKey, command: command };
-}
-
-/**
- * Register every enabled connected MCP server's tools (#331). Listings come
- * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
- * the discovery round-trip.
- */
 async function registerMcpTools(
   tools: ToolSet,
   agentConfig: AgentConfig,
@@ -631,6 +590,47 @@ async function registerMcpTools(
   }
 }
 
+/**
+ * Where a lambda-hosted MCP row runs: the VM bash reaches on the same sandbox,
+ * which is the workspace's when one mounts the agent's first sandbox. A missing
+ * command or a non-persistent sandbox is a config error, not a quiet skip.
+ */
+function sandboxMcpTarget(
+  serverId: string,
+  command: string[] | undefined,
+  host: ResolvedAgentSandbox,
+  context: Omit<ToolContext, "config">,
+): SandboxMcpTarget {
+  if (!command) {
+    throw new Error(
+      `config.mcp.${serverId} runs on lambda sandbox "${host.name}" and needs command`,
+    );
+  }
+  const workspace =
+    host === context.sandboxes?.[0]
+      ? agentOwnWorkspace({
+          workspaces: context.workspaces ?? [],
+          sandboxes: context.sandboxes,
+        })
+      : undefined;
+  const config = workspace?.sandbox ?? host.sandbox;
+  const reservationKey = workspace
+    ? workspace.namespace
+    : statelessReservationKeyFor(host.sandbox);
+  if (config.persistent !== true || !reservationKey) {
+    throw new Error(
+      `config.mcp.${serverId} runs on lambda sandbox "${host.name}", which must be persistent`,
+    );
+  }
+
+  return { config: config, reservationKey: reservationKey, command: command };
+}
+
+/**
+ * Register every enabled connected MCP server's tools (#331). Listings come
+ * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
+ * the discovery round-trip.
+ */
 function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
   for (const toolName of denyTools ?? []) {
     if (toolName in tools) {

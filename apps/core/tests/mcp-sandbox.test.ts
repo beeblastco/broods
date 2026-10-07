@@ -92,6 +92,22 @@ test("names the server when the VM cannot be reached", async () => {
   ).toContain("MCP server obscura on its sandbox failed: MicroVM /mcp failed");
 });
 
+test("refuses a sandbox whose executor has no MCP host", async () => {
+  expect(
+    await failure(
+      sandboxMcpRequest(
+        { ...TARGET, config: { provider: "sandbox", persistent: true } },
+        "obscura",
+        LIST,
+        undefined,
+        {},
+      ),
+    ),
+  ).toContain(
+    "MCP server obscura needs a lambda sandbox; sandbox has no MCP host",
+  );
+});
+
 // An executor whose every POST answers `reply`, recording each request.
 function answering(requests: unknown[], reply: unknown): SandboxMcpExecutor {
   return {

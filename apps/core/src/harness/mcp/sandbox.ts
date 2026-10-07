@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import {
   isJSONRPCErrorResponse,
   isJSONRPCResultResponse,
+  type JSONRPCRequest,
 } from "@modelcontextprotocol/client";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
@@ -43,7 +44,7 @@ export type SandboxMcpExecutor = Pick<SandboxExecutor, "postReserved">;
 export async function sandboxMcpRequest(
   target: SandboxMcpTarget,
   serverName: string,
-  message: { method: string; params: Record<string, unknown> },
+  message: Pick<JSONRPCRequest, "method" | "params">,
   abortSignal?: AbortSignal,
   executor: SandboxMcpExecutor = createSandboxExecutor(target.config),
 ): Promise<unknown> {

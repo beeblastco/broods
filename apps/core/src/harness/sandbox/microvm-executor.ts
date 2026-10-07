@@ -26,6 +26,7 @@ import {
   TerminateMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
 import { createHmac } from "node:crypto";
+import { z } from "zod";
 import {
   recordSandboxBurst,
   removeSandboxInstance,
@@ -183,6 +184,12 @@ const reservedEndpoints = new Map<
 // credential without cutting normal interactive use short.
 export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
+
+// The VM's burst totals, as the image reports them on guest routes.
+const burstTotals = z.object({
+  vcpu_seconds: z.number(),
+  gb_seconds: z.number(),
+});
 
 // One POST to the guest: retry while the VM warms, or its answer.
 type Warming<T> =
@@ -1645,7 +1652,6 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
   return `${scope}:${name}-${variant}`;
 }
 
-// The burst totals a non-exec route sends in its `x-sandbox-burst` header.
 // /exec retries any fetch error but its own timeout: a refused or reset
 // connection is the VM still restoring its snapshot, while a timeout means the
 // command ran past its budget and a retry would run it twice.
@@ -1661,22 +1667,18 @@ function isConnectionRefused(err: unknown): boolean {
   );
 }
 
+// The burst totals a guest route sends in its `x-sandbox-burst` header. A
+// missing or malformed header bills nothing rather than failing the call.
 function burstHeader(headers: Headers): SandboxExecResponse["burst"] {
   const header = headers.get("x-sandbox-burst");
   if (!header) return undefined;
-  const totals: unknown = JSON.parse(header);
-  if (
-    typeof totals !== "object" ||
-    totals === null ||
-    !("vcpu_seconds" in totals) ||
-    !("gb_seconds" in totals) ||
-    typeof totals.vcpu_seconds !== "number" ||
-    typeof totals.gb_seconds !== "number"
-  ) {
+  try {
+    const totals = burstTotals.safeParse(JSON.parse(header));
+
+    return totals.success ? totals.data : undefined;
+  } catch {
     return undefined;
   }
-
-  return { vcpu_seconds: totals.vcpu_seconds, gb_seconds: totals.gb_seconds };
 }
 
 function microvmLocalNamespace(namespace: string): string {
