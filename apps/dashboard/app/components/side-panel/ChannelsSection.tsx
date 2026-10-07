@@ -680,6 +680,8 @@ function formatFieldValue(type: FieldType, value: unknown): string {
       .join(", ");
   }
 
+  if (typeof value === "number") return String(value);
+
   return typeof value === "string" ? value : "";
 }
 
