@@ -148,7 +148,7 @@ function stringifyMessageContent(content: ModelMessage["content"]): string {
 
 // Summarizes every block. The whole history goes first; only when the summary
 // model refuses it for length are the older and newer halves summarized apart
-// and their two summaries merged, so no message is dropped. A single message
+// and their two summaries merged, so no whole message is dropped. A single message
 // too long on its own keeps its first half. A refused merge fails the
 // compaction and leaves the stored history as it was. Per-call data rides the
 // user message so the static system prompt stays cacheable.

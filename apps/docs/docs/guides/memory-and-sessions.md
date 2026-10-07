@@ -80,7 +80,7 @@ export const myAgent = defineAgent({
 - On a model with a context window under 500k tokens, set `maxContextLength` below that window so compaction runs before the provider refuses a turn.
 - Auto-compaction runs only after a turn has finished, once the model answered with no tool call left, never between tool steps. It runs before the next queued message, so that message starts from the summary. A turn that stops on a tool approval or a question does not compact.
 - If a model rejects a turn because its context is too long, the turn fails with that error and Broods compacts the history, so the next message fits.
-- Compaction stores a summary and folds earlier summaries into the next one. The summary reads every earlier summary and message. When the model refuses that much input, the older and newer halves are summarized apart and merged, so no message is dropped.
+- Compaction stores a summary and folds earlier summaries into the next one. The summary reads every earlier summary and message. When the model refuses that much input, the older and newer halves are summarized apart and merged. Only a single message too long for the model on its own is cut, keeping its first half.
 - On Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram, `/compact [instructions]` compacts on demand, whatever the config says. Sent mid-turn, it waits until the model finishes the turn and stops calling tools. The instructions steer what the summary keeps. `/new` and `/clear` start over.
 
 A [harness adapter](agents.md) manages its own model context, so these settings apply to the default Broods loop.
