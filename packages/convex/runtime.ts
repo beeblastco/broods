@@ -864,8 +864,9 @@ export const listAccountSandboxReservations = internalQuery({
 /**
  * Mirror rows no reservation names any more (a teardown that failed, or the old
  * prune), still carrying the provider id the sweeper needs to tear them down. Bounded to rows idle longer than a whole
- * reservation TTL so a live sandbox is never mistaken for one, and `ephemeral` rows are
- * skipped: their key is a provider id, not a reconnect key.
+ * reservation TTL so a live sandbox is never mistaken for one. `ephemeral` rows are
+ * left out by the index, so they never fill the page: their key is a provider id, not
+ * a reconnect key, and the hourly accrual deletes them.
  * @returns the orphaned mirror rows, up to `limit`
  */
 export const listOrphanedSandboxInstances = internalQuery({
@@ -878,12 +879,13 @@ export const listOrphanedSandboxInstances = internalQuery({
     const idleBefore = Date.now() - SANDBOX_RESERVATION_TTL_SECONDS * 1000;
     const rows = await ctx.db
       .query("sandboxInstances")
-      .withIndex("by_lastUsedAt", (q) => q.lt("lastUsedAt", idleBefore))
+      .withIndex("by_ephemeral_and_lastUsedAt", (q) =>
+        q.eq("ephemeral", undefined).lt("lastUsedAt", idleBefore),
+      )
       .take(args.limit);
 
     const orphans: Infer<typeof sandboxReservationSummary>[] = [];
     for (const row of rows) {
-      if (row.ephemeral === true) continue;
       const reservation = await ctx.db
         .query("sandboxReservations")
         .withIndex("by_provider_and_reservationKey", (q) =>

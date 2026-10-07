@@ -25,6 +25,7 @@ import {
   UNIT_RATES_EUR,
   type UsageQuantities,
 } from "./pricing";
+import { workspaceSandboxLimits } from "./sandboxRules";
 
 /**
  * How long a sandbox runs idle before its provider suspends or stops it, for
@@ -49,6 +50,9 @@ const MONTH_SECONDS = DAYS_PER_MONTH * 24 * 60 * 60;
 // used at `lastUsedAt` is gone 8 hours later even if its row still says
 // running or suspended.
 const MICROVM_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
+// Past the longest exec an ephemeral call may run: a MicroVM's own
+// `maximumDuration` is its timeout plus 60 s, and a workdir call also mounts.
+const EPHEMERAL_SANDBOX_GRACE_MS = 2 * 60 * 1000;
 
 // How many months back the billing tab's month picker reaches.
 const MONTHS_SHOWN = 12;
@@ -292,11 +296,28 @@ export function meterMonth(now: number): string {
 }
 
 /**
+ * How long after its upsert an ephemeral (per-call) sandbox can still be
+ * running: the provider's longest exec plus a grace. Its row is billed no
+ * further, and the hourly accrual deletes one older than this.
+ */
+export function ephemeralSandboxMaxMs(
+  provider: Doc<"sandboxInstances">["provider"],
+): number {
+  return (
+    workspaceSandboxLimits(provider).maxTimeoutSeconds * 1000 +
+    EPHEMERAL_SANDBOX_GRACE_MS
+  );
+}
+
+/**
  * Sandbox time not billed yet, up to `now`. A sandbox is billed running from
  * where billing last stopped (or its last use) until its provider suspends it,
  * its own idle timeout past the last use. From then on a suspended MicroVM is
  * billed for storing its memory snapshot until it resumes or is released, and
  * never past the 8 hours a MicroVM can live after its last use.
+ * An ephemeral sandbox never idles or stores a snapshot: it runs until its
+ * call ends, and never past `ephemeralSandboxMaxMs`, so a row whose removal
+ * was lost stops billing there.
  * Nothing is billed when the platform does not pay: a sandbox on the account's
  * own provider credentials, or a machine (the user's own computer).
  */
@@ -310,6 +331,7 @@ export function sandboxAccrual(
     | "meteredUntil"
     | "ownCredentials"
     | "idleTimeoutSeconds"
+    | "ephemeral"
   >,
   now: number,
 ): SandboxAccrual {
@@ -322,21 +344,27 @@ export function sandboxAccrual(
     return { usage: {}, meteredUntil: start };
   }
   const size = billedSize(instance);
+  const ephemeral = instance.ephemeral === true;
   const lambda = instance.provider === "lambda";
   // Past this the machine is gone, running or stored.
   const aliveUntil = Math.min(
     now,
-    lambda ? instance.lastUsedAt + MICROVM_MAX_LIFETIME_MS : now,
+    ephemeral
+      ? instance.lastUsedAt + ephemeralSandboxMaxMs(instance.provider)
+      : lambda
+        ? instance.lastUsedAt + MICROVM_MAX_LIFETIME_MS
+        : now,
   );
+  const idleUntil = ephemeral
+    ? aliveUntil
+    : instance.lastUsedAt + sandboxIdleMs(instance);
   const runningUntil = BILLED_STATUSES.has(instance.status)
-    ? Math.max(
-        start,
-        Math.min(aliveUntil, instance.lastUsedAt + sandboxIdleMs(instance)),
-      )
+    ? Math.max(start, Math.min(aliveUntil, idleUntil))
     : start;
   const runSeconds = (runningUntil - start) / 1000;
   const storedUntil = Math.max(runningUntil, aliveUntil);
-  const storedSeconds = lambda ? (storedUntil - runningUntil) / 1000 : 0;
+  const storedSeconds =
+    lambda && !ephemeral ? (storedUntil - runningUntil) / 1000 : 0;
   const usage: Partial<UsageQuantities> = {};
   if (runSeconds > 0) {
     usage.sandboxVcpuSeconds = runSeconds * size.vcpu;
