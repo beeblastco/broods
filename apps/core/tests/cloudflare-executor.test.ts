@@ -1,3 +1,10 @@
+/**
+ * The cloudflare executor against a mocked bridge Worker: what it sends, when
+ * it reserves, reuses and destroys a Container, and which instance rows it
+ * mirrors for metering. The bridge itself needs workerd and Docker, so it is
+ * not run here.
+ */
+
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
@@ -7,13 +14,6 @@ import {
   cloudflareConnection,
 } from "../src/harness/sandbox/cloudflare-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
-
-interface BridgeCall {
-  method: string;
-  url: string;
-  authorization: string | null;
-  body: Record<string, unknown> | null;
-}
 
 // A successful bridge exec answer, in the shared exec contract's shape.
 const EXEC_OK = {
@@ -25,6 +25,30 @@ const EXEC_OK = {
   stderr: "",
   truncated: false,
 };
+const config: SandboxExecutorConfig = {
+  provider: "cloudflare",
+  network: { mode: "deny-all" },
+  size: "medium",
+  envVars: { ACCOUNT_VAR: "a" },
+  controlPlane: {
+    accountId: "acct",
+    name: "box",
+    specs: { vcpu: 2, memoryMb: 4096, storageGb: 16 },
+  },
+};
+const request = {
+  code: "true",
+  reservationKey: "acct:workspace",
+  timeoutSeconds: 10,
+  outputLimitBytes: 1024,
+};
+
+interface BridgeCall {
+  method: string;
+  url: string;
+  authorization: string | null;
+  body: Record<string, unknown> | null;
+}
 
 const calls: BridgeCall[] = [];
 const mirrored: string[] = [];
@@ -107,18 +131,6 @@ afterEach((): void => {
   delete process.env.CLOUDFLARE_SANDBOX_API_KEY;
 });
 
-const config: SandboxExecutorConfig = {
-  provider: "cloudflare",
-  network: { mode: "deny-all" },
-  size: "medium",
-  envVars: { ACCOUNT_VAR: "a" },
-  controlPlane: {
-    accountId: "acct",
-    name: "box",
-    specs: { vcpu: 2, memoryMb: 4096, storageGb: 16 },
-  },
-};
-
 it("runs an ephemeral command on the bridge, meters it and destroys its container", async (): Promise<void> => {
   const result = await new CloudflareSandboxExecutor(config).run({
     code: "echo ok",
@@ -155,50 +167,76 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
   expect(mirrored).toEqual([`upsert ${id} true`, `remove ${id}`]);
 });
 
-it("reserves one persistent container and keeps it across runs", async (): Promise<void> => {
+it("reserves one persistent container, keeps it across runs and mirrors it", async (): Promise<void> => {
   const executor = new CloudflareSandboxExecutor({
     ...config,
     persistent: true,
   });
-  const request = {
-    code: "true",
-    reservationKey: "acct:workspace",
-    timeoutSeconds: 10,
-    outputLimitBytes: 1024,
-  };
   await executor.run(request);
   await executor.run(request);
+  await settled();
 
-  expect(calls.map((call) => call.method)).toEqual(["POST", "POST"]);
+  expect(calls.map((call): string => call.method)).toEqual(["POST", "POST"]);
   expect(calls[0]?.url).toBe(calls[1]?.url);
   expect(calls[0]?.url).toContain(`/v1/sandboxes/${stored}/exec`);
+  expect(mirrored).toEqual([
+    "upsert acct:workspace false",
+    "upsert acct:workspace false",
+  ]);
+});
+
+it("never mirrors a reservation whose first start failed, so it is not billed", async (): Promise<void> => {
+  const refused = async (): Promise<Response> =>
+    new Response("Unauthorized", { status: 401 });
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(refused, { preconnect: (): void => {} }),
+  );
+  restores.unshift((): void => fetchSpy.mockRestore());
+
+  const failure = await new CloudflareSandboxExecutor({
+    ...config,
+    persistent: true,
+  })
+    .run(request)
+    .then(
+      (): string => "ran",
+      (error: unknown): string => String(error),
+    );
+  await settled();
+
+  expect(failure).toContain("failed (401)");
+  expect(mirrored).toEqual([]);
 });
 
 it("takes the winner's container when it loses the reservation race", async (): Promise<void> => {
   claimWins = false;
-  await new CloudflareSandboxExecutor({ ...config, persistent: true }).run({
-    code: "true",
-    reservationKey: "acct:workspace",
-    timeoutSeconds: 10,
-    outputLimitBytes: 1024,
-  });
+  await new CloudflareSandboxExecutor({ ...config, persistent: true }).run(
+    request,
+  );
 
   expect(calls[0]?.url).toContain("/v1/sandboxes/winner-id/exec");
 });
 
-it("runs a persistent config without an account as ephemeral", async (): Promise<void> => {
+it("reuses an existing reservation without an account, as the dashboard console runs", async (): Promise<void> => {
+  stored = "fp-p-existing";
   await new CloudflareSandboxExecutor({
     ...config,
     persistent: true,
     controlPlane: undefined,
-  }).run({
-    code: "true",
-    reservationKey: "acct:workspace",
-    timeoutSeconds: 10,
-    outputLimitBytes: 1024,
-  });
+  }).run(request);
 
-  expect(calls.map((call) => call.method)).toEqual(["POST", "DELETE"]);
+  expect(calls.map((call): string => call.method)).toEqual(["POST"]);
+  expect(calls[0]?.url).toContain("/v1/sandboxes/fp-p-existing/exec");
+});
+
+it("runs a persistent config with no account and no reservation as ephemeral", async (): Promise<void> => {
+  await new CloudflareSandboxExecutor({
+    ...config,
+    persistent: true,
+    controlPlane: undefined,
+  }).run(request);
+
+  expect(calls.map((call): string => call.method)).toEqual(["POST", "DELETE"]);
   expect(calls[0]?.url).toContain("/v1/sandboxes/fp-e-");
 });
 
@@ -230,6 +268,13 @@ it("refuses a plain-HTTP bridge outside loopback, since every call carries the k
   process.env.CLOUDFLARE_SANDBOX_URL = "http://127.0.0.1:8795/";
   expect(cloudflareConnection().baseURL).toBe("http://127.0.0.1:8795");
 });
+
+// Lets the queued mirror writes, which run off the command's path, settle.
+async function settled(): Promise<void> {
+  await new Promise((resolve): void => {
+    setTimeout(resolve, 0);
+  });
+}
 
 function urlOf(input: string | URL | Request): string {
   if (typeof input === "string") return input;

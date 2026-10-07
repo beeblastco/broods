@@ -185,7 +185,8 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 | `DELETE /v1/sandboxes/:id`       | Destroys the Container                                                         |
 | `GET /v1/sandboxes/:id/terminal` | PTY WebSocket, raw bytes both ways, for a `terminal` ticket                    |
 
-- A Durable Object exists once named, so a persistent reservation is only the claim: the executor claims `sandboxNamePrefix(key)` plus a random suffix, and a run that loses the race uses the winner's id.
+- A Durable Object exists once named, so a persistent reservation is only the claim: the executor claims `sandboxNamePrefix(key)` plus a random suffix, and a run that loses the race uses the winner's id. An existing reservation is reused by key alone, which is how the dashboard console's `exec` reaches it. The instance row is mirrored only after the Container answered, so a start that failed is never billed.
+- The bridge runs each command under GNU `timeout -k 5`, which kills the whole process group at the deadline, so a background child does not outlive a timed-out call.
 - Ephemeral runs use a fresh `fp-e-<uuid>` id and `DELETE` it afterwards. A platform-paid one gets an ephemeral `sandboxInstances` row for the call, removed at teardown, which meters it like the MicroVM and workdir ones.
 - The exec answer is the shared exec contract, so `parseExecResponse` and `execRunResult` turn it into a run result like the MicroVM and `custom` ones. Output is capped per stream in the Durable Object, so a chatty command cannot grow its memory.
 - `deploy.yaml` does not deploy the bridge. A deployment that offers the provider deploys it with `wrangler deploy` (Docker builds the image) and sets the key on both sides.

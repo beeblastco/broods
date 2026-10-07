@@ -8,11 +8,16 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
+import type { SandboxExecResponse } from "../../core/src/shared/domain/sandbox-config.ts";
 import { MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS } from "./limits.ts";
 
 const SANDBOX_PATH =
   /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec|\/terminal)?$/;
 const TERMINAL_SIZE = { cols: 120, rows: 32 };
+// Seconds `timeout` waits after its TERM before it sends KILL.
+const KILL_GRACE_SECONDS = 5;
+// The abort fires only past the KILL, for an exec that never settles.
+const BACKSTOP_GRACE_MS = (KILL_GRACE_SECONDS + 5) * 1000;
 
 const execRequest = z.object({
   argv: z.array(z.string()).min(1),
@@ -38,63 +43,95 @@ interface Env {
 }
 
 /**
- * One finished command, its output capped at the request's limit per stream.
- * The shape of core's `SandboxExecResponse` (the sandbox exec contract), so
- * core reads it with the parser every exec server goes through.
+ * One finished command, its output capped at the request's limit per stream:
+ * core's `SandboxExecResponse` (the sandbox exec contract), so core reads it
+ * with the parser every exec server goes through.
  */
-export interface ExecResult {
-  ok: boolean;
-  exit_code: number | null;
-  timed_out: boolean;
-  duration_ms: number;
-  stdout: string;
-  stderr: string;
-  truncated: boolean;
-}
+export type ExecResult = Required<
+  Pick<
+    SandboxExecResponse,
+    | "duration_ms"
+    | "exit_code"
+    | "ok"
+    | "stderr"
+    | "stdout"
+    | "timed_out"
+    | "truncated"
+  >
+>;
 
 /** One sandbox: the Container it starts and the commands core runs in it. */
 export class Sandbox extends DurableObject<Env> {
   #starting: Promise<void> | null = null;
   #booting = false;
 
-  /** Starts the Container on first use, then runs one command to completion. */
+  /**
+   * Starts the Container on first use, then runs one command to completion.
+   * GNU `timeout` kills the command's whole process group at the deadline, so
+   * a background child dies with it; the abort is only a backstop for a wedged
+   * exec, and it is cleared once the command settles, because aborting an
+   * exited process throws.
+   */
   async exec(request: ExecRequest): Promise<ExecResult> {
     const startedAt = Date.now();
     const container = this.#container();
     await this.#ensureRunning(container, request);
-    const signal = AbortSignal.timeout(request.timeoutMs);
-    const process = await container
-      .exec(request.argv, {
-        env: request.env,
-        signal: signal,
-        stdout: "pipe",
-        stderr: "pipe",
-      })
-      .finally((): void => {
-        this.#booting = false;
-      });
-    const [stdout, stderr] = await Promise.all([
-      readCapped(process.stdout, request.outputLimitBytes, signal),
-      readCapped(process.stderr, request.outputLimitBytes, signal),
-    ]);
-    const finished = await process.exitCode.catch((): null => null);
-    const exitCode = signal.aborted ? null : finished;
+    const backstop = new AbortController();
+    const timer = setTimeout(
+      (): void => backstop.abort(),
+      request.timeoutMs + BACKSTOP_GRACE_MS,
+    );
+    try {
+      const process = await container
+        .exec(
+          [
+            "timeout",
+            "-k",
+            `${KILL_GRACE_SECONDS}`,
+            `${request.timeoutMs / 1000}s`,
+            ...request.argv,
+          ],
+          {
+            env: request.env,
+            signal: backstop.signal,
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        )
+        .finally((): void => {
+          this.#booting = false;
+        });
+      const [stdout, stderr] = await Promise.all([
+        readCapped(process.stdout, request.outputLimitBytes, backstop.signal),
+        readCapped(process.stderr, request.outputLimitBytes, backstop.signal),
+      ]);
+      const finished = await process.exitCode.catch((): null => null);
+      // 124 is the TERM `timeout` sends, 137 the KILL its `-k` follows with.
+      const timedOut =
+        backstop.signal.aborted || finished === 124 || finished === 137;
+      const exitCode = timedOut ? null : finished;
 
-    return {
-      ok: exitCode === 0,
-      exit_code: exitCode,
-      timed_out: signal.aborted,
-      duration_ms: Date.now() - startedAt,
-      stdout: stdout.text,
-      stderr: stderr.text,
-      truncated: stdout.truncated || stderr.truncated,
-    };
+      return {
+        ok: exitCode === 0,
+        exit_code: exitCode,
+        timed_out: timedOut,
+        duration_ms: Date.now() - startedAt,
+        stdout: stdout.text,
+        stderr: stderr.text,
+        truncated: stdout.truncated || stderr.truncated,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
-  /** Stops the Container and drops its disk. A stopped one is a no-op. */
+  /**
+   * Stops the Container and drops its disk. One still starting is stopped too,
+   * so a terminate during the first exec does not leave it running.
+   */
   async destroy(): Promise<void> {
     const container = this.#container();
-    if (container.running) await container.destroy();
+    if (container.running || this.#booting) await container.destroy();
   }
 
   /** Opens a PTY shell over a WebSocket: raw bytes both ways, no resize frames. */
@@ -129,7 +166,14 @@ export class Sandbox extends DurableObject<Env> {
         .write(bytes)
         .catch((): void => server.close(1011, "Terminal input failed"));
     });
-    server.addEventListener("close", (): void => abort.abort());
+    // Aborting a shell that already exited throws, so only a live one is killed.
+    let exited = false;
+    void shell.exitCode.finally((): void => {
+      exited = true;
+    });
+    server.addEventListener("close", (): void => {
+      if (!exited) abort.abort();
+    });
     void (async (): Promise<void> => {
       if (shell.stdout)
         for await (const chunk of shell.stdout) server.send(chunk);
@@ -198,7 +242,7 @@ const handler: ExportedHandler<Env> = {
     if (action === "/terminal") return sandbox.fetch(request);
     if (action === "/exec" && request.method === "POST") {
       const body = execRequest.safeParse(
-        await request.json().catch(() => null),
+        await request.json().catch((): null => null),
       );
       if (!body.success)
         return Response.json({ error: body.error.message }, { status: 400 });
@@ -253,7 +297,8 @@ async function readCapped(
       const room = limit - size;
       if (value.byteLength > room) truncated = true;
       if (room > 0) {
-        const part = value.subarray(0, room);
+        // A copy, so a kept prefix does not pin the whole chunk's buffer.
+        const part = value.slice(0, room);
         kept.push(part);
         size += part.byteLength;
       }

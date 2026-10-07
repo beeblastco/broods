@@ -38,4 +38,4 @@ export const helper = defineAgent({
 - Background jobs, suspend, resume and Create snapshot are not available.
 - `config.harness` agents cannot run on this provider. Use `sandbox` or `lambda`.
 - The dashboard runs commands through its bounded runner. The API's `terminal` action opens a PTY only on a running Container, so run a command first to wake it.
-- The provider needs the bridge Worker on a Cloudflare account with Workers Paid (Containers). A deployment without it refuses every run with an error naming `CLOUDFLARE_SANDBOX_URL`. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).
+- The provider runs only where the deployment runs its Cloudflare bridge. Without it every run fails with an error saying the bridge is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).

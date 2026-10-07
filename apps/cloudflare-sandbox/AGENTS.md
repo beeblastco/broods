@@ -6,7 +6,9 @@ The Container API (`ctx.container`) only answers inside a Durable Object, so cor
 
 ## Gotchas
 
-- **keep it dumb.** reservations, ids, env merging, the working directory and the output limit all come from core. the bridge runs exactly the argv it is given. a rule added here is a rule core and its tests cannot see.
+- **keep it dumb.** reservations, ids, env merging, the working directory and the output limit all come from core. the bridge runs exactly the argv it is given, under GNU `timeout -k` so the deadline kills the whole process group (124/137 read as timed out). a rule added here is a rule core and its tests cannot see.
+- never abort a `container.exec` that already exited: workerd throws it uncaught. the exec deadline is a cleared backstop timer, and the terminal only aborts a shell still running.
+- `exec` answers core's `SandboxExecResponse`; `ExecResult` is derived from that type, so a contract change fails `check` here.
 - this is Sandbox SDK 1.0: our own Durable Object drives `ctx.container`. the 0.x `Sandbox` class, `getSandbox`, `sleepAfter` and `keepAlive` are gone. `@cloudflare/sandbox` now only ships `Files`, `S3Mount` and `DirectoryBackup`; nothing here needs them yet, so it is not a dependency.
 - a Container that sleeps loses its disk. `#ensureRunning` shares one start between concurrent first calls and reapplies `setInactivityTimeout` once per Durable Object instance, because a restarted one forgets it. the first `exec()` after `start()` waits for readiness itself.
 - `scheduling_policy: "durable_object"` containers take no `max_instances` or `instance_type` in `wrangler.jsonc`; the instance type rides `start()`. `npx wrangler types <out>` validates the config without deploying.

@@ -75,7 +75,7 @@ export async function cloudflareSandbox(context: VerifyContext): Promise<void> {
   // The read answers the marker reversed, which no prompt contains, so the
   // model cannot pass it from the conversation without the file.
   const marker = `cf-${context.runId}`;
-  const reversed = [...marker].reverse().join("");
+  const reversed = marker.split("").reverse().join("");
   const wrote = await turn(
     `Run: echo ${marker} > /tmp/marker`,
     "cloudflare write",

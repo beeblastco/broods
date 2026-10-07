@@ -97,24 +97,24 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     this.#config = config;
   }
 
+  /**
+   * Runs one command. A persistent config reuses its reservation's Container;
+   * anything else gets a fresh one that is destroyed afterwards.
+   */
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     const key = sandboxReservationKey(request);
     const controlPlane = this.#config.controlPlane;
-    // Without an account the reservation write is skipped, so the run degrades
-    // to ephemeral instead of failing, as `claimSandboxInstance` documents.
-    const persistent =
-      this.#config.persistent === true &&
-      key !== undefined &&
-      controlPlane?.accountId !== undefined;
-    const id = persistent
-      ? await this.#reserve(key, request.metadata)
-      : `fp-e-${crypto.randomUUID()}`;
+    const reserved =
+      this.#config.persistent === true && key !== undefined
+        ? await this.#reserve(key)
+        : undefined;
+    const id = reserved ?? `fp-e-${crypto.randomUUID()}`;
     // An ephemeral Container gets a row keyed by its id for the call; the
     // teardown removes it, which meters the call, like the MicroVM and workdir.
-    const ephemeralAccountId = persistent ? undefined : controlPlane?.accountId;
+    const ephemeralAccountId = reserved ? undefined : controlPlane?.accountId;
     if (ephemeralAccountId)
-      void queueMirrorWrite(id, () =>
+      void queueMirrorWrite(id, (): Promise<void> =>
         upsertSandboxInstance(
           controlPlane,
           "cloudflare",
@@ -138,10 +138,11 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         ],
         request,
       );
+      if (reserved && key) this.#mirror(key, reserved, request.metadata);
 
       return execRunResult(request, response, "cloudflare", startedAt);
     } finally {
-      if (!persistent) {
+      if (!reserved) {
         waitUntil(
           this.#bridge(`/v1/sandboxes/${id}`, "DELETE").catch(
             (error: unknown): void =>
@@ -153,7 +154,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         );
         if (ephemeralAccountId)
           waitUntil(
-            queueMirrorWrite(id, () =>
+            queueMirrorWrite(id, (): Promise<void> =>
               removeSandboxInstance(ephemeralAccountId, id, id),
             ),
           );
@@ -161,6 +162,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     }
   }
 
+  /** The reservation's Container while it is up; a stopped one has lost its disk. */
   async getInstanceInfo(
     request: SandboxReservationRef,
   ): Promise<SandboxInstanceInfo | null> {
@@ -170,25 +172,23 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     const response = await this.#bridge(`/v1/sandboxes/${id}`, "GET");
     const { running } = statusResult.parse(await response.json());
 
-    // A stopped Container has lost its disk, so there is nothing to resume.
     return running ? { externalId: id, state: "running" } : null;
   }
 
+  /** Starts a persistent reservation's Container before its first command. */
   async prewarm(request: SandboxReservationRef): Promise<void> {
     const key = sandboxReservationKey(request);
-    if (
-      this.#config.persistent !== true ||
-      !key ||
-      this.#config.controlPlane?.accountId === undefined
-    )
-      return;
-    const id = await this.#reserve(key, undefined);
+    if (this.#config.persistent !== true || !key) return;
+    const id = await this.#reserve(key);
+    if (!id) return;
     await this.#exec(id, ["true"], {
       timeoutSeconds: 30,
       outputLimitBytes: 1024,
     });
+    this.#mirror(key, id, undefined);
   }
 
+  /** Destroys a reservation's Container and drops the reservation; cleanup and terminate call it. */
   async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
@@ -205,6 +205,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     );
   }
 
+  // One authenticated call to the bridge Worker; a non-2xx answer throws.
   async #bridge(
     path: string,
     method: "DELETE" | "GET" | "POST",
@@ -230,6 +231,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     return response;
   }
 
+  // Runs one argv in the sandbox's Container, clamped to the bridge's limits.
   async #exec(
     id: string,
     argv: string[],
@@ -265,38 +267,40 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  // A Durable Object exists as soon as it is named, so reserving is only the
-  // claim: the loser of a race takes the winner's id and creates nothing.
-  async #reserve(
+  // Mirrors a reserved Container into Convex once it answered, so a start that
+  // failed is never billed. Recoverable, so it never holds up the command.
+  #mirror(
     key: string,
+    id: string,
     metadata: SandboxRunRequest["metadata"],
-  ): Promise<string> {
-    const accountId = this.#config.controlPlane?.accountId;
-    const existing = await getSandboxExternalId("cloudflare", key);
-    if (existing) {
-      await saveSandboxInstance("cloudflare", key, existing, accountId);
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "cloudflare",
-        key,
-        existing,
-        metadata,
-      );
-
-      return existing;
-    }
-    const id = `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`;
-    if (await claimSandboxInstance("cloudflare", key, id, accountId)) {
-      await upsertSandboxInstance(
+  ): void {
+    void queueMirrorWrite(id, (): Promise<void> =>
+      upsertSandboxInstance(
         this.#config.controlPlane,
         "cloudflare",
         key,
         id,
         metadata,
-      );
+      ),
+    );
+  }
 
-      return id;
+  // A Durable Object exists as soon as it is named, so reserving is only the
+  // claim: the loser of a race takes the winner's id and creates nothing. An
+  // existing reservation is reused by key alone (the dashboard console carries
+  // no account); claiming a new one needs the account, so without it the run
+  // is ephemeral.
+  async #reserve(key: string): Promise<string | undefined> {
+    const accountId = this.#config.controlPlane?.accountId;
+    const existing = await getSandboxExternalId("cloudflare", key);
+    if (existing) {
+      await saveSandboxInstance("cloudflare", key, existing, accountId);
+
+      return existing;
     }
+    if (!accountId) return undefined;
+    const id = `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`;
+    if (await claimSandboxInstance("cloudflare", key, id, accountId)) return id;
     const winner = await getSandboxExternalId("cloudflare", key);
     if (!winner)
       throw new Error(
