@@ -1280,10 +1280,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       if (!(err instanceof Error && "code" in err)) throw err;
       if (err.code !== "ConnectionRefused") throw err;
 
-      return {
-        retry: true,
-        status: err instanceof Error ? err.message : "fetch error",
-      };
+      return { retry: true, status: err.message };
     }
     if (res.status === 502 || res.status === 503) {
       return { retry: true, status: res.status };
