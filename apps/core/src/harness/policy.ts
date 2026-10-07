@@ -34,6 +34,7 @@ import type {
   ResolvedAgentSandbox,
   ResolvedWorkspace,
 } from "../shared/workspaces.ts";
+import { toLifecycleValue } from "./lifecycle.ts";
 import {
   bashNeedsApproval,
   bashSandboxTarget,
@@ -667,12 +668,8 @@ function sanitizePolicyValue(value: unknown, depth: number): unknown {
 
     return output;
   }
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "function")
-    return `[function ${value.name || "anonymous"}]`;
-  if (typeof value === "symbol") return value.description ?? "symbol";
 
-  return undefined;
+  return toLifecycleValue(value);
 }
 
 function toolContextForPolicy(

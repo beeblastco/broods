@@ -5,22 +5,12 @@
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-interface ToolApprovalRequestChunk {
-  type: "tool-approval-request";
-  approvalId: string;
-  toolCall: {
-    type: "tool-call";
-    toolCallId: string;
-    toolName: string;
-  };
-}
-
 const client = new BroodsClient();
 
 const conversationKey = `approval-${Date.now()}`;
 
 // First pass: stream until approval request is received.
-let approvalRequest: ToolApprovalRequestChunk | null = null;
+let approvalRequest: { approvalId: string; toolName: string } | null = null;
 
 for await (const chunk of client.stream(api.agents.approvalAgent, {
   input:
@@ -56,11 +46,12 @@ for await (const chunk of client.stream(api.agents.approvalAgent, {
         `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
       );
       break;
-  }
-
-  const parsed = parseToolApprovalRequestChunk(chunk);
-  if (parsed) {
-    approvalRequest = parsed;
+    case "tool-approval-request":
+      approvalRequest = {
+        approvalId: chunk.approvalId,
+        toolName: chunk.toolCall.toolName,
+      };
+      break;
   }
 }
 
@@ -122,37 +113,4 @@ for await (const chunk of client.stream(api.agents.approvalAgent, {
       );
       break;
   }
-}
-
-function parseToolApprovalRequestChunk(
-  chunk: unknown,
-): ToolApprovalRequestChunk | null {
-  try {
-    const parsed = chunk as unknown;
-    if (
-      !isPlainObject(parsed) ||
-      parsed.type !== "tool-approval-request" ||
-      typeof parsed.approvalId !== "string"
-    ) {
-      return null;
-    }
-
-    const toolCall = parsed.toolCall;
-    if (
-      !isPlainObject(toolCall) ||
-      toolCall.type !== "tool-call" ||
-      typeof toolCall.toolCallId !== "string" ||
-      typeof toolCall.toolName !== "string"
-    ) {
-      return null;
-    }
-
-    return parsed as ToolApprovalRequestChunk;
-  } catch {
-    return null;
-  }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

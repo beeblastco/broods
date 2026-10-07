@@ -388,13 +388,7 @@ async function materializeRuntimeNodes(
     }
 
     const data = asRecord(node.data);
-    const rawName =
-      typeof data.mountName === "string"
-        ? data.mountName
-        : typeof data.label === "string"
-          ? data.label
-          : node.type;
-    const name = rawName.trim() || node.type;
+    const name = nodeName(data) || node.type;
     const description =
       typeof data.description === "string" ? data.description : undefined;
     const resourceId =
@@ -593,6 +587,18 @@ async function materializeWorkspaceNode(
   return { ...node, data: { ...data, resourceId: createdId } };
 }
 
+/** A node's trimmed resource name: `mountName`, else `label`, else empty. */
+function nodeName(data: Record<string, unknown>): string {
+  const name =
+    typeof data.mountName === "string"
+      ? data.mountName
+      : typeof data.label === "string"
+        ? data.label
+        : "";
+
+  return name.trim();
+}
+
 /**
  * Delete dashboard-owned workspace/sandbox rows in this stage that no
  * canvas node references anymore, making node deletion a real resource delete.
@@ -673,21 +679,8 @@ function resourceFieldsChanged(
   next: Record<string, unknown>,
   previous: Record<string, unknown>,
 ): boolean {
-  const nextName =
-    typeof next.mountName === "string"
-      ? next.mountName
-      : typeof next.label === "string"
-        ? next.label
-        : "";
-  const previousName =
-    typeof previous.mountName === "string"
-      ? previous.mountName
-      : typeof previous.label === "string"
-        ? previous.label
-        : "";
-
   return (
-    nextName.trim() !== previousName.trim() ||
+    nodeName(next) !== nodeName(previous) ||
     stableJson(next.description ?? null) !==
       stableJson(previous.description ?? null) ||
     stableJson(next.config ?? null) !== stableJson(previous.config ?? null)
