@@ -1516,6 +1516,33 @@ describe("createSandboxExecutor", () => {
     },
   );
 
+  it("stops reading a guest answer past its byte limit", async () => {
+    storedSandboxExternalId = "microvm-1";
+    globalThis.fetch = guestFetch(
+      async () => new Response("x".repeat(16 * 1024 * 1024 + 1)),
+    );
+    const {
+      MicrovmSandboxExecutor,
+    } = require("../src/harness/sandbox/microvm-executor.ts");
+
+    const failure = await new MicrovmSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    })
+      .postReserved({
+        reservationKey: microvmNamespace(),
+        path: "/mcp",
+        body: {},
+        timeoutMs: 1_000,
+      })
+      .then(
+        (): string => "resolved",
+        (error: unknown): string => String(error),
+      );
+
+    expect(failure).toContain("MicroVM /mcp answered more than 16777216 bytes");
+  });
+
   it("waits for a warming VM before it sends the MCP call once", async () => {
     storedSandboxExternalId = "microvm-1";
     const posted: string[] = [];

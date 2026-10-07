@@ -202,6 +202,10 @@ const GUEST_ROUTE_RETRY: GuestRetry = {
   warmingStatus: false,
 };
 
+// The most one guest answer may hold: room for an MCP result carrying images up
+// to MAX_IMAGE_BYTES as base64, far past any /exec output limit.
+const GUEST_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
+
 // The VM's burst totals, as the image reports them on guest routes.
 const burstTotals = z.object({
   vcpu_seconds: z.number(),
@@ -1314,7 +1318,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (retry.warmingStatus && isWarmingStatus(res.status)) {
       return { retry: true, status: res.status };
     }
-    const text = await res.text();
+    const text = await boundedText(res, request.path);
     if (!res.ok) {
       throw new Error(
         `MicroVM ${request.path} failed (${res.status}): ${text || res.statusText}`,
@@ -1742,6 +1746,35 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
   if (!scope || !name) return undefined;
 
   return `${scope}:${name}-${variant}`;
+}
+
+// A guest's answer as text, refused once it passes GUEST_RESPONSE_MAX_BYTES so
+// a runaway answer never sits whole in core's memory.
+async function boundedText(res: Response, path: string): Promise<string> {
+  const tooLarge = (): Error =>
+    new Error(
+      `MicroVM ${path} answered more than ${GUEST_RESPONSE_MAX_BYTES} bytes`,
+    );
+  if (Number(res.headers.get("content-length")) > GUEST_RESPONSE_MAX_BYTES) {
+    await res.body?.cancel();
+    throw tooLarge();
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > GUEST_RESPONSE_MAX_BYTES) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 // The proxy's answer while the VM is still restoring its snapshot.

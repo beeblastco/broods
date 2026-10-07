@@ -1299,6 +1299,60 @@ describe("connected MCP servers", () => {
     });
   });
 
+  it("shows the model only images it can read, within one result's budget", async () => {
+    // A PNG signature padded to just over 6 MB once decoded.
+    const huge = `iVBORw0KGgo${"A".repeat(8 * 1024 * 1024 + 1)}`;
+    setMcpForTests({
+      callTool: async function () {
+        return {
+          content: [
+            { type: "image" as const, data: "/9j/4AAQ", mimeType: "image/png" },
+            {
+              type: "image" as const,
+              data: "not base64!",
+              mimeType: "image/png",
+            },
+            {
+              type: "image" as const,
+              data: btoa("<svg/>"),
+              mimeType: "image/svg+xml",
+            },
+            { type: "image" as const, data: huge, mimeType: "image/png" },
+            ...Array.from({ length: 8 }, () => ({
+              type: "image" as const,
+              data: "iVBORw0KGgo=",
+              mimeType: "image/png",
+            })),
+          ],
+        };
+      },
+    });
+
+    const result = (await callMcpTool(
+      mcpConnection(mcpRecord(), undefined),
+      "screenshot",
+      {},
+    )) as { type: "content"; value: Array<Record<string, string>> };
+
+    // The bytes name the type: a JPEG labelled PNG goes through as a JPEG.
+    expect(result.value[0]).toEqual({
+      type: "image-data",
+      data: "/9j/4AAQ",
+      mediaType: "image/jpeg",
+    });
+    expect(result.value.slice(1, 4).map((part) => part.type)).toEqual([
+      "text",
+      "text",
+      "text",
+    ]);
+    expect(result.value[1]!.text).toContain("not a PNG, JPEG, GIF or WebP");
+    expect(result.value[3]!.text).toContain("over the 6 MB");
+    expect(
+      result.value.filter((part) => part.type === "image-data"),
+    ).toHaveLength(8);
+    expect(result.value.at(-1)!.text).toContain("more than 8 images");
+  });
+
   it("filters by the row's allowedTools and skips disabled rows", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setMcpForTests({

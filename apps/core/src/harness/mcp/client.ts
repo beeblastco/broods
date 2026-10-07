@@ -44,6 +44,7 @@ import {
 } from "../sandbox/machine-executor.ts";
 import { mergeSandboxEnv } from "../sandbox/utils.ts";
 import { publicHostFetch } from "../../shared/http.ts";
+import { withImageLimits } from "../tools/utils.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -455,8 +456,9 @@ async function connectClient(
 }
 
 /**
- * A result's content as model content parts: images as image data, the rest as
- * text, and any structuredContent as one more JSON text part.
+ * A result's content as model content parts: images as image data, within the
+ * limits on what one result may show, the rest as text, and any
+ * structuredContent as one more JSON text part.
  */
 function imageContentOutput(
   content: CallToolResult["content"],
@@ -464,7 +466,7 @@ function imageContentOutput(
 ): ToolResultOutput {
   return {
     type: "content",
-    value: [
+    value: withImageLimits([
       ...content.map((block) =>
         block.type === "image"
           ? {
@@ -477,7 +479,7 @@ function imageContentOutput(
       ...(structured
         ? [{ type: "text" as const, text: JSON.stringify(structured) }]
         : []),
-    ],
+    ]),
   };
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import {
@@ -102,6 +102,16 @@ describe("browse tool", () => {
       ).toContain(`--timeout ${obscura} `);
     },
   );
+
+  it("never reads a screenshot past the byte limit into memory", () => {
+    // Other test files mock shared/s3.ts for the whole run; check the real one alone.
+    const run = Bun.spawnSync(
+      [process.execPath, "test", "./tests/isolated/s3-read-limit.ts"],
+      { cwd: dirname(import.meta.dir) },
+    );
+
+    expect(run.exitCode, run.stderr.toString()).toBe(0);
+  });
 
   it("runs Obscura without an inherited OBSCURA_ALLOW_PRIVATE_NETWORK", () => {
     const bin = mkdtempSync(join(tmpdir(), "obscura-"));

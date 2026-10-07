@@ -4,9 +4,10 @@
  */
 
 import type { JSONValue } from "@ai-sdk/provider";
-import type { ToolResultOutput } from "@ai-sdk/provider-utils";
+import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
 import type { JSONSchema7, UserContent, UserModelMessage } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
+import { MAX_IMAGE_BYTES } from "../../shared/media-types.ts";
 import {
   parseAccountAgentScopedKey,
   scopedDirectEventId,
@@ -29,6 +30,23 @@ export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
 };
 
 export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
+
+// Images one tool result may show the model; together they share MAX_IMAGE_BYTES.
+const MAX_RESULT_IMAGES = 8;
+// What every model provider reads inline.
+const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** One part of a `content` tool result. */
+export type ToolContentPart = Extract<
+  ToolResultOutput,
+  { type: "content" }
+>["value"][number];
 
 export interface SubagentToolContext {
   accountId: string;
@@ -202,6 +220,58 @@ export const toolError = (value: string): never => {
 
 /** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
+
+/**
+ * A tool result's content parts with every image the model cannot read, or past
+ * the result's budget (MAX_RESULT_IMAGES images sharing MAX_IMAGE_BYTES), swapped
+ * for a text note. A bad image would fail the next model call, and big ones stay
+ * in the conversation for every later turn. browse and MCP results go through it.
+ */
+export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
+  let images = 0;
+  let bytes = 0;
+
+  return parts.map((part): ToolContentPart => {
+    if (part.type !== "image-data") return part;
+    const note = (problem: string): ToolContentPart => ({
+      type: "text",
+      text: `[An image (${part.mediaType}, ${part.data.length} base64 characters) was not shown to you: ${problem}.]`,
+    });
+    const size = base64Bytes(part.data);
+    // The bytes name the type; a label alone is often wrong.
+    const mediaType =
+      size === undefined
+        ? undefined
+        : detectMediaType({ data: part.data, topLevelType: "image" });
+    if (
+      size === undefined ||
+      mediaType === undefined ||
+      !MODEL_IMAGE_TYPES.has(mediaType)
+    ) {
+      return note("it is not a PNG, JPEG, GIF or WebP image");
+    }
+    if (bytes + size > MAX_IMAGE_BYTES) {
+      return note(
+        `it would take the result over the ${MAX_IMAGE_BYTES / 1024 / 1024} MB of images one result may carry`,
+      );
+    }
+    if (images >= MAX_RESULT_IMAGES) {
+      return note(`the result carries more than ${MAX_RESULT_IMAGES} images`);
+    }
+    images += 1;
+    bytes += size;
+
+    return { ...part, mediaType: mediaType };
+  });
+}
+
+/** Decoded size of a base64 string, or undefined when it is not valid base64. */
+function base64Bytes(data: string): number | undefined {
+  if (data.length % 4 !== 0 || !BASE64_PATTERN.test(data)) return undefined;
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+
+  return (data.length / 4) * 3 - padding;
+}
 
 function formatJSONValue(value: JSONValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);
