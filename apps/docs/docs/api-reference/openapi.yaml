@@ -1306,7 +1306,7 @@ paths:
       tags:
         - Environment Variables
       summary: Delete an account environment variable
-      description: Re-resolves source-backed agents; a now-missing placeholder remains literal in stored runtime config.
+      description: Re-resolves source-backed agents; a now-missing placeholder remains literal in stored runtime config. Refused while an R2 workspace's keys reference the variable.
       security:
         - BearerAuth: []
       parameters:
@@ -1322,6 +1322,12 @@ paths:
                 properties:
                   deleted:
                     type: boolean
+        "409":
+          description: An R2 workspace's `accessKeyId` or `secretAccessKey` still references the variable. `error.message` names the workspaces.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/agents:
     post:

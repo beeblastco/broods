@@ -17,6 +17,8 @@ import {
 } from "../_generated/server";
 import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import { substituteAccountEnvPlaceholders } from "../model/agentConfigCodec";
+import { ClientError } from "../model/clientError";
+import { workspaceEnvRefNames } from "../model/workspaceRules";
 
 /** List write-only account variable metadata; ciphertext never leaves storage. */
 export const list = internalQuery({
@@ -115,7 +117,11 @@ export const set = internalMutation({
   },
 });
 
-/** Delete an account variable and re-resolve source-backed agents, preserving missing placeholders literally. */
+/**
+ * Delete an account variable and re-resolve source-backed agents, preserving
+ * missing placeholders literally. Refused while an API-made R2 workspace still
+ * mints its credentials from it.
+ */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string() },
   returns: v.boolean(),
@@ -127,6 +133,26 @@ export const remove = internalMutation({
       )
       .unique();
     if (!existing) return false;
+    const workspaces = await ctx.db
+      .query("workspaceConfigs")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .collect();
+    const referencing = workspaces
+      .filter(
+        (entry) =>
+          !(entry.projectId && entry.stageId) &&
+          workspaceEnvRefNames(entry.config).includes(args.name),
+      )
+      .map((entry) => `workspace "${entry.name}"`);
+    if (referencing.length > 0) {
+      throw new ClientError(
+        `${args.name} is still referenced by ${referencing.join(", ")}. ` +
+          "Point those workspaces at another variable before deleting this one.",
+        "conflict",
+      );
+    }
 
     await ctx.db.delete(existing._id);
     await refreshSourceBackedAgents(ctx, args.accountId);

@@ -322,6 +322,22 @@ export function workspaceStorageOwnAuth(
 }
 
 /**
+ * The env var names a stored workspace's R2 keys reference, empty for any other
+ * storage. Reads the stored shape only, so a row a later access rule refuses
+ * never blocks an unrelated env var delete.
+ */
+export function workspaceEnvRefNames(
+  config: WorkspaceConfig | undefined,
+): string[] {
+  const auth = config?.storage?.auth;
+  if (auth?.type !== "r2") return [];
+
+  return [auth.accessKeyId, auth.secretAccessKey].flatMap(
+    (ref) => ACCOUNT_ENV_REF_PATTERN.exec(ref)?.[1] ?? [],
+  );
+}
+
+/**
  * Derive a workspace's `fs-…` filesystem namespace. Matches core's
  * normalizeFilesystemNamespace byte-for-byte: S3 keys live under this prefix
  * and workspace-bound sandbox reservation keys are the namespace itself or

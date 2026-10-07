@@ -631,6 +631,12 @@ describe("R2 workspace storage", () => {
         prefix: "broods/",
       }),
     ).rejects.toThrow("Workspace not found");
+    await expect(
+      t.mutation(internal.account.envVars.remove, {
+        accountId: accountId,
+        name: "R2_SECRET_ACCESS_KEY",
+      }),
+    ).rejects.toThrow('still referenced by workspace "r2"');
   });
 
   it("mints a CLI-synced workspace's credentials from its stage env vars", async (): Promise<void> => {

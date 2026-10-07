@@ -13,8 +13,7 @@ import {
 import { assertEnvVarName } from "./agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./sandboxConfigSync";
-import { ACCOUNT_ENV_REF_PATTERN } from "./envRefs";
-import { normalizeWorkspaceConfig } from "./workspaceRules";
+import { workspaceEnvRefNames } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
 interface EnvironmentVariableWrite {
@@ -132,16 +131,7 @@ export async function assertEnvironmentVariableUnreferenced(
       )
       .map((entry) => `sandbox "${entry.name}"`),
     ...workspaces
-      .filter((entry) => {
-        const auth = normalizeWorkspaceConfig(entry.config).storage?.auth;
-
-        return (
-          auth?.type === "r2" &&
-          [auth.accessKeyId, auth.secretAccessKey].some(
-            (ref) => ACCOUNT_ENV_REF_PATTERN.exec(ref)?.[1] === name,
-          )
-        );
-      })
+      .filter((entry) => workspaceEnvRefNames(entry.config).includes(name))
       .map((entry) => `workspace "${entry.name}"`),
   ].sort();
   if (referencing.length === 0) return;

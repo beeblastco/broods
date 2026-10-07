@@ -196,7 +196,7 @@ broods env set R2_ACCESS_KEY_ID
 broods env set R2_SECRET_ACCESS_KEY
 ```
 
-Over the API, write the keys as `"${R2_ACCESS_KEY_ID}"` references to account env vars set under `/v1/env`. A literal key is rejected, and so is any endpoint other than `https://<32-character account id>.r2.cloudflarestorage.com` (the `eu` and `fedramp` jurisdiction hosts work too). Leave `region` unset or `auto`. Only the two keys take `env()`. For each run the config plane signs R2 [temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) that last one hour and only reach `bucket/prefix`. The token's own keys never enter a sandbox. Revoking the token stops every credential minted from it.
+Over the API, write the keys as `"${R2_ACCESS_KEY_ID}"` references to account env vars set under `/v1/env`. A literal key is rejected, and so is any endpoint other than `https://<32-character account id>.r2.cloudflarestorage.com` (the `eu` and `fedramp` jurisdiction hosts work too). Leave `region` unset or `auto`. Only the two keys take `env()`. For each run the config plane signs R2 [temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) that last one hour and only reach `bucket/prefix`. The token's own keys never enter a sandbox. Revoking the token stops every credential minted from it. An env var the keys reference cannot be deleted while the workspace uses it.
 
 These rules are checked when you save and again whenever the storage is used, so a workspace saved before a rule existed fails with the same error until you fix it.
 
