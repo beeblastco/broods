@@ -14,16 +14,18 @@ import {
   type JSONRPCRequest,
 } from "@modelcontextprotocol/client";
 import { toErrorMessage } from "../../shared/errors.ts";
+import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxReservedTarget,
 } from "../sandbox/types.ts";
+import { mergeSandboxEnv } from "../sandbox/utils.ts";
 import { sandboxTimeoutSeconds } from "../tools/filesystem-utils.ts";
 
 // A tool call on a sandbox with no `timeout` of its own: browser steps run
-// longer than bash's 30 s default.
+// longer than bash's 30 s default. The operator's ceiling still caps it.
 const DEFAULT_TIMEOUT_SECONDS = 120;
 // The image may spend up to this long starting a server and running its
 // handshake before the tool's own timeout begins.
@@ -59,7 +61,10 @@ export async function sandboxMcpRequest(
   }
   const timeoutMs =
     (target.config.timeout === undefined
-      ? DEFAULT_TIMEOUT_SECONDS
+      ? Math.min(
+          DEFAULT_TIMEOUT_SECONDS,
+          workspaceSandboxLimits(target.config.provider).maxTimeoutSeconds,
+        )
       : sandboxTimeoutSeconds(target.config)) * 1000;
   const reply = await executor
     .postReserved({
@@ -68,6 +73,9 @@ export async function sandboxMcpRequest(
       body: {
         server: serverName,
         command: target.command,
+        // The server sees the env vars bash sees, minus the run identity: it
+        // outlives the run. The image restarts the server when they change.
+        env: mergeSandboxEnv(target.config.envVars, undefined),
         message: {
           jsonrpc: "2.0",
           id: randomUUID(),
