@@ -11,57 +11,8 @@ import {
   getSharedNatsConn,
   logsSubject,
 } from "./nats.ts";
+import { isSecretName } from "@broods/convex/model/secretNames";
 import { emitOtelLog, getObservabilityContext } from "./otel.ts";
-
-// Keys are matched after normalizing to lowercase with hyphens/underscores
-// stripped, against three lists: exact, prefix, and suffix.
-const DENY_EXACT: ReadonlySet<string> = new Set([
-  "authorization",
-  "xapikey", // x-api-key / x_api_key
-  "apikey",
-  "secret",
-  "token",
-  "password",
-  "accesstoken",
-  "refreshtoken",
-  "bearertoken",
-  "idtoken",
-  "clientsecret",
-  "apisecret",
-  "privatekey",
-]);
-
-// Also redact any key that starts with these prefixes (normalized, no sep).
-const DENY_PREFIX: ReadonlyArray<string> = ["authorization", "xapi"];
-
-// Redact any key ENDING in one of these (normalized). This is what catches the
-// open-ended cases the exact list can't enumerate: apiToken, sessionToken,
-// natsToken, webhookSecret, dbPassword, etc. Singular "token" never matches the
-// plural "tokens" of the token-count metrics (and ALLOW_EXACT guards those too).
-const DENY_SUFFIX: ReadonlyArray<string> = [
-  "token",
-  "secret",
-  "password",
-  "passwd",
-  "apikey",
-  "secretkey",
-  "privatekey",
-  "accesskey",
-  "credential",
-  "credentials",
-];
-
-// Keys that are always safe regardless of deny matches (e.g. token-count metrics).
-const ALLOW_EXACT: ReadonlySet<string> = new Set([
-  "inputtokens",
-  "outputtokens",
-  "totaltokens",
-  "cachedinputtokens",
-  "cachewritetokens",
-  "reasoningtokens",
-  "invocations",
-  "modelcalls",
-]);
 
 const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
@@ -96,7 +47,7 @@ export function collectSecretValues(value: unknown): string[] {
           : undefined;
     if (
       namedKey &&
-      isRedactedKey(namedKey) &&
+      isSecretName(namedKey) &&
       typeof record.value === "string"
     ) {
       secrets.add(record.value);
@@ -127,7 +78,7 @@ export function collectSecretValues(value: unknown): string[] {
           }
         }
       }
-      if (isRedactedKey(key) && typeof nested === "string") secrets.add(nested);
+      if (isSecretName(key) && typeof nested === "string") secrets.add(nested);
       visit(nested);
     }
   };
@@ -164,7 +115,7 @@ export function redactSerialized(
       typeof value === "string"
         ? value
         : (JSON.stringify(value, (key: string, item: unknown): unknown =>
-            isRedactedKey(key) ? "[redacted]" : item,
+            isSecretName(key) ? "[redacted]" : item,
           ) ?? "");
   } catch {
     text = String(value);
@@ -306,25 +257,11 @@ function emit(
   }
 }
 
-function isRedactedKey(key: string): boolean {
-  const norm = key.toLowerCase().replace(/[-_]/g, "");
-  if (ALLOW_EXACT.has(norm)) return false;
-  if (DENY_EXACT.has(norm)) return true;
-  for (const prefix of DENY_PREFIX) {
-    if (norm.startsWith(prefix)) return true;
-  }
-  for (const suffix of DENY_SUFFIX) {
-    if (norm.endsWith(suffix)) return true;
-  }
-
-  return false;
-}
-
 function isSensitiveEnvName(name: string): boolean {
-  const normalized = name.toLowerCase().replace(/[-_]/g, "");
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, "");
 
   return (
-    isRedactedKey(name) ||
+    isSecretName(name) ||
     normalized.includes("credential") ||
     normalized.includes("authorization") ||
     normalized.endsWith("headers") ||
@@ -404,7 +341,7 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = isRedactedKey(k) ? "[redacted]" : redactValue(v, secrets);
+    out[k] = isSecretName(k) ? "[redacted]" : redactValue(v, secrets);
   }
 
   return out;

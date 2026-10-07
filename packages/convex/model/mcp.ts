@@ -19,6 +19,7 @@ import {
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./envRefs";
 import { ClientError } from "./clientError";
+import { isSecretName } from "./secretNames";
 
 const MAX_ALLOWED_TOOLS = 256;
 const MAX_COMMAND_ARGS = 32;
@@ -49,10 +50,6 @@ export const MCP_CLEARABLE_FIELDS = [
   "headers",
   "oauth",
 ] as const;
-
-/** Header names whose values carry credentials and so must use a ${NAME} ref. */
-export const SENSITIVE_HEADER_NAME_PATTERN =
-  /auth|token|secret|key|cookie|password|credential/i;
 
 /**
  * Server names become the `server__tool` namespace prefix inside provider
@@ -439,8 +436,11 @@ export function normalizeHeaders(
         `headers values must be single-line strings of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
+    // Header names ignore case, and a bare `Key` header carries a credential
+    // though a `key` field names a row.
+    const lowerName = name.toLowerCase();
     if (
-      SENSITIVE_HEADER_NAME_PATTERN.test(name) &&
+      (isSecretName(lowerName) || /^keys?$/.test(lowerName)) &&
       !CREDENTIAL_HEADER_VALUE_PATTERN.test(headerValue) &&
       stored[name] !== headerValue
     ) {

@@ -10,6 +10,7 @@ import {
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./envRefs";
 import { isPlainObject } from "./objects";
+import { isSecretName } from "./secretNames";
 
 export const REDACTED_SECRET_VALUE = "********";
 
@@ -31,8 +32,8 @@ export function mergeConfigObjects(
 }
 
 /**
- * Recursively replace secret-shaped string values with the redaction
- * placeholder for public API responses.
+ * Recursively replace secret values, found by name or inside a `headers`
+ * map, with the redaction placeholder for public API responses.
  * @param value the config value to project
  * @returns the value with secrets masked
  */
@@ -73,45 +74,39 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-// Inside a `headers` map any value but a `${NAME}` ref is masked: a sync
-// resolves refs into the stored config whatever the header is called.
+// Inside a `headers` map any value but `${NAME}` refs, after an optional auth
+// scheme word, is masked: a sync resolves refs into the stored config whatever
+// the header is called.
 function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
-    return value.map((entry) => redactSecrets(entry));
+    return value.map((entry): unknown => redactSecrets(entry));
   }
   if (!isPlainObject(value)) {
     return value;
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => {
-      if (typeof entry !== "string") {
+    Object.entries(value).map(([key, entry]): [string, unknown] => {
+      if (inHeaders) {
+        return [
+          key,
+          typeof entry === "string" &&
+          !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
+            ? REDACTED_SECRET_VALUE
+            : entry,
+        ];
+      }
+      if (!isSecretName(key)) {
         return [key, redactSecrets(entry, key === "headers")];
       }
-      const secret = inHeaders
-        ? !CREDENTIAL_HEADER_VALUE_PATTERN.test(entry)
-        : isSecretConfigKey(key) && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(entry);
+      // Under a secret name only refs show. A list is masked whole, so
+      // sending it back keeps the stored one.
+      const exposed = (Array.isArray(entry) ? entry : [entry]).some(
+        (item): boolean =>
+          typeof item === "string" && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(item),
+      );
 
-      return [key, secret ? REDACTED_SECRET_VALUE : entry];
+      return [key, exposed ? REDACTED_SECRET_VALUE : redactSecrets(entry)];
     }),
-  );
-}
-
-function isSecretConfigKey(key: string): boolean {
-  const normalized = key.toLowerCase();
-
-  return (
-    normalized.includes("secret") ||
-    normalized.includes("token") ||
-    normalized.includes("privatekey") ||
-    normalized.includes("private_key") ||
-    normalized.includes("credential") ||
-    normalized.includes("kubeconfig") ||
-    normalized.includes("certificate") ||
-    normalized.includes("accesskey") ||
-    normalized.includes("access_key") ||
-    normalized.includes("password") ||
-    normalized.includes("passwd") ||
-    /api[-_]?key$/.test(normalized)
   );
 }
