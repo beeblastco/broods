@@ -26,6 +26,7 @@
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import {
   assertStorageEndpoint,
+  normalizeWorkspacePrefix,
   workspaceStorageOwnAuth,
 } from "@broods/convex/model/workspaceRules";
 import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
@@ -268,14 +269,14 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
       "workspace S3 mount requires storage.bucket or a managed bucket (FILESYSTEM_BUCKET_NAME).",
     );
   }
-  if (storage?.bucket && !normalizePrefix(storage.prefix)) {
+  if (storage?.bucket && !normalizeWorkspacePrefix(storage.prefix)) {
     throw new Error(
       "workspace storage.prefix is required for a bring-your-own bucket; the mount is scoped to bucket/prefix/",
     );
   }
   const prefix = storage?.bucket
     ? joinPrefix(
-        normalizePrefix(storage.prefix),
+        normalizeWorkspacePrefix(storage.prefix),
         namespaceIsolationSuffix(ctx.namespace),
       )
     : `${workspaceNamespacePrefix(ctx.namespace)}/`;
@@ -367,12 +368,6 @@ function nearsExpiry(target: S3ReadTarget): boolean {
     target.credentialsExpireAt.getTime() - Date.now() <=
       READ_TARGET_REFRESH_MARGIN_MS
   );
-}
-
-function normalizePrefix(prefix: string | undefined): string {
-  const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
-
-  return trimmed.length > 0 ? `${trimmed}/` : "";
 }
 
 async function readTargetFromMount(ctx: S3MountContext): Promise<S3ReadTarget> {
