@@ -5,14 +5,15 @@
  * module, safe for the default Convex runtime and for core.
  */
 
-// Words that make a name secret wherever they appear: secretAccessKey, dbPassword.
-const ALWAYS_SECRET_WORDS = new Set([
+// Make a name secret wherever they appear, run together or not:
+// secretAccessKey, dbPassword, PGPASSWORD, secretkey.
+const ALWAYS_SECRET_PARTS = [
   "secret",
   "password",
   "passwd",
   "passphrase",
   "kubeconfig",
-]);
+];
 // Words that make a name secret when they end it: tokenSecret, x-api-key,
 // refreshTokens, Proxy-Auth. As a qualifier they do not: tokenUrl, cookieDomain.
 const SECRET_LAST_WORDS = new Set([
@@ -73,17 +74,14 @@ const TOKEN_COUNT_NAMES = new Set([
   "totaltokens",
 ]);
 
-// Endings that make a run-together last word secret: PGPASSWORD, accesstoken,
-// clientsecret, x-authtoken. Not "key" or "auth": monkey, oauth.
+// Endings that make a run-together last word secret: accesstoken, x-authtoken.
+// Not "key" or "auth": monkey, oauth.
 const SECRET_WORD_ENDINGS = [
   "apikey",
   "accesskey",
   "credential",
   "credentials",
-  "passwd",
-  "password",
   "privatekey",
-  "secret",
   "token",
 ];
 // Log redaction asks for every key of every line, so each name is judged once.
@@ -117,7 +115,11 @@ function judgeName(name: string): boolean {
     .filter((word): boolean => word.length > 0);
   const last = words.at(-1);
   if (!last || TOKEN_COUNT_NAMES.has(words.join(""))) return false;
-  if (words.some((word): boolean => ALWAYS_SECRET_WORDS.has(word))) {
+  if (
+    words.some((word): boolean =>
+      ALWAYS_SECRET_PARTS.some((part): boolean => word.includes(part)),
+    )
+  ) {
     return true;
   }
   if (!SECRET_LAST_WORDS.has(last)) {

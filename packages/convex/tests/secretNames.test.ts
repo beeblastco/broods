@@ -38,6 +38,8 @@ describe("isSecretName", (): void => {
       "APIToken",
       "JWTToken",
       "x-authtoken",
+      "secretkey",
+      "AWSSECRETKEY",
     ]) {
       expect(isSecretName(name), name).toBe(true);
     }
