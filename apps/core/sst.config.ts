@@ -882,6 +882,7 @@ export default $config({
                 "lambda:DeleteMicrovmImage",
                 "lambda:DeleteMicrovmImageVersion",
                 "lambda:GetMicrovmImage",
+                "lambda:GetMicrovmImageVersion",
                 "lambda:ListMicrovmImages",
                 "lambda:ListMicrovmImageVersions",
                 "lambda:ListMicrovmImageBuilds",
@@ -897,6 +898,9 @@ export default $config({
               resources: [
                 `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
                 `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
+                // A sandbox snapshot builds on the Lambda-managed base image its
+                // source image used.
+                `arn:aws:lambda:${region}:aws:microvm-image:*`,
               ],
             },
             {

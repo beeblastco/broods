@@ -183,6 +183,8 @@ if (import.meta.main) {
     await import("./harness/isolate/executor.ts");
   const { startSandboxSweeper, stopSandboxSweeper } =
     await import("./shared/sandbox-sweeper.ts");
+  const { startSnapshotBuildWatcher, stopSnapshotBuildWatcher } =
+    await import("./shared/sandbox-snapshot-builds.ts");
   const { isMachineUpgrade, machineWebSocketHandler, upgradeMachineSocket } =
     await import("./harness/sandbox/machine-executor.ts");
 
@@ -197,6 +199,7 @@ if (import.meta.main) {
   // startup. Failure is not fatal: the pool spawns on demand anyway.
   void prewarmIsolatePool().catch(() => undefined);
   startSandboxSweeper();
+  startSnapshotBuildWatcher();
   startIngressRecovery();
 
   const route = createRoute(
@@ -244,6 +247,7 @@ if (import.meta.main) {
       drained = true;
       shutdownIsolatePool();
       stopSandboxSweeper();
+      stopSnapshotBuildWatcher();
     })().catch((err) => {
       logError("Graceful shutdown failed", {
         error: err instanceof Error ? err.message : String(err),

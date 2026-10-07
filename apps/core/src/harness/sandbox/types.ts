@@ -248,10 +248,15 @@ export interface SandboxReleaseRequest extends SandboxReservationRef {
 }
 
 /** Result of capturing a sandbox snapshot/image (workdir snapshot or MicroVM image). */
+/** Where a snapshot's image build stands, for providers that build it after capture. */
+export type SandboxSnapshotBuildState = "building" | "active" | "build_failed";
+
 export interface SandboxSnapshotResult {
   snapshotId: string;
   // Provider-side image id/ARN, when distinct from snapshotId.
   externalImageId?: string;
+  // "building" while the provider still builds the image; absent means ready.
+  status?: SandboxSnapshotBuildState;
 }
 
 /** Live instance info surfaced for control-plane sync (Convex sandboxInstances). */
@@ -335,6 +340,8 @@ export interface SandboxExecutor {
   resume?(request: SandboxReservationRef): Promise<void>;
   // Capture the current sandbox state as a reusable snapshot/image.
   snapshot?(request: SandboxReservationRef): Promise<SandboxSnapshotResult>;
+  // A building snapshot's progress, by its provider image id (lambda only).
+  snapshotStatus?(externalImageId: string): Promise<SandboxSnapshotBuildState>;
   // Best-effort live instance info (external id + state) for control-plane sync.
   getInstanceInfo?(
     request: SandboxReservationRef,

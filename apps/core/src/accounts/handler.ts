@@ -46,7 +46,10 @@ import {
   setSandboxInstanceStatus,
   type SandboxInstanceStatus,
 } from "../shared/convex/sandbox-instances.ts";
-import { upsertSandboxSnapshot } from "../shared/convex/sandbox-snapshots.ts";
+import {
+  findSandboxSnapshot,
+  upsertSandboxSnapshot,
+} from "../shared/convex/sandbox-snapshots.ts";
 import {
   normalizeCreateAccountInput,
   type AccountRecord,
@@ -642,7 +645,9 @@ async function refreshSandboxStatus(
 
 /**
  * The `snapshot` verb: snapshots the instance and saves it as a named account
- * sandbox snapshot.
+ * sandbox snapshot. A lambda snapshot is an image build, saved as building
+ * until core's snapshot build watcher sees it land. Its base image is the
+ * variant the sandbox ran, so pinning it keeps that image's tools.
  */
 async function snapshotSandbox(
   context: SandboxLifecycleContext,
@@ -663,18 +668,22 @@ async function snapshotSandbox(
     context.executor.snapshot!(context.ref),
   );
   const externalImageId = result.externalImageId ?? result.snapshotId;
+  const status = result.status ?? "active";
   await upsertSandboxSnapshot({
     accountId: context.accountId,
     name: name,
     provider: context.provider,
-    baseImage: context.provider,
+    baseImage:
+      context.provider === "lambda"
+        ? await lambdaBaseImage(context)
+        : context.provider,
     externalImageId: externalImageId,
-    status: "active",
+    status: status,
   });
   await context.audit("ok", { status: "running" });
 
   return jsonResponse(200, {
-    status: "active",
+    status: status,
     snapshotId: result.snapshotId,
     externalImageId: externalImageId,
   });
@@ -843,6 +852,21 @@ function errorResponseForError(err: unknown): Response {
 /** An error's message, or the value as a string, for logs and audit rows. */
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The image variant a lambda snapshot is built from: the config's `image`, else
+ * the variant of the snapshot it booted from, else the default image.
+ */
+async function lambdaBaseImage(
+  context: SandboxLifecycleContext,
+): Promise<string> {
+  if (context.config.image) return context.config.image;
+  const pinned = context.config.snapshot
+    ? await findSandboxSnapshot(context.accountId, context.config.snapshot)
+    : null;
+
+  return pinned?.baseImage ?? "default";
 }
 
 /**

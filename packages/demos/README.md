@@ -57,6 +57,7 @@ to `gateway.broods.app`), so this swaps only the base URL. See
 - `agent-hooks`: a code hook that runs in the isolate at `agent.started` and injects a system instruction.
 - `webhook`: deliver agent lifecycle events to your own HTTPS endpoint.
 - `harness-codex`: run an agent on the Codex harness in a persistent sandbox.
+- `sandbox-obscura`: browse the web from a lambda sandbox on the Obscura image, with the `browse` tool and Obscura's MCP server. Exits 1 unless both answer, so it smoke-tests a stage.
 - `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.
 - `multi-channel`: one agent on Slack, Telegram and GitHub, with a register script that wires every webhook.
 - `channel-records`: bind two Slack channels of one app to two different agents.

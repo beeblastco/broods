@@ -111,10 +111,11 @@ export function SandboxInstancePanel({
   // providers keep the bounded command runner.
   const supportsLiveTerminal =
     instance.provider === "sandbox" || instance.provider === "lambda";
-  // Only the workdir `sandbox` provider has a runtime snapshot-to-image API, so
-  // the capture action is hidden elsewhere. The others still keep state across
-  // idle through suspend/resume.
-  const supportsSnapshot = instance.provider === "sandbox";
+  // workdir captures a running sandbox; a lambda MicroVM is rebuilt as a new
+  // image from the files it changed. The others keep state through suspend.
+  const supportsSnapshot =
+    instance.provider === "sandbox" || instance.provider === "lambda";
+  const buildsSnapshot = instance.provider === "lambda";
   // Only a provider with its own guest log stream can be tailed, and only a
   // deployment-scoped run has lines the gateway can find.
   const logSandboxId = instance.logStream
@@ -137,7 +138,11 @@ export function SandboxInstancePanel({
         name: snapName.trim(),
       });
       setSnapName("");
-      setSnapMessage("Snapshot captured.");
+      setSnapMessage(
+        buildsSnapshot
+          ? "Building the snapshot image. It turns active on the Snapshots tab in a few minutes."
+          : "Snapshot captured.",
+      );
     } catch (err) {
       setSnapMessage(toErrorMessage(err));
     } finally {
@@ -223,7 +228,9 @@ export function SandboxInstancePanel({
             {supportsSnapshot ? (
               <>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Capture the current sandbox state as a reusable image.
+                  {buildsSnapshot
+                    ? "Save the files changed since this machine started as a new image. Workspace files stay in the workspace."
+                    : "Capture the current sandbox state as a reusable image."}
                 </p>
                 <div className="mt-2 flex items-center gap-2">
                   <Input

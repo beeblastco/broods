@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { snapshotOptions } from "../app/lib/sandboxSnapshots";
+import { snapshotImage, snapshotOptions } from "../app/lib/sandboxSnapshots";
 
 const ROWS = [
   {
@@ -53,5 +53,21 @@ describe("snapshotOptions", () => {
     expect(snapshotOptions([], "lambda", undefined)).toEqual([
       { value: "none", label: "None" },
     ]);
+  });
+});
+
+describe("snapshotImage", () => {
+  const rows = [
+    { baseImage: "obscura", externalImageId: "arn:snap-obscura" },
+    { baseImage: "default", externalImageId: "arn:snap-default" },
+  ];
+
+  test("follows the variant a snapshot was built from", () => {
+    expect(snapshotImage(rows, "arn:snap-obscura")).toBe("obscura");
+  });
+
+  test("has none for the default image or a pin the list lacks", () => {
+    expect(snapshotImage(rows, "arn:snap-default")).toBeUndefined();
+    expect(snapshotImage(rows, "arn:from-code")).toBeUndefined();
   });
 });

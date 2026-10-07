@@ -15,8 +15,11 @@
 
 import {
   CreateMicrovmAuthTokenCommand,
+  CreateMicrovmImageCommand,
   CreateMicrovmShellAuthTokenCommand,
   GetMicrovmCommand,
+  GetMicrovmImageCommand,
+  GetMicrovmImageVersionCommand,
   LambdaMicrovms,
   type MicrovmState,
   ResumeMicrovmCommand,
@@ -25,25 +28,32 @@ import {
   SuspendMicrovmCommand,
   TerminateMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   recordSandboxBurst,
   removeSandboxInstance,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
+import { findSandboxSnapshot } from "../../shared/convex/sandbox-snapshots.ts";
 import type {
   SandboxExecRequest,
   SandboxExecResponse,
 } from "../../shared/domain/sandbox-config.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
-import { optionalEnv } from "../../shared/env.ts";
+import { optionalEnv, requireEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getObservabilityContext } from "../../shared/otel.ts";
 import { stripTrailingSlashes } from "../../shared/paths.ts";
+import {
+  copyS3Object,
+  deleteS3Object,
+  getS3ObjectUrl,
+  putS3ObjectUrl,
+} from "../../shared/s3.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -65,6 +75,7 @@ import {
   statusScript,
   stopScript,
 } from "./jobs.ts";
+import { snapshotCapture } from "./microvm-snapshot.ts";
 import {
   type S3MountContext,
   mountAttribution,
@@ -85,6 +96,8 @@ import type {
   SandboxRunPrincipal,
   SandboxRunRequest,
   SandboxRunResult,
+  SandboxSnapshotBuildState,
+  SandboxSnapshotResult,
 } from "./types.ts";
 import {
   configString,
@@ -182,6 +195,15 @@ const reservedEndpoints = new Map<
 // The proxy authenticates shell WebSocket upgrades with this header; the value
 // comes from CreateMicrovmShellAuthToken. 30 minutes bounds a terminal session's
 // credential without cutting normal interactive use short.
+// A snapshot's zips pass through this prefix of the filesystem bucket, and the
+// build reads the result from the artifact bucket's MicroVM image prefix, the
+// only one the platform build role may read.
+const SNAPSHOT_STAGING_PREFIX = "sandbox-snapshots/";
+const SNAPSHOT_ARTIFACT_PREFIX = "microvm-images/broods-snapshots/";
+const SNAPSHOT_IMAGE_PREFIX = "broods-snapshot-";
+// The in-VM capture walks the disk, tars the changes and uploads them.
+const SNAPSHOT_CAPTURE_TIMEOUT_SECONDS = 600;
+
 export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
 
@@ -604,6 +626,122 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
   }
 
+  // Capture the reserved VM as a new MicroVM image. AWS cannot snapshot a running
+  // VM, so the VM tars what changed since it started onto the zip of the image it
+  // booted from, and AWS builds that with the source image's own settings. The
+  // build takes minutes, so the result is "building" until snapshotStatus says not.
+  async snapshot(
+    request: SandboxReservationRef,
+  ): Promise<SandboxSnapshotResult> {
+    const microvmId = await this.#reservedId(request);
+    if (!microvmId) {
+      throw new Error("no reserved MicroVM to snapshot for this sandbox");
+    }
+    const target = await this.#reconnect(microvmId);
+    const vm = await this.#client.send(
+      new GetMicrovmCommand({ microvmIdentifier: microvmId }),
+    );
+    if (!vm.imageArn || !vm.imageVersion || !vm.startedAt) {
+      throw new Error(`MicroVM ${microvmId} does not report the image it runs`);
+    }
+    const source = await this.#client.send(
+      new GetMicrovmImageVersionCommand({
+        imageIdentifier: vm.imageArn,
+        imageVersion: vm.imageVersion,
+      }),
+    );
+    const artifact = s3Location(source.codeArtifact?.uri);
+    if (!artifact) {
+      throw new Error(`MicroVM image ${vm.imageArn} has no S3 code artifact`);
+    }
+    // The VM reaches the filesystem bucket under every network mode, but not the
+    // artifact bucket, so the zips pass through a staging prefix there.
+    const staging = requireEnv("FILESYSTEM_BUCKET_NAME");
+    const snapshotId = randomUUID().replaceAll("-", "").slice(0, 20);
+    const stagedSource = `${SNAPSHOT_STAGING_PREFIX}${snapshotId}/source.zip`;
+    const stagedImage = `${SNAPSHOT_STAGING_PREFIX}${snapshotId}/image.zip`;
+    const artifactKey = `${SNAPSHOT_ARTIFACT_PREFIX}${snapshotId}.zip`;
+    try {
+      await copyS3Object(artifact.bucket, artifact.key, staging, stagedSource);
+      const capture = snapshotCapture({
+        snapshotId: snapshotId,
+        startedAt: vm.startedAt,
+        sourceUrl: await getS3ObjectUrl(staging, stagedSource, {
+          expiresInSeconds: SNAPSHOT_CAPTURE_TIMEOUT_SECONDS,
+        }),
+        uploadUrl: await putS3ObjectUrl(staging, stagedImage, {
+          expiresInSeconds: SNAPSHOT_CAPTURE_TIMEOUT_SECONDS,
+        }),
+        workspaceRoot: this.#workspaceRoot(),
+      });
+      const captured = await this.#shell(
+        target.microvmId,
+        target.endpoint,
+        capture.script,
+        { timeoutSeconds: SNAPSHOT_CAPTURE_TIMEOUT_SECONDS, env: capture.env },
+      );
+      if (captured.exitCode !== 0) {
+        throw new Error(
+          `snapshot capture failed: ${captured.stderr || captured.stdout}`,
+        );
+      }
+      await copyS3Object(staging, stagedImage, artifact.bucket, artifactKey);
+    } finally {
+      await Promise.all([
+        deleteS3Object(staging, stagedSource),
+        deleteS3Object(staging, stagedImage),
+      ]).catch(() => {});
+    }
+    const created = await this.#client
+      .send(
+        new CreateMicrovmImageCommand({
+          name: `${SNAPSHOT_IMAGE_PREFIX}${snapshotId}`,
+          description: `Broods snapshot of ${microvmId} on ${vm.imageArn}`,
+          baseImageArn: source.baseImageArn,
+          baseImageVersion: source.baseImageVersion,
+          buildRoleArn: source.buildRoleArn,
+          codeArtifact: { uri: `s3://${artifact.bucket}/${artifactKey}` },
+          hooks: source.hooks,
+          additionalOsCapabilities: source.additionalOsCapabilities,
+          cpuConfigurations: source.cpuConfigurations,
+          resources: source.resources,
+          environmentVariables: source.environmentVariables,
+          egressNetworkConnectors: source.egressNetworkConnectors,
+          logging: source.logging,
+        }),
+      )
+      .catch(async (error: unknown): Promise<never> => {
+        // No image will read the artifact, so it goes with the failed build.
+        await deleteS3Object(artifact.bucket, artifactKey).catch(() => {});
+        throw error;
+      });
+    if (!created.imageArn) {
+      throw new Error("CreateMicrovmImage returned no image ARN");
+    }
+
+    return {
+      snapshotId: snapshotId,
+      externalImageId: created.imageArn,
+      status: "building",
+    };
+  }
+
+  // A snapshot image's build: active once AWS has a version that can run, failed
+  // when the build failed with none.
+  async snapshotStatus(
+    externalImageId: string,
+  ): Promise<SandboxSnapshotBuildState> {
+    const image = await this.#client.send(
+      new GetMicrovmImageCommand({ imageIdentifier: externalImageId }),
+    );
+    if (image.latestActiveImageVersion) return "active";
+    if (image.latestFailedImageVersion || image.state === "CREATE_FAILED") {
+      return "build_failed";
+    }
+
+    return "building";
+  }
+
   async getInstanceInfo(
     request: SandboxReservationRef,
   ): Promise<SandboxInstanceInfo | null> {
@@ -653,6 +791,17 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // sandbox image workflow publishes next to it.
   #image(): { imageIdentifier: string; imageVersion?: string } {
     const fallback = optionalEnv("MICROVM_IMAGE_IDENTIFIER");
+    const pinned = configString(this.#config.snapshot);
+    if (pinned) {
+      const scope = fallback ? microvmImageScope(fallback) : undefined;
+      if (!scope || microvmImageScope(pinned) !== scope) {
+        throw new Error(
+          "config.snapshot must name a platform MicroVM image in this region",
+        );
+      }
+
+      return { imageIdentifier: pinned };
+    }
     if (this.#config.image) {
       const variant = fallback
         ? microvmImageVariant(fallback, this.#config.image)
@@ -665,28 +814,17 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
       return { imageIdentifier: variant };
     }
-    const pinned = configString(this.#config.snapshot);
-    if (!pinned) {
-      if (!fallback) {
-        throw new Error(
-          "MicroVM sandbox requires MICROVM_IMAGE_IDENTIFIER in the harness runtime.",
-        );
-      }
-      const imageVersion = optionalEnv("MICROVM_IMAGE_VERSION");
-
-      return {
-        imageIdentifier: fallback,
-        ...(imageVersion ? { imageVersion: imageVersion } : {}),
-      };
-    }
-    const scope = fallback ? microvmImageScope(fallback) : undefined;
-    if (!scope || microvmImageScope(pinned) !== scope) {
+    if (!fallback) {
       throw new Error(
-        "config.snapshot must name a platform MicroVM image in this region",
+        "MicroVM sandbox requires MICROVM_IMAGE_IDENTIFIER in the harness runtime.",
       );
     }
+    const imageVersion = optionalEnv("MICROVM_IMAGE_VERSION");
 
-    return { imageIdentifier: pinned };
+    return {
+      imageIdentifier: fallback,
+      ...(imageVersion ? { imageVersion: imageVersion } : {}),
+    };
   }
 
   // The image name this sandbox boots, compared against a cached or reserved VM's.
@@ -1034,6 +1172,21 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     logStream: string,
   ): Promise<RunMicrovmRequest> {
     const image = this.#image();
+    // Every account's snapshot images live in the platform account, so one boots
+    // only for the account that built it.
+    const imageName = image.imageIdentifier.split(":")[6] ?? "";
+    if (imageName.startsWith(SNAPSHOT_IMAGE_PREFIX)) {
+      const accountId = this.#config.controlPlane?.accountId;
+      const owned = accountId
+        ? await findSandboxSnapshot(
+            accountId,
+            microvmImageName(image.imageIdentifier),
+          )
+        : null;
+      if (!owned) {
+        throw new Error("config.snapshot names a snapshot of another account");
+      }
+    }
     // Role and log group are platform resources, so they come from the runtime
     // env only. An account naming the build role would get its IMDS credentials.
     const executionRoleArn = optionalEnv("MICROVM_EXECUTION_ROLE_ARN");
@@ -1800,6 +1953,15 @@ function burstHeader(headers: Headers): SandboxExecResponse["burst"] {
   } catch {
     return undefined;
   }
+}
+
+// The bucket and key of an `s3://bucket/key` code artifact URI.
+function s3Location(
+  uri: string | undefined,
+): { bucket: string; key: string } | undefined {
+  const [, bucket, key] = uri?.match(/^s3:\/\/([^/]+)\/(.+)$/) ?? [];
+
+  return bucket && key ? { bucket: bucket, key: key } : undefined;
 }
 
 function microvmLocalNamespace(namespace: string): string {

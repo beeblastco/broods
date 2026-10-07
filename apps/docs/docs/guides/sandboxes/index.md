@@ -120,13 +120,13 @@ Only the `sandbox` provider applies the size to the machine it creates, and it r
 
 Set `snapshot` to boot a prebuilt image instead of the provider default. Bake heavy toolchains into an image once rather than installing them on every cold start.
 
-- `sandbox` boots the named image. The dashboard's Create snapshot action captures a running `sandbox` instance into an image you can pin later. It is the only provider with that action.
-- `lambda` selects a platform MicroVM image by ARN, in the same AWS account and region as the default image. A running MicroVM cannot be captured into a new image. Its state survives idle through suspend and resume instead.
+- `sandbox` boots the named image. The dashboard's Snapshot action on a running instance captures it into an image you can pin later.
+- `lambda` selects a MicroVM image by ARN, in the same AWS account and region as the default image. The Snapshot action on a running instance saves every file changed since that machine started as a new image. It shows as building for a few minutes, then active. Workspace files stay in the workspace, and deleted files are not carried over.
 - `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
 
 The dashboard Snapshots view shows which image each running instance booted from. On a `sandbox` or `lambda` sandbox node, the Snapshot select pins one of the account's active snapshots for that provider.
 
-On `lambda`, `image` picks a platform image with a browser by name. It cannot be combined with `snapshot` or `fallbackProvider`.
+On `lambda`, `image` picks a platform image with a browser by name. With `snapshot` set too, the machine boots the snapshot and `image` names the variant it was built from, so a snapshot of an Obscura sandbox keeps `browse` working. The dashboard sets it when you pick the snapshot. `image` cannot be combined with `fallbackProvider`.
 
 ```ts
 export const web = defineSandbox({
