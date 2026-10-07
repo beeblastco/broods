@@ -3161,6 +3161,7 @@ function countingNats(): {
   return { nats: nats, opened: (): number => opened, stopped: stopped };
 }
 
+/** The URL a fetch mock was called with, whatever form the input took. */
 function requestUrl(input: RequestInfo | URL): string {
   return input instanceof Request ? input.url : input.toString();
 }
