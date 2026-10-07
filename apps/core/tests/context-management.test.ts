@@ -1110,6 +1110,16 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(config, 500_000)).toBe(true);
   });
 
+  it("uses the upstream window a gateway model id names", async (): Promise<void> => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    const config = {
+      model: { provider: "cloudflare" as const, modelId: "xai/grok-4.3" },
+    };
+
+    expect(shouldAutoCompact(config, 499_999)).toBe(false);
+    expect(shouldAutoCompact(config, 500_000)).toBe(true);
+  });
+
   it("compacts a turn refused for context length unless turned off", async () => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
@@ -1373,6 +1383,34 @@ describe("conversation summary", () => {
     );
     expect(content).toContain("Message 4 (user):\nnewest-context");
     expect(content).toEndWith("keep the deploy decisions");
+  });
+
+  it("cuts an oversized prior summary before the newest message", async (): Promise<void> => {
+    const { summarizeConversation } =
+      await import("../src/harness/compaction.ts");
+
+    await summarizeConversation({
+      conversationKey: "conversation",
+      priorSummaries: [
+        {
+          role: "system",
+          content: `<session-compaction-summary>\n${"s".repeat(14_000)}`,
+        },
+      ],
+      messages: [{ role: "user", content: "newest-context" }],
+      agentConfig: {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gpt-3.5-turbo" },
+      },
+    });
+
+    const options = generateTextMock.mock.calls[0]?.[0] as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    const content = options?.messages[0]?.content ?? "";
+    expect(content.length).toBeLessThanOrEqual(13_108);
+    expect(content).toStartWith("Message 1 (system):");
+    expect(content).toEndWith("Message 2 (user):\nnewest-context");
   });
 
   it("strips reasoning before building the summary request", async () => {

@@ -137,9 +137,10 @@ function createCompactionSummaryMessage(summary: string): SystemModelMessage {
 
 // Per-call data rides the user message; the system prompt stays the static
 // generated DEFAULT_COMPACTION_PROMPT so its prefix stays cacheable. History
-// longer than `limit` characters drops its oldest whole messages; prior
-// summaries and the instructions always stay. A newest message that still
-// overflows on its own keeps its beginning.
+// longer than `limit` characters drops its oldest whole messages and keeps the
+// instructions. Prior summaries take the room the kept messages leave, so an
+// oversized summary is cut before the newest message is. A newest message that
+// still overflows on its own keeps its beginning.
 function formatCompactionRequest(
   priorSummaries: SystemModelMessage[],
   messages: ModelMessage[],
@@ -158,11 +159,22 @@ function formatCompactionRequest(
     const dropped = messageBlocks.shift() ?? "";
     length -= dropped.length + COMPACTION_MESSAGE_SEPARATOR.length;
   }
-  const body = [...summaryBlocks, ...messageBlocks].join(
-    COMPACTION_MESSAGE_SEPARATOR,
-  );
+  const budget = Math.max(0, limit - suffix.length);
+  const history = messageBlocks.join(COMPACTION_MESSAGE_SEPARATOR);
+  const summaries = summaryBlocks
+    .join(COMPACTION_MESSAGE_SEPARATOR)
+    .slice(
+      0,
+      Math.max(
+        0,
+        budget - history.length - COMPACTION_MESSAGE_SEPARATOR.length,
+      ),
+    );
+  const body = summaries
+    ? `${summaries}${COMPACTION_MESSAGE_SEPARATOR}${history}`
+    : history;
 
-  return `${body.slice(0, Math.max(0, limit - suffix.length))}${suffix}`;
+  return `${body.slice(0, budget)}${suffix}`;
 }
 
 function formatMessagesForCompaction(messages: ModelMessage[]): string[] {
@@ -175,9 +187,10 @@ function stringifyMessageContent(content: ModelMessage["content"]): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
 
-// Resolves provider-routed IDs against the shared model catalog. The configured
-// provider's own window wins; otherwise the smallest window among the matching
-// provider IDs, then among all providers, keeps the threshold safe.
+// Resolves provider-routed IDs against the shared model catalog. The window of
+// the configured provider, or of the upstream a gateway id like `xai/grok-4`
+// names, wins; otherwise the smallest window among the matching provider IDs,
+// then among all providers, keeps the threshold safe.
 function modelContextLength(agentConfig: AgentConfig): number {
   const modelId = agentConfig.model?.modelId;
   if (!modelId) return DEFAULT_MODEL_CONTEXT_LENGTH;
@@ -194,8 +207,13 @@ function modelContextLength(agentConfig: AgentConfig): number {
       ),
   );
   if (!model) return DEFAULT_MODEL_CONTEXT_LENGTH;
+  const routedProvider = modelId.includes("/")
+    ? modelId.split("/")[0]
+    : undefined;
   const configuredProvider = model.providers.filter(
-    (provider): boolean => provider.providerId === agentConfig.model?.provider,
+    (provider): boolean =>
+      provider.providerId === agentConfig.model?.provider ||
+      provider.providerId === routedProvider,
   );
   const exactMappings = model.providers.filter((provider): boolean =>
     identifiers.includes(provider.externalId),
