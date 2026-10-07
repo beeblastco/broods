@@ -13,6 +13,7 @@ import type { R2Credentials } from "@broods/convex/model/r2Credentials";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { PolicyRecord } from "./domain/policy.ts";
+import type { PrincipalLink } from "./domain/principal.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { ChannelRecord } from "./domain/channel-record.ts";
 import type {
@@ -44,6 +45,8 @@ export interface TaskUsageInput {
   /** Convex endpoint identifier when the task belongs to a deployment. */
   endpointId?: string;
   agentId: string;
+  /** The run's delegation chain, stored as `actor.chain` on its `run.completed` ledger row. */
+  principalChain?: PrincipalLink[];
   conversationKey: string;
   /** `${eventId}#${traceId}`: one row per model pass. */
   taskId: string;
@@ -153,7 +156,10 @@ interface ChannelRecordStore {
  * chosen per request by id.
  */
 interface AgentDeploymentStore {
-  getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentScope | null>;
+  /** The key's scope with its account, null when either is inactive. */
+  getByApiKeyHash(
+    apiKeyHash: string,
+  ): Promise<(AgentDeploymentScope & { account: AccountRecord }) | null>;
   /** Stamp the key's lastUsedAt for the dashboard. Callers throttle it. */
   touchLastUsed(apiKeyHash: string, usedAt: number): Promise<void>;
   /** Resolve the stage deployment containing one linked runtime agent. */
@@ -287,7 +293,7 @@ interface ConnectionStore {
   ): Promise<boolean>;
 }
 
-/** Assume-role sessions, keyed by fp_sts_ token hash. Minted by the config plane. */
+/** Assume-role sessions, keyed by bsts_ token hash. Minted by the config plane. */
 interface RoleSessionStore {
   /** Resolve a live session to its role principal; null when unknown/expired/disabled. */
   resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;
@@ -322,7 +328,32 @@ interface TaskUsageStore {
   record(input: TaskUsageInput): Promise<void>;
 }
 
+/**
+ * One row core appends to the account's hash-chained audit ledger off the
+ * happy path: an enforced policy denying a tool. A run's own `run.completed`
+ * row rides the usage write (`internal.usage.recordTaskUsage`) instead, so
+ * the per-turn path gains no Convex call. `details` must hold ids, names
+ * and counts only, never tool input or secrets.
+ */
+export interface AuditLedgerInput {
+  accountId: string;
+  agentId?: string;
+  /** The run's delegation chain, stored as `actor.chain`. */
+  chain?: PrincipalLink[];
+  traceId?: string;
+  action: "tool.denied";
+  resource: { kind: "tool"; name: string };
+  summary: string;
+  details?: Record<string, JSONValue | undefined>;
+}
+
+/** Appends to the audit ledger. Best-effort: a failed write is logged, never thrown. */
+interface AuditLedgerStore {
+  append(input: AuditLedgerInput): Promise<void>;
+}
+
 export interface Storage {
+  auditLedger: AuditLedgerStore;
   accounts: AccountStore;
   agents: AgentStore;
   budgets: BudgetStore;

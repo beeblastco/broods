@@ -9,7 +9,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Plug } from "lucide-react";
 
 const TRANSPORT_SUBTITLE: Record<StageMcpServer["transport"], string> = {
-  hosted: "hosted · node",
+  hosted: "hosted · bundle",
   http: "external · url",
   machine: "your computer · stdio",
 };

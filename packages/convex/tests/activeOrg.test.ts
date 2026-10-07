@@ -24,7 +24,7 @@ describe("active org", () => {
     const userId = await seedUser(t, "auth_victim", "victim@example.com");
     caller.authId = "auth_victim";
 
-    const orgId = await t.mutation(api.org.orgs.getOrCreate, {});
+    const { orgId } = await t.mutation(api.org.orgs.getOrCreate, {});
 
     expect((await t.run(async (ctx) => ctx.db.get(userId)))?.activeOrgId).toBe(
       orgId,
@@ -53,7 +53,7 @@ describe("active org", () => {
     caller.authId = "auth_victim";
 
     expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(ownOrg);
-    expect(await t.mutation(api.org.orgs.getOrCreate, {})).toBe(ownOrg);
+    expect((await t.mutation(api.org.orgs.getOrCreate, {})).orgId).toBe(ownOrg);
   });
 
   test("setActive and create still switch orgs", async () => {
@@ -71,6 +71,86 @@ describe("active org", () => {
 
     const created = await t.mutation(api.org.orgs.create, { name: "fresh" });
     expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(created);
+  });
+});
+
+describe("home bootstrap", () => {
+  test("a first sign-in creates the org and opens nothing until it is provisioned", async () => {
+    const t = activeOrgTest();
+    await seedUser(t, "auth_victim", "victim@example.com");
+    caller.authId = "auth_victim";
+
+    const home = await t.mutation(api.project.openHome, {});
+
+    expect(home).toMatchObject({
+      needsProvision: true,
+      projectId: null,
+      stageId: null,
+    });
+    expect(await t.mutation(api.org.orgs.getOrCreate, {})).toEqual({
+      orgId: home.orgId,
+      needsProvision: true,
+    });
+    expect(
+      await t.run(async (ctx) => ctx.db.query("projects").collect()),
+    ).toEqual([]);
+  });
+
+  test("a provisioned org opens the deep-linked project and stage, else its newest", async () => {
+    const t = activeOrgTest();
+    const userId = await seedUser(t, "auth_victim", "victim@example.com");
+    const orgId = await seedOrg(t, "victim", userId, "auth_victim", 1);
+    const { projectId, productionId } = await t.run(async (ctx) => {
+      await ctx.db.insert("accounts", {
+        orgId: orgId,
+        username: "victim",
+        secretHash: "hash-victim",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_victim",
+        orgId: orgId,
+        name: "Tracy",
+        slug: "tracy",
+        updatedAt: 1,
+      });
+      const stage = async (
+        name: string,
+        isDefault: boolean,
+      ): Promise<Id<"stages">> =>
+        await ctx.db.insert("stages", {
+          authId: "auth_victim",
+          projectId: projectId,
+          name: name,
+          kind: isDefault ? "development" : "production",
+          isDefault: isDefault,
+          updatedAt: 1,
+        });
+      await stage("development", true);
+
+      return {
+        projectId: projectId,
+        productionId: await stage("production", false),
+      };
+    });
+    caller.authId = "auth_victim";
+
+    expect(
+      await t.mutation(api.project.openHome, {
+        project: "tracy",
+        stage: "Production",
+      }),
+    ).toEqual({
+      orgId: orgId,
+      needsProvision: false,
+      projectId: projectId,
+      stageId: productionId,
+    });
+    expect(
+      await t.mutation(api.project.openHome, { project: "someone-elses" }),
+    ).toMatchObject({ projectId: projectId, stageId: null });
   });
 });
 

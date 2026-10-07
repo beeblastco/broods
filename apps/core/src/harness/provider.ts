@@ -77,6 +77,9 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 // shorter than a tokens-per-minute window, so one 429 failed the whole run.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
 
+// Cloudflare AI Gateway's base URL.
+const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
+
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
 const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
@@ -119,6 +122,16 @@ const STALE_STORED_ITEM_PATTERN =
 // provider out. The settings each one accepts are read off it, never restated.
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 
+// Workers AI REST credentials, plus the AI Gateway that carries every request
+// once it is named.
+type CloudflareProviderSettings = Extract<
+  Parameters<typeof createWorkersAI>[0],
+  { accountId: string }
+> & {
+  gatewayId?: string;
+  headers?: Record<string, string>;
+};
+
 interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
   // a model instance, which is what middleware can wrap.
@@ -160,7 +173,7 @@ export function modelProviderFactories(): Record<
     baseten: createBaseten,
     bedrock: createAmazonBedrock,
     cerebras: createCerebras,
-    cloudflare: createWorkersAI,
+    cloudflare: createCloudflare,
     cohere: createCohere,
     custom: createOpenAICompatible,
     deepinfra: createDeepInfra,
@@ -676,6 +689,53 @@ function resolveOpenAICompatibleModel(
       ],
     }),
   };
+}
+
+/**
+ * The `cloudflare` provider: Workers AI over REST, through AI Gateway once
+ * `gatewayId` is set (`apiKey` rides `cf-aig-authorization`). Workers AI
+ * models (`@cf/`, `@hf/`) keep the Workers AI provider; other ids use the
+ * gateway's OpenAI-compatible endpoint, where `headers.Authorization` carries an
+ * upstream key.
+ */
+function createCloudflare({
+  gatewayId,
+  headers,
+  ...settings
+}: CloudflareProviderSettings): ModelProviderInstance {
+  const gateway = gatewayId?.trim();
+  if (!gateway) {
+    const workersAI = createWorkersAI(settings);
+
+    return (modelId: string): Exclude<LanguageModel, string> =>
+      workersAI(workersAIModelId(modelId));
+  }
+  const gatewayAuth = { "cf-aig-authorization": `Bearer ${settings.apiKey}` };
+  const workersAI = createWorkersAI({
+    ...settings,
+    gateway: { ...settings.gateway, id: gateway },
+  });
+  const path = [settings.accountId, gateway].map(encodeURIComponent).join("/");
+  const compatible = createOpenAICompatible({
+    name: "cloudflare",
+    baseURL: `${CLOUDFLARE_GATEWAY_BASE_URL}/${path}/compat`,
+    headers: { ...headers, ...gatewayAuth },
+    fetch: settings.fetch,
+    includeUsage: true,
+  });
+
+  return (modelId: string): Exclude<LanguageModel, string> => {
+    const workersModel = workersAIModelId(modelId);
+
+    return workersModel.startsWith("@")
+      ? workersAI(workersModel, { extraHeaders: gatewayAuth })
+      : compatible(modelId);
+  };
+}
+
+// The gateway names Workers AI models `workers-ai/@cf/...`; Workers AI itself takes `@cf/...`.
+function workersAIModelId(modelId: string): string {
+  return modelId.replace(/^workers-ai\//, "");
 }
 
 /**

@@ -9,6 +9,7 @@ import { api } from "@broods/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 export default function AccountSettingsPage(): React.JSX.Element {
   const searchParams = useSearchParams();
@@ -47,11 +48,7 @@ function AccountDangerPanel(): React.JSX.Element {
       setDialogOpen(false);
       router.replace("/auth/sign-in");
     } catch (err) {
-      setDeleteError(
-        err instanceof Error
-          ? err.message
-          : "Unable to schedule account deletion.",
-      );
+      setDeleteError(toErrorMessage(err));
     } finally {
       setIsDeleting(false);
     }

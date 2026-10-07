@@ -6,7 +6,9 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 
 - `apps/core` (`@broods/core`) is the agent harness. one Bun container behind gateway. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
 - `apps/lambda` is plain `.mjs` files, no build, not a workspace; `apps/core/sst.config.ts` deploys them. the AWS Lambda that runs account-uploaded hosted MCP server bundles (`handler.mjs` + `child-runner.mjs`), and the sandbox log forwarder that ships MicroVM guest logs from CloudWatch to Loki (`sandbox-log-forwarder.mjs`).
-- `apps/gateway` (`@broods/gateway`) is the front door. every public request hit this first. splits config-plane paths from core paths, and terminates the agent / observability / terminal WebSockets.
+- `apps/cloudflare-mcp` (`@broods/cloudflare-mcp`) is the hosted MCP runtime on Cloudflare Dynamic Workers. the platform sends a hosted row there when its bundle can run on Workers and the deployment runs this Worker; every other row stays on Lambda. same batch payload and NDJSON frames as the Lambda runner. `deploy.yaml` deploys its code per stage with wrangler; the infra repo owns its key.
+- `apps/edge` (`@broods/edge`) is the public route table and the Traefik config generated from it. Traefik is the front door: every public request hit it first. it splits config-plane paths from core paths, sends WebSockets to the gateway, limits per client address, sets CORS. nothing in it runs as a service.
+- `apps/gateway` (`@broods/gateway`) is the WebSocket server behind Traefik. terminates the agent / observability / terminal / machine WebSockets.
 - `apps/discord-forwarder` (`@broods/discord-forwarder`) runs the Discord Gateway sockets. Discord only POSTs interactions to a webhook; regular messages arrive over a socket, so without this a Discord agent answers `/new` and ignores every mention. one socket per bot token, one deployment, single replica.
 - `apps/matrix-forwarder` (`@broods/matrix-forwarder`) runs the Matrix `/sync` long-polls and holds each account's E2EE keys. Matrix has no webhooks, so it POSTs decrypted room messages to the channel webhook, and core sends room events (replies, reactions, typing) back through it because only it can encrypt them. one long-poll per access token, crypto store on a persistent volume, single replica.
 - `apps/dashboard` (`@broods/dashboard`) is the Next.js UI. drives core through Convex.
@@ -16,7 +18,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
 - `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
 
-they are one product, not eleven islands. gateway is the door, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
+they are one product, not thirteen islands. Traefik (`apps/edge`) is the door, the gateway own the sockets, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
 
 outside repo, sibling of checkout:
 

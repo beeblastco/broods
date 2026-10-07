@@ -108,7 +108,7 @@ export function createTwilioChannel(
     },
 
     // Twilio signs the URL it called plus every form field, so the check needs
-    // the public URL, not the one core was reached on behind the gateway.
+    // the public URL, not the one core was reached on behind Traefik.
     authenticate: async function (req): Promise<boolean> {
       const url =
         options.webhookUrl ??

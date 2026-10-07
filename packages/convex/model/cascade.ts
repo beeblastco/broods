@@ -50,6 +50,11 @@ const accountScopedReads: ReadonlyArray<
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
+      .query("accountKeys")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
       .query("accountRoles")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
@@ -110,6 +115,21 @@ const accountScopedReads: ReadonlyArray<
       .withIndex("by_accountId_and_reservationKey_and_createdAt", (q) =>
         q.eq("accountId", accountId),
       )
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditEvents")
+      .withIndex("by_accountId_and_seq", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditChainHeads")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("auditSinks")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
@@ -229,16 +249,6 @@ export async function deleteAccountContentsBatch(
     return false;
   }
 
-  const auditEvents = await ctx.db
-    .query("configAuditEvents")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-    .take(ACCOUNT_DELETE_BATCH_SIZE);
-  if (auditEvents.length > 0) {
-    for (const event of auditEvents) await ctx.db.delete(event._id);
-
-    return false;
-  }
-
   const taskUsage = await ctx.db
     .query("taskUsage")
     .withIndex("by_accountId_and_taskId", (q) => q.eq("accountId", accountId))
@@ -268,6 +278,21 @@ export async function deleteAccountContentsBatch(
 }
 
 /**
+ * Deletes a workspace file row and its stored blob. Used by every path that
+ * removes workspace files. A blob that is already gone is skipped, so one stale
+ * row cannot block the deletion of a whole project, org or user.
+ */
+export async function deleteWorkspaceFile(
+  ctx: MutationCtx,
+  file: Doc<"workspaceFiles">,
+): Promise<void> {
+  if (file.storageId && (await ctx.db.system.get(file.storageId))) {
+    await ctx.storage.delete(file.storageId);
+  }
+  await ctx.db.delete(file._id);
+}
+
+/**
  * Delete a project, its stages + their contents, its crons, and its workspace
  * files (including stored blobs).
  * @param projectId the project to purge
@@ -292,10 +317,7 @@ export async function purgeProject(
       q.eq("projectId", projectId),
     )
     .collect();
-  for (const file of files) {
-    if (file.storageId) await ctx.storage.delete(file.storageId);
-    await ctx.db.delete(file._id);
-  }
+  for (const file of files) await deleteWorkspaceFile(ctx, file);
 
   await ctx.db.delete(projectId);
 }

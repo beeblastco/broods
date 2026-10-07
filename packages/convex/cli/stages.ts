@@ -8,7 +8,7 @@
  *
  * Stage management spans every stage of a project, so the HTTP endpoint
  * authenticates with a `broods login` token rather than a stage-scoped
- * deploy key.
+ * project key.
  */
 
 import { v } from "convex/values";
@@ -21,7 +21,7 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { assertStageName } from "../lib/slug";
-import { sha256Hex } from "../model/accountSecrets";
+import { cliLoginTokenHash } from "./auth";
 import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
@@ -142,14 +142,12 @@ export const createByAccount = internalMutation({
 /** HTTP endpoint for `broods stage list` and `broods stage create`. */
 export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
-    const auth = await bearerAuth(req);
-    if (!auth) {
-      return jsonError(401, "Authorization Bearer token is required");
-    }
-
-    const resolved = await ctx.runMutation(internal.cli.auth.resolveCliToken, {
-      tokenHash: auth.secretHash,
-    });
+    const tokenHash = await cliLoginTokenHash(req);
+    const resolved = tokenHash
+      ? await ctx.runMutation(internal.cli.auth.resolveCliToken, {
+          tokenHash: tokenHash,
+        })
+      : null;
     if (!resolved) {
       return jsonError(401, "Stage commands require a `broods login` token");
     }
@@ -246,19 +244,17 @@ export const mintSessionByAccount = internalMutation({
 /**
  * HTTP endpoint for the CLI's logs, stream and machine commands. They trade
  * the `broods login` token for a 15-minute stage ticket instead of using the
- * stage runtime key, which is meant to sit in a frontend.
+ * runtime key, which is meant to sit in a frontend.
  */
 export const sessionHttpHandle = httpAction(
   async (ctx, req): Promise<Response> => {
     try {
-      const auth = await bearerAuth(req);
-      if (!auth) {
-        return jsonError(401, "Authorization Bearer token is required");
-      }
-      const resolved = await ctx.runMutation(
-        internal.cli.auth.resolveCliToken,
-        { tokenHash: auth.secretHash },
-      );
+      const tokenHash = await cliLoginTokenHash(req);
+      const resolved = tokenHash
+        ? await ctx.runMutation(internal.cli.auth.resolveCliToken, {
+            tokenHash: tokenHash,
+          })
+        : null;
       if (!resolved) {
         return jsonError(401, "Stage sessions require a `broods login` token");
       }
@@ -327,20 +323,6 @@ export const listByAccount = internalQuery({
     );
   },
 });
-
-async function bearerAuth(
-  req: Request,
-): Promise<{ secretHash: string } | null> {
-  const header = req.headers.get("Authorization") ?? "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  return {
-    secretHash: await sha256Hex(match[1]),
-  };
-}
 
 async function projectForAccount(
   ctx: MutationCtx | QueryCtx,

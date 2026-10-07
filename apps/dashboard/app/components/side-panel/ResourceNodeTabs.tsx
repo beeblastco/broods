@@ -7,6 +7,7 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
+import { isWorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
   ToggleRow,
@@ -40,7 +41,7 @@ const WORKSPACE_DEFAULT_CONFIG = {
 };
 
 const SANDBOX_DEFAULT_CONFIG = {
-  provider: "sandbox",
+  provider: "lambda",
   permissionMode: "ask",
 };
 
@@ -158,7 +159,7 @@ export function SandboxResourceDetailsTab({
           label="Provider"
           disabled={managedByCode}
           value={
-            typeof config.provider === "string" ? config.provider : "sandbox"
+            typeof config.provider === "string" ? config.provider : "lambda"
           }
           onValueChange={setProvider}
           options={[
@@ -245,6 +246,9 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
+  const isolation = isWorkspaceIsolation(config.isolation)
+    ? config.isolation
+    : undefined;
   const storage: Record<string, unknown> = isPlainObject(config.storage)
     ? config.storage
     : { provider: "s3" };
@@ -437,12 +441,12 @@ export function WorkspaceResourceDetailsTab({
         <ToggleRow
           label="Isolation"
           description="Split the filesystem per conversation instead of sharing one root."
-          checked={config.isolation === true}
-          onCheckedChange={(isolation) =>
-            setConfig({ isolation: isolation ? true : undefined })
+          checked={isolation !== undefined}
+          onCheckedChange={(checked) =>
+            setConfig({ isolation: checked ? "conversation" : undefined })
           }
         />
-        {config.isolation === true && (
+        {isolation === "conversation" && (
           <ExpandBlock>
             <p className="text-2xs text-muted-foreground">
               Every channel attached to this workspace must set `partition`. A

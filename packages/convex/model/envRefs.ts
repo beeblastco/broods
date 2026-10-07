@@ -17,3 +17,11 @@ export const ACCOUNT_ENV_REFS_ONLY_PATTERN = /^(?:\$\{[A-Z][A-Z0-9_]*\})+$/;
 
 /** A value that is exactly one `${NAME}` ref; group 1 is the name. */
 export const ACCOUNT_ENV_REF_PATTERN = /^\$\{([A-Z][A-Z0-9_]*)\}$/;
+
+/**
+ * A credential value with no inline secret: `${NAME}` refs only, after an
+ * optional auth scheme word (`Bearer ${TOKEN}`). Anchored, so a literal beside
+ * a ref (`Bearer sk-live ${X}`) does not match. Members see only these.
+ */
+export const CREDENTIAL_HEADER_VALUE_PATTERN =
+  /^(?:[A-Za-z]+ )?(?:\$\{[A-Z][A-Z0-9_]*\})+$/;

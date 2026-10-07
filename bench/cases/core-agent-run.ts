@@ -282,6 +282,7 @@ function fakeStorage(): Storage {
     connections: { load: none, saveRefreshed: async () => false },
     roleSessions: { resolveByTokenHash: none },
     taskUsage: { record: async () => undefined },
+    auditLedger: { append: async () => undefined },
   };
 }
 
@@ -323,6 +324,10 @@ function session(): Session {
     environmentText: (): string => "<environment>",
     persistModelMessages: async (): Promise<never[]> => [],
     renewConversationLease: async (): Promise<"renewed"> => "renewed",
+    stepBoundary: async (): Promise<{
+      renewal: "renewed";
+      steering: null;
+    }> => ({ renewal: "renewed", steering: null }),
     applySteeringIngress: async (): Promise<null> => null,
     appendIngressEvents: async (): Promise<null> => null,
     loadRefreshedSystemPromptParts: async (): Promise<{

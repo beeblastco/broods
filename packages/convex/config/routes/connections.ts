@@ -4,7 +4,7 @@
  * provider's consent screen, opens it, and PUTs the code the browser brought
  * back; this route trades it on the client OpenAI issued, checks the ID
  * token and stores the tokens. GET answers what is connected, never the
- * tokens; DELETE forgets, then revokes. Refresh is core's. The account secret
+ * tokens; DELETE forgets, then revokes. Refresh is core's. The account key
  * or a `broods login` token may call it; role sessions and runtime keys may
  * not.
  */
@@ -13,7 +13,7 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import type { ConnectionStatus } from "../../account/connections";
-import { type ConfigAuditActor } from "../../model/auditEvents";
+import { type AuditActor } from "../../model/auditEvents";
 import { ClientError } from "../../model/clientError";
 import {
   authorizeUrl,
@@ -68,10 +68,7 @@ export async function handleConnectionsRoute(
   if (!caller) return await unauthorizedResponse(ctx, req);
   // A runtime key controls one stage; a connection acts for the whole account.
   if (caller.deploymentScope) {
-    return jsonError(
-      403,
-      "Connections require the account secret or a CLI login",
-    );
+    return jsonError(403, "Connections require the account key or a CLI login");
   }
   const accountId = caller.accountId;
 
@@ -93,10 +90,11 @@ export async function handleConnectionsRoute(
   );
 
   // Hosted, paid services need the provider's approval before a sign-in starts.
-  const selfHostedOnly = CONNECTION_TYPES[type].selfHostedOnly;
+  const { selfHostedOnly, managedOptIn } = CONNECTION_TYPES[type];
   if (
     selfHostedOnly &&
     isManagedService() &&
+    !(managedOptIn && process.env[managedOptIn] === "true") &&
     (path.start || req.method === "PUT")
   )
     return jsonError(403, selfHostedOnly);
@@ -131,7 +129,7 @@ export function parseConnectionsPath(pathname: string): ConnectionsPath | null {
 async function disconnectResponse(
   ctx: ActionCtx,
   ref: ConnectionRef,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   const deleted: boolean = await ctx.runMutation(
     internal.account.connections.disconnect,
@@ -230,45 +228,38 @@ async function signInResponse(
   req: Request,
   ref: ConnectionRef,
   existing: ConnectionStatus | null,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
 ): Promise<Response> {
   const meta = CONNECTION_TYPES[ref.type];
   const code = readCode(await parseJsonRequest(req));
   // OpenAI issued the client on this sign-in's redirect.
   const client = { clientId: code.clientId, hostId: code.hostId };
-  let stored: ConnectionStatus;
-  let models: string[];
-  try {
-    const tokens = await exchangeCode(ref.type, client, code);
-    const claims = await verifyIdToken(
-      ref.type,
-      tokens.idToken,
-      client.clientId,
-      code.nonce,
+  // A failed sign-in throws a ClientError the config plane answers with its
+  // reason; anything unexpected is a logged 500 that names nothing internal.
+  const tokens = await exchangeCode(ref.type, client, code);
+  const claims = await verifyIdToken(
+    ref.type,
+    tokens.idToken,
+    client.clientId,
+    code.nonce,
+  );
+  // A grant without the scope the type is for is no use: refuse it here
+  // rather than at the first run.
+  if (meta.requiredScope && !tokens.scopes.includes(meta.requiredScope))
+    throw new ClientError(
+      `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
     );
-    // A grant without the scope the type is for is no use: refuse it here
-    // rather than at the first run.
-    if (meta.requiredScope && !tokens.scopes.includes(meta.requiredScope))
-      throw new Error(
-        `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
-      );
-    stored = await ctx.runMutation(internal.account.connections.set, {
-      ...ref,
-      clientId: client.clientId,
-      hostId: client.hostId,
-      ...(claims.email ? { email: claims.email } : {}),
-      scopes: tokens.scopes,
-      expiresAt: tokens.expiresAt,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    });
-    models = await listModels(ref.type, tokens.accessToken);
-  } catch (error) {
-    return jsonError(
-      400,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
+  const stored = await ctx.runMutation(internal.account.connections.set, {
+    ...ref,
+    clientId: client.clientId,
+    hostId: client.hostId,
+    ...(claims.email ? { email: claims.email } : {}),
+    scopes: tokens.scopes,
+    expiresAt: tokens.expiresAt,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+  });
+  const models = await listModels(ref.type, tokens.accessToken);
   await writeAudit(ctx, {
     accountId: ref.accountId,
     actor: actor,

@@ -8,7 +8,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage } from "./model/ownership/stage";
-import { decryptAgentConfigBlob } from "./model/agentConfigCodec";
+import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import {
   assertEnvironmentVariableUnreferenced,
@@ -19,8 +19,8 @@ import {
   accountIdForProject,
   auditDetailsJson,
   dashboardAuditActor,
-  insertConfigAuditEvent,
-  type ConfigAuditActor,
+  appendAuditEvent,
+  type AuditActor,
 } from "./model/auditEvents";
 
 // Plaintext reveal and every write are org admin operations; members read names only.
@@ -151,12 +151,15 @@ export const reveal = mutation({
       throw new Error("Variable not found.");
     }
 
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
-      encryptionSecret(),
+    const cipher = await accountCipher(
+      ctx,
+      await requireAccountIdForProject(ctx, projectId),
     );
-    const revealed = decrypted as { value?: unknown } | null;
-    const value = typeof revealed?.value === "string" ? revealed.value : "";
+    const decrypted = await cipher.decrypt(
+      "environmentVariables:ciphertext",
+      variable,
+    );
+    const value = typeof decrypted?.value === "string" ? decrypted.value : "";
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: projectId,
@@ -219,17 +222,6 @@ export const set = mutation({
   },
 });
 
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
-    );
-  }
-
-  return secret;
-}
-
 function maskEnvironmentVariable(variable: {
   _id: Id<"environmentVariables">;
   _creationTime: number;
@@ -260,7 +252,7 @@ function maskEnvironmentVariable(variable: {
 /** Record an environment-variable mutation without storing plaintext values. */
 async function recordEnvironmentVariableAudit(
   ctx: MutationCtx,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   input: {
     projectId: Id<"projects">;
     stageId: Id<"stages">;
@@ -273,7 +265,7 @@ async function recordEnvironmentVariableAudit(
   const accountId = await accountIdForProject(ctx, input.projectId);
   if (!accountId) return;
 
-  await insertConfigAuditEvent(ctx.db, {
+  await appendAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: input.projectId,
     stageId: input.stageId,

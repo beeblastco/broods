@@ -72,7 +72,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
 | `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
 | `policies`          | Policies that gate the agent. Each carries its own mode                                                |
-| `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                               |
+| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                     |
 | `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                           |
 
 ```ts
@@ -231,7 +231,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 
 | Field                  | Default    | Description                                                                                                                    |
 | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`             | `sandbox`  | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`                                                                     |
+| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`, `custom`                                                           |
 | `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                      |
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |
@@ -246,6 +246,8 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `memoryLimit`          |            | MB, informational                                                                                                              |
 | `outputLimitBytes`     | 65536      | Output kept per call                                                                                                           |
 | `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey` |
+
+`custom` runs `bash` on your own server through one HTTP contract, named by `options.endpoint`; what it accepts and refuses is on [Your own server](../guides/sandboxes/custom.md).
 
 ```ts
 export const lambdaSandbox = defineSandbox({
@@ -264,7 +266,7 @@ Persistent files, mounted into a sandbox. See [Workspaces](../guides/workspaces.
 | Field         | Default              | Description                                                                                              |
 | ------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
 | `storage`     | `{ provider: "s3" }` | Managed bucket, or your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`                        |
-| `partitioned` | `false`              | Allow channels to split the workspace per conversation                                                   |
+| `partitioned` |                      | `"conversation"` lets channels split the workspace per conversation, `"agent"` gives each agent its own  |
 | `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default |
 
 ```ts
@@ -303,6 +305,7 @@ An MCP server whose tools the agent sees as `<name>__<tool>`. Give exactly one o
 | `headers`      | Request headers. Credentials must be `"Bearer ${NAME}"` refs                                                 |
 | `oauth`        | `{ clientId, clientSecret, refreshToken, tokenUrl? }` for expiring tokens. No Authorization header alongside |
 | `allowedTools` | Tools to register. Omit for all                                                                              |
+| `runtime`      | `handler` only. `"auto"` (default) runs it on Cloudflare Workers when it builds for them; `"lambda"` never   |
 
 ```ts
 export const search = defineMcp({

@@ -17,6 +17,10 @@ import {
 } from "./envRefs";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
+import {
+  WORKSPACE_ISOLATION_LEVELS,
+  type WorkspaceIsolation,
+} from "./workspaceIsolation";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
@@ -74,7 +78,7 @@ export interface WorkspaceStorageConfig {
 
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
-  isolation?: boolean;
+  isolation?: WorkspaceIsolation;
   // Named harness features, each with its own options (no top-level enabled):
   // workspace = the <workspace> prompt, memory = structured memory.
   harness?: {
@@ -148,9 +152,11 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   const config = value;
   const storage = normalizeWorkspaceStorage(config.storage);
-  assertOptionalBoolean(config.isolation, "config.isolation");
-  const isolation = config.isolation as boolean | undefined;
-
+  assertOptionalEnum(
+    config.isolation,
+    "config.isolation",
+    WORKSPACE_ISOLATION_LEVELS,
+  );
   let harness:
     | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
     | undefined;
@@ -176,7 +182,7 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
   return {
     storage: storage,
-    ...(isolation === true ? { isolation: true } : {}),
+    ...(config.isolation ? { isolation: config.isolation } : {}),
     ...(harness ? { harness: harness } : {}),
   };
 }
@@ -378,7 +384,7 @@ function assertOptionalEnum<T extends string>(
   value: unknown,
   name: string,
   allowed: readonly T[],
-): void {
+): asserts value is T | undefined {
   if (
     value !== undefined &&
     (typeof value !== "string" || !allowed.includes(value as T))

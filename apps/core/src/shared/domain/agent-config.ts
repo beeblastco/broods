@@ -1,8 +1,9 @@
 /**
- * Agent configuration: types for the per-agent settings object, the runtime
- * projection of a stored config, and encryption helpers. The validation rules
- * are the config plane's (`@broods/convex/model/agentRules`), so a config is
- * judged the same on write and on every run.
+ * Agent configuration: types for the per-agent settings object and the
+ * runtime projection of a stored config. The validation rules are the config
+ * plane's (`@broods/convex/model/agentRules`), so a config is judged the same
+ * on write and on every run. Decrypting the stored blob is
+ * `../convex/account-keys.ts`.
  * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
@@ -24,14 +25,6 @@ import type {
   SystemModelMessage,
   streamText,
 } from "ai";
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from "node:crypto";
-import { requireEnv } from "../env.ts";
-import { isPlainObject } from "../object.ts";
 import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
 import {
   normalizeAgentConfig,
@@ -44,7 +37,6 @@ import type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 import type { McpOauth } from "./mcp.ts";
 export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
-const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 // `agent.maxTurn: 0` lifts the step cap: the loop runs until the model stops.
 export const AGENT_MAX_TURN_UNLIMITED = 0;
 // A per-run `model` override may tune sampling (the Vercel AI SDK
@@ -88,13 +80,13 @@ export interface AgentConfig {
   scheduler?: AgentSchedulerConfig;
   /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
-  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
-  // runtime key). Off by default: when not `true` the deployment (public-key)
-  // request path is refused. Internal callers (account/admin secret, cron,
-  // async worker) and channel webhooks are never gated by this.
+  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the runtime
+  // key). Off by default: when not `true` the runtime-key request path is
+  // refused. Internal callers (account key, admin secret, cron, async worker)
+  // and channel webhooks are never gated by this.
   publicAccess?: boolean;
   // Lets the embeddable runtime key send `system` and `model` overrides. Off by
-  // default; stage tickets and account secrets ignore it.
+  // default; stage tickets and account keys ignore it.
   allowRunOverrides?: boolean;
   [key: string]: unknown;
 }
@@ -230,6 +222,8 @@ export interface AgentProviderSettings {
   base_url?: string;
   /** OpenAI-compatible endpoint (`custom`). AI-SDK form; the dashboard writes both. */
   baseURL?: string;
+  /** Cloudflare AI Gateway id (`cloudflare`). Set, requests go through the gateway. */
+  gatewayId?: string;
   headers?: Record<string, string>;
   /** Endpoint label; becomes the provider id and the pi harness env prefix. */
   name?: string;
@@ -743,14 +737,6 @@ export interface AgentWhatsAppChannelConfig {
   [key: string]: unknown;
 }
 
-interface EncryptedAgentConfig {
-  encrypted: true;
-  algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
-  iv: string;
-  tag: string;
-  ciphertext: string;
-}
-
 /**
  * Folds per-run overrides into a shallow copy of the agent config for one
  * invocation. Model overrides ride on `model` and are read where the config
@@ -783,44 +769,6 @@ export function configuredMaxTurn(config: AgentConfig): number | undefined {
   return maxTurn === AGENT_MAX_TURN_UNLIMITED
     ? Number.MAX_SAFE_INTEGER
     : maxTurn;
-}
-
-export function decodeStoredAgentConfig(value: unknown): AgentConfig {
-  return decodeStoredConfigObject(value) as AgentConfig;
-}
-
-export function decodeStoredConfigObject(
-  value: unknown,
-): Record<string, unknown> {
-  if (isEncryptedAgentConfig(value)) {
-    return decryptConfigObject(value);
-  }
-
-  throw new Error("Stored config must be encrypted");
-}
-
-// The same aes-256-gcm blob the config plane writes with Web Crypto
-// (encryptAgentConfigBlob), so decodeStoredConfigObject reads either.
-export function encryptConfigObject(config: object): EncryptedAgentConfig {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(
-    CONFIG_ENCRYPTION_ALGORITHM,
-    agentConfigEncryptionKey(),
-    iv,
-  );
-  const plaintext = JSON.stringify(config);
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, "utf-8"),
-    cipher.final(),
-  ]);
-
-  return {
-    encrypted: true,
-    algorithm: CONFIG_ENCRYPTION_ALGORITHM,
-    iv: iv.toString("base64url"),
-    tag: cipher.getAuthTag().toString("base64url"),
-    ciphertext: ciphertext.toString("base64url"),
-  };
 }
 
 // Off by default: only an explicit `trace: "enabled"` on the channel appends
@@ -914,46 +862,4 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
       ? { allowRunOverrides: allowRunOverrides }
       : {}),
   }) as AgentConfig;
-}
-
-function agentConfigEncryptionKey(): Buffer {
-  return createHash("sha256")
-    .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
-    .digest();
-}
-
-function decryptConfigObject(
-  config: EncryptedAgentConfig,
-): Record<string, unknown> {
-  const decipher = createDecipheriv(
-    CONFIG_ENCRYPTION_ALGORITHM,
-    agentConfigEncryptionKey(),
-    Buffer.from(config.iv, "base64url"),
-  );
-  decipher.setAuthTag(Buffer.from(config.tag, "base64url"));
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(config.ciphertext, "base64url")),
-    decipher.final(),
-  ]).toString("utf-8");
-
-  const parsed = JSON.parse(plaintext) as unknown;
-  if (!isPlainObject(parsed)) {
-    throw new Error("Stored config must be an object");
-  }
-
-  return parsed;
-}
-
-function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
-  if (!isPlainObject(value)) {
-    return false;
-  }
-
-  return (
-    value.encrypted === true &&
-    value.algorithm === CONFIG_ENCRYPTION_ALGORITHM &&
-    typeof value.iv === "string" &&
-    typeof value.tag === "string" &&
-    typeof value.ciphertext === "string"
-  );
 }

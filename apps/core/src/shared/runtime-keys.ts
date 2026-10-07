@@ -114,6 +114,11 @@ export function normalizeFilesystemNamespace(conversationKey: string): string {
   return `${FILESYSTEM_NAMESPACE_PREFIX}${hashScopedValue("filesystem-namespace", conversationKey)}`;
 }
 
+/** The folder one agent owns inside an agent-isolated workspace namespace. */
+export function agentNamespaceFolder(agentId: string): string {
+  return `agent/${normalizeFilesystemNamespace(agentId)}`;
+}
+
 export function conversationLeaseKey(conversationKey: string): string {
   return `${INTERNAL_EVENT_ID_PREFIX}${hashScopedValue("conversation-lease", conversationKey)}`;
 }
