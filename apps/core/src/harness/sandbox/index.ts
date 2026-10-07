@@ -76,6 +76,14 @@ export function createSandboxExecutor(
       return resume(request);
     };
   }
+  const postReserved = executor.postReserved?.bind(executor);
+  if (postReserved) {
+    executor.postReserved = async (request): Promise<unknown> => {
+      await assertSandboxBudget(accountId);
+
+      return postReserved(request);
+    };
+  }
   const prewarm = executor.prewarm?.bind(executor);
   if (prewarm) {
     executor.prewarm = async (request): Promise<void> => {

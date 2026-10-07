@@ -1,5 +1,13 @@
-import type { RunMicrovmRequest } from "@aws-sdk/client-lambda-microvms";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
+import * as planLimits from "../src/harness/plan-limits.ts";
 import type {
   SandboxExecutorConfig,
   SandboxRunRequest,
@@ -162,11 +170,10 @@ let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
 // The image the mocked VM booted, which GetMicrovm reports like the real API.
 let microvmBootedImage = "";
 const microvmSendMock = mock(
-  async (command: { _type?: string; input?: unknown }) => {
+  async (command: { _type?: string; input?: { imageIdentifier?: string } }) => {
     switch (command?._type) {
       case "RunMicrovm":
-        microvmBootedImage =
-          (command.input as RunMicrovmRequest).imageIdentifier ?? "";
+        microvmBootedImage = command.input?.imageIdentifier ?? "";
 
         return {
           microvmId: "microvm-1",
@@ -1046,6 +1053,74 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("stops a suspended MicroVM on another image without resuming it", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        state: "SUSPENDED",
+        imageArn:
+          "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox:4",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    }).run({
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).not.toContain("ResumeMicrovm");
+    expect(types.indexOf("TerminateMicrovm")).toBeLessThan(
+      types.indexOf("RunMicrovm"),
+    );
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
+  });
+
+  it("keeps a reserved MicroVM that reports no image", async () => {
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+        imageArn: undefined,
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run({
+      code: "echo ok",
+      namespace: microvmNamespace(),
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).not.toContain("TerminateMicrovm");
+    expect(types).not.toContain("RunMicrovm");
+  });
+
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
@@ -1284,6 +1359,33 @@ describe("createSandboxExecutor", () => {
     expect(posted.at(-1)).toContain("microvm-1");
   });
 
+  it("mounts the workspace when a guest POST is the first to reach the VM", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = null;
+    const {
+      MicrovmSandboxExecutor,
+    } = require("../src/harness/sandbox/microvm-executor.ts");
+
+    await new MicrovmSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    }).postReserved({
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      path: "/mcp",
+      body: {},
+      timeoutMs: 1_000,
+    });
+
+    // The VM bash reaches next must already carry the workspace mount, or bash
+    // writes to local disk for the VM's whole life.
+    const payload = JSON.parse(String(microvmRunInput().runHookPayload));
+    expect(payload.workspace).toMatchObject({
+      namespace: ns,
+      root: "/mnt/workspaces",
+    });
+  });
+
   it("posts a guest route on the reserved VM, then through its cached endpoint", async () => {
     storedSandboxExternalId = "microvm-1";
     const posts: Array<{ url: string; init?: RequestInit }> = [];
@@ -1330,35 +1432,148 @@ describe("createSandboxExecutor", () => {
     expect(posts[0]!.init?.body).toBe(JSON.stringify({ server: "obscura" }));
   });
 
-  it("never resends a guest POST the VM answered with an error", async () => {
+  it.each([500, 504])(
+    "never resends a guest POST the VM answered with %i",
+    async (status) => {
+      storedSandboxExternalId = "microvm-1";
+      let posts = 0;
+      globalThis.fetch = stubFetch(async () => {
+        posts += 1;
+
+        return new Response("boom", { status: status });
+      });
+      const {
+        MicrovmSandboxExecutor,
+      } = require("../src/harness/sandbox/microvm-executor.ts");
+
+      const failure = await new MicrovmSandboxExecutor({
+        provider: "lambda",
+        persistent: true,
+      })
+        .postReserved({
+          reservationKey: microvmNamespace(),
+          path: "/mcp",
+          body: {},
+          timeoutMs: 1_000,
+        })
+        .then(
+          (): string => "resolved",
+          (error: unknown): string => String(error),
+        );
+
+      expect(failure).toContain(`MicroVM /mcp failed (${status}): boom`);
+      expect(posts).toBe(1);
+    },
+  );
+
+  it("resends a guest POST whose connection was refused, then takes the answer", async () => {
     storedSandboxExternalId = "microvm-1";
     let posts = 0;
     globalThis.fetch = stubFetch(async () => {
       posts += 1;
+      if (posts === 1) {
+        throw Object.assign(new TypeError("connection refused"), {
+          code: "ConnectionRefused",
+        });
+      }
 
-      return new Response("boom", { status: 500 });
+      return Response.json({ jsonrpc: "2.0", id: "1", result: { tools: [] } });
     });
     const {
       MicrovmSandboxExecutor,
     } = require("../src/harness/sandbox/microvm-executor.ts");
 
-    const failure = await new MicrovmSandboxExecutor({
+    const reply = await new MicrovmSandboxExecutor({
       provider: "lambda",
       persistent: true,
-    })
-      .postReserved({
-        reservationKey: microvmNamespace(),
-        path: "/mcp",
-        body: {},
-        timeoutMs: 1_000,
-      })
-      .then(
-        (): string => "resolved",
-        (error: unknown): string => String(error),
-      );
+    }).postReserved({
+      reservationKey: microvmNamespace(),
+      path: "/mcp",
+      body: {},
+      timeoutMs: 1_000,
+    });
 
-    expect(failure).toContain("MicroVM /mcp failed (500): boom");
-    expect(posts).toBe(1);
+    expect(reply).toEqual({ jsonrpc: "2.0", id: "1", result: { tools: [] } });
+    expect(posts).toBe(2);
+  });
+
+  it("answers a guest POST whose burst header is malformed", async () => {
+    storedSandboxExternalId = "microvm-1";
+    globalThis.fetch = stubFetch(async () =>
+      Response.json(
+        { jsonrpc: "2.0", id: "1", result: {} },
+        { headers: { "x-sandbox-burst": "{not json" } },
+      ),
+    );
+    const {
+      MicrovmSandboxExecutor,
+    } = require("../src/harness/sandbox/microvm-executor.ts");
+
+    const reply = await new MicrovmSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      controlPlane: {
+        accountId: "acct_burst",
+        name: "mcp-host",
+        specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        ownCredentials: true,
+      },
+    }).postReserved({
+      reservationKey: microvmNamespace(),
+      path: "/mcp",
+      body: {},
+      timeoutMs: 1_000,
+    });
+
+    expect(reply).toEqual({ jsonrpc: "2.0", id: "1", result: {} });
+  });
+
+  it("checks the account's budget before a guest POST on platform credentials", async () => {
+    storedSandboxExternalId = "microvm-1";
+    let posts = 0;
+    globalThis.fetch = stubFetch(async () => {
+      posts += 1;
+
+      return Response.json({ jsonrpc: "2.0", id: "1", result: {} });
+    });
+    const budget = spyOn(planLimits, "assertSandboxBudget").mockImplementation(
+      async (): Promise<void> => {
+        throw new Error("sandbox budget exhausted");
+      },
+    );
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    try {
+      const executor = createSandboxExecutor({
+        provider: "lambda",
+        persistent: true,
+        controlPlane: {
+          accountId: "acct_budget",
+          name: "mcp-host",
+          specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        },
+      });
+
+      const failure = await executor
+        .postReserved({
+          reservationKey: microvmNamespace(),
+          path: "/mcp",
+          body: {},
+          timeoutMs: 1_000,
+        })
+        .then(
+          (): string => "resolved",
+          (error: unknown): string => String(error),
+        );
+
+      expect(failure).toContain("sandbox budget exhausted");
+      expect(budget).toHaveBeenCalledWith("acct_budget");
+      expect(posts).toBe(0);
+    } finally {
+      budget.mockRestore();
+    }
   });
 
   it("never resends a guest POST whose connection dropped mid-request", async () => {
@@ -1458,7 +1673,7 @@ describe("createSandboxExecutor", () => {
     }) as unknown as typeof fetch;
 
     await expect(executor.run(request)).rejects.toThrow(
-      "MicroVM exec failed (504)",
+      "MicroVM /exec failed (504)",
     );
     expect(
       posted.filter((body): boolean => body.includes("sleep 900")),

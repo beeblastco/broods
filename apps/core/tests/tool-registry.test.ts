@@ -1428,7 +1428,7 @@ describe("connected MCP servers", () => {
     expect(Object.keys(tools)).toContain("obscura__navigate");
     expect(listed?.sandbox).toEqual({
       config: web,
-      reservationKey: "acct_test:web",
+      reservation: { reservationKey: "acct_test:web" },
       command: ["obscura", "mcp"],
     });
 

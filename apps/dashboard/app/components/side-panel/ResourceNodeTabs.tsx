@@ -7,6 +7,10 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
+import {
+  SANDBOX_IMAGES,
+  type SandboxImage,
+} from "@broods/convex/model/sandboxRules";
 import { isWorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
@@ -31,12 +35,19 @@ import {
   machineStartCommand,
   machineState,
 } from "@/app/lib/machineConnection";
+import { snapshotOptions } from "@/app/lib/sandboxSnapshots";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { useState } from "react";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
+
+// What the Image select shows for each platform image variant.
+const SANDBOX_IMAGE_LABEL: Record<SandboxImage, string> = {
+  browser: "Chromium browser",
+  obscura: "Obscura browser",
+};
 
 const WORKSPACE_DEFAULT_CONFIG = {
   storage: { provider: "s3" },
@@ -123,20 +134,7 @@ export function SandboxResourceDetailsTab({
     api.sandbox.snapshots.listForActiveOrg,
     hasSnapshots ? {} : "skip",
   );
-  // The account's ready snapshots for this provider, pinned by provider image id.
-  // A pin set in code that is not in the list still shows, so the select is honest.
-  const snapshotOptions = [
-    { value: "none", label: "None" },
-    ...(snapshots ?? [])
-      .filter((row) => row.provider === provider && row.status === "active")
-      .map((row) => ({ value: row.externalImageId, label: row.name })),
-  ];
-  if (
-    snapshot &&
-    !snapshotOptions.some((option) => option.value === snapshot)
-  ) {
-    snapshotOptions.push({ value: snapshot, label: snapshot });
-  }
+  const snapshotChoices = snapshotOptions(snapshots ?? [], provider, snapshot);
 
   function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: { ...config, ...patch } });
@@ -184,9 +182,7 @@ export function SandboxResourceDetailsTab({
         <SelectField
           label="Provider"
           disabled={managedByCode}
-          value={
-            typeof config.provider === "string" ? config.provider : "lambda"
-          }
+          value={provider}
           onValueChange={setProvider}
           options={[
             { value: "sandbox", label: "Sandbox" },
@@ -211,8 +207,10 @@ export function SandboxResourceDetailsTab({
             }
             options={[
               { value: "default", label: "Default" },
-              { value: "obscura", label: "Obscura browser" },
-              { value: "browser", label: "Chromium browser" },
+              ...SANDBOX_IMAGES.map((image) => ({
+                value: image,
+                label: SANDBOX_IMAGE_LABEL[image],
+              })),
             ]}
           />
         )}
@@ -228,7 +226,7 @@ export function SandboxResourceDetailsTab({
                 ...(next !== "none" ? { image: undefined } : {}),
               })
             }
-            options={snapshotOptions}
+            options={snapshotChoices}
           />
         )}
         <SelectField
