@@ -609,6 +609,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { imageIdentifier: pinned };
   }
 
+  // The image name this sandbox boots, compared against a cached or reserved VM's.
+  #imageName(): string {
+    return microvmImageName(this.#image().imageIdentifier);
+  }
+
   #persistent(request: SandboxReservationRef): boolean {
     return this.#config.persistent === true && !!sandboxReservationKey(request);
   }
@@ -683,7 +688,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const cached = key ? reservedEndpoints.get(key) : undefined;
     if (!cached || cached.expiresAt <= Date.now()) return null;
     // A changed image goes through #acquire, whose reconnect replaces the VM.
-    if (cached.image !== microvmImageName(this.#image().imageIdentifier)) {
+    if (cached.image !== this.#imageName()) {
       return null;
     }
 
@@ -817,7 +822,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const entry = { microvmId: target.microvmId, endpoint: target.endpoint };
     reservedEndpoints.set(key, {
       ...entry,
-      image: microvmImageName(this.#image().imageIdentifier),
+      image: this.#imageName(),
       expiresAt: now + RESERVED_ENDPOINT_TTL_MS,
     });
 
@@ -840,9 +845,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     // image. GetMicrovm always reports the image, so a missing one is a mismatch.
     if (
       !isTerminalMicrovmState(info.state) &&
-      (!info.imageArn ||
-        microvmImageName(info.imageArn) !==
-          microvmImageName(this.#image().imageIdentifier))
+      (!info.imageArn || microvmImageName(info.imageArn) !== this.#imageName())
     ) {
       await this.#terminate(microvmId);
       throw new MicrovmGoneError(

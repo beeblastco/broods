@@ -7,6 +7,10 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
+import {
+  SANDBOX_IMAGES,
+  type SandboxImage,
+} from "@broods/convex/model/sandboxRules";
 import { isWorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
@@ -37,6 +41,12 @@ import { useQuery } from "convex/react";
 import { useState } from "react";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
+
+// What the Image select shows for each platform image variant.
+const SANDBOX_IMAGE_LABEL: Record<SandboxImage, string> = {
+  browser: "Chromium browser",
+  obscura: "Obscura browser",
+};
 
 const WORKSPACE_DEFAULT_CONFIG = {
   storage: { provider: "s3" },
@@ -184,9 +194,7 @@ export function SandboxResourceDetailsTab({
         <SelectField
           label="Provider"
           disabled={managedByCode}
-          value={
-            typeof config.provider === "string" ? config.provider : "lambda"
-          }
+          value={provider}
           onValueChange={setProvider}
           options={[
             { value: "sandbox", label: "Sandbox" },
@@ -211,8 +219,10 @@ export function SandboxResourceDetailsTab({
             }
             options={[
               { value: "default", label: "Default" },
-              { value: "obscura", label: "Obscura browser" },
-              { value: "browser", label: "Chromium browser" },
+              ...SANDBOX_IMAGES.map((image) => ({
+                value: image,
+                label: SANDBOX_IMAGE_LABEL[image],
+              })),
             ]}
           />
         )}
