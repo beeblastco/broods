@@ -86,8 +86,8 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       };
     } finally {
       if (!persistent) {
-        endMeter?.();
         await sandbox.kill();
+        endMeter?.();
       }
     }
   }
