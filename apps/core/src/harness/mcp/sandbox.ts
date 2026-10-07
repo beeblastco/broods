@@ -13,8 +13,13 @@ import {
   isJSONRPCResultResponse,
   type JSONRPCRequest,
 } from "@modelcontextprotocol/client";
+import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
+import type {
+  ResolvedAgentSandbox,
+  ResolvedWorkspace,
+} from "../../shared/workspaces.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type {
   SandboxExecutor,
@@ -22,7 +27,12 @@ import type {
   SandboxReservedTarget,
 } from "../sandbox/types.ts";
 import { mergeSandboxEnv } from "../sandbox/utils.ts";
-import { sandboxTimeoutSeconds } from "../tools/filesystem-utils.ts";
+import {
+  agentOwnWorkspace,
+  sandboxTimeoutSeconds,
+  statelessReservationKeyFor,
+  workspaceRootFor,
+} from "../tools/filesystem-utils.ts";
 
 // A tool call on a sandbox with no `timeout` of its own: browser steps run
 // longer than bash's 30 s default. The operator's ceiling still caps it.
@@ -102,4 +112,57 @@ export async function sandboxMcpRequest(
   }
 
   return reply.result;
+}
+
+/**
+ * Where a row runs when it names a lambda sandbox among `runtime.sandboxes`:
+ * the VM bash reaches on that sandbox, which is the workspace's when one mounts
+ * the agent's first sandbox. Undefined for any other row (a machine sandbox's
+ * daemon serves it). A missing command or a non-persistent sandbox is a config
+ * error, not a quiet skip. Agent tool registration and the dashboard explorer
+ * both resolve a row here, each with its own runtime.
+ */
+export function sandboxMcpTarget(
+  record: McpRecord,
+  runtime: {
+    sandboxes?: ResolvedAgentSandbox[];
+    workspaces?: ResolvedWorkspace[];
+  },
+): SandboxMcpTarget | undefined {
+  const host = runtime.sandboxes?.find(
+    (entry) => entry.name === record.sandbox,
+  );
+  if (record.transport !== "machine" || host?.sandbox.provider !== "lambda") {
+    return undefined;
+  }
+  if (!record.command) {
+    throw new Error(
+      `config.mcp.${record.serverId} runs on lambda sandbox "${host.name}" and needs command`,
+    );
+  }
+  const workspace =
+    host === runtime.sandboxes?.[0]
+      ? agentOwnWorkspace({
+          workspaces: runtime.workspaces ?? [],
+          sandboxes: runtime.sandboxes,
+        })
+      : undefined;
+  const config = workspace?.sandbox ?? host.sandbox;
+  // The same target runSandbox gives bash, so both reach one VM.
+  const reservation: SandboxReservedTarget = workspace
+    ? {
+        namespace: workspace.namespace,
+        workspaceRoot: workspaceRootFor(config),
+      }
+    : { reservationKey: statelessReservationKeyFor(host.sandbox) };
+  if (
+    config.persistent !== true ||
+    !(reservation.namespace ?? reservation.reservationKey)
+  ) {
+    throw new Error(
+      `config.mcp.${record.serverId} runs on lambda sandbox "${host.name}", which must be persistent`,
+    );
+  }
+
+  return { config: config, reservation: reservation, command: record.command };
 }
