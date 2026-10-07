@@ -43,8 +43,8 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 
-const originalMutate = runtime.mutate;
-const originalQuery = runtime.query;
+const originalMutate = runtime.mutate.bind(runtime);
+const originalQuery = runtime.query.bind(runtime);
 
 afterEach(() => {
   runtime.mutate = originalMutate;
@@ -301,7 +301,7 @@ describe("step boundary", (): void => {
       steering: null,
     });
     expect(calls[0]).not.toHaveProperty("events");
-    await expect(session.assertRecentOwner()).rejects.toThrow(
+    expect(session.assertRecentOwner()).rejects.toThrow(
       "Stale conversation owner generation",
     );
     expect(reads).toHaveBeenCalledTimes(1);
@@ -653,7 +653,13 @@ describe("channel senders", (): void => {
     ownerGeneration: 2,
     configRef: { channel: { channelName: "slack" } },
   };
-  const originalCreate = Session.prototype.createTurnContext;
+  const originalCreateDescriptor = Object.getOwnPropertyDescriptor(
+    Session.prototype,
+    "createTurnContext",
+  );
+  if (!originalCreateDescriptor) {
+    throw new Error("Session.createTurnContext descriptor is missing");
+  }
   let senders: unknown[];
 
   beforeEach((): void => {
@@ -676,7 +682,11 @@ describe("channel senders", (): void => {
   });
 
   afterEach((): void => {
-    Session.prototype.createTurnContext = originalCreate;
+    Object.defineProperty(
+      Session.prototype,
+      "createTurnContext",
+      originalCreateDescriptor,
+    );
     resetStorageForTests();
   });
 
@@ -1341,7 +1351,7 @@ describe("applied ingress config", (): void => {
       agents: { getById: async (): Promise<null> => null },
     } as never);
 
-    await expect(
+    expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1362,7 +1372,7 @@ describe("applied ingress config", (): void => {
       model: { provider: "openai", modelId: "gpt-5" },
     };
 
-    await expect(
+    expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1373,7 +1383,7 @@ describe("applied ingress config", (): void => {
   });
 
   it("fails any other ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
-    await expect(
+    expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1499,13 +1509,13 @@ describe("session messages", (): void => {
       sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
     };
 
-    await expect(
+    expect(
       prepareSessionMessage({
         ...options,
         input: { conversationKey: "tg:source-chat", message: "loop" },
       }),
     ).rejects.toThrow("cannot target the current conversation");
-    await expect(
+    expect(
       prepareSessionMessage({
         ...options,
         input: {
@@ -1524,7 +1534,7 @@ describe("session messages", (): void => {
       return null as T;
     };
 
-    await expect(
+    expect(
       prepareSessionMessage({
         accountId: "acct_test",
         agentId: "agent_test",

@@ -273,7 +273,7 @@ describe("createAgentLifecycleEmitter", () => {
     // the operator never configured.
     await withWebhookServer(
       async (url) => {
-        await expect(
+        expect(
           fireWebhook(
             { url: url("/hook"), secret: "secret" },
             { type: "agent.started" },
@@ -289,7 +289,7 @@ describe("createAgentLifecycleEmitter", () => {
     // The name is public and passes the protocol check; only resolution reveals
     // the metadata address. A hostname string check cannot see this, which is
     // the whole reason delivery goes through the pinned guard.
-    await expect(
+    expect(
       fireWebhook(
         { url: "https://public.test/hook", secret: "secret" },
         { type: "agent.started" },

@@ -24,7 +24,7 @@ export default function HomePage(): React.JSX.Element {
     if (!currentUser || started.current === attempt) return;
 
     started.current = attempt;
-    (async () => {
+    void (async () => {
       try {
         // A `broods` deep link (?project=&stage=) opens that project's
         // architecture view with the same stage selected.

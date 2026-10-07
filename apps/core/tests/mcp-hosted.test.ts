@@ -297,7 +297,7 @@ describe("hosted MCP metering", () => {
         new Response(
           `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
         );
-      await expect(callWorkersRow()).rejects.toThrow("without an end frame");
+      expect(callWorkersRow()).rejects.toThrow("without an end frame");
       // Answered 200, so a tool may have run: never retried on Lambda.
       expect(lambda).not.toHaveBeenCalled();
       await Promise.resolve();
@@ -341,14 +341,14 @@ describe("hosted MCP metering", () => {
     const lambda = spyOn(LambdaClient.prototype, "send");
 
     try {
-      await expect(callWorkersRow()).rejects.toThrow("HTTP 401: unauthorized");
+      expect(callWorkersRow()).rejects.toThrow("HTTP 401: unauthorized");
       bridge.mockImplementation(
         workerFetch(
           async (): Promise<Response> =>
             new Response("Service Unavailable", { status: 503 }),
         ),
       );
-      await expect(callWorkersRow()).rejects.toThrow("HTTP 503");
+      expect(callWorkersRow()).rejects.toThrow("HTTP 503");
       expect(lambda).not.toHaveBeenCalled();
     } finally {
       bridge.mockRestore();
@@ -408,7 +408,7 @@ describe("hosted MCP metering", () => {
     delete process.env.TOOL_RUNNER_FUNCTION_NAME;
 
     try {
-      await expect(callWorkersRow()).rejects.toThrow(
+      expect(callWorkersRow()).rejects.toThrow(
         /TOOL_RUNNER_FUNCTION_NAME.*Lambda fallback after: .*HTTP 422: bundle failed to load: sha256/,
       );
     } finally {
@@ -425,7 +425,7 @@ describe("hosted MCP metering", () => {
     const lambda = spyOn(LambdaClient.prototype, "send");
 
     try {
-      await expect(callWorkersRow()).rejects.toThrow("socket closed");
+      expect(callWorkersRow()).rejects.toThrow("socket closed");
       expect(lambda).not.toHaveBeenCalled();
     } finally {
       bridge.mockRestore();
@@ -438,7 +438,7 @@ describe("hosted MCP metering", () => {
     const send = spyOn(LambdaClient.prototype, "send");
 
     try {
-      await expect(
+      expect(
         hostedMcpFetch({ record: hostedRecord() })(URL, {
           method: "POST",
           body: "{}",

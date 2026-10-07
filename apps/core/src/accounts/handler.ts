@@ -688,9 +688,10 @@ async function suspendOrResumeSandbox(
   context: SandboxLifecycleContext,
   action: "suspend" | "resume",
 ): Promise<Response> {
-  const supported =
-    action === "suspend" ? context.executor.suspend : context.executor.resume;
-  if (!supported) {
+  if (
+    (action === "suspend" && !context.executor.suspend) ||
+    (action === "resume" && !context.executor.resume)
+  ) {
     return unsupportedSandboxAction(context, action);
   }
   await auditedSandboxCall(context, async () => {

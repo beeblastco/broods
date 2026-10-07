@@ -11,6 +11,7 @@ import {
   type GetObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { toErrorMessage } from "./errors.ts";
 import { logDebug, logError } from "./log.ts";
 
 const SANDBOX_UID = "993";
@@ -92,7 +93,9 @@ export async function copyS3Object(
       errorName: err instanceof Error ? err.name : typeof err,
       errorStack: err instanceof Error ? err.stack : undefined,
       errorCause:
-        err instanceof Error && err.cause ? String(err.cause) : undefined,
+        err instanceof Error && err.cause
+          ? toErrorMessage(err.cause)
+          : undefined,
     });
     throw err;
   }
@@ -259,7 +262,9 @@ export async function listS3Prefix(
       errorName: err instanceof Error ? err.name : typeof err,
       errorStack: err instanceof Error ? err.stack : undefined,
       errorCause:
-        err instanceof Error && err.cause ? String(err.cause) : undefined,
+        err instanceof Error && err.cause
+          ? toErrorMessage(err.cause)
+          : undefined,
     });
     throw err;
   }
@@ -324,7 +329,9 @@ export async function s3ObjectExists(
       errorName: err instanceof Error ? err.name : typeof err,
       errorStack: err instanceof Error ? err.stack : undefined,
       errorCause:
-        err instanceof Error && err.cause ? String(err.cause) : undefined,
+        err instanceof Error && err.cause
+          ? toErrorMessage(err.cause)
+          : undefined,
     };
     if (err && typeof err === "object") {
       const e = err as Record<string, unknown>;
@@ -376,7 +383,9 @@ export async function writeS3Object(
       errorName: err instanceof Error ? err.name : typeof err,
       errorStack: err instanceof Error ? err.stack : undefined,
       errorCause:
-        err instanceof Error && err.cause ? String(err.cause) : undefined,
+        err instanceof Error && err.cause
+          ? toErrorMessage(err.cause)
+          : undefined,
     });
     throw err;
   }

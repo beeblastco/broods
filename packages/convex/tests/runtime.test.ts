@@ -1155,7 +1155,7 @@ describe("sandbox reservation expiry", () => {
         ["orphan", idle],
         ["reserved", idle],
         ["recent", Date.now()],
-        ["throwaway", idle],
+        ["throwaway", idle - 60_000],
       ] as const) {
         await ctx.db.insert("sandboxInstances", {
           accountId: accountId,
@@ -1182,9 +1182,10 @@ describe("sandbox reservation expiry", () => {
       });
     });
 
+    // The oldest row is ephemeral; it must not take the page's only slot.
     expect(
       await t.query(internal.runtime.listOrphanedSandboxInstances, {
-        limit: 10,
+        limit: 1,
       }),
     ).toEqual([
       {
@@ -1194,6 +1195,52 @@ describe("sandbox reservation expiry", () => {
         externalId: "sbx-orphan",
       },
     ]);
+  });
+});
+
+describe("sandbox.instances.isControllable", () => {
+  test("refuses an ephemeral row its own config would otherwise control", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const sandboxConfigId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("sandboxConfigs", {
+          accountId: accountId,
+          name: "default",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+    );
+    await t.run(async (ctx) => {
+      for (const reservationKey of ["reserved", "vm-call"]) {
+        await ctx.db.insert("sandboxInstances", {
+          accountId: accountId,
+          provider: "lambda",
+          reservationKey: reservationKey,
+          externalId: reservationKey,
+          name: "default",
+          status: "running",
+          specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+          sandboxConfigId: sandboxConfigId,
+          createdAt: Date.now(),
+          lastUsedAt: Date.now(),
+          ...(reservationKey === "vm-call" ? { ephemeral: true } : {}),
+        });
+      }
+    });
+
+    for (const [reservationKey, controllable] of [
+      ["reserved", true],
+      ["vm-call", false],
+    ] as const) {
+      expect(
+        await t.query(internal.sandbox.instances.isControllable, {
+          accountId: accountId,
+          sandboxConfigId: sandboxConfigId,
+          reservationKey: reservationKey,
+        }),
+      ).toBe(controllable);
+    }
   });
 });
 

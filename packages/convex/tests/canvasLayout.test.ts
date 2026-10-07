@@ -243,9 +243,10 @@ describe("tidyCanvasLayout", () => {
         ["cloud", "mac"],
       ]) {
         const laid = layout(mountOn, order);
-        expect(laid.get(mountOn)!.x, `${mountOn} ${order}`).toBeGreaterThan(
-          laid.get(other)!.x,
-        );
+        expect(
+          laid.get(mountOn)!.x,
+          `${mountOn} ${order.join(",")}`,
+        ).toBeGreaterThan(laid.get(other)!.x);
         expect(laid.get("w1")!.x).toBeGreaterThan(laid.get(mountOn)!.x);
       }
     }

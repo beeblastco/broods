@@ -109,7 +109,7 @@ export function CreateProjectDialog({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            handleCreate();
+            void handleCreate();
           }}
         >
           <div className="grid gap-3 py-4">

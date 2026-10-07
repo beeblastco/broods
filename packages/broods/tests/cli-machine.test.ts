@@ -7,8 +7,8 @@ import { startFakeCore } from "./fixtures/fake-core.ts";
 
 const servers: Bun.Server<undefined>[] = [];
 
-afterEach(() => {
-  for (const server of servers.splice(0)) server.stop(true);
+afterEach(async () => {
+  for (const server of servers.splice(0)) await server.stop(true);
 });
 
 test("runExec runs bash on this machine with the frame's cwd and env", async () => {
@@ -88,7 +88,7 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
   servers.push(core.server);
   const lines: string[] = [];
 
-  await expect(
+  expect(
     runMachineDaemon({
       credential: async (): Promise<string> => "key",
       baseUrl: core.url,
@@ -117,7 +117,7 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
 });
 
 test("the daemon stops when the stage session is refused", async () => {
-  await expect(
+  expect(
     runMachineDaemon({
       baseUrl: "http://127.0.0.1:9",
       credential: async (): Promise<string> => {
@@ -139,7 +139,7 @@ test("the daemon retries when minting a stage session fails in transit", async (
   const lines: string[] = [];
   let calls = 0;
 
-  await expect(
+  expect(
     runMachineDaemon({
       baseUrl: core.url,
       credential: async (): Promise<string> => {

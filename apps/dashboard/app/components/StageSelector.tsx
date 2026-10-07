@@ -296,7 +296,7 @@ export function StageSelector(): React.JSX.Element | null {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleCreate();
+              void handleCreate();
             }}
           >
             <div className="grid gap-4 py-4">

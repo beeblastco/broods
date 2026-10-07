@@ -7,6 +7,7 @@ import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
 import { logWarn, redactSensitiveText } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
+import { isContextLengthError } from "./model-errors.ts";
 import { getObservabilityContext } from "./otel.ts";
 
 /** Reach every room or sender, instead of only the listed ids. */
@@ -18,11 +19,6 @@ const RETRY_REPLY = "Retry";
 // The id an ask_questions button carries back: statusId, question, option.
 // 53 bytes at most, under Telegram's 64-byte callback_data cap.
 const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
-
-// A provider error saying the conversation no longer fits what the model takes
-// per request, whether the context window or a per-minute token cap.
-const CONTEXT_LIMIT_PATTERN =
-  /request too large|context (length|window)|prompt is too long|input is too long|exceeds the maximum number of tokens/i;
 
 // The fix to append to any other provider error, first match wins. A provider
 // that already says when to retry ("try again in 37s", "later") gets no hint,
@@ -500,7 +496,7 @@ function simplifyErrorText(raw: string, commands: boolean): string {
   if (!message) {
     return "Something went wrong while generating a reply. Try again.";
   }
-  const hint = CONTEXT_LIMIT_PATTERN.test(message)
+  const hint = isContextLengthError(message)
     ? commands
       ? "Send /compact to summarize the conversation, or /new to start over if that fails."
       : "Start a new conversation to continue."

@@ -33,7 +33,7 @@ export interface BenchCase {
   iterations: number;
   /** Timed samples; the default suits sub-millisecond cases. Lower it for a spawn. */
   samples?: number;
-  run: () => unknown | Promise<unknown>;
+  run: () => unknown;
   /**
    * Whether the case can run here. A case that needs a runtime the machine
    * lacks (the Node isolate runner, a built artifact) reports as skipped rather

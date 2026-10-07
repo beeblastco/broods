@@ -307,8 +307,9 @@ export function runTokenRefusal(req: Request): Response | null {
 /**
  * Terminate reserved sandbox instances matching a predicate through core's
  * lifecycle route (which owns the decrypted provider credentials). Best-effort:
- * skips rows without a sandboxConfigId or already terminating, and swallows
- * per-instance failures. `error` rows are tried: they may still hold a machine.
+ * skips rows without a sandboxConfigId, already terminating or ephemeral (core
+ * refuses those, and their call removes them), and swallows per-instance
+ * failures. `error` rows are tried: they may still hold a machine.
  */
 export async function terminateReservedInstances(
   ctx: ActionCtx,
@@ -332,6 +333,7 @@ export async function terminateReservedInstances(
         (instance) =>
           instance.sandboxConfigId !== undefined &&
           instance.status !== "terminating" &&
+          instance.ephemeral !== true &&
           matches(instance),
       )
       .map(async (instance) => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
 import type { Attachment } from "chat";
+import { requestBodyText, requestUrl } from "./helpers/http.ts";
 import type {
   ChannelAdapter,
   ChannelParseResult,
@@ -377,10 +378,10 @@ describe("zalo channel adapter", () => {
 
   it("rejects image URLs Zalo could not fetch", async () => {
     const calls = await captureZaloCalls(async (actions): Promise<void> => {
-      await expect(
+      expect(
         actions.sendImages?.([{ type: "image", url: "/workspace/chart.png" }]),
       ).rejects.toThrow("absolute http(s) image URL");
-      await expect(
+      expect(
         actions.sendImages?.([
           { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
         ]),
@@ -450,8 +451,8 @@ async function captureZaloCalls(
     init?: Parameters<typeof fetch>[1],
   ): Promise<Response> => {
     calls.push({
-      url: String(input),
-      body: JSON.parse(String(init?.body)) as unknown,
+      url: requestUrl(input),
+      body: JSON.parse(requestBodyText(init?.body)) as unknown,
     });
 
     return new Response(JSON.stringify({ ok: true, result: {} }), {

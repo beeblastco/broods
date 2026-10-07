@@ -13,6 +13,7 @@ import {
 } from "../src/harness/mcp/oauth.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import { requestBodyText, requestUrl } from "./helpers/http.ts";
 
 const TOKEN_URL = "https://oauth.test/token";
 // publicHostFetch dials the resolved address with the name in the Host header.
@@ -77,9 +78,9 @@ function stubTokenEndpoint(
     init?: RequestInit,
   ): Promise<Response> => {
     requests.push({
-      url: String(input),
+      url: requestUrl(input),
       host: new Headers(init?.headers).get("host"),
-      body: String(init?.body ?? ""),
+      body: requestBodyText(init?.body),
       redirect: init?.redirect,
     });
     const next = responses[Math.min(requests.length, responses.length) - 1]!;
@@ -179,7 +180,7 @@ describe("mcp oauth access tokens", () => {
   it("surfaces a failed refresh as an error naming the server", async () => {
     stubTokenEndpoint([{ status: 400, body: { error: "invalid_grant" } }]);
 
-    await expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow(
+    expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow(
       /MCP server gmail: OAuth token refresh.*invalid_grant/,
     );
   });
@@ -190,7 +191,7 @@ describe("mcp oauth access tokens", () => {
       { body: { access_token: "token-b", expires_in: 3600 } },
     ]);
 
-    await expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow();
+    expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow();
     expect(await mcpAccessToken("gmail", resolvedOauth())).toBe("token-b");
     expect(requests).toHaveLength(2);
   });
@@ -342,12 +343,12 @@ describe("mcp transport fetch", () => {
     ]);
     const dialed: string[] = [];
     globalThis.fetch = (async (input) => {
-      dialed.push(String(input));
+      dialed.push(requestUrl(input));
 
       return new Response("{}");
     }) as typeof fetch;
     try {
-      await expect(
+      expect(
         listMcpTools(
           mcpConnection(
             oauthRecord({ oauth: undefined, url: "https://mcp.example.com/" }),

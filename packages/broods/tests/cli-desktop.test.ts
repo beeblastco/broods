@@ -9,9 +9,9 @@ const macOnly = test.skipIf(process.platform !== "darwin");
 const drivers: DesktopDriver[] = [];
 const servers: Bun.Server<undefined>[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const driver of drivers.splice(0)) driver.stop();
-  for (const server of servers.splice(0)) server.stop(true);
+  for (const server of servers.splice(0)) await server.stop(true);
 });
 
 macOnly(
@@ -60,7 +60,7 @@ macOnly(
     );
     servers.push(core.server);
 
-    await expect(
+    expect(
       runMachineDaemon({
         credential: async (): Promise<string> => "key",
         baseUrl: core.url,

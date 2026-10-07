@@ -106,6 +106,7 @@
         "@daytona/sdk": "^0.214.0",
         "@linear/sdk": "^76.0.0",
         "@llmgateway/ai-sdk-provider": "^4.0.0",
+        "@llmgateway/models": "^1.335.0",
         "@microsoft/teams.apps": "^2.1.0",
         "@modelcontextprotocol/client": "^2.0.0",
         "@mv37/workdir": "^0.3.2",

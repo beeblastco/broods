@@ -60,10 +60,10 @@ describe("channelAttachmentBytes", () => {
       name: "x.png",
     });
 
-    await expect(
-      channelAttachmentBytes(image("file:///etc/hosts")),
-    ).rejects.toThrow("only http(s) URLs are supported");
-    await expect(
+    expect(channelAttachmentBytes(image("file:///etc/hosts"))).rejects.toThrow(
+      "only http(s) URLs are supported",
+    );
+    expect(
       channelAttachmentBytes(image("http://169.254.169.254/latest")),
     ).rejects.toThrow(
       "blocked private or metadata address for 169.254.169.254",

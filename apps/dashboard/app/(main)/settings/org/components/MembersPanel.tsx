@@ -254,7 +254,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
                         value={m.role}
                         onValueChange={(v) => {
                           if (v === null) return;
-                          handleRoleChange(m.membershipId, v as Role);
+                          void handleRoleChange(m.membershipId, v as Role);
                         }}
                       >
                         <SelectTrigger className="w-28 cursor-pointer">

@@ -10,7 +10,7 @@ import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
-import { stubPublicDns } from "./helpers/http.ts";
+import { requestUrl, stubPublicDns } from "./helpers/http.ts";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
@@ -72,7 +72,7 @@ void mock.module("@aws-sdk/client-sts", () => ({
   AssumeRoleCommand: class {},
 }));
 
-mock.module("../src/shared/s3.ts", () => ({
+await mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
   headS3Object: headS3ObjectMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).
@@ -101,7 +101,7 @@ const transcribeAudioMock = mock(async (): Promise<TranscriptOutcome> => ({
 const { TRANSCRIPTION_RETRIES, transcriptAdvice } =
   await import("../src/harness/transcribe.ts");
 
-mock.module("../src/harness/transcribe.ts", () => ({
+await mock.module("../src/harness/transcribe.ts", () => ({
   TRANSCRIPTION_RETRIES: TRANSCRIPTION_RETRIES,
   transcribeAudio: transcribeAudioMock,
   transcriptAdvice: transcriptAdvice,
@@ -197,7 +197,10 @@ describe("ingestInboundAttachments", () => {
     if (image?.type !== "image") throw new Error("expected an image part");
     // A sealed media link, never a base64 payload: the conversation is stored
     // as JSON and re-read on every later turn.
-    expect(String(image.image)).toStartWith("https://core.example/v1/media/");
+    if (typeof image.image !== "string") {
+      throw new Error("expected a string image URL");
+    }
+    expect(image.image).toStartWith("https://core.example/v1/media/");
     expect(image.mediaType).toBe("image/png");
 
     // One copy for the agent, inside its mount; one for the conversation, in
@@ -263,9 +266,10 @@ describe("ingestInboundAttachments", () => {
 
     const image = parts.stored.find((part) => part.type === "image");
     if (image?.type !== "image") throw new Error("expected an image part");
-    const token = String(image.image).slice(
-      "https://core.example/v1/media/".length,
-    );
+    if (typeof image.image !== "string") {
+      throw new Error("expected a string image URL");
+    }
+    const token = image.image.slice("https://core.example/v1/media/".length);
     const ticket = openMediaTicket(token, ["media-ticket-secret"]);
     expect(ticket).not.toBeNull();
     expect(ticket).not.toHaveProperty("workspaceId");
@@ -337,7 +341,10 @@ describe("ingestInboundAttachments", () => {
 
     const file = parts.stored.find((part) => part.type === "file");
     if (file?.type !== "file") throw new Error("expected a file part");
-    expect(String(file.data)).toStartWith("https://core.example/v1/media/");
+    if (typeof file.data !== "string") {
+      throw new Error("expected a string file URL");
+    }
+    expect(file.data).toStartWith("https://core.example/v1/media/");
     expect(file.mediaType).toBe("audio/aac");
   });
 
@@ -786,7 +793,7 @@ describe("readAttachmentBytes URL guard", () => {
   it("refuses a host that resolves to a private address", async (): Promise<void> => {
     // The URL comes out of the webhook body, so the sender picks the host. A
     // literal here, but a public name pointed at 127.0.0.1 fails the same check.
-    await expect(
+    expect(
       readAttachmentBytes({ type: "file", url: "http://127.0.0.1/secret" }),
     ).rejects.toThrow(/private or metadata address/);
   });
@@ -885,7 +892,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expect(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({
@@ -904,7 +911,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expect(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -924,7 +931,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expect(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/big.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -959,7 +966,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      await expect(
+      expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/endless.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -1053,7 +1060,7 @@ function telegramFetch(
   options: { ok?: boolean } = {},
 ): ReturnType<typeof mock> {
   const fetchMock = mock(async (input: string | URL | Request) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (!(options.ok ?? true)) {
       return new Response("gone", { status: 404 });
     }

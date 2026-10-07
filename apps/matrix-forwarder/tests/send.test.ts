@@ -18,7 +18,7 @@ describe("sending into a room", () => {
   it("sends the event type as-is into a plain room", async () => {
     const { client, crypto, encryptedTypes, sent } = fakes(false);
 
-    await expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
+    expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
     expect(encryptedTypes).toEqual([]);
     expect(sent).toEqual([
       {
@@ -32,7 +32,7 @@ describe("sending into a room", () => {
   it("encrypts and sends m.room.encrypted into an encrypted room", async () => {
     const { client, crypto, encryptedTypes, sent } = fakes(true);
 
-    await expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
+    expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
     expect(encryptedTypes).toEqual(["m.room.message"]);
     expect(sent).toEqual([
       {

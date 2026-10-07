@@ -414,6 +414,7 @@ async function createGitHubRestClient(options: {
   if (typeof tokenJson.token !== "string" || tokenJson.token.length === 0) {
     throw new Error("installation token response did not include a token");
   }
+  const token = tokenJson.token;
 
   return {
     get: async function <T>(path: string): Promise<T> {
@@ -421,7 +422,7 @@ async function createGitHubRestClient(options: {
         method: "GET",
         headers: {
           Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${tokenJson.token}`,
+          Authorization: `Bearer ${token}`,
           "X-GitHub-Api-Version": GITHUB_API_VERSION,
         },
       });
