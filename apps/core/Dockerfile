@@ -32,6 +32,8 @@ COPY package.json bun.lock ./
 COPY packages/ai-sdk-sandbox ./packages/ai-sdk-sandbox
 COPY packages/convex ./packages/convex
 COPY apps/core ./apps/core
+# The cloudflare executor clamps its requests with the bridge's own limits.
+COPY apps/cloudflare-sandbox/src/limits.ts ./apps/cloudflare-sandbox/src/limits.ts
 # Compile at the amd64 target: the k3s cluster nodes are amd64.
 RUN cd apps/core && bun run scripts/compaction-prompt.ts \
     && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server
