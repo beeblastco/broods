@@ -53,16 +53,26 @@ export function loopbackTransport(): PinnedFetchTransport {
   };
 }
 
-/** A TLS server on a free loopback port for the duration of `run`, named by its origin. */
+/**
+ * A TLS server on a loopback port (a free one unless `port` is given) for the
+ * duration of `run`, named by its origin. The port is released before it returns.
+ */
 export async function withLoopbackTlsServer(
   listener: RequestListener,
   run: (origin: string) => Promise<void>,
+  port: number = 0,
 ): Promise<void> {
   const server: Server = createServer(
     { cert: TLS_CERT, key: TLS_KEY },
     listener,
   );
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", (): void => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
   const address = server.address();
   if (address === null || typeof address !== "object") {
     throw new Error("test server has no port");
@@ -71,6 +81,6 @@ export async function withLoopbackTlsServer(
     await run(`https://public.test:${address.port}`);
   } finally {
     server.closeAllConnections();
-    server.close();
+    await new Promise<void>((resolve) => server.close((): void => resolve()));
   }
 }
