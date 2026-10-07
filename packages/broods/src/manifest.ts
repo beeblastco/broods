@@ -19,15 +19,17 @@ import {
   transformSync,
   type BuildFailure,
   type Plugin,
+  type StdinOptions,
 } from "esbuild";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "../../convex/model/envRefs.ts";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
+import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
-  workspaceIsolationInput,
 } from "../../convex/model/workspaceIsolation.ts";
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
@@ -48,6 +50,10 @@ import {
 
 /** Reach every room the app can see, instead of only the declared channels. */
 const CHANNEL_REACH_WILDCARD = "*";
+const ENV_PLACEHOLDER_GLOBAL_PATTERN = new RegExp(
+  ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
+  "g",
+);
 
 export interface CompileOptions {
   cwd?: string;
@@ -80,6 +86,12 @@ type ExportedValue = {
   exportName: string;
   file: string;
   value: unknown;
+};
+
+// The auth half of an MCP server config, copied under each agent entry.
+type McpAuth = {
+  headers?: Record<string, unknown>;
+  oauth?: Record<string, unknown>;
 };
 
 type ExportedResource = {
@@ -205,13 +217,21 @@ export async function compileProject(
       (options.useRuntimeStage === false ? undefined : stageFromEnv()),
     options.command ?? "dev",
   );
-  const manifestResources = (
+  const sortedResources = (
     await Promise.all(
       resourceExports.map((entry) => toManifestResources(entry, root, reach)),
     )
   )
     .flat()
     .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
+  const mcpServers = new Map(
+    sortedResources
+      .filter((resource) => resource.kind === "mcp")
+      .map((resource) => [resource.name, resource.config as McpAuth]),
+  );
+  const manifestResources = sortedResources.map((resource) =>
+    withMcpServerAuth(resource, mcpServers),
+  );
   assertUniqueResources(manifestResources);
 
   return {
@@ -231,21 +251,42 @@ export async function compileProject(
 /**
  * Collects the distinct account/environment variable names referenced via
  * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
- * compiled manifest, sorted. `dev` uses this to auto-sync exactly those vars
- * from the local environment to the cloud, never unrelated `.env.local` keys.
+ * compiled manifest, plus the `${NAME}` refs in MCP headers (a server's and an
+ * agent's own), sorted.
+ * `dev` uses this to auto-sync exactly those vars from the local environment
+ * to the cloud, never unrelated `.env.local` keys.
  */
 export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
-  for (const resource of manifest.resources)
-    collectEnvRefNamesFromValue(resource.config, names);
+  for (const resource of manifest.resources) {
+    collectEnvRefNamesFromValue(resource.config, names, false);
+    // `${NAME}` refs count where the sync resolves them: agent mcp entries,
+    // which carry each server's headers and oauth, and the server's own headers.
+    const config = resource.config as { headers?: unknown; mcp?: unknown };
+    if (resource.kind === "agent")
+      collectEnvRefNamesFromValue(config.mcp, names, true);
+    if (resource.kind === "mcp")
+      collectEnvRefNamesFromValue(config.headers, names, true);
+  }
 
   return [...names].sort();
 }
 
-function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
+function collectEnvRefNamesFromValue(
+  value: unknown,
+  names: Set<string>,
+  placeholders: boolean,
+): void {
+  if (placeholders && typeof value === "string") {
+    for (const match of value.matchAll(ENV_PLACEHOLDER_GLOBAL_PATTERN))
+      names.add(match[1]!);
+
+    return;
+  }
   if (Array.isArray(value)) {
-    for (const entry of value) collectEnvRefNamesFromValue(entry, names);
+    for (const entry of value)
+      collectEnvRefNamesFromValue(entry, names, placeholders);
 
     return;
   }
@@ -257,7 +298,7 @@ function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
       return;
     }
     for (const entry of Object.values(record))
-      collectEnvRefNamesFromValue(entry, names);
+      collectEnvRefNamesFromValue(entry, names, placeholders);
   }
 }
 
@@ -492,11 +533,10 @@ function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
   const config = resource.config as unknown as Record<string, unknown>;
   if (
     config.partitioned !== undefined &&
-    typeof config.partitioned !== "boolean" &&
     !isWorkspaceIsolation(config.partitioned)
   ) {
     throw new Error(
-      `Workspace "${resource.name}" config.partitioned must be a boolean or one of: ${WORKSPACE_ISOLATION_LEVELS.join(", ")}`,
+      `Workspace "${resource.name}" config.partitioned must be one of: ${WORKSPACE_ISOLATION_LEVELS.join(", ")}`,
     );
   }
   if (config.isolation !== undefined) {
@@ -563,9 +603,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     // Only the per-conversation split needs a channel partition; "agent" splits
     // on its own.
     const partitionedWorkspaces = attachedWorkspaces.filter(
-      (workspace) =>
-        workspaceIsolationInput(workspace.config.partitioned) ===
-        "conversation",
+      (workspace) => workspace.config.partitioned === "conversation",
     );
     const partitionedChannels = channelDefinitions.filter(
       (channel) => channel.partition,
@@ -574,7 +612,7 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     if (partitionedChannels.length > 0 && partitionedWorkspaces.length === 0) {
       const channel = partitionedChannels[0]!;
       throw new Error(
-        `Agent "${resource.name}" connection "${channel.type}" defines partition, but no attached workspace has partitioned: true.`,
+        `Agent "${resource.name}" connection "${channel.type}" defines partition, but no attached workspace has partitioned: "conversation".`,
       );
     }
 
@@ -1075,11 +1113,11 @@ async function normalizeConfig(
 
   if (resource.kind === "workspace") {
     const config = { ...(resource.config as Record<string, unknown>) };
-    // Authoring says `partitioned`; storage reads `isolation` by level (the
-    // shape check above already refused anything else).
-    const isolation = workspaceIsolationInput(config.partitioned);
+    // Authoring says `partitioned`; storage says `isolation` (the shape check
+    // above already refused anything but a level).
+    const isolation = config.partitioned;
     delete config.partitioned;
-    if (isolation) config.isolation = isolation;
+    if (isolation !== undefined) config.isolation = isolation;
 
     return rewriteValues(config);
   }
@@ -1121,7 +1159,12 @@ async function normalizeConfig(
   return rewriteValues(resource.config);
 }
 
-const CANONICAL_PROVIDER_KEYS = new Set(["apiKey", "base_url", "baseURL"]);
+const CANONICAL_PROVIDER_KEYS = new Set([
+  "apiKey",
+  "base_url",
+  "baseURL",
+  "gatewayId",
+]);
 const KNOWN_HARNESS_KEYS = new Set([
   "activeTools",
   "debug",
@@ -1137,7 +1180,8 @@ const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
  * Suggest the canonical key for a common misspelling, else "". A setting the SDK
  * has never heard of is fine, since it reaches the provider's Vercel AI SDK
  * factory untouched. But a casing slip on one of the few keys broods reads
- * itself (`apiKey`, `base_url`) would do nothing at all, so those still throw.
+ * itself (`apiKey`, `base_url`, `gatewayId`) would do nothing at all, so those
+ * still throw.
  */
 function suggestProviderKey(key: string): string {
   if (CANONICAL_PROVIDER_KEYS.has(key)) {
@@ -1146,6 +1190,7 @@ function suggestProviderKey(key: string): string {
   const canonical = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   if (canonical === "baseurl") return `"base_url" or "baseURL"`;
   if (canonical === "apikey") return `"apiKey"`;
+  if (canonical === "gatewayid") return `"gatewayId"`;
 
   return "";
 }
@@ -1619,15 +1664,21 @@ async function assertServableMcpBundle(
 
 /** Run one esbuild bundle build, mapping failures to a deploy-time error. */
 async function buildBundleModule(options: {
-  entryPoint: string;
+  stdin: StdinOptions;
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
+  /** A Workers build resolves the Workers export conditions and no Node builtins. */
+  workers?: boolean;
 }): Promise<string> {
   const build = await esbuild({
-    entryPoints: [options.entryPoint],
+    stdin: options.stdin,
+    // esbuild names modules relative to this dir, so the hash ignores the cwd.
+    absWorkingDir: options.stdin.resolveDir,
     bundle: true,
-    platform: "node",
+    ...(options.workers
+      ? { platform: "browser", conditions: ["workerd", "worker", "browser"] }
+      : { platform: "node" }),
     format: "esm",
     minify: false,
     write: false,
@@ -1712,24 +1763,39 @@ async function normalizeMcpConfig(
 
   const manifestPath = relative(projectRoot, entry.file).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "MCP server");
-  // The defining module imports the SDK for defineMcp/defineAgent; a shim
-  // entrypoint picks the handler off the resource export and the stub plugin
-  // keeps the SDK client out of the bundle.
-  const shimDir = await mkdtemp(join(tmpdir(), "broods-mcp-shim-"));
-  let bundle: string;
-  try {
-    const shimPath = join(shimDir, "mcp-handler.mjs");
-    await writeFile(shimPath, mcpShimSource(entry), "utf8");
-    await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
-    bundle = await buildBundleModule({
-      entryPoint: shimPath,
+  // An in-memory shim picks the handler off the resource export and the stub
+  // keeps the SDK out; a temp path would change the bundle sha256 every build.
+  const build = (workers: boolean): Promise<string> =>
+    buildBundleModule({
+      stdin: {
+        contents: mcpShimSource(entry),
+        resolveDir: projectRoot,
+        sourcefile: "mcp-handler.mjs",
+        loader: "js",
+      },
       label: "MCP server bundle",
       manifestPath: manifestPath,
-      plugins: [sdkStubPlugin(shimDir)],
+      plugins: [sdkStubPlugin()],
+      workers: workers,
     });
-  } finally {
-    await rm(shimDir, { recursive: true, force: true });
-  }
+  // Ship the Workers build only when the config plane will place it on
+  // Workers: runtime "auto", within the 10 MB Worker cap, passing the same
+  // scan and loading as a handler. Anything else ships the Node build,
+  // which runs on Lambda.
+  const workersBundle =
+    config.runtime === "lambda"
+      ? undefined
+      : await build(true).catch((): undefined => undefined);
+  const bundle =
+    workersBundle !== undefined &&
+    Buffer.byteLength(workersBundle) <= INLINE_MCP_BUNDLE_BYTES &&
+    isWorkersSafeBundle(workersBundle) &&
+    (await assertServableMcpBundle(manifestPath, workersBundle).then(
+      (): boolean => true,
+      (): boolean => false,
+    ))
+      ? workersBundle
+      : await build(false);
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_MCP_BUNDLE_BYTES) {
     throw new Error(
@@ -1760,13 +1826,63 @@ function mcpShimSource(entry: ExportedResource): string {
 // Hosted MCP handlers live beside `defineAgent(...)` calls that import the
 // SDK. Alias those imports to inert stubs so the bundle carries the handler,
 // not the client.
-function sdkStubPlugin(shimDir: string): Plugin {
-  const stub = join(shimDir, "broods-stub.mjs");
-
+function sdkStubPlugin(): Plugin {
   return {
     name: "broods-sdk-stub",
     setup: function (build): void {
-      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
+      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({
+        path: "broods",
+        namespace: "broods-stub",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "broods-stub" }, () => ({
+        contents: SDK_STUB_SOURCE,
+        loader: "js",
+      }));
+    },
+  };
+}
+
+/**
+ * Copies each connected MCP server's headers and oauth credentials under the
+ * agent's own entry. Core reads a server's secrets only from the agent config,
+ * where the sync resolves their refs; the agent's own value wins, and header
+ * names compare case-insensitively.
+ */
+function withMcpServerAuth(
+  resource: CliManifestResource,
+  servers: Map<string, McpAuth>,
+): CliManifestResource {
+  if (resource.kind !== "agent") return resource;
+  const mcp = (resource.config as { mcp?: Record<string, McpAuth> }).mcp;
+  if (!mcp) return resource;
+  const entries = Object.entries(mcp).map(([server, entry]) => {
+    const config = servers.get(server);
+    const own = new Set(
+      Object.keys(entry.headers ?? {}).map((name) => name.toLowerCase()),
+    );
+    const headers = Object.entries(config?.headers ?? {}).filter(
+      ([name]) => !own.has(name.toLowerCase()),
+    );
+    // The token endpoint stays on the server row, where registration checked it.
+    const { tokenUrl: _tokenUrl, ...oauth } = config?.oauth ?? {};
+
+    return [
+      server,
+      {
+        ...entry,
+        ...(headers.length > 0
+          ? { headers: { ...Object.fromEntries(headers), ...entry.headers } }
+          : {}),
+        ...(config?.oauth ? { oauth: { ...oauth, ...entry.oauth } } : {}),
+      },
+    ];
+  });
+
+  return {
+    ...resource,
+    config: {
+      ...(resource.config as Record<string, unknown>),
+      mcp: Object.fromEntries(entries),
     },
   };
 }

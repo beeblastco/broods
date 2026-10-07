@@ -48,13 +48,12 @@ Envelope encryption, one codec for both sides (`packages/convex/model/envelope.t
 
 ### Rotation runbook
 
-All three run with `bunx convex run` against the deployment, as the deployment admin. None has a UI. Each one is paginated with a self-reschedule and idempotent; call it with no continuation arguments and wait for the scheduled batches to drain. The value a call returns covers its first batch only, so `isDone: false` is the normal answer. A batch that throws stops the walk and shows as a failed scheduled function.
+Both run with `bunx convex run` against the deployment, as the deployment admin. None has a UI. Each one is paginated with a self-reschedule and idempotent; call it with no continuation arguments and wait for the scheduled batches to drain. The value a call returns covers its first batch only, so `isDone: false` is the normal answer. A batch that throws stops the walk and shows as a failed scheduled function.
 
-1. **Legacy rows, once per deployment.** Blobs written before envelope encryption have no `v2:` prefix and still decrypt through the legacy branch in `envelope.ts`. Run `bunx convex run migrations:migrateToEnvelope` on dev and on production; it mints a key for every account that has none and rewrites every legacy blob under it. Each call returns `skipped`, the running count of rows whose project has no account yet; those stay legacy. Once both have run and `skipped` is zero, the legacy branch can be deleted. A legacy blob also opens under the whole unsplit env value, so a secret that holds a comma or outer whitespace keeps working after deploy; run this step before changing that value, since its pieces are what the list is read as from now on.
-2. **Rotate one account's DEK.** `bunx convex run account/keys:rotateAccountKey '{"accountId": "<id>"}'` mints a new key, which every write uses from that moment, rewrites every blob of the account under it table by table, then retires the older keys. Calling it again before it finishes, or after a batch failed, resumes the same rotation, and only the walk that began under the newest key retires the older ones. A retired key opens nothing, so a config that an HTTP action sealed under the old key is refused with a `409` and the caller retries under the new one.
-3. **Rotate the KEK.** Core and Convex pick up an env change at different moments, so the new secret goes in last before it goes first. Set `old,new` on both and deploy, so each side can unwrap under either. Then set `new,old` on both, run `bunx convex run account/keys:rewrapAllKeys`, and once the batches drain check that no `accountKeys` row still carries the old `kekId`. Only then drop `old` and deploy again. No blob is rewritten; only the wrapped keys change. Legacy blobs are keyed by the secret itself, so finish step 1 before dropping the secret they were written under.
+1. **Rotate one account's DEK.** `bunx convex run account/keys:rotateAccountKey '{"accountId": "<id>"}'` mints a new key, which every write uses from that moment, rewrites every blob of the account under it table by table, then retires the older keys. Calling it again before it finishes, or after a batch failed, resumes the same rotation, and only the walk that began under the newest key retires the older ones. A retired key opens nothing, so a config that an HTTP action sealed under the old key is refused with a `409` and the caller retries under the new one.
+2. **Rotate the KEK.** Core and Convex pick up an env change at different moments, so the new secret goes in last before it goes first. Set `old,new` on both and deploy, so each side can unwrap under either. Then set `new,old` on both, run `bunx convex run account/keys:rewrapAllKeys`, and once the batches drain check that no `accountKeys` row still carries the old `kekId`. Only then drop `old` and deploy again. No blob is rewritten; only the wrapped keys change.
 
-Reads recursively redact secret-like field names such as `token`, `secret`, `privateKey` and `apiKey` as `********`, including inside tool config. Sending `********` back in a patch keeps the stored value.
+Reads recursively redact secret-like field names such as `token`, `secret`, `privateKey` and any name ending in `apiKey` or `api-key`, plus every value in a `headers` map, as `********`, including inside tool config. A value made only of `${NAME}` refs holds no secret and is shown as is; in a header it may follow an auth scheme word, like `Bearer ${KEY}`. Sending `********` back in a patch keeps the stored value.
 
 Logs go through one redaction chokepoint. See [observability](observability.md#security).
 
@@ -69,8 +68,9 @@ Logs go through one redaction chokepoint. See [observability](observability.md#s
 | `brole_` | Role                 | Never used directly. Exchanged for a session                                                   |
 | `bsts_`  | Role session         | The role's policy. Default TTL 1 hour, max 12. Only the hash is stored                         |
 | `bdts_`  | Stage session ticket | Fifteen minutes, signed by Convex with `STAGE_TICKET_SECRET`                                   |
+| `brt_`   | Run token            | Reads its own agent's runs. Signed by core, never stored                                       |
 
-Every Broods credential starts with `b`, so a person or a secret scanner can tell it from another vendor's key. The `broods-credential` rule in `.gitleaks.toml` matches each one by its full shape: `bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_` and `bsts_` followed by 43 base64url chars, and `bdts_` and `brt_` followed by a base64url payload, a dot and a 43-char signature. `brole_` ids are not secrets and are not matched. Core resolves a bearer in a fixed order in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`). `bsts_` and `bdts_` are routed by prefix and resolve as that kind or not at all. The admin secret and service token are compared next. A `bask_` or `bsk_` token then goes straight to its one hash lookup. Any other token, a key minted under an old prefix included, is refused without a lookup. The config plane routes the same way, and `cli/http.ts` adds `bcli_` and `bpdk_`:
+Every Broods credential starts with `b`, so a person or a secret scanner can tell it from another vendor's key. The `broods-credential` rule in `.gitleaks.toml` matches each one by its full shape: `bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_` and `bsts_` followed by 43 base64url chars, and `bdts_` and `brt_` followed by a base64url payload, a dot and a 43-char signature. `brole_` ids are not secrets and are not matched. Core resolves a bearer in a fixed order in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`). `bsts_`, `bdts_` and `brt_` are routed by prefix and resolve as that kind or not at all. The admin secret and service token are compared next. A `bask_` or `bsk_` token then goes straight to its one hash lookup. Any other token, a key minted under an old prefix included, is refused without a lookup. The config plane routes the same way, and `cli/http.ts` adds `bcli_` and `bpdk_`:
 
 ```mermaid
 flowchart TD
@@ -78,7 +78,9 @@ flowchart TD
   Sts -->|yes| Role["roleSessions hash lookup<br/>kind: role"]
   Sts -->|no| Dts{"bdts_ prefix?"}
   Dts -->|yes| Ticket["open with STAGE_TICKET_SECRET<br/>kind: deployment, stageTicket"]
-  Dts -->|no| Admin{"equals ADMIN_ACCOUNT_SECRET?"}
+  Dts -->|no| Brt{"brt_ prefix?"}
+  Brt -->|yes| Run["open with the HKDF key of STAGE_TICKET_SECRET<br/>kind: agent, reads its own runs only"]
+  Brt -->|no| Admin{"equals ADMIN_ACCOUNT_SECRET?"}
   Admin -->|yes| AdminCtx["kind: admin"]
   Admin -->|no| Svc{"equals SERVICE_AUTH_SECRET<br/>and no x-broods-via-gateway?"}
   Svc -->|yes| SvcCtx["account from X-Account-Id<br/>kind: account, viaServiceToken"]
@@ -210,5 +212,3 @@ Remote MCP servers (`http` and `hosted` transports) receive `X-Broods-Agent-Id` 
 - No Secrets Manager object per account.
 - No KMS decrypt call on every config read.
 - Account metadata and runtime config stay in Convex without per-provider secret resources.
-
-Revisit this when Broods needs per-tenant keys or key rotation without a migration.

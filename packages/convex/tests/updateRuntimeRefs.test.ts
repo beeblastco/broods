@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { accountCipher } from "../model/accountKeys";
+import { pruneAgents } from "../model/cliSyncResources";
 import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
@@ -217,6 +218,35 @@ describe("provider key", () => {
   });
 });
 
+describe("runtime secrets go with their agent config", () => {
+  test("a dashboard remove deletes the config's secrets and no other", async () => {
+    const t = refsTest();
+    const { configId, otherSecretId, secretId } = await seedSecrets(t);
+
+    await t.mutation(api.agent.config.remove, { configId: configId });
+
+    expect(await secretsOf(t, [secretId, otherSecretId])).toEqual([
+      null,
+      otherSecretId,
+    ]);
+  });
+
+  test("a CLI prune deletes the pruned config's secrets and no other", async () => {
+    const t = refsTest();
+    const { accountId, configId, otherSecretId, projectId, secretId, stageId } =
+      await seedSecrets(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(configId, { managedBy: "cli" });
+      await pruneAgents(ctx, accountId, projectId, stageId, []);
+    });
+
+    expect(await secretsOf(t, [secretId, otherSecretId])).toEqual([
+      null,
+      otherSecretId,
+    ]);
+  });
+});
+
 describe("updateRuntimeRefs", () => {
   test("refuses an order that puts a workspace's sandbox after the default", async () => {
     const t = refsTest();
@@ -357,6 +387,56 @@ async function seed(
       stageId: stageId,
     };
   });
+}
+
+/**
+ * The seeded org with a runtime secret on its config, and a second dashboard
+ * config in the same stage holding its own.
+ */
+async function seedSecrets(t: T): Promise<
+  Seeded & {
+    otherSecretId: Id<"agentRuntimeSecrets">;
+    secretId: Id<"agentRuntimeSecrets">;
+  }
+> {
+  const seeded = await seed(t, []);
+
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    const otherConfigId = await ctx.db.insert("agentConfigs", {
+      authId: "auth_creator",
+      name: "other",
+      projectId: seeded.projectId,
+      stageId: seeded.stageId,
+      updatedAt: now,
+    });
+    const secret = async (
+      configId: Id<"agentConfigs">,
+    ): Promise<Id<"agentRuntimeSecrets">> =>
+      await ctx.db.insert("agentRuntimeSecrets", {
+        agentConfigId: configId,
+        ciphertext: "ciphertext",
+        iv: "iv",
+        tag: "tag",
+        updatedAt: now,
+      });
+
+    return {
+      ...seeded,
+      otherSecretId: await secret(otherConfigId),
+      secretId: await secret(seeded.configId),
+    };
+  });
+}
+
+/** Each runtime secret's id while its row exists, null once deleted. */
+async function secretsOf(
+  t: T,
+  ids: Id<"agentRuntimeSecrets">[],
+): Promise<(Id<"agentRuntimeSecrets"> | null)[]> {
+  return await t.run(async (ctx) =>
+    Promise.all(ids.map(async (id) => (await ctx.db.get(id))?._id ?? null)),
+  );
 }
 
 /**

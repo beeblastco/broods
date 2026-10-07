@@ -299,6 +299,9 @@ jobs:
       - name: Test matrix forwarder
         run: bun run --filter @broods/matrix-forwarder test
 
+      - name: Test Cloudflare MCP runtime
+        run: bun run --filter @broods/cloudflare-mcp test
+
       - name: Test dashboard
         run: bun run --filter @broods/dashboard test
 

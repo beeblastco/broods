@@ -26,7 +26,6 @@ import type {
   WorkspaceIsolation,
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
-import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   agentNamespaceFolder,
   normalizeFilesystemNamespace,
@@ -324,7 +323,7 @@ export async function resolveAgentRuntime(
         workspaceId: ref.workspaceId,
         namespace: isolatedWorkspaceNamespace(
           workspaceNamespace(accountId, ref.workspaceId),
-          workspaceIsolation(record.config.isolation),
+          record.config.isolation,
           { ...isolationScope, agentId: identity.agentId },
         ),
         ...(record.description ? { description: record.description } : {}),

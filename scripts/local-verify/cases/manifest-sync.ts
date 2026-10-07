@@ -9,7 +9,8 @@ import { assertStep, type VerifyContext } from "../harness.ts";
 
 /**
  * Concurrent SDK deploys leave one complete manifest; a stale revision cannot
- * overwrite it. The runtime key the deploy minted then authenticates on core.
+ * overwrite it. The runtime key the deploy minted then authenticates on core,
+ * and a stage env var name a `${NAME}` ref could not reach is refused.
  */
 export async function manifestSync(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
@@ -109,5 +110,18 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
     "the runtime key authenticates on core",
     typeof status !== "string" && status.status === "not_found",
     JSON.stringify(status),
+  );
+  const lowercase = await client
+    .setEnv(project, "development", "api_key", "sk-verify")
+    .then(
+      (): string => "accepted",
+      (error: unknown): string => String(error),
+    );
+  const stored = await client.listEnv(project, "development");
+  assertStep(
+    "a lowercase stage env var name is refused and not stored",
+    lowercase.includes("env name must match") &&
+      !stored.some((variable): boolean => variable.name === "api_key"),
+    lowercase,
   );
 }

@@ -182,6 +182,18 @@ test("the managed service refuses ChatGPT before the browser opens", async () =>
   expect((await request(t, "PUT", "chatgpt", codeBody())).status).toBe(403);
 });
 
+test("the managed service offers ChatGPT once CHATGPT_PLAN_ENABLED is set", async () => {
+  vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+  vi.stubEnv("CHATGPT_PLAN_ENABLED", "true");
+  const t = connectionsTest();
+  await seedAccount(t);
+
+  expect((await request(t, "POST", "chatgpt/start", startBody())).status).toBe(
+    200,
+  );
+  expect((await request(t, "PUT", "chatgpt", codeBody())).status).toBe(200);
+});
+
 test("a refresh never overwrites a newer sign-in", async () => {
   const t = connectionsTest();
   const accountId = await seedAccount(t);

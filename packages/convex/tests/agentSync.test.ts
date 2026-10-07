@@ -382,6 +382,8 @@ describe("syncApiAgentCanvasWiring", () => {
         expect.objectContaining({ source: agentNode.id, target: target }),
       );
     }
+    // Animated edges repaint the canvas every frame.
+    expect(edges.filter((edge) => "animated" in edge)).toEqual([]);
 
     // Referenced account-scoped rows are adopted into the canvas stage
     // so the dashboard's save path accepts (and never edits) them.
