@@ -1380,6 +1380,47 @@ describe("conversation summary", () => {
     }
   });
 
+  it("fails the compaction when the two half summaries still do not fit", async (): Promise<void> => {
+    const { summarizeConversation } =
+      await import("../src/harness/compaction.ts");
+    generateTextMock.mockImplementation(
+      async (options: { messages: Array<{ content: string }> }) => {
+        const content = options.messages[0]?.content ?? "";
+        const wholeHistory =
+          content.includes("Message 1") && content.includes("Message 2");
+        if (wholeHistory || content.startsWith("half")) {
+          throw new APICallError({
+            message: "prompt is too long: 210000 tokens > 200000 maximum",
+            url: "https://provider.test/v1",
+            requestBodyValues: {},
+            statusCode: 400,
+          });
+        }
+
+        return { text: "half" };
+      },
+    );
+
+    try {
+      expect(
+        summarizeConversation({
+          conversationKey: "conversation",
+          priorSummaries: [],
+          messages: [
+            { role: "user", content: "first" },
+            { role: "assistant", content: "second" },
+          ],
+          agentConfig: compactingAgentConfig,
+        }),
+      ).rejects.toThrow("prompt is too long");
+    } finally {
+      generateTextMock.mockReset();
+      generateTextMock.mockImplementation(async () => ({
+        text: "Earlier context summary.",
+      }));
+    }
+  });
+
   it("surfaces a passing rate limit instead of splitting the history", async (): Promise<void> => {
     const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
