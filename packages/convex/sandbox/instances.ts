@@ -29,6 +29,7 @@ import {
 import {
   addUsage,
   burstUsage,
+  ephemeralSandboxMaxMs,
   sandboxAccrual,
   sandboxIdleMs,
   sandboxLaunchUsage,
@@ -55,6 +56,8 @@ const sandboxInstanceDoc = v.object({
 /**
  * Internal action helper: verifies a dashboard lifecycle request targets an
  * instance owned by the active account and created from the supplied sandbox row.
+ * An ephemeral instance is never controllable: its call owns it, and a suspend or
+ * exec from outside would stop its billing mid-call or boot an unmetered machine.
  */
 export const isControllable = internalQuery({
   args: {
@@ -73,6 +76,7 @@ export const isControllable = internalQuery({
 
     return Boolean(
       instance &&
+      instance.ephemeral !== true &&
       instance.accountId === args.accountId &&
       instance.sandboxConfigId === args.sandboxConfigId,
     );
@@ -380,7 +384,9 @@ export const upsert = internalMutation({
  * Bill the running time of every sandbox used recently enough to still have
  * some unbilled, so the meter stays current for one nothing writes to.
  * Hourly cron. One bounded page per transaction; the rest is scheduled with
- * the same `now`, so every page bills up to the same instant.
+ * the same `now`, so every page bills up to the same instant. The first page
+ * also bills and deletes ephemeral rows whose call must have ended, so a lost
+ * teardown cannot leave one billing or crowding the dashboard.
  */
 export const accrueRecent = internalMutation({
   args: {
@@ -390,6 +396,28 @@ export const accrueRecent = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const now = args.now ?? Date.now();
+    if (args.cursor === undefined) {
+      // Past the longer of the two per-call ceilings, any provider's call is over.
+      const staleBefore =
+        now -
+        Math.max(
+          ephemeralSandboxMaxMs("lambda"),
+          ephemeralSandboxMaxMs("sandbox"),
+        );
+      const stale = await ctx.db
+        .query("sandboxInstances")
+        .withIndex("by_ephemeral_and_lastUsedAt", (q) =>
+          q.eq("ephemeral", true).lt("lastUsedAt", staleBefore),
+        )
+        .take(ACCRUE_PAGE_SIZE);
+      for (const instance of stale) {
+        await accrue(ctx, instance, now);
+        await ctx.db.delete(instance._id);
+        if (instance.sandboxConfigId) {
+          await pruneReleasedDashboardSandbox(ctx, instance.sandboxConfigId);
+        }
+      }
+    }
     const page = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_lastUsedAt", (q) =>

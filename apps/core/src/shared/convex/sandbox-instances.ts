@@ -15,6 +15,10 @@ import type {
 } from "../sandbox-sizes.ts";
 import { getConvexClient } from "./client.ts";
 
+// A lost remove leaves a row the meter keeps billing, so it is retried
+// through a Convex blip. The remove is idempotent, so a repeat is harmless.
+const REMOVE_RETRY_DELAYS_MS = [0, 500, 2_000];
+
 export type SandboxInstanceStatus =
   | "running"
   | "suspended"
@@ -168,8 +172,9 @@ export async function recordSandboxBurst(
 }
 
 /**
- * Removes a terminated instance's row. No-op when no row matches the key, or when
- * `externalId` is given and the row has since been repointed at another machine.
+ * Removes a terminated instance's row, retried a few times before it is logged
+ * and given up. No-op when no row matches the key, or when `externalId` is given
+ * and the row has since been repointed at another machine.
  */
 export async function removeSandboxInstance(
   accountId: string,
@@ -177,13 +182,25 @@ export async function removeSandboxInstance(
   externalId?: string,
 ): Promise<void> {
   try {
-    await getConvexClient().mutation(internal.sandbox.instances.remove, {
-      accountId: accountId as any,
-      reservationKey: reservationKey,
-      externalId: externalId,
-    });
+    // Built once, outside the retries: a missing Convex config is not a blip.
+    const client = getConvexClient();
+    for (const [attempt, delayMs] of REMOVE_RETRY_DELAYS_MS.entries()) {
+      await Bun.sleep(delayMs);
+      try {
+        await client.mutation(internal.sandbox.instances.remove, {
+          accountId: accountId as any,
+          reservationKey: reservationKey,
+          externalId: externalId,
+        });
+
+        return;
+      } catch (err) {
+        if (attempt === REMOVE_RETRY_DELAYS_MS.length - 1) throw err;
+      }
+    }
   } catch (err) {
     logError("Sandbox instance remove mirror failed (convex)", {
+      reservationKey: reservationKey,
       error: err instanceof Error ? err.message : String(err),
     });
   }

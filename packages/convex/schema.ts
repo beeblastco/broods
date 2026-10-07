@@ -1530,6 +1530,7 @@ export default defineSchema({
     ])
     .index("by_externalId", ["externalId"])
     .index("by_lastUsedAt", ["lastUsedAt"])
+    .index("by_ephemeral_and_lastUsedAt", ["ephemeral", "lastUsedAt"])
     .index("by_reservationKey", ["reservationKey"])
     .index("by_sandboxConfigId", ["sandboxConfigId"]),
   machineConnections: defineTable(machineConnectionsFields)
