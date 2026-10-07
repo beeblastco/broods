@@ -32,7 +32,7 @@ const realRuntime = { ...runtimeModule };
 const queries: unknown[][] = [];
 let building: unknown[] = [];
 
-mock.module("../src/shared/convex/runtime.ts", () => ({
+await mock.module("../src/shared/convex/runtime.ts", () => ({
   ...realRuntime,
   runtime: {
     ...realRuntime.runtime,
@@ -45,8 +45,8 @@ mock.module("../src/shared/convex/runtime.ts", () => ({
 }));
 
 // mock.module is process-wide; restore the real runtime for later test files.
-afterAll((): void => {
-  mock.module(
+afterAll(async (): Promise<void> => {
+  await mock.module(
     "../src/shared/convex/runtime.ts",
     (): typeof runtimeModule => realRuntime,
   );

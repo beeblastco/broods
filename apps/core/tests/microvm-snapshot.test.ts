@@ -58,8 +58,8 @@ describe.skipIf(!python)("snapshotCapture", () => {
     const capture = snapshotCapture({
       snapshotId: "snap1",
       startedAt: startedAt,
-      sourceUrl: `${server?.url}source.zip`,
-      uploadUrl: `${server?.url}image.zip`,
+      sourceUrl: new URL("source.zip", server?.url).href,
+      uploadUrl: new URL("image.zip", server?.url).href,
       workspaceRoot: "/mnt/workspaces",
     });
     const run = await runCapture({
@@ -92,8 +92,8 @@ describe.skipIf(!python)("snapshotCapture", () => {
     const capture = snapshotCapture({
       snapshotId: "snap2",
       startedAt: startedAt,
-      sourceUrl: `${server?.url}source.zip`,
-      uploadUrl: `${server?.url}image.zip`,
+      sourceUrl: new URL("source.zip", server?.url).href,
+      uploadUrl: new URL("image.zip", server?.url).href,
       workspaceRoot: "/mnt/workspaces",
     });
     const run = await runCapture({
