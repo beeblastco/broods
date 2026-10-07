@@ -4,6 +4,7 @@
  * plane.
  */
 
+import { isUnreachableError } from "../shared/errors.ts";
 import {
   roleDenial,
   rolePrincipal,
@@ -13,6 +14,7 @@ import {
   BudgetExhaustedError,
   planRefusalResponse,
 } from "../harness/plan-limits.ts";
+import { cloudflareConnection } from "../harness/sandbox/cloudflare-executor.ts";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import type { SandboxExecutor } from "../harness/sandbox/types.ts";
 import {
@@ -27,7 +29,12 @@ import {
   workdirConnection,
   workdirPtyUrl,
 } from "../harness/sandbox/workdir-executor.ts";
-import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import {
+  extractBearerToken,
+  isServiceToken,
+  resolveBearerAuth,
+  type AuthContext,
+} from "../shared/auth.ts";
 import { handleMcpServiceRpc } from "./mcp-service.ts";
 import {
   recordSandboxAuditEvent,
@@ -74,17 +81,6 @@ import {
   deleteAccountSkills,
   deleteAccountBundles,
 } from "./cleanup.ts";
-
-// Socket-level fetch failure codes (Bun's own names plus the Node errnos) that
-// mean the provider was never reached, as opposed to it answering with an error.
-const UNREACHABLE_ERROR_CODES = new Set([
-  "ConnectionRefused",
-  "ECONNREFUSED",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "ENOTFOUND",
-  "FailedToOpenSocket",
-]);
 
 // Verbs that run or wake a machine. The executor below is built from the
 // stored config with no control plane, so the budget check its wrapper does
@@ -195,7 +191,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     }
 
     // Other account CRUD lives in the Convex config plane
-    // (packages/convex/config/http.ts); the gateway routes those paths there.
+    // (packages/convex/config/http.ts); Traefik routes those paths there.
 
     const mcpServiceResponse = await handleMcpServiceRoute(
       auth,
@@ -273,7 +269,16 @@ async function handleMcpServiceRoute(
   request: CoreRequest,
 ): Promise<Response | null> {
   if (method !== "POST" || rawPath !== "/v1/mcp-service/rpc") return null;
-  if (auth.kind !== "account") return errorResponse(403, "Forbidden");
+  // Only the config plane calls this, with the service token, which is never
+  // valid on a request that came through the edge.
+  const token = extractBearerToken(request.headers.authorization);
+  if (
+    auth.kind !== "account" ||
+    !token ||
+    !isServiceToken(request.headers, token)
+  ) {
+    return errorResponse(403, "Forbidden");
+  }
 
   return await handleMcpServiceRpc(auth.account.accountId, request);
 }
@@ -492,9 +497,13 @@ async function openSandboxTerminal(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
   // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
-  // shell endpoint (SHELL_INGRESS). Other providers keep the bounded `exec`
-  // terminal.
-  if (context.provider !== "sandbox" && context.provider !== "lambda") {
+  // shell endpoint (SHELL_INGRESS); the cloudflare bridge opens a PTY in its
+  // Container. Other providers keep the bounded `exec` terminal.
+  if (
+    context.provider !== "sandbox" &&
+    context.provider !== "lambda" &&
+    context.provider !== "cloudflare"
+  ) {
     return unsupportedSandboxAction(context, "a live terminal");
   }
   const externalId = await getSandboxExternalId(
@@ -546,6 +555,26 @@ async function openSandboxTerminal(
         `MicroVM shell access unavailable (${message}); terminate and re-reserve the instance to enable the live terminal`,
       );
     }
+  } else if (context.provider === "cloudflare") {
+    // A stopped Container lost its disk; the next exec starts a fresh one.
+    const info = await auditedSandboxCall(context, async () =>
+      context.executor.getInstanceInfo?.(context.ref),
+    );
+    if (!info) {
+      await context.audit("error", {
+        errorMessage: "Container is not running",
+      });
+
+      return errorResponse(
+        409,
+        "The Cloudflare container is not running; run a command to start it",
+      );
+    }
+    const { baseURL, apiKey } = cloudflareConnection();
+    target = {
+      url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal`,
+      authorization: `Bearer ${apiKey}`,
+    };
   } else {
     const { baseUrl, apiKey } = workdirConnection(context.config);
     target = {
@@ -816,16 +845,6 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** True when a fetch failed at the socket, before reaching the provider. */
-function isUnreachableError(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    "code" in err &&
-    typeof err.code === "string" &&
-    UNREACHABLE_ERROR_CODES.has(err.code)
-  );
-}
-
 /**
  * Narrows auth to an account principal for account endpoints, throwing for
  * role, deployment, admin, or a disallowed service token.
@@ -834,7 +853,11 @@ function requireAccountAuth(
   auth: AuthContext,
   options: { allowServiceToken?: boolean } = {},
 ): Extract<AuthContext, { kind: "account" }>["account"] {
-  if (auth.kind === "deployment" || auth.kind === "role") {
+  if (
+    auth.kind === "deployment" ||
+    auth.kind === "role" ||
+    auth.kind === "agent"
+  ) {
     throw new AccountEndpointUnauthorizedError();
   }
   if (auth.kind !== "account") {

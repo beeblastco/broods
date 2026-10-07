@@ -11,6 +11,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 const EMPTY_DEFAULT = "{}";
 
@@ -70,7 +71,7 @@ export function BranchEditor({
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save");
+      setError(toErrorMessage(e));
     } finally {
       setIsSaving(false);
     }
@@ -99,7 +100,7 @@ export function BranchEditor({
           <Button
             size="sm"
             variant="outline"
-            className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
+            className="h-8 cursor-pointer text-xs"
             disabled={disabled || !dirty || isSaving}
             onClick={handleSave}
           >

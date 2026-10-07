@@ -6,10 +6,23 @@ import {
   logInfo,
   logWarn,
   redact,
+  redactSerialized,
   redactSensitiveText,
+  redactWithRunSecrets,
 } from "../src/shared/log.ts";
 import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
+import { sealRunToken } from "../src/shared/run-token.ts";
 
+const BROODS_CREDENTIAL_PREFIXES = [
+  "bsk_",
+  "bask_",
+  "bpdk_",
+  "bcli_",
+  "bcode_",
+  "bsts_",
+  "bdts_",
+  "brt_",
+];
 const ORIGINAL_ENV = { ...process.env };
 const REAL_DATE = Date;
 const FIXED_TIME = "2024-01-02T03:04:05.678Z";
@@ -202,6 +215,87 @@ describe("logging helpers", () => {
     expect(redactSensitiveText("request failed: Basic dXNlcjpwYXNz")).toBe(
       "request failed: Basic [redacted]",
     );
+    process.env.STAGE_TICKET_SECRET = "run-token-test-secret";
+    const runToken = sealRunToken({ accountId: "acct_1", agentId: "agent_1" });
+    expect(redactSensitiveText(`BROODS_RUN_TOKEN=${runToken} next`)).toBe(
+      "BROODS_RUN_TOKEN=[redacted] next",
+    );
+    expect(redactSensitiveText(`curl sent ${runToken} twice`)).toBe(
+      "curl sent [redacted] twice",
+    );
+  });
+
+  it("scrubs run secret values from tool data and leaves its keys alone", () => {
+    process.env.ACCOUNT_GOOGLE_API_KEY = "env-secret-value";
+
+    // Read back by the model, so a key named like a secret keeps its value.
+    expect(
+      redactWithRunSecrets({
+        nextPageToken: "page-2",
+        credentials: { user: "ada" },
+        stdout: ["key env-secret-value"],
+      }),
+    ).toEqual({
+      nextPageToken: "page-2",
+      credentials: { user: "ada" },
+      stdout: ["key [redacted]"],
+    });
+    expect(
+      redactWithRunSecrets("a run-secret-value", ["run-secret-value"]),
+    ).toBe("a [redacted]");
+    // The log patterns stay out: prose and a paging url are not credentials.
+    const prose = "a basic setup, see https://api.test/items?page=2&token=next";
+    expect(redactWithRunSecrets(prose)).toBe(prose);
+    expect(redactWithRunSecrets(`key bsk_${"a".repeat(43)}`)).toBe(
+      "key [redacted]",
+    );
+    // A frame's timestamp stays what JSON.stringify would have written.
+    expect(
+      redactWithRunSecrets({ timestamp: new Date("2026-01-02T03:04:05Z") }),
+    ).toEqual({ timestamp: "2026-01-02T03:04:05.000Z" });
+  });
+
+  it("redacts every Broods credential prefix and leaves short identifiers", () => {
+    // The minted shape: the prefix plus 43 base64url chars; signed tickets add a dot.
+    const body = `${"aB3-_xYz".repeat(5)}abc`;
+    for (const prefix of BROODS_CREDENTIAL_PREFIXES) {
+      expect(redactSensitiveText(`run failed for ${prefix}${body} twice`)).toBe(
+        "run failed for [redacted] twice",
+      );
+    }
+    expect(redactSensitiveText(`ticket bdts_${body}.${body} sent`)).toBe(
+      "ticket [redacted] sent",
+    );
+    expect(redactSensitiveText("column bsk_id is null")).toBe(
+      "column bsk_id is null",
+    );
+    expect(redactSensitiveText("role brole_abcdefghijklmnopqrstuvwxyz")).toBe(
+      "role brole_abcdefghijklmnopqrstuvwxyz",
+    );
+    expect(redactSensitiveText("job bsk_abcdefghijklmnopqrs done")).toBe(
+      "job bsk_abcdefghijklmnopqrs done",
+    );
+  });
+
+  it("never leaks a secret that straddles a truncated attribute's cut", () => {
+    const secret = "s3cr3t-value-long";
+    // One straddles the cut itself; the other straddles the scrubbed window's
+    // end and is pulled under the cut once the secret before it shrinks.
+    const atCut = `${"x".repeat(45)}${secret}${"y".repeat(100)}`;
+    const atWindow = `${secret}${"z".repeat(34)}${secret}${"y".repeat(100)}`;
+    // A token the patterns match, longer than any literal secret.
+    const atToken = `${"x".repeat(40)} bsk_${"a".repeat(43)} ${"y".repeat(100)}`;
+
+    for (const text of [atCut, atWindow, atToken]) {
+      const attribute = redactSerialized(text, [secret], 50);
+      const whole = redact(text, [secret]) as string;
+
+      expect(attribute).not.toContain(secret.slice(0, 4));
+      expect(attribute).toBe(`${whole.slice(0, 50)}...[truncated]`);
+    }
+    expect(
+      redactSerialized({ note: 'pa"ss-word', apiKey: "k" }, ['pa"ss-word'], 50),
+    ).toBe('{"note":"[redacted]","apiKey":"[redacted]"}');
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {

@@ -6,16 +6,16 @@
  */
 
 import { v } from "convex/values";
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { action, type ActionCtx } from "../_generated/server";
 import { authKit } from "../auth";
-import { MAX_WORKSPACE_FILE_BYTES } from "../model/workspaceRules";
 import {
   deleteWorkspacePath,
   listWorkspaceFiles,
   renameWorkspacePath,
   uploadWorkspaceFile,
+  withR2Credentials,
   type WorkspaceFileEntry,
   type WorkspaceFsRef,
 } from "../model/workspaceFs";
@@ -27,11 +27,6 @@ const fileEntry = v.object({
   sizeBytes: v.optional(v.number()),
   updatedAt: v.optional(v.string()),
 });
-
-type LegacyFile = Pick<
-  Doc<"workspaceFiles">,
-  "_id" | "path" | "isFolder" | "storageId"
->;
 
 type RuntimeWorkspace = WorkspaceFsRef & {
   accountId: Id<"accounts">;
@@ -46,66 +41,6 @@ export const list = action({
     const workspace = await resolveWorkspace(ctx, args);
 
     return await listWorkspaceFiles(workspace);
-  },
-});
-
-/** Moves legacy files into S3 when needed and returns the authoritative file list. */
-export const migrateLegacy = action({
-  args: {
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    workspaceId: v.string(),
-  },
-  returns: v.array(fileEntry),
-  handler: async (ctx, args): Promise<WorkspaceFileEntry[]> => {
-    const user = await requireActionUser(ctx);
-    const workspace = await resolveWorkspace(ctx, args, "admin");
-    const legacyFiles: LegacyFile[] = await ctx.runQuery(
-      internal.workspace.files.listForMigrationInternal,
-      {
-        authId: user.id,
-        projectId: args.projectId,
-        nodeId: args.nodeId,
-      },
-    );
-    if (legacyFiles.length === 0) return await listWorkspaceFiles(workspace);
-    const current = await listWorkspaceFiles(workspace);
-    const existingPaths = new Set(current.map((file) => file.path));
-    let changed = false;
-
-    for (const file of legacyFiles) {
-      if (!file.isFolder && file.storageId && !existingPaths.has(file.path)) {
-        const url: string | null = await ctx.runQuery(
-          internal.workspace.files.getFileDownloadUrlInternal,
-          {
-            authId: user.id,
-            projectId: args.projectId,
-            nodeId: args.nodeId,
-            path: file.path,
-          },
-        );
-        if (!url) continue;
-        const response = await fetch(url);
-        if (!response.ok) continue;
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength > MAX_WORKSPACE_FILE_BYTES) continue;
-        await uploadWorkspaceFile(workspace, {
-          path: file.path,
-          contentBase64: Buffer.from(bytes).toString("base64"),
-          contentType: response.headers.get("content-type") ?? undefined,
-        });
-        changed = true;
-      }
-      await ctx.runMutation(
-        internal.workspace.files.removeForMigrationInternal,
-        {
-          authId: user.id,
-          fileId: file._id,
-        },
-      );
-    }
-
-    return changed ? await listWorkspaceFiles(workspace) : current;
   },
 });
 
@@ -195,5 +130,5 @@ async function resolveWorkspace(
     );
   }
 
-  return workspace;
+  return await withR2Credentials(ctx, workspace);
 }

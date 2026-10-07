@@ -21,6 +21,7 @@ export const taskUsage: Storage["taskUsage"] = {
           accountId: input.accountId as any,
           endpointId: input.endpointId ?? "",
           agentId: input.agentId,
+          principalChain: input.principalChain,
           conversationKey: input.conversationKey,
           taskId: input.taskId,
           modelProvider: input.modelProvider,

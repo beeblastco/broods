@@ -182,7 +182,7 @@ export function UserMenu(): React.JSX.Element | null {
                 className="cursor-pointer"
                 render={
                   <a
-                    href="https://broods.app/terms"
+                    href="https://docs.broods.app/terms"
                     target="_blank"
                     rel="noopener noreferrer"
                   />
@@ -195,7 +195,7 @@ export function UserMenu(): React.JSX.Element | null {
                 className="cursor-pointer"
                 render={
                   <a
-                    href="https://broods.app/privacy"
+                    href="https://docs.broods.app/privacy"
                     target="_blank"
                     rel="noopener noreferrer"
                   />
@@ -208,7 +208,7 @@ export function UserMenu(): React.JSX.Element | null {
                 className="cursor-pointer"
                 render={
                   <a
-                    href="https://broods.app/support"
+                    href="https://docs.broods.app/support"
                     target="_blank"
                     rel="noopener noreferrer"
                   />

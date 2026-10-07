@@ -268,12 +268,21 @@ function fakeStorage(): Storage {
       seen: async () => undefined,
     },
     sandboxConfigs: { getById: none, list: empty, removeAllForAccount: zero },
-    workspaceConfigs: { getById: none, list: empty, removeAllForAccount: zero },
+    workspaceConfigs: {
+      getById: none,
+      list: empty,
+      mintR2Credentials: async () => {
+        throw new Error("the bench has no R2 workspace");
+      },
+      removeAllForAccount: zero,
+    },
     accountHooks: { getById: none, removeAllForAccount: zero },
     mcp: { getById: none, removeAllForAccount: zero },
     agentPolicies: { getById: none },
+    connections: { load: none, saveRefreshed: async () => false },
     roleSessions: { resolveByTokenHash: none },
     taskUsage: { record: async () => undefined },
+    auditLedger: { append: async () => undefined },
   };
 }
 
@@ -315,6 +324,10 @@ function session(): Session {
     environmentText: (): string => "<environment>",
     persistModelMessages: async (): Promise<never[]> => [],
     renewConversationLease: async (): Promise<"renewed"> => "renewed",
+    stepBoundary: async (): Promise<{
+      renewal: "renewed";
+      steering: null;
+    }> => ({ renewal: "renewed", steering: null }),
     applySteeringIngress: async (): Promise<null> => null,
     appendIngressEvents: async (): Promise<null> => null,
     loadRefreshedSystemPromptParts: async (): Promise<{

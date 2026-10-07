@@ -24,6 +24,7 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 type Role = "owner" | "admin" | "member";
 
@@ -107,7 +108,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
       setInviteEmail("");
       setInviteNotice(`Added ${email}.`);
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : "Add failed");
+      setInviteError(toErrorMessage(err));
     } finally {
       setInviting(false);
     }
@@ -121,7 +122,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
     try {
       await updateRole({ membershipId: membershipId, role: role });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Role change failed");
+      setActionError(toErrorMessage(err));
     }
   }
 
@@ -133,7 +134,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
       await remove({ membershipId: removingMember.membershipId });
       setRemovingMember(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Remove failed");
+      setActionError(toErrorMessage(err));
     } finally {
       setIsRemovingMember(false);
     }
@@ -182,7 +183,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
                 </Select>
                 <Button
                   size="sm"
-                  className="cursor-pointer disabled:cursor-not-allowed"
+                  className="cursor-pointer"
                   disabled={inviting || !inviteEmail.trim()}
                   onClick={handleInvite}
                 >

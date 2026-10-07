@@ -53,27 +53,28 @@ Names are uppercase letters, digits and underscores. A sync fails, and writes no
 
 The agent's model, instructions, tools, and what it can reach. See [Agents](../guides/agents.md).
 
-| Field               | Description                                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `name`              | Unique per stage. Required                                                                             |
-| `description`       | Shown to parent agents choosing a subagent                                                             |
-| `provider`          | Credentials per model provider. See [providers](#model-providers)                                      |
-| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId` |
-| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                          |
-| `harness`           | A `defineHarness()` value to replace the built-in loop                                                 |
-| `tools`             | Provider-executed tools, keyed by the provider's tool name                                             |
-| `mcp`               | MCP servers to enable, keyed by server name                                                            |
-| `connections`       | Channel connections the agent answers on                                                               |
-| `sandboxes`         | Sandboxes it can use. The first is the default                                                         |
-| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                              |
-| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                        |
-| `skills`            | `enabled`, `allowed` skill resources                                                                   |
-| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                   |
-| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                         |
-| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                |
-| `policies`          | Policies that gate the agent. Each carries its own mode                                                |
-| `publicAccess`      | Open the agent to the stage runtime key. Default `false`                                               |
-| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                           |
+| Field               | Description                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `name`              | Unique per stage. Required                                                                               |
+| `description`       | Shown to parent agents choosing a subagent                                                               |
+| `provider`          | Credentials per model provider. See [providers](#model-providers)                                        |
+| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`   |
+| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                            |
+| `harness`           | A `defineHarness()` value to replace the built-in loop                                                   |
+| `tools`             | Provider-executed tools, keyed by the provider's tool name                                               |
+| `mcp`               | MCP servers to enable, keyed by server name                                                              |
+| `connections`       | Channel connections the agent answers on                                                                 |
+| `sandboxes`         | Sandboxes it can use. The first is the default                                                           |
+| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                |
+| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                          |
+| `skills`            | `enabled`, `allowed` skill resources                                                                     |
+| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                     |
+| `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox needs `image: "obscura"` and `allow-all` |
+| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                           |
+| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                  |
+| `policies`          | Policies that gate the agent. Each carries its own mode                                                  |
+| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                       |
+| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                             |
 
 ```ts
 import { defineAgent, env } from "broods";
@@ -121,7 +122,7 @@ model: {
 
 ### Model providers
 
-Every Vercel AI SDK language model provider works, plus any OpenAI-compatible endpoint through `custom`. Each needs an `apiKey`, and other settings pass through to the provider's AI SDK factory. The provider keys and the `bedrock`, `vertex` and `custom` specifics are in [Agents](../guides/agents.md). When a `custom` server reports no reasoning token count, Broods estimates it.
+Every Vercel AI SDK language model provider works, plus any OpenAI-compatible endpoint through `custom`. Each needs an `apiKey`, and other settings pass through to the provider's AI SDK factory. `chatgpt` is the exception: it runs on the account's `chatgpt` [connection](../guides/connections.md) and takes no settings. The provider keys and the `bedrock`, `vertex`, `custom` and `chatgpt` specifics are in [Agents](../guides/agents.md). When a `custom` server reports no reasoning token count, Broods estimates it.
 
 ### tools and mcp
 
@@ -231,11 +232,12 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 
 | Field                  | Default    | Description                                                                                                                    |
 | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`             | `sandbox`  | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `machine`                                                                     |
+| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `cloudflare`, `machine`, `custom`                                             |
 | `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                      |
 | `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                           |
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                      |
 | `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                   |
+| `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. Not with `snapshot` or `fallbackProvider`                        |
 | `snapshot`             | provider   | Image or snapshot to boot from. On `lambda`, a platform MicroVM image ARN                                                      |
 | `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                             |
 | `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                    |
@@ -246,6 +248,8 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `memoryLimit`          |            | MB, informational                                                                                                              |
 | `outputLimitBytes`     | 65536      | Output kept per call                                                                                                           |
 | `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey` |
+
+`custom` runs `bash` on your own server through one HTTP contract, named by `options.endpoint`; what it accepts and refuses is on [Your own server](../guides/sandboxes/custom.md).
 
 ```ts
 export const lambdaSandbox = defineSandbox({
@@ -264,7 +268,7 @@ Persistent files, mounted into a sandbox. See [Workspaces](../guides/workspaces.
 | Field         | Default              | Description                                                                                              |
 | ------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
 | `storage`     | `{ provider: "s3" }` | Managed bucket, or your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`                        |
-| `partitioned` | `false`              | Allow channels to split the workspace per conversation                                                   |
+| `partitioned` |                      | `"conversation"` lets channels split the workspace per conversation, `"agent"` gives each agent its own  |
 | `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default |
 
 ```ts
@@ -299,10 +303,12 @@ An MCP server whose tools the agent sees as `<name>__<tool>`. Give exactly one o
 | `name`         | 1 to 32 lowercase letters, digits or hyphens, starting with a letter                                         |
 | `url`          | External server over stateless HTTP. Public host, no redirects                                               |
 | `handler`      | Hosted server built with `createMcpHandler` from `@modelcontextprotocol/server`, bundled by the CLI          |
-| `sandbox`      | A `machine` sandbox whose daemon runs the stdio server of the same name                                      |
+| `sandbox`      | A `machine` sandbox whose daemon runs the stdio server of the same name, or a persistent `lambda` sandbox    |
+| `command`      | Argv of the stdio server, such as `["obscura", "mcp"]`. Required on a `lambda` sandbox                       |
 | `headers`      | Request headers. Credentials must be `"Bearer ${NAME}"` refs                                                 |
 | `oauth`        | `{ clientId, clientSecret, refreshToken, tokenUrl? }` for expiring tokens. No Authorization header alongside |
 | `allowedTools` | Tools to register. Omit for all                                                                              |
+| `runtime`      | `handler` only. `"auto"` (default) runs it on Cloudflare Workers when it builds for them; `"lambda"` never   |
 
 ```ts
 export const search = defineMcp({

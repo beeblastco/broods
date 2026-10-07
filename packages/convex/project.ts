@@ -16,6 +16,11 @@ import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { getOrgMembership, orgRoleMeets } from "./model/ownership/org";
+import {
+  getOrCreateActiveOrg,
+  orgBootstrapValidator,
+  type OrgBootstrap,
+} from "./org/orgs";
 import { projectsFields } from "./schema";
 
 const RANDOM_ADJECTIVES = [
@@ -135,6 +140,11 @@ const projectDoc = v.object({
 
 type Ctx = QueryCtx | MutationCtx;
 
+type HomeTarget = OrgBootstrap & {
+  projectId: Id<"projects"> | null;
+  stageId: Id<"stages"> | null;
+};
+
 export const create = mutation({
   args: {
     name: v.string(),
@@ -186,69 +196,6 @@ export const getById = query({
 });
 
 /**
- * Returns the caller's most recent project. On the very first call for an
- * org that has never had a project, creates a random one plus a default
- * Production stage and marks the org as onboarded. On subsequent calls
- * where the user has deleted every project, returns null so the UI can fall
- * back to the project gallery.
- * @returns The existing or newly created project id, or null when the org has
- * been onboarded but currently has no projects.
- */
-export const getOrCreateDefault = mutation({
-  args: {},
-  returns: v.union(v.id("projects"), v.null()),
-  handler: async (ctx): Promise<Id<"projects"> | null> => {
-    const authUser = await requireAuth(ctx);
-
-    // No org yet means no first project yet: onboarding creates the org first.
-    const orgId = await getCallerActiveOrgId(ctx, authUser.id);
-    if (!orgId) return null;
-
-    const existing = (await listProjects(ctx, authUser.id))[0];
-    const org = await ctx.db.get(orgId);
-    if (existing) {
-      // Stamp the flag on an org whose projects predate it, so the first-time
-      // path doesn't silently re-trigger.
-      if (org && !org.onboardedAt) {
-        await ctx.db.patch(orgId, { onboardedAt: Date.now() });
-      }
-
-      return existing._id;
-    }
-
-    if (org?.onboardedAt) {
-      return null;
-    }
-    // A member never creates the first project; an admin will.
-    if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) return null;
-
-    const now = Date.now();
-    const name = randomProjectName();
-    const projectId = await ctx.db.insert("projects", {
-      authId: authUser.id,
-      orgId: orgId,
-      name: name,
-      description: undefined,
-      slug: await uniqueProjectSlug(ctx, orgId, name),
-      updatedAt: now,
-    });
-
-    await ctx.db.insert("stages", {
-      authId: authUser.id,
-      projectId: projectId,
-      name: "Development",
-      kind: "development",
-      isDefault: true,
-      updatedAt: now,
-    });
-
-    await ctx.db.patch(orgId, { onboardedAt: now });
-
-    return projectId;
-  },
-});
-
-/**
  * Lists the caller's projects. Soft-auth: returns [] (instead of throwing) when
  * no auth user is resolved yet, so the first-login WorkOS-webhook gap renders an
  * empty list rather than tripping the dashboard's React error boundary.
@@ -260,7 +207,46 @@ export const list = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) return [];
 
-    return listProjects(ctx, authUser.id);
+    return listProjects(ctx, await getCallerActiveOrgId(ctx, authUser.id));
+  },
+});
+
+/**
+ * The dashboard home in one round trip: gets or creates the caller's active
+ * org, then picks the project to open. A `broods` deep link (`project` name or
+ * slug, optional `stage` name) opens that project and stage; otherwise the
+ * newest project, or a random first one for an org never onboarded. Opens
+ * nothing while the org still needs `org/lifecycle:provision`.
+ */
+export const openHome = mutation({
+  args: { project: v.optional(v.string()), stage: v.optional(v.string()) },
+  returns: v.object({
+    ...orgBootstrapValidator.fields,
+    projectId: v.union(v.null(), v.id("projects")),
+    stageId: v.union(v.null(), v.id("stages")),
+  }),
+  handler: async (ctx, { project, stage }): Promise<HomeTarget> => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const org = await getOrCreateActiveOrg(ctx, user.id);
+    if (org.needsProvision) {
+      return { ...org, projectId: null, stageId: null };
+    }
+    const projects = await listProjects(ctx, org.orgId);
+    const linked = project
+      ? await deepLinkTarget(ctx, projects, project, stage)
+      : null;
+    if (linked) return { ...org, ...linked };
+
+    return {
+      ...org,
+      projectId: await defaultProjectId(ctx, user.id, org.orgId, projects),
+      stageId: null,
+    };
   },
 });
 
@@ -281,55 +267,6 @@ export const remove = mutation({
     await purgeProject(ctx, projectId);
 
     return projectId;
-  },
-});
-
-/**
- * Resolves a CLI-style project name/slug (and optional stage name) to the
- * caller's real project and stage ids, so a `broods` deep link can
- * land directly on that project's architecture view.
- * @param project name or slug as printed by the CLI
- * @param stage optional stage name (e.g. "development"); matched case-insensitively
- * @returns the matching ids, or null when the project is not visible to the caller
- */
-export const resolveTarget = query({
-  args: { project: v.string(), stage: v.optional(v.string()) },
-  returns: v.union(
-    v.null(),
-    v.object({
-      projectId: v.id("projects"),
-      stageId: v.union(v.null(), v.id("stages")),
-    }),
-  ),
-  handler: async (
-    ctx,
-    { project, stage },
-  ): Promise<{
-    projectId: Id<"projects">;
-    stageId: Id<"stages"> | null;
-  } | null> => {
-    const authUser = await requireAuth(ctx);
-    const needle = project.trim().toLowerCase();
-    const match = (await listProjects(ctx, authUser.id)).find(
-      (entry) =>
-        entry.name.toLowerCase() === needle ||
-        entry.slug.toLowerCase() === needle,
-    );
-    if (!match) return null;
-
-    const stages = await ctx.db
-      .query("stages")
-      .withIndex("by_projectId", (q) => q.eq("projectId", match._id))
-      .collect();
-    const wanted = stage?.trim().toLowerCase();
-    const target =
-      (wanted
-        ? stages.find((entry) => entry.name.toLowerCase() === wanted)
-        : undefined) ??
-      stages.find((entry) => entry.isDefault) ??
-      null;
-
-    return { projectId: match._id, stageId: target?._id ?? null };
   },
 });
 
@@ -395,6 +332,91 @@ async function callerCanWriteOrg(
 }
 
 /**
+ * The deep-linked project, matched by name or slug, and its stage by name,
+ * else the default stage. Null when the caller cannot see that project.
+ */
+async function deepLinkTarget(
+  ctx: Ctx,
+  projects: Doc<"projects">[],
+  project: string,
+  stage: string | undefined,
+): Promise<{
+  projectId: Id<"projects">;
+  stageId: Id<"stages"> | null;
+} | null> {
+  const needle = project.trim().toLowerCase();
+  const match = projects.find(
+    (entry) =>
+      entry.name.toLowerCase() === needle ||
+      entry.slug.toLowerCase() === needle,
+  );
+  if (!match) return null;
+
+  const stages = await ctx.db
+    .query("stages")
+    .withIndex("by_projectId", (q) => q.eq("projectId", match._id))
+    .collect();
+  const wanted = stage?.trim().toLowerCase();
+  const target =
+    (wanted
+      ? stages.find((entry) => entry.name.toLowerCase() === wanted)
+      : undefined) ??
+    stages.find((entry) => entry.isDefault) ??
+    null;
+
+  return { projectId: match._id, stageId: target?._id ?? null };
+}
+
+/**
+ * The newest project. An org that never had one gets a random project with a
+ * Development stage on an admin's first visit and is marked onboarded; after
+ * that, an org with no projects opens the project gallery (null).
+ */
+async function defaultProjectId(
+  ctx: MutationCtx,
+  authId: string,
+  orgId: Id<"orgs">,
+  projects: Doc<"projects">[],
+): Promise<Id<"projects"> | null> {
+  const org = await ctx.db.get(orgId);
+  const existing = projects[0];
+  if (existing) {
+    // Stamp the flag on an org whose projects predate it, so the first-time
+    // path doesn't silently re-trigger.
+    if (org && !org.onboardedAt) {
+      await ctx.db.patch(orgId, { onboardedAt: Date.now() });
+    }
+
+    return existing._id;
+  }
+  if (org?.onboardedAt) return null;
+  // A member never creates the first project; an admin will.
+  if (!(await callerCanWriteOrg(ctx, authId, orgId))) return null;
+
+  const now = Date.now();
+  const name = randomProjectName();
+  const projectId = await ctx.db.insert("projects", {
+    authId: authId,
+    orgId: orgId,
+    name: name,
+    description: undefined,
+    slug: await uniqueProjectSlug(ctx, orgId, name),
+    updatedAt: now,
+  });
+  await ctx.db.insert("stages", {
+    authId: authId,
+    projectId: projectId,
+    name: "Development",
+    kind: "development",
+    isDefault: true,
+    updatedAt: now,
+  });
+  await ctx.db.patch(orgId, { onboardedAt: now });
+
+  return projectId;
+}
+
+/**
  * Resolve the caller's active org id, used to scope new and listed projects.
  * Returns null when the user has no membership yet (first-load flow).
  */
@@ -415,13 +437,12 @@ async function getCallerActiveOrgId(
 
 /**
  * Lists the projects visible to the caller: their active org's, newest first.
- * Nothing before the caller has joined an org.
+ * Nothing before the caller has joined an org (`orgId` null).
  */
 async function listProjects(
   ctx: Ctx,
-  authId: string,
+  orgId: Id<"orgs"> | null,
 ): Promise<Doc<"projects">[]> {
-  const orgId = await getCallerActiveOrgId(ctx, authId);
   if (orgId === null) return [];
 
   const orgProjects = await ctx.db

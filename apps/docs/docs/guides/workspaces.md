@@ -76,12 +76,12 @@ The refusal exists because the workspace is the only storage that outlives a san
 
 By default every run mounts the same folder. Partitioning gives each conversation, ticket or team its own folder under one workspace, so a GitHub issue cannot read another issue's files. It separates files, `memory/` and `TASKS.md`. The agent's prompt, tools, credentials and skills stay shared.
 
-Turn it on with `partitioned: true` on the workspace and a `partition` on every connection the agent uses:
+Turn it on with `partitioned: "conversation"` on the workspace and a `partition` on every connection the agent uses:
 
 ```ts
 export const support = defineWorkspace({
   name: "support",
-  partitioned: true,
+  partitioned: "conversation",
 });
 
 export const slack = defineSlackConnection({
@@ -111,7 +111,18 @@ export const github = defineGitHubConnection({
 
 A new child folder starts empty. Files at the root are not copied in. A [channel record](../channels/channel-records.md) can also set `partition` for one place.
 
-`broods dev` checks the rules. A workspace with `partitioned: true` needs `partition` on every attached connection, and a connection with `partition` needs at least one partitioned workspace.
+`broods dev` checks the rules. A workspace with `partitioned: "conversation"` needs `partition` on every attached connection, and a connection with `partition` needs at least one partitioned workspace.
+
+### Per agent
+
+`partitioned: "agent"` splits the workspace by agent instead of by conversation. Every agent that attaches it gets its own folder under `agent/`, with its own sandbox, S3 prefix and mount credentials, so two agents on one workspace cannot read each other's files. It needs no `partition` on the connections, and every conversation of one agent shares that agent's folder.
+
+```ts
+export const scratch = defineWorkspace({
+  name: "scratch",
+  partitioned: "agent",
+});
+```
 
 ### When a child folder is deleted
 
@@ -143,18 +154,49 @@ export const notes = defineWorkspace({
 });
 ```
 
-| `auth.type`        | Credentials                         | Use                     |
-| ------------------ | ----------------------------------- | ----------------------- |
-| `managed`, default | the platform's role                 | the managed bucket only |
-| `assumeRole`       | your IAM role, assumed for each run | required with `bucket`  |
+| `auth.type`        | Credentials                         | Use                      |
+| ------------------ | ----------------------------------- | ------------------------ |
+| `managed`, default | the platform's role                 | the managed bucket only  |
+| `assumeRole`       | your IAM role, assumed for each run | an AWS `bucket`          |
+| `r2`               | your R2 API token, from env vars    | a Cloudflare R2 `bucket` |
 
 A workspace with `bucket` is rejected unless:
 
-- `auth.type` is `assumeRole` and `roleArn` is a role outside the platform's AWS account.
+- `auth.type` is `assumeRole` and `roleArn` is a role outside the platform's AWS account, or `auth.type` is `r2` (see below).
 - `bucket` is not one of the platform's own buckets.
 - `endpoint`, if set, is a public `https` URL. Other S3-compatible stores keep `provider: "s3"` and change `endpoint`.
 
-The platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. Set `externalId` when the role trusts Broods across accounts. No access keys are stored. Static access keys for R2 or MinIO are not supported yet, so a bring-your-own bucket needs an AWS IAM role. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
+With `assumeRole`, the platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. Set `externalId` when the role trusts Broods across accounts. No access keys are stored. Static access keys for MinIO and other stores are not supported. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
+
+### Cloudflare R2
+
+Create an R2 API token with Object Read & Write on the bucket, store its S3 keys as env vars, and point the workspace at your account's R2 endpoint:
+
+```ts
+import { defineWorkspace, env } from "broods";
+
+export const files = defineWorkspace({
+  name: "r2-files",
+  storage: {
+    provider: "s3",
+    bucket: "agent-files",
+    prefix: "broods/", // required
+    endpoint: "https://<ACCOUNT_ID>.r2.cloudflarestorage.com",
+    auth: {
+      type: "r2",
+      accessKeyId: env("R2_ACCESS_KEY_ID"),
+      secretAccessKey: env("R2_SECRET_ACCESS_KEY"),
+    },
+  },
+});
+```
+
+```sh
+broods env set R2_ACCESS_KEY_ID
+broods env set R2_SECRET_ACCESS_KEY
+```
+
+Over the API, write the keys as `"${R2_ACCESS_KEY_ID}"` references to account env vars set under `/v1/env`. A literal key is rejected, and so is any endpoint other than `https://<32-character account id>.r2.cloudflarestorage.com` (the `eu` and `fedramp` jurisdiction hosts work too). Leave `region` unset or `auto`. Only the two keys take `env()`. For each run the config plane signs R2 [temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) that last one hour and only reach `bucket/prefix`. The token's own keys never enter a sandbox. Revoking the token stops every credential minted from it. An env var the keys reference cannot be deleted while the workspace uses it.
 
 These rules are checked when you save and again whenever the storage is used, so a workspace saved before a rule existed fails with the same error until you fix it.
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { ingestChannelAttachments } from "../src/harness/session.ts";
 import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 import {
   agentSandboxReservation,
@@ -48,11 +49,11 @@ describe("workspaceNamespace", () => {
       partition: { by: "shared" as const },
     };
 
-    expect(isolatedWorkspaceNamespace(base, false, scope)).toBe(base);
-    expect(isolatedWorkspaceNamespace(base, true)).toBe(base);
-    expect(isolatedWorkspaceNamespace(base, true, scope)).toBe(base);
+    expect(isolatedWorkspaceNamespace(base, undefined, scope)).toBe(base);
+    expect(isolatedWorkspaceNamespace(base, "conversation")).toBe(base);
+    expect(isolatedWorkspaceNamespace(base, "conversation", scope)).toBe(base);
     expect(
-      isolatedWorkspaceNamespace(base, true, {
+      isolatedWorkspaceNamespace(base, "conversation", {
         ...scope,
         partition: { alias: "support", by: "conversation" },
       }),
@@ -60,9 +61,43 @@ describe("workspaceNamespace", () => {
       `${base}/support/${normalizeFilesystemNamespace(scope.conversationKey)}`,
     );
     expect(() =>
-      isolatedWorkspaceNamespace(base, true, { channelName: "slack" }),
+      isolatedWorkspaceNamespace(base, "conversation", {
+        channelName: "slack",
+      }),
     ).toThrow(
       "Workspace isolation requires the active channel to define partition",
+    );
+  });
+
+  it("gives each agent its own folder under agent isolation, shared across its conversations", () => {
+    const base = workspaceNamespace("acct_1", "ws_a");
+    const conversationA = {
+      agentId: "agent_1",
+      channelName: "github",
+      channelScopeKey: "gh:owner/repo",
+      conversationKey: "gh:owner/repo:issue:1",
+      partition: { alias: "support", by: "conversation" as const },
+    };
+    const conversationB = {
+      ...conversationA,
+      conversationKey: "gh:owner/repo:issue:2",
+    };
+    const agentOne = isolatedWorkspaceNamespace(base, "agent", conversationA);
+
+    expect(agentOne).toBe(
+      `${base}/agent/${normalizeFilesystemNamespace("agent_1")}`,
+    );
+    expect(isolatedWorkspaceNamespace(base, "agent", conversationB)).toBe(
+      agentOne,
+    );
+    expect(
+      isolatedWorkspaceNamespace(base, "agent", {
+        ...conversationA,
+        agentId: "agent_2",
+      }),
+    ).not.toBe(agentOne);
+    expect(() => isolatedWorkspaceNamespace(base, "agent", {})).toThrow(
+      'Workspace isolation "agent" requires an agent identity',
     );
   });
 
@@ -92,15 +127,15 @@ describe("workspaceNamespace", () => {
       conversationKey: "gh:owner/repo:issue:456",
     };
 
-    expect(isolatedWorkspaceNamespace(base, true, parentScope)).toBe(
-      isolatedWorkspaceNamespace(base, true, sameAliasParent),
+    expect(isolatedWorkspaceNamespace(base, "conversation", parentScope)).toBe(
+      isolatedWorkspaceNamespace(base, "conversation", sameAliasParent),
     );
-    expect(isolatedWorkspaceNamespace(base, true, firstIssue)).toBe(
+    expect(isolatedWorkspaceNamespace(base, "conversation", firstIssue)).toBe(
       `${base}/support/${normalizeFilesystemNamespace("gh:owner/repo:issue:123")}`,
     );
-    expect(isolatedWorkspaceNamespace(base, true, firstIssue)).not.toBe(
-      isolatedWorkspaceNamespace(base, true, secondIssue),
-    );
+    expect(
+      isolatedWorkspaceNamespace(base, "conversation", firstIssue),
+    ).not.toBe(isolatedWorkspaceNamespace(base, "conversation", secondIssue));
   });
 });
 
@@ -296,7 +331,12 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
           id === "ws_a"
-            ? { config: { storage: { provider: "s3" }, isolation: true } }
+            ? {
+                config: {
+                  storage: { provider: "s3" },
+                  isolation: "conversation",
+                },
+              }
             : null,
       },
     } as never);
@@ -324,7 +364,12 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
           id === "ws_a"
-            ? { config: { storage: { provider: "s3" }, isolation: true } }
+            ? {
+                config: {
+                  storage: { provider: "s3" },
+                  isolation: "conversation",
+                },
+              }
             : null,
       },
     } as never);
@@ -337,6 +382,88 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.namespace).toBe(
       workspaceNamespace("acct_1", "ws_a"),
     );
+  });
+
+  it("resolves an agent-isolated workspace to the agent's own namespace", async () => {
+    setStorageForTests({
+      sandboxConfigs: { getById: async () => null },
+      workspaceConfigs: {
+        getById: async (_accountId: string, id: string) =>
+          id === "ws_a"
+            ? { config: { storage: { provider: "s3" }, isolation: "agent" } }
+            : null,
+      },
+    } as never);
+    const agentConfig = {
+      workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+    };
+    const resolve = (
+      agentId: string,
+      conversationKey: string,
+    ): ReturnType<typeof resolveAgentRuntime> =>
+      resolveAgentRuntime(
+        agentConfig,
+        { accountId: "acct_1", agentId: agentId },
+        {
+          channelName: "github",
+          channelScopeKey: "gh:owner/repo",
+          conversationKey: conversationKey,
+          partition: { alias: "support", by: "conversation" },
+        },
+      );
+
+    const [one, oneAgain, two] = await Promise.all([
+      resolve("agent_1", "gh:owner/repo:issue:1"),
+      resolve("agent_1", "gh:owner/repo:issue:2"),
+      resolve("agent_2", "gh:owner/repo:issue:1"),
+    ]);
+    const base = workspaceNamespace("acct_1", "ws_a");
+    expect(one.workspaces[0]?.namespace).toBe(
+      `${base}/agent/${normalizeFilesystemNamespace("agent_1")}`,
+    );
+    expect(oneAgain.workspaces[0]?.namespace).toBe(
+      one.workspaces[0]?.namespace,
+    );
+    expect(two.workspaces[0]?.namespace).not.toBe(one.workspaces[0]?.namespace);
+    expect(
+      resolveAgentRuntime(agentConfig, { accountId: "acct_1" }),
+    ).rejects.toThrow('Workspace isolation "agent" requires an agent identity');
+  });
+
+  it("ingests a channel attachment on an agent-isolated workspace as that agent", async () => {
+    setStorageForTests({
+      sandboxConfigs: { getById: async () => null },
+      workspaceConfigs: {
+        getById: async () => ({
+          config: { storage: { provider: "s3" }, isolation: "agent" },
+        }),
+      },
+    } as never);
+
+    // The download is refused; resolving the workspace before it needs the agent.
+    expect(
+      ingestChannelAttachments(
+        [],
+        [
+          {
+            type: "image",
+            name: "photo.png",
+            mimeType: "image/png",
+            fetchData: async (): Promise<Buffer> => {
+              throw new Error("download refused");
+            },
+          },
+        ],
+        {
+          accountId: "acct_1",
+          agentId: "agent_1",
+          agentConfig: { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
+          channelName: "slack",
+          conversationKey: "slack:C1:T1",
+          eventId: "evt_1",
+        },
+      ),
+    ).resolves.toMatchObject({ events: [{ role: "user" }] });
   });
 
   it("lets a workspace override the agent-level sandbox per agent", async () => {
@@ -451,6 +578,33 @@ describe("resolveAgentRuntime", () => {
     expect(String(ownBucketRefusal)).toContain(
       'Workspace "byo" uses its own bucket',
     );
+  });
+
+  it("refuses a workspace whose sandbox falls back to cloudflare", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async () => ({
+          config: {
+            provider: "lambda",
+            fallbackProvider: "cloudflare",
+            permissionMode: "edit",
+          },
+        }),
+      },
+      workspaceConfigs: {
+        getById: async () => ({ config: { storage: { provider: "s3" } } }),
+      },
+    } as never);
+
+    expect(
+      resolveAgentRuntime(
+        {
+          sandboxes: ["sb_box"],
+          workspaces: [{ name: "notes", workspaceId: "ws_notes" }],
+        },
+        { accountId: "acct_1" },
+      ),
+    ).rejects.toThrow('Workspace "notes" cannot run on a cloudflare sandbox');
   });
 
   it("resolves a read-only workspace (no agent sandbox, no override) without a sandbox", async () => {

@@ -3,10 +3,10 @@ import type { ModelMessage } from "ai";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { ConversationDispatchTarget } from "../src/harness/ingress.ts";
-import { toChannelRuntimeAgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import type { ChannelRecord } from "../src/shared/domain/channel-record.ts";
 import type { CronRecord, CronRunRecord } from "../src/shared/domain/cron.ts";
+import type { SandboxConfigRecord } from "../src/shared/domain/sandbox-config.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -150,10 +150,11 @@ describe("handleScheduledCron", () => {
       channel: "slack",
       source: CHANNEL_TARGET.source,
     });
-    // Rebuilt from the live agent row, never a copy the coordinator kept.
-    expect(admitted[0]?.agentConfig).toEqual(
-      toChannelRuntimeAgentConfig(AGENT.config, "slack"),
-    );
+    // The envelope carries the rows to rebuild from, never the config itself.
+    expect(admitted[0]?.configRef).toEqual({
+      channel: { channelName: "slack" },
+    });
+    expect(admitted[0]).not.toHaveProperty("agentConfig");
     expect(failures).toEqual([
       "Cron conversation is already processing another turn",
     ]);
@@ -272,9 +273,141 @@ describe("background job continuation", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(admitted[0]?.agentConfig).toMatchObject({
-      channels: { slack: { botToken: "current-token" } },
-      denyTools: ["bash"],
+    expect(admitted[0]?.configRef).toEqual({
+      channel: {
+        channelName: "slack",
+        channelRecordId: CHANNEL_RECORD.channelRecordId,
+      },
+    });
+    expect(admitted[0]).not.toHaveProperty("agentConfig");
+  });
+
+  it("stores a job's output scrubbed of its sandbox's env values", async () => {
+    setStorageForTests({
+      agents: {
+        getById: async function (): Promise<AgentRecord> {
+          return { ...AGENT, config: { ...AGENT.config, sandboxes: ["sb_1"] } };
+        },
+      },
+      agentDeployments: {
+        getByAgentId: async function () {
+          return null;
+        },
+      },
+      sandboxConfigs: {
+        getById: async function (): Promise<SandboxConfigRecord> {
+          return {
+            accountId: "acct_1",
+            sandboxId: "sb_1",
+            name: "box",
+            config: {
+              provider: "lambda",
+              envVars: { DATABASE_URL: "postgres://sandbox-env-value" },
+            },
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+        },
+      },
+    } as unknown as Storage);
+    const job: AsyncToolResultRecord = {
+      resultId: "job_2",
+      parentEventId: "acct:acct_1:agent:agent_1:evt_2",
+      conversationKey: "acct:acct_1:agent:agent_1:api:c1",
+      toolName: "bash",
+      toolCallId: "call_2",
+      input: {},
+      status: "processing",
+      createdAt: "2026-08-14T09:00:00.000Z",
+      updatedAt: "2026-08-14T09:00:00.000Z",
+      expiresAt: 0,
+    };
+    const answers: Record<string, unknown> = {
+      getAsyncToolResult: job,
+      getAsyncToolToken: true,
+    };
+    runtime.query = async function (name: string) {
+      return answers[name] ?? null;
+    } as never;
+    const settles: Record<string, unknown>[] = [];
+    runtime.mutate = async function (name: string, args: unknown) {
+      if (name === "updateAsyncToolResult") {
+        settles.push(args as Record<string, unknown>);
+
+        return { ...job, status: "completed", response: "done" };
+      }
+
+      return { outcome: "queued" };
+    } as never;
+
+    await handler({
+      method: "POST",
+      path: "/v1/sandbox-jobs/job_2/complete",
+      search: "",
+      query: new URLSearchParams(),
+      headers: { "x-job-token": "token" },
+      body: JSON.stringify({
+        status: "completed",
+        response: {
+          stdout: "connected to postgres://sandbox-env-value",
+          nextPageToken: "page-2",
+        },
+      }),
+      cookies: [],
+      clientIp: "127.0.0.1",
+    });
+
+    expect(settles[0]?.response).toEqual({
+      stdout: "connected to [redacted]",
+      nextPageToken: "page-2",
+    });
+  });
+});
+
+describe("queued envelope without a config ref", () => {
+  it("is settled failed instead of running on another turn's config", async () => {
+    const { dispatchAppliedIngress } =
+      await import("../src/harness/handler.ts");
+    const writes: { name: string; args: Record<string, unknown> }[] = [];
+    runtime.mutate = async function (name: string, args: unknown) {
+      writes.push({ name: name, args: args as Record<string, unknown> });
+
+      return null;
+    } as never;
+
+    expect(
+      dispatchAppliedIngress(
+        {
+          accountId: "acct_1",
+          agentId: "agent_1",
+          conversationKey: "acct:acct_1:agent:agent_1:api:c1",
+          publicConversationKey: "c1",
+        },
+        {
+          eventId: "evt_old_pod",
+          events: [{ role: "user", content: "queued before the rollout" }],
+          delivery: {
+            kind: "async",
+            publicEventId: "evt_old_pod",
+            publicConversationKey: "c1",
+            statusUrl: "/v1/runs/run_old",
+          },
+          requestedMode: "followup",
+          appliedMode: "followup",
+          appliedToEventId: "evt_old_pod",
+          contributingEventIds: ["evt_old_pod"],
+          ownerGeneration: 2,
+        },
+      ),
+    ).rejects.toThrow("Queued turn was admitted before config refs; retry");
+
+    expect(
+      writes.find((write) => write.args.status === "failed")?.args,
+    ).toMatchObject({
+      ownerEventId: "evt_old_pod",
+      ownerGeneration: 2,
+      status: "failed",
+      error: "Queued turn was admitted before config refs; retry",
     });
   });
 });

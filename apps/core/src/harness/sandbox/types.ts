@@ -11,6 +11,12 @@
  */
 
 import type { Readable } from "node:stream";
+import type { SandboxImage } from "@broods/convex/model/sandboxRules";
+import type {
+  SandboxNetworkMode,
+  SandboxProvider,
+  SandboxRuntimeName as SandboxRuntime,
+} from "../../shared/domain/sandbox-config.ts";
 import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
 import type {
   SandboxControlPlane,
@@ -18,15 +24,14 @@ import type {
   SandboxSize,
 } from "../../shared/sandbox-sizes.ts";
 
-export type SandboxProvider =
-  | "sandbox"
-  | "lambda"
-  | "e2b"
-  | "daytona"
-  | "vercel"
-  | "machine";
-export type SandboxRuntime = "bash" | "python" | "node";
-export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
+// The provider, runtime and network lists are the config plane's
+// (`packages/convex/model/sandboxRules.ts`); the registry in index.ts is keyed
+// by the provider one.
+export type {
+  SandboxNetworkMode,
+  SandboxProvider,
+  SandboxRuntimeName as SandboxRuntime,
+} from "../../shared/domain/sandbox-config.ts";
 
 export interface SandboxNetworkConfig {
   mode: SandboxNetworkMode;
@@ -48,6 +53,8 @@ export interface SandboxExecutorConfig {
   // Predefined compute size; drives workdir create-time resources (see
   // _shared/sandbox-sizes). Advisory on providers that size natively.
   size?: SandboxSize;
+  // Platform MicroVM image variant by name (lambda only, never with `snapshot`).
+  image?: SandboxImage;
   // Prebuilt image/snapshot to launch from (workdir image id/name, MicroVM image
   // ARN). Consumed by the self-hosted backends; unset boots the provider default.
   snapshot?: string;
@@ -110,12 +117,24 @@ export interface SandboxRunRequest {
   // Per-call env vars merged over the account envVars by `mergeSandboxEnv`, which
   // drops RESERVED_SANDBOX_ENV_KEYS; the host process.env is never inherited.
   envVars?: Record<string, string>;
+  // The run's identity, laid over both env layers as BROODS_* by `mergeSandboxEnv`.
+  // Blocking execs only: a background job outlives the run and its token.
+  principal?: SandboxRunPrincipal;
   metadata?: SandboxRunMetadata;
   // Background-only: the caller supplies the jobId (so the tracking row exists
   // before the job can finish) and an optional completion callback the detached
   // job POSTs when it exits.
   jobId?: string;
   callback?: SandboxJobCallback;
+}
+
+/** What sandbox code learns about the run it serves: who it is and a bearer that reads its agent's runs. */
+export interface SandboxRunPrincipal {
+  accountId: string;
+  agentId: string;
+  runToken: string;
+  /** The public API base, when core knows its own (PUBLIC_BASE_URL). */
+  baseUrl?: string;
 }
 
 // Where a finished background job reports its result. The detached process POSTs
@@ -244,6 +263,24 @@ export interface SandboxInstanceInfo {
   errorMessage?: string;
 }
 
+/** One JSON POST to a route the sandbox image serves, such as `/exec` or `/mcp`. */
+export interface SandboxGuestPost {
+  path: string;
+  body: unknown;
+  timeoutMs: number;
+  abortSignal?: AbortSignal;
+}
+
+/** Which reserved VM a call reaches: bash's workspace namespace, or its reservation key. */
+export type SandboxReservedTarget = Pick<
+  SandboxRunRequest,
+  "namespace" | "reservationKey" | "workspaceRoot"
+>;
+
+/** A guest POST to the reserved VM bash reaches on the same target. */
+export interface SandboxReservedPost
+  extends SandboxGuestPost, SandboxReservedTarget {}
+
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
   // Best-effort: create/resume the reserved sandbox and wait until its pod is
@@ -277,6 +314,8 @@ export interface SandboxExecutor {
   // Persistent-only background capabilities. Implemented by sandbox/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;
+  // A guest route on the reserved VM, beside /exec. lambda only: the MCP relay.
+  postReserved?(request: SandboxReservedPost): Promise<unknown>;
   jobStatus?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
   jobLogs?(request: SandboxJobRequest): Promise<SandboxJobLogs>;
   stopJob?(request: SandboxJobRequest): Promise<SandboxJobStatus>;

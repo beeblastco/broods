@@ -951,6 +951,105 @@ describe("context prepare", () => {
     }
   });
 
+  it.each([
+    ["before", false],
+    ["after", true],
+  ])(
+    "keeps the turn's input once when the history read lands %s its write",
+    async (_when: string, readSeesWrite: boolean): Promise<void> => {
+      const { runtime } = await import("../src/shared/convex/runtime.ts");
+      const originalQuery = runtime.query.bind(runtime);
+      const originalMutate = runtime.mutate.bind(runtime);
+      const written: StoredConversationEventPage["page"] = [];
+      const wrote = Promise.withResolvers<void>();
+      runtime.mutate = (async (
+        _name: string,
+        args: { events: [] },
+      ): Promise<null> => {
+        written.push(...args.events);
+        wrote.resolve();
+
+        return null;
+      }) as typeof runtime.mutate;
+      runtime.query = (async (
+        name: string,
+      ): Promise<StoredConversationEventPage | null> => {
+        if (name !== "listConversationEvents") return null;
+        if (readSeesWrite) await wrote.promise;
+
+        return {
+          page: [...userRows(2), ...written],
+          isDone: true,
+          continueCursor: null,
+        };
+      }) as typeof runtime.query;
+      try {
+        const session = await newSession({ skills: { enabled: false } });
+        const turnContext = await session.createTurnContext(
+          [{ role: "system", content: "one turn only" }],
+          [
+            { role: "user", content: "new question" },
+            { role: "system", content: "ephemeral", persist: false },
+          ],
+        );
+
+        expect(written).toHaveLength(1);
+        expect(turnContext.messages.map((message) => message.content)).toEqual([
+          "message 0",
+          "message 1",
+          "new question",
+        ]);
+        expect(turnContext.ephemeralSystem).toEqual([
+          { role: "system", content: "ephemeral" },
+          { role: "system", content: "one turn only" },
+        ]);
+      } finally {
+        runtime.query = originalQuery;
+        runtime.mutate = originalMutate;
+      }
+    },
+  );
+
+  it("keeps cursor order when a newer context row lands before the turn's input", async (): Promise<void> => {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalQuery = runtime.query.bind(runtime);
+    const originalMutate = runtime.mutate.bind(runtime);
+    // A context-only channel message, written without the lease after the
+    // input's cursor was minted but before the input's write landed.
+    const newer: StoredConversationEventPage["page"][number] = {
+      cursor: "9999-12-31T00:00:00.000Z#context#0000",
+      event: {
+        version: 1,
+        sourceEventId: "context",
+        message: { role: "user", content: "channel chatter" },
+      },
+    };
+    runtime.mutate = (async (): Promise<null> => null) as typeof runtime.mutate;
+    runtime.query = (async (
+      name: string,
+    ): Promise<StoredConversationEventPage | null> =>
+      name === "listConversationEvents"
+        ? { page: [...userRows(2), newer], isDone: true, continueCursor: null }
+        : null) as typeof runtime.query;
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext(
+        [],
+        [{ role: "user", content: "new question" }],
+      );
+
+      expect(turnContext.messages.map((message) => message.content)).toEqual([
+        "message 0",
+        "message 1",
+        "new question",
+        "channel chatter",
+      ]);
+    } finally {
+      runtime.query = originalQuery;
+      runtime.mutate = originalMutate;
+    }
+  });
+
   it("never compacts while preparing a turn, however long the history", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const history = await stubHistory(userRows(50));
@@ -1005,6 +1104,16 @@ describe("auto-compaction threshold", () => {
     // xai serves grok-4.3 with a 1M window; another catalog provider lists 20k.
     const config = {
       model: { provider: "xai" as const, modelId: "grok-4.3" },
+    };
+
+    expect(shouldAutoCompact(config, 499_999)).toBe(false);
+    expect(shouldAutoCompact(config, 500_000)).toBe(true);
+  });
+
+  it("uses the upstream window a gateway model id names", async (): Promise<void> => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    const config = {
+      model: { provider: "cloudflare" as const, modelId: "xai/grok-4.3" },
     };
 
     expect(shouldAutoCompact(config, 499_999)).toBe(false);
@@ -1274,6 +1383,34 @@ describe("conversation summary", () => {
     );
     expect(content).toContain("Message 4 (user):\nnewest-context");
     expect(content).toEndWith("keep the deploy decisions");
+  });
+
+  it("cuts an oversized prior summary before the newest message", async (): Promise<void> => {
+    const { summarizeConversation } =
+      await import("../src/harness/compaction.ts");
+
+    await summarizeConversation({
+      conversationKey: "conversation",
+      priorSummaries: [
+        {
+          role: "system",
+          content: `<session-compaction-summary>\n${"s".repeat(14_000)}`,
+        },
+      ],
+      messages: [{ role: "user", content: "newest-context" }],
+      agentConfig: {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gpt-3.5-turbo" },
+      },
+    });
+
+    const options = generateTextMock.mock.calls[0]?.[0] as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    const content = options?.messages[0]?.content ?? "";
+    expect(content.length).toBeLessThanOrEqual(13_108);
+    expect(content).toStartWith("Message 1 (system):");
+    expect(content).toEndWith("Message 2 (user):\nnewest-context");
   });
 
   it("strips reasoning before building the summary request", async () => {

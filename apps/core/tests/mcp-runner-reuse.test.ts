@@ -23,7 +23,7 @@ interface HostedResponse {
 }
 
 interface RunnerEvent {
-  accountId?: string;
+  tenantId?: string;
   bundle: string;
   /** Requests in this invocation's batch; one by default. */
   batch?: number;
@@ -67,7 +67,7 @@ async function invokeSequence(
     const driverEvents = events.map((event) => ({
       mode: "mcp",
       toolName: "server-under-test",
-      ...(event.accountId !== undefined ? { accountId: event.accountId } : {}),
+      ...(event.tenantId !== undefined ? { tenantId: event.tenantId } : {}),
       ...(event.waitMs !== undefined ? { waitMs: event.waitMs } : {}),
       expectedSha256: new Bun.CryptoHasher("sha256")
         .update(event.bundle)
@@ -164,9 +164,9 @@ function terminalFrame(run: string | undefined): RunnerFrame | undefined {
 describe("mcp-runner warm reuse", () => {
   it("reuses the child for the same account and bundle, fetching once", async () => {
     const { runs, bundleFetches } = await invokeSequence([
-      { accountId: "acct-1", bundle: COUNTER_BUNDLE },
-      { accountId: "acct-1", bundle: COUNTER_BUNDLE },
-      { accountId: "acct-1", bundle: COUNTER_BUNDLE },
+      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
+      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
+      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
     ]);
 
     expect(
@@ -179,8 +179,8 @@ describe("mcp-runner warm reuse", () => {
     // Three requests in one invocation share the process (counter 1..3),
     // and the next invocation still lands in it.
     const { runs, bundleFetches } = await invokeSequence([
-      { accountId: "acct-1", bundle: COUNTER_BUNDLE, batch: 3 },
-      { accountId: "acct-1", bundle: COUNTER_BUNDLE },
+      { tenantId: "acct-1", bundle: COUNTER_BUNDLE, batch: 3 },
+      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
     ]);
 
     expect(
@@ -214,8 +214,8 @@ describe("mcp-runner warm reuse", () => {
     ].join("\n");
 
     const { runs } = await invokeSequence([
-      { accountId: "acct-1", bundle: bundle },
-      { accountId: "acct-1", bundle: bundle },
+      { tenantId: "acct-1", bundle: bundle },
+      { tenantId: "acct-1", bundle: bundle },
     ]);
     const second = finalBody(runs[1]) as {
       sameDirAsLastCall: boolean;
@@ -228,8 +228,8 @@ describe("mcp-runner warm reuse", () => {
 
   it("never hands a used child to another account", async () => {
     const { runs } = await invokeSequence([
-      { accountId: "acct-1", bundle: COUNTER_BUNDLE },
-      { accountId: "acct-2", bundle: COUNTER_BUNDLE },
+      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
+      { tenantId: "acct-2", bundle: COUNTER_BUNDLE },
     ]);
 
     expect(
@@ -251,8 +251,8 @@ describe("mcp-runner warm reuse", () => {
     ].join("\n");
 
     const { runs, bundleFetches } = await invokeSequence([
-      { accountId: "acct-1", bundle: bundle },
-      { accountId: "acct-1", bundle: bundle },
+      { tenantId: "acct-1", bundle: bundle },
+      { tenantId: "acct-1", bundle: bundle },
     ]);
 
     expect(frames(runs[0])).toEqual([
@@ -269,8 +269,8 @@ describe("mcp-runner warm reuse", () => {
     const bundle = `export default { name: "nope" };`;
 
     const { runs, bundleFetches } = await invokeSequence([
-      { accountId: "acct-1", bundle: bundle },
-      { accountId: "acct-1", bundle: bundle },
+      { tenantId: "acct-1", bundle: bundle },
+      { tenantId: "acct-1", bundle: bundle },
     ]);
 
     expect(frames(runs[0])).toHaveLength(1);
@@ -293,8 +293,8 @@ describe("mcp-runner warm reuse", () => {
     ].join("\n");
 
     const { runs } = await invokeSequence([
-      { accountId: "acct-1", bundle: bundle, waitMs: 400 },
-      { accountId: "acct-1", bundle: bundle },
+      { tenantId: "acct-1", bundle: bundle, waitMs: 400 },
+      { tenantId: "acct-1", bundle: bundle },
     ]);
 
     expect(
@@ -305,8 +305,8 @@ describe("mcp-runner warm reuse", () => {
   it("enforces the max-calls bound", async () => {
     const { runs, bundleFetches } = await invokeSequence(
       [
-        { accountId: "acct-1", bundle: COUNTER_BUNDLE },
-        { accountId: "acct-1", bundle: COUNTER_BUNDLE },
+        { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
+        { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
       ],
       { MCP_CHILD_MAX_CALLS: "1" },
     );
@@ -317,7 +317,7 @@ describe("mcp-runner warm reuse", () => {
     expect(bundleFetches).toBe(2);
   }, 30_000);
 
-  it("runs one-shot when the event carries no accountId", async () => {
+  it("runs one-shot when the event carries no tenantId", async () => {
     const { runs, bundleFetches } = await invokeSequence([
       { bundle: COUNTER_BUNDLE },
       { bundle: COUNTER_BUNDLE },

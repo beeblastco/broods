@@ -26,18 +26,23 @@ const PROVIDER_REQUIRED_SETTINGS: Partial<
   custom: { base_url: "https://llm.example.com/v1" },
 };
 
+// `chatgpt` runs on the account's `chatgpt` connection, not an API key or a factory.
+const API_KEY_PROVIDER_NAMES = ACCOUNT_MODEL_PROVIDER_NAMES.filter(
+  (name) => name !== "chatgpt",
+);
+
 describe("model provider registry", () => {
-  it("has a live AI SDK factory for every supported provider name", () => {
+  it("has a live AI SDK factory for every API-key provider name", () => {
     const factories = modelProviderFactories();
     expect(Object.keys(factories).sort()).toEqual(
-      [...ACCOUNT_MODEL_PROVIDER_NAMES].sort(),
+      [...API_KEY_PROVIDER_NAMES].sort(),
     );
-    for (const name of ACCOUNT_MODEL_PROVIDER_NAMES) {
+    for (const name of API_KEY_PROVIDER_NAMES) {
       expect(typeof factories[name]).toBe("function");
     }
   });
 
-  it.each(ACCOUNT_MODEL_PROVIDER_NAMES)(
+  it.each(API_KEY_PROVIDER_NAMES)(
     "builds a %s model from an API key and its own required settings",
     (name) => {
       const resolved = resolveConfiguredModel({
@@ -83,6 +88,103 @@ describe("model provider registry", () => {
       }
     },
   );
+
+  // The OpenAI-compatible gateway route is pinned in harness.test.ts, which
+  // mocks that factory for every file after it.
+  it("sends Cloudflare to Workers AI when no gateway is named", async () => {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request): Promise<Response> => {
+        calls.push(input instanceof Request ? input.url : String(input));
+
+        return Response.json({ error: "stop" }, { status: 400 });
+      },
+      { preconnect: realFetch.preconnect },
+    );
+    try {
+      const { model } = resolveConfiguredModel({
+        model: {
+          provider: "cloudflare",
+          modelId: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        },
+        provider: { cloudflare: { apiKey: "cf-token", accountId: "acct" } },
+      });
+      await generateText({ model: model, prompt: "hi", maxRetries: 0 }).catch(
+        () => undefined,
+      );
+
+      expect(calls[0]).toBe(
+        "https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  // The gateway's OpenAI-compatible route refuses Workers AI messages whose
+  // content is an array of parts, which every Broods turn sends.
+  it("sends a Workers AI model through the gateway's Workers AI route", async () => {
+    const requests: Request[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        requests.push(
+          new Request(
+            input instanceof Request ? input.url : String(input),
+            init,
+          ),
+        );
+
+        return Response.json({ error: "stop" }, { status: 400 });
+      },
+      { preconnect: realFetch.preconnect },
+    );
+    try {
+      const { model } = resolveConfiguredModel({
+        model: {
+          provider: "cloudflare",
+          modelId: "workers-ai/@cf/meta/llama-3.1-8b-instruct-fast",
+        },
+        provider: {
+          cloudflare: {
+            apiKey: "cf-token",
+            accountId: "acct",
+            gatewayId: "gw",
+          },
+        },
+      });
+      await generateText({
+        model: model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "hi" },
+              { type: "text", text: "<environment>" },
+            ],
+          },
+        ],
+        maxRetries: 0,
+      }).catch(() => undefined);
+      const [request] = requests;
+
+      expect(request?.url).toBe(
+        "https://gateway.ai.cloudflare.com/v1/acct/gw/workers-ai/run/@cf/meta/llama-3.1-8b-instruct-fast",
+      );
+      expect(request?.headers.get("cf-aig-authorization")).toBe(
+        "Bearer cf-token",
+      );
+      expect(await request?.json()).toMatchObject({
+        messages: [{ content: expect.any(String) }],
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 
   it("guards an endpoint under a name broods does not know", async () => {
     const { model } = resolveConfiguredModel({

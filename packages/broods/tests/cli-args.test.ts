@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   browserCommand,
   hasFlag,
+  loginWithBrowser,
   optionValue,
   positionalArgs,
 } from "../src/cli/utils.ts";
@@ -52,6 +53,33 @@ test("hasFlag reads a value option inline and a boolean flag only bare", () => {
 test("hasFlag ignores a boolean flag given a value", () => {
   expect(hasFlag(["--yes=false"], "--yes")).toBe(false);
   expect(hasFlag(["--prune=false"], "--prune")).toBe(false);
+});
+
+// A dashboard that cannot mint a code redirects with `error`; the CLI used to
+// wait out its 3-minute timeout, and crashed outright with no browser launcher.
+test("loginWithBrowser fails at once with the dashboard's error, browser or not", async () => {
+  const path = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  const dashboard = Bun.serve({
+    port: 0,
+    fetch: (request: Request): Response => {
+      const start = new URL(request.url);
+      const callback = new URL(start.searchParams.get("callback")!);
+      callback.searchParams.set("state", start.searchParams.get("state")!);
+      callback.searchParams.set("error", "No active org");
+      setTimeout(() => void fetch(callback), 50);
+
+      return new Response("ok");
+    },
+  });
+  try {
+    expect(loginWithBrowser(dashboard.url.origin)).rejects.toThrow(
+      "Login failed: No active org",
+    );
+  } finally {
+    await dashboard.stop(true);
+    process.env.PATH = path;
+  }
 });
 
 // `cmd /c start` cut the login URL at its first `&`, dropping the PKCE challenge.

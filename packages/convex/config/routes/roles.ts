@@ -1,20 +1,20 @@
 /**
  * Account role CRUD (`/v1/roles*`) and the assume-role exchange
  * (`POST /v1/account/assume-role`). Role CRUD is account-secret only; the
- * exchange also accepts CLI tokens and stage runtime keys (the latter only
+ * exchange also accepts CLI tokens and runtime keys (the latter only
  * into roles scoped to the key's own project/stage).
  */
 
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { ACCOUNT_SECRET_PREFIX, sha256Hex } from "../../model/accountSecrets";
-import { DEPLOYMENT_KEY_PREFIX } from "../../agent/deployments";
-import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import {
-  auditDetailsJson,
-  type ConfigAuditActor,
-} from "../../model/auditEvents";
+  ACCOUNT_KEY_PREFIX,
+  RUNTIME_KEY_PREFIX,
+  sha256Hex,
+} from "../../model/accountSecrets";
+import { CLI_TOKEN_PREFIX } from "../../cli/auth";
+import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { toPublicRoleResponse } from "../../model/responses";
 import {
   createRoleSessionToken,
@@ -33,21 +33,21 @@ import {
   writeAudit,
 } from "./shared";
 
-type AssumeRoleCaller = {
+type AccountCaller = {
   accountId: Id<"accounts">;
-  actor: ConfigAuditActor;
+  actor: AuditActor;
   deploymentScope?: { projectId: Id<"projects">; stageId: Id<"stages"> };
 };
 
 type CreatedRole = Omit<Doc<"accountRoles">, "_id" | "_creationTime">;
 
-/** Exchange a role for a short-lived fp_sts_ session token. */
+/** Exchange a role for a short-lived bsts_ session token. */
 export async function handleAssumeRoleRoute(
   ctx: ActionCtx,
   req: Request,
 ): Promise<Response> {
   if (req.method !== "POST") return methodNotAllowed(["POST"]);
-  const caller = await resolveAssumeRoleCaller(ctx, req);
+  const caller = await resolveAccountCaller(ctx, req);
   if (!caller) return await unauthorizedResponse(ctx, req);
   const input = normalizeAssumeRoleInput(await parseJsonRequest(req));
 
@@ -58,7 +58,7 @@ export async function handleAssumeRoleRoute(
   if (!role) return jsonError(404, "Role not found");
   if (role.status !== "active") return jsonError(403, "Role is disabled");
   // A runtime key may only assume roles pinned to its own stage: a leaked
-  // fp_agent_ must not widen past the stage it already controls.
+  // bsk_ key must not widen past the stage it already controls.
   if (caller.deploymentScope) {
     if (
       role.projectId !== caller.deploymentScope.projectId ||
@@ -100,7 +100,7 @@ export async function handleRoleRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-  actor: ConfigAuditActor,
+  actor: AuditActor,
   roleId?: string,
 ): Promise<Response> {
   if (!roleId) {
@@ -208,30 +208,18 @@ export async function handleRoleRoute(
 }
 
 /**
- * Resolve the assume-role caller by token prefix: account secret, CLI login
- * token, or stage runtime key. fp_sts_ sessions may not chain into new
- * sessions, and no other credential kind is accepted.
+ * Resolve an account-level caller by prefix: CLI login token, runtime key or
+ * account key, one lookup each. Assume-role and connections use it; any
+ * other prefix, a bsts_ role session included, resolves to nothing, so a role
+ * session never mints sessions or reads connections.
  */
-async function resolveAssumeRoleCaller(
+export async function resolveAccountCaller(
   ctx: ActionCtx,
   req: Request,
-): Promise<AssumeRoleCaller | null> {
+): Promise<AccountCaller | null> {
   const token = bearerToken(req);
   if (!token) return null;
   const tokenHash = await sha256Hex(token);
-
-  if (token.startsWith(ACCOUNT_SECRET_PREFIX)) {
-    const account: Doc<"accounts"> | null = await ctx.runQuery(
-      internal.account.accounts.getBySecretHash,
-      { secretHash: tokenHash },
-    );
-    if (!account || account.status !== "active") return null;
-
-    return {
-      accountId: account._id,
-      actor: { kind: "apiAccountSecret", id: account._id },
-    };
-  }
 
   if (token.startsWith(CLI_TOKEN_PREFIX)) {
     const resolved: { accountId: Id<"accounts"> } | null =
@@ -243,7 +231,7 @@ async function resolveAssumeRoleCaller(
     return { accountId: resolved.accountId, actor: { kind: "cli" } };
   }
 
-  if (token.startsWith(DEPLOYMENT_KEY_PREFIX)) {
+  if (token.startsWith(RUNTIME_KEY_PREFIX)) {
     const deployment: {
       accountId: Id<"accounts">;
       projectId: Id<"projects">;
@@ -263,5 +251,16 @@ async function resolveAssumeRoleCaller(
     };
   }
 
-  return null;
+  if (!token.startsWith(ACCOUNT_KEY_PREFIX)) return null;
+
+  const account: Doc<"accounts"> | null = await ctx.runQuery(
+    internal.account.accounts.getBySecretHash,
+    { secretHash: tokenHash },
+  );
+  if (!account || account.status !== "active") return null;
+
+  return {
+    accountId: account._id,
+    actor: { kind: "apiAccountSecret", id: account._id },
+  };
 }

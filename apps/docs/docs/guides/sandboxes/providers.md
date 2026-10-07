@@ -1,10 +1,10 @@
 # Sandbox providers
 
-Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here. The `machine` provider has its own page, [Your computer](machine.md).
+Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here. The `machine` provider has its own page, [Your computer](machine.md), and `custom`, a server you run on the sandbox HTTP contract, is on [Your own server](custom.md).
 
 ## `sandbox`
 
-The default provider runs Firecracker VMs on Broods-hosted machines. It supports workspace mounts, persistence with pause and resume, background jobs with logs and stop, the live dashboard terminal, and the Create snapshot action.
+Runs Firecracker VMs on a workdir node. The hosted service does not offer it yet, so use `lambda` there; a self-hosted deployment points it at its own node. It supports workspace mounts, persistence with pause and resume, background jobs with logs and stop, the live dashboard terminal, and the Create snapshot action.
 
 ```ts
 export const box = defineSandbox({
@@ -44,7 +44,7 @@ export const box = defineSandbox({
 - A workspace that brings its own bucket cannot be reached under `deny-all`, so the run is refused. Pair it with `allow-all`.
 - The workspace mount cannot append or edit in place. `>>` and in-place edits fail. The `write` and `edit` tools rewrite whole files, so tell the agent not to append.
 - The image, roles and log group are managed by the platform. `options` accepts only `workspaceRoot` and `reservationKey`.
-- Create snapshot is not available. MicroVM images are built ahead of time by the platform. `snapshot` can pin another platform image by ARN, in the same AWS account and region as the default. Any other ARN fails the run.
+- Create snapshot is not available. MicroVM images are built ahead of time by the platform. `image: "obscura"` or `image: "browser"` boots a platform image with a headless browser, see [Images](index.md#images). `snapshot` can pin another platform image by ARN, in the same AWS account and region as the default. Any other ARN fails the run.
 - `broods logs --sandbox <uuid>` and the Instances Logs tab show what the guest itself writes to stdout and stderr.
 
 The first exec after a resume can take 1 to 10 seconds while the VM restores.

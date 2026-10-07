@@ -25,7 +25,7 @@ import {
 } from "../src/shared/terminal-ticket.ts";
 
 const ACCOUNT_ID = "acct_test";
-const AUTH = { authorization: "Bearer fp_acct_test" };
+const AUTH = { authorization: "Bearer bask_test" };
 const ORIGINAL_SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET;
 const ORIGINAL_ADMIN_ACCOUNT_SECRET = process.env.ADMIN_ACCOUNT_SECRET;
 const ORIGINAL_TERMINAL_TICKET_SECRET = process.env.TERMINAL_TICKET_SECRET;
@@ -114,9 +114,9 @@ let registryOwnsReservation = true;
 // This month's metered cost the fake budget store reports against a €5 budget.
 let budgetUsedPercent = 0;
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
-  recordSandboxBurst: mock(async (): Promise<boolean> => true),
   sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
   setSandboxInstanceStatus: mock(async () => {}),
+  recordSandboxBurst: mock(async (): Promise<boolean> => true),
   removeSandboxInstance: mock(async () => {}),
   upsertSandboxInstance: mock(async () => {}),
 }));
@@ -583,6 +583,58 @@ describe("account-manage sandbox endpoints", () => {
     ).toContain("terminate and re-reserve");
   });
 
+  it("mints a sealed terminal ticket for a running Cloudflare Container and refuses a stopped one", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
+    process.env.CLOUDFLARE_SANDBOX_URL = "https://bridge.example.com";
+    process.env.CLOUDFLARE_SANDBOX_API_KEY = "bridge-key";
+    let running = true;
+    globalThis.fetch = (async (): Promise<Response> =>
+      Response.json({ running: running })) as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "cloudflare",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+    const terminal = (): Promise<Response> =>
+      handler(
+        createEvent(
+          "POST",
+          `/v1/sandboxes/${created.sandboxId}/terminal`,
+          {
+            authorization: "Bearer service-secret",
+            "x-account-id": ACCOUNT_ID,
+          },
+          { reservationKey: reservationKey },
+        ),
+      );
+    try {
+      const response = await terminal();
+      expect(response.status).toBe(200);
+      const body = (await responseJson(response)) as { token: string };
+      expect(body.token).not.toContain("bridge-key");
+      expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
+        url: "wss://bridge.example.com/v1/sandboxes/sbx_handler/terminal",
+        authorization: "Bearer bridge-key",
+        accountId: ACCOUNT_ID,
+      });
+
+      running = false;
+      const stopped = await terminal();
+      expect(stopped.status).toBe(409);
+      expect(
+        String(
+          ((await responseJson(stopped)) as { error: { message: string } })
+            .error.message,
+        ),
+      ).toContain("run a command to start it");
+    } finally {
+      delete process.env.CLOUDFLARE_SANDBOX_URL;
+      delete process.env.CLOUDFLARE_SANDBOX_API_KEY;
+    }
+  });
+
   it("refuses terminal tickets for providers without an in-guest PTY", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
@@ -723,13 +775,13 @@ function createFakeStorage() {
         return [fakeAccount()];
       },
       create: async function () {
-        return { account: fakeAccount(), secret: "fp_acct_fake" };
+        return { account: fakeAccount(), secret: "bask_fake" };
       },
       update: async function () {
         return fakeAccount();
       },
       rotateSecret: async function () {
-        return { account: fakeAccount(), secret: "fp_acct_fake" };
+        return { account: fakeAccount(), secret: "bask_fake" };
       },
       remove: async function () {
         return true;

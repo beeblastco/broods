@@ -171,6 +171,65 @@ describe("cli sync rejects env() refs with no stored value", () => {
 
     expect(await runtimeValue(tt)).toBe("sk-live-1");
   });
+
+  test("stores an R2 workspace's env() keys as refs, never values", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "r2-secret");
+    const ref = { __beeblastEnv: true, name: ENV_NAME };
+
+    await syncResources(tt, [
+      {
+        kind: "workspace",
+        name: "r2-files",
+        config: {
+          storage: {
+            provider: "s3",
+            bucket: "agent-files",
+            prefix: "broods/",
+            endpoint:
+              "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+            auth: { type: "r2", accessKeyId: ref, secretAccessKey: ref },
+          },
+        },
+      },
+    ]);
+
+    const stored = await tt.run(
+      async (ctx) => (await ctx.db.query("workspaceConfigs").first())?.config,
+    );
+    expect(stored.storage.auth).toEqual({
+      type: "r2",
+      accessKeyId: `\${${ENV_NAME}}`,
+      secretAccessKey: `\${${ENV_NAME}}`,
+    });
+    await expect(removeEnv(tt)).rejects.toThrow('workspace "r2-files"');
+  });
+
+  test("refuses an R2 workspace whose ${NAME} keys have no value", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    const ref = `\${${ENV_NAME}}`;
+
+    await expect(
+      syncResources(tt, [
+        {
+          kind: "workspace",
+          name: "r2-files",
+          config: {
+            storage: {
+              provider: "s3",
+              bucket: "agent-files",
+              prefix: "broods/",
+              endpoint:
+                "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+              auth: { type: "r2", accessKeyId: ref, secretAccessKey: ref },
+            },
+          },
+        },
+      ]),
+    ).rejects.toThrow(ENV_NAME);
+  });
 });
 
 describe("removing an env var a synced resource still reads", () => {
@@ -272,6 +331,72 @@ describe("an unchanged re-sync", () => {
     await syncResources(tt, [agentResource, sandboxResource]);
 
     expect(await syncedRows(tt)).toEqual(before);
+  });
+});
+
+describe("cli sync holds a custom sandbox to the config API's rules", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const customSandbox = (network: string): CliManifestResource => ({
+    kind: "sandbox",
+    name: "own-server",
+    config: {
+      provider: "custom",
+      network: { mode: network },
+      options: {
+        endpoint: "https://sandbox.example.com",
+        headers: { authorization: { __beeblastEnv: true, name: ENV_NAME } },
+      },
+    },
+  });
+
+  // The rules read the placeholder form, where a credential header is a ref.
+  test("accepts a credential header written as env() and refuses a rule it breaks", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+
+    await syncResources(tt, [customSandbox("allow-all")]);
+
+    expect(
+      await tt.run(
+        async (ctx) => (await ctx.db.query("sandboxConfigs").collect()).length,
+      ),
+    ).toBe(1);
+    await expect(
+      syncResources(tt, [customSandbox("deny-all")]),
+    ).rejects.toThrow("custom cannot enforce egress restrictions");
+  });
+});
+
+describe("a stage env var name", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // A `${NAME}` ref only matches uppercase, so a lowercase name could never be read.
+  test("is uppercase only, like an account env var", async (): Promise<void> => {
+    const tt = t();
+    await seedAccount(tt);
+
+    await expect(
+      tt.mutation(internal.cli.sync.setEnvBySecretHash, {
+        secretHash: SECRET_HASH,
+        project: PROJECT,
+        stage: STAGE,
+        name: "api_key",
+        value: "sk-live-1",
+      }),
+    ).rejects.toThrow("env name must match /^[A-Z][A-Z0-9_]*$/");
+    expect(await storedEnvCount(tt)).toBe(0);
   });
 });
 

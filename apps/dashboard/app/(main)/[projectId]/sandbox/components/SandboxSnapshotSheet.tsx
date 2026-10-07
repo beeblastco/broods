@@ -84,8 +84,9 @@ export function SandboxSnapshotSheet({
           </div>
 
           <p className="mt-4 text-xs text-muted-foreground">
-            Launch a sandbox from this image by pinning its name on a sandbox
-            config.
+            Launch a sandbox from this image with the Snapshot select on its
+            sandbox node, or set <code className="font-mono">snapshot</code> to
+            the image id in code.
           </p>
         </div>
       </SheetContent>

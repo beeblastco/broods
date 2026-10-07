@@ -8,7 +8,7 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
-import { ChevronRight, Loader2, Play, RefreshCw } from "lucide-react";
+import { ChevronRight, Play, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface RemoteTool {
@@ -85,12 +85,8 @@ export function McpToolsTab({
             setRefreshToken((token) => token + 1);
           }}
         >
-          {isListing ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <RefreshCw className="size-3" />
-          )}
-          Refresh
+          <RefreshCw className="size-3" />
+          {isListing ? "Refreshing…" : "Refresh"}
         </Button>
       </div>
 
@@ -206,11 +202,7 @@ function ToolRow({
                 disabled={isRunning}
                 onClick={handleRun}
               >
-                {isRunning ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Play className="size-3" />
-                )}
+                <Play className="size-3" />
                 {isRunning ? "Running…" : "Run"}
               </Button>
             )}

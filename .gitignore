@@ -21,6 +21,8 @@ na_tmp/
 build/
 .docusaurus.d
 .next/
+.wrangler/
+.dev.vars*
 
 .claude/*
 !.claude/settings.json

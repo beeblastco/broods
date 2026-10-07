@@ -33,8 +33,11 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-const RUNTIME_KEY_PATTERN = /\bfp_agent_[A-Za-z0-9_-]+\b/g;
-const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
+// Every Broods credential: its b-prefix plus a long base64url body (signed
+// tickets add a dot), so short identifiers like `bsk_id` stay readable.
+// Identical in apps/core/src/shared/log.ts; keep them in step.
+const BROODS_CREDENTIAL_PATTERN =
+  /\bb(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
 
 /**
  * Lambda handler for one CloudWatch Logs subscription delivery. Control messages
@@ -154,8 +157,7 @@ export function redact(line) {
     .replace(BEARER_SECRET_PATTERN, "Bearer [redacted]")
     .replace(BASIC_SECRET_PATTERN, "Basic [redacted]")
     .replace(QUERY_SECRET_PATTERN, "$1[redacted]")
-    .replace(RUNTIME_KEY_PATTERN, "[redacted]")
-    .replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
+    .replace(BROODS_CREDENTIAL_PATTERN, "[redacted]");
 }
 
 function decodeCloudWatchEvent(event) {
