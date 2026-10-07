@@ -673,6 +673,7 @@ export function ChannelsSection({
   );
 }
 
+/** Render a stored value as the field's input text; values of another type render empty. */
 function formatFieldValue(type: FieldType, value: unknown): string {
   if (type === "stringList" && Array.isArray(value)) {
     return value

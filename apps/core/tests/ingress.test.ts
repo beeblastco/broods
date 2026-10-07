@@ -653,13 +653,6 @@ describe("channel senders", (): void => {
     ownerGeneration: 2,
     configRef: { channel: { channelName: "slack" } },
   };
-  const originalCreateDescriptor = Object.getOwnPropertyDescriptor(
-    Session.prototype,
-    "createTurnContext",
-  );
-  if (!originalCreateDescriptor) {
-    throw new Error("Session.createTurnContext descriptor is missing");
-  }
   let senders: unknown[];
 
   beforeEach((): void => {
@@ -671,22 +664,20 @@ describe("channel senders", (): void => {
     runtime.query = (async (name: string): Promise<[] | null> =>
       name === "listPendingAsyncToolResults" ? [] : null) as never;
     // Ends each turn before the model runs; only the session's sender matters.
-    Session.prototype.createTurnContext = async function (
-      this: Session,
-    ): Promise<never> {
-      senders.push(
-        this.delivery?.kind === "channel" ? this.delivery.identity : undefined,
-      );
-      throw new Error("stop before the model");
-    };
+    spyOn(Session.prototype, "createTurnContext").mockImplementation(
+      async function (this: Session): Promise<never> {
+        senders.push(
+          this.delivery?.kind === "channel"
+            ? this.delivery.identity
+            : undefined,
+        );
+        throw new Error("stop before the model");
+      },
+    );
   });
 
   afterEach((): void => {
-    Object.defineProperty(
-      Session.prototype,
-      "createTurnContext",
-      originalCreateDescriptor,
-    );
+    mock.restore();
     resetStorageForTests();
   });
 

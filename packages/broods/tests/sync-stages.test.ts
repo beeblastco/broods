@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { BroodsSyncClient } from "../src/sync.ts";
+import { requestUrl } from "./fixtures/request-url.ts";
 
 function clientWith(handler: (url: string, init: RequestInit) => Response): {
   client: BroodsSyncClient;
@@ -10,7 +11,7 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
     baseUrl: "https://convex.example.com",
     token: "tok",
     fetch: async (input, init) => {
-      const url = input instanceof Request ? input.url : input.toString();
+      const url = requestUrl(input);
       calls.push({
         url: url,
         method: (init?.method ?? "GET").toUpperCase(),

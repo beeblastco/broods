@@ -1241,8 +1241,6 @@ async function receiveChannelWebhook(
   context: HttpRoutingContext,
 ): Promise<ChannelReceipt> {
   const { adapter, agent } = receiver;
-  const waitUntil = (promise: Promise<unknown>): void =>
-    context.waitUntil(promise);
   const deployment = await context.deploymentLoader(
     account.accountId,
     agent.agentId,
@@ -1327,7 +1325,7 @@ async function receiveChannelWebhook(
         conversationKey: parsed.conversationKey,
         statusCode: response.statusCode,
       });
-      waitUntil(
+      context.waitUntil(
         Promise.resolve().then(() =>
           cleanupChannelPartitions({
             accountId: account.accountId,
@@ -1405,8 +1403,6 @@ async function acceptChannelTurn(
   deployment: AgentDeploymentScope | null,
   context: HttpRoutingContext,
 ): Promise<(() => Promise<void>) | undefined> {
-  const waitUntil = (promise: Promise<unknown>): void =>
-    context.waitUntil(promise);
   if (result.kind === "context") {
     const { message, ack } = result;
     const response = ack ?? { statusCode: 200 };
@@ -1447,7 +1443,7 @@ async function acceptChannelTurn(
       statusCode: response.statusCode,
     });
 
-    waitUntil(
+    context.waitUntil(
       Promise.resolve().then(() =>
         handlers.handleChannelContext?.({
           eventId: accountAgentScopedKey(
@@ -1506,7 +1502,7 @@ async function acceptChannelTurn(
       accountId: account.accountId,
       conversationKey: message.conversationKey,
     });
-    waitUntil(
+    context.waitUntil(
       adapter
         .actions(message)
         .sendText(
@@ -1553,7 +1549,7 @@ async function acceptChannelTurn(
     identity,
   );
   if (refusal) {
-    waitUntil(
+    context.waitUntil(
       channel
         .sendText(formatChannelErrorText(refusal))
         .catch((err: unknown) => {

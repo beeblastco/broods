@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { requestBodyText } from "./helpers/http.ts";
+import { requestBodyText, requestUrl } from "./helpers/http.ts";
 import { sendChannelReply } from "../src/harness/integrations.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
@@ -52,7 +52,7 @@ describe("sendChannelReply", () => {
     });
 
     expect(fetchMock.calls).toHaveLength(1);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-xyz/sendRichMessage",
     );
     expect(
@@ -85,22 +85,11 @@ function installFetchMock(): { calls: FetchCall[]; responses: Response[] } {
     calls.push({ input: input, init: init });
     const response = responses.shift();
     if (!response) {
-      throw new Error(`Unexpected fetch: ${toUrl(input)}`);
+      throw new Error(`Unexpected fetch: ${requestUrl(input)}`);
     }
 
     return response;
   }) as unknown as typeof fetch;
 
   return { calls: calls, responses: responses };
-}
-
-function toUrl(input: FetchInput): string {
-  if (typeof input === "string") {
-    return input;
-  }
-  if (input instanceof URL) {
-    return input.toString();
-  }
-
-  return input.url;
 }

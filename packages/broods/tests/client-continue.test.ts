@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { BroodsClient, type AgentReference } from "../src/client.ts";
+import { requestUrl } from "./fixtures/request-url.ts";
 
 type Call = { url: string; body: string };
 
@@ -16,7 +17,7 @@ function mockClient(
     apiKey: "key-1",
     fetch: async (input, init): Promise<Response> => {
       calls.push({
-        url: input instanceof Request ? input.url : input.toString(),
+        url: requestUrl(input),
         body: typeof init?.body === "string" ? init.body : "",
       });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { formDataText, requestBodyText } from "./helpers/http.ts";
+import { formDataText, requestBodyText, requestUrl } from "./helpers/http.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 import { createSlackChannel } from "../src/shared/slack-channel.ts";
@@ -54,7 +54,7 @@ describe("telegram channel actions", () => {
     await actions.sendSticker?.("telegram-file-id");
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendPhoto",
     );
     expect(JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body))).toEqual(
@@ -65,7 +65,7 @@ describe("telegram channel actions", () => {
         message_thread_id: 7,
       },
     );
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendSticker",
     );
     expect(JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body))).toEqual(
@@ -109,7 +109,9 @@ describe("telegram channel actions", () => {
     // Twelve is past Telegram's ten-per-album ceiling, so it goes out as two
     // albums rather than one rejected request, and only the first carries the
     // caption.
-    expect(fetchMock.calls.map((call): string => toUrl(call.input))).toEqual([
+    expect(
+      fetchMock.calls.map((call): string => requestUrl(call.input)),
+    ).toEqual([
       "https://api.telegram.org/botbot-token/sendMediaGroup",
       "https://api.telegram.org/botbot-token/sendMediaGroup",
     ]);
@@ -162,7 +164,7 @@ describe("telegram channel actions", () => {
 
     // A lone attachment is a plain send, not an album, and `type` is what picks
     // sendDocument over sendPhoto.
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendDocument",
     );
     expect(
@@ -213,7 +215,7 @@ describe("telegram channel actions", () => {
     await actions.reactToMessage(":heart:");
 
     expect(fetchMock.calls).toHaveLength(6);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessage",
     );
     expect(
@@ -228,13 +230,13 @@ describe("telegram channel actions", () => {
     ).toContain("telegram");
 
     expect(messageId).toBe("123:51");
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessageDraft",
     );
-    expect(toUrl(fetchMock.calls[2]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[2]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessageDraft",
     );
-    expect(toUrl(fetchMock.calls[3]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[3]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessage",
     );
     expect(
@@ -246,7 +248,7 @@ describe("telegram channel actions", () => {
       },
     });
 
-    expect(toUrl(fetchMock.calls[4]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[4]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendChatAction",
     );
     expect(
@@ -256,7 +258,7 @@ describe("telegram channel actions", () => {
       action: "typing",
     });
 
-    expect(toUrl(fetchMock.calls[5]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[5]!.input)).toBe(
       "https://api.telegram.org/botbot-token/setMessageReaction",
     );
     expect(
@@ -318,10 +320,10 @@ describe("telegram channel actions", () => {
     await actions.sendText(`${"a".repeat(3600)} ${"b".repeat(20)}`);
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessage",
     );
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendRichMessage",
     );
   });
@@ -433,7 +435,7 @@ describe("discord channel actions", () => {
     await actions.reactToMessage();
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://discord.com/api/v10/webhooks/app-1/interaction-token/messages/@original",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("PATCH");
@@ -441,7 +443,7 @@ describe("discord channel actions", () => {
       JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)).content,
     ).toHaveLength(2000);
 
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
       "https://discord.com/api/v10/channels/channel-1/typing",
     );
     expect(fetchMock.calls[1]!.init?.headers).toEqual({
@@ -494,7 +496,7 @@ describe("discord channel actions", () => {
     await actions.sendText("job done");
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
       "https://discord.com/api/v10/channels/channel-1/messages",
     );
     expect(fetchMock.calls[1]!.init?.method).toBe("POST");
@@ -639,12 +641,12 @@ describe("slack channel actions", () => {
     // Slack ignores an outbound URL attachment, so the only way in is an
     // upload, and both files share one completeUpload call rather than posting
     // a message each.
-    const urls = fetchMock.calls.map((call): string => toUrl(call.input));
+    const urls = fetchMock.calls.map((call): string => requestUrl(call.input));
     expect(
       urls.filter((url) => url.includes("getUploadURLExternal")),
     ).toHaveLength(2);
     const complete = fetchMock.calls.find((call): boolean =>
-      toUrl(call.input).includes("completeUploadExternal"),
+      requestUrl(call.input).includes("completeUploadExternal"),
     );
     expect(complete).toBeDefined();
     const body = Object.fromEntries(
@@ -753,7 +755,7 @@ describe("slack channel actions", () => {
     await actions.sendText("| Name | Value |\n| --- | --- |\n| Alpha | Beta |");
 
     expect(fetchMock.calls).toHaveLength(1);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://hooks.slack.test/response",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
@@ -793,11 +795,9 @@ describe("slack channel actions", () => {
     await actions.sendSticker?.("party_parrot");
     await actions.sendSticker?.("https://cdn.example.com/sticker.gif");
 
-    expect(fetchMock.calls.map((call): string => toUrl(call.input))).toEqual([
-      responseUrl,
-      responseUrl,
-      responseUrl,
-    ]);
+    expect(
+      fetchMock.calls.map((call): string => requestUrl(call.input)),
+    ).toEqual([responseUrl, responseUrl, responseUrl]);
     expect(
       JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)),
     ).toMatchObject({
@@ -862,7 +862,7 @@ describe("slack channel actions", () => {
     await actions.sendTyping();
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://slack.com/api/chat.postMessage",
     );
     expect(fetchMock.calls[0]!.init?.headers).toEqual({
@@ -879,7 +879,7 @@ describe("slack channel actions", () => {
       thread_ts: "1713916800.000001",
     });
 
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
       "https://slack.com/api/reactions.add",
     );
     expect(JSON.parse(requestBodyText(fetchMock.calls[1]!.init?.body))).toEqual(
@@ -989,7 +989,7 @@ describe("pancake channel actions", () => {
     await actions.reactToMessage();
 
     expect(fetchMock.calls).toHaveLength(1);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://pages.fm/api/public_api/v1/pages/page-1/conversations/conversation-1/messages?page_access_token=page-token",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
@@ -1100,7 +1100,7 @@ describe("zalo channel actions", () => {
     await actions.reactToMessage();
 
     expect(fetchMock.calls).toHaveLength(3);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://bot-api.zaloplatforms.com/botbot-token/sendMessage",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
@@ -1120,7 +1120,7 @@ describe("zalo channel actions", () => {
         text: "b",
       },
     );
-    expect(toUrl(fetchMock.calls[2]!.input)).toBe(
+    expect(requestUrl(fetchMock.calls[2]!.input)).toBe(
       "https://bot-api.zaloplatforms.com/botbot-token/sendChatAction",
     );
     expect(JSON.parse(requestBodyText(fetchMock.calls[2]!.init?.body))).toEqual(
@@ -1236,25 +1236,13 @@ function installFetchMock(): { calls: FetchCall[]; responses: Response[] } {
     calls.push({ input: input, init: init });
     const response = responses.shift();
     if (!response) {
-      throw new Error(`Unexpected fetch: ${toUrl(input)}`);
+      throw new Error(`Unexpected fetch: ${requestUrl(input)}`);
     }
 
     return response;
   }) as unknown as typeof fetch;
 
   return { calls: calls, responses: responses };
-}
-
-function toUrl(input: FetchInput): string {
-  if (typeof input === "string") {
-    return input;
-  }
-
-  if (input instanceof URL) {
-    return input.toString();
-  }
-
-  return input.url;
 }
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {

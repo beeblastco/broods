@@ -554,34 +554,21 @@ export class BroodsSyncClient {
     project: string,
     stage: string,
     suffix: string,
-    init: RequestInit,
+    init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
     timeoutMs?: number | null,
   ): Promise<Response> {
     const url =
       `${this.baseUrl}/v1/account/projects/${encodeURIComponent(project)}` +
       `/stages/${encodeURIComponent(stage)}${suffix}`;
-    const headers: Record<string, string> =
-      init.headers instanceof Headers || Array.isArray(init.headers)
-        ? Object.fromEntries(new Headers(init.headers).entries())
-        : Object.fromEntries(
-            Object.entries(init.headers ?? {}).map(([name, value]) => [
-              name,
-              typeof value === "string" ? value : value.join(", "),
-            ]),
-          );
-    if (
-      !Object.keys(headers).some(
-        (name) => name.toLowerCase() === "authorization",
-      )
-    ) {
-      headers.Authorization = `Bearer ${this.token}`;
-    }
 
     return await this.send(
       url,
       {
         ...init,
-        headers: headers,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          ...init.headers,
+        },
       },
       timeoutMs,
     );
