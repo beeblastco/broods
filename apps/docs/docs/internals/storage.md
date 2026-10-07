@@ -97,7 +97,7 @@ The dashboard Files tab lists and mutates the same S3 namespace through the Conv
 - The conversation lease serializes work per conversation, fenced by owner generation. See [queue and steer](queue-and-steer.md).
 - `appendIngressEvents()` persists incoming user, assistant, tool and persisted system messages to `runtimeConversationEvents`.
 - `createTurnContext()` loads history, builds system prompt parts and prunes model-visible messages (`pruning.ts`).
-- `compactConversation()` folds the stored history into a summary (`compaction.ts`). It serves `/compact` and runs in `harness.ts` after a finished turn whose last model call read `session.autoCompaction.maxContextLength` input tokens.
+- `compactConversation()` folds the stored history into a bounded summary (`compaction.ts`). It serves `/compact`, runs after a finished turn reaches the lower of `session.autoCompaction.maxContextLength` and 80% of the model window, and after a turn the provider refused for context length.
 - `resolvedWorkspaces()`, backed by `resolveAgentRuntime()` in `src/shared/workspaces.ts`, resolves workspace and sandbox records, applies per-workspace overrides and hashes namespaces.
 
 What one turn reads and writes, and in which store:

@@ -1070,11 +1070,11 @@ describe("context prepare", () => {
 });
 
 describe("auto-compaction threshold", () => {
-  it("is on by default and starts at 500000 input tokens", async () => {
+  it("is on by default and uses a conservative window for unknown models", async () => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
 
-    expect(shouldAutoCompact({}, 499_999)).toBe(false);
-    expect(shouldAutoCompact({}, 500_000)).toBe(true);
+    expect(shouldAutoCompact({}, 102_399)).toBe(false);
+    expect(shouldAutoCompact({}, 102_400)).toBe(true);
     expect(shouldAutoCompact({ session: {} }, 2_000_000)).toBe(true);
   });
 
@@ -1086,6 +1086,51 @@ describe("auto-compaction threshold", () => {
     expect(shouldAutoCompact(off, 10_000_000)).toBe(false);
     expect(shouldAutoCompact(low, 999)).toBe(false);
     expect(shouldAutoCompact(low, 1_000)).toBe(true);
+  });
+
+  it("caps the configured threshold below a known model's context window", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    const config = {
+      model: { provider: "openai" as const, modelId: "gpt-4-turbo" },
+      session: { autoCompaction: { maxContextLength: 500_000 } },
+    };
+
+    expect(shouldAutoCompact(config, 102_399)).toBe(false);
+    expect(shouldAutoCompact(config, 102_400)).toBe(true);
+  });
+
+  it("prefers the configured provider's window over a smaller one", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    // xai serves grok-4.3 with a 1M window; another catalog provider lists 20k.
+    const config = {
+      model: { provider: "xai" as const, modelId: "grok-4.3" },
+    };
+
+    expect(shouldAutoCompact(config, 499_999)).toBe(false);
+    expect(shouldAutoCompact(config, 500_000)).toBe(true);
+  });
+
+  it("uses the upstream window a gateway model id names", async (): Promise<void> => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+    const config = {
+      model: { provider: "cloudflare" as const, modelId: "xai/grok-4.3" },
+    };
+
+    expect(shouldAutoCompact(config, 499_999)).toBe(false);
+    expect(shouldAutoCompact(config, 500_000)).toBe(true);
+  });
+
+  it("compacts a turn refused for context length unless turned off", async () => {
+    const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
+
+    expect(shouldAutoCompact({}, undefined, true)).toBe(true);
+    expect(
+      shouldAutoCompact(
+        { session: { autoCompaction: { enabled: false } } },
+        undefined,
+        true,
+      ),
+    ).toBe(false);
   });
 
   it("never compacts when the provider reported no input tokens", async () => {
@@ -1301,6 +1346,73 @@ describe("conversation summary", () => {
     expect(options?.messages[0]?.content).toContain("new assistant content");
   });
 
+  it("drops the oldest whole messages to fit the model's context window", async () => {
+    const { summarizeConversation } =
+      await import("../src/harness/compaction.ts");
+
+    await summarizeConversation({
+      conversationKey: "conversation",
+      priorSummaries: [
+        {
+          role: "system",
+          content:
+            "<session-compaction-summary>\nEarlier summary.\n</session-compaction-summary>",
+        },
+      ],
+      messages: [
+        { role: "user", content: `oldest-${"x".repeat(20_000)}` },
+        { role: "assistant", content: `middle-${"y".repeat(10_000)}` },
+        { role: "user", content: "newest-context" },
+      ],
+      agentConfig: {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gpt-3.5-turbo" },
+      },
+      instructions: "keep the deploy decisions",
+    });
+
+    const options = generateTextMock.mock.calls[0]?.[0] as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    const content = options?.messages[0]?.content ?? "";
+    expect(content.length).toBeLessThanOrEqual(13_108);
+    expect(content).toContain("Earlier summary.");
+    expect(content).not.toContain("oldest-");
+    expect(content).toContain(
+      `Message 3 (assistant):\nmiddle-${"y".repeat(10_000)}`,
+    );
+    expect(content).toContain("Message 4 (user):\nnewest-context");
+    expect(content).toEndWith("keep the deploy decisions");
+  });
+
+  it("cuts an oversized prior summary before the newest message", async (): Promise<void> => {
+    const { summarizeConversation } =
+      await import("../src/harness/compaction.ts");
+
+    await summarizeConversation({
+      conversationKey: "conversation",
+      priorSummaries: [
+        {
+          role: "system",
+          content: `<session-compaction-summary>\n${"s".repeat(14_000)}`,
+        },
+      ],
+      messages: [{ role: "user", content: "newest-context" }],
+      agentConfig: {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gpt-3.5-turbo" },
+      },
+    });
+
+    const options = generateTextMock.mock.calls[0]?.[0] as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    const content = options?.messages[0]?.content ?? "";
+    expect(content.length).toBeLessThanOrEqual(13_108);
+    expect(content).toStartWith("Message 1 (system):");
+    expect(content).toEndWith("Message 2 (user):\nnewest-context");
+  });
+
   it("strips reasoning before building the summary request", async () => {
     const { summarizeConversation } =
       await import("../src/harness/compaction.ts");
@@ -1369,7 +1481,7 @@ async function stubHistory(
   page: StoredConversationEventPage["page"],
 ): Promise<{ restore: () => void }> {
   const { runtime } = await import("../src/shared/convex/runtime.ts");
-  const originalQuery = runtime.query;
+  const originalQuery = runtime.query.bind(runtime);
   runtime.query = (async (name: string) =>
     name === "listConversationEvents"
       ? { page: page, isDone: true, continueCursor: null }

@@ -85,10 +85,11 @@ const minimaxModelMock = mock((modelId: string) => ({
   modelId: modelId,
 }));
 const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
-let streamTextScenario:
+type StreamTextScenario =
   | "empty"
   | "error-then-empty"
   | "error-no-finish"
+  | "context-overflow"
   | "hard-throw"
   | "approval-request"
   | "automatic-approval"
@@ -96,7 +97,13 @@ let streamTextScenario:
   | "tool-run"
   | "delivery-tool-then-empty"
   | "multi-step-text"
-  | "real-two-step" = "empty";
+  | "real-two-step";
+let streamTextScenario: StreamTextScenario = "empty";
+// Scenarios whose first model call fails before any step finishes, by error.
+const NO_FINISH_ERRORS: Partial<Record<StreamTextScenario, string>> = {
+  "error-no-finish": "provider failed",
+  "context-overflow": "prompt is too long",
+};
 // The model the last "real-two-step" run was given, so a test can read its calls.
 let twoStepModelInUse: MockLanguageModelV4 | undefined;
 // How long the "real-two-step" second model call and weather tool take.
@@ -228,15 +235,14 @@ const streamTextMock = mock(
           });
         }
 
-        if (streamTextScenario === "error-no-finish") {
+        const noFinishError = NO_FINISH_ERRORS[streamTextScenario];
+        if (noFinishError !== undefined) {
           // Mimic the real AI SDK: a run that errors before any step completes (a
           // usage-limit error on the first model call) fires onError but SKIPS
           // onEnd, so a stream-draining caller never finalizes on its own.
-          await options.onError({ error: new Error("provider failed") });
-          controller.enqueue({
-            type: "error",
-            error: new Error("provider failed"),
-          });
+          const error = new Error(noFinishError);
+          await options.onError({ error: error });
+          controller.enqueue({ type: "error", error: error });
           controller.close();
 
           return;
@@ -2886,7 +2892,7 @@ describe("auto-compaction after a turn", () => {
   // Runs a turn on the real SDK loop with a session that records, in order,
   // every final reply and auto-compaction the harness asks for.
   async function runCompactingTurn(options: {
-    scenario: "real-two-step" | "approval-request";
+    scenario: "real-two-step" | "approval-request" | "context-overflow";
     autoCompaction: { enabled?: boolean; maxContextLength?: number };
     compactConversation?: () => Promise<number>;
   }): Promise<{ stream: AgentLoopStream; order: string[] }> {
@@ -2988,6 +2994,21 @@ describe("auto-compaction after a turn", () => {
     });
 
     expect(order).toEqual(["approval"]);
+  });
+
+  it("compacts after the provider refuses a turn for context length", async () => {
+    const refused = await runCompactingTurn({
+      scenario: "context-overflow",
+      autoCompaction: {},
+    });
+    const off = await runCompactingTurn({
+      scenario: "context-overflow",
+      autoCompaction: { enabled: false },
+    });
+
+    expect(refused.stream.failureText()).toBe("prompt is too long");
+    expect(refused.order).toEqual(["error", "compact"]);
+    expect(off.order).toEqual(["error"]);
   });
 
   it("keeps the turn's outcome when the compaction fails", async () => {

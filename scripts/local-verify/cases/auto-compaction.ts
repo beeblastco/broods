@@ -10,7 +10,7 @@ import { MODEL_KEY_HINT, assertStep, type VerifyContext } from "../harness.ts";
 export async function autoCompaction(context: VerifyContext): Promise<void> {
   const reply = async (
     name: string,
-    autoCompaction: { enabled: boolean; maxContextLength: number },
+    autoCompaction?: { enabled: boolean; maxContextLength: number },
   ): Promise<string> => {
     const key = `${name}-${context.runId}`;
     const { agentId } = await context.measure(
@@ -21,7 +21,9 @@ export async function autoCompaction(context: VerifyContext): Promise<void> {
           config: {
             ...context.model,
             instructions: "Reply with the single word OK.",
-            session: { autoCompaction: autoCompaction },
+            ...(autoCompaction
+              ? { session: { autoCompaction: autoCompaction } }
+              : {}),
           },
         }),
     );
@@ -54,12 +56,13 @@ export async function autoCompaction(context: VerifyContext): Promise<void> {
     enabled: false,
     maxContextLength: 1,
   });
+  const defaultThreshold = await reply("default-auto-compacting");
   if (!context.hasModelKey) {
     // Without a model no turn finishes, so nothing auto-compacts.
     assertStep(
       `auto-compaction needs a finished turn (${MODEL_KEY_HINT})`,
-      compacted.length > 0 && kept.length > 0,
-      `${compacted} | ${kept}`,
+      compacted.length > 0 && kept.length > 0 && defaultThreshold.length > 0,
+      `${compacted} | ${kept} | ${defaultThreshold}`,
     );
 
     return;
@@ -73,5 +76,12 @@ export async function autoCompaction(context: VerifyContext): Promise<void> {
     "a turn with auto-compaction off kept its history",
     /^Context compacted\. \d+ message\(s\) summarized\.$/.test(kept),
     kept,
+  );
+  assertStep(
+    "a short turn stays below the model-aware default threshold",
+    /^Context compacted\. \d+ message\(s\) summarized\.$/.test(
+      defaultThreshold,
+    ),
+    defaultThreshold,
   );
 }
