@@ -972,6 +972,32 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("fails a Harness resume on another image as gone, so a fresh session starts", async () => {
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+        imageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const { isSandboxGoneError } = require("../src/harness/sandbox/utils.ts");
+
+    const error = await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    })
+      .resumeHarnessReservation({ reservationKey: "acct:agent:harness" })
+      .catch((caught: unknown): unknown => caught);
+
+    expect(isSandboxGoneError(error)).toBe(true);
+  });
+
   it("skips a cached endpoint once the sandbox image changes", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";

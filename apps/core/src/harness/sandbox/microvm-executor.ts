@@ -189,10 +189,11 @@ export interface MicrovmHarnessReservation {
   readonly isFirstCreate: boolean;
 }
 
-// A reservation whose VM cannot be reconnected because it reached a terminal state.
-// GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
-// separates "recreate it" from a transient control-plane failure.
-class MicrovmGoneError extends Error {}
+// A reservation whose VM cannot be reconnected because it reached a terminal state
+// or booted another image. GetMicrovm still answers for a TERMINATED VM, so this is
+// the only signal that separates "recreate it" from a transient control-plane
+// failure. A SandboxGoneError, so a resumed Harness session starts a fresh one.
+class MicrovmGoneError extends SandboxGoneError {}
 
 // The proxy never accepted the request inside the warm-up budget, so the exec
 // definitely did not run. That is the only failure safe to retry against another VM.
@@ -1551,6 +1552,11 @@ function markMountCredentialsFresh(key: string): void {
 }
 
 // In-VM mount directory: one workspace per VM, so the base segment is enough.
+// An image ARN without any version qualifier, so two versions compare equal.
+function microvmImageName(arn: string): string {
+  return arn.split(":").slice(0, 7).join(":");
+}
+
 // `arn:aws:lambda:<region>:<account>:microvm-image`, or undefined for anything
 // that is not a MicroVM image ARN.
 function microvmImageScope(arn: string): string | undefined {
@@ -1569,11 +1575,6 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
   if (!scope || !name) return undefined;
 
   return `${scope}:${name}-${variant}`;
-}
-
-// An image ARN without any version qualifier, so two versions compare equal.
-function microvmImageName(arn: string): string {
-  return arn.split(":").slice(0, 7).join(":");
 }
 
 function microvmLocalNamespace(namespace: string): string {

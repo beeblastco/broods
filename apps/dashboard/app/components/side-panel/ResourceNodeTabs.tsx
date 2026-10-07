@@ -118,7 +118,11 @@ export function SandboxResourceDetailsTab({
     typeof config.provider === "string" ? config.provider : "lambda";
   const snapshot =
     typeof config.snapshot === "string" ? config.snapshot : undefined;
-  const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
+  const hasSnapshots = provider === "sandbox" || provider === "lambda";
+  const snapshots = useQuery(
+    api.sandbox.snapshots.listForActiveOrg,
+    hasSnapshots ? {} : "skip",
+  );
   // The account's ready snapshots for this provider, pinned by provider image id.
   // A pin set in code that is not in the list still shows, so the select is honest.
   const snapshotOptions = [
@@ -212,7 +216,7 @@ export function SandboxResourceDetailsTab({
             ]}
           />
         )}
-        {(provider === "sandbox" || provider === "lambda") && (
+        {hasSnapshots && (
           <SelectField
             label="Snapshot"
             disabled={managedByCode}
