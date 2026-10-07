@@ -14,7 +14,6 @@ import { toErrorMessage } from "./errors.ts";
 import { logWarn } from "./log.ts";
 
 const DEFAULT_INTERVAL_SECONDS = 60;
-const PAGE_SIZE = 50;
 
 interface BuildingSnapshot {
   accountId: string;
@@ -49,14 +48,14 @@ export function stopSnapshotBuildWatcher(): void {
 }
 
 /**
- * One pass over a page of building snapshots: each one whose build has landed
+ * One pass over the building snapshots: each one whose build has landed
  * is marked active or build_failed.
  * @returns the number of snapshots whose build finished
  */
 export async function refreshBuildingSnapshots(): Promise<number> {
   const building = await runtime.query<BuildingSnapshot[]>(
     "listBuildingSandboxSnapshots",
-    { limit: PAGE_SIZE },
+    {},
   );
   let finished = 0;
   for (const snapshot of building) {

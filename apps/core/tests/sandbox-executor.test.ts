@@ -8,6 +8,7 @@ import {
   spyOn,
 } from "bun:test";
 import * as planLimits from "../src/harness/plan-limits.ts";
+import * as sandboxSnapshots from "../src/shared/convex/sandbox-snapshots.ts";
 import * as s3 from "../src/shared/s3.ts";
 import { requestBodyText, requestUrl } from "./helpers/http.ts";
 import type {
@@ -1336,21 +1337,72 @@ describe("createSandboxExecutor", () => {
     it("boots a pinned snapshot even when image names the variant it came from", async () => {
       const snapshot =
         "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-x";
+      const owned = spyOn(
+        sandboxSnapshots,
+        "findSandboxSnapshot",
+      ).mockImplementation(async () => ({
+        baseImage: "obscura",
+        status: "active",
+      }));
       const {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
 
-      await createSandboxExecutor({
-        provider: "lambda",
-        image: "obscura",
-        snapshot: snapshot,
-      }).run({
-        code: "echo ok",
-        timeoutSeconds: 30,
-        outputLimitBytes: 4096,
-      });
+      try {
+        await createSandboxExecutor({
+          provider: "lambda",
+          image: "obscura",
+          snapshot: snapshot,
+          controlPlane: {
+            accountId: "account-owner",
+            name: "owner",
+            specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+          },
+        }).run({
+          code: "echo ok",
+          timeoutSeconds: 30,
+          outputLimitBytes: 4096,
+        });
 
-      expect(microvmRunInput().imageIdentifier).toBe(snapshot);
+        expect(microvmRunInput().imageIdentifier).toBe(snapshot);
+        expect(owned).toHaveBeenCalledWith("account-owner", snapshot);
+      } finally {
+        owned.mockRestore();
+      }
+    });
+
+    it("refuses to boot a snapshot another account built", async () => {
+      const owned = spyOn(
+        sandboxSnapshots,
+        "findSandboxSnapshot",
+      ).mockImplementation(async () => null);
+      const {
+        createSandboxExecutor,
+      } = require("../src/harness/sandbox/index.ts");
+
+      try {
+        const outcome = await createSandboxExecutor({
+          provider: "lambda",
+          snapshot:
+            "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-y",
+          controlPlane: {
+            accountId: "account-other",
+            name: "other",
+            specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+          },
+        })
+          .run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 })
+          .then(
+            (result: unknown): string => JSON.stringify(result),
+            (error: unknown): string => String(error),
+          );
+
+        expect(outcome).toContain("snapshot of another account");
+        const types = microvmSendMock.mock.calls.map((c) => c[0]?._type);
+        expect(types).not.toContain("RunMicrovm");
+      } finally {
+        owned.mockRestore();
+      }
     });
   });
 

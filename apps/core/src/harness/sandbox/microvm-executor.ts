@@ -35,6 +35,7 @@ import {
   removeSandboxInstance,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
+import { findSandboxSnapshot } from "../../shared/convex/sandbox-snapshots.ts";
 import type {
   SandboxExecRequest,
   SandboxExecResponse,
@@ -199,6 +200,7 @@ const reservedEndpoints = new Map<
 // only one the platform build role may read.
 const SNAPSHOT_STAGING_PREFIX = "sandbox-snapshots/";
 const SNAPSHOT_ARTIFACT_PREFIX = "microvm-images/broods-snapshots/";
+const SNAPSHOT_IMAGE_PREFIX = "broods-snapshot-";
 // The in-VM capture walks the disk, tars the changes and uploads them.
 const SNAPSHOT_CAPTURE_TIMEOUT_SECONDS = 600;
 
@@ -690,23 +692,29 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         deleteS3Object(staging, stagedImage),
       ]).catch(() => {});
     }
-    const created = await this.#client.send(
-      new CreateMicrovmImageCommand({
-        name: `broods-snapshot-${snapshotId}`,
-        description: `Broods snapshot of ${microvmId} on ${vm.imageArn}`,
-        baseImageArn: source.baseImageArn,
-        baseImageVersion: source.baseImageVersion,
-        buildRoleArn: source.buildRoleArn,
-        codeArtifact: { uri: `s3://${artifact.bucket}/${artifactKey}` },
-        hooks: source.hooks,
-        additionalOsCapabilities: source.additionalOsCapabilities,
-        cpuConfigurations: source.cpuConfigurations,
-        resources: source.resources,
-        environmentVariables: source.environmentVariables,
-        egressNetworkConnectors: source.egressNetworkConnectors,
-        logging: source.logging,
-      }),
-    );
+    const created = await this.#client
+      .send(
+        new CreateMicrovmImageCommand({
+          name: `${SNAPSHOT_IMAGE_PREFIX}${snapshotId}`,
+          description: `Broods snapshot of ${microvmId} on ${vm.imageArn}`,
+          baseImageArn: source.baseImageArn,
+          baseImageVersion: source.baseImageVersion,
+          buildRoleArn: source.buildRoleArn,
+          codeArtifact: { uri: `s3://${artifact.bucket}/${artifactKey}` },
+          hooks: source.hooks,
+          additionalOsCapabilities: source.additionalOsCapabilities,
+          cpuConfigurations: source.cpuConfigurations,
+          resources: source.resources,
+          environmentVariables: source.environmentVariables,
+          egressNetworkConnectors: source.egressNetworkConnectors,
+          logging: source.logging,
+        }),
+      )
+      .catch(async (error: unknown): Promise<never> => {
+        // No image will read the artifact, so it goes with the failed build.
+        await deleteS3Object(artifact.bucket, artifactKey).catch(() => {});
+        throw error;
+      });
     if (!created.imageArn) {
       throw new Error("CreateMicrovmImage returned no image ARN");
     }
@@ -1164,6 +1172,21 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     logStream: string,
   ): Promise<RunMicrovmRequest> {
     const image = this.#image();
+    // Every account's snapshot images live in the platform account, so one boots
+    // only for the account that built it.
+    const imageName = image.imageIdentifier.split(":")[6] ?? "";
+    if (imageName.startsWith(SNAPSHOT_IMAGE_PREFIX)) {
+      const accountId = this.#config.controlPlane?.accountId;
+      const owned = accountId
+        ? await findSandboxSnapshot(
+            accountId,
+            microvmImageName(image.imageIdentifier),
+          )
+        : null;
+      if (!owned) {
+        throw new Error("config.snapshot names a snapshot of another account");
+      }
+    }
     // Role and log group are platform resources, so they come from the runtime
     // env only. An account naming the build role would get its IMDS credentials.
     const executionRoleArn = optionalEnv("MICROVM_EXECUTION_ROLE_ARN");

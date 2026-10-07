@@ -83,7 +83,7 @@ it("marks each landed build active or failed and leaves the rest building", asyn
     await import("../src/shared/sandbox-snapshot-builds.ts");
 
   expect(await refreshBuildingSnapshots()).toBe(2);
-  expect(queries).toEqual([["listBuildingSandboxSnapshots", { limit: 50 }]]);
+  expect(queries).toEqual([["listBuildingSandboxSnapshots", {}]]);
   expect(written).toEqual([
     { name: "scraper", status: "active" },
     { name: "broken", status: "build_failed" },

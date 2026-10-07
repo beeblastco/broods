@@ -2,11 +2,12 @@
  * Sandbox snapshot/image registry scoped to an account. Mirrors broods's image
  * build state so the dashboard can list snapshots with their unified build status.
  * `listForActiveOrg` is the dashboard read; `upsert` is the create-or-refresh
- * writer broods calls when a snapshot is captured (or its build status changes).
+ * writer broods calls when a snapshot is captured (or its build status changes);
+ * `findByImage` is how core checks an account owns the image it pins.
  */
 
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, internalQuery, query } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxSnapshotsFields } from "../schema";
@@ -33,6 +34,37 @@ export const listForActiveOrg = query({
       .query("sandboxSnapshots")
       .withIndex("by_accountId_and_name", (q) => q.eq("accountId", account._id))
       .collect();
+  },
+});
+
+/**
+ * Internal query: the account's snapshot row for one provider image, so core can
+ * refuse to boot another account's snapshot and read the variant it was built from.
+ * @returns the row's base image and status, or null when the account has none
+ */
+export const findByImage = internalQuery({
+  args: { accountId: v.id("accounts"), externalImageId: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      baseImage: v.string(),
+      status: sandboxSnapshotsFields.status,
+    }),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Pick<Doc<"sandboxSnapshots">, "baseImage" | "status"> | null> => {
+    const row = await ctx.db
+      .query("sandboxSnapshots")
+      .withIndex("by_accountId_and_externalImageId", (q) =>
+        q
+          .eq("accountId", args.accountId)
+          .eq("externalImageId", args.externalImageId),
+      )
+      .first();
+
+    return row ? { baseImage: row.baseImage, status: row.status } : null;
   },
 });
 

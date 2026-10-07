@@ -21,6 +21,21 @@ export type SandboxSnapshotStatus =
   | "build_failed";
 
 /**
+ * The account's snapshot row for one provider image, or null when it has none.
+ * The lambda executor refuses to boot a snapshot image the account does not own,
+ * and the snapshot verb reads the variant a pinned snapshot was built from.
+ */
+export async function findSandboxSnapshot(
+  accountId: string,
+  externalImageId: string,
+): Promise<{ baseImage: string; status: SandboxSnapshotStatus } | null> {
+  return getConvexClient().query(internal.sandbox.snapshots.findByImage, {
+    accountId: accountId,
+    externalImageId: externalImageId,
+  });
+}
+
+/**
  * Mirrors a captured/registered snapshot into Convex. Idempotent by (account, name).
  */
 export async function upsertSandboxSnapshot(input: {

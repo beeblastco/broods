@@ -785,12 +785,13 @@ export const listExpiredSandboxReservations = internalQuery({
 });
 
 /**
- * One page of snapshot images still building, for core's build watcher to
- * finish once the provider reports the build done.
- * @returns the building snapshots, up to `limit`
+ * Every snapshot image still building, for core's build watcher to finish once
+ * the provider reports the build done. Builds last minutes, so the set stays small,
+ * and a capped page would let builds stuck on failing checks starve the rest.
+ * @returns the building snapshots
  */
 export const listBuildingSandboxSnapshots = internalQuery({
-  args: { limit: v.number() },
+  args: {},
   returns: v.array(
     v.object({
       accountId: v.id("accounts"),
@@ -802,7 +803,6 @@ export const listBuildingSandboxSnapshots = internalQuery({
   ),
   handler: async (
     ctx,
-    args,
   ): Promise<
     Array<
       Pick<
@@ -814,7 +814,7 @@ export const listBuildingSandboxSnapshots = internalQuery({
     const rows = await ctx.db
       .query("sandboxSnapshots")
       .withIndex("by_status", (q) => q.eq("status", "building"))
-      .take(args.limit);
+      .collect();
 
     return rows.map((row) => ({
       accountId: row.accountId,
