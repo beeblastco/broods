@@ -385,8 +385,7 @@ export const upsert = internalMutation({
  * some unbilled, so the meter stays current for one nothing writes to.
  * Hourly cron. One bounded page per transaction; the rest is scheduled with
  * the same `now`, so every page bills up to the same instant. The first page
- * also bills and deletes ephemeral rows whose call must have ended, so a lost
- * teardown cannot leave one billing or crowding the dashboard.
+ * also starts `sweepStaleEphemeral`.
  */
 export const accrueRecent = internalMutation({
   args: {
@@ -397,26 +396,11 @@ export const accrueRecent = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const now = args.now ?? Date.now();
     if (args.cursor === undefined) {
-      // Past the longer of the two per-call ceilings, any provider's call is over.
-      const staleBefore =
-        now -
-        Math.max(
-          ephemeralSandboxMaxMs("lambda"),
-          ephemeralSandboxMaxMs("sandbox"),
-        );
-      const stale = await ctx.db
-        .query("sandboxInstances")
-        .withIndex("by_ephemeral_and_lastUsedAt", (q) =>
-          q.eq("ephemeral", true).lt("lastUsedAt", staleBefore),
-        )
-        .take(ACCRUE_PAGE_SIZE);
-      for (const instance of stale) {
-        await accrue(ctx, instance, now);
-        await ctx.db.delete(instance._id);
-        if (instance.sandboxConfigId) {
-          await pruneReleasedDashboardSandbox(ctx, instance.sandboxConfigId);
-        }
-      }
+      await ctx.scheduler.runAfter(
+        0,
+        internal.sandbox.instances.sweepStaleEphemeral,
+        { now: now },
+      );
     }
     const page = await ctx.db
       .query("sandboxInstances")
@@ -435,6 +419,47 @@ export const accrueRecent = internalMutation({
         now: now,
         cursor: page.continueCursor,
       });
+    }
+
+    return null;
+  },
+});
+
+/**
+ * Bill and delete ephemeral rows whose call must have ended, so a lost teardown
+ * cannot leave one billing or crowding the dashboard. Started by `accrueRecent`;
+ * a full page schedules the next one until the backlog is gone.
+ */
+export const sweepStaleEphemeral = internalMutation({
+  args: { now: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    // Past the longer of the two per-call ceilings, any provider's call is over.
+    const staleBefore =
+      args.now -
+      Math.max(
+        ephemeralSandboxMaxMs("lambda"),
+        ephemeralSandboxMaxMs("sandbox"),
+      );
+    const stale = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_ephemeral_and_lastUsedAt", (q) =>
+        q.eq("ephemeral", true).lt("lastUsedAt", staleBefore),
+      )
+      .take(ACCRUE_PAGE_SIZE);
+    for (const instance of stale) {
+      await accrue(ctx, instance, args.now);
+      await ctx.db.delete(instance._id);
+      if (instance.sandboxConfigId) {
+        await pruneReleasedDashboardSandbox(ctx, instance.sandboxConfigId);
+      }
+    }
+    if (stale.length === ACCRUE_PAGE_SIZE) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.sandbox.instances.sweepStaleEphemeral,
+        { now: args.now },
+      );
     }
 
     return null;
