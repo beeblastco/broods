@@ -61,6 +61,11 @@ const CLOUDFLARE_INSTANCES: Record<SandboxSize, string> = {
 };
 // Headroom over the command timeout for the bridge to start the Container.
 const BRIDGE_OVERHEAD_MS = 60_000;
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
+  "127.0.0.1",
+  "[::1]",
+  "localhost",
+]);
 
 const statusResult = z.object({ running: z.boolean() });
 
@@ -72,6 +77,10 @@ export function cloudflareConnection(): { baseURL: string; apiKey: string } {
     throw new Error(
       "the cloudflare sandbox provider needs CLOUDFLARE_SANDBOX_URL and CLOUDFLARE_SANDBOX_API_KEY on core",
     );
+  // Every call carries the key, so plain HTTP is only for a local `wrangler dev`.
+  const { protocol, hostname } = new URL(baseURL);
+  if (protocol !== "https:" && !LOOPBACK_HOSTS.has(hostname))
+    throw new Error("CLOUDFLARE_SANDBOX_URL must be https outside loopback");
 
   return { baseURL: baseURL.replace(/\/+$/, ""), apiKey: apiKey };
 }

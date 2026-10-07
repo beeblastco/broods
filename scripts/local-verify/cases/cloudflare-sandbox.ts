@@ -72,17 +72,20 @@ export async function cloudflareSandbox(context: VerifyContext): Promise<void> {
         text: text,
       }),
     );
+  // The read answers the marker reversed, which no prompt contains, so the
+  // model cannot pass it from the conversation without the file.
   const marker = `cf-${context.runId}`;
+  const reversed = [...marker].reverse().join("");
   const wrote = await turn(
-    `Run: echo ${marker} > /tmp/marker && cat /tmp/marker`,
+    `Run: echo ${marker} > /tmp/marker`,
     "cloudflare write",
   );
-  const read = await turn("Run: cat /tmp/marker", "cloudflare read");
+  const read = await turn("Run: rev /tmp/marker", "cloudflare read");
   assertStep(
     "a warm cloudflare container keeps a file between turns",
     wrote.status === "completed" &&
       read.status === "completed" &&
-      JSON.stringify(read.response ?? "").includes(marker),
+      JSON.stringify(read.response ?? "").includes(reversed),
     `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
   );
 }

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
-import { CloudflareSandboxExecutor } from "../src/harness/sandbox/cloudflare-executor.ts";
+import {
+  CloudflareSandboxExecutor,
+  cloudflareConnection,
+} from "../src/harness/sandbox/cloudflare-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 
 interface BridgeCall {
@@ -219,6 +222,13 @@ it("keeps the result when the ephemeral destroy fails", async (): Promise<void> 
   });
 
   expect(result.ok).toBe(true);
+});
+
+it("refuses a plain-HTTP bridge outside loopback, since every call carries the key", (): void => {
+  process.env.CLOUDFLARE_SANDBOX_URL = "http://bridge.example.com";
+  expect(cloudflareConnection).toThrow("must be https outside loopback");
+  process.env.CLOUDFLARE_SANDBOX_URL = "http://127.0.0.1:8795/";
+  expect(cloudflareConnection().baseURL).toBe("http://127.0.0.1:8795");
 });
 
 function urlOf(input: string | URL | Request): string {

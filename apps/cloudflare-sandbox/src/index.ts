@@ -55,6 +55,7 @@ export interface ExecResult {
 /** One sandbox: the Container it starts and the commands core runs in it. */
 export class Sandbox extends DurableObject<Env> {
   #starting: Promise<void> | null = null;
+  #booting = false;
 
   /** Starts the Container on first use, then runs one command to completion. */
   async exec(request: ExecRequest): Promise<ExecResult> {
@@ -62,12 +63,16 @@ export class Sandbox extends DurableObject<Env> {
     const container = this.#container();
     await this.#ensureRunning(container, request);
     const signal = AbortSignal.timeout(request.timeoutMs);
-    const process = await container.exec(request.argv, {
-      env: request.env,
-      signal: signal,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const process = await container
+      .exec(request.argv, {
+        env: request.env,
+        signal: signal,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      .finally((): void => {
+        this.#booting = false;
+      });
     const [stdout, stderr] = await Promise.all([
       readCapped(process.stdout, request.outputLimitBytes, signal),
       readCapped(process.stderr, request.outputLimitBytes, signal),
@@ -147,10 +152,13 @@ export class Sandbox extends DurableObject<Env> {
   }
 
   // `start()` returns before the Container is ready and its first `exec()`
-  // waits for it, per the Container API. Concurrent first calls share one
-  // start, and a failed setup destroys the half-started Container.
+  // waits for it, per the Container API. `running` can read false until then,
+  // so `#booting` holds the shared start until an exec gets through. Concurrent
+  // first calls share one start, and a failed setup destroys the half-started
+  // Container.
   #ensureRunning(container: Container, request: ExecRequest): Promise<void> {
-    if (this.#starting === null || !container.running) {
+    if (this.#starting === null || (!this.#booting && !container.running)) {
+      this.#booting = true;
       this.#starting = (async (): Promise<void> => {
         if (!container.running) {
           container.start({
@@ -169,6 +177,7 @@ export class Sandbox extends DurableObject<Env> {
         }
       })().catch((error: unknown): never => {
         this.#starting = null;
+        this.#booting = false;
         throw error;
       });
     }
