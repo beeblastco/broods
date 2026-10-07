@@ -390,16 +390,22 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       target: { microvmId: string; endpoint: string },
       budgetMs: number,
     ): Promise<unknown> => {
+      const readyBy = Date.now() + budgetMs;
       await this.#whileWarming(target.microvmId, budgetMs, () =>
-        this.#ready(target, budgetMs, request.abortSignal),
+        this.#ready(target, readyBy, request.abortSignal),
       );
 
       return this.#whileWarming(target.microvmId, budgetMs, () =>
-        this.#post(target, request, GUEST_ROUTE_RETRY, (text, headers) => {
-          this.#reportBurst(target.microvmId, burstHeader(headers));
+        this.#post(
+          target,
+          request,
+          GUEST_ROUTE_RETRY,
+          (text, headers): unknown => {
+            this.#reportBurst(target.microvmId, burstHeader(headers));
 
-          return JSON.parse(text);
-        }),
+            return JSON.parse(text);
+          },
+        ),
       );
     };
     const reach: SandboxRunRequest = {
@@ -1315,7 +1321,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         status: err instanceof Error ? err.message : "fetch error",
       };
     }
-    if (retry.warmingStatus && isWarmingStatus(res.status)) {
+    if (retry.warmingStatus && (res.status === 502 || res.status === 503)) {
       return { retry: true, status: res.status };
     }
     const text = await boundedText(res, request.path);
@@ -1328,15 +1334,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { retry: false, response: parse(text, res.headers) };
   }
 
-  // One GET of the guest's /healthz. Any answer but 2xx, or a failed fetch that
-  // is not the caller's abort, means the VM is not serving yet. It runs nothing.
+  // One GET of the guest's /healthz, given up at `readyBy`. Any answer but 2xx,
+  // or a failed fetch that is not the caller's abort, means the VM is not
+  // serving yet. It runs nothing.
   async #ready(
     target: { microvmId: string; endpoint: string },
-    budgetMs: number,
+    readyBy: number,
     abortSignal?: AbortSignal,
   ): Promise<Warming<void>> {
     const token = await this.#authToken(target.microvmId);
-    const deadline = AbortSignal.timeout(budgetMs);
+    const deadline = AbortSignal.timeout(Math.max(1, readyBy - Date.now()));
     try {
       const res = await fetch(
         `https://${target.endpoint.replace(/^https?:\/\//, "")}/healthz`,
@@ -1649,6 +1656,35 @@ export async function microvmShellConnection(
   };
 }
 
+// A guest's answer as text, refused once it passes GUEST_RESPONSE_MAX_BYTES so
+// a runaway answer never sits whole in core's memory.
+async function boundedText(res: Response, path: string): Promise<string> {
+  const tooLarge = (): Error =>
+    new Error(
+      `MicroVM ${path} answered more than ${GUEST_RESPONSE_MAX_BYTES} bytes`,
+    );
+  if (Number(res.headers.get("content-length")) > GUEST_RESPONSE_MAX_BYTES) {
+    await res.body?.cancel();
+    throw tooLarge();
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > GUEST_RESPONSE_MAX_BYTES) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1746,40 +1782,6 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
   if (!scope || !name) return undefined;
 
   return `${scope}:${name}-${variant}`;
-}
-
-// A guest's answer as text, refused once it passes GUEST_RESPONSE_MAX_BYTES so
-// a runaway answer never sits whole in core's memory.
-async function boundedText(res: Response, path: string): Promise<string> {
-  const tooLarge = (): Error =>
-    new Error(
-      `MicroVM ${path} answered more than ${GUEST_RESPONSE_MAX_BYTES} bytes`,
-    );
-  if (Number(res.headers.get("content-length")) > GUEST_RESPONSE_MAX_BYTES) {
-    await res.body?.cancel();
-    throw tooLarge();
-  }
-  if (!res.body) return "";
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > GUEST_RESPONSE_MAX_BYTES) {
-      await reader.cancel();
-      throw tooLarge();
-    }
-    chunks.push(value);
-  }
-
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-// The proxy's answer while the VM is still restoring its snapshot.
-function isWarmingStatus(status: number): boolean {
-  return status === 502 || status === 503;
 }
 
 // The burst totals a guest route sends in its `x-sandbox-burst` header. A

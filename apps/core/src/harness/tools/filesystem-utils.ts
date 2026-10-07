@@ -125,13 +125,23 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-/** The exec timeout a run on `config` gets: its own, within the provider's limits. */
-export function sandboxTimeoutSeconds(config: SandboxExecutorConfig): number {
+/**
+ * The exec timeout a run on `config` gets: its own, within the provider's
+ * limits. One with none gets `defaultSeconds` (bash's default unless a caller,
+ * like the MCP relay, names its own), never past the provider's maximum.
+ */
+export function sandboxTimeoutSeconds(
+  config: SandboxExecutorConfig,
+  defaultSeconds?: number,
+): number {
   const limits = workspaceSandboxLimits(config.provider);
 
   return boundedInteger(
     config.timeout,
-    limits.defaultTimeoutSeconds,
+    Math.min(
+      defaultSeconds ?? limits.defaultTimeoutSeconds,
+      limits.maxTimeoutSeconds,
+    ),
     limits.maxTimeoutSeconds,
   );
 }

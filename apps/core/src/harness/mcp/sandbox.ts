@@ -15,11 +15,7 @@ import {
 } from "@modelcontextprotocol/client";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
-import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
-import type {
-  ResolvedAgentSandbox,
-  ResolvedWorkspace,
-} from "../../shared/workspaces.ts";
+import type { ResolvedAgentRuntime } from "../../shared/workspaces.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type {
   SandboxExecutor,
@@ -70,12 +66,7 @@ export async function sandboxMcpRequest(
     );
   }
   const timeoutMs =
-    (target.config.timeout === undefined
-      ? Math.min(
-          DEFAULT_TIMEOUT_SECONDS,
-          workspaceSandboxLimits(target.config.provider).maxTimeoutSeconds,
-        )
-      : sandboxTimeoutSeconds(target.config)) * 1000;
+    sandboxTimeoutSeconds(target.config, DEFAULT_TIMEOUT_SECONDS) * 1000;
   const reply = await executor
     .postReserved({
       ...target.reservation,
@@ -124,10 +115,7 @@ export async function sandboxMcpRequest(
  */
 export function sandboxMcpTarget(
   record: McpRecord,
-  runtime: {
-    sandboxes?: ResolvedAgentSandbox[];
-    workspaces?: ResolvedWorkspace[];
-  },
+  runtime: Partial<ResolvedAgentRuntime>,
 ): SandboxMcpTarget | undefined {
   const host = runtime.sandboxes?.find(
     (entry) => entry.name === record.sandbox,

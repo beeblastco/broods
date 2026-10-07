@@ -267,7 +267,10 @@ export async function listS3Prefix(
   return objects;
 }
 
-/** An object's bytes; with `maxBytes`, a larger object is refused before any is read. */
+/**
+ * An object's bytes. With `maxBytes`, a larger object, or one whose size the
+ * store does not say, is refused before any is read.
+ */
 export async function readS3Bytes(
   bucket: string,
   key: string,
@@ -275,10 +278,13 @@ export async function readS3Bytes(
   maxBytes?: number,
 ): Promise<Uint8Array> {
   const { body, contentLength } = await readS3Body(bucket, key, access);
-  if (maxBytes !== undefined && (contentLength ?? 0) > maxBytes) {
+  if (
+    maxBytes !== undefined &&
+    (contentLength === undefined || contentLength > maxBytes)
+  ) {
     await body.transformToWebStream().cancel();
     throw new Error(
-      `S3 object ${key} is ${contentLength} bytes, over the ${maxBytes} byte limit`,
+      `S3 object ${key} is ${contentLength ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
     );
   }
 

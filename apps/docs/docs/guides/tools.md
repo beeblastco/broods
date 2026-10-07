@@ -36,7 +36,7 @@ A tool that your code would execute, such as the Tavily AI SDK package, cannot g
 
 ## MCP servers
 
-Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at: a PNG, JPEG, GIF or WebP, up to 8 images and 6 MB per result. Any other image, and other non-text blocks, are named in the text.
+Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at: a PNG, JPEG, GIF or WebP no wider or taller than 8000 pixels, up to 8 images and 6 MB per result. Any other image, and other non-text blocks, are named in the text.
 
 ### Connect a server
 
@@ -156,7 +156,7 @@ export const researcher = defineAgent({
 - The tool listing is cached for a few minutes, and refetched sooner when the server or its sandbox changes, so most runs do not start the sandbox just to list tools. A listing with nothing cached starts it.
 - The server shares the VM that `bash` uses on that sandbox, including its workspace, and sees the sandbox's env vars. Changing them restarts the server.
 - A call times out after the sandbox's `timeout`, or 120 seconds when the sandbox sets none.
-- The MCP explorer in the dashboard runs the server on a sandbox VM of its own, so a browser session there is separate from the agent's.
+- The MCP explorer in the dashboard runs the server on a sandbox VM of its own, so a browser session there is separate from the agent's. A sandbox that pins `options.reservationKey` shares one VM with the explorer and every agent.
 
 ## Approvals
 

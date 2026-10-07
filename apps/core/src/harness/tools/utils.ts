@@ -33,6 +33,8 @@ export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
 // Images one tool result may show the model; together they share MAX_IMAGE_BYTES.
 const MAX_RESULT_IMAGES = 8;
+// The longest side a model provider takes for an inline image.
+const MAX_IMAGE_SIDE = 8000;
 // What every model provider reads inline.
 const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
   "image/gif",
@@ -258,6 +260,16 @@ export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
     if (images >= MAX_RESULT_IMAGES) {
       return note(`the result carries more than ${MAX_RESULT_IMAGES} images`);
     }
+    const pixels = imageSize(Buffer.from(part.data, "base64"), mediaType);
+    if (!pixels) return note("it is not a PNG, JPEG, GIF or WebP image");
+    if (
+      Math.max(pixels.width, pixels.height) > MAX_IMAGE_SIDE ||
+      Math.min(pixels.width, pixels.height) < 1
+    ) {
+      return note(
+        `it is ${pixels.width}x${pixels.height} pixels; a side must be 1 to ${MAX_IMAGE_SIDE}`,
+      );
+    }
     images += 1;
     bytes += size;
 
@@ -271,6 +283,86 @@ function base64Bytes(data: string): number | undefined {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
 
   return (data.length / 4) * 3 - padding;
+}
+
+/**
+ * An image's pixel size, read from the header its type defines, or undefined
+ * when that header is not all there: a signature alone is not an image.
+ */
+function imageSize(
+  bytes: Buffer,
+  mediaType: string,
+): { width: number; height: number } | undefined {
+  if (mediaType === "image/png") {
+    return bytes.length >= 24 && bytes.toString("latin1", 12, 16) === "IHDR"
+      ? { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+      : undefined;
+  }
+  if (mediaType === "image/gif") {
+    return bytes.length >= 10
+      ? { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) }
+      : undefined;
+  }
+  if (mediaType === "image/webp") {
+    return webpSize(bytes);
+  }
+
+  return jpegSize(bytes);
+}
+
+/** A JPEG's size from its first start-of-frame segment. */
+function jpegSize(
+  bytes: Buffer,
+): { width: number; height: number } | undefined {
+  let offset = 2;
+  while (offset + 9 <= bytes.length && bytes[offset] === 0xff) {
+    const marker = bytes.readUInt8(offset + 1);
+    // SOF0 to SOF15, except DHT (C4), JPG (C8) and DAC (CC).
+    if (
+      marker >= 0xc0 &&
+      marker <= 0xcf &&
+      marker !== 0xc4 &&
+      marker !== 0xc8 &&
+      marker !== 0xcc
+    ) {
+      return {
+        width: bytes.readUInt16BE(offset + 7),
+        height: bytes.readUInt16BE(offset + 5),
+      };
+    }
+    offset += 2 + bytes.readUInt16BE(offset + 2);
+  }
+
+  return undefined;
+}
+
+/** A WebP's size from its VP8, VP8L or VP8X chunk. */
+function webpSize(
+  bytes: Buffer,
+): { width: number; height: number } | undefined {
+  if (bytes.length < 30) return undefined;
+  switch (bytes.toString("latin1", 12, 16)) {
+    case "VP8 ":
+      return {
+        width: bytes.readUInt16LE(26) & 0x3fff,
+        height: bytes.readUInt16LE(28) & 0x3fff,
+      };
+    case "VP8L": {
+      const bits = bytes.readUInt32LE(21);
+
+      return {
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >> 14) & 0x3fff) + 1,
+      };
+    }
+    case "VP8X":
+      return {
+        width: bytes.readUIntLE(24, 3) + 1,
+        height: bytes.readUIntLE(27, 3) + 1,
+      };
+    default:
+      return undefined;
+  }
 }
 
 function formatJSONValue(value: JSONValue): string {
