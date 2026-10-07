@@ -272,6 +272,20 @@ export async function listS3Prefix(
   return objects;
 }
 
+// A presigned PUT for one object, so a machine with no AWS credentials, such as a
+// sandbox VM, can upload it.
+export async function putS3ObjectUrl(
+  bucket: string,
+  key: string,
+  options: { expiresInSeconds?: number } = {},
+): Promise<string> {
+  return getSignedUrl(
+    awsClient(),
+    new PutObjectCommand({ Bucket: bucket, Key: key }),
+    { expiresIn: options.expiresInSeconds ?? 300 },
+  );
+}
+
 /**
  * An object's bytes. With `maxBytes`, a larger object, or one whose size the
  * store does not say, is refused before any is read.

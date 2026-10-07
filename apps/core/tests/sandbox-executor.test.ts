@@ -8,6 +8,7 @@ import {
   spyOn,
 } from "bun:test";
 import * as planLimits from "../src/harness/plan-limits.ts";
+import * as s3 from "../src/shared/s3.ts";
 import { requestBodyText, requestUrl } from "./helpers/http.ts";
 import type {
   SandboxExecutorConfig,
@@ -171,6 +172,9 @@ let microvmExecPayload = {
   truncated: false,
 };
 let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
+// What the image calls answer: the version a VM booted, and one image's state.
+let microvmImageVersion: Record<string, unknown> = {};
+let microvmImageState: Record<string, unknown> = {};
 // The image the mocked VM booted, which GetMicrovm reports like the real API.
 let microvmBootedImage = "";
 const microvmSendMock = mock(
@@ -186,6 +190,15 @@ const microvmSendMock = mock(
         };
       case "CreateMicrovmAuthToken":
         return { authToken: { "X-aws-proxy-auth": "proxy-token" } };
+      case "GetMicrovmImageVersion":
+        return microvmImageVersion;
+      case "GetMicrovmImage":
+        return microvmImageState;
+      case "CreateMicrovmImage":
+        return {
+          imageArn:
+            "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-x",
+        };
       case "CreateMicrovmShellAuthToken":
         return { authToken: { "X-aws-proxy-auth": "shell-jwe-token" } };
       case "GetMicrovm":
@@ -327,6 +340,9 @@ await mock.module("@aws-sdk/client-lambda-microvms", () => ({
   },
   RunMicrovmCommand: microvmCommand("RunMicrovm"),
   CreateMicrovmAuthTokenCommand: microvmCommand("CreateMicrovmAuthToken"),
+  CreateMicrovmImageCommand: microvmCommand("CreateMicrovmImage"),
+  GetMicrovmImageCommand: microvmCommand("GetMicrovmImage"),
+  GetMicrovmImageVersionCommand: microvmCommand("GetMicrovmImageVersion"),
   CreateMicrovmShellAuthTokenCommand: microvmCommand(
     "CreateMicrovmShellAuthToken",
   ),
@@ -392,6 +408,8 @@ beforeEach(() => {
   microvmSendMock.mockClear();
   microvmFetchMock.mockClear();
   microvmGetResponses = [];
+  microvmImageVersion = {};
+  microvmImageState = {};
   microvmBootedImage = process.env.MICROVM_IMAGE_IDENTIFIER ?? "";
   microvmMountLive = true;
   microvmMountPendingChecks = 0;
@@ -1137,6 +1155,203 @@ describe("createSandboxExecutor", () => {
     );
     expect(types).not.toContain("TerminateMicrovm");
     expect(types).not.toContain("RunMicrovm");
+  });
+
+  describe("lambda snapshots", () => {
+    const SOURCE_VERSION = {
+      baseImageArn: "arn:aws:lambda:us-east-1:aws:microvm-image:al2023",
+      buildRoleArn: "arn:aws:iam::123456789012:role/microvm-build",
+      codeArtifact: { uri: "s3://artifacts/microvm-images/sandbox/abc.zip" },
+      hooks: { port: 9000 },
+      additionalOsCapabilities: ["ALL"],
+    };
+    const STARTED_AT = new Date("2026-10-07T08:00:00.000Z");
+
+    // Spies on the S3 helpers a snapshot calls, recording each copy and delete.
+    function stubS3(): {
+      copies: string[][];
+      deletes: string[];
+      restore: () => void;
+    } {
+      const copies: string[][] = [];
+      const deletes: string[] = [];
+      const spies = [
+        spyOn(s3, "copyS3Object").mockImplementation(
+          async (from, fromKey, to, toKey): Promise<void> => {
+            copies.push([from, fromKey, to, toKey]);
+          },
+        ),
+        spyOn(s3, "deleteS3Object").mockImplementation(
+          async (bucket, key): Promise<void> => {
+            deletes.push(`${bucket}/${key}`);
+          },
+        ),
+        spyOn(s3, "getS3ObjectUrl").mockImplementation(
+          async (): Promise<string> => "https://s3.example/source.zip",
+        ),
+        spyOn(s3, "putS3ObjectUrl").mockImplementation(
+          async (): Promise<string> => "https://s3.example/image.zip",
+        ),
+      ];
+
+      return {
+        copies: copies,
+        deletes: deletes,
+        restore: (): void => {
+          for (const spy of spies) spy.mockRestore();
+        },
+      };
+    }
+
+    function reservedVm(): void {
+      storedSandboxExternalId = "microvm-1";
+      const vm = {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+        imageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox",
+        imageVersion: "3",
+        startedAt: STARTED_AT,
+      };
+      microvmGetResponses = [vm, vm];
+      microvmImageVersion = SOURCE_VERSION;
+    }
+
+    it("builds an image from the image the VM runs plus what it changed", async () => {
+      reservedVm();
+      const storage = stubS3();
+      const {
+        MicrovmSandboxExecutor,
+      } = require("../src/harness/sandbox/microvm-executor.ts");
+
+      try {
+        const result = await new MicrovmSandboxExecutor({
+          provider: "lambda",
+          persistent: true,
+        }).snapshot({ reservationKey: microvmNamespace() });
+
+        expect(result).toMatchObject({
+          externalImageId:
+            "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-x",
+          status: "building",
+        });
+        const id = String(result.snapshotId);
+        expect(storage.copies).toEqual([
+          [
+            "artifacts",
+            "microvm-images/sandbox/abc.zip",
+            "workspace-bucket",
+            `sandbox-snapshots/${id}/source.zip`,
+          ],
+          [
+            "workspace-bucket",
+            `sandbox-snapshots/${id}/image.zip`,
+            "artifacts",
+            `microvm-images/broods-snapshots/${id}.zip`,
+          ],
+        ]);
+        expect(storage.deletes.sort()).toEqual([
+          `workspace-bucket/sandbox-snapshots/${id}/image.zip`,
+          `workspace-bucket/sandbox-snapshots/${id}/source.zip`,
+        ]);
+        // The capture ran in the VM, told when the VM started.
+        const execBody = microvmFetchMock.mock.calls
+          .map((call) => JSON.stringify(call[1] ?? null))
+          .find((body) => body.includes("BROODS_STARTED_AT"));
+        expect(execBody).toContain(String(STARTED_AT.getTime() / 1000));
+        const create = microvmSendMock.mock.calls
+          .map((call) => call[0])
+          .find((command) => command?._type === "CreateMicrovmImage");
+        expect(create?.input).toMatchObject({
+          name: `broods-snapshot-${id}`,
+          baseImageArn: SOURCE_VERSION.baseImageArn,
+          buildRoleArn: SOURCE_VERSION.buildRoleArn,
+          hooks: SOURCE_VERSION.hooks,
+          additionalOsCapabilities: ["ALL"],
+          codeArtifact: {
+            uri: `s3://artifacts/microvm-images/broods-snapshots/${id}.zip`,
+          },
+        });
+      } finally {
+        storage.restore();
+      }
+    });
+
+    it("starts no build and clears its staging when the capture fails", async () => {
+      reservedVm();
+      microvmExecPayload = {
+        ...microvmExecPayload,
+        ok: false,
+        exit_code: 1,
+        stderr: "the changes pass 4294967296 bytes, too large to snapshot",
+      };
+      const storage = stubS3();
+      const {
+        MicrovmSandboxExecutor,
+      } = require("../src/harness/sandbox/microvm-executor.ts");
+
+      try {
+        const failure = await new MicrovmSandboxExecutor({
+          provider: "lambda",
+          persistent: true,
+        })
+          .snapshot({ reservationKey: microvmNamespace() })
+          .then(
+            (): string => "resolved",
+            (error: unknown): string => String(error),
+          );
+
+        expect(failure).toContain("too large to snapshot");
+        expect(storage.deletes).toHaveLength(2);
+        const types = microvmSendMock.mock.calls.map((c) => c[0]?._type);
+        expect(types).not.toContain("CreateMicrovmImage");
+      } finally {
+        storage.restore();
+      }
+    });
+
+    it.each([
+      [{ state: "CREATING" }, "building"],
+      [{ state: "CREATED", latestActiveImageVersion: "1" }, "active"],
+      [{ state: "CREATE_FAILED" }, "build_failed"],
+      [{ state: "UPDATED", latestFailedImageVersion: "1" }, "build_failed"],
+    ])(
+      "reads a snapshot build from its image: %o is %s",
+      async (image, state) => {
+        microvmImageState = image;
+        const {
+          MicrovmSandboxExecutor,
+        } = require("../src/harness/sandbox/microvm-executor.ts");
+
+        expect(
+          await new MicrovmSandboxExecutor({
+            provider: "lambda",
+          }).snapshotStatus(
+            "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-x",
+          ),
+        ).toBe(state);
+      },
+    );
+
+    it("boots a pinned snapshot even when image names the variant it came from", async () => {
+      const snapshot =
+        "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-x";
+      const {
+        createSandboxExecutor,
+      } = require("../src/harness/sandbox/index.ts");
+
+      await createSandboxExecutor({
+        provider: "lambda",
+        image: "obscura",
+        snapshot: snapshot,
+      }).run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
+
+      expect(microvmRunInput().imageIdentifier).toBe(snapshot);
+    });
   });
 
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {

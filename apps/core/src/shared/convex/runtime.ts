@@ -17,6 +17,7 @@ export const runtimeQueries = {
   getSandboxReservationRecord: internal.runtime.getSandboxReservationRecord,
   listAccountSandboxReservations:
     internal.runtime.listAccountSandboxReservations,
+  listBuildingSandboxSnapshots: internal.runtime.listBuildingSandboxSnapshots,
   listConversationEvents: internal.runtime.listConversationEvents,
   listExpiredSandboxReservations:
     internal.runtime.listExpiredSandboxReservations,

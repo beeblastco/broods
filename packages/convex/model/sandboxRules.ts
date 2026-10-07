@@ -99,7 +99,7 @@ export interface SandboxConfig {
   fallbackProvider?: SandboxProvider;
   size?: SandboxSize;
   // A platform image variant by name (lambda only): "browser" has Chromium,
-  // "obscura" has the Obscura headless browser. Exclusive with `snapshot`.
+  // "obscura" has the Obscura headless browser. With `snapshot`, the variant it was built from.
   image?: SandboxImage;
   snapshot?: string;
   runtimes?: RuntimeName[];
@@ -205,7 +205,7 @@ export function normalizeSandboxConfig(
     "config.image",
     SANDBOX_IMAGES,
   );
-  assertImage(image, provider, fallbackProvider, snapshot);
+  assertImage(image, provider, fallbackProvider);
 
   if (fallbackProvider === provider) {
     throw new ClientError(
@@ -368,21 +368,17 @@ function assertEnvVarsAndOptions(
 }
 
 // An image variant is a platform MicroVM image, so only lambda boots it, and a
-// capacity fallback onto another provider would silently run without it.
+// capacity fallback onto another provider would silently run without it. With a
+// snapshot pinned too, the VM boots the snapshot and `image` names the variant it
+// was built from, which is what the browse tool and the dashboard read.
 function assertImage(
   image: SandboxImage | undefined,
   provider: SandboxProvider,
   fallbackProvider: SandboxProvider | undefined,
-  snapshot: string | undefined,
 ): void {
   if (image === undefined) return;
   if (provider !== "lambda") {
     throw new ClientError("config.image applies to the lambda provider only");
-  }
-  if (snapshot !== undefined) {
-    throw new ClientError(
-      "config.image and config.snapshot cannot both be set",
-    );
   }
   if (fallbackProvider !== undefined) {
     throw new ClientError(

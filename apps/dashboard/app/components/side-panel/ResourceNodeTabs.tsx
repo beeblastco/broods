@@ -35,7 +35,7 @@ import {
   machineStartCommand,
   machineState,
 } from "@/app/lib/machineConnection";
-import { snapshotOptions } from "@/app/lib/sandboxSnapshots";
+import { snapshotImage, snapshotOptions } from "@/app/lib/sandboxSnapshots";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
@@ -222,8 +222,11 @@ export function SandboxResourceDetailsTab({
             onValueChange={(next) =>
               setConfig({
                 snapshot: next === "none" ? undefined : next,
-                // A lambda snapshot replaces the image variant.
-                ...(next !== "none" ? { image: undefined } : {}),
+                // A lambda snapshot boots its own image, built from a variant the
+                // browser tools look for, so Image follows it.
+                ...(provider === "lambda" && next !== "none"
+                  ? { image: snapshotImage(snapshots ?? [], next) }
+                  : {}),
               })
             }
             options={snapshotChoices}

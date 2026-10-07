@@ -1556,10 +1556,9 @@ export default defineSchema({
       "stageId",
     ])
     .index("by_sandboxConfigId", ["sandboxConfigId"]),
-  sandboxSnapshots: defineTable(sandboxSnapshotsFields).index(
-    "by_accountId_and_name",
-    ["accountId", "name"],
-  ),
+  sandboxSnapshots: defineTable(sandboxSnapshotsFields)
+    .index("by_accountId_and_name", ["accountId", "name"])
+    .index("by_status", ["status"]),
   sandboxAuditEvents: defineTable(sandboxAuditEventsFields).index(
     "by_accountId_and_reservationKey_and_createdAt",
     ["accountId", "reservationKey", "createdAt"],

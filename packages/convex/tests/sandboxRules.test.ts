@@ -53,13 +53,16 @@ describe("sandbox config", () => {
     expect(() =>
       normalizeSandboxConfig({ provider: "sandbox", image: "obscura" }),
     ).toThrow("config.image applies to the lambda provider only");
-    expect(() =>
+    expect(
       normalizeSandboxConfig({
         provider: "lambda",
-        image: "browser",
+        image: "obscura",
         snapshot: "arn:aws:lambda:us-east-1:123456789012:microvm-image:x",
       }),
-    ).toThrow("config.image and config.snapshot cannot both be set");
+    ).toMatchObject({
+      image: "obscura",
+      snapshot: "arn:aws:lambda:us-east-1:123456789012:microvm-image:x",
+    });
     expect(() =>
       normalizeSandboxConfig({
         provider: "lambda",

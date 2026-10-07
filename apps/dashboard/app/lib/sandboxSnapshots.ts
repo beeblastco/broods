@@ -1,4 +1,8 @@
 import type { Doc } from "@broods/convex/_generated/dataModel";
+import {
+  SANDBOX_IMAGES,
+  type SandboxImage,
+} from "@broods/convex/model/sandboxRules";
 
 /** One choice in the sandbox node's Snapshot select. */
 export interface SnapshotOption {
@@ -36,4 +40,20 @@ export function snapshotOptions(
   }
 
   return options;
+}
+
+/**
+ * The image variant a lambda snapshot was built from, for the Image select to
+ * follow when that snapshot is picked. A snapshot of the default image, or one
+ * the list does not hold, has none.
+ */
+export function snapshotImage(
+  rows: ReadonlyArray<
+    Pick<Doc<"sandboxSnapshots">, "baseImage" | "externalImageId">
+  >,
+  pinned: string,
+): SandboxImage | undefined {
+  const row = rows.find((candidate) => candidate.externalImageId === pinned);
+
+  return SANDBOX_IMAGES.find((image) => image === row?.baseImage);
 }

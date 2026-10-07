@@ -11,6 +11,7 @@ import { edgeHeaders } from "./edge-headers.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
+import { lambdaSnapshot } from "./lambda-snapshot.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
@@ -36,6 +37,7 @@ export const verifyCases: readonly VerifyCase[] = [
   machineSandbox,
   ownBucketSandbox,
   sandboxImage,
+  lambdaSnapshot,
   browserSandbox,
   mcpCommand,
   customSandbox,

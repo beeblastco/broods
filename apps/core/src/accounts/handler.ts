@@ -642,7 +642,9 @@ async function refreshSandboxStatus(
 
 /**
  * The `snapshot` verb: snapshots the instance and saves it as a named account
- * sandbox snapshot.
+ * sandbox snapshot. A lambda snapshot is an image build, saved as building
+ * until core's snapshot build watcher sees it land. Its base image is the
+ * variant the sandbox ran, so pinning it keeps that image's tools.
  */
 async function snapshotSandbox(
   context: SandboxLifecycleContext,
@@ -663,18 +665,22 @@ async function snapshotSandbox(
     context.executor.snapshot!(context.ref),
   );
   const externalImageId = result.externalImageId ?? result.snapshotId;
+  const status = result.status ?? "active";
   await upsertSandboxSnapshot({
     accountId: context.accountId,
     name: name,
     provider: context.provider,
-    baseImage: context.provider,
+    baseImage:
+      context.provider === "lambda"
+        ? (context.config.image ?? "default")
+        : context.provider,
     externalImageId: externalImageId,
-    status: "active",
+    status: status,
   });
   await context.audit("ok", { status: "running" });
 
   return jsonResponse(200, {
-    status: "active",
+    status: status,
     snapshotId: result.snapshotId,
     externalImageId: externalImageId,
   });

@@ -1727,7 +1727,7 @@ paths:
                       {
                         type: string,
                         enum: [browser, obscura],
-                        description: "Platform MicroVM image variant to boot instead of the default (lambda only). `obscura` adds the Obscura headless browser (markdown/text/link dumps, screenshots, CDP and MCP servers); `browser` adds headless Chromium for pixel-exact rendering. Cannot be set with `snapshot` or `fallbackProvider`.",
+                        description: "Platform MicroVM image variant to boot instead of the default (lambda only). `obscura` adds the Obscura headless browser (markdown/text/link dumps, screenshots, CDP and MCP servers); `browser` adds headless Chromium for pixel-exact rendering. With `snapshot` set, the VM boots the snapshot and this names the variant it was built from. Cannot be set with `fallbackProvider`.",
                       }
                     snapshot:
                       {
@@ -2004,7 +2004,7 @@ paths:
     post:
       tags: [Sandboxes]
       summary: Snapshot sandbox instance
-      description: Creates a reusable image from a persistent sandbox reservation when the provider supports snapshots. Currently supported by the self-hosted workdir `sandbox` provider.
+      description: Creates a reusable image from a persistent sandbox reservation when the provider supports snapshots. The self-hosted workdir `sandbox` provider captures the instance and answers `active`. The AWS MicroVM `lambda` provider builds a new image from the files the VM changed since it started and answers `building`; the snapshot turns `active` or `build_failed` once the build lands, usually within minutes.
       security: [{ BearerAuth: [] }]
       parameters:
         - {
@@ -2024,7 +2024,7 @@ paths:
                 reservationKey: { type: string }
                 name: { type: string }
       responses:
-        "200": { description: Snapshot active }
+        "200": { description: "Snapshot active, or building on lambda" }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,

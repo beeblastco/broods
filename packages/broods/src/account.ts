@@ -1053,7 +1053,7 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Snapshot a persistent sandbox reservation into a reusable image (self-hosted `sandbox` provider). Throws on 404/403/409. */
+  /** Snapshot a persistent sandbox reservation into a reusable image (`sandbox`, or `lambda`, which answers `building` until its image build lands). Throws on 404/403/409. */
   async snapshotSandbox(
     sandboxId: string,
     reservationKey: string,

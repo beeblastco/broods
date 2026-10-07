@@ -785,6 +785,48 @@ export const listExpiredSandboxReservations = internalQuery({
 });
 
 /**
+ * One page of snapshot images still building, for core's build watcher to
+ * finish once the provider reports the build done.
+ * @returns the building snapshots, up to `limit`
+ */
+export const listBuildingSandboxSnapshots = internalQuery({
+  args: { limit: v.number() },
+  returns: v.array(
+    v.object({
+      accountId: v.id("accounts"),
+      name: v.string(),
+      provider: sandboxProviderValidator,
+      baseImage: v.string(),
+      externalImageId: v.string(),
+    }),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    Array<
+      Pick<
+        Doc<"sandboxSnapshots">,
+        "accountId" | "name" | "provider" | "baseImage" | "externalImageId"
+      >
+    >
+  > => {
+    const rows = await ctx.db
+      .query("sandboxSnapshots")
+      .withIndex("by_status", (q) => q.eq("status", "building"))
+      .take(args.limit);
+
+    return rows.map((row) => ({
+      accountId: row.accountId,
+      name: row.name,
+      provider: row.provider,
+      baseImage: row.baseImage,
+      externalImageId: row.externalImageId,
+    }));
+  },
+});
+
+/**
  * Every reservation an account holds, whatever key shape reserved it, so a
  * deletion sweep releases each machine before the cascade drops the rows. Paged
  * because one account can hold more rows than a single query may read.
