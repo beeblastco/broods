@@ -359,31 +359,6 @@ function dedupeNodes(nodes: Node[]): Node[] {
   });
 }
 
-/** Deterministic edge id matching its endpoints. */
-function plainEdgeId(source: string, target: string): string {
-  return `xy-edge__${source}-${target}`;
-}
-
-/**
- * Migrate legacy auto-redirected edges (agent→sandbox carrying `_original`) back into direct
- * agent→workspace edges, matching the explicit-wiring model.
- */
-function unredirectEdge(edge: Edge): Edge {
-  const data = (edge.data as Record<string, unknown> | undefined) ?? {};
-  const original = data._original;
-  if (typeof original !== "string") return edge;
-
-  const nextData = { ...data };
-  delete nextData._original;
-
-  return {
-    ...edge,
-    id: plainEdgeId(edge.source, original),
-    target: original,
-    data: nextData,
-  };
-}
-
 /** Whether an edge already connects the two nodes, in either direction. */
 /** Drop duplicate edges by id and by node pair, keeping the first of each. Subagent links are
  * directional (A→B and B→A coexist), so they key by ordered pair; everything else by unordered. */
@@ -798,12 +773,7 @@ function CanvasInner({
     if (hasLocalChanges.current || isDraggingNode.current) return;
 
     if (canvasLayout) {
-      // Strip persisted `animated: true` (legacy layouts). Animated edges run a
-      // continuous dash keyframe. Normalized before the signature so the echo
-      // check still matches local state; the next save persists the flag off.
-      const persistedEdges = (canvasLayout.edges as Edge[]).map((edge) =>
-        edge.animated ? { ...edge, animated: false } : edge,
-      );
+      const persistedEdges = canvasLayout.edges as Edge[];
       const incoming = layoutSignature(
         canvasLayout.nodes as Node[],
         persistedEdges,
@@ -815,7 +785,6 @@ function CanvasInner({
         setEdges(
           dedupeEdges(
             persistedEdges
-              .map(unredirectEdge)
               .map(hydrateMountEdge)
               .map(hydrateSubagentEdge)
               .map((edge) => lockCodeManagedEdge(edge, nodesById)),

@@ -7,17 +7,21 @@ import { sandboxDisplayConfig } from "../model/sandboxDisplayConfig";
 describe("sandboxDisplayConfig", () => {
   test("keeps the fields the canvas renders", () => {
     const display = sandboxDisplayConfig({
+      image: "obscura",
       network: { mode: "allow-all" },
       permissionMode: "bypass",
       persistent: true,
-      provider: "sandbox",
+      provider: "lambda",
+      snapshot: "snap-1",
     });
 
     expect(display).toEqual({
+      image: "obscura",
       network: { mode: "allow-all" },
       permissionMode: "bypass",
       persistent: true,
-      provider: "sandbox",
+      provider: "lambda",
+      snapshot: "snap-1",
     });
   });
 
@@ -27,7 +31,6 @@ describe("sandboxDisplayConfig", () => {
       envVars: { GH_TOKEN: "ghp_secret" },
       options: { apiKey: "sk-secret" },
       onCreate: ["gh auth setup-git"],
-      snapshot: "snap-1",
       timeout: 60,
     });
 

@@ -21,9 +21,8 @@ const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
   error: "error",
 };
 
-// What users see for a stored provider; `lambda` and `sandbox` are implementation details.
+// What users see for a stored provider when it differs from the stored name.
 const PROVIDER_LABEL: Record<string, string> = {
-  lambda: "managed-vm",
   machine: MACHINE_LABEL,
   sandbox: "workdir",
 };

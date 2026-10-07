@@ -4,20 +4,30 @@
  * is unchanged. The public projection lives in ./responses.ts.
  */
 
+import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
+import { normalizeHeaders } from "./mcp";
 import { isPlainObject, isStringRecord } from "./objects";
+import {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+  type SandboxProvider,
+} from "./sandboxProviders";
 import { assertStorageEndpoint } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
-export const SANDBOX_PROVIDERS = [
-  "sandbox",
-  "lambda",
-  "e2b",
-  "daytona",
-  "vercel",
-  "cloudflare",
-  "machine",
-] as const;
+export {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+  type SandboxProvider,
+} from "./sandboxProviders";
+
+/** The provider a config without one runs on: AWS MicroVM, until `sandbox` has hosts everywhere. */
+export const DEFAULT_SANDBOX_PROVIDER: SandboxProvider = "lambda";
+
+// Platform MicroVM image variants a lambda sandbox can boot by name instead of ARN.
+// Core resolves each to `<default image name>-<variant>` in the default's account.
+export const SANDBOX_IMAGES = ["browser", "obscura"] as const;
 
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
 export const SANDBOX_PERMISSION_MODES = ["edit", "ask", "bypass"] as const;
@@ -53,8 +63,6 @@ const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
   "workspaceRoot",
 ]);
 
-export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
-
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
 
 export type PermissionMode = (typeof SANDBOX_PERMISSION_MODES)[number];
@@ -62,6 +70,8 @@ export type PermissionMode = (typeof SANDBOX_PERMISSION_MODES)[number];
 export type NetworkMode = (typeof SANDBOX_NETWORK_MODES)[number];
 
 export type SandboxSize = (typeof SANDBOX_SIZE_NAMES)[number];
+
+export type SandboxImage = (typeof SANDBOX_IMAGES)[number];
 
 /**
  * Idle and maximum lifetime controls for a persistent sandbox.
@@ -86,6 +96,9 @@ export interface SandboxConfig {
   // Never set with `persistent`: a reserved sandbox belongs to one provider.
   fallbackProvider?: SandboxProvider;
   size?: SandboxSize;
+  // A platform image variant by name (lambda only): "browser" has Chromium,
+  // "obscura" has the Obscura headless browser. Exclusive with `snapshot`.
+  image?: SandboxImage;
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -145,12 +158,16 @@ export function workspaceSandboxLimits(
 
 /**
  * @param value the raw config value
+ * @param stored the config an update merges into, when there is one
  * @returns the normalized sandbox config
  */
-export function normalizeSandboxConfig(value: unknown): SandboxConfig {
+export function normalizeSandboxConfig(
+  value: unknown,
+  stored?: SandboxConfig,
+): SandboxConfig {
   if (value == null) {
     return {
-      provider: "sandbox",
+      provider: DEFAULT_SANDBOX_PROVIDER,
       permissionMode: "ask",
       network: { mode: "deny-all" },
     };
@@ -167,7 +184,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
   const provider =
     assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS) ??
-    "sandbox";
+    DEFAULT_SANDBOX_PROVIDER;
   const fallbackProvider = assertOptionalEnum(
     config.fallbackProvider,
     "config.fallbackProvider",
@@ -181,21 +198,31 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
   assertOptionalBoolean(config.persistent, "config.persistent");
   const snapshot = optionalString(config.snapshot, "config.snapshot");
+  const image = assertOptionalEnum(
+    config.image,
+    "config.image",
+    SANDBOX_IMAGES,
+  );
+  assertImage(image, provider, fallbackProvider, snapshot);
 
   if (fallbackProvider === provider) {
     throw new ClientError(
       "config.fallbackProvider must differ from config.provider",
     );
   }
-  if (fallbackProvider === "machine") {
-    throw new ClientError("config.fallbackProvider cannot be machine");
+  // A machine is one computer, and a custom server's endpoint lives in
+  // `options`, which does not carry over to the fallback.
+  if (fallbackProvider && STATELESS_SANDBOX_PROVIDERS.has(fallbackProvider)) {
+    throw new ClientError(
+      `config.fallbackProvider cannot be ${fallbackProvider}`,
+    );
   }
   if (fallbackProvider !== undefined && config.persistent === true) {
     throw new ClientError(
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
     );
   }
-  assertMachineFields(config, provider);
+  assertStatelessProviderFields(config, provider);
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
@@ -206,13 +233,14 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     assertNetworkEnforceable(runsOn, network);
     assertResourceLimits(config, runsOn);
   }
-  assertEnvVarsAndOptions(config, provider);
+  assertEnvVarsAndOptions(config, provider, stored);
 
   return buildNormalizedConfig(
     config,
     provider,
     fallbackProvider,
     network,
+    image,
     snapshot,
     persistentFields,
   );
@@ -257,6 +285,7 @@ export function normalizeUpdateSandboxConfigInput(
     "config" in value
       ? normalizeSandboxConfig(
           mergeConfigObjects(existingConfig, asObject(value.config)),
+          existingConfig,
         )
       : existingConfig;
 
@@ -282,9 +311,43 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
+// A custom server is reached by one URL and nothing else, so the endpoint is
+// the one required option. A `${NAME}` token or header resolves on a code sync
+// only (core refuses one left over); a placeholder URL is never accepted.
+function assertCustomOptions(
+  options: Record<string, unknown>,
+  storedHeaders: unknown,
+): void {
+  if (typeof options.endpoint !== "string") {
+    throw new ClientError(
+      "config.options.endpoint is required for the custom provider: the https URL of your sandbox server",
+    );
+  }
+  const endpoint = assertPublicHttpsUrl(
+    options.endpoint,
+    "config.options.endpoint",
+  );
+  // Core appends `/exec` to the string, so anything after the path is lost.
+  if (endpoint.search || endpoint.hash) {
+    throw new ClientError(
+      "config.options.endpoint must not carry a query or fragment",
+    );
+  }
+  if (options.token !== undefined) {
+    requireString(options.token, "config.options.token");
+  }
+  if (options.headers !== undefined) {
+    normalizeHeaders(
+      options.headers,
+      isStringRecord(storedHeaders) ? storedHeaders : undefined,
+    );
+  }
+}
+
 function assertEnvVarsAndOptions(
   config: Record<string, unknown>,
   provider: SandboxProvider,
+  stored: SandboxConfig | undefined,
 ): void {
   if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
     throw new ClientError(
@@ -297,19 +360,32 @@ function assertEnvVarsAndOptions(
   if (config.options !== undefined) {
     validateProviderOptions(provider, config.options);
   }
+  if (provider === "custom") {
+    assertCustomOptions(config.options ?? {}, stored?.options?.headers);
+  }
 }
 
-function assertMachineFields(
-  config: Record<string, unknown>,
+// An image variant is a platform MicroVM image, so only lambda boots it, and a
+// capacity fallback onto another provider would silently run without it.
+function assertImage(
+  image: SandboxImage | undefined,
   provider: SandboxProvider,
+  fallbackProvider: SandboxProvider | undefined,
+  snapshot: string | undefined,
 ): void {
-  if (provider !== "machine") return;
-  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
-    if (config[field] !== undefined) {
-      throw new ClientError(
-        `config.${field} does not apply to the machine provider`,
-      );
-    }
+  if (image === undefined) return;
+  if (provider !== "lambda") {
+    throw new ClientError("config.image applies to the lambda provider only");
+  }
+  if (snapshot !== undefined) {
+    throw new ClientError(
+      "config.image and config.snapshot cannot both be set",
+    );
+  }
+  if (fallbackProvider !== undefined) {
+    throw new ClientError(
+      "config.image cannot be set with config.fallbackProvider: the fallback provider has no platform image variants",
+    );
   }
 }
 
@@ -318,7 +394,7 @@ function assertNetworkEnforceable(
   network: SandboxNetworkConfig,
 ): void {
   if (
-    (provider === "e2b" || provider === "machine") &&
+    (provider === "e2b" || STATELESS_SANDBOX_PROVIDERS.has(provider)) &&
     network.mode !== "allow-all"
   ) {
     throw new ClientError(
@@ -413,11 +489,27 @@ function assertRuntimes(value: unknown): void {
   }
 }
 
+// A stateless provider is never sized, snapshotted or reserved by Broods.
+function assertStatelessProviderFields(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
+  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+    if (config[field] !== undefined) {
+      throw new ClientError(
+        `config.${field} does not apply to the ${provider} provider`,
+      );
+    }
+  }
+}
+
 function buildNormalizedConfig(
   config: Record<string, unknown>,
   provider: SandboxProvider,
   fallbackProvider: SandboxProvider | undefined,
   network: SandboxNetworkConfig,
+  image: SandboxImage | undefined,
   snapshot: string | undefined,
   persistentFields: Pick<SandboxConfig, "lifecycle" | "onCreate" | "onResume">,
 ): SandboxConfig {
@@ -428,6 +520,7 @@ function buildNormalizedConfig(
     permissionMode:
       (config.permissionMode as PermissionMode | undefined) ?? "ask",
     ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
+    ...(image ? { image: image } : {}),
     ...(snapshot ? { snapshot: snapshot } : {}),
     ...(config.persistent !== undefined
       ? { persistent: config.persistent as boolean }

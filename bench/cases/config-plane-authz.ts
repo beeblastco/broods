@@ -1,5 +1,5 @@
 /**
- * The config-plane authorization decision. Every fp_sts_ request through the
+ * The config-plane authorization decision. Every bsts_ request through the
  * gateway resolves to a role and runs `authorize` before anything else, and a
  * default-deny walks the entire rule list, so the miss, not the hit, is the
  * case worth holding a baseline on.
@@ -79,7 +79,7 @@ const POLICY: PolicyDocument = {
 const PRINCIPAL: ApiPrincipal = {
   kind: "role",
   accountId: "acc_5f21c9",
-  roleId: "fp_role_8c1d4a9e",
+  roleId: "brole_8c1d4a9e",
   policy: POLICY,
   projectId: "prj_acme",
   stageId: "stg_production",

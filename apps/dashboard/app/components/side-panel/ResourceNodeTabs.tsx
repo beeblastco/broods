@@ -7,6 +7,7 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
+import { isWorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
   ToggleRow,
@@ -31,6 +32,8 @@ import {
   machineState,
 } from "@/app/lib/machineConnection";
 import { isPlainObject } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
+import { useQuery } from "convex/react";
 import { useState } from "react";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
@@ -40,7 +43,7 @@ const WORKSPACE_DEFAULT_CONFIG = {
 };
 
 const SANDBOX_DEFAULT_CONFIG = {
-  provider: "sandbox",
+  provider: "lambda",
   permissionMode: "ask",
 };
 
@@ -111,6 +114,29 @@ export function SandboxResourceDetailsTab({
     : {};
   // Convex rejects sizing, persistence and egress rules on a machine record.
   const machine = config.provider === "machine";
+  const provider =
+    typeof config.provider === "string" ? config.provider : "lambda";
+  const snapshot =
+    typeof config.snapshot === "string" ? config.snapshot : undefined;
+  const hasSnapshots = provider === "sandbox" || provider === "lambda";
+  const snapshots = useQuery(
+    api.sandbox.snapshots.listForActiveOrg,
+    hasSnapshots ? {} : "skip",
+  );
+  // The account's ready snapshots for this provider, pinned by provider image id.
+  // A pin set in code that is not in the list still shows, so the select is honest.
+  const snapshotOptions = [
+    { value: "none", label: "None" },
+    ...(snapshots ?? [])
+      .filter((row) => row.provider === provider && row.status === "active")
+      .map((row) => ({ value: row.externalImageId, label: row.name })),
+  ];
+  if (
+    snapshot &&
+    !snapshotOptions.some((option) => option.value === snapshot)
+  ) {
+    snapshotOptions.push({ value: snapshot, label: snapshot });
+  }
 
   function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: { ...config, ...patch } });
@@ -124,10 +150,11 @@ export function SandboxResourceDetailsTab({
             network: { mode: "allow-all" },
             persistent: undefined,
             size: undefined,
+            image: undefined,
             snapshot: undefined,
             memoryLimit: undefined,
           }
-        : { provider: provider },
+        : { provider: provider, image: undefined, snapshot: undefined },
     );
   }
 
@@ -158,17 +185,52 @@ export function SandboxResourceDetailsTab({
           label="Provider"
           disabled={managedByCode}
           value={
-            typeof config.provider === "string" ? config.provider : "sandbox"
+            typeof config.provider === "string" ? config.provider : "lambda"
           }
           onValueChange={setProvider}
           options={[
             { value: "sandbox", label: "Sandbox" },
-            { value: "lambda", label: "Managed VM" },
+            { value: "lambda", label: "Lambda" },
             { value: "e2b", label: "e2b" },
             { value: "daytona", label: "Daytona" },
             { value: "machine", label: "Your computer" },
           ]}
         />
+        {provider === "lambda" && (
+          <SelectField
+            label="Image"
+            disabled={managedByCode}
+            value={typeof config.image === "string" ? config.image : "default"}
+            onValueChange={(image) =>
+              setConfig({
+                image: image === "default" ? undefined : image,
+                // Exclusive with an image: an ARN pin, or a fallback that could not boot it.
+                snapshot: undefined,
+                fallbackProvider: undefined,
+              })
+            }
+            options={[
+              { value: "default", label: "Default" },
+              { value: "obscura", label: "Obscura browser" },
+              { value: "browser", label: "Chromium browser" },
+            ]}
+          />
+        )}
+        {hasSnapshots && (
+          <SelectField
+            label="Snapshot"
+            disabled={managedByCode}
+            value={snapshot ?? "none"}
+            onValueChange={(next) =>
+              setConfig({
+                snapshot: next === "none" ? undefined : next,
+                // A lambda snapshot replaces the image variant.
+                ...(next !== "none" ? { image: undefined } : {}),
+              })
+            }
+            options={snapshotOptions}
+          />
+        )}
         <SelectField
           label="Permission mode"
           disabled={managedByCode}
@@ -245,6 +307,9 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
+  const isolation = isWorkspaceIsolation(config.isolation)
+    ? config.isolation
+    : undefined;
   const storage: Record<string, unknown> = isPlainObject(config.storage)
     ? config.storage
     : { provider: "s3" };
@@ -429,12 +494,12 @@ export function WorkspaceResourceDetailsTab({
         <ToggleRow
           label="Isolation"
           description="Split the filesystem per conversation instead of sharing one root."
-          checked={config.isolation === true}
-          onCheckedChange={(isolation) =>
-            setConfig({ isolation: isolation ? true : undefined })
+          checked={isolation !== undefined}
+          onCheckedChange={(checked) =>
+            setConfig({ isolation: checked ? "conversation" : undefined })
           }
         />
-        {config.isolation === true && (
+        {isolation === "conversation" && (
           <ExpandBlock>
             <p className="text-2xs text-muted-foreground">
               Every channel attached to this workspace must set `partition`. A

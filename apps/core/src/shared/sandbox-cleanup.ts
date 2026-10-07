@@ -5,7 +5,11 @@
  * no longer be what any config says.
  */
 
-import { createSandboxExecutor } from "../harness/sandbox/index.ts";
+import {
+  SANDBOX_PROVIDERS,
+  STATELESS_SANDBOX_PROVIDERS,
+} from "@broods/convex/model/sandboxRules";
+import { providerExecutor } from "../harness/sandbox/index.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
@@ -26,14 +30,11 @@ import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { runsOnOwnCredentials } from "./workspaces.ts";
 
-const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
-  "cloudflare",
-  "daytona",
-  "e2b",
-  "lambda",
-  "sandbox",
-  "vercel",
-];
+// Every provider that reserves a machine Broods may have to tear down.
+const RELEASABLE_PROVIDERS: readonly SandboxProvider[] =
+  SANDBOX_PROVIDERS.filter(
+    (provider): boolean => !STATELESS_SANDBOX_PROVIDERS.has(provider),
+  );
 
 /**
  * Release the reservations the sweeper found expired. The row goes first, as a
@@ -197,7 +198,10 @@ async function releaseOnProvider(
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {
     try {
-      await createSandboxExecutor(config).release?.({
+      // The candidates come from a reserving provider, so every executor releases.
+      const executor = providerExecutor(config);
+      if (!executor.release) continue;
+      await executor.release({
         namespace: namespace,
         expectedExternalId: target.externalId,
       });

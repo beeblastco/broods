@@ -83,14 +83,17 @@ export function wrapToolExecute(
   return wrapped;
 }
 
-/** Revalidates the fencing token immediately before any executable tool starts. */
+/**
+ * Revalidates the fencing token before any executable tool starts, unless a
+ * fenced call proved it within the session's owner check interval.
+ */
 export function wrapToolsWithOwnerFence(
   tools: ToolSet,
-  session: Pick<Session, "assertCurrentOwner">,
+  session: Pick<Session, "assertRecentOwner">,
 ): ToolSet {
   return wrapToolExecute(tools, () => ({
     before: async (input: unknown) => {
-      await session.assertCurrentOwner?.();
+      await session.assertRecentOwner?.();
 
       return input;
     },

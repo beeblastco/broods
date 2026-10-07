@@ -35,7 +35,7 @@ cd apps/core && bun run serve          # fill apps/core/.env first — see its .
 
 # 2. In the demo's .env.local, point the SDK at it:
 #    BROODS_BASE_URL=http://localhost:3000
-#    BROODS_API_KEY=fp_agent_...        # a runtime key for the demo account
+#    BROODS_API_KEY=bsk_...              # a runtime key for the demo account
 
 # 3. Run the demo from its own folder.
 cd packages/demos/basic-stream && bun run start

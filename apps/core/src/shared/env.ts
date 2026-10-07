@@ -1,3 +1,9 @@
+// How long one worker slot may run a turn. The run token TTL follows it.
+export const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
+  "WORKER_TIMEOUT_BUDGET_MS",
+  10 * 60 * 1000,
+);
+
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);

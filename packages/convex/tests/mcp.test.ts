@@ -266,7 +266,39 @@ describe("normalizeMcpInput", () => {
         { name: "blender", sandbox: "" },
         { requireConnection: true },
       ),
-    ).rejects.toThrow("sandbox must be the name of a machine sandbox");
+    ).rejects.toThrow("sandbox must be the name of the sandbox that serves it");
+  });
+
+  test("command is a bounded argv, only for a server on a sandbox", async () => {
+    const input = await normalizeMcpInput(
+      { name: "obscura", sandbox: "web", command: ["obscura", "mcp"] },
+      { requireConnection: true },
+    );
+    expect(input.command).toEqual(["obscura", "mcp"]);
+    for (const command of [
+      [],
+      "obscura mcp",
+      ["obscura", ""],
+      [42],
+      Array.from({ length: 33 }, () => "a"),
+      ["a".repeat(4097)],
+    ]) {
+      await expect(
+        normalizeMcpInput(
+          { name: "obscura", sandbox: "web", command: command },
+          { requireConnection: true },
+        ),
+      ).rejects.toThrow("command must be 1-32 non-empty strings");
+    }
+    // Every write checks the row it produces, so a url row or a patch carrying
+    // command alone is refused there.
+    expect(() =>
+      assertMcpRow({
+        transport: "http",
+        url: SERVER_URL,
+        command: ["obscura", "mcp"],
+      }),
+    ).toThrow("command applies to a server on a sandbox");
   });
 
   test("headers cannot reach a machine row through a patch", () => {
@@ -316,6 +348,26 @@ describe("normalizeMcpInput", () => {
         { requireConnection: true },
       ),
     ).rejects.toThrow("headers values for X-Api-Key must reference");
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          headers: { Key: "raw-secret" },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("headers values for Key must reference");
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          headers: { aUtHoRiZaTiOn: "Bearer sk-live-1234" },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("headers values for aUtHoRiZaTiOn must reference");
   });
 
   test("rejects an inline secret sitting beside a ref", async () => {
@@ -500,6 +552,57 @@ describe("normalizeMcpInput", () => {
     ).rejects.toThrow("drop the explicit authorization header");
   });
 
+  test("a command lives on a sandbox row and leaves with a transport switch", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const serverId = await seedServer(tt, scope);
+
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: serverId,
+        command: ["obscura", "mcp"],
+      }),
+    ).rejects.toThrow("command applies to a server on a sandbox");
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "machine",
+      sandbox: "web",
+      command: ["obscura", "mcp"],
+    });
+    // Restating the sandbox without a command clears it, as a sync that drops it does.
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "machine",
+      sandbox: "web",
+    });
+    const cleared = await tt.query(internal.account.mcp.getById, {
+      accountId: scope.accountId,
+      serverId: serverId,
+    });
+    expect(cleared?.command).toBeUndefined();
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "machine",
+      sandbox: "web",
+      command: ["obscura", "mcp"],
+    });
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      transport: "http",
+      url: SERVER_URL,
+    });
+    const row = await tt.query(internal.account.mcp.getById, {
+      accountId: scope.accountId,
+      serverId: serverId,
+    });
+    expect(row?.command).toBeUndefined();
+  });
+
   test("create checks the oauth invariants on the row it writes", async () => {
     const tt = t();
     const scope = await seedScope(tt);
@@ -626,5 +729,52 @@ describe("hosted rows", () => {
     expect(listed[0]?._id).toBe(serverId);
     expect(listed[0]?.transport).toBe("hosted");
     expect(listed[0]?.url).toBeUndefined();
+  });
+
+  test("runtime is auto or lambda, and only a hosted row picks one", async () => {
+    await expect(
+      normalizeMcpInput({ runtime: "workers" }, { requireConnection: false }),
+    ).rejects.toThrow('runtime must be "auto" or "lambda"');
+    expect(
+      (
+        await normalizeMcpInput(
+          { runtime: "lambda" },
+          { requireConnection: false },
+        )
+      ).runtime,
+    ).toBe("lambda");
+
+    const tt = t();
+    const scope = await seedScope(tt);
+    const httpId = await seedServer(tt, scope);
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: httpId,
+        runtime: "lambda",
+      }),
+    ).rejects.toThrow("runtime applies to hosted (bundle) servers, not http");
+
+    const hostedId = await tt.mutation(internal.account.mcp.create, {
+      accountId: scope.accountId,
+      projectId: scope.projectId,
+      stageId: scope.stageId,
+      name: "hosted",
+      transport: "hosted",
+      bundleStorageKey: "account-mcp/acct/bundles/x.mjs",
+      sha256: "a".repeat(64),
+      runtime: "lambda",
+    });
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: hostedId,
+      transport: "http",
+      url: SERVER_URL,
+    });
+    const row = await tt.query(internal.account.mcp.getById, {
+      accountId: scope.accountId,
+      serverId: hostedId,
+    });
+    expect(row?.runtime).toBeUndefined();
   });
 });

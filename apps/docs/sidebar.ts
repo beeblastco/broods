@@ -26,6 +26,16 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guides/tools", label: "Tools and MCP" },
         { type: "doc", id: "guides/connections", label: "Connections" },
         {
+          type: "doc",
+          id: "guides/cloudflare-mcp",
+          label: "Cloudflare MCP runtime",
+        },
+        {
+          type: "doc",
+          id: "guides/cloudflare-browser",
+          label: "Cloudflare Browser Run",
+        },
+        {
           type: "category",
           label: "Sandboxes",
           link: { type: "doc", id: "guides/sandboxes/index" },
@@ -49,6 +59,11 @@ const sidebars: SidebarsConfig = {
               type: "doc",
               id: "guides/sandboxes/machine",
               label: "Your computer",
+            },
+            {
+              type: "doc",
+              id: "guides/sandboxes/custom",
+              label: "Your own server",
             },
           ],
         },
@@ -153,6 +168,13 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "internals/self-hosting", label: "Self-hosting" },
         { type: "doc", id: "internals/operations", label: "Operations" },
         { type: "doc", id: "internals/ci-cd", label: "CI/CD" },
+      ],
+    },
+    {
+      type: "category",
+      label: "Proposals",
+      items: [
+        { type: "doc", id: "internals/jev-judge", label: "Judge (proposal)" },
       ],
     },
   ],

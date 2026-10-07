@@ -389,7 +389,7 @@ describe("create/update/remove", () => {
 describe("CLI cron delete", () => {
   test("deletes only the route stage's job of that name", async () => {
     const tt = t();
-    const secret = "fp_secret_cron_delete";
+    const secret = "bask_secret_cron_delete";
     const { devCronId, prodCronId } = await tt.run(async (ctx) => {
       const now = Date.now();
       const orgId = await ctx.db.insert("orgs", {

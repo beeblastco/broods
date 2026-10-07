@@ -9,6 +9,7 @@ import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   org: Doc<"orgs">;
@@ -31,7 +32,7 @@ export function OrgDangerPanel({ org }: Props): React.JSX.Element {
       setDeleteOpen(false);
       router.replace("/");
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : "Delete failed");
+      setDeleteError(toErrorMessage(err));
       setDeleting(false);
     }
   }

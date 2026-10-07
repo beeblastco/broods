@@ -3,12 +3,10 @@
 
 Model of how a manifest sync treats crons. `desiredCrons`
 (`packages/convex/cli/httpRoutes.ts`) keys each cron by its resource name, whatever
-`config.name` says, and carries a different `config.name` as the legacy name an older
-sync created the cron under. The main sync prunes undeclared agents and deletes their
-crons with them (`deleteAgentRow` in `packages/convex/model/agentSync.ts`). `syncCrons`
-then lets each job claim one stage cron, by its own name first and by legacy name only
-among unclaimed rows, patches it, which renames a legacy one in place, creates the
-rest, and with prune drops the stage agents' unclaimed crons by id.
+`config.name` says. The main sync prunes undeclared agents and deletes their crons with
+them (`deleteAgentRow` in `packages/convex/model/agentSync.ts`). `syncCrons` then lets
+each job claim the stage cron under its own name, patches it, creates the rest, and
+with prune drops the stage agents' unclaimed crons by id.
 -/
 
 namespace Broods.SyncCron
@@ -33,17 +31,15 @@ structure CronResource where
   agent : Nat
   deriving DecidableEq, Repr
 
-/-- One entry of `desiredCrons`: the job, and the `legacyName` it may exist under. -/
+/-- One entry of `desiredCrons`. -/
 structure DesiredCron where
   name : Nat
   agent : Nat
-  legacy : Option Nat
   deriving DecidableEq, Repr
 
-/-- `desiredCrons`: a cron is keyed by its resource name; a different `config.name`
-is only a legacy name to find it by. -/
+/-- `desiredCrons`: a cron is keyed by its resource name; `config.name` plays no part. -/
 def desiredCrons (rs : List CronResource) : List DesiredCron :=
-  rs.map fun r => ⟨r.resourceName, r.agent, r.configName.filter (· != r.resourceName)⟩
+  rs.map fun r => ⟨r.resourceName, r.agent⟩
 
 /-- Every cron targets an agent that exists. -/
 def Server.noOrphans (s : Server) : Prop := ∀ c ∈ s.crons, c.agent ∈ s.agents
@@ -57,22 +53,13 @@ def pruneAgents (stageAgents declared : List Nat) (s : Server) : Server :=
 def byName (stageAgents : List Nat) (cs : List Cron) (n : Nat) : Option Cron :=
   cs.find? fun c => stageAgents.contains c.agent && c.name == n
 
-/-- The `syncCrons` loop's claims, in job order: the row a job holds by its own name,
-or else by its legacy name among the rows no claim holds yet. `kept` starts with every
-own-name row. -/
-def claims (stageAgents : List Nat) (existing : List Cron) :
-    List Nat → List DesiredCron → List (DesiredCron × Option Nat)
-  | _, [] => []
-  | kept, d :: ds =>
-    match byName stageAgents existing d.name with
-    | some c => (d, some c.id) :: claims stageAgents existing kept ds
-    | none =>
-      match d.legacy.bind (byName stageAgents (existing.filter (!kept.contains ·.id))) with
-      | some c => (d, some c.id) :: claims stageAgents existing (c.id :: kept) ds
-      | none => (d, none) :: claims stageAgents existing kept ds
+/-- The `syncCrons` loop's claims, in job order: the stage cron each job holds by its
+own name. -/
+def claims (stageAgents : List Nat) (existing : List Cron) (ds : List DesiredCron) :
+    List (DesiredCron × Option Nat) :=
+  ds.map fun d => (d, (byName stageAgents existing d.name).map (·.id))
 
-/-- A cron after the loop: patched with the job that claimed it, which renames a legacy
-one in place, or else untouched. -/
+/-- A cron after the loop: patched with the job that claimed it, or else untouched. -/
 def patch (cl : List (DesiredCron × Option Nat)) (c : Cron) : Cron :=
   match cl.find? (·.2 == some c.id) with
   | some p => { c with name := p.1.name, agent := p.1.agent }
@@ -82,8 +69,7 @@ def patch (cl : List (DesiredCron × Option Nat)) (c : Cron) : Cron :=
 `fresh` up), and with prune drop the stage agents' crons no job claimed. -/
 def syncCrons (stageAgents : List Nat) (desired : List DesiredCron) (prune : Bool)
     (fresh : Nat) (s : Server) : Server :=
-  let own := desired.filterMap fun d => (byName stageAgents s.crons d.name).map (·.id)
-  let cl := claims stageAgents s.crons own desired
+  let cl := claims stageAgents s.crons desired
   let rows := if prune then
     s.crons.filter (fun c => !stageAgents.contains c.agent || cl.any (·.2 == some c.id))
     else s.crons
@@ -100,20 +86,10 @@ theorem pruneAgents_noOrphans {stageAgents declared : List Nat} {s : Server}
   exact ⟨h c hc.1, hc.2⟩
 
 /-- Every claim is one of the jobs. -/
-theorem claims_mem {stageAgents : List Nat} {existing : List Cron} :
-    ∀ {kept : List Nat} {ds : List DesiredCron} {p : DesiredCron × Option Nat},
-      p ∈ claims stageAgents existing kept ds → p.1 ∈ ds
-  | _, [], _, h => by simp [claims] at h
-  | kept, d :: ds, p, h => by
-    simp only [claims] at h
-    split at h
-    · rcases List.mem_cons.mp h with rfl | h
-      · exact List.mem_cons_self
-      · exact List.mem_cons_of_mem _ (claims_mem h)
-    · split at h <;> rcases List.mem_cons.mp h with rfl | h
-      all_goals first
-        | exact List.mem_cons_self
-        | exact List.mem_cons_of_mem _ (claims_mem h)
+theorem claims_mem {stageAgents : List Nat} {existing : List Cron} {ds : List DesiredCron}
+    {p : DesiredCron × Option Nat} (h : p ∈ claims stageAgents existing ds) : p.1 ∈ ds := by
+  obtain ⟨d, hd, rfl⟩ := List.mem_map.mp h
+  exact hd
 
 /-- A created cron carries a job's name and agent. -/
 theorem created_job {cl : List (DesiredCron × Option Nat)} {fresh : Nat} {c : Cron}
@@ -187,23 +163,16 @@ theorem sync_resource_names {stageAgents : List Nat} {rs : List CronResource}
 
 /-! ## Witnesses -/
 
-/-- A stray `config.name` does not split the key: the cron is keyed `1`, and `9` is
-only the name it may exist under. -/
-example : desiredCrons [⟨1, some 9, 2⟩] = [⟨1, 2, some 9⟩] := by decide
+/-- A stray `config.name` does not split the key: the cron is keyed `1`. -/
+example : desiredCrons [⟨1, some 9, 2⟩] = [⟨1, 2⟩] := by decide
 
-/-- A cron an older sync created under `config.name` 9 is renamed in place: same row,
-no duplicate firing next to it. -/
+/-- A cron stored under another name is not found by `config.name`: a pruning sync
+replaces it, so the job still fires once. -/
 example : syncCrons [2] (desiredCrons [⟨1, some 9, 2⟩]) true 0 ⟨[2], [⟨9, 2, 5⟩]⟩ =
-    ⟨[2], [⟨1, 2, 5⟩]⟩ := by decide
+    ⟨[2], [⟨1, 2, 0⟩]⟩ := by decide
 
-/-- A job's legacy name never takes the cron another job owns by name, even when that
-job is listed first: job 2 is created instead of stealing job 1's row. -/
-example : syncCrons [2] [⟨2, 2, some 1⟩, ⟨1, 2, none⟩] true 7 ⟨[2], [⟨1, 2, 5⟩]⟩ =
-    ⟨[2], [⟨1, 2, 5⟩, ⟨2, 2, 7⟩]⟩ := by decide
-
-/-- A cron under the job's name and another under its legacy name: the first is kept,
-the second pruned, so the job fires once. -/
-example : syncCrons [2] [⟨1, 2, some 9⟩] true 0 ⟨[2], [⟨1, 2, 5⟩, ⟨9, 2, 6⟩]⟩ =
+/-- A cron under the job's name is patched in place and a stray one beside it pruned. -/
+example : syncCrons [2] [⟨1, 2⟩] true 0 ⟨[2], [⟨1, 2, 5⟩, ⟨9, 2, 6⟩]⟩ =
     ⟨[2], [⟨1, 2, 5⟩]⟩ := by decide
 
 /-- Pruning agent 2 takes its cron along instead of leaving it to fire at nothing. -/

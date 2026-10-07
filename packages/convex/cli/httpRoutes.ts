@@ -14,6 +14,7 @@ import {
   isExternalResourceKind,
   placeholderIds,
   resourceName,
+  rewriteEnvRefs,
   type ExternalResourceKind,
 } from "../model/cliSync";
 import { reservedBy } from "../model/cliSyncResources";
@@ -21,7 +22,12 @@ import {
   normalizeAccountHookUpload,
   type RequiredAccountHookUpload,
 } from "../model/accountHooks";
-import { assertMcpRow, normalizeMcpInput, type McpInput } from "../model/mcp";
+import {
+  assertMcpRow,
+  MCP_CLEARABLE_FIELDS,
+  normalizeMcpInput,
+  type McpInput,
+} from "../model/mcp";
 import { normalizeCreateCronInput } from "../model/cronRules";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
@@ -30,7 +36,7 @@ import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
 
-/** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
+/** Resolved CLI auth: an account key, a scoped project key, or a CLI token. */
 export type CliAuth =
   | {
       accountId: Id<"accounts">;
@@ -85,7 +91,7 @@ type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 /**
  * `kind:name` of every external resource another stage of the account
  * manages. Skills and hooks are account-wide rows keyed by name, so this set
- * is what keeps a stage-scoped deploy key from replacing them.
+ * is what keeps a stage-scoped project key from replacing them.
  */
 type ForeignExternalResources = ReadonlySet<string>;
 
@@ -148,12 +154,12 @@ export async function handleEnvRoute(
   auth: CliAuth,
 ): Promise<Response> {
   if (req.method === "GET") {
-    // A deploy key deploys; it does not carry the stage's secrets out. Reveal
-    // stays with a person (`broods login`) or the org secret.
+    // A project key deploys; it does not carry the stage's secrets out. Reveal
+    // stays with a person (`broods login`) or the account key.
     if ("deployKeyId" in auth) {
       return jsonError(
         403,
-        "Deploy keys cannot read environment values; use `broods login` or the org secret",
+        "Project keys cannot read environment values; use `broods login` or the account key",
       );
     }
     const result = await ctx.runMutation(internal.cli.sync.getEnvBySecretHash, {
@@ -393,7 +399,7 @@ function cronStatus(value: unknown): "active" | "paused" {
   throw new ClientError("Cron job status must be active or paused");
 }
 
-// Matches only this stage's crons: a deploy key pinned to dev must not delete
+// Matches only this stage's crons: a project key pinned to dev must not delete
 // production's job of the same name.
 async function deleteCronByName(
   ctx: ActionCtx,
@@ -418,14 +424,11 @@ async function deleteCronByName(
   });
 }
 
-/**
- * The manifest's crons, keyed by resource name. `legacyName` is a different
- * `config.name` an older sync may have created the cron under.
- */
+/** The manifest's crons, keyed by resource name. */
 function desiredCrons(
   manifest: CliManifest,
   agentIds: Record<string, string>,
-): Array<{ job: DesiredCron; legacyName?: string }> {
+): DesiredCron[] {
   return manifest.resources
     .filter((resource) => resource.kind === "cron")
     .map((resource) => {
@@ -442,7 +445,7 @@ function desiredCrons(
 
       // A cron is keyed by its resource name, the key the diff and the
       // generated ids use, whatever `config.name` says.
-      const job = stripUndefined({
+      return stripUndefined({
         name: resource.name,
         description: optionalStringField(
           config.description ?? resource.description,
@@ -457,11 +460,6 @@ function desiredCrons(
         timezone: optionalStringField(config.timezone),
         status: cronStatus(config.status),
       });
-      const legacyName = optionalStringField(config.name);
-
-      return legacyName && legacyName !== resource.name
-        ? { job: job, legacyName: legacyName }
-        : { job: job };
     });
 }
 
@@ -535,9 +533,9 @@ async function handleManifestSync(
     },
   );
   try {
-    // Skills and hooks are account-wide, so the org secret and a login token
+    // Skills and hooks are account-wide, so the account key and a login token
     // may move a name between stages (dev then deploy). Only a stage-scoped
-    // deploy key is fenced to the names another stage recorded, read before this
+    // project key is fenced to the names another stage recorded, read before this
     // sync records anything.
     const fenced = "deployKeyId" in auth;
     const foreign =
@@ -631,7 +629,7 @@ async function handleManifestSync(
       },
     );
 
-    // Mint or reuse the stage's recoverable runtime API key so the CLI
+    // Mint or reuse the stage's recoverable runtime key so the CLI
     // can write BROODS_API_KEY locally on first or later deploys.
     const deployment = await ctx.runMutation(
       internal.cli.sync.ensureRuntimeKeyBySecretHash,
@@ -864,24 +862,9 @@ async function syncCrons(
   });
   const stageAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
   const cronIds: Record<string, string> = {};
-  // Every job's own name claims its cron before any legacy name can, and a
-  // cron is claimed once.
-  const own = desired.map(({ job }) =>
-    stageCronByName(existing, stageAgentIds, job.name),
-  );
-  const kept = new Set<string>(own.flatMap((row) => (row ? [row._id] : [])));
-
-  for (const [index, { job, legacyName }] of desired.entries()) {
-    // Patching a cron found under its legacy name renames it in place.
-    const existingJob =
-      own[index] ??
-      (legacyName
-        ? stageCronByName(
-            existing.filter((row) => !kept.has(row._id)),
-            stageAgentIds,
-            legacyName,
-          )
-        : undefined);
+  const kept = new Set<string>();
+  for (const job of desired) {
+    const existingJob = stageCronByName(existing, stageAgentIds, job.name);
     if (existingJob) {
       kept.add(existingJob._id);
       await ctx.runMutation(internal.agent.crons.update, {
@@ -1034,7 +1017,11 @@ async function prepareExternalResources(
   for (const resource of manifest.resources.filter(
     (entry) => entry.kind === "mcp",
   )) {
-    const config = asRecord(resource.config, `mcp:${resource.name}`);
+    // env() refs (an oauth secret) register as `${NAME}`, never the value.
+    const config = rewriteEnvRefs(
+      asRecord(resource.config, `mcp:${resource.name}`),
+      new Set(),
+    );
     const input = await normalizeMcpInput(
       {
         name: resource.name,
@@ -1077,7 +1064,7 @@ async function syncMcpResources(
 
   for (const { name, input } of desired) {
     const current = existing.get(name);
-    const bundleStorageKey = await storeMcpBundle(
+    const storedBundle = await storeMcpBundle(
       ctx,
       accountId,
       input,
@@ -1088,9 +1075,9 @@ async function syncMcpResources(
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
       ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
-      ...(bundleStorageKey !== undefined
-        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
-        : {}),
+      // A synced machine row runs exactly the command its definition states.
+      ...(input.transport === "machine" ? { command: input.command } : {}),
+      ...storedBundle,
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),
@@ -1099,19 +1086,30 @@ async function syncMcpResources(
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),
+      // The manifest is the whole truth: dropping `runtime` from it means "auto".
+      ...(input.transport === "hosted"
+        ? { runtime: input.runtime ?? "auto" }
+        : {}),
     };
     if (current) {
+      // The manifest is the whole server, so a field it dropped is cleared.
+      const clear = MCP_CLEARABLE_FIELDS.filter(
+        (field) => input[field] === undefined && current[field] !== undefined,
+      );
       // An identical patch is skipped: a write would bump updatedAt, which is
       // core's MCP cache identity, and re-probe every server on the next run.
       const row = current as unknown as Record<string, unknown>;
-      const unchanged = Object.entries(patch).every(
-        ([key, value]) => stableJson(value) === stableJson(row[key]),
-      );
+      const unchanged =
+        clear.length === 0 &&
+        Object.entries(patch).every(
+          ([key, value]) => stableJson(value) === stableJson(row[key]),
+        );
       if (!unchanged) {
         await ctx.runMutation(internal.account.mcp.update, {
           accountId: accountId,
           serverId: current._id,
           ...patch,
+          clear: clear,
         });
       }
       ids[name] = current._id;
@@ -1242,7 +1240,7 @@ async function validateManifest(
     }),
   });
   const agentNames = names("agent").map((name) => resourceName(name));
-  for (const { job } of desiredCrons(manifest, placeholderIds(agentNames))) {
+  for (const job of desiredCrons(manifest, placeholderIds(agentNames))) {
     normalizeCreateCronInput(job);
   }
 }

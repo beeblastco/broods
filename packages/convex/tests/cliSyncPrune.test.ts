@@ -17,7 +17,7 @@ const modules = import.meta.glob("../**/*.ts");
 
 const CORE_URL = "https://core.test";
 const PROJECT = "prune";
-const SECRET = "fp_secret_prune";
+const SECRET = "bask_secret_prune";
 const STAGE = "development";
 const STAGE_PATH = `/v1/account/projects/${PROJECT}/stages/${STAGE}`;
 

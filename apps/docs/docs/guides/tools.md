@@ -7,7 +7,7 @@ An agent gets tools from four places:
 | Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `computerUse` |
 | MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                         |
 | Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`             |
-| Broods features       | the matching agent setting       | `load_skill`, `run_subagent`, `schedule`, `ask_questions`   |
+| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`          |
 
 This page covers the first two, approvals, and the built-in tools. Sandbox tools are in [Sandboxes](sandboxes/index.md).
 
@@ -36,7 +36,7 @@ A tool that your code would execute, such as the Tavily AI SDK package, cannot g
 
 ## MCP servers
 
-Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`.
+Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at. Other non-text blocks are named in the text.
 
 ### Connect a server
 
@@ -61,7 +61,11 @@ Rules:
 - `name` is 1 to 32 lowercase letters, digits or hyphens, starts with a letter, and is unique per stage.
 - The URL must be public. Private, loopback, link-local and metadata addresses are refused, and so are redirects. For a server on `localhost` or your network, run it on your computer with the [machine sandbox](sandboxes/machine.md).
 - Credential headers such as `Authorization` or `X-Api-Key` must name an environment variable inside a plain string, `"Bearer ${SEARCH_TOKEN}"`. Inline secrets are rejected. A template literal around `env()` sends `[object Object]`.
+- Reads show a header's value only while it is `${NAME}` refs. Any other value reads back as `********`, since a sync stores refs resolved. Sending `********` back keeps the stored value.
+- Every agent that connects the server gets its headers and `oauth`, and an agent's own value wins. Header names compare case-insensitively. `broods dev` pushes the named variables from `.env.local`, and a sync is refused while one has no value on the stage.
+- Removing `headers` or `allowedTools` from `defineMcp` removes them from the server on the next sync.
 - Tool lists are cached for the time the server's listing allows. Server-pushed list changes are not supported.
+- Every request carries `X-Broods-Agent-Id` (the calling agent) and, when the requester is known, `X-Broods-Principal` (base64url JSON of the delegation chain: who asked, then each agent that delegated, the caller last; ids and kinds only, no display names). A server can authorize per agent on them. Hosted servers read the same headers off the `Request` they are handed. Both names are reserved: a configured header of either name, in any case, is dropped. Tool lists are shared across agents, so authorize in the call, not by hiding tools from the list.
 
 ### Servers with expiring OAuth tokens
 
@@ -81,16 +85,8 @@ export const gmail = defineMcp({
 
 export const assistant = defineAgent({
   name: "assistant",
-  mcp: {
-    [gmail.name]: {
-      enabled: true,
-      // repeat the secrets so they resolve into the agent's encrypted config
-      oauth: {
-        clientSecret: env("GMAIL_CLIENT_SECRET"),
-        refreshToken: env("GMAIL_REFRESH_TOKEN"),
-      },
-    },
-  },
+  // the CLI copies the server's oauth here, where the secrets resolve
+  mcp: { [gmail.name]: { enabled: true } },
 });
 ```
 
@@ -118,14 +114,47 @@ Install `@modelcontextprotocol/server` in your project. The CLI bundles the file
 
 - The factory must build a new server on every call. Calls from one model step run at the same time, and a shared instance breaks.
 - Bundles are capped at 50 MB. The calls from one model step to one server run as a batch, and the batch shares a 30 second deadline and 16 MB of output.
-- Hosted servers run isolated per account. The first call after an idle period is a cold start.
+- Hosted servers run outside the Broods core: in a Workers isolate per bundle, or one Lambda child process per bundle. Accounts can share a warm runner environment today, so keep secrets out of module-level state. The first call after an idle period is a cold start.
 - Module-level state, such as a memoized client, survives between calls of the same bundle.
+- By default (`runtime: "auto"`) Broods runs a server on [Cloudflare Dynamic Workers](cloudflare-mcp.md) when its bundle can run there, and on AWS Lambda otherwise. Set `runtime: "lambda"` to always run it on Lambda.
 
 See the runnable [`mcp-connect` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect).
+
+For a worked hosted server, see [Cloudflare Browser Run](cloudflare-browser.md).
 
 ### Run a server on your computer
 
 A server in your `.mcp.json`, such as a Blender or filesystem server, can run on your machine and serve cloud agents. Name the machine sandbox instead of a URL. See [Machine](sandboxes/machine.md).
+
+### Run a server in a sandbox
+
+A stdio server installed in a sandbox image can run inside a persistent `lambda` sandbox. Name the sandbox and give the server's `command`:
+
+```ts
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  persistent: true,
+  network: { mode: "allow-all" },
+});
+export const obscura = defineMcp({
+  name: "obscura",
+  sandbox: web,
+  command: ["obscura", "mcp"],
+});
+export const researcher = defineAgent({
+  name: "researcher",
+  sandboxes: [web],
+  mcp: { obscura: { enabled: true } },
+});
+```
+
+- The sandbox must be `persistent: true` and listed in the agent's `sandboxes`.
+- The server starts on the first call and keeps running for as long as the reserved sandbox lives, so its state, such as a browser session, carries over between calls and runs.
+- `command` is required on a `lambda` sandbox. A machine sandbox ignores it and uses its own `.mcp.json`.
+- The tool listing is kept until the server's definition changes, so a run does not start the sandbox just to list tools. The first call starts it.
+- The server shares the VM that `bash` uses on that sandbox, including its workspace.
 
 ## Approvals
 
@@ -143,7 +172,7 @@ Keep approval off for agents that only live in channels. Approval also breaks su
 
 `ask_questions` lets the agent ask one to three multiple-choice questions and keep working. It is on automatically for channel and WebSocket runs, which have somewhere to post the question and resume. Plain HTTP runs, cron runs and subagents do not get it.
 
-Each question has an `id`, a short `header`, the `question`, two to four `options`, and optionally `allowFreeText`. With `blocking: false`, the default, the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
+Each question has an `id`, a short `header`, the `question`, and two to four `options`. Every question also takes the person's own typed answer, so the agent never needs an "Other" option. With `blocking: false`, the default, the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
 
 | Where       | The question appears as                  | The user answers by                                                                            |
 | ----------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -153,6 +182,46 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 | Any client  | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
 | WebSocket   | a `question-request` frame               | an `execute` frame carrying `answers`                                                          |
 
+## Web browsing
+
+`browse` opens a public web page in [Obscura](https://github.com/h4ckf0r0day/obscura), a headless browser on the agent's first sandbox, and returns it to the model. Turn it on with `browser` and give the agent a sandbox with the Obscura image and internet access:
+
+```ts title="broods/index.ts"
+import { defineAgent, defineSandbox, defineWorkspace } from "broods";
+
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  network: { mode: "allow-all" },
+});
+
+export const workspace = defineWorkspace({
+  name: "workspace",
+  storage: { provider: "s3" },
+});
+
+export const researcher = defineAgent({
+  name: "researcher",
+  sandboxes: [web], // the first sandbox runs browse
+  workspaces: [workspace], // screenshots are saved here
+  browser: { enabled: true },
+});
+```
+
+| `mode`               | Returns                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `markdown` (default) | The rendered page as markdown, usually 3 to 17x smaller than its HTML                   |
+| `text`               | Plain text                                                                              |
+| `links`              | Every link on the page, one per line                                                    |
+| `eval`               | The result of a JavaScript expression run in the page, passed as `script`               |
+| `screenshot`         | An image of the viewport, saved under `.broods/browse/` so `send-images` can send it on |
+
+- The first sandbox must be `lambda` with `image: "obscura"` and `network.mode: "allow-all"`, or a [machine](sandboxes/machine.md) with `obscura` installed. Anything else fails the run with a message saying what to change.
+- `screenshot` needs a workspace on that sandbox. The image reaches the model on the turn it was taken. Later turns keep the file path.
+- Private and internal addresses are refused. Layout can differ from Chrome on JavaScript-heavy pages. For pixel-exact screenshots, run Chromium through `bash` on a sandbox with `image: "browser"`.
+- Reading needs no approval. `eval` runs the model's own JavaScript in the page, so it asks like `bash` unless the sandbox uses `permissionMode: "bypass"`.
+
 ## Background tools
 
 `async_status` appears on its own when the agent can start background work, through a workspace on a persistent sandbox or a tool marked `async: true`. The model uses it to check, tail or stop that work. See [Persistent sandboxes](sandboxes/persistent.md).
@@ -161,6 +230,7 @@ Each question has an `id`, a short `header`, the `question`, two to four `option
 
 | Tool                                                                      | Enabled by                          | Guide                                         |
 | ------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
+| `browse`                                                                  | `browser`                           | [Web browsing](#web-browsing)                 |
 | `load_skill`                                                              | `skills`                            | [Skills](skills.md)                           |
 | `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent`                          | [Subagents](subagents.md)                     |
 | `ask_parent`                                                              | the run being a persistent subagent | [Subagents](subagents.md)                     |

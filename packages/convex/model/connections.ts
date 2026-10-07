@@ -44,6 +44,8 @@ export interface ConnectionTypeMeta {
   requiredScope?: string;
   /** Why the managed service refuses this type; self-hosted deployments only. */
   selfHostedOnly?: string;
+  /** The deployment env var that, set to `true`, lets the managed service offer it anyway. */
+  managedOptIn?: string;
   /** Lists the models a sign-in may call, so `broods connect` can print them. */
   modelsUrl?: string;
   /** Where a user reviews what an app draws from their plan. */
@@ -117,6 +119,8 @@ export const CONNECTION_TYPES: Readonly<
     requiredScope: CHATGPT_DIRECT_SCOPE,
     selfHostedOnly:
       "ChatGPT plan usage is only available on self-hosted Broods for now. Use an OpenAI API key with the `openai` provider instead.",
+    // Set on a deployment OpenAI has approved for hosted use; plan limits stay on.
+    managedOptIn: "CHATGPT_PLAN_ENABLED",
     modelsUrl: `${CHATGPT_RESOURCE}/models`,
     usageUrl: "https://chatgpt.com/settings/usage",
   },

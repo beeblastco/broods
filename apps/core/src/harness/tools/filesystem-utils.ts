@@ -46,6 +46,7 @@ import type {
   SandboxExecutorConfig,
   SandboxJobCallback,
   SandboxJobHandle,
+  SandboxRunPrincipal,
   SandboxRunResult,
   SandboxRuntime,
 } from "../sandbox/types.ts";
@@ -109,6 +110,10 @@ export interface SandboxToolContext {
   // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
+  // The run's identity for a blocking `bash` exec env. The file tools run the
+  // harness's own scripts and a background job outlives its run, so they get
+  // none. A function, so the run token is only minted once a command runs.
+  principal?: () => SandboxRunPrincipal | undefined;
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
@@ -120,15 +125,29 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-/** Whether bash reaches the default sandbox by name: it exists and no workspace mounts it. */
-export function hasStandaloneSandbox(context: SandboxToolContext): boolean {
-  if (!context.sandboxes?.[0]) {
-    return false;
-  }
+/** The exec timeout a run on `config` gets: its own, within the provider's limits. */
+export function sandboxTimeoutSeconds(config: SandboxExecutorConfig): number {
+  const limits = workspaceSandboxLimits(config.provider);
 
-  return !context.workspaces.some((workspace): boolean =>
+  return boundedInteger(
+    config.timeout,
+    limits.defaultTimeoutSeconds,
+    limits.maxTimeoutSeconds,
+  );
+}
+
+/** The workspace mounted in the agent's own (first) sandbox, if any. bash, browse and lambda MCP rows run there. */
+export function agentOwnWorkspace(
+  context: SandboxToolContext,
+): ResolvedWorkspace | undefined {
+  return context.workspaces.find((workspace): boolean =>
     isAgentOwnSandbox(workspace, context),
   );
+}
+
+/** Whether bash reaches the default sandbox by name: it exists and no workspace mounts it. */
+export function hasStandaloneSandbox(context: SandboxToolContext): boolean {
+  return Boolean(context.sandboxes?.[0]) && !agentOwnWorkspace(context);
 }
 
 /**
@@ -180,9 +199,7 @@ export function resolveAgentSandbox(
   }
   const mountedBy =
     context.sandboxes?.[0]?.name === requested
-      ? context.workspaces.find((workspace): boolean =>
-          isAgentOwnSandbox(workspace, context),
-        )
+      ? agentOwnWorkspace(context)
       : undefined;
   if (mountedBy) {
     throw new Error(
@@ -254,11 +271,12 @@ export async function runSandbox(
   options?: {
     onSandboxCpu?: (sample: SandboxCpuSample) => void;
     metadata?: SandboxRunMetadata;
+    principal?: SandboxRunPrincipal;
   },
 ): Promise<SandboxRunResult> {
   let result: SandboxRunResult;
   try {
-    result = await runSandboxOn(config, namespace, code, options?.metadata);
+    result = await runSandboxOn(config, namespace, code, options);
   } catch (error) {
     // `options` (URL, key, template) and `snapshot` (workdir image name vs
     // MicroVM image ARN) are the primary provider's; the fallback runs on the
@@ -289,7 +307,7 @@ export async function runSandbox(
       },
       namespace,
       code,
-      options?.metadata,
+      options,
     );
   }
   if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
@@ -331,11 +349,7 @@ export async function runSandboxBackground(
     ...(options.callback ? { callback: options.callback } : {}),
     ...(options.metadata ? { metadata: options.metadata } : {}),
     workspaceRoot: workspaceRootFor(config),
-    timeoutSeconds: boundedInteger(
-      config.timeout,
-      limits.defaultTimeoutSeconds,
-      limits.maxTimeoutSeconds,
-    ),
+    timeoutSeconds: sandboxTimeoutSeconds(config),
     outputLimitBytes: boundedInteger(
       config.outputLimitBytes,
       limits.defaultOutputLimitBytes,
@@ -858,7 +872,9 @@ async function runSandboxOn(
   config: SandboxExecutorConfig,
   namespace: string | undefined,
   code: string,
-  metadata: SandboxRunMetadata | undefined,
+  options:
+    | { metadata?: SandboxRunMetadata; principal?: SandboxRunPrincipal }
+    | undefined,
 ): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
@@ -878,12 +894,9 @@ async function runSandboxOn(
           workspaceRoot: workspaceRootFor(config),
         }
       : {}),
-    ...(metadata ? { metadata: metadata } : {}),
-    timeoutSeconds: boundedInteger(
-      config.timeout,
-      limits.defaultTimeoutSeconds,
-      limits.maxTimeoutSeconds,
-    ),
+    ...(options?.metadata ? { metadata: options.metadata } : {}),
+    ...(options?.principal ? { principal: options.principal } : {}),
+    timeoutSeconds: sandboxTimeoutSeconds(config),
     outputLimitBytes: boundedInteger(
       config.outputLimitBytes,
       limits.defaultOutputLimitBytes,
@@ -899,8 +912,9 @@ function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
 }
 
 // The reservation key a namespace-less run reconnects on, normally derived per
-// agent by resolveAgentRuntime rather than written by the author.
-function statelessReservationKeyFor(
+// agent by resolveAgentRuntime rather than written by the author. Lambda-hosted
+// MCP rows (tools/index.ts) reserve on it too, so they share bash's VM.
+export function statelessReservationKeyFor(
   config: SandboxExecutorConfig,
 ): string | undefined {
   const options = isPlainObject(config.options) ? config.options : {};

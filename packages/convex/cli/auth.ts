@@ -14,19 +14,24 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
 import { slugifyName } from "../lib/slug";
-import { sha256Hex } from "../model/accountSecrets";
+import { bearerToken } from "../config/routes/shared";
+import {
+  createAccountSecret,
+  randomToken,
+  sha256Hex,
+} from "../model/accountSecrets";
 import {
   getActiveOrgForUser,
   getOrgMembership,
   orgRoleMeets,
-  requireOrgMember,
 } from "../model/ownership/org";
+import { ClientError } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { planValidator } from "../schema";
 
-const CLI_CODE_PREFIX = "fp_code_";
+const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
-export const CLI_TOKEN_PREFIX = "fp_cli_";
+export const CLI_TOKEN_PREFIX = "bcli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
 
 // RFC 7636: 43..128 unreserved characters, base64url without padding.
@@ -86,22 +91,19 @@ type OnboardingOrg = {
 
 /**
  * Mint a short-lived one-time login code for the authenticated user's active
- * org. With a PKCE `codeChallenge`, only the CLI process holding the verifier
- * can exchange the code, so a stray localhost listener that catches it gets
- * nothing.
+ * org. The PKCE `codeChallenge` means only the CLI process holding the
+ * verifier can exchange the code, so a stray localhost listener that catches
+ * it gets nothing.
  */
 export const createLoginCode = mutation({
-  args: { codeChallenge: v.optional(v.string()) },
+  args: { codeChallenge: v.string() },
   returns: v.object({ code: v.string(), expiresAt: v.number() }),
   handler: async (
     ctx,
     { codeChallenge },
   ): Promise<{ code: string; expiresAt: number }> => {
-    if (
-      codeChallenge !== undefined &&
-      !PKCE_CHALLENGE_PATTERN.test(codeChallenge)
-    ) {
-      throw new Error("codeChallenge must be a base64url S256 challenge");
+    if (!PKCE_CHALLENGE_PATTERN.test(codeChallenge)) {
+      throw new ClientError("codeChallenge must be a base64url S256 challenge");
     }
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
@@ -112,19 +114,27 @@ export const createLoginCode = mutation({
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
       .unique();
-    if (!user) throw new Error("User not found");
+    if (!user) throw new ClientError("User not found", "not_found");
 
+    // Plain Errors reach a production caller as "Server Error"; these
+    // sentences go back to the CLI as the reason its login failed.
     const org = await getActiveOrgForUser(ctx, user._id);
-    if (!org) throw new Error("No active org");
-    await requireOrgMember(ctx, org._id, user._id, "admin");
+    if (!org) throw new ClientError("No active organization", "not_found");
+    const membership = await getOrgMembership(ctx, org._id, user._id);
+    if (!membership || !orgRoleMeets(membership.role, "admin")) {
+      throw new ClientError(
+        `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
+        "unauthorized",
+      );
+    }
 
     const account = await ctx.db
       .query("accounts")
       .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
       .unique();
     if (!account || account.status !== "active") {
-      throw new Error(
-        "Provision your organization's API account first (Settings -> API Access).",
+      throw new ClientError(
+        `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
       );
     }
 
@@ -136,7 +146,7 @@ export const createLoginCode = mutation({
       authId: authUser.id,
       orgId: org._id,
       accountId: account._id,
-      ...(codeChallenge ? { codeChallenge: codeChallenge } : {}),
+      codeChallenge: codeChallenge,
       expiresAt: expiresAt,
       createdAt: now,
     });
@@ -183,7 +193,7 @@ export const createOnboardingOrg = internalMutation({
       orgId: orgId,
       username: slug,
       description: `Broods org ${name}`,
-      secretHash: await sha256Hex(randomToken("fp_acct_")),
+      secretHash: await sha256Hex(createAccountSecret()),
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -215,15 +225,16 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
   if (typeof body.code !== "string" || !body.code.trim()) {
     return jsonError(400, "Request body must include code");
   }
+  if (typeof body.code_verifier !== "string") {
+    return jsonError(400, "Request body must include code_verifier");
+  }
 
   try {
     const result: Record<string, unknown> = await ctx.runMutation(
       internal.cli.auth.exchangeLoginCode,
       {
         code: body.code,
-        ...(typeof body.code_verifier === "string"
-          ? { codeVerifier: body.code_verifier }
-          : {}),
+        codeVerifier: body.code_verifier,
       },
     );
 
@@ -243,7 +254,7 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
 
 /** Exchange a one-time code for a long-lived CLI bearer token. */
 export const exchangeLoginCode = internalMutation({
-  args: { code: v.string(), codeVerifier: v.optional(v.string()) },
+  args: { code: v.string(), codeVerifier: v.string() },
   returns: v.object({
     token: v.string(),
     expiresAt: v.number(),
@@ -263,6 +274,9 @@ export const exchangeLoginCode = internalMutation({
     }),
   }),
   handler: async (ctx, { code, codeVerifier }) => {
+    if (!code.startsWith(CLI_CODE_PREFIX)) {
+      throw new Error("CLI login code is invalid or expired");
+    }
     const codeHash = await sha256Hex(code);
     const row = await ctx.db
       .query("cliAuthCodes")
@@ -272,11 +286,7 @@ export const exchangeLoginCode = internalMutation({
     if (!row || row.usedAt || row.expiresAt < now) {
       throw new Error("CLI login code is invalid or expired");
     }
-    if (
-      row.codeChallenge &&
-      (!codeVerifier ||
-        (await pkceChallenge(codeVerifier)) !== row.codeChallenge)
-    ) {
+    if ((await pkceChallenge(codeVerifier)) !== row.codeChallenge) {
       throw new Error("CLI login code is invalid or expired");
     }
 
@@ -345,7 +355,18 @@ export const getOnboardingContext = internalMutation({
 });
 
 /**
- * Resolve a CLI token to the account secret hash used by existing sync code.
+ * Hash of the request's `broods login` bearer token, for `resolveCliToken`.
+ * Null when the bearer is missing or carries another prefix, so the
+ * login-only CLI routes spend no lookup on it.
+ */
+export async function cliLoginTokenHash(req: Request): Promise<string | null> {
+  const token = bearerToken(req);
+
+  return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
+}
+
+/**
+ * Resolve a CLI token to the account key hash used by existing sync code.
  * Touches lastUsedAt at a coarse interval to avoid write contention.
  */
 export const resolveCliToken = internalMutation({
@@ -504,14 +525,6 @@ async function onboardingContext(
       name: user.name,
     },
   };
-}
-
-function randomToken(prefix: string): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-
-  return `${prefix}${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
 }
 
 async function resolveActiveCliToken(
