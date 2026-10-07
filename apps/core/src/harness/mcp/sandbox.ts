@@ -22,6 +22,9 @@ import type {
 } from "../sandbox/types.ts";
 import { sandboxTimeoutSeconds } from "../tools/filesystem-utils.ts";
 
+// A tool call on a sandbox with no `timeout` of its own: browser steps run
+// longer than bash's 30 s default.
+const DEFAULT_TIMEOUT_SECONDS = 120;
 // The image may spend up to this long starting a server and running its
 // handshake before the tool's own timeout begins.
 const SERVER_START_MS = 30_000;
@@ -54,7 +57,10 @@ export async function sandboxMcpRequest(
       `MCP server ${serverName} needs a lambda sandbox; ${target.config.provider} has no MCP host`,
     );
   }
-  const timeoutMs = sandboxTimeoutSeconds(target.config) * 1000;
+  const timeoutMs =
+    (target.config.timeout === undefined
+      ? DEFAULT_TIMEOUT_SECONDS
+      : sandboxTimeoutSeconds(target.config)) * 1000;
   const reply = await executor
     .postReserved({
       ...target.reservation,

@@ -347,8 +347,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // One JSON POST to a route the sandbox image serves beside /exec, for the MCP
   // relay's /mcp. Like run(), it tries this pod's cached endpoint first, and
   // otherwise reaches the VM the way bash does on the same target: the workspace
-  // mount and the lifecycle in bash's directory. The VM is shared with bash and
-  // other conversations, so a failed setup never releases it.
+  // mount and the lifecycle in bash's directory. As for bash, a failed lifecycle
+  // keeps the shared VM and a failed mount on the create that made it releases it.
   async postReserved(request: SandboxReservedPost): Promise<unknown> {
     if (!this.#persistent(request)) {
       throw new Error(
@@ -365,8 +365,20 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
         return JSON.parse(text);
       });
+    const reach: SandboxRunRequest = {
+      ...this.#harnessRequest(sandboxReservationKey(request) ?? ""),
+      reservationKey: request.reservationKey,
+      namespace: request.namespace,
+      workspaceRoot: request.workspaceRoot,
+    };
     const cached = this.#cachedTarget(request);
     if (cached) {
+      // MCP-only use keeps the workspace mount's credentials fresh, like bash.
+      await this.#refreshMountCredentials(
+        reach,
+        cached.microvmId,
+        cached.endpoint,
+      );
       try {
         return await this.#whileWarming(
           cached.microvmId,
@@ -378,12 +390,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         reservedEndpoints.delete(sandboxReservationKey(request) ?? "");
       }
     }
-    const reach: SandboxRunRequest = {
-      ...this.#harnessRequest(sandboxReservationKey(request) ?? ""),
-      reservationKey: request.reservationKey,
-      namespace: request.namespace,
-      workspaceRoot: request.workspaceRoot,
-    };
     const acquired = await this.#acquire(reach);
     const workDir = this.#workDir(this.#workspaceKey(reach));
     await this.#prepareWorkspaceMount(reach, acquired, workDir);

@@ -92,6 +92,27 @@ test("names the server when the VM cannot be reached", async () => {
   ).toContain("MCP server obscura on its sandbox failed: MicroVM /mcp failed");
 });
 
+test("gives a tool call 120 s on a sandbox with no timeout of its own", async () => {
+  const requests: unknown[] = [];
+  const executor: SandboxMcpExecutor = {
+    postReserved: async function (request): Promise<unknown> {
+      requests.push(request);
+
+      return { jsonrpc: "2.0", id: "1", result: {} };
+    },
+  };
+
+  await sandboxMcpRequest(
+    { ...TARGET, config: { provider: "lambda", persistent: true } },
+    "obscura",
+    LIST,
+    undefined,
+    executor,
+  );
+
+  expect(requests[0]).toMatchObject({ body: { timeout_ms: 120_000 } });
+});
+
 test("refuses a sandbox whose executor has no MCP host", async () => {
   expect(
     await failure(
