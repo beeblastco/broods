@@ -293,8 +293,7 @@ function transportLabel(server: Doc<"mcp"> | null | undefined): string {
     return "hosted bundle";
   }
   if (server.transport === "machine") {
-    // The sandbox is a machine (the user's computer) or a lambda VM.
-    return `on sandbox ${server.sandbox ?? ""}`;
+    return `on your computer (machine sandbox ${server.sandbox ?? ""})`;
   }
 
   return `external (${server.url ?? ""})`;
