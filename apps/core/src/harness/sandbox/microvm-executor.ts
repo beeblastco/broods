@@ -1266,7 +1266,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     } catch (err) {
       if (!retryable(err)) throw err;
 
-      return { retry: true, status: err.message };
+      return {
+        retry: true,
+        status: err instanceof Error ? err.message : "fetch error",
+      };
     }
     if (res.status === 502 || res.status === 503) {
       return { retry: true, status: res.status };
