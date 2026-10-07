@@ -22,6 +22,7 @@ import {
   budgetUsage,
   burstUsage,
   DEFAULT_SANDBOX_IDLE_MS,
+  ephemeralSandboxMaxMs,
   sandboxAccrual,
 } from "../model/usageMeter";
 import schema from "../schema";
@@ -148,6 +149,27 @@ describe("sandboxAccrual", () => {
       sandboxVcpuSeconds: 7200,
       sandboxGbSeconds: 14400,
     });
+  });
+
+  test("stops billing an ephemeral MicroVM whose removal was lost at its longest call", () => {
+    const lastUsedAt = NOW - HOUR_MS;
+    const accrual = sandboxAccrual(
+      {
+        ...microvm,
+        ephemeral: true,
+        lastUsedAt: lastUsedAt,
+        meteredUntil: lastUsedAt,
+      },
+      NOW,
+    );
+    const maxMs = ephemeralSandboxMaxMs("lambda");
+
+    expect(maxMs).toBe((600 + 120) * 1000);
+    expect(accrual.usage).toEqual({
+      sandboxVcpuSeconds: maxMs / 1000,
+      sandboxGbSeconds: (maxMs / 1000) * 2,
+    });
+    expect(accrual.meteredUntil).toBe(lastUsedAt + maxMs);
   });
 });
 
@@ -317,6 +339,47 @@ test("the hourly accrual pages through every recent sandbox", async () => {
   );
   // 150 sandboxes × 60 s each, across two pages.
   expect(meter?.sandboxVcpuSeconds).toBe(150 * 60);
+});
+
+test("the hourly accrual bills and deletes ephemeral rows whose call is over", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  await t.run(async (ctx) => {
+    for (const [key, lastUsedAt] of [
+      ["vm-stale", NOW - HOUR_MS],
+      ["vm-live", NOW - 60_000],
+    ] as const) {
+      await ctx.db.insert("sandboxInstances", {
+        accountId: accountId,
+        provider: "sandbox",
+        reservationKey: key,
+        externalId: key,
+        name: "default",
+        status: "running",
+        specs: { vcpu: 1, memoryMb: 1024, storageGb: 8 },
+        createdAt: lastUsedAt,
+        lastUsedAt: lastUsedAt,
+        meteredUntil: lastUsedAt,
+        ephemeral: true,
+      });
+    }
+  });
+
+  await t.mutation(internal.sandbox.instances.accrueRecent, {});
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  const rows = await t.run(async (ctx) =>
+    ctx.db.query("sandboxInstances").collect(),
+  );
+  expect(rows.map((row) => row.reservationKey)).toEqual(["vm-live"]);
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  // The stale row is billed up to its longest call, the live one up to now.
+  expect(meter?.sandboxVcpuSeconds).toBe(
+    ephemeralSandboxMaxMs("sandbox") / 1000 + 60,
+  );
 });
 
 test("a storage snapshot lands in the month it was taken", async () => {

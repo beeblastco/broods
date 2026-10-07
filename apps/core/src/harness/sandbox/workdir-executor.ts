@@ -777,7 +777,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
     const winner = await getSandboxExternalId("sandbox", ns);
-    await created.delete().catch(() => {});
+    await created.delete().catch((error: unknown): void => {
+      logWarn("workdir sandbox delete failed", {
+        sandboxId: created.id,
+        error: toErrorMessage(error),
+      });
+    });
     if (!winner)
       throw new Error("failed to reserve workdir sandbox (lost create race)");
 
