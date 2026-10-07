@@ -29,6 +29,20 @@
         "typescript": "^7.0.2",
       },
     },
+    "apps/cloudflare-sandbox": {
+      "name": "@broods/cloudflare-sandbox",
+      "version": "0.1.0",
+      "dependencies": {
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261001.1",
+        "wrangler": "^4.145.0",
+      },
+      "peerDependencies": {
+        "typescript": "^7.0.2",
+      },
+    },
     "apps/core": {
       "name": "@broods/core",
       "dependencies": {
@@ -762,6 +776,8 @@
     "@broods/ai-sdk-sandbox": ["@broods/ai-sdk-sandbox@workspace:packages/ai-sdk-sandbox"],
 
     "@broods/cloudflare-mcp": ["@broods/cloudflare-mcp@workspace:apps/cloudflare-mcp"],
+
+    "@broods/cloudflare-sandbox": ["@broods/cloudflare-sandbox@workspace:apps/cloudflare-sandbox"],
 
     "@broods/convex": ["@broods/convex@workspace:packages/convex"],
 

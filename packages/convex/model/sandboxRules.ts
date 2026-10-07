@@ -54,10 +54,13 @@ export const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
-// The only options core reads for a MicroVM: the executor's workspaceRoot and the
-// reservation pin every provider shares. Image, version, role and log group are
-// platform resources core takes from its env, so anything else is refused.
-const LAMBDA_OPTION_KEYS: ReadonlySet<string> = new Set([
+// Cloudflare refuses a Container inactivity timeout over six hours.
+export const CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60;
+// The only options core reads for a platform-run provider (lambda, cloudflare):
+// the executor's workspaceRoot and the reservation pin every provider shares.
+// Images, roles and the cloudflare bridge are platform resources core takes from
+// its env, so anything else is refused.
+const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
   "workspaceRoot",
 ]);
@@ -400,6 +403,11 @@ function assertNetworkEnforceable(
       `${provider} cannot enforce egress restrictions; set config.network.mode to allow-all explicitly`,
     );
   }
+  if (provider === "cloudflare" && network.mode === "restricted") {
+    throw new ClientError(
+      "cloudflare can only turn a container's internet on or off; use config.network.mode deny-all or allow-all",
+    );
+  }
   if (
     provider === "lambda" &&
     network.mode === "restricted" &&
@@ -658,6 +666,24 @@ function normalizePersistentFields(
       "config.onCreate and config.onResume require config.persistent to be true",
     );
   }
+  if (provider === "cloudflare") {
+    for (const field of ["onCreate", "onResume", "snapshot"]) {
+      if (config[field] !== undefined)
+        throw new ClientError(
+          `config.${field} is not supported by the cloudflare provider; the bridge Worker's image sets the machine`,
+        );
+    }
+    if (lifecycle?.maxLifetimeSeconds !== undefined)
+      throw new ClientError(
+        "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
+      );
+    if (
+      (lifecycle?.idleTimeoutSeconds ?? 0) > CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS
+    )
+      throw new ClientError(
+        `config.lifecycle.idleTimeoutSeconds must be at most ${CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS} on the cloudflare provider`,
+      );
+  }
   if (provider === "e2b" && (onCreate || onResume)) {
     throw new ClientError(
       "config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly",
@@ -719,9 +745,9 @@ function validateProviderOptions(
       );
     }
   }
-  if (provider === "lambda") {
+  if (provider === "lambda" || provider === "cloudflare") {
     for (const key of Object.keys(options)) {
-      if (!LAMBDA_OPTION_KEYS.has(key)) {
+      if (!PLATFORM_OPTION_KEYS.has(key)) {
         throw new ClientError(
           `config.options.${key} is not supported in account sandbox config`,
         );

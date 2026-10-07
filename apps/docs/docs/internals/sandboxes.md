@@ -6,15 +6,16 @@ This page covers how core runs sandbox tools on each provider, how reservations 
 
 Every sandbox tool (`bash`, `read`, `write`, `edit`, `glob`, `grep`) compiles to one `run` against the selected provider's executor. There is no per-runtime routing.
 
-| Provider  | Executor              | Compute                                            |
-| --------- | --------------------- | -------------------------------------------------- |
-| `lambda`  | `microvm-executor.ts` | AWS Lambda MicroVM (Firecracker)                   |
-| `sandbox` | `workdir-executor.ts` | Self-hosted workdir (Firecracker)                  |
-| `daytona` | `daytona-executor.ts` | Daytona                                            |
-| `e2b`     | `e2b-executor.ts`     | E2B                                                |
-| `vercel`  | `vercel-executor.ts`  | `@vercel/sandbox`, loaded lazily                   |
-| `machine` | `machine-executor.ts` | The `broods machine` daemon over `/v1/machines/ws` |
-| `custom`  | `http-executor.ts`    | The account's own server on `POST <endpoint>/exec` |
+| Provider     | Executor                 | Compute                                                                    |
+| ------------ | ------------------------ | -------------------------------------------------------------------------- |
+| `lambda`     | `microvm-executor.ts`    | AWS Lambda MicroVM (Firecracker)                                           |
+| `sandbox`    | `workdir-executor.ts`    | Self-hosted workdir (Firecracker)                                          |
+| `daytona`    | `daytona-executor.ts`    | Daytona                                                                    |
+| `e2b`        | `e2b-executor.ts`        | E2B                                                                        |
+| `vercel`     | `vercel-executor.ts`     | `@vercel/sandbox`, loaded lazily                                           |
+| `cloudflare` | `cloudflare-executor.ts` | Cloudflare Containers, through the `apps/cloudflare-sandbox` bridge Worker |
+| `machine`    | `machine-executor.ts`    | The `broods machine` daemon over `/v1/machines/ws`                         |
+| `custom`     | `http-executor.ts`       | The account's own server on `POST <endpoint>/exec`                         |
 
 `index.ts` holds the registry: `EXECUTORS`, a record from provider name to executor factory. The provider names are `SANDBOX_PROVIDERS` in `packages/convex/model/sandboxProviders.ts`, the one list the Convex validator, core's `SandboxProvider` type and the SDK derive from, and the record's key type fails the build when a name has no factory. `STATELESS_SANDBOX_PROVIDERS` beside it (`machine`, `custom`) is what the fallback, workspace and sizing rules refuse. The exec wire contract the MicroVM image and a custom server share is `SandboxExecRequest` / `SandboxExecResponse` in `src/shared/domain/sandbox-config.ts`; `parseExecResponse` and `execRunResult` in `utils.ts` turn that answer into a run result.
 
@@ -26,15 +27,16 @@ Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 
 
 ### Capability matrix
 
-| Provider  | S3 workspace mount                                  | Persistent                       | Background jobs                                  |
-| --------- | --------------------------------------------------- | -------------------------------- | ------------------------------------------------ |
-| `sandbox` | `mount-s3`, per run                                 | native pause/resume and standby  | yes, with live logs and stop                     |
-| `lambda`  | `mount-s3` inside the VM from the `/run` hook       | snapshot suspend/resume, 8 h max | yes, in the persistent VM                        |
-| `daytona` | `mount-s3` when `options.mountAwsS3Buckets` is true | native, `autoStopInterval`       | yes, with live logs and stop                     |
-| `e2b`     | not wired, rejected                                 | native pause/resume              | native launch and callback, no live logs or stop |
-| `vercel`  | not wired, rejected                                 | named persistent sandbox         | yes, with live logs and stop                     |
-| `machine` | not supported, rejected                             | no                               | no                                               |
-| `custom`  | not supported, rejected                             | no                               | no                                               |
+| Provider     | S3 workspace mount                                  | Persistent                                    | Background jobs                                  |
+| ------------ | --------------------------------------------------- | --------------------------------------------- | ------------------------------------------------ |
+| `sandbox`    | `mount-s3`, per run                                 | native pause/resume and standby               | yes, with live logs and stop                     |
+| `lambda`     | `mount-s3` inside the VM from the `/run` hook       | snapshot suspend/resume, 8 h max              | yes, in the persistent VM                        |
+| `daytona`    | `mount-s3` when `options.mountAwsS3Buckets` is true | native, `autoStopInterval`                    | yes, with live logs and stop                     |
+| `e2b`        | not wired, rejected                                 | native pause/resume                           | native launch and callback, no live logs or stop |
+| `vercel`     | not wired, rejected                                 | named persistent sandbox                      | yes, with live logs and stop                     |
+| `cloudflare` | not wired, rejected                                 | same Container while warm, disk lost on sleep | no                                               |
+| `machine`    | not supported, rejected                             | no                                            | no                                               |
+| `custom`     | not supported, rejected                             | no                                            | no                                               |
 
 `fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. Validation refuses a fallback equal to `provider`, a `machine` or `custom` fallback, and any fallback on a `persistent` config.
 
@@ -172,6 +174,29 @@ Credentials fall back to deployment env when a config omits them. Daytona reads 
 - E2B maps `lifecycle.idleTimeoutSeconds` to the sandbox timeout with `lifecycle.onTimeout: "pause"`. Background jobs use `commands.run` with `background: true` and disconnect from the handle, so there are no `.fp-jobs` markers and no live logs or stop. E2B cannot enforce egress, so validation requires `allow-all`.
 - Vercel creates a persistent sandbox with `Sandbox.create()` under a new name, a prefix derived from the reservation key plus a random generation, stored as the reservation's `externalId`. The generation keeps a sweeper that took a row from deleting a machine a new run just created under the same key. `onCreate` and `onResume` run as one script guarded by a `.fp-lifecycle-created` marker in the work dir, so `onCreate` runs the first time and `onResume` after that. The Vercel timeout counts from start, not last activity, so the executor maps `idleTimeoutSeconds` onto it and a persistent sandbox stops that long after each wake. `maxLifetimeSeconds` is not enforced.
 
+## Cloudflare
+
+The Container API only answers inside a Durable Object, so `cloudflare-executor.ts` talks to the bridge Worker in `apps/cloudflare-sandbox` over HTTPS with `Authorization: Bearer $CLOUDFLARE_SANDBOX_API_KEY`. The Worker compares a SHA-256 of the header against its `SANDBOX_API_KEY` secret with `timingSafeEqual`. Each sandbox id is one `Sandbox` Durable Object owning one Container booted from the Worker's `Dockerfile`.
+
+| Route                            | Does                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `POST /v1/sandboxes/:id/exec`    | Starts the Container if needed, runs one argv, answers a `SandboxExecResponse` |
+| `GET /v1/sandboxes/:id`          | `{ running }`                                                                  |
+| `DELETE /v1/sandboxes/:id`       | Destroys the Container                                                         |
+| `GET /v1/sandboxes/:id/terminal` | PTY WebSocket, raw bytes both ways, for a `terminal` ticket                    |
+
+- A Durable Object exists once named, so a persistent reservation is only the claim: the executor claims `sandboxNamePrefix(key)` plus a random suffix, and a run that loses the race uses the winner's id. An existing reservation is reused by key alone, which is how the dashboard console's `exec` reaches it. The instance row is mirrored only after the Container answered, so a start that failed is never billed.
+- The bridge runs each command under GNU `timeout -k 5`, which kills the whole process group at the deadline, so a background child does not outlive a timed-out call.
+- Ephemeral runs use a fresh `fp-e-<uuid>` id and `DELETE` it afterwards. A platform-paid one gets an ephemeral `sandboxInstances` row for the call, removed at teardown, which meters it like the MicroVM and workdir ones.
+- The exec answer is the shared exec contract, so `parseExecResponse` and `execRunResult` turn it into a run result like the MicroVM and `custom` ones. Output is capped per stream in the Durable Object, so a chatty command cannot grow its memory.
+- `deploy.yaml` does not deploy the bridge. A deployment that offers the provider deploys it with `wrangler deploy` (Docker builds the image) and sets the key on both sides.
+- `lifecycle.idleTimeoutSeconds` becomes `setInactivityTimeout`, applied once per Durable Object instance. A Container that sleeps loses its disk, so `getInstanceInfo` reports it gone rather than suspended, and the next exec starts a fresh one.
+- `network.mode: "allow-all"` starts the Container with `enableInternet: true`; anything else starts it without internet. `restricted` is rejected. Internet and instance type are fixed at `start()`, so the Durable Object stores what the running Container started with and replaces it when a run asks for another.
+- `setInactivityTimeout` refuses more than six hours, so the config plane caps cloudflare's `idleTimeoutSeconds` there. An ephemeral Container idles only a minute past its command, so one whose `DELETE` failed stops soon.
+- 124 and 137 count as a timeout only once the deadline passed; earlier they are the command's own exit or an OOM kill.
+- `size` maps to the nearest named instance type, `standard-1` to `standard-4`. Custom types need a whole vCPU.
+- There are no background jobs, snapshots or suspend. Harness adapters refuse the provider.
+
 ## Machine
 
 `machine-executor.ts` runs `bash`, the `computer` tool and local MCP servers on a user's computer through the WebSocket the `broods machine` daemon holds on `/v1/machines/ws`. Frames are defined once in `src/shared/machine-socket.ts`, which the CLI bundles, and the gateway relays them unchanged.
@@ -285,7 +310,7 @@ The row exists before the launch, so a fast job's callback never arrives first. 
 
 ## Terminal
 
-Workdir and MicroVM instances get a real in-guest TTY in the dashboard. Other providers answer the terminal route as unsupported, and the dashboard keeps the bounded `exec` runner for them, at 30 s and 64 KiB per command.
+Workdir and MicroVM instances get a real in-guest TTY in the dashboard. A running Cloudflare Container answers the terminal route through its bridge, but the dashboard does not open it yet. Other providers answer the terminal route as unsupported, and the dashboard keeps the bounded `exec` runner for them, at 30 s and 64 KiB per command.
 
 ```mermaid
 sequenceDiagram
