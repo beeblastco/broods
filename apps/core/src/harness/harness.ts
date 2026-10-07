@@ -2987,8 +2987,8 @@ function serializeError(error: unknown): Record<string, unknown> {
 }
 
 // Trace attributes keep a media part's type and size, not its base64: a
-// screenshot would fill the attribute with truncated noise. These cover the
-// tool results in a step's messages and a tool's own output.
+// screenshot would fill the attribute with truncated noise. This covers the
+// tool results in a step's messages.
 function messagesWithoutMediaBytes(messages: ModelMessage[]): ModelMessage[] {
   return messages.map((message): ModelMessage =>
     message.role === "tool"
@@ -3004,12 +3004,14 @@ function messagesWithoutMediaBytes(messages: ModelMessage[]): ModelMessage[] {
   );
 }
 
+// A tool's own output for its trace span, without media bytes.
 function outputWithoutMediaBytes(output: unknown): unknown {
   const parsed = parseToolResultOutput(output);
 
   return parsed ? toolOutputWithoutMediaBytes(parsed) : output;
 }
 
+// One tool result with each image or file part's data replaced by its size.
 function toolOutputWithoutMediaBytes(
   output: ToolResultOutput,
 ): ToolResultOutput {
