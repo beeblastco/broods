@@ -25,24 +25,27 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 
 ## Providers
 
-| Provider  | What it is                   | Workspace mount | Persistent            | Background jobs         | Network enforcement            |
-| --------- | ---------------------------- | --------------- | --------------------- | ----------------------- | ------------------------------ |
-| `sandbox` | Broods-hosted Firecracker VM | yes             | yes, pause and resume | yes, with logs and stop | all modes, domain + CIDR lists |
-| `lambda`  | AWS Lambda MicroVM           | yes             | yes, 8 h max per VM   | yes, with logs and stop | `allow-all` or no internet     |
-| `daytona` | Daytona sandbox              | yes             | yes, native auto-stop | yes, with logs and stop | all modes, CIDR lists only     |
-| `e2b`     | E2B template                 | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
-| `vercel`  | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
-| `machine` | Your own computer            | no              | no                    | no                      | `allow-all` only               |
+| Provider     | What it is                   | Workspace mount | Persistent            | Background jobs         | Network enforcement            |
+| ------------ | ---------------------------- | --------------- | --------------------- | ----------------------- | ------------------------------ |
+| `sandbox`    | Broods-hosted Firecracker VM | yes             | yes, pause and resume | yes, with logs and stop | all modes, domain + CIDR lists |
+| `lambda`     | AWS Lambda MicroVM           | yes             | yes, 8 h max per VM   | yes, with logs and stop | `allow-all` or no internet     |
+| `daytona`    | Daytona sandbox              | yes             | yes, native auto-stop | yes, with logs and stop | all modes, CIDR lists only     |
+| `e2b`        | E2B template                 | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
+| `vercel`     | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
+| `cloudflare` | Cloudflare Container         | no              | yes, while warm       | no                      | `allow-all` or no internet     |
+| `machine`    | Your own computer            | no              | no                    | no                      | `allow-all` only               |
+| `custom`     | Your own server over HTTP    | no              | no                    | no                      | `allow-all` only               |
 
-`sandbox` is the default provider. Attaching a workspace to an `e2b`, `vercel` or `machine` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and the `machine` provider has its own page, [Your computer](machine.md).
+`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and `cloudflare` has [Cloudflare Containers](cloudflare.md). The `machine` provider has its own page, [Your computer](machine.md), and so does `custom`, [Your own server](custom.md).
 
 ## Configuration
 
 | Field                  | Default                | What it does                                                                                                      |
 | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `provider`             | `sandbox`              | Compute backend, from the table above                                                                             |
-| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                          |
+| `provider`             | `lambda`               | Compute backend, from the table above                                                                             |
+| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`              |
 | `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
+| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)       |
 | `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
 | `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
@@ -56,7 +59,9 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                              |
 | `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                   |
 
-`envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND` and the background-job slots. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
+`envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, the background-job slots and the run identity `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID`, `BROODS_BASE_URL`. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
+
+Every command that blocks also receives that run identity: `BROODS_RUN_TOKEN` is a short-lived bearer that reads this agent's runs, `BROODS_AGENT_ID` and `BROODS_ACCOUNT_ID` say who it is, and `BROODS_BASE_URL` is the API base when the deployment publishes one. See [Calling the API from a sandbox](../../reference/http-api.md#calling-the-api-from-a-sandbox).
 
 A call that blocks is capped at 600 seconds on every provider. Background jobs are not bound by the call timeout.
 
@@ -86,14 +91,16 @@ network: {
 },
 ```
 
-| Provider  | `allow-all` | `deny-all` | `restricted`                                                 |
-| --------- | ----------- | ---------- | ------------------------------------------------------------ |
-| `sandbox` | allowed     | denied     | domain and CIDR allowlist                                    |
-| `lambda`  | allowed     | denied     | same as `deny-all`. Allowlists are rejected at validation    |
-| `daytona` | allowed     | denied     | CIDR allowlist only. Domain lists are ignored with a warning |
-| `vercel`  | allowed     | denied     | domain and CIDR allowlist                                    |
-| `e2b`     | allowed     | rejected   | rejected                                                     |
-| `machine` | allowed     | rejected   | rejected                                                     |
+| Provider     | `allow-all` | `deny-all` | `restricted`                                                 |
+| ------------ | ----------- | ---------- | ------------------------------------------------------------ |
+| `sandbox`    | allowed     | denied     | domain and CIDR allowlist                                    |
+| `lambda`     | allowed     | denied     | same as `deny-all`. Allowlists are rejected at validation    |
+| `daytona`    | allowed     | denied     | CIDR allowlist only. Domain lists are ignored with a warning |
+| `vercel`     | allowed     | denied     | domain and CIDR allowlist                                    |
+| `cloudflare` | allowed     | denied     | rejected                                                     |
+| `e2b`        | allowed     | rejected   | rejected                                                     |
+| `machine`    | allowed     | rejected   | rejected                                                     |
+| `custom`     | allowed     | rejected   | rejected                                                     |
 
 A provider that cannot enforce a mode rejects the config instead of quietly granting more access. Background jobs report back to the platform over the network, so under `deny-all` a job still runs but its result has to be polled. See [Persistent sandboxes](persistent.md#background-jobs).
 
@@ -107,7 +114,7 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `medium` | 2    | 4 GB   | 16 GB | paid          |
 | `large`  | 4    | 8 GB   | 32 GB | paid          |
 
-Only the `sandbox` provider applies the size to the machine it creates, and it rounds `tiny` up to 0.5 vCPU. On `lambda` the image fixes the machine, so the size is display-only. `daytona`, `e2b` and `vercel` size machines through their own options, and there the size only sets what the dashboard shows. Every provider accepts every size name.
+Only the `sandbox` provider applies the size to the machine it creates, and it rounds `tiny` up to 0.5 vCPU. On `lambda` the image fixes the machine, so the size is display-only. `daytona`, `e2b` and `vercel` size machines through their own options, and there the size only sets what the dashboard shows. `cloudflare` picks the nearest Cloudflare instance type. Every provider accepts every size name.
 
 ## Images
 
@@ -117,7 +124,27 @@ Set `snapshot` to boot a prebuilt image instead of the provider default. Bake he
 - `lambda` selects a platform MicroVM image by ARN, in the same AWS account and region as the default image. A running MicroVM cannot be captured into a new image. Its state survives idle through suspend and resume instead.
 - `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
 
-The dashboard Snapshots view shows which image each running instance booted from.
+The dashboard Snapshots view shows which image each running instance booted from. On a `sandbox` or `lambda` sandbox node, the Snapshot select pins one of the account's active snapshots for that provider.
+
+On `lambda`, `image` picks a platform image with a browser by name. It cannot be combined with `snapshot` or `fallbackProvider`.
+
+```ts
+export const web = defineSandbox({
+  name: "web",
+  provider: "lambda",
+  image: "obscura",
+  network: { mode: "allow-all" },
+});
+```
+
+| `image`   | Adds                                                                                                      | Use it for                                                       |
+| --------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `obscura` | [Obscura](https://github.com/h4ckf0r0day/obscura), about 77 MB: page to markdown, text, links, screenshot | Reading the web. Markdown is 3 to 17x smaller than a page's HTML |
+| `browser` | Headless Chromium as `chromium`, about 770 MB                                                             | Screenshots that must match Chrome, heavy JavaScript apps        |
+
+The agent then runs `obscura fetch https://example.com --dump markdown --quiet` through `bash`. Obscura refuses private and link-local addresses unless passed `--allow-private-network`.
+
+A persistent `lambda` sandbox can also run a stdio MCP server from its image, such as `obscura mcp`, and keep it alive between calls. See [Run a server in a sandbox](../tools.md#run-a-server-in-a-sandbox).
 
 ## More than one sandbox
 

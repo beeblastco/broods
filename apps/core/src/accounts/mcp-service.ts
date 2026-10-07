@@ -11,6 +11,10 @@ import {
   mcpConnection,
   type McpConnection,
 } from "../harness/mcp/client.ts";
+import {
+  sandboxMcpTarget,
+  type SandboxMcpTarget,
+} from "../harness/mcp/sandbox.ts";
 import type { McpRecord } from "../shared/domain/mcp.ts";
 import {
   errorResponse,
@@ -20,8 +24,11 @@ import {
 } from "../shared/http.ts";
 import { isPlainObject, isStringRecord } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
+import { resolveAgentRuntime } from "../shared/workspaces.ts";
 
 const RPC_TIMEOUT_MS = 30_000;
+// The agent id the explorer reserves a lambda sandbox's VM under.
+const MCP_EXPLORER_AGENT_ID = "mcp-explorer";
 
 /** An unsaved row to verify: the minimal record fields a connection needs. */
 interface McpProbe {
@@ -31,6 +38,7 @@ interface McpProbe {
   headers?: Record<string, string>;
   bundleStorageKey?: string;
   sha256?: string;
+  workersCompatible?: boolean;
 }
 
 /**
@@ -57,7 +65,10 @@ export async function handleMcpServiceRpc(
     if (!record || record.status !== "active") {
       return errorResponse(404, "MCP server not found");
     }
-    connection = mcpConnection(record, undefined);
+    connection = {
+      ...mcpConnection(record, undefined),
+      sandbox: await explorerSandboxTarget(accountId, record),
+    };
   } else {
     const probe = parseProbe(body.probe);
     if (typeof probe === "string") return errorResponse(400, probe);
@@ -89,12 +100,45 @@ export async function handleMcpServiceRpc(
 }
 
 /**
+ * Where the explorer reaches a row on a lambda sandbox of the row's stage,
+ * resolved the way an agent run resolves it. The explorer runs as no agent, so
+ * it reserves a VM of its own on that sandbox (or the sandbox's pinned one).
+ * Undefined for any other row.
+ */
+async function explorerSandboxTarget(
+  accountId: string,
+  record: McpRecord,
+): Promise<SandboxMcpTarget | undefined> {
+  if (record.transport !== "machine") return undefined;
+  const sandboxes = await getStorage().sandboxConfigs.list(accountId);
+  const host = sandboxes.find(
+    (sandbox) =>
+      sandbox.name === record.sandbox && sandbox.stageId === record.stageId,
+  );
+  if (host?.config.provider !== "lambda") return undefined;
+  const runtime = await resolveAgentRuntime(
+    { sandboxes: [host.sandboxId] },
+    { accountId: accountId, agentId: MCP_EXPLORER_AGENT_ID },
+  );
+
+  return sandboxMcpTarget(record, runtime);
+}
+
+/**
  * Validates the rpc body's probe object into an McpProbe, or returns the 400
  * error message.
  */
 function parseProbe(value: unknown): McpProbe | string {
   if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
-  const { name, transport, url, headers, bundleStorageKey, sha256 } = value;
+  const {
+    name,
+    transport,
+    url,
+    headers,
+    bundleStorageKey,
+    sha256,
+    workersCompatible,
+  } = value;
   if (typeof name !== "string" || !name) return "probe needs a name";
   if (headers !== undefined && !isStringRecord(headers)) {
     return "probe headers must be a string record";
@@ -112,12 +156,21 @@ function parseProbe(value: unknown): McpProbe | string {
     if (typeof bundleStorageKey !== "string" || typeof sha256 !== "string") {
       return "a hosted probe needs bundleStorageKey and sha256";
     }
+    if (
+      workersCompatible !== undefined &&
+      typeof workersCompatible !== "boolean"
+    ) {
+      return "probe workersCompatible must be a boolean";
+    }
 
     return {
       ...shared,
       transport: transport,
       bundleStorageKey: bundleStorageKey,
       sha256: sha256,
+      ...(workersCompatible !== undefined
+        ? { workersCompatible: workersCompatible }
+        : {}),
     };
   }
 
@@ -138,6 +191,9 @@ function probeRecord(accountId: string, probe: McpProbe): McpRecord {
     stageId: "probe",
     name: probe.name,
     transport: probe.transport,
+    ...(probe.workersCompatible !== undefined
+      ? { workersCompatible: probe.workersCompatible }
+      : {}),
     ...(probe.url !== undefined ? { url: probe.url } : {}),
     ...(probe.headers !== undefined ? { headers: probe.headers } : {}),
     ...(probe.bundleStorageKey !== undefined

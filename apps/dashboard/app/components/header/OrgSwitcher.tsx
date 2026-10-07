@@ -33,6 +33,7 @@ import {
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
+import { toErrorMessage } from "@/app/lib/errors";
 
 export function OrgSwitcher(): React.JSX.Element {
   const router = useRouter();
@@ -96,7 +97,7 @@ export function OrgSwitcher(): React.JSX.Element {
       router.replace("/projects");
       router.refresh();
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Create failed");
+      setCreateError(toErrorMessage(err));
     } finally {
       setCreating(false);
     }
@@ -199,7 +200,7 @@ export function OrgSwitcher(): React.JSX.Element {
               Cancel
             </Button>
             <Button
-              className="cursor-pointer disabled:cursor-not-allowed"
+              className="cursor-pointer"
               disabled={creating || !newName.trim()}
               onClick={handleCreate}
             >

@@ -11,6 +11,10 @@
 // the route answers 413 and the link the model was handed would be dead.
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
+// Pictures are the one kind a model reads inline on nearly every provider, and
+// a 25 MB one costs far more in tokens than it carries in meaning.
+export const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+
 const MEDIA_EXTENSION_TYPES: Record<string, string> = {
   aac: "audio/aac",
   csv: "text/csv",

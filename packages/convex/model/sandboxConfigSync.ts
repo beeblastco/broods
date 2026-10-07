@@ -9,11 +9,8 @@
 
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-  substituteEnvPlaceholders,
-} from "./agentConfigCodec";
+import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
+import { substituteEnvPlaceholders } from "./agentConfigCodec";
 import { loadEnvironmentVariableValues } from "./environmentValues";
 
 /**
@@ -28,8 +25,7 @@ export async function refreshSandboxConfigsForEnvironmentVariable(
   name: string,
   value: string | undefined,
 ): Promise<void> {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) return;
+  if (!hasEncryptionSecret()) return;
 
   const configs = await ctx.db
     .query("sandboxConfigs")
@@ -53,18 +49,22 @@ export async function refreshSandboxConfigsForEnvironmentVariable(
     ) {
       continue;
     }
-    const source = await decryptAgentConfigBlob(
+    const cipher = await accountCipherForWrite(ctx, config.accountId);
+    const source = await cipher.decrypt(
+      "sandboxConfigs:encryptedSourceConfig",
       {
         ciphertext: config.encryptedSourceConfig,
         iv: config.sourceEncryptionIv,
         tag: config.sourceEncryptionTag,
       },
-      secret,
     );
     if (!source) continue;
 
     const resolved = substituteEnvPlaceholders(source, values);
-    const encrypted = await encryptAgentConfigBlob(resolved, secret);
+    const encrypted = await cipher.encrypt(
+      "sandboxConfigs:encryptedConfig",
+      resolved,
+    );
     await ctx.db.patch(config._id, {
       encryptedConfig: encrypted.ciphertext,
       encryptionIv: encrypted.iv,

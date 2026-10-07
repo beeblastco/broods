@@ -1,9 +1,10 @@
 import type { ApiError } from "../../../packages/convex/model/apiError.ts";
+import { DEFAULT_ORIGINS } from "../../edge/src/origins.ts";
 
 export {
   resolveRequestId,
   withRequestId,
-} from "../../core/src/shared/request-id.ts";
+} from "../../../packages/convex/model/requestId.ts";
 export {
   jsonError,
   rateLimitHeaders,
@@ -15,7 +16,6 @@ export type GatewayLimits = {
   backpressureBytes: number;
   idleTimeoutSeconds: number;
   runStartTimeoutMs: number;
-  maxRequestBodyBytes: number;
 };
 
 export const decoder = new TextDecoder();
@@ -63,25 +63,11 @@ export function errorMessage(error: unknown): string {
 
 export function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
-  if (!trimmed) throw new Error("Gateway requires BROODS_CORE_URLS");
+  if (!trimmed) throw new Error("Gateway requires BROODS_CORE_URL");
 
   return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed)
     ? trimmed
     : `https://${trimmed}`;
-}
-
-export function normalizedCoreBaseUrls(values: string[]): string[] {
-  const urls = [
-    ...new Set(
-      values
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .map(normalizeBaseUrl),
-    ),
-  ];
-  if (urls.length === 0) throw new Error("Gateway requires BROODS_CORE_URLS");
-
-  return urls;
 }
 
 /**
@@ -120,52 +106,6 @@ export function websocketUpgradeHeaders(
     : undefined;
 }
 
-/**
- * CORS headers for a browser request, scoped to the same allowlist that gates
- * WebSocket upgrades. Empty when the request carries no `Origin` (a server
- * caller, e.g. Convex or a channel webhook) or the origin is not allowed, so a
- * disallowed cross-origin call gets no `Access-Control-Allow-Origin` and the
- * browser blocks it. Credentials are never allowed: the dashboard authenticates
- * with a bearer token, not a cookie.
- */
-export function corsHeaders(
-  origin: string | null,
-  allowedPatterns: string[],
-  forwardAccountId = false,
-): Record<string, string> {
-  if (!origin?.trim() || !isOriginAllowed(origin, allowedPatterns)) return {};
-
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods":
-      "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": forwardAccountId
-      ? "authorization, content-type, x-request-id, x-account-id"
-      : "authorization, content-type, x-request-id",
-    "Access-Control-Max-Age": "600",
-    Vary: "Origin",
-  };
-}
-
-/** Stamp a response with the CORS headers for its origin, overwriting any it set. */
-export function withCors(
-  response: Response,
-  origin: string | null,
-  allowedPatterns: string[],
-  forwardAccountId = false,
-): Response {
-  const cors = corsHeaders(origin, allowedPatterns, forwardAccountId);
-  if (Object.keys(cors).length === 0) return response;
-  const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(cors)) headers.set(name, value);
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: headers,
-  });
-}
-
 export function allowedOriginPatternsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
@@ -177,7 +117,7 @@ export function allowedOriginPatternsFromEnv(
       .filter(Boolean);
   }
 
-  return ["broods.app", "*.broods.app", "localhost", "127.0.0.1"];
+  return [...DEFAULT_ORIGINS];
 }
 
 export function isOriginAllowed(
@@ -238,12 +178,6 @@ export function gatewayLimitsFromEnv(
       maxBunIdleTimeoutSeconds,
     ),
     runStartTimeoutMs: positiveInt(env.GATEWAY_RUN_START_TIMEOUT_MS, 15_000),
-    // Bun.serve refuses a body past this, streamed or buffered. The default is
-    // the Convex HTTP action limit, the largest either upstream accepts.
-    maxRequestBodyBytes: positiveInt(
-      env.GATEWAY_MAX_REQUEST_BODY_BYTES,
-      20 * 1024 * 1024,
-    ),
   };
 }
 

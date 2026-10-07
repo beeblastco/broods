@@ -35,34 +35,23 @@ import {
   type TerminalGatewayData,
 } from "./terminal.ts";
 import {
-  isConfigHttpPath,
-  isCoreHttpRoute,
-  isInternalCorePath,
   matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
-  normalizePathname,
 } from "./routes.ts";
 import { RateLimiter } from "./rate-limiter.ts";
-import {
-  proxyHttp,
-  resolveSocketScope,
-  type ProxyOptions,
-} from "./upstream.ts";
+import { resolveSocketScope } from "./upstream.ts";
 import {
   allowedOriginPatternsFromEnv,
   clientIp,
-  corsHeaders,
   gatewayLimitsFromEnv,
   isOriginAllowed,
   json,
   jsonError,
   normalizeBaseUrl,
-  normalizedCoreBaseUrls,
   rateLimitHeaders,
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
-  withCors,
   withRequestId,
   type GatewayLimits,
 } from "./utils.ts";
@@ -79,15 +68,10 @@ let natsConnectionPromise: Promise<NatsConnection> | null = null;
 export interface GatewayConfig {
   allowedOrigins: string[];
   authFailureLimiter: RateLimiter;
-  configBaseUrl: string | undefined;
-  coreBaseUrls: string[];
-  denyInternalPaths: boolean;
-  httpLimiter: RateLimiter | undefined;
+  coreBaseUrl: string;
   limits: GatewayLimits;
-  proxyOptions: Omit<ProxyOptions, "path">;
   spentTickets: SpentTickets;
   terminalTicketSecrets: string[];
-  upgradeLimiter: RateLimiter;
 }
 
 /** The two halves `Bun.serve` needs, built over one resolved config. */
@@ -104,11 +88,13 @@ export interface GatewayRuntime {
 /**
  * Build the router and socket handlers over one config.
  *
- * The security ordering lives here rather than inside the `import.meta.main`
- * block so tests can drive it without binding a port: origin allowlist, upgrade
- * rate limit, auth-failure rate limit, capacity, then the per-path token and
- * scope checks. The open sockets are per gateway, so two of them in one test
- * process do not share a capacity ceiling.
+ * Traefik routes, rate-limits and sets CORS in front of this (`apps/edge`) and
+ * sends it only health checks and WebSocket upgrades. The security ordering of
+ * an upgrade lives here rather than inside the `import.meta.main` block so tests
+ * can drive it without binding a port: origin allowlist, auth-failure rate
+ * limit, capacity, then the per-path token and scope checks. The open sockets
+ * are per gateway, so two of them in one test process do not share a capacity
+ * ceiling.
  */
 export function createGateway(config: GatewayConfig): GatewayRuntime {
   const sockets = new Set<Bun.ServerWebSocket<GatewayData>>();
@@ -117,38 +103,18 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
   async function route(
     request: Request,
     server: Bun.Server<GatewayData>,
-    requestId: string,
   ): Promise<Response | undefined> {
-    // Every decision below and the upstream see one path, so a trailing slash
-    // never moves a request to the other plane.
-    const url = new URL(request.url);
-    const pathname = normalizePathname(url.pathname);
+    // Traefik strips trailing slashes before it forwards.
+    const pathname = new URL(request.url).pathname;
 
     if (
       (pathname === "/" || pathname === "/healthz") &&
       request.method === "GET"
     ) {
-      return json(
-        {
-          status: "ok",
-          activeWebSockets: sockets.size,
-          maxWebSockets: config.limits.maxConnections,
-        },
-        { headers: { "Access-Control-Allow-Origin": "*" } },
-      );
-    }
-
-    // Answer the browser's CORS preflight before the rate limiters and routing:
-    // a preflight is not the real request and never reaches an upstream. A
-    // disallowed origin gets no CORS headers, so the browser blocks it.
-    if (request.method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders(
-          request.headers.get("origin"),
-          config.allowedOrigins,
-          config.proxyOptions.forwardAccountId,
-        ),
+      return json({
+        status: "ok",
+        activeWebSockets: sockets.size,
+        maxWebSockets: config.limits.maxConnections,
       });
     }
 
@@ -159,17 +125,6 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         return jsonError(403, "Origin is not allowed");
       }
       const ip = clientIp(request, server.requestIP(request)?.address);
-      if (!config.upgradeLimiter.allow(ip)) {
-        return jsonError(
-          429,
-          "Too many connection attempts",
-          {},
-          rateLimitHeaders(
-            config.upgradeLimiter.limit,
-            config.upgradeLimiter.retryAfterSeconds(ip),
-          ),
-        );
-      }
       if (config.authFailureLimiter.blocked(ip)) {
         return jsonError(
           429,
@@ -220,7 +175,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           data = {
             kind: "machine",
             ticket: {
-              url: machineSocketUrl(config.coreBaseUrls[0]!),
+              url: machineSocketUrl(config.coreBaseUrl),
               authorization: `Bearer ${token}`,
             },
           };
@@ -228,7 +183,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
 
-          const resolved = await resolveSocketScope(token, config.coreBaseUrls);
+          const resolved = await resolveSocketScope(token, config.coreBaseUrl);
           if (resolved.kind === "unavailable")
             return jsonError(502, "Could not verify the WebSocket token");
           if (resolved.kind === "invalid") {
@@ -269,7 +224,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               kind: "agent-test",
               corePath: pathname.slice(0, -"/ws".length),
               token: token,
-              coreBaseUrl: resolved.coreBaseUrl,
+              coreBaseUrl: config.coreBaseUrl,
               accountId: scope.accountId,
             };
           }
@@ -298,44 +253,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       }
     }
 
-    const requestIp = clientIp(request, server.requestIP(request)?.address);
-    if (config.httpLimiter && !config.httpLimiter.allow(requestIp)) {
-      return jsonError(
-        429,
-        "Too many requests",
-        {},
-        rateLimitHeaders(
-          config.httpLimiter.limit,
-          config.httpLimiter.retryAfterSeconds(requestIp),
-        ),
-      );
-    }
-
-    if (isConfigHttpPath(pathname, request.method)) {
-      if (!config.configBaseUrl)
-        return jsonError(
-          503,
-          "Config plane is not configured (BROODS_CONFIG_URL)",
-        );
-
-      return proxyHttp(request, [config.configBaseUrl], {
-        ...config.proxyOptions,
-        requestId: requestId,
-        path: `${pathname}${url.search}`,
-      });
-    }
-
-    if (
-      !isCoreHttpRoute(pathname) ||
-      (config.denyInternalPaths && isInternalCorePath(pathname))
-    )
-      return jsonError(404, "Not found");
-
-    return proxyHttp(request, config.coreBaseUrls, {
-      ...config.proxyOptions,
-      requestId: requestId,
-      path: `${pathname}${url.search}`,
-    });
+    return jsonError(404, "Not found");
   }
 
   async function handleRequest(
@@ -344,24 +262,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
   ): Promise<Response | undefined> {
     const requestId = resolveRequestId(request.headers.get("x-request-id"));
     try {
-      const response = await route(request, server, requestId);
+      const response = await route(request, server);
 
       // A WebSocket upgrade returns undefined; there is no response to stamp.
-      // A browser reads the response only when it carries the CORS headers for
-      // its origin, so a cross-origin POST (the Continue button, the test chat)
-      // sees the result instead of a bare "Failed to fetch".
-      if (!response) return response;
-      const origin = request.headers.get("origin");
-
-      return withRequestId(
-        withCors(
-          response,
-          origin,
-          config.allowedOrigins,
-          config.proxyOptions.forwardAccountId,
-        ),
-        requestId,
-      );
+      return response && withRequestId(response, requestId);
     } catch (error) {
       // A malformed %-escape in a path segment is the caller's mistake.
       if (error instanceof URIError)
@@ -459,41 +363,16 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
 
 /** Resolve the router's config from the process environment. */
 export function gatewayConfigFromEnv(): GatewayConfig {
-  const httpRequestsPerMinute =
-    Number(process.env.GATEWAY_HTTP_REQUESTS_PER_MINUTE ?? "") || 0;
-
   return {
     allowedOrigins: allowedOriginPatternsFromEnv(),
     authFailureLimiter: new RateLimiter(
       Number(process.env.GATEWAY_AUTH_FAILURES_PER_MINUTE ?? "") || 20,
       60_000,
     ),
-    configBaseUrl: process.env.BROODS_CONFIG_URL?.trim()
-      ? normalizeBaseUrl(process.env.BROODS_CONFIG_URL)
-      : undefined,
-    coreBaseUrls: normalizedCoreBaseUrls(
-      process.env.BROODS_CORE_URLS?.split(",") ?? [],
-    ),
-    denyInternalPaths: process.env.GATEWAY_DENY_INTERNAL_PATHS !== "false",
-    // Proxied HTTP is unmetered unless this is set, and core keeps no per-IP
-    // count of its own. Left off by default because channel webhooks arrive on
-    // this branch from a provider's egress addresses: one number chosen here
-    // would meter a whole retrying fleet as a single caller.
-    httpLimiter:
-      httpRequestsPerMinute > 0
-        ? new RateLimiter(httpRequestsPerMinute, 60_000)
-        : undefined,
+    coreBaseUrl: normalizeBaseUrl(process.env.BROODS_CORE_URL ?? ""),
     limits: gatewayLimitsFromEnv(),
-    // Only the service token reads the header, and it never crosses this door.
-    proxyOptions: {
-      forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID === "true",
-    },
     spentTickets: natsSpentTickets(getNatsConnection),
     terminalTicketSecrets: requireSecretsEnv("TERMINAL_TICKET_SECRET"),
-    upgradeLimiter: new RateLimiter(
-      Number(process.env.GATEWAY_UPGRADES_PER_MINUTE ?? "") || 120,
-      60_000,
-    ),
   };
 }
 
@@ -504,7 +383,6 @@ if (import.meta.main) {
     port: Number(process.env.PORT ?? "3000"),
     hostname: process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
     idleTimeout: config.limits.idleTimeoutSeconds,
-    maxRequestBodySize: config.limits.maxRequestBodyBytes,
     fetch: gateway.fetch,
     websocket: gateway.websocket,
   });

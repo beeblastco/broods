@@ -10,6 +10,7 @@ import { useMutation } from "convex/react";
 import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { CronDialog } from "./CronDialog";
+import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   crons: Array<Doc<"crons">>;
@@ -35,7 +36,7 @@ export function CronsTable({ crons, agents }: Props): React.JSX.Element {
       await remove({ cronId: deleting._id });
       setDeleting(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
+      setError(toErrorMessage(err));
     } finally {
       setPending(false);
     }

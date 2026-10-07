@@ -54,6 +54,7 @@ export const runtimeMutations = {
   releaseIngressOwner: internal.runtimeIngress.releaseOwner,
   renewIngressOwner: internal.runtimeIngress.renewOwner,
   settleIngress: internal.runtimeIngress.settle,
+  stepIngressBoundary: internal.runtimeIngress.stepBoundary,
   stopIngressOwner: internal.runtimeIngress.stopOwner,
   takeNextIngress: internal.runtimeIngress.takeNext,
 } as const;

@@ -12,12 +12,8 @@ import {
   stopActiveRun,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
-import {
-  isConfigHttpPath,
-  isCoreHttpRoute,
-  matchAgentWebSocketPath,
-} from "../src/routes.ts";
-import { proxyHttp, resolveSocketScope } from "../src/upstream.ts";
+import { matchAgentWebSocketPath } from "../src/routes.ts";
+import { resolveSocketScope } from "../src/upstream.ts";
 import {
   cleanupObservabilitySocket,
   fetchTempoBackfill,
@@ -44,20 +40,16 @@ import {
 import {
   allowedOriginPatternsFromEnv,
   clientIp,
-  corsHeaders,
   gatewayLimitsFromEnv,
   isOriginAllowed,
   json,
   mapWithConcurrency,
-  normalizedCoreBaseUrls,
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
-  withCors,
   withRequestId,
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
-import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import {
   createSubagentTaskId,
   scopedDirectEventId,
@@ -1346,7 +1338,6 @@ test("uses conservative gateway limit defaults", () => {
     backpressureBytes: 1024 * 1024,
     idleTimeoutSeconds: 255,
     runStartTimeoutMs: 15_000,
-    maxRequestBodyBytes: 20 * 1024 * 1024,
   });
 });
 
@@ -1358,7 +1349,6 @@ test("ignores invalid gateway limit overrides", () => {
       GATEWAY_BACKPRESSURE_BYTES: "-1",
       GATEWAY_IDLE_TIMEOUT_SECONDS: "60",
       GATEWAY_RUN_START_TIMEOUT_MS: "2500",
-      GATEWAY_MAX_REQUEST_BODY_BYTES: "0",
     }),
   ).toEqual({
     maxConnections: 500,
@@ -1366,7 +1356,6 @@ test("ignores invalid gateway limit overrides", () => {
     backpressureBytes: 1024 * 1024,
     idleTimeoutSeconds: 60,
     runStartTimeoutMs: 2500,
-    maxRequestBodyBytes: 20 * 1024 * 1024,
   });
 });
 
@@ -1376,148 +1365,6 @@ test("caps gateway idle timeout at Bun's supported maximum", () => {
       GATEWAY_IDLE_TIMEOUT_SECONDS: "300",
     }).idleTimeoutSeconds,
   ).toBe(255);
-});
-
-test("normalizes and de-duplicates unified gateway core upstreams", () => {
-  expect(
-    normalizedCoreBaseUrls([
-      "https://dev-core.example.com/",
-      "https://prod-core.example.com",
-      "https://dev-core.example.com",
-    ]),
-  ).toEqual(["https://dev-core.example.com", "https://prod-core.example.com"]);
-  expect(() => normalizedCoreBaseUrls(["", "  "])).toThrow("Gateway requires");
-});
-
-test("proxies runtime HTTP paths used by the SDK", () => {
-  expect(isCoreHttpRoute("/v1/runs")).toBe(true);
-  expect(isCoreHttpRoute("/v1/runs/run_1")).toBe(true);
-  expect(isCoreHttpRoute("/v1/accounts")).toBe(true);
-  // The one webhook shape reaches core, and so does a retired agent-scoped URL:
-  // core answers that with a 404 naming the right one, which it cannot do if
-  // the gateway swallows the path first.
-  expect(isCoreHttpRoute("/v1/webhooks/acct_1/slack")).toBe(true);
-  expect(isCoreHttpRoute("/v1/webhooks/acct_1/agent_1/slack")).toBe(true);
-  expect(isCoreHttpRoute("/v1/crons")).toBe(true);
-  expect(
-    isCoreHttpRoute("/v1/projects/demo/stages/development/agents/env_123"),
-  ).toBe(true);
-  expect(isCoreHttpRoute("/")).toBe(false);
-  expect(isCoreHttpRoute("/healthz")).toBe(false);
-});
-
-test("routes config-plane CRUD to Convex, not core", () => {
-  // Account metadata/rotation plus agents, skills, tools, hooks, workspace files, crons, workspaces, sandboxes, policies, and channels are Convex config-plane routes.
-  for (const method of ["GET", "POST", "PUT"]) {
-    expect(isConfigHttpPath("/v1/account/onboarding", method)).toBe(true);
-    expect(
-      isConfigHttpPath("/v1/account/projects/p/stages/e/manifest", method),
-    ).toBe(true);
-  }
-  expect(isConfigHttpPath("/v1/accountx", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/v1/account", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/account", "PATCH")).toBe(true);
-  expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts/acct_1", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts/acct_1", "PATCH")).toBe(true);
-  expect(isConfigHttpPath("/v1/accounts/acct_1/rotate-secret", "POST")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/agents", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents/agent_1", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents/agent_1", "PATCH")).toBe(true);
-  expect(isConfigHttpPath("/v1/agents/agent_1", "DELETE")).toBe(true);
-  expect(
-    isConfigHttpPath("/v1/agents/agent_1/channels/slack/directory", "GET"),
-  ).toBe(true);
-  expect(
-    isConfigHttpPath("/v1/agents/agent_1/channels/slack/directory", "POST"),
-  ).toBe(false);
-  expect(isConfigHttpPath("/v1/env", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "PUT")).toBe(true);
-  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "DELETE")).toBe(true);
-  expect(isConfigHttpPath("/v1/skills")).toBe(true);
-  expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
-  // /v1/tools is retired (#331 phase 3); it no longer routes to the config plane.
-  expect(isConfigHttpPath("/v1/tools")).toBe(false);
-  expect(isConfigHttpPath("/v1/mcp")).toBe(true);
-  expect(isConfigHttpPath("/v1/mcp/k57mcpserver00000000000000000000")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/mcp/uploads", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/hooks")).toBe(true);
-  expect(isConfigHttpPath("/v1/hooks/k17zwc4z4q5ysxm74fgrhd13s88xxtv")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
-  expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
-  expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
-  expect(isConfigHttpPath("/v1/workspaces/ws_123/download-links", "POST")).toBe(
-    true,
-  );
-  expect(isConfigHttpPath("/v1/workspaces/ws_123/download-links", "GET")).toBe(
-    false,
-  );
-  // Redeeming a download link is unauthenticated and read-only.
-  expect(isConfigHttpPath("/v1/downloads/tok_abc", "GET")).toBe(true);
-  expect(isConfigHttpPath("/v1/downloads/tok_abc", "HEAD")).toBe(true);
-  expect(isConfigHttpPath("/v1/downloads/tok_abc", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/v1/downloads", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/downloads/tok_abc/extra", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/sandboxes")).toBe(true);
-  expect(isConfigHttpPath("/v1/sandboxes/sbx_1")).toBe(true);
-  expect(isConfigHttpPath("/v1/policies")).toBe(true);
-  expect(isConfigHttpPath("/v1/policies/pol_1")).toBe(true);
-  expect(isConfigHttpPath("/v1/roles")).toBe(true);
-  expect(isConfigHttpPath("/v1/roles/fp_role_abc")).toBe(true);
-  expect(isConfigHttpPath("/v1/account/assume-role", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/channels")).toBe(true);
-  expect(isConfigHttpPath("/v1/channels/chan_1")).toBe(true);
-  expect(isConfigHttpPath("/v1/crons")).toBe(true);
-  expect(isConfigHttpPath("/v1/crons/cron_123")).toBe(true);
-  expect(isConfigHttpPath("/v1/crons/cron_123/runs")).toBe(true);
-  expect(isConfigHttpPath("/v1/cron-runs", "POST")).toBe(false);
-
-  // Exact depth only: scoped agent invocations and other resources stay core.
-  expect(isConfigHttpPath("/v1/account", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/accounts", "POST")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1", "DELETE")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret", "GET")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1/agents", "GET")).toBe(false);
-  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret/extra", "POST")).toBe(
-    false,
-  );
-  // The whole /v1/account/ subtree is Convex's; core only owns the exact-path DELETE.
-  expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/account/auth/exchange", "POST")).toBe(true);
-  expect(isConfigHttpPath("/v1/skills/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/hooks/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/crons/agents/development/env_123")).toBe(false);
-  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);
-  expect(isConfigHttpPath("/v1/sandboxes/sbx_1/terminal")).toBe(false);
-  expect(isConfigHttpPath("/v1/policies/agents/development/env_123")).toBe(
-    false,
-  );
-  expect(isConfigHttpPath("/v1/channels/agents/development/env_123")).toBe(
-    false,
-  );
-  expect(isConfigHttpPath("/v1/agents/agent_1", "POST")).toBe(false);
-  expect(isConfigHttpPath("/v1/env", "PUT")).toBe(false);
-  expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/agents/agent_1/ws", "GET")).toBe(false);
-  expect(isConfigHttpPath("/v1/agents/agent_1/async", "POST")).toBe(false);
-  expect(isConfigHttpPath("/v1/demo/agents/development/env_123", "POST")).toBe(
-    false,
-  );
-  expect(
-    isConfigHttpPath("/v1/demo/agents/development/env_123/async", "POST"),
-  ).toBe(false);
-  expect(
-    isConfigHttpPath("/v1/demo/agents/development/env_123/ws", "GET"),
-  ).toBe(false);
 });
 
 test("parses agent websocket paths so the upgrade can bind the key's endpoint scope", () => {
@@ -1551,15 +1398,13 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
   ).toBeNull();
 });
 
-test("routes a runtime key to the matching core upstream", async () => {
+test("resolves the scope a runtime key grants from core", async (): Promise<void> => {
   const calls: string[] = [];
   const resolved = await resolveSocketScope(
     "runtime-key",
-    ["https://dev.example", "https://prod.example"],
-    async (input) => {
+    "https://core.example",
+    async (input): Promise<Response> => {
       calls.push(String(input));
-      if (new URL(String(input)).origin === "https://dev.example")
-        return new Response("unauthorized", { status: 401 });
 
       return Response.json({
         accountId: "account-1",
@@ -1570,10 +1415,11 @@ test("routes a runtime key to the matching core upstream", async () => {
     },
   );
 
-  expect(calls).toHaveLength(2);
+  expect(calls).toEqual([
+    "https://core.example/v1/internal/observability-scope",
+  ]);
   expect(resolved).toMatchObject({
     kind: "resolved",
-    coreBaseUrl: "https://prod.example",
     scope: { stageSlug: "production" },
   });
 });
@@ -1582,7 +1428,7 @@ test("a core that cannot answer is an outage, not a bad token", async (): Promis
   const resolve = (
     answer: () => Promise<Response>,
   ): ReturnType<typeof resolveSocketScope> =>
-    resolveSocketScope("runtime-key", ["https://core.example"], answer);
+    resolveSocketScope("runtime-key", "https://core.example", answer);
 
   expect(
     await resolve(
@@ -1604,112 +1450,6 @@ test("a core that cannot answer is an outage, not a bad token", async (): Promis
       throw new Error("timed out");
     }),
   ).toEqual({ kind: "unavailable" });
-});
-
-test("proxyHttp strips hop-by-hop headers and preserves method query and body", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: Array<{ input: string; init?: RequestInit }> = [];
-
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ input: String(input), init: init });
-
-    return new Response("ok", { status: 200 });
-  }) as typeof fetch;
-
-  try {
-    const response = await proxyHttp(
-      new Request("https://gateway.example/v1/agents?debug=1", {
-        method: "POST",
-        headers: {
-          host: "gateway.example",
-          connection: "upgrade",
-          upgrade: "websocket",
-          "x-test": "yes",
-        },
-        body: "hello",
-      }),
-      ["https://core.example"],
-      { path: "/v1/agents?debug=1" },
-    );
-
-    expect(response.status).toBe(200);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.input).toBe("https://core.example/v1/agents?debug=1");
-    expect(calls[0]!.init?.method).toBe("POST");
-    expect(calls[0]!.init?.redirect).toBe("manual");
-    const headers = calls[0]!.init?.headers as Headers;
-    expect(headers.get("x-test")).toBe("yes");
-    expect(headers.has("host")).toBe(false);
-    expect(headers.has("connection")).toBe(false);
-    expect(headers.has("upgrade")).toBe(false);
-    // One upstream streams the client body instead of buffering it.
-    expect(calls[0]!.init?.body).toBeInstanceOf(ReadableStream);
-    expect(await new Response(calls[0]!.init?.body).text()).toBe("hello");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("proxyHttp buffers the body only to resend it on a 401 failover", async () => {
-  const bodies: string[] = [];
-  const respond = async (
-    _input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    bodies.push(await new Response(init?.body).text());
-
-    return bodies.length === 1
-      ? new Response("unauthorized", { status: 401 })
-      : new Response("ok", { status: 200 });
-  };
-  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(respond, { preconnect: (): void => {} }),
-  );
-
-  try {
-    const response = await proxyHttp(
-      new Request("https://gateway.example/v1/runs", {
-        method: "POST",
-        body: "hello",
-      }),
-      ["https://dev.example", "https://prod.example"],
-      { path: "/v1/runs" },
-    );
-
-    expect(response.status).toBe(200);
-    expect(bodies).toEqual(["hello", "hello"]);
-  } finally {
-    fetchSpy.mockRestore();
-  }
-});
-
-test("proxyHttp falls through to the next upstream only on 401", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    calls.push(String(input));
-
-    return calls.length === 1
-      ? new Response("unauthorized", { status: 401 })
-      : new Response("ok", { status: 200 });
-  }) as typeof fetch;
-
-  try {
-    const response = await proxyHttp(
-      new Request("https://gateway.example/status/request-1"),
-      ["https://dev.example", "https://prod.example"],
-      { path: "/status/request-1" },
-    );
-
-    expect(response.status).toBe(200);
-    expect(calls).toEqual([
-      "https://dev.example/status/request-1",
-      "https://prod.example/status/request-1",
-    ]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
 
 test("bounds observability backfill requests", () => {
@@ -3005,7 +2745,7 @@ test("maps with bounded concurrency, preserves order, and isolates failures", as
 test("opens a sealed terminal ticket with whichever stage secret verifies it", () => {
   const ticket = {
     url: "ws://sandbox-node.example:8080/v1/sandboxes/sb_1/pty",
-    authorization: "Bearer sk_live_key",
+    authorization: "Bearer bsk_live_key",
     accountId: "acct_1",
     expiresAt: Date.now() + 60_000,
   };
@@ -3209,52 +2949,6 @@ test("origin allow-list: defaults cover broods.app, wildcards, and non-browser c
   expect(isOriginAllowed("https://anything.example", ["*"])).toBe(true);
 });
 
-test("CORS: an allowed origin gets reflected headers, a disallowed or absent one gets none", () => {
-  const patterns = allowedOriginPatternsFromEnv({});
-
-  const allowed = corsHeaders("https://dashboard.dev.broods.app", patterns);
-  expect(allowed["Access-Control-Allow-Origin"]).toBe(
-    "https://dashboard.dev.broods.app",
-  );
-  expect(allowed["Access-Control-Allow-Methods"]).toContain("POST");
-  expect(allowed["Access-Control-Allow-Headers"]).toContain("authorization");
-  expect(allowed["Access-Control-Allow-Headers"]).not.toContain("x-account-id");
-  expect(
-    corsHeaders("https://dashboard.dev.broods.app", patterns, true)[
-      "Access-Control-Allow-Headers"
-    ],
-  ).toContain("x-account-id");
-  expect(allowed["Vary"]).toBe("Origin");
-  // No credentials: the dashboard sends a bearer token, not a cookie.
-  expect(allowed["Access-Control-Allow-Credentials"]).toBeUndefined();
-
-  expect(corsHeaders("https://evil.example.com", patterns)).toEqual({});
-  expect(corsHeaders(null, patterns)).toEqual({});
-});
-
-test("withCors stamps a proxied response for an allowed origin and leaves others untouched", () => {
-  const patterns = allowedOriginPatternsFromEnv({});
-
-  const stamped = withCors(
-    json({ ok: true }, { status: 200 }),
-    "https://dashboard.dev.broods.app",
-    patterns,
-  );
-  expect(stamped.headers.get("access-control-allow-origin")).toBe(
-    "https://dashboard.dev.broods.app",
-  );
-
-  const bare = withCors(
-    json({ ok: true }),
-    "https://evil.example.com",
-    patterns,
-  );
-  expect(bare.headers.get("access-control-allow-origin")).toBeNull();
-
-  const serverCaller = withCors(json({ ok: true }), null, patterns);
-  expect(serverCaller.headers.get("access-control-allow-origin")).toBeNull();
-});
-
 test("rate limiter: bounds a window, probes without counting, and resets", async () => {
   const limiter = new RateLimiter(3, 50);
   expect(limiter.allow("ip-1")).toBe(true);
@@ -3302,43 +2996,6 @@ test("client ip takes the rightmost forwarded hop, then the socket address", () 
   expect(clientIp(new Request("https://gateway.example.com/"), undefined)).toBe(
     "unknown",
   );
-});
-
-test("proxyHttp never replays a POST to the next upstream after a network error", async (): Promise<void> => {
-  const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
-    calls.push(String(input));
-    throw new Error("connection reset");
-  }) as unknown as typeof fetch;
-
-  try {
-    const response = await proxyHttp(
-      new Request("https://gateway.example/v1/runs", {
-        method: "POST",
-        body: "{}",
-      }),
-      ["https://dev.example", "https://prod.example"],
-      { path: "/v1/runs" },
-    );
-
-    expect(response.status).toBe(502);
-    expect(calls).toEqual(["https://dev.example/v1/runs"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("proxyHttp returns 502 when every upstream is unreachable", async () => {
-  const response = await proxyHttp(
-    new Request("https://gateway.example.com/v1/agents"),
-    ["http://127.0.0.1:9", "http://127.0.0.1:1"],
-    { path: "/v1/agents" },
-  );
-  expect(response.status).toBe(502);
-  expect(await response.json()).toMatchObject({
-    error: { message: "Upstream is unreachable" },
-  });
 });
 
 test("observability relay sheds droppable frames when the socket buffer is backed up", async () => {
@@ -3784,42 +3441,6 @@ test("observability selectors keep a hostile stage slug inside the string", () =
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(
     '{account_id="acct-1",project="shop",stage="dev\\"} or {stage=~\\".+",service_name!="broods-sandbox"}',
   );
-});
-
-test("proxyHttp drops a client X-Account-Id unless told to forward it, and always marks the hop", async () => {
-  const originalFetch = globalThis.fetch;
-  const seen: Array<string | null> = [];
-  const marks: Array<string | null> = [];
-  globalThis.fetch = (async (_input, init) => {
-    seen.push(new Headers(init?.headers).get("x-account-id"));
-    marks.push(new Headers(init?.headers).get(VIA_GATEWAY_HEADER));
-
-    return new Response("ok", { status: 200 });
-  }) as typeof fetch;
-
-  try {
-    const request = () =>
-      new Request("https://gateway.example/v1/sandboxes/sb_1/terminate", {
-        method: "POST",
-        headers: {
-          "x-account-id": "acct_1",
-          authorization: "Bearer svc",
-          [VIA_GATEWAY_HEADER]: "client-value",
-        },
-        body: "{}",
-      });
-    const path = "/v1/sandboxes/sb_1/terminate";
-    await proxyHttp(request(), ["https://core.example"], { path: path });
-    await proxyHttp(request(), ["https://core.example"], {
-      path: path,
-      forwardAccountId: true,
-    });
-
-    expect(seen).toEqual([null, "acct_1"]);
-    expect(marks).toEqual(["1", "1"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
 
 test("resolveRequestId reuses an inbound id only when it matches the issued shape", () => {

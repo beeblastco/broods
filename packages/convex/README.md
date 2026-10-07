@@ -36,9 +36,9 @@ blobs. Core encrypts before writing; the dashboard never reads the plaintext.
 Environment variables are the exception: their values can be revealed on demand
 by the stage owner (`environmentVariables.reveal` / CLI `env get`), and
 each reveal is recorded in the `environmentVariableReveals` audit table. Config
-mutations write account-visible rows to `configAuditEvents`, which the dashboard
-reads reactively.
-Stage runtime API keys are also stored AES-GCM encrypted alongside their
+mutations append rows to the hash-chained `auditEvents` ledger, which the config plane
+serves and exports (`GET /v1/audit`).
+Runtime keys are also stored AES-GCM encrypted alongside their
 authentication hash. Owners can recover them through the dashboard or CLI login
 without rotating.
 
@@ -69,8 +69,8 @@ the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
 `workspace/filesPublic.ts`).
 
 `config/http.ts` serves the public config API on this deployment's
-`.convex.site` host, replacing core's former routes. The gateway forwards those
-paths here (`BROODS_CONFIG_URL`). It covers account metadata and rotation (`GET/PATCH /v1/account`,
+`.convex.site` host, replacing core's former routes. Traefik routes those
+paths here (the config rules in `apps/edge/src/routes.ts`). It covers account metadata and rotation (`GET/PATCH /v1/account`,
 `POST /v1/account/rotate-secret`, `GET /v1/accounts`,
 `GET/PATCH /v1/accounts/{accountId}`, and
 `POST /v1/accounts/{accountId}/rotate-secret`), `/v1/agents*`, `/v1/skills*`,
@@ -102,7 +102,7 @@ Deployment environment variables:
 - `ALLOW_PRIVATE_STORAGE_ENDPOINTS`: `true` lets a self-hosted deployment accept
   a private workspace `storage.endpoint`, over `http` or `https`. A public host
   stays `https` only. Set the same value on core.
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: AES-GCM secret for agent and sandbox config CRUD.
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: derives the KEK that wraps every account's data encryption key (`model/envelope.ts`). Comma-separated list: the first entry wraps, every entry unwraps. To rotate it, follow the rotation runbook in `apps/docs/docs/internals/security.md`.
 - `ADMIN_ACCOUNT_SECRET`: admin bearer secret accepted by account admin HTTP
   routes in `config/http.ts`.
 - `BROODS_ACCOUNT_MANAGE_URL` / `SERVICE_AUTH_SECRET`: core's in-cluster URL

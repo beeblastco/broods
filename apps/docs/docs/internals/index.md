@@ -9,20 +9,21 @@ This section is for the contributors, self-hosters and operators who work on Bro
 
 ## What is in the repo
 
-The repo is a Bun workspaces monorepo. The parts form one product. The gateway is the front door, core owns runtime truth, Convex owns config and persistence, and the dashboard and CLI are two clients of the same config plane.
+The repo is a Bun workspaces monorepo. The parts form one product. Traefik is the front door, with routes generated from `apps/edge`, core owns runtime truth, Convex owns config and persistence, and the dashboard and CLI are two clients of the same config plane.
 
-| Path                     | Package                     | Job                                                                                                                                                                                                                               |
-| ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/core`              | `@broods/core`              | The agent harness, one Bun container behind the gateway. Runtime API, channel webhooks, cron runs, tools, skills, sandboxes, workspaces, async status, SSE, the machine socket. Also holds `sst.config.ts` for the AWS resources. |
-| `apps/gateway`           | `@broods/gateway`           | The front door. Sends config-plane paths to Convex and the rest to core, and terminates the agent, observability, terminal and machine WebSockets.                                                                                |
-| `apps/lambda`            | none, plain `.mjs`          | The hosted MCP runner Lambda (`handler.mjs`, `child-runner.mjs`) and the sandbox log forwarder (`sandbox-log-forwarder.mjs`). Deployed by `apps/core/sst.config.ts`, no build step.                                               |
-| `apps/discord-forwarder` | `@broods/discord-forwarder` | Holds the Discord Gateway sockets, one per bot token, and posts regular messages to the channel webhook. Single replica.                                                                                                          |
-| `apps/matrix-forwarder`  | `@broods/matrix-forwarder`  | Runs the Matrix `/sync` long-polls and holds each account's E2EE keys. Posts decrypted messages in, sends encrypted replies out. Crypto store on a persistent volume, single replica.                                             |
-| `apps/dashboard`         | `@broods/dashboard`         | The Next.js UI. Reads and writes Convex as a WorkOS user, and opens gateway sockets for logs, traces, the test chat and sandbox terminals.                                                                                        |
-| `packages/convex`        | `@broods/convex`            | Shared Convex backend: the config plane plus runtime persistence for core and the dashboard.                                                                                                                                      |
-| `apps/docs`              | `@broods/docs`              | This Docusaurus site and the OpenAPI spec at `docs/api-reference/openapi.yaml`.                                                                                                                                                   |
-| `packages/broods`        | `broods`                    | The published CLI and TypeScript SDK. `broods` exports `BroodsClient`, `WebSocketClient` and the `define*` helpers. `broods/account` exports the dependency-free `BroodsAccountClient`.                                           |
-| `packages/demos`         | not a workspace             | Runnable demos against a deployed core.                                                                                                                                                                                           |
+| Path                     | Package                     | Job                                                                                                                                                                                                                           |
+| ------------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/core`              | `@broods/core`              | The agent harness, one Bun container behind Traefik. Runtime API, channel webhooks, cron runs, tools, skills, sandboxes, workspaces, async status, SSE, the machine socket. Also holds `sst.config.ts` for the AWS resources. |
+| `apps/edge`              | `@broods/edge`              | The public route table. Generates the Traefik config that sends config-plane paths to Convex, the rest to core and WebSockets to the gateway, with per-address limits and CORS.                                               |
+| `apps/gateway`           | `@broods/gateway`           | The WebSocket server behind Traefik: the agent, observability, terminal and machine sockets.                                                                                                                                  |
+| `apps/lambda`            | none, plain `.mjs`          | The hosted MCP runner Lambda (`handler.mjs`, `child-runner.mjs`) and the sandbox log forwarder (`sandbox-log-forwarder.mjs`). Deployed by `apps/core/sst.config.ts`, no build step.                                           |
+| `apps/discord-forwarder` | `@broods/discord-forwarder` | Holds the Discord Gateway sockets, one per bot token, and posts regular messages to the channel webhook. Single replica.                                                                                                      |
+| `apps/matrix-forwarder`  | `@broods/matrix-forwarder`  | Runs the Matrix `/sync` long-polls and holds each account's E2EE keys. Posts decrypted messages in, sends encrypted replies out. Crypto store on a persistent volume, single replica.                                         |
+| `apps/dashboard`         | `@broods/dashboard`         | The Next.js UI. Reads and writes Convex as a WorkOS user, and opens gateway sockets for logs, traces, the test chat and sandbox terminals.                                                                                    |
+| `packages/convex`        | `@broods/convex`            | Shared Convex backend: the config plane plus runtime persistence for core and the dashboard.                                                                                                                                  |
+| `apps/docs`              | `@broods/docs`              | This Docusaurus site and the OpenAPI spec at `docs/api-reference/openapi.yaml`.                                                                                                                                               |
+| `packages/broods`        | `broods`                    | The published CLI and TypeScript SDK. `broods` exports `BroodsClient`, `WebSocketClient` and the `define*` helpers. `broods/account` exports the dependency-free `BroodsAccountClient`.                                       |
+| `packages/demos`         | not a workspace             | Runnable demos against a deployed core.                                                                                                                                                                                       |
 
 Two sibling repos sit next to the checkout:
 
@@ -46,12 +47,12 @@ flowchart TB
   end
 
   subgraph K3s["Hetzner k3s cluster, nbg1 (../infra)"]
-    Ingress["Hetzner load balancer<br/>Traefik, cert-manager TLS"]
+    Ingress["Traefik on the node's 80/443<br/>cert-manager TLS"]
 
     subgraph NsApp["namespace beeblast"]
       GW["gateway, gateway-dev"]
       Dash["dashboard, dashboard-dev"]
-      Core["core, core-dev<br/>no ingress"]
+      Core["core, core-dev"]
       Fwd["discord-forwarder,<br/>matrix-forwarder + volume"]
       OPA["OPA"]
     end
@@ -85,7 +86,9 @@ flowchart TB
   Machine --> Ingress
   Sock <--> Fwd
 
-  Ingress --> GW
+  Ingress -->|"WebSockets"| GW
+  Ingress -->|"runtime paths"| Core
+  Ingress -->|"config paths"| CVX
   Ingress --> Dash
   Ingress -->|"convex-api, convex-site hosts"| CVX
 
@@ -93,7 +96,6 @@ flowchart TB
   Fwd -->|"listConnections"| CVX
   Core -->|"Matrix send"| Fwd
   GW --> Core
-  GW -->|"config paths"| CVX
   GW --> NATS
   Core --> CVX
   Core --> NATS
@@ -114,15 +116,15 @@ flowchart TB
   Ingress --> Otel
 ```
 
-| Where                        | What runs there                                                                                                                                                              | Provisioned by                           |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Hetzner k3s, `beeblast`      | gateway, core, dashboard, OPA, the two forwarders. Public hosts are `gateway.*` for the API, `dashboard.*`, and `opa.beeblast.co` for CI policy checks. Core has no ingress. | `../infra` Helm releases                 |
-| Hetzner k3s, `convex`        | Self-hosted `convex-backend` for prod and dev, on one Postgres with a block volume. Browsers and CI use the public api host; gateway and core stay in-cluster.               | `../infra` Helm releases                 |
-| Hetzner k3s, `nats`          | NATS JetStream for `WS_RESPONSES` and `OBSERVABILITY`. In-cluster only.                                                                                                      | `../infra` Helm releases                 |
-| Hetzner k3s, `observability` | OTel collector, Loki, Tempo, VictoriaMetrics, Grafana.                                                                                                                       | `../infra` Helm releases                 |
-| AWS `eu-west-1`              | Workspace, skill and bundle buckets, the mcp-runner Lambda, the MicroVM artifacts bucket and roles, the MicroVM log group and forwarder, the sandbox VPC.                    | `apps/core/sst.config.ts`, per SST stage |
-| AWS `eu-central-1`           | Convex storage buckets and nightly exports.                                                                                                                                  | `../infra` Terraform                     |
-| GitHub                       | Actions for CI and deploys, `ghcr.io/beeblastco/broods-*` images.                                                                                                            | `.github/workflows`                      |
+| Where                        | What runs there                                                                                                                                                                                                         | Provisioned by                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Hetzner k3s, `beeblast`      | gateway, core, dashboard, OPA, the two forwarders. Public hosts are `gateway.*` for the API, `dashboard.*`, and `opa.beeblast.co` for CI policy checks. Core has no host of its own; Traefik reaches it on `gateway.*`. | `../infra` Helm releases                 |
+| Hetzner k3s, `convex`        | Self-hosted `convex-backend` for prod and dev, on one Postgres with a block volume. Browsers and CI use the public api host; gateway and core stay in-cluster.                                                          | `../infra` Helm releases                 |
+| Hetzner k3s, `nats`          | NATS JetStream for `WS_RESPONSES` and `OBSERVABILITY`. In-cluster only.                                                                                                                                                 | `../infra` Helm releases                 |
+| Hetzner k3s, `observability` | OTel collector, Loki, Tempo, VictoriaMetrics, Grafana.                                                                                                                                                                  | `../infra` Helm releases                 |
+| AWS `eu-west-1`              | Workspace, skill and bundle buckets, the mcp-runner Lambda, the MicroVM artifacts bucket and roles, the MicroVM log group and forwarder, the sandbox VPC.                                                               | `apps/core/sst.config.ts`, per SST stage |
+| AWS `eu-central-1`           | Convex storage buckets and nightly exports.                                                                                                                                                                             | `../infra` Terraform                     |
+| GitHub                       | Actions for CI and deploys, `ghcr.io/beeblastco/broods-*` images.                                                                                                                                                       | `.github/workflows`                      |
 
 The forwarders are one release each for both planes, because a bot token must hold one socket. They read connections from each plane's Convex in-cluster and post to each plane's public gateway host. MicroVM images are built by `../lambda-sanbdox` CI, not SST. The docs site is static files on S3 behind CloudFront. How a commit reaches each box is in [CI/CD](ci-cd.md), and how to run the same shape yourself is in [self-hosting](self-hosting.md).
 

@@ -57,15 +57,12 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
-import {
-  isRuntimeVariable,
-  type RuntimeVariable,
-} from "@/app/lib/runtimeVariables";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import { reportPerf } from "@/app/lib/perfReport";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { providerApiKeyEnvName } from "@broods/convex/model/modelProviders";
 import type { Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
@@ -212,7 +209,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const ensureDeployment = useMutation(api.agent.deployments.ensureForStage);
   const rotateDeployment = useMutation(api.agent.deployments.rotate);
 
-  // The stage's runtime API key (shared by every agent in it). The agent
+  // The stage's runtime key (shared by every agent in it). The agent
   // itself is selected per request by its Agent ID. Created on demand here or on
   // the first `broods deploy`.
   const activeDeployment =
@@ -298,16 +295,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
     return inferProviderFromModelId(agentConfig.modelId ?? "");
   }, [agentConfig]);
-  const runtimeVariables = useMemo<RuntimeVariable[]>(
-    () =>
-      Array.isArray(agentConfig?.runtimeVariables)
-        ? agentConfig.runtimeVariables.filter(
-            (value: unknown): value is RuntimeVariable =>
-              isRuntimeVariable(value),
-          )
-        : [],
-    [agentConfig],
-  );
   const headerStatus = useMemo<HeaderStatusBadge | null>(() => {
     if (isAgent) {
       const config = agentStatusConfig[healthStatus];
@@ -464,17 +451,22 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const base = agentConfig
       ? (toNestedAgentConfig(agentConfig) as Record<string, unknown>)
       : {};
-    const currentProvider = isPlainObject(base.provider) ? base.provider : {};
-    const nextProviderConfig = { ...currentProvider };
-    if (next.provider === "custom") {
-      nextProviderConfig.custom = {
-        ...(isPlainObject(currentProvider.custom)
-          ? currentProvider.custom
+    const currentProvider = readAgentBranch<
+      Partial<Record<AgentProvider, Record<string, unknown>>>
+    >(agentConfig, "provider");
+    // A provider picked here without a key yet reads the same `${NAME}` stage
+    // variable a newly created agent does.
+    const keyVariable = providerApiKeyEnvName(next.provider);
+    const nextProviderConfig = {
+      ...currentProvider,
+      [next.provider]: {
+        ...(keyVariable ? { apiKey: `\${${keyVariable}}` } : {}),
+        ...currentProvider[next.provider],
+        ...(next.provider === "custom"
+          ? { base_url: next.customBaseUrl, baseURL: next.customBaseUrl }
           : {}),
-        base_url: next.customBaseUrl,
-        baseURL: next.customBaseUrl,
-      };
-    }
+      },
+    };
     const patch = fromNestedAgentConfig({
       ...base,
       model: {
@@ -594,17 +586,20 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
-  // Public-endpoint opt-in (issue #65). Stored as a top-level scalar in
-  // extraConfig so it rides through the codec to the harness; off by default.
-  const handleUpdatePublicAccess = useCallback(
-    async (enabled: boolean) => {
+  // One top-level extraConfig entry, such as the public-endpoint opt-in (issue #65)
+  // or the browser switch, so it rides through the codec to the harness.
+  const handleUpdateExtraEntry = useCallback(
+    async (
+      key: "publicAccess" | "browser",
+      value: boolean | { enabled: true } | undefined,
+    ): Promise<void> => {
       if (!agentConfigId || !agentConfig) return;
 
       const currentExtra =
         (agentConfig.extraConfig as Record<string, unknown>) ?? {};
       await updateConfig({
         configId: agentConfigId,
-        extraConfig: { ...currentExtra, publicAccess: enabled },
+        extraConfig: { ...currentExtra, [key]: value },
       });
     },
     [agentConfigId, agentConfig, updateConfig],
@@ -809,12 +804,19 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onRotateKey={handleRotateKey}
                 isSavingKey={isSavingKey}
                 selectedProvider={selectedProvider}
-                runtimeVariables={runtimeVariables}
                 onSaveModelSettings={handleSaveModelSettings}
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}
                 onUpdateModelReasoning={handleUpdateModelReasoning}
-                onUpdatePublicAccess={handleUpdatePublicAccess}
+                onUpdatePublicAccess={(enabled) =>
+                  handleUpdateExtraEntry("publicAccess", enabled)
+                }
+                onUpdateBrowser={(enabled) =>
+                  handleUpdateExtraEntry(
+                    "browser",
+                    enabled ? { enabled: true } : undefined,
+                  )
+                }
                 onUpdatePolicyConfig={handleUpdatePolicyConfig}
               />
             ) : isMcp && node ? (

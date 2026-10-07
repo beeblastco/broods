@@ -1,7 +1,8 @@
 # One-click promotion: waits for dev's required checks, fast-forwards main to
 # dev, then dispatches the main deploy workflows. Pushes made with GITHUB_TOKEN
 # do not fire `on: push` workflows (recursion guard), so the production
-# workflows are dispatched explicitly: Convex first, then the rest in parallel.
+# workflows are dispatched explicitly: Convex first, the service rollouts in
+# parallel, npm last.
 
 name: Promote dev to main
 
@@ -145,10 +146,9 @@ jobs:
 
           # Convex schema/functions first, then the AWS data plane that calls
           # them: that deploy must not start until the new schema exists. The
-          # remaining workflows are independent, so they are dispatched in
-          # parallel and the promote finishes when the slowest one does. `on:
-          # push` does not fire for the promote's bot push, so each of these
-          # must be dispatched explicitly.
+          # service rollouts are independent, so they are dispatched in
+          # parallel. `on: push` does not fire for the promote's bot push, so
+          # each of these must be dispatched explicitly.
           dispatch_and_wait deploy-convex.yaml
 
           workflows=(
@@ -159,7 +159,6 @@ jobs:
             build-discord-forwarder.yaml
             build-matrix-forwarder.yaml
             deploy-docs.yaml
-            publish-npm.yaml
           )
 
           pids=()
@@ -175,5 +174,11 @@ jobs:
               failed=1
             fi
           done
+          if [[ "$failed" -ne 0 ]]; then
+            exit 1
+          fi
 
-          exit "$failed"
+          # npm last. A package published while core and gateway are still
+          # rolling out would let `npm i broods` pull a client ahead of the
+          # backend it talks to; a failed rollout above keeps it unpublished.
+          dispatch_and_wait publish-npm.yaml

@@ -403,6 +403,84 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
     ).not.toThrow();
+    // Core puts it into AI Gateway URL paths.
+    for (const gatewayId of [7, "gw/../other", "gw?x=1"]) {
+      expect(() =>
+        normalizeAgentConfig({
+          provider: { cloudflare: { gatewayId: gatewayId } },
+        }),
+      ).toThrow(
+        "config.provider.cloudflare.gatewayId must be an AI Gateway id",
+      );
+    }
+    expect(() =>
+      normalizeAgentConfig({
+        provider: { cloudflare: { gatewayId: "broods-dev_1" } },
+      }),
+    ).not.toThrow();
+    // An upstream key in a literal header is as secret as an apiKey; a header
+    // made only of an env ref is not. Outside headers only refs are shown.
+    expect(
+      redactConfigSecrets({
+        provider: {
+          cloudflare: {
+            headers: {
+              Authorization: "Bearer sk-live",
+              "Proxy-Authorization": "Bearer sk-live${X}",
+              "x-api-key": "sk-ant-live",
+              "cf-aig-authorization": "Bearer ${CF_AIG_TOKEN}",
+              "X-Bot-Authorization": "Bot ${BOT_TOKEN}",
+            },
+          },
+        },
+        tools: {
+          search: {
+            serperApiKey: "sk-serper",
+            apiKey: "sk-live ${SUFFIX}",
+            apiKeys: ["sk-one", "${KEY_TWO}"],
+            credentials: { clientId: "id-1", refreshToken: "sk-refresh" },
+          },
+        },
+        model: {
+          output: {
+            schema: {
+              properties: {
+                credentials: { type: "object", required: ["username"] },
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      provider: {
+        cloudflare: {
+          headers: {
+            Authorization: "********",
+            "Proxy-Authorization": "********",
+            "x-api-key": "********",
+            "cf-aig-authorization": "Bearer ${CF_AIG_TOKEN}",
+            "X-Bot-Authorization": "Bot ${BOT_TOKEN}",
+          },
+        },
+      },
+      tools: {
+        search: {
+          serperApiKey: "********",
+          apiKey: "********",
+          apiKeys: "********",
+          credentials: { clientId: "id-1", refreshToken: "********" },
+        },
+      },
+      model: {
+        output: {
+          schema: {
+            properties: {
+              credentials: { type: "object", required: ["username"] },
+            },
+          },
+        },
+      },
+    });
     // Inherited Object keys are not provider names, however `in` reads them.
     for (const inherited of ["constructor", "__proto__", "toString"]) {
       expect(() =>

@@ -10,6 +10,7 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { sandboxConfigsFields, paginationCursorFields } from "../schema";
+import { assertSealedUnderCurrentKey } from "../model/accountKeys";
 import { ClientError } from "../model/clientError";
 
 const sandboxConfigDoc = v.object({
@@ -89,6 +90,9 @@ export const create = internalMutation({
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
     }
+    await assertSealedUnderCurrentKey(ctx, args.accountId, [
+      args.encryptedConfig,
+    ]);
 
     const now = Date.now();
 
@@ -130,6 +134,7 @@ export const update = internalMutation({
         "Sandbox config does not belong to the supplied accountId",
       );
     }
+    await assertSealedUnderCurrentKey(ctx, accountId, [patch.encryptedConfig]);
 
     await ctx.db.patch(normalized, {
       ...(patch.name !== undefined && { name: patch.name }),

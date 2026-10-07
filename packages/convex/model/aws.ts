@@ -112,15 +112,14 @@ export async function assumeScopedS3Credentials(params: {
 
 /**
  * Build an S3 client authenticated as the Convex config plane, or as the scoped
- * session a bring-your-own bucket supplies.
+ * session a bring-your-own bucket supplies. Given access with its own region, no
+ * platform AWS configuration is read.
  * @param access credentials/region/endpoint for a foreign bucket
  * @returns an S3 client
  */
 export async function s3Client(access?: S3Access): Promise<S3Client> {
-  const config = awsAccess();
-
   return new S3Client({
-    region: access?.region ?? config.region,
+    region: access?.region ?? awsAccess().region,
     credentials: access ? access.credentials : await assumeCredentials(),
     // Path style with a custom endpoint, matching core's awsClient: a non-AWS S3
     // endpoint rarely resolves virtual-hosted bucket subdomains.

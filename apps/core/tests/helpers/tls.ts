@@ -1,6 +1,12 @@
-/** Ephemeral TLS credentials shared by loopback HTTP integration tests. */
+/**
+ * Ephemeral TLS credentials and the loopback server fixture shared by the
+ * tests that drive a pinned fetch against a real socket.
+ */
 
+import type { RequestListener } from "node:http";
+import { createServer, type Server } from "node:https";
 import { generate } from "selfsigned";
+import type { PinnedFetchTransport } from "../../src/shared/http.ts";
 
 // Keep validity independent of tests that replace the clock. Nothing is saved to disk.
 const credentials = await generate(
@@ -25,3 +31,46 @@ const credentials = await generate(
 
 export const TLS_CERT = credentials.cert;
 export const TLS_KEY = credentials.private;
+
+/**
+ * The pinned fetch's seams for a server on loopback: `public.test` resolves to
+ * 127.0.0.1, which alone is exempt from the denylist. Every other address still
+ * meets the real check, so a test exercises the same guard production runs.
+ */
+export function loopbackTransport(): PinnedFetchTransport {
+  return {
+    allowAddresses: ["127.0.0.1"],
+    ca: TLS_CERT,
+    lookup: async (
+      hostname: string,
+    ): Promise<{ address: string; family: number }[]> => {
+      if (hostname !== "public.test") {
+        throw new Error(`no test DNS entry for ${hostname}`);
+      }
+
+      return [{ address: "127.0.0.1", family: 4 }];
+    },
+  };
+}
+
+/** A TLS server on a free loopback port for the duration of `run`, named by its origin. */
+export async function withLoopbackTlsServer(
+  listener: RequestListener,
+  run: (origin: string) => Promise<void>,
+): Promise<void> {
+  const server: Server = createServer(
+    { cert: TLS_CERT, key: TLS_KEY },
+    listener,
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address !== "object") {
+    throw new Error("test server has no port");
+  }
+  try {
+    await run(`https://public.test:${address.port}`);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+}

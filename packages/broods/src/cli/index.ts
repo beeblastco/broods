@@ -44,6 +44,7 @@ import {
   BroodsSyncClient,
   ManifestConflictError,
   type RemoteManifestResponse,
+  RouteNotMountedError,
 } from "../sync.ts";
 import {
   BroodsClient,
@@ -60,6 +61,13 @@ import {
   type LogLevel,
   type ObservabilityLogEntry,
 } from "../observability-contracts.ts";
+import { BroodsAccountApiError, BroodsAccountClient } from "../account.ts";
+import {
+  CONNECTION_TYPES,
+  CONNECTION_TYPE_NAMES,
+  isConnectionType,
+} from "../../../convex/model/connections.ts";
+import { connectInBrowser } from "./connect.ts";
 import {
   hasFlag,
   isPlainObject,
@@ -78,6 +86,7 @@ import {
   formatContext,
   formatNext,
   formatTarget,
+  formatWarning,
   printDeploymentTarget,
   printDiffEntries,
   printEnvSync,
@@ -127,7 +136,7 @@ const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage
   Inspect   agent  whoami
-  Account   login  org  project
+  Account   login  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
 // Help printed to a terminal is colored for stdout; help embedded in an error
@@ -159,6 +168,17 @@ Subcommands:
   get <name>           Show an agent's model, sandboxes, workspaces, tools and channels
 
 ${GLOBAL_OPTIONS}`,
+  connect: `Usage: broods connect [type]
+
+Signs an external account in through the browser and keeps it on your
+deployment, so agents act through it. Without a type, lists the account's
+connections. Uses the account key in BROODS_ACCOUNT_SECRET when set, otherwise
+your broods login.
+
+Types:
+${CONNECTION_TYPE_NAMES.map((type) => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
+
+${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
 
 Syncs Production once and writes BROODS_API_KEY to .env.local. Ignores
@@ -166,7 +186,7 @@ BROODS_STAGE by design. Pass --stage to deploy anywhere else.
 
 Options:
   --prune               Allow deploy to delete undeclared remote resources
-  --rotate-key          Mint a fresh runtime API key and write it to .env.local
+  --rotate-key          Mint a fresh runtime key and write it to .env.local
 
 ${GLOBAL_OPTIONS}`,
   dev: `Usage: broods dev [--once] [options]
@@ -186,6 +206,11 @@ ${GLOBAL_OPTIONS}`,
 
 Shows local desired state against the remote state of the current stage, and
 warns when the stage's value for an env("NAME") ref no longer matches .env.local.
+
+${GLOBAL_OPTIONS}`,
+  disconnect: `Usage: broods disconnect <type>
+
+Forgets the account's connection of that type and revokes it at the provider.
 
 ${GLOBAL_OPTIONS}`,
   env: `Usage: broods env <set|get|list|rm|sync> [name]
@@ -252,7 +277,7 @@ whose sandbox is this record. The file has the .mcp.json shape Claude Code and
 Cursor read, and it never leaves this computer.
 
 Authenticates with your \`broods login\`, like \`broods logs\`, and needs a
-deployed stage. The stage runtime key cannot open the machine socket.
+deployed stage. The runtime key cannot open the machine socket.
 
 Options:
   --cwd <dir>           Working directory for commands (default: current directory)
@@ -325,9 +350,10 @@ than a terminal:
 
 Auth comes from the environment, same as the SDK. Prefer a role session
 (BROODS_SESSION_TOKEN) so the role's policy bounds what the agent can reach;
-BROODS_ACCOUNT_SECRET is the full-tenant fallback. Mint a session with the
-assume-role tool, or with the account secret from another client. With only
-a stored \`broods login\`, the org, project and stage tools still register.
+BROODS_ACCOUNT_SECRET (the account key) is the full-tenant fallback. Mint a
+session with the assume-role tool, or with the account key from another
+client. With only a stored \`broods login\`, the org, project and stage tools
+still register.
 
 rotate-secret and delete-project stay unregistered unless
 BROODS_MCP_ALLOW_DESTRUCTIVE=1 is exported in the shell: no role policy
@@ -380,6 +406,14 @@ async function main(): Promise<void> {
       return;
     case "login":
       await login(args);
+
+      return;
+    case "connect":
+      await connectCommand(args);
+
+      return;
+    case "disconnect":
+      await disconnectCommand(args);
 
       return;
     case "whoami":
@@ -587,6 +621,106 @@ async function login(args: string[]): Promise<void> {
   const stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
 
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
+}
+
+/** An account API failure's own message, without the method, path and raw JSON around it. */
+function apiErrorMessage(error: unknown): string {
+  if (!(error instanceof BroodsAccountApiError))
+    return error instanceof Error ? error.message : String(error);
+  try {
+    const body = JSON.parse(error.body) as { error?: { message?: string } };
+
+    return body.error?.message ?? error.message;
+  } catch {
+    return error.message;
+  }
+}
+
+/**
+ * `broods connect [type]`: with a type, signs that external account in through
+ * the browser; without one, lists the account's connections.
+ */
+async function connectCommand(args: string[]): Promise<void> {
+  const [type] = positionalArgs(args);
+  const client = await connectionsClient(args);
+  if (type === undefined) {
+    await listConnections(client);
+
+    return;
+  }
+  if (!isConnectionType(type)) {
+    throw new Error(
+      `Unknown connection type ${type}.\n\n${commandHelp("connect")}`,
+    );
+  }
+  const meta = CONNECTION_TYPES[type];
+  const connection = await connectInBrowser(client, type).catch(
+    (error: unknown) => {
+      throw new Error(apiErrorMessage(error));
+    },
+  );
+  printSuccess(
+    `Connected ${meta.label}${connection.email ? ` as ${connection.email}` : ""}.`,
+  );
+  console.log(`Agents on model.provider "${type}" now run on it.`);
+  if (meta.usageUrl) console.log(`Manage usage: ${meta.usageUrl}`);
+  if (!connection.models?.length) return;
+  console.log("Models (use the id as model.modelId):");
+  for (const model of connection.models) console.log(`  ${model}`);
+}
+
+/**
+ * The account client connections run on: the account key when set, else
+ * the `broods login` token. Role sessions are refused by the route itself.
+ */
+async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
+  loadBroodsRuntimeConfig();
+  const baseUrl = optionValue(args, "--base-url");
+  const accountSecret = process.env.BROODS_ACCOUNT_SECRET;
+  if (accountSecret) {
+    return new BroodsAccountClient({
+      accountSecret: accountSecret,
+      ...(baseUrl ? { baseUrl: baseUrl } : {}),
+    });
+  }
+  const login = await requireAuth(baseUrl);
+
+  return new BroodsAccountClient({
+    accountSecret: login.token,
+    baseUrl: baseUrl ?? login.baseUrl,
+  });
+}
+
+/** `broods disconnect <type>`: forget a connection and revoke it. */
+async function disconnectCommand(args: string[]): Promise<void> {
+  const [type] = positionalArgs(args);
+  if (!type || !isConnectionType(type))
+    throw new Error(commandHelp("disconnect"));
+  const deleted = await (await connectionsClient(args)).disconnect(type);
+  if (deleted) {
+    printSuccess(`Disconnected ${CONNECTION_TYPES[type].label}`);
+
+    return;
+  }
+  console.log(`No ${type} connection.`);
+}
+
+/** The account's connections as a table, then the types it can add. */
+async function listConnections(client: BroodsAccountClient): Promise<void> {
+  const connections = await client.listConnections();
+  if (connections.length === 0) {
+    console.log("No connections yet.");
+  } else {
+    console.log(`${"TYPE".padEnd(16)} ACCOUNT`);
+  }
+  for (const connection of connections) {
+    console.log(
+      `${CONNECTION_TYPES[connection.type].label.padEnd(16)} ${connection.email ?? connection.clientId}`,
+    );
+  }
+  console.log(
+    `\nConnect one: broods connect <${CONNECTION_TYPE_NAMES.join("|")}>`,
+  );
 }
 
 /**
@@ -1066,7 +1200,7 @@ async function deploy(args: string[]): Promise<void> {
 }
 
 /**
- * Persist the stage's recoverable runtime API key after a deploy.
+ * Persist the stage's recoverable runtime key after a deploy.
  */
 async function applyDeploymentKey(
   deployment: RemoteManifestResponse["deployment"],
@@ -1242,7 +1376,7 @@ async function dev(args: string[]): Promise<void> {
   );
 
   // Like `convex dev`: stream live agent logs alongside the resource watcher so
-  // the developer sees activity while editing. Best-effort: with no runtime API
+  // the developer sees activity while editing. Best-effort: with no runtime
   // key configured yet, it prints a hint and skips without breaking the sync.
   const logController = new AbortController();
   void streamDevLogs(args, logController.signal);
@@ -1276,8 +1410,10 @@ async function streamDevLogs(
   try {
     for await (const entry of subscribeObservabilityLogs(session, {
       backfill: 0,
+      keepReconnecting: true,
       minLevel: minLevel,
       signal: signal,
+      onReconnect: printReconnect,
     })) {
       console.log(formatObservabilityEntry(entry));
     }
@@ -1472,9 +1608,10 @@ async function getOnboardingContextOrFallback(
   try {
     return await client.getOnboarding();
   } catch (error) {
-    if (!auth.org) throw error;
+    // Only an older server falls back; a 401 or a network error is the answer.
+    if (!(error instanceof RouteNotMountedError) || !auth.org) throw error;
     printWarning(
-      "CLI onboarding endpoint is not available yet; using the org from the current login.",
+      "This broods server cannot list your orgs yet; using the org from your login.",
     );
 
     return {
@@ -2200,7 +2337,7 @@ async function syncEnvFromLocal(
   if (unresolved.length > 0) {
     printWarning(
       `${unresolved.length} referenced variable(s) with no value here or on ${target}: ` +
-        `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME>\`.`,
+        `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME> --stage ${manifest.stage}\`.`,
     );
   }
 }
@@ -2254,7 +2391,7 @@ async function resolveProjectStage(
 /**
  * The stage the logs, stream and machine commands act on, with a credential
  * for it: a 15-minute ticket minted from the `broods login` token and re-minted
- * once it nears expiry. Never the stage runtime key, which sits in frontends.
+ * once it nears expiry. Never the runtime key, which sits in frontends.
  * Project and stage come back as slugs, which the gateway paths match on.
  */
 async function openStageSession(
@@ -2303,6 +2440,15 @@ function levelHint(minLevel: LogLevel): string {
   return minLevel === "WARN" ? " (--all for INFO too)" : "";
 }
 
+/** The `onReconnect` of every live tail: stderr, so `logs --json` stays parseable. */
+function printReconnect(attempt: number, reason: string): void {
+  console.error(
+    formatWarning(`Reconnecting to live logs (attempt ${attempt}): ${reason}`, {
+      stream: "stderr",
+    }),
+  );
+}
+
 /**
  * Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`.
  * A sandbox line is raw guest output, so terminal escapes are dropped before
@@ -2338,6 +2484,7 @@ async function streamLogs(args: string[]): Promise<void> {
       backfill: 0,
       minLevel: minLevel,
       signal: controller.signal,
+      onReconnect: printReconnect,
     })) {
       console.log(formatObservabilityEntry(entry));
     }
@@ -2462,6 +2609,7 @@ async function logs(args: string[]): Promise<void> {
       minLevel: minLevel,
       ...(sandboxId ? { sandboxId: sandboxId } : {}),
       signal: controller.signal,
+      onReconnect: printReconnect,
     })) {
       if (jsonMode) {
         console.log(JSON.stringify(entry));
@@ -2762,7 +2910,7 @@ async function writeStarter(
   }
 }
 
-/** `.env.local` holds the stage runtime key, so keep it out of the repo. */
+/** `.env.local` holds the runtime key, so keep it out of the repo. */
 async function ensureEnvLocalIgnored(): Promise<void> {
   const path = resolve(process.cwd(), ".gitignore");
   const existing = await readTextIfExists(path);
@@ -2959,7 +3107,7 @@ function starterAgent(): string {
     `    system: "You are a helpful assistant.",\n` +
     `  },\n` +
     `  sandboxes: [lambdaSandbox],\n` +
-    `  // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
+    `  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key and\n` +
     `  // \`broods run\` can reach this agent. Off by default: a private agent is\n` +
     `  // only reachable via internal endpoints or channel webhooks.\n` +
     `  publicAccess: true,\n` +
@@ -3013,7 +3161,7 @@ async function mcp(): Promise<void> {
   const runtime = loadBroodsRuntimeConfig();
   const auth = readStoredAuth();
   // A stored login adds the org, project and stage tools; those routes live
-  // behind the CLI router, which rejects an account secret or role session.
+  // behind the CLI router, which rejects an account key or role session.
   const [{ createBroodsMcpServer }, { serveStdio }] = await Promise.all([
     import("../mcp.ts"),
     import("@modelcontextprotocol/server/stdio"),

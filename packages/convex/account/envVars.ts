@@ -15,11 +15,10 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
-import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-  substituteAccountEnvPlaceholders,
-} from "../model/agentConfigCodec";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
+import { substituteAccountEnvPlaceholders } from "../model/agentConfigCodec";
+import { ClientError } from "../model/clientError";
+import { workspacesReferencingEnvVar } from "../model/environmentValues";
 
 /** List write-only account variable metadata; ciphertext never leaves storage. */
 export const list = internalQuery({
@@ -84,17 +83,16 @@ export const set = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string(), value: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const secret = encryptionSecret();
+    const cipher = await accountCipherForWrite(ctx, args.accountId);
     const existing = await ctx.db
       .query("accountEnvVars")
       .withIndex("by_accountId_and_name", (q) =>
         q.eq("accountId", args.accountId).eq("name", args.name),
       )
       .unique();
-    const encrypted = await encryptAgentConfigBlob(
-      { value: args.value },
-      secret,
-    );
+    const encrypted = await cipher.encrypt("accountEnvVars:ciphertext", {
+      value: args.value,
+    });
     const now = Date.now();
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -119,7 +117,11 @@ export const set = internalMutation({
   },
 });
 
-/** Delete an account variable and re-resolve source-backed agents, preserving missing placeholders literally. */
+/**
+ * Delete an account variable and re-resolve source-backed agents, preserving
+ * missing placeholders literally. Refused while an API-made R2 workspace still
+ * mints its credentials from it.
+ */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string() },
   returns: v.boolean(),
@@ -131,6 +133,20 @@ export const remove = internalMutation({
       )
       .unique();
     if (!existing) return false;
+    const workspaces = await workspacesReferencingEnvVar(
+      ctx,
+      args.accountId,
+      undefined,
+      args.name,
+    );
+    // No names in the refusal: a role may write env vars without reading workspaces.
+    if (workspaces.length > 0) {
+      throw new ClientError(
+        `${args.name} is still referenced by an R2 workspace's keys. ` +
+          "Point the workspace at another variable before deleting this one.",
+        "conflict",
+      );
+    }
 
     await ctx.db.delete(existing._id);
     await refreshSourceBackedAgents(ctx, args.accountId);
@@ -139,29 +155,33 @@ export const remove = internalMutation({
   },
 });
 
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");
-
-  return secret;
-}
-
-/** Decrypt every account variable into the map used for write-time substitution. */
-async function loadValuesForAccount(
+/** Decrypt the account variables, all of them or only `names`, into the map used for write-time substitution. */
+export async function loadValuesForAccount(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
+  names?: string[],
 ): Promise<Record<string, string>> {
-  const rows = await ctx.db
-    .query("accountEnvVars")
-    .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
-    .collect();
-  const secret = encryptionSecret();
+  const rows = names
+    ? (
+        await Promise.all(
+          names.map((name) =>
+            ctx.db
+              .query("accountEnvVars")
+              .withIndex("by_accountId_and_name", (q) =>
+                q.eq("accountId", accountId).eq("name", name),
+              )
+              .unique(),
+          ),
+        )
+      ).filter((row) => row !== null)
+    : await ctx.db
+        .query("accountEnvVars")
+        .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+        .collect();
+  const cipher = await accountCipher(ctx, accountId);
   const values: Record<string, string> = {};
   for (const row of rows) {
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
-      secret,
-    );
+    const decrypted = await cipher.decrypt("accountEnvVars:ciphertext", row);
     // Fail loudly: silently resolving to "" would bake an empty secret
     // into an agent's live config instead of surfacing the corruption.
     if (typeof decrypted?.value !== "string") {
@@ -178,7 +198,7 @@ async function refreshSourceBackedAgents(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
 ): Promise<void> {
-  const secret = encryptionSecret();
+  const cipher = await accountCipherForWrite(ctx, accountId);
   const values = await loadValuesForAccount(ctx, accountId);
   const agents = await ctx.db
     .query("agents")
@@ -191,18 +211,15 @@ async function refreshSourceBackedAgents(
       !agent.sourceEncryptionTag
     )
       continue;
-    const source = await decryptAgentConfigBlob(
-      {
-        ciphertext: agent.encryptedSourceConfig,
-        iv: agent.sourceEncryptionIv,
-        tag: agent.sourceEncryptionTag,
-      },
-      secret,
-    );
+    const source = await cipher.decrypt("agents:encryptedSourceConfig", {
+      ciphertext: agent.encryptedSourceConfig,
+      iv: agent.sourceEncryptionIv,
+      tag: agent.sourceEncryptionTag,
+    });
     if (!source) continue;
-    const encrypted = await encryptAgentConfigBlob(
+    const encrypted = await cipher.encrypt(
+      "agents:encryptedConfig",
       substituteAccountEnvPlaceholders(source, values),
-      secret,
     );
     await ctx.db.patch(agent._id, {
       encryptedConfig: encrypted.ciphertext,
