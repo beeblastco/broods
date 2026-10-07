@@ -1451,15 +1451,16 @@ export async function runAgentLoop(
             "tool.compute.cpu_usec": compute.cpuUsec,
           }
         : {};
+      const outputAttributes = toolSucceeded
+        ? { "tool.output": traceAttribute(outputWithoutMediaBytes(output)) }
+        : {};
       tracked.otelSpan.setAttributes({
         "tool.duration_ms": toolDurationMs,
         "tool.success": toolSucceeded,
         "tool.state": toolSucceeded ? "completed" : "failed",
         "tool.input": traceAttribute(toolCall.input),
         ...computeAttributes,
-        ...(toolSucceeded
-          ? { "tool.output": traceAttribute(outputWithoutMediaBytes(output)) }
-          : {}),
+        ...outputAttributes,
       });
       if (toolSucceeded) {
         tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
@@ -1491,9 +1492,7 @@ export async function runAgentLoop(
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
           ...computeAttributes,
-          ...(toolSucceeded
-            ? { "tool.output": traceAttribute(outputWithoutMediaBytes(output)) }
-            : {}),
+          ...outputAttributes,
           ...(stepNumber !== undefined
             ? { "agent.step_number": stepNumber }
             : {}),
