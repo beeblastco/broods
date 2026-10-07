@@ -842,14 +842,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     );
     // A sandbox whose image changed must not keep reaching the VM the old image
     // booted: stop it, before any resume, and the caller creates one from the new
-    // image. GetMicrovm always reports the image, so a missing one is a mismatch.
+    // image. A VM that reports no image is left alone, since stopping a healthy
+    // VM on a partial answer costs more than one call on the old image.
     if (
       !isTerminalMicrovmState(info.state) &&
-      (!info.imageArn || microvmImageName(info.imageArn) !== this.#imageName())
+      info.imageArn &&
+      microvmImageName(info.imageArn) !== this.#imageName()
     ) {
       await this.#terminate(microvmId);
       throw new MicrovmGoneError(
-        `MicroVM ${microvmId} runs ${info.imageArn ?? "an unknown image"}, not the sandbox's image`,
+        `MicroVM ${microvmId} runs ${info.imageArn}, not the sandbox's image`,
       );
     }
     if (info.state === "SUSPENDED" || info.state === "SUSPENDING") {

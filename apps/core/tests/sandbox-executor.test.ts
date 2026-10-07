@@ -1,4 +1,3 @@
-import type { RunMicrovmRequest } from "@aws-sdk/client-lambda-microvms";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type {
   SandboxExecutorConfig,
@@ -162,11 +161,10 @@ let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
 // The image the mocked VM booted, which GetMicrovm reports like the real API.
 let microvmBootedImage = "";
 const microvmSendMock = mock(
-  async (command: { _type?: string; input?: unknown }) => {
+  async (command: { _type?: string; input?: { imageIdentifier?: string } }) => {
     switch (command?._type) {
       case "RunMicrovm":
-        microvmBootedImage =
-          (command.input as RunMicrovmRequest).imageIdentifier ?? "";
+        microvmBootedImage = command.input?.imageIdentifier ?? "";
 
         return {
           microvmId: "microvm-1",
@@ -1044,6 +1042,74 @@ describe("createSandboxExecutor", () => {
     expect(microvmRunInput().imageIdentifier).toBe(
       "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
     );
+  });
+
+  it("stops a suspended MicroVM on another image without resuming it", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        state: "SUSPENDED",
+        imageArn:
+          "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox:4",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    await createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      image: "obscura",
+    }).run({
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).not.toContain("ResumeMicrovm");
+    expect(types.indexOf("TerminateMicrovm")).toBeLessThan(
+      types.indexOf("RunMicrovm"),
+    );
+    expect(microvmRunInput().imageIdentifier).toBe(
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox-obscura",
+    );
+  });
+
+  it("keeps a reserved MicroVM that reports no image", async () => {
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+        imageArn: undefined,
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run({
+      code: "echo ok",
+      namespace: microvmNamespace(),
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).not.toContain("TerminateMicrovm");
+    expect(types).not.toContain("RunMicrovm");
   });
 
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {

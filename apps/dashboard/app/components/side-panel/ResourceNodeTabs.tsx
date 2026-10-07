@@ -35,6 +35,7 @@ import {
   machineStartCommand,
   machineState,
 } from "@/app/lib/machineConnection";
+import { snapshotOptions } from "@/app/lib/sandboxSnapshots";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
@@ -133,20 +134,7 @@ export function SandboxResourceDetailsTab({
     api.sandbox.snapshots.listForActiveOrg,
     hasSnapshots ? {} : "skip",
   );
-  // The account's ready snapshots for this provider, pinned by provider image id.
-  // A pin set in code that is not in the list still shows, so the select is honest.
-  const snapshotOptions = [
-    { value: "none", label: "None" },
-    ...(snapshots ?? [])
-      .filter((row) => row.provider === provider && row.status === "active")
-      .map((row) => ({ value: row.externalImageId, label: row.name })),
-  ];
-  if (
-    snapshot &&
-    !snapshotOptions.some((option) => option.value === snapshot)
-  ) {
-    snapshotOptions.push({ value: snapshot, label: snapshot });
-  }
+  const snapshotChoices = snapshotOptions(snapshots ?? [], provider, snapshot);
 
   function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: { ...config, ...patch } });
@@ -238,7 +226,7 @@ export function SandboxResourceDetailsTab({
                 ...(next !== "none" ? { image: undefined } : {}),
               })
             }
-            options={snapshotOptions}
+            options={snapshotChoices}
           />
         )}
         <SelectField
