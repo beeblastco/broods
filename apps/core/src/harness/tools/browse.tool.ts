@@ -127,7 +127,11 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
             },
             {
               type: "image-data",
-              data: Buffer.from(image).toString("base64"),
+              data: Buffer.from(
+                image.buffer,
+                image.byteOffset,
+                image.byteLength,
+              ).toString("base64"),
               mediaType: "image/png",
             },
           ],

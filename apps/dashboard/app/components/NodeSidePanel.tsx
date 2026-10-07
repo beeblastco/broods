@@ -584,7 +584,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   // One top-level extraConfig entry, such as the public-endpoint opt-in (issue #65)
   // or the browser switch, so it rides through the codec to the harness.
   const handleUpdateExtraEntry = useCallback(
-    async (key: "publicAccess" | "browser", value: unknown) => {
+    async (
+      key: "publicAccess" | "browser",
+      value: boolean | { enabled: true } | undefined,
+    ) => {
       if (!agentConfigId || !agentConfig) return;
 
       const currentExtra =
